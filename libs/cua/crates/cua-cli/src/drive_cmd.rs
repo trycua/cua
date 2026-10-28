@@ -13,7 +13,7 @@ use std::sync::Arc;
 use clap::{Args, Subcommand};
 use cua_sdk::{Cua, CuaError, DriveView};
 
-use crate::util::line;
+use crate::util::{hint_line, line};
 
 /// Whose view of the drive a command takes.
 #[derive(Args, Debug, Clone, Default)]
@@ -175,9 +175,42 @@ pub enum DriveCmd {
   cua volume status
   cua volume status --json")]
     Status,
-    /// Which store the drive uses (fs, s3, cloud).
+    /// Which store the drive uses (fs, s3).
     #[command(subcommand)]
     Config(ConfigCmd),
+    /// Named volumes: folders of the volume that Spaces mount
+    /// (`cua spaces create --volume`).
+    #[command(subcommand)]
+    Named(NamedCmd),
+}
+
+/// `cua volume named`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum NamedCmd {
+    /// The named volumes, and the Spaces that mount each.
+    #[command(after_help = "Examples:
+  cua volume named ls
+  cua volume named ls --json")]
+    Ls,
+    /// Make an empty named volume.
+    #[command(after_help = "Examples:
+  cua volume named create shared
+  cua spaces create --volume shared:/mnt/shared")]
+    Create {
+        /// 1 to 63 of a-z, 0-9, `.`, `_`, `-`.
+        name: String,
+    },
+    /// Delete a named volume and its files (their history stays). Refused
+    /// while Spaces mount it unless --force.
+    #[command(after_help = "Examples:
+  cua volume named rm shared
+  cua volume named rm shared --force")]
+    Rm {
+        name: String,
+        /// Delete although Spaces mount it.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// `cua volume config`.
@@ -192,7 +225,7 @@ pub enum ConfigCmd {
   cua volume config set --backend fs
   cua volume config set --backend s3 --endpoint http://127.0.0.1:9000 --bucket cua-volume --path-style")]
     Set {
-        /// `fs` (default), `s3`, or `cloud` (off unless the Cua cloud enables it).
+        /// `fs` (default) or `s3`.
         #[arg(long)]
         backend: String,
         #[arg(long)]
@@ -288,6 +321,48 @@ pub async fn run(
                         );
                     }
                 }
+            }
+        }
+        DriveCmd::Named(NamedCmd::Ls) => {
+            let vols = spaces.volumes().await?;
+            if json {
+                let v: Vec<_> = vols
+                    .iter()
+                    .map(|v| json!({"name": v.name, "mounted_in": v.mounted_in}))
+                    .collect();
+                line(out, json!({ "volumes": v }).to_string());
+            } else if vols.is_empty() {
+                hint_line(
+                    out,
+                    "No named volumes. Make one with `cua volume named create NAME`.",
+                );
+            } else {
+                for v in &vols {
+                    if v.mounted_in.is_empty() {
+                        line(out, v.name.clone());
+                    } else {
+                        line(
+                            out,
+                            format!("{}  mounted in {}", v.name, v.mounted_in.join(", ")),
+                        );
+                    }
+                }
+            }
+        }
+        DriveCmd::Named(NamedCmd::Create { name }) => {
+            let v = spaces.create_volume(name).await?;
+            if json {
+                line(out, json!({"name": v.name}).to_string());
+            } else {
+                line(out, format!("Created volume {}.", v.name));
+            }
+        }
+        DriveCmd::Named(NamedCmd::Rm { name, force }) => {
+            let files = spaces.delete_volume(name.clone(), force).await?;
+            if json {
+                line(out, json!({"deleted": name, "files": files}).to_string());
+            } else {
+                line(out, format!("Deleted volume {name} ({files} files)."));
             }
         }
         DriveCmd::Cat {

@@ -1,0 +1,12 @@
+{
+  "_host": "AWS c7g.2xlarge (8 Graviton3 vCPU, 16 GiB), Ubuntu 24.04, Docker + gVisor release-20260921.0, 2026-10-20",
+  "desktop_create_p50_ms": 4340.6,
+  "headless_create_p50_ms": 314.0,
+  "headless_b16_wall_ms": 2280.0,
+  "create_failures": 0,
+  "idle_spacesd_cpu_pct": 0,
+  "rollout_steps_per_sec": 211.47822938689316,
+  "rollout_errors": 0,
+  "pool_claim_batch_p50_ms": 153.3,
+  "rollout_sandboxes": 32
+}

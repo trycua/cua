@@ -44,7 +44,11 @@ pub enum Error {
         /// The driver's own limitation text, if any.
         limitation: String,
     },
-    /// A host-side prerequisite (Fleet credentials, a local runtime, an
+    /// A machine of yours runs a Cua older than the call needs (see
+    /// [`cua_spacesd_client::old_host`]); the text says what to do.
+    #[error("{0}")]
+    HostTooOld(String),
+    /// A host-side prerequisite (a local runtime, an
     /// operator display, app-session providers) is not configured.
     #[error("{what} is not available on this host: {why}")]
     HostCapabilityMissing {
@@ -58,9 +62,13 @@ pub enum Error {
     WrongProvider {
         /// The operation.
         op: String,
-        /// `fleet`, `local` or `direct`.
+        /// `local`, `direct`, `relay` or a provider.
         provider: String,
     },
+    /// The operation is not available for this Space, with the reason in
+    /// plain words (for example publishing a checkpoint of a container).
+    #[error("{0}")]
+    Unsupported(String),
     /// A transfer did not land, or landed corrupted.
     #[error("transfer failed: {0}")]
     Transfer(String),
@@ -83,9 +91,6 @@ pub enum Error {
     /// spacesd RPC failure.
     #[error(transparent)]
     Env(#[from] cua_spacesd_client::Error),
-    /// Fleet control-plane failure.
-    #[error(transparent)]
-    Fleet(#[from] cua_fleet::Error),
     /// Sandbox lifecycle failure.
     #[error(transparent)]
     Sandbox(cua_sandbox_core::Error),
@@ -126,11 +131,39 @@ pub enum Error {
         /// For humans.
         message: String,
     },
+    /// A build step failed.
+    #[error("{}", build_message(.step, .command, .exit_code, .output))]
+    Build {
+        /// The step's number (0: the base image).
+        step: u32,
+        /// The step as a line (`RUN make`).
+        command: String,
+        /// Its exit code, when it exited.
+        exit_code: Option<i32>,
+        /// The last lines it printed (and why it stopped, if not an exit).
+        output: String,
+    },
     /// The create was cancelled ([`crate::Spaces::cancel_create`], or its
     /// caller went away); what it made is gone. The message says what was
     /// removed and what stays.
     #[error("{0}")]
     Cancelled(String),
+}
+
+fn build_message(step: &u32, command: &str, exit_code: &Option<i32>, output: &str) -> String {
+    let mut m = if command.is_empty() {
+        "build failed".to_string()
+    } else {
+        format!("build failed at step {step}: {command}")
+    };
+    if let Some(c) = exit_code {
+        m.push_str(&format!(" (exit {c})"));
+    }
+    if !output.trim().is_empty() {
+        m.push('\n');
+        m.push_str(output.trim_end());
+    }
+    m
 }
 
 fn limitation_suffix(limitation: &str) -> String {
@@ -148,9 +181,10 @@ impl Error {
             Error::InvalidArgument(_) => "invalid_argument",
             Error::NotFound(_) => "not_found",
             Error::SpacesdNotAvailable { .. } => "spacesd_not_available",
-            Error::CapabilityMissing { .. } => "capability_missing",
+            Error::CapabilityMissing { .. } | Error::HostTooOld(_) => "capability_missing",
             Error::HostCapabilityMissing { .. } => "host_capability_missing",
             Error::WrongProvider { .. } => "wrong_provider",
+            Error::Unsupported(_) => "wrong_provider",
             Error::Transfer(_) => "transfer_failed",
             Error::TeleportRefused(_) => "teleport_refused",
             Error::LoginRefused(_) => "login_refused",
@@ -162,12 +196,15 @@ impl Error {
                 cua_spacesd_client::Error::Unauthenticated(_) => "unauthenticated",
                 _ => "env",
             },
-            Error::Fleet(cua_fleet::Error::AdmissionDenied { .. }) => "fleet_admission_denied",
-            Error::Fleet(cua_fleet::Error::CreditExhausted { .. }) => "cloud_credit_exhausted",
-            Error::Fleet(_) => "fleet",
             Error::Sandbox(cua_sandbox_core::Error::AmbiguousSandbox { .. }) => "ambiguous_sandbox",
             Error::Sandbox(cua_sandbox_core::Error::NotFound(_)) => "not_found",
             Error::Sandbox(cua_sandbox_core::Error::InvalidPlacement(_)) => "invalid_placement",
+            Error::Sandbox(cua_sandbox_core::Error::Runtime(
+                cua_sandbox_core::RuntimeError::InsufficientDisk(_),
+            )) => "insufficient_disk",
+            Error::Sandbox(cua_sandbox_core::Error::Runtime(
+                cua_sandbox_core::RuntimeError::HostCapacity(_),
+            )) => "host_capacity",
             Error::Sandbox(_) => "sandbox",
             Error::Io(_) => "io",
             Error::Mcp(_) => "mcp",
@@ -176,6 +213,7 @@ impl Error {
             Error::AmbiguousHost { .. } => "ambiguous_host",
             Error::Extension { kind, .. } => kind,
             Error::Cancelled(_) => "cancelled",
+            Error::Build { .. } => "build_failed",
             Error::Relay(e) => match e {
                 cua_host::Error::Unauthenticated(_) => "unauthenticated",
                 cua_host::Error::PermissionDenied(_) => "permission_denied",
@@ -228,6 +266,14 @@ impl Error {
 
 impl From<cua_sandbox_core::Error> for Error {
     fn from(e: cua_sandbox_core::Error) -> Self {
+        // A runtime that refuses an egress policy (`an egress policy
+        // (why)`): the Space's kind does not take one.
+        if let Some((provider, op)) = egress_refusal(&e) {
+            return Error::WrongProvider {
+                op: format!("A{}", &op[1..]),
+                provider,
+            };
+        }
         match e {
             cua_sandbox_core::Error::SpacesdNotAvailable { sandbox, reason } => {
                 Error::SpacesdNotAvailable {
@@ -236,7 +282,6 @@ impl From<cua_sandbox_core::Error> for Error {
                 }
             }
             cua_sandbox_core::Error::Env(e) => Error::Env(e),
-            cua_sandbox_core::Error::Fleet(e) => Error::Fleet(e),
             cua_sandbox_core::Error::NotFound(n) => Error::NotFound(n),
             cua_sandbox_core::Error::Mcp(e) => Error::Mcp(e),
             cua_sandbox_core::Error::Cloud(m) => Error::extension("cloud", m),
@@ -244,14 +289,25 @@ impl From<cua_sandbox_core::Error> for Error {
             cua_sandbox_core::Error::InvalidArgument(m) => Error::InvalidArgument(m),
             cua_sandbox_core::Error::Cancelled(m) => Error::Cancelled(m),
             cua_sandbox_core::Error::ProviderNotConfigured(p) => Error::host(
-                match p {
-                    cua_sandbox_core::ProviderKind::Fleet => cua_spaces_contract::host::FLEET,
-                    _ => cua_spaces_contract::host::LOCAL_RUNTIME,
-                },
+                cua_spaces_contract::host::LOCAL_RUNTIME,
                 format!("the {p:?} provider is not configured"),
             ),
             other => Error::Sandbox(other),
         }
+    }
+}
+
+/// The runtime and its words when `e` refuses an egress policy.
+fn egress_refusal(e: &cua_sandbox_core::Error) -> Option<(String, String)> {
+    use cua_sandbox_core::{Error as S, RuntimeError as R};
+    match e {
+        S::Runtime(R::Unsupported { backend, op }) if op.starts_with("an egress policy") => {
+            Some((backend.clone(), op.clone()))
+        }
+        S::Unsupported { provider, op } if op.starts_with("an egress policy") => {
+            Some((format!("{provider:?}").to_lowercase(), op.clone()))
+        }
+        _ => None,
     }
 }
 
@@ -295,16 +351,6 @@ mod tests {
             Error::Stream("x".into()),
             Error::Env(cua_spacesd_client::Error::Unauthenticated(details())),
             Error::Env(cua_spacesd_client::Error::Transport("x".into())),
-            Error::Fleet(cua_fleet::Error::Timeout("x".into())),
-            Error::Fleet(cua_fleet::Error::AdmissionDenied {
-                operation: "create template".into(),
-                status: 403,
-                message: "x".into(),
-            }),
-            Error::Fleet(cua_fleet::Error::CreditExhausted {
-                message: "x".into(),
-                billing_url: "https://x".into(),
-            }),
             Error::Sandbox(cua_sandbox_core::Error::AmbiguousSandbox {
                 name: "x".into(),
                 candidates: vec![],

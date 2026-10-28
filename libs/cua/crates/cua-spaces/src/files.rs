@@ -147,6 +147,125 @@ pub struct DownloadReport {
     pub verified: bool,
 }
 
+/// How long opening a host file or folder may take before a transfer gives
+/// up on it. A read macOS is holding for a privacy (TCC) decision blocks
+/// forever when no prompt can be shown; a healthy open takes milliseconds.
+pub const HOST_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The macOS privacy-protected location `path` is in, named for people
+/// ("Documents folder"), or `None`. `home` is the user's home directory.
+/// Pure: callers decide whether the host is a Mac.
+pub fn protected_folder(path: &Path, home: Option<&Path>) -> Option<&'static str> {
+    if path.starts_with("/Volumes") {
+        return Some("removable and network volumes");
+    }
+    let rest = path.strip_prefix(home?).ok()?;
+    let mut parts = rest.components().map(|c| c.as_os_str().to_string_lossy());
+    match parts.next()?.as_ref() {
+        "Documents" => Some("Documents folder"),
+        "Desktop" => Some("Desktop folder"),
+        "Downloads" => Some("Downloads folder"),
+        "Library" => match parts.next()?.as_ref() {
+            "Mobile Documents" => Some("iCloud Drive"),
+            "CloudStorage" => Some("cloud storage folders"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Why a host path could not be opened.
+#[derive(Debug)]
+enum OpenFailure {
+    /// The open did not return within the timeout.
+    Hung(std::time::Duration),
+    /// The OS refused it.
+    Io(std::io::Error),
+}
+
+/// The error a transfer reports for `path`. `folder` is
+/// [`protected_folder`] on a Mac, `None` elsewhere.
+fn unreadable(path: &Path, folder: Option<&str>, failure: OpenFailure) -> Error {
+    let shown = path.display();
+    let tcc = |folder: &str, pending: bool| {
+        let prompt = if pending {
+            " (a macOS permission prompt may be waiting on screen, possibly behind other windows)"
+        } else {
+            ""
+        };
+        Error::extension(
+            "host_capability_missing",
+            format!(
+                "Cua can't read {shown}: macOS hasn't given Cua Spaces access to your \
+                 {folder}{prompt}. Allow it in System Settings > Privacy & Security > Files \
+                 and Folders, or move the file to another folder."
+            ),
+        )
+    };
+    match failure {
+        OpenFailure::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied => match folder {
+            Some(f) => tcc(f, false),
+            None => Error::invalid(format!("Cua can't read {shown}: {e}")),
+        },
+        OpenFailure::Io(e) => Error::invalid(format!("host path {shown}: {e}")),
+        OpenFailure::Hung(after) => match folder {
+            Some(f) => tcc(f, true),
+            None => Error::Timeout(format!(
+                "Cua can't read {shown}: opening it took longer than {}s (is the disk or \
+                 network share responding?)",
+                after.as_secs()
+            )),
+        },
+    }
+}
+
+/// Opens `path` the way a transfer will (a file: open and read a byte; a
+/// folder: list it). Blocking.
+fn probe_open(path: &Path) -> std::io::Result<()> {
+    use std::io::Read;
+    if std::fs::metadata(path)?.is_dir() {
+        std::fs::read_dir(path)?.next().transpose()?;
+    } else {
+        let _ = std::fs::File::open(path)?.read(&mut [0u8; 1])?;
+    }
+    Ok(())
+}
+
+/// Proves this process can read `path` before a transfer starts, within
+/// [`HOST_OPEN_TIMEOUT`]. On a Mac, a read the privacy system blocks or
+/// refuses becomes an error that says which folder and how to allow it,
+/// instead of a call that never returns.
+pub async fn check_host_readable(path: &Path) -> Result<()> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let folder = if cfg!(target_os = "macos") {
+        protected_folder(path, home.as_deref())
+    } else {
+        None
+    };
+    check_readable_with(path, folder, HOST_OPEN_TIMEOUT, probe_open).await
+}
+
+async fn check_readable_with(
+    path: &Path,
+    folder: Option<&str>,
+    timeout: std::time::Duration,
+    probe: fn(&Path) -> std::io::Result<()>,
+) -> Result<()> {
+    let owned = path.to_path_buf();
+    // A hung open keeps its blocking thread; the caller gets its answer.
+    let task = tokio::task::spawn_blocking(move || probe(&owned));
+    let failure = match tokio::time::timeout(timeout, task).await {
+        Ok(Ok(Ok(()))) => return Ok(()),
+        Ok(Ok(Err(e))) => OpenFailure::Io(e),
+        Ok(Err(join)) => OpenFailure::Io(std::io::Error::other(join.to_string())),
+        Err(_) => OpenFailure::Hung(timeout),
+    };
+    if let Some(f) = folder {
+        tracing::warn!(path = %path.display(), folder = f, failure = ?failure, "host path is not readable");
+    }
+    Err(unreadable(path, folder, failure))
+}
+
 async fn sha256_file(path: &Path) -> Result<String> {
     let mut f = tokio::fs::File::open(path).await?;
     let mut hasher = Sha256::new();
@@ -244,6 +363,7 @@ impl Space {
         local: &Path,
         options: SendFileOptions,
     ) -> Result<SendFileReport> {
+        check_host_readable(local).await?;
         let meta = tokio::fs::metadata(local)
             .await
             .map_err(|e| Error::invalid(format!("host path {}: {e}", local.display())))?;
@@ -468,6 +588,7 @@ impl Space {
     /// a file there); with no `dest` it lands at `<home>/<name>`, or at the
     /// first free `<home>/<name> (n).ext` when that is taken.
     pub async fn upload(&self, local: &Path, dest: Option<&str>) -> Result<UploadReport> {
+        check_host_readable(local).await?;
         let meta = tokio::fs::metadata(local)
             .await
             .map_err(|e| Error::invalid(format!("host path {}: {e}", local.display())))?;
@@ -667,6 +788,109 @@ fn keep_both_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macos_privacy_folders_are_recognised() {
+        let home = Some(Path::new("/Users/me"));
+        let f = |p: &str| protected_folder(Path::new(p), home);
+        assert_eq!(f("/Users/me/Documents/a.pdf"), Some("Documents folder"));
+        assert_eq!(f("/Users/me/Documents"), Some("Documents folder"));
+        assert_eq!(f("/Users/me/Desktop/x/y.txt"), Some("Desktop folder"));
+        assert_eq!(f("/Users/me/Downloads/z"), Some("Downloads folder"));
+        assert_eq!(
+            f("/Users/me/Library/Mobile Documents/com~apple~CloudDocs/n.md"),
+            Some("iCloud Drive")
+        );
+        assert_eq!(
+            f("/Users/me/Library/CloudStorage/Dropbox/n.md"),
+            Some("cloud storage folders")
+        );
+        assert_eq!(
+            f("/Volumes/USB/n.md"),
+            Some("removable and network volumes")
+        );
+        assert_eq!(f("/tmp/a.pdf"), None);
+        assert_eq!(f("/Users/me/code/Documents/a"), None);
+        assert_eq!(f("/Users/me/Library/Caches/a"), None);
+        assert_eq!(f("/Users/meow/Documents/a"), None);
+        assert_eq!(
+            protected_folder(Path::new("/Users/me/Documents/a"), None),
+            None
+        );
+    }
+
+    fn hangs(_: &Path) -> std::io::Result<()> {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        Ok(())
+    }
+
+    fn denied(_: &Path) -> std::io::Result<()> {
+        Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+    }
+
+    const SHORT: std::time::Duration = std::time::Duration::from_millis(100);
+
+    #[tokio::test]
+    async fn a_blocked_read_in_a_protected_folder_says_how_to_allow_it() {
+        let p = Path::new("/Users/me/Documents/report.pdf");
+        let started = std::time::Instant::now();
+        let e = check_readable_with(p, Some("Documents folder"), SHORT, hangs)
+            .await
+            .unwrap_err();
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(e.tag(), "host_capability_missing");
+        assert_eq!(
+            e.to_string(),
+            "Cua can't read /Users/me/Documents/report.pdf: macOS hasn't given Cua Spaces \
+             access to your Documents folder (a macOS permission prompt may be waiting on \
+             screen, possibly behind other windows). Allow it in System Settings > Privacy & \
+             Security > Files and Folders, or move the file to another folder."
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_read_in_a_protected_folder_says_the_same() {
+        let p = Path::new("/Users/me/Desktop/a.txt");
+        let e = check_readable_with(p, Some("Desktop folder"), SHORT, denied)
+            .await
+            .unwrap_err();
+        assert!(
+            e.to_string()
+                .contains("access to your Desktop folder. Allow"),
+            "{e}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_hung_read_elsewhere_is_a_timeout() {
+        let p = Path::new("/mnt/share/a.bin");
+        let e = check_readable_with(p, None, SHORT, hangs)
+            .await
+            .unwrap_err();
+        assert_eq!(e.tag(), "timeout");
+        assert!(
+            e.to_string().contains("Cua can't read /mnt/share/a.bin"),
+            "{e}"
+        );
+    }
+
+    #[tokio::test]
+    async fn readable_paths_pass_and_missing_ones_say_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "hi").unwrap();
+        check_host_readable(&file).await.unwrap();
+        check_host_readable(dir.path()).await.unwrap();
+        std::fs::write(dir.path().join("empty"), "").unwrap();
+        check_host_readable(&dir.path().join("empty"))
+            .await
+            .unwrap();
+        let e = check_host_readable(&dir.path().join("nope"))
+            .await
+            .unwrap_err();
+        assert_eq!(e.tag(), "invalid_argument");
+        assert!(e.to_string().contains("host path"), "{e}");
+    }
 
     #[test]
     fn a_download_is_named_by_the_guest_path_last_component() {

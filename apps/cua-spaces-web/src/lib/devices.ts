@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+// Words the Machines page formats itself (the core leaves dates to the shell,
+// as the SwiftUI app's `DevicesModel` does).
+
+import type { DeviceBanner, DevicesInput, DevicesView } from "@/bridge";
+
+/** "Oct 27, 2026" (a medium date, no time). */
+export function dateText(secs: number, locale?: string): string {
+  return new Intl.DateTimeFormat(locale ?? "en-US", { dateStyle: "medium" }).format(new Date(secs * 1000));
+}
+
+/** "just now" within a minute, else "5 minutes ago", "3 days ago". */
+export function relativeText(secs: number, nowSecs: number, locale?: string): string {
+  const diff = secs - nowSecs;
+  if (diff > -60) return "just now";
+  const f = new Intl.RelativeTimeFormat(locale ?? "en-US", { numeric: "auto" });
+  const abs = Math.abs(diff);
+  if (abs < 3600) return f.format(Math.round(diff / 60), "minute");
+  if (abs < 86_400) return f.format(Math.round(diff / 3600), "hour");
+  if (abs < 30 * 86_400) return f.format(Math.round(diff / 86_400), "day");
+  if (abs < 365 * 86_400) return f.format(Math.round(diff / (30 * 86_400)), "month");
+  return f.format(Math.round(diff / (365 * 86_400)), "year");
+}
+
+/**
+ * The bar above every page when this device needs enrolling or re-verifying
+ * (`DevicesModel.banner` in the SwiftUI app): signed in, and only once the
+ * relay was read. A first read the relay refused leaves no list behind (the
+ * hosts send an empty one with `readError`), and the SwiftUI app shows no
+ * bar then either; This machine's page in Machines says why.
+ */
+export function shellDevicesBanner(
+  data: { input: Pick<DevicesInput, "devices" | "readError">; view: Pick<DevicesView, "banner"> | null } | undefined,
+  signedIn: boolean | undefined,
+): DeviceBanner | null {
+  if (!signedIn || !data?.view) return null;
+  const read = !data.input.readError || (data.input.devices?.length ?? 0) > 0;
+  return read ? data.view.banner : null;
+}

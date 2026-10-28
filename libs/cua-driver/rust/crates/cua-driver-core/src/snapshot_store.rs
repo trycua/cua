@@ -1,5 +1,6 @@
 use crate::element_token::{
-    format_snapshot_id, parse_token, refusal, ResolvedElement, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
+    format_snapshot_id, parse_token, refusal, token_for, ResolvedElement, LRU_CAP_PER_PID,
+    STALE_TOKEN_ERROR,
 };
 use crate::protocol::ToolResult;
 use std::any::Any;
@@ -26,6 +27,9 @@ struct Snapshot<S> {
     window_id: u64,
     screenshot_owner: Option<String>,
     screenshot_scale: Option<f64>,
+    /// Window size in points when the screenshot was taken. A tree-only read
+    /// keeps the screenshot frame only while the window still has this size.
+    screenshot_window_size: Option<(f64, f64)>,
     zoom: Option<ZoomContext>,
     semantic: bool,
     payload: S,
@@ -68,12 +72,68 @@ impl ZoomContext {
     }
 }
 
-fn screenshot_context_refusal(pid: Option<i32>, window_id: Option<u64>) -> ToolResult {
-    ToolResult::error(
-        "No current snapshot for this window contains a screenshot owned by this session. Call get_window_state with a screenshot on the same connection before using pixels.",
-    )
-    .with_structured(serde_json::json!({
+/// Why a pixel action found no screenshot frame for its window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MissingFrame {
+    /// This pid has no snapshot of the window at all in this runtime.
+    WindowNeverRead,
+    /// The window's current snapshot carries no screenshot frame: the last
+    /// read skipped the screenshot after the window changed size, or no
+    /// screenshot was ever taken of it.
+    NoScreenshot,
+    /// The current screenshot frame belongs to another session.
+    OtherSession,
+    /// No window was named and the process's snapshots disagree.
+    Ambiguous,
+}
+
+impl MissingFrame {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::WindowNeverRead => "window_never_read",
+            Self::NoScreenshot => "no_screenshot",
+            Self::OtherSession => "other_session",
+            Self::Ambiguous => "ambiguous_window",
+        }
+    }
+}
+
+fn screenshot_context_refusal(
+    pid: Option<i32>,
+    window_id: Option<u64>,
+    why: MissingFrame,
+) -> ToolResult {
+    let read = match (pid, window_id) {
+        (Some(pid), Some(window_id)) => {
+            format!("get_window_state(pid:{pid}, window_id:{window_id})")
+        }
+        (None, Some(window_id)) => format!("get_window_state(pid, window_id:{window_id})"),
+        _ => "get_window_state(pid, window_id)".to_owned(),
+    };
+    let window = window_id.map_or_else(|| "this window".to_owned(), |id| format!("window {id}"));
+    let message = match why {
+        MissingFrame::WindowNeverRead => format!(
+            "No screenshot of {window} in this session: it has not been read yet. Call {read} \
+             and take x,y from that window's own screenshot; pixels read off another window's \
+             screenshot do not apply to it."
+        ),
+        MissingFrame::NoScreenshot => format!(
+            "No screenshot frame for {window}: its latest read had no screenshot and the window \
+             changed size since the last one (or it was never captured). Call {read} with the \
+             default screenshot and take x,y from that image."
+        ),
+        MissingFrame::OtherSession => format!(
+            "The current screenshot of {window} belongs to another session. Call {read} on \
+             this connection before using pixels."
+        ),
+        MissingFrame::Ambiguous => format!(
+            "Pass window_id: this process has several windows without one shared screenshot \
+             frame. Then call {read} if that window has no screenshot yet."
+        ),
+    };
+    ToolResult::error(message).with_structured(serde_json::json!({
         "code": "screenshot_context_missing",
+        "reason": why.as_str(),
         "pid": pid,
         "window_id": window_id,
     }))
@@ -121,6 +181,82 @@ fn zoom_context_refusal(pid: i32, window_id: Option<u64>) -> ToolResult {
     }))
 }
 
+/// The snapshot a bare row number refers to: the current snapshot of the
+/// named window, or the process's only snapshot when no window is named.
+fn row_snapshot<S: SnapshotPayload>(
+    pid: i32,
+    lane: &[Snapshot<S>],
+    window_id: Option<u64>,
+    row: usize,
+) -> Result<&Snapshot<S>, ToolResult> {
+    let found = match window_id {
+        Some(window_id) => lane.iter().find(|snapshot| snapshot.window_id == window_id),
+        None => match lane {
+            [only] => Some(only),
+            _ => None,
+        },
+    };
+    found.ok_or_else(|| {
+        let current = lane
+            .iter()
+            .map(|snapshot| {
+                format!(
+                    "\"{}\" (window {})",
+                    token_for(snapshot.id, row),
+                    snapshot.window_id
+                )
+            })
+            .collect::<Vec<_>>();
+        let message = if current.is_empty() {
+            format!(
+                "element_token \"{row}\" is a row number, and pid {pid} has no current \
+                 snapshot. Call get_window_state, then pass \"<snapshot_id>:{row}\"."
+            )
+        } else {
+            format!(
+                "element_token \"{row}\" is a row number, not a token. Pass the full token, \
+                 <snapshot_id>:{row}: {}; or add window_id.",
+                current.join(", ")
+            )
+        };
+        refusal("invalid_element_token", message)
+    })
+}
+
+fn invalid_token_refusal<S>(token: &str, lane: &[Snapshot<S>]) -> ToolResult {
+    let example = lane.last().map_or_else(
+        || "s0000002a:11".to_owned(),
+        |snapshot| token_for(snapshot.id, 11),
+    );
+    refusal(
+        "invalid_element_token",
+        format!(
+            "element_token \"{token}\" has invalid format: use <snapshot_id>:<row>, e.g. \
+             \"{example}\" for row [11] of the read whose snapshot_id is {}.",
+            example.split(':').next().unwrap_or_default()
+        ),
+    )
+}
+
+fn out_of_range_refusal<S: SnapshotPayload>(snapshot: &Snapshot<S>, row: usize) -> ToolResult {
+    let snapshot_id = format_snapshot_id(snapshot.id);
+    let rows = match snapshot.payload.len() {
+        0 => "no rows".to_owned(),
+        n => format!("rows [0] to [{}] only", n - 1),
+    };
+    refusal(
+        "invalid_element_token",
+        format!(
+            "element_token {snapshot_id}:{row} is out of range: snapshot {snapshot_id} has \
+             {rows} ({} element(s)). Row numbers belong to one read: a read with a smaller \
+             max_elements, max_depth or another query can stop before row [{row}]. Use a row \
+             printed in {snapshot_id}, or re-read with a larger max_elements (or a query that \
+             matches the target) and use that read's rows.",
+            snapshot.payload.len()
+        ),
+    )
+}
+
 pub struct SnapshotStore<S: SnapshotPayload> {
     runtime_scope: String,
     inner: Mutex<HashMap<i32, Vec<Snapshot<S>>>>,
@@ -155,7 +291,74 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         session: Option<&str>,
         screenshot_scale: Option<f64>,
     ) -> Option<(u32, Vec<u32>)> {
-        self.publish_snapshot(pid, window_id, payload, session, screenshot_scale, true)
+        self.publish_snapshot(
+            pid,
+            window_id,
+            payload,
+            session,
+            (screenshot_scale, None),
+            true,
+        )
+    }
+
+    /// [`Self::publish_for_session`] that also records the window's size in
+    /// points (`window_size`), so later reads can tell whether the screenshot
+    /// frame still applies.
+    ///
+    /// * With a `screenshot_scale`, the size is stored with the new frame.
+    /// * Without one (a tree-only read), the new snapshot keeps the replaced
+    ///   snapshot's screenshot frame when that frame belongs to the same
+    ///   session and was taken at the same window size. Window-relative pixels
+    ///   off that screenshot still land where they did, so a pixel action
+    ///   after a tree-only re-read is not refused. A resized window, an
+    ///   unknown size or another session's frame retires the frame as before.
+    pub fn publish_sized_for_session(
+        &self,
+        pid: i32,
+        window_id: u64,
+        payload: S,
+        session: Option<&str>,
+        screenshot_scale: Option<f64>,
+        window_size: Option<(f64, f64)>,
+    ) -> Option<(u32, Vec<u32>)> {
+        self.publish_snapshot(
+            pid,
+            window_id,
+            payload,
+            session,
+            (screenshot_scale, window_size),
+            true,
+        )
+    }
+
+    /// Refresh the screenshot frame of the window's current snapshot in place,
+    /// keeping its id, its elements and their tokens. Used by a
+    /// screenshot-only read (no tree walk): it adds a new image but no new
+    /// element indices, so the tokens the caller holds stay valid. Returns the
+    /// kept snapshot id, or `None` when the window has no snapshot with
+    /// elements (the caller then publishes a new one).
+    pub fn refresh_screenshot_for_session(
+        &self,
+        pid: i32,
+        window_id: u64,
+        session: Option<&str>,
+        screenshot_scale: f64,
+        window_size: Option<(f64, f64)>,
+    ) -> Option<u32> {
+        let mut inner = self.inner.lock().unwrap();
+        if session.is_some_and(crate::session::is_session_ended) {
+            return None;
+        }
+        let snapshot = inner
+            .get_mut(&pid)?
+            .iter_mut()
+            .find(|snapshot| snapshot.window_id == window_id)
+            .filter(|snapshot| snapshot.semantic && !snapshot.payload.is_empty())?;
+        snapshot.screenshot_owner = session.map(str::to_owned);
+        snapshot.screenshot_scale = Some(screenshot_scale);
+        snapshot.screenshot_window_size = window_size;
+        snapshot.zoom = None;
+        Some(snapshot.id)
     }
 
     /// Publish screenshot/capture state without claiming that an accessibility
@@ -168,7 +371,14 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         session: Option<&str>,
         screenshot_scale: Option<f64>,
     ) -> Option<(u32, Vec<u32>)> {
-        self.publish_snapshot(pid, window_id, payload, session, screenshot_scale, false)
+        self.publish_snapshot(
+            pid,
+            window_id,
+            payload,
+            session,
+            (screenshot_scale, None),
+            false,
+        )
     }
 
     fn publish_snapshot(
@@ -177,7 +387,9 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         window_id: u64,
         payload: S,
         session: Option<&str>,
-        screenshot_scale: Option<f64>,
+        // The new screenshot's scale, if any, and the window size in points
+        // at this read.
+        (screenshot_scale, window_size): (Option<f64>, Option<(f64, f64)>),
         semantic: bool,
     ) -> Option<(u32, Vec<u32>)> {
         let (id, retired) = {
@@ -190,6 +402,21 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             if let Some(position) = lane.iter().position(|entry| entry.window_id == window_id) {
                 retired.push(lane.remove(position));
             }
+            // A new screenshot brings its own frame. A tree-only read keeps the
+            // replaced snapshot's frame while the window keeps its size.
+            let (scale, frame_size) = match (screenshot_scale, window_size) {
+                (Some(scale), size) => (Some(scale), size),
+                (None, Some(now)) => retired
+                    .first()
+                    .filter(|previous| previous.screenshot_owner.as_deref() == session)
+                    .and_then(|previous| {
+                        let then = previous.screenshot_window_size?;
+                        let same = (then.0 - now.0).abs() < 0.5 && (then.1 - now.1).abs() < 0.5;
+                        same.then_some((previous.screenshot_scale?, then))
+                    })
+                    .map_or((None, None), |(scale, size)| (Some(scale), Some(size))),
+                (None, None) => (None, None),
+            };
             if lane.len() == LRU_CAP_PER_PID {
                 retired.push(lane.remove(0));
             }
@@ -198,7 +425,8 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
                 id,
                 window_id,
                 screenshot_owner: session.map(str::to_owned),
-                screenshot_scale,
+                screenshot_scale: scale,
+                screenshot_window_size: frame_size,
                 zoom: None,
                 semantic,
                 payload,
@@ -221,21 +449,46 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
     ) -> Result<ScreenshotContext, ToolResult> {
         let inner = self.inner.lock().unwrap();
         let lane = inner.get(&pid).map(Vec::as_slice).unwrap_or_default();
-        let context = match window_id {
-            Some(window_id) => lane
-                .iter()
-                .find(|snapshot| snapshot.window_id == window_id)
-                .and_then(|snapshot| snapshot.screenshot(session)),
-            None => {
-                let mut contexts = lane.iter().map(|snapshot| snapshot.screenshot(session));
-                contexts.next().flatten().filter(|first| {
-                    contexts.all(|context| {
-                        context.is_some_and(|context| (context.scale - first.scale).abs() < 1e-9)
-                    })
+        match window_id {
+            Some(window_id) => {
+                let snapshot = lane
+                    .iter()
+                    .find(|snapshot| snapshot.window_id == window_id)
+                    .ok_or_else(|| {
+                        screenshot_context_refusal(
+                            Some(pid),
+                            Some(window_id),
+                            MissingFrame::WindowNeverRead,
+                        )
+                    })?;
+                snapshot.screenshot(session).ok_or_else(|| {
+                    let why = if snapshot.screenshot_scale.is_some() {
+                        MissingFrame::OtherSession
+                    } else {
+                        MissingFrame::NoScreenshot
+                    };
+                    screenshot_context_refusal(Some(pid), Some(window_id), why)
                 })
             }
-        };
-        context.ok_or_else(|| screenshot_context_refusal(Some(pid), window_id))
+            None => {
+                let mut contexts = lane.iter().map(|snapshot| snapshot.screenshot(session));
+                let why = match lane {
+                    [] => MissingFrame::WindowNeverRead,
+                    [_] => MissingFrame::NoScreenshot,
+                    _ => MissingFrame::Ambiguous,
+                };
+                contexts
+                    .next()
+                    .flatten()
+                    .filter(|first| {
+                        contexts.all(|context| {
+                            context
+                                .is_some_and(|context| (context.scale - first.scale).abs() < 1e-9)
+                        })
+                    })
+                    .ok_or_else(|| screenshot_context_refusal(Some(pid), None, why))
+            }
+        }
     }
 
     /// The native-image / delivered-image scale for a window-relative pixel
@@ -279,7 +532,11 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         });
         match (matches.next(), matches.next()) {
             (Some(found), None) => Ok(found),
-            _ => Err(screenshot_context_refusal(None, Some(window_id))),
+            _ => Err(screenshot_context_refusal(
+                None,
+                Some(window_id),
+                MissingFrame::WindowNeverRead,
+            )),
         }
     }
 
@@ -398,35 +655,34 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         else {
             return Ok(ResolvedElement::None);
         };
-        let (snapshot_id, element_index) = parse_token(token).ok_or_else(|| {
-            refusal(
-                "invalid_element_token",
-                "element_token has invalid format".into(),
-            )
-        })?;
+        let window_arg = args["window_id"].as_u64();
         let inner = self.inner.lock().unwrap();
         let lane = inner.get(&pid).map(Vec::as_slice).unwrap_or_default();
-        let Some(snapshot) = lane.iter().find(|snapshot| snapshot.id == snapshot_id) else {
-            return Err(stale_token_refusal(pid, lane));
+        let (snapshot, element_index) = match parse_token(token) {
+            Some((snapshot_id, element_index)) => {
+                let Some(snapshot) = lane.iter().find(|snapshot| snapshot.id == snapshot_id) else {
+                    return Err(stale_token_refusal(pid, lane));
+                };
+                (snapshot, element_index)
+            }
+            // A bare row number ("11") is the `[11]` of a markdown read. It
+            // names a row of the window's current snapshot, the one a fresh
+            // read just printed, so resolve it there when the window is known.
+            None => match token.trim().parse::<usize>() {
+                Ok(row) => (row_snapshot(pid, lane, window_arg, row)?, row),
+                Err(_) => return Err(invalid_token_refusal(token, lane)),
+            },
         };
-        if args["window_id"]
-            .as_u64()
-            .is_some_and(|window_id| window_id != snapshot.window_id)
-        {
+        if window_arg.is_some_and(|window_id| window_id != snapshot.window_id) {
             return Err(refusal(
                 "conflicting_element_target",
                 "element_token conflicts with window_id".into(),
             ));
         }
-        let element = snapshot.payload.retain(element_index).ok_or_else(|| {
-            refusal(
-                "invalid_element_token",
-                format!(
-                    "element_token element_index {element_index} out of range (snapshot had {} elements)",
-                    snapshot.payload.len()
-                ),
-            )
-        })?;
+        let element = snapshot
+            .payload
+            .retain(element_index)
+            .ok_or_else(|| out_of_range_refusal(snapshot, element_index))?;
         Ok(ResolvedElement::Element {
             window_id: snapshot.window_id,
             element_index,
@@ -838,6 +1094,170 @@ mod tests {
             scale(&cache, 20, "client-a"),
             None,
             "a newer tree-only observation retires the older image frame"
+        );
+    }
+
+    #[test]
+    fn tree_only_read_keeps_the_screenshot_frame_while_the_window_keeps_its_size() {
+        let cache = SnapshotStore::new();
+        let size = Some((900.0, 680.0));
+        cache.publish_sized_for_session(10, 20, Payload(vec![1]), Some("a"), Some(2.0), size);
+        cache.publish_sized_for_session(10, 20, Payload(vec![1, 2]), Some("a"), None, size);
+        assert_eq!(scale(&cache, 20, "a"), Some(2.0), "same size: frame kept");
+        cache.publish_sized_for_session(10, 20, Payload(vec![1]), Some("a"), None, size);
+        assert_eq!(
+            scale(&cache, 20, "a"),
+            Some(2.0),
+            "kept across repeated tree reads"
+        );
+
+        cache.publish_sized_for_session(
+            10,
+            20,
+            Payload(vec![1]),
+            Some("a"),
+            None,
+            Some((901.0, 680.0)),
+        );
+        assert_eq!(scale(&cache, 20, "a"), None, "resized: frame retired");
+
+        cache.publish_sized_for_session(10, 20, Payload(vec![1]), Some("a"), Some(1.0), size);
+        cache.publish_sized_for_session(10, 20, Payload(vec![1]), Some("b"), None, size);
+        assert_eq!(scale(&cache, 20, "a"), None, "another session's tree read");
+        assert_eq!(
+            scale(&cache, 20, "b"),
+            None,
+            "never inherits a foreign frame"
+        );
+
+        cache.publish_sized_for_session(10, 20, Payload(vec![1]), Some("a"), Some(1.0), size);
+        cache.publish_sized_for_session(10, 20, Payload(vec![1]), Some("a"), None, None);
+        assert_eq!(scale(&cache, 20, "a"), None, "unknown size: frame retired");
+    }
+
+    #[test]
+    fn screenshot_only_read_refreshes_the_frame_and_keeps_tokens() {
+        let cache = SnapshotStore::new();
+        assert_eq!(
+            cache.refresh_screenshot_for_session(10, 20, Some("a"), 1.0, None),
+            None,
+            "nothing to refresh"
+        );
+        let (id, _) = cache
+            .publish_sized_for_session(10, 20, Payload(vec![5, 6, 7]), Some("a"), None, None)
+            .unwrap();
+        assert_eq!(scale(&cache, 20, "a"), None);
+        assert_eq!(
+            cache.refresh_screenshot_for_session(10, 20, Some("a"), 2.0, Some((10.0, 10.0))),
+            Some(id)
+        );
+        assert_eq!(scale(&cache, 20, "a"), Some(2.0));
+        let token = serde_json::json!({ "element_token": token_for(id, 2) });
+        assert!(matches!(
+            cache.resolve(10, &token).unwrap(),
+            ResolvedElement::Element { element: 7, .. }
+        ));
+
+        // A capture-only snapshot has no rows to keep: publish a new one.
+        cache.publish_sized_for_session(10, 21, Payload(vec![]), Some("a"), Some(1.0), None);
+        assert_eq!(
+            cache.refresh_screenshot_for_session(10, 21, Some("a"), 1.0, None),
+            None
+        );
+    }
+
+    #[test]
+    fn missing_frame_refusals_say_why() {
+        let cache = SnapshotStore::new();
+        let reason = |cache: &SnapshotStore<Payload>, window: u64| {
+            let refused = cache
+                .screenshot_context(10, Some(window), Some("a"))
+                .unwrap_err();
+            let structured = refused.structured_content.clone().unwrap();
+            assert_eq!(structured["code"], "screenshot_context_missing");
+            (
+                structured["reason"].as_str().unwrap().to_owned(),
+                crate::snapshot_test_support::text(&refused),
+            )
+        };
+        let (why, text) = reason(&cache, 20);
+        assert_eq!(why, "window_never_read");
+        assert!(
+            text.contains("get_window_state(pid:10, window_id:20)"),
+            "{text}"
+        );
+        assert!(text.contains("another window's"), "{text}");
+
+        cache.publish_for_session(10, 20, Payload(vec![1]), Some("a"), None);
+        assert_eq!(reason(&cache, 20).0, "no_screenshot");
+
+        cache.publish_for_session(10, 20, Payload(vec![1]), Some("b"), Some(1.0));
+        assert_eq!(reason(&cache, 20).0, "other_session");
+    }
+
+    #[test]
+    fn bare_row_number_resolves_against_the_named_windows_current_snapshot() {
+        let cache = SnapshotStore::new();
+        let first = cache.publish(10, 20, Payload(vec![100, 101, 102]));
+        cache.publish(10, 21, Payload(vec![200, 201]));
+
+        let row = serde_json::json!({ "element_token": "2", "window_id": 20 });
+        assert!(matches!(
+            cache.resolve(10, &row).unwrap(),
+            ResolvedElement::Element {
+                window_id: 20,
+                element_index: 2,
+                element: 102
+            }
+        ));
+
+        // Two windows and no window_id: refused, naming the full tokens.
+        let refused = cache
+            .resolve(10, &serde_json::json!({ "element_token": "1" }))
+            .unwrap_err();
+        let text = crate::snapshot_test_support::text(&refused);
+        assert!(text.contains("is a row number, not a token"), "{text}");
+        assert!(
+            text.contains(&format!("\"{}\" (window 20)", token_for(first, 1))),
+            "{text}"
+        );
+
+        // One snapshot for the pid: the row is unambiguous.
+        let only = SnapshotStore::new();
+        only.publish(11, 30, Payload(vec![7, 8]));
+        assert!(matches!(
+            only.resolve(11, &serde_json::json!({ "element_token": "1" }))
+                .unwrap(),
+            ResolvedElement::Element { element: 8, .. }
+        ));
+
+        // Garbage still fails, with the expected shape spelled out.
+        let refused = cache
+            .resolve(10, &serde_json::json!({ "element_token": "row11" }))
+            .unwrap_err();
+        let text = crate::snapshot_test_support::text(&refused);
+        assert!(text.contains("use <snapshot_id>:<row>"), "{text}");
+    }
+
+    #[test]
+    fn out_of_range_row_explains_that_rows_belong_to_one_read() {
+        let cache = SnapshotStore::new();
+        let id = cache.publish(10, 20, Payload(vec![0; 44]));
+        let refused = cache
+            .resolve(
+                10,
+                &serde_json::json!({ "element_token": token_for(id, 48) }),
+            )
+            .unwrap_err();
+        let text = crate::snapshot_test_support::text(&refused);
+        assert!(
+            text.contains("rows [0] to [43] only (44 element(s))"),
+            "{text}"
+        );
+        assert!(text.contains("smaller max_elements"), "{text}");
+        assert_eq!(
+            refused.structured_content.unwrap()["refusal"]["code"],
+            "invalid_element_token"
         );
     }
 

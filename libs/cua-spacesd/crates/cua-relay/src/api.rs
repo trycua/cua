@@ -10,6 +10,9 @@
 //! - `GET | PATCH | DELETE /v1/machines/{id}`
 //! - `POST /v1/machines/{id}/stop-sharing` | `start-sharing` (owner or the
 //!   machine itself): cut every client and refuse new ones, or resume.
+//! - `POST /v1/machines/{id}/leave` (anyone it is shared with, never the
+//!   owner): take yourself off it. A direct share is removed from the
+//!   allowlist or viewers; a team machine is hidden from your listing.
 //!
 //! Account callers other than registration need an enrolled client device
 //! (see [`crate::devices`]). A machine token only serves its own machine:
@@ -94,6 +97,10 @@ pub struct MachineView {
     /// machine; no secrets).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub meta: BTreeMap<String, String>,
+    /// The team the caller reaches this machine through (`team-…`), when
+    /// it is not the owner's own share.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -132,9 +139,10 @@ pub(crate) fn routes() -> Router<Relay> {
         .route("/v1/machines/{id}/stop-sharing", post(stop_sharing))
         .route("/v1/machines/{id}/start-sharing", post(start_sharing))
         .route("/v1/machines/{id}/confirm", post(confirm))
+        .route("/v1/machines/{id}/leave", post(leave))
 }
 
-fn error(status: StatusCode, message: impl Into<String>) -> Response {
+pub(crate) fn error(status: StatusCode, message: impl Into<String>) -> Response {
     (status, Json(serde_json::json!({"error": message.into()}))).into_response()
 }
 
@@ -162,7 +170,7 @@ pub const REGISTER_LOG_TARGET: &str = "cua_relay::register";
 /// device), not just an account session.
 pub const MACHINE_AUTHORIZATION_HEADER: &str = "x-cua-machine-authorization";
 
-enum Caller {
+pub(crate) enum Caller {
     /// An account user and how their device stands.
     Account(Identity, Result<Gate, String>),
     Machine(MachineRecord),
@@ -171,7 +179,7 @@ enum Caller {
 impl Caller {
     /// Fails for an account caller whose device is not enrolled (after the
     /// grace period).
-    fn require_device(&self) -> Result<(), Response> {
+    pub(crate) fn require_device(&self) -> Result<(), Response> {
         match self {
             Caller::Account(_, Err(m)) => Err(error(StatusCode::FORBIDDEN, m.clone())),
             _ => Ok(()),
@@ -179,7 +187,7 @@ impl Caller {
     }
 
     /// The acting device (enrolled account device) or `machine`.
-    fn actor(&self) -> Option<String> {
+    pub(crate) fn actor(&self) -> Option<String> {
         match self {
             Caller::Account(_, Ok(g)) => g.device().map(str::to_owned),
             Caller::Account(_, Err(_)) => None,
@@ -199,7 +207,7 @@ fn finish(relay: &Relay, caller: &Caller, mut response: Response) -> Response {
     response
 }
 
-async fn caller(relay: &Relay, headers: &HeaderMap) -> Result<Caller, Response> {
+pub(crate) async fn caller(relay: &Relay, headers: &HeaderMap) -> Result<Caller, Response> {
     let machine_token = bearer(headers, header::AUTHORIZATION.as_str())
         .filter(|t| t.starts_with(MACHINE_TOKEN_PREFIX));
     if let Some(token) = machine_token {
@@ -209,7 +217,7 @@ async fn caller(relay: &Relay, headers: &HeaderMap) -> Result<Caller, Response> 
             .map(Caller::Machine)
             .ok_or_else(|| {
                 auth_log::rejected(headers, Route::Machines, Reason::UnknownMachineToken, None);
-                error(StatusCode::UNAUTHORIZED, "invalid machine token")
+                error(StatusCode::UNAUTHORIZED, "invalid computer token")
             });
     }
     let Some(oidc) = &relay.config.oidc else {
@@ -235,6 +243,20 @@ async fn caller(relay: &Relay, headers: &HeaderMap) -> Result<Caller, Response> 
                 format!("invalid account token: {e}"),
             )
         })
+}
+
+/// An account caller (never a machine token) and how its device stands.
+pub(crate) async fn account_caller(
+    relay: &Relay,
+    headers: &HeaderMap,
+) -> Result<(Identity, Result<Gate, String>), Response> {
+    match caller(relay, headers).await? {
+        Caller::Account(who, gate) => Ok((who, gate)),
+        Caller::Machine(_) => Err(error(
+            StatusCode::FORBIDDEN,
+            "a machine token cannot do this",
+        )),
+    }
 }
 
 fn view(relay: &Relay, headers: &HeaderMap, record: &MachineRecord, role: Role) -> MachineView {
@@ -289,6 +311,7 @@ fn view(relay: &Relay, headers: &HeaderMap, record: &MachineRecord, role: Role) 
         host: record.host.clone(),
         confirmed: record.confirmed,
         meta: record.meta.clone(),
+        team: None,
     }
 }
 
@@ -298,7 +321,7 @@ fn authorize(caller: &Caller, relay: &Relay, id: &str) -> Result<(MachineRecord,
         Caller::Machine(record) if record.id == id => Ok((record.clone(), Role::Owner)),
         Caller::Machine(_) => Err(error(
             StatusCode::FORBIDDEN,
-            "machine token for another machine",
+            "computer token for another computer",
         )),
         Caller::Account(who, _) => {
             let record = relay
@@ -307,8 +330,8 @@ fn authorize(caller: &Caller, relay: &Relay, id: &str) -> Result<(MachineRecord,
                 .ok_or_else(|| directory_error(DirectoryError::NotFound))?;
             // Machines not shared with the caller are indistinguishable from
             // missing ones.
-            let role = record
-                .role_of(who)
+            let (role, _) = relay
+                .machine_role(&record, who)
                 .ok_or_else(|| directory_error(DirectoryError::NotFound))?;
             Ok((record, role))
         }
@@ -331,6 +354,13 @@ async fn info(State(relay): State<Relay>, headers: HeaderMap) -> Response {
         "issuer": relay.config.oidc.as_ref().map(|o| o.config().issuer.clone()),
         "account_auth": relay.config.oidc.is_some(),
         "static_tokens": !relay.config.tokens.is_empty(),
+        // Present when this relay coordinates the WireGuard®-based mesh;
+        // clients and machines compare `version` before using it.
+        "mesh": crate::mesh::info(&relay),
+        // False once a write of the relay's state files fails, until one
+        // succeeds again (a full or read-only state volume).
+        // (Details: GET /readyz.)
+        "state_writable": relay.storage.writes_ok(),
     }))
     .into_response()
 }
@@ -340,12 +370,54 @@ async fn register(
     headers: HeaderMap,
     body: Json<RegisterBody>,
 ) -> Response {
-    let (who, device) = match caller(&relay, &headers).await {
-        Ok(Caller::Account(who, device)) => (who, device),
-        Ok(Caller::Machine(_)) => {
-            return error(StatusCode::FORBIDDEN, "register with an account token")
+    // A machine added by link or QR presents the pairing code an enrolled
+    // device minted, instead of an account token: it registers as that
+    // account (see `crate::pairing`). The code is spent only once the
+    // registration goes through.
+    let pairing = match bearer(&headers, header::AUTHORIZATION.as_str())
+        .filter(|t| t.starts_with(crate::pairing::PAIRING_TOKEN_PREFIX))
+    {
+        Some(code) => match relay.pairing.peek(code).and_then(|p| {
+            // Revoking a device also voids the codes it made.
+            let revoked = p.created_by.as_deref().is_some_and(|d| {
+                relay.devices.get(d).is_none_or(|r| {
+                    r.state(crate::assertion::now_secs()) == crate::devices::DeviceState::Revoked
+                })
+            });
+            if revoked {
+                Err(crate::pairing::PairingError::Invalid)
+            } else {
+                Ok(p)
+            }
+        }) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                auth_log::rejected(&headers, Route::Machines, Reason::InvalidPairingCode, None);
+                return error(StatusCode::UNAUTHORIZED, e.to_string());
+            }
+        },
+        None => None,
+    };
+    let (who, device) = match &pairing {
+        Some(p) => {
+            if body.host.is_some() {
+                return error(
+                    StatusCode::FORBIDDEN,
+                    "a pairing code adds a machine, not a Space on a host",
+                );
+            }
+            (
+                p.identity(),
+                Err("registered with a pairing code".to_string()),
+            )
         }
-        Err(r) => return r,
+        None => match caller(&relay, &headers).await {
+            Ok(Caller::Account(who, device)) => (who, device),
+            Ok(Caller::Machine(_)) => {
+                return error(StatusCode::FORBIDDEN, "register with an account token")
+            }
+            Err(r) => return r,
+        },
     };
     // An id currently connected with a static relay token belongs to that
     // (self-hosted) machine: an account cannot take it over.
@@ -355,7 +427,7 @@ async fn register(
     {
         return error(
             StatusCode::CONFLICT,
-            "machine id is connected with a relay token",
+            "computer id is connected with a relay token",
         );
     }
     let existing = relay.directory.get(&body.id);
@@ -399,7 +471,7 @@ async fn register(
                 let m = device.as_ref().err().cloned().unwrap_or_default();
                 return error(
                     StatusCode::FORBIDDEN,
-                    format!("re-registering this machine needs its machine token or an enrolled device ({m})"),
+                    format!("re-registering this computer needs its computer token or an enrolled device ({m})"),
                 );
             }
         }
@@ -421,13 +493,16 @@ async fn register(
                     "that host is shared with you to watch only",
                 )
             }
-            None => return error(StatusCode::NOT_FOUND, "no such host machine"),
+            None => return error(StatusCode::NOT_FOUND, "no such host computer"),
         }
     }
-    let actor = device
-        .as_ref()
-        .ok()
-        .and_then(|g| g.device().map(str::to_owned));
+    let actor = match &pairing {
+        Some(p) => p.created_by.clone(),
+        None => device
+            .as_ref()
+            .ok()
+            .and_then(|g| g.device().map(str::to_owned)),
+    };
     let old_allow = existing.map(|r| r.allow).unwrap_or_default();
     // A brand-new machine still needs only the account token (hosting never
     // enrolls the host as a client), but one that arrives with neither an
@@ -441,20 +516,39 @@ async fn register(
     let proven = matches!(
         device,
         Ok(crate::device_api::Gate::Device(_)) | Ok(crate::device_api::Gate::Off)
-    ) || who.mfa;
+    ) || who.mfa
+        || pairing.as_ref().is_some_and(|p| p.proven);
+    let meta = body.meta.clone();
     // Metadata is checked before anything is registered.
-    if let Some(meta) = body.meta.clone() {
+    if let Some(meta) = meta.clone() {
         if let Err(e) = crate::directory::clean_meta(meta) {
             return directory_error(e);
         }
     }
-    match relay.directory.register(
+    if !crate::valid_machine_id(&body.id) {
+        return directory_error(DirectoryError::Invalid("invalid machine id".into()));
+    }
+    // Single use: of two registrations racing on one code only one spends it.
+    if let Some(p) = &pairing {
+        if let Err(e) = relay.pairing.spend(&p.id, &body.id) {
+            return error(StatusCode::UNAUTHORIZED, e.to_string());
+        }
+    }
+    let name = pairing
+        .as_ref()
+        .and_then(|p| p.name.clone())
+        .or_else(|| body.name.clone());
+    let registered = relay.directory.register(
         &who,
         &body.id,
-        body.name.as_deref(),
+        name.as_deref(),
         body.allow.as_deref(),
         proven,
-    ) {
+    );
+    if let (Err(_), Some(p)) = (&registered, &pairing) {
+        relay.pairing.unspend(&p.id);
+    }
+    match registered {
         Ok((record, token)) => {
             let record = match body.host.as_deref() {
                 Some(host) => match relay.directory.set_host(&record.id, Some(host)) {
@@ -463,7 +557,7 @@ async fn register(
                 },
                 None => record,
             };
-            let record = match body.meta.clone() {
+            let record = match meta {
                 Some(meta) => match relay.directory.set_meta(&record.id, meta) {
                     Ok(r) => r,
                     Err(e) => return directory_error(e),
@@ -474,7 +568,7 @@ async fn register(
             if existed {
                 relay.drop_machine(&record.id);
             }
-            tracing::info!(machine = %record.id, account = %who.account, confirmed = %record.confirmed, "machine registered");
+            tracing::info!(machine = %record.id, account = %crate::ident::tag(&who.account), confirmed = %record.confirmed, "machine registered");
             relay.devices.audit(
                 &who.account,
                 AuditEvent::new(if existed {
@@ -484,9 +578,12 @@ async fn register(
                 })
                 .device(actor.as_deref())
                 .machine(&record.id)
-                .detail(match &record.host {
-                    Some(host) => format!("{} (a Space on host {host})", record.name),
-                    None => record.name.clone(),
+                .detail(match (&record.host, &pairing) {
+                    (Some(host), _) => format!("{} (a Space on host {host})", record.name),
+                    (None, Some(p)) => {
+                        format!("{} (added with pairing code {})", record.name, p.id)
+                    }
+                    (None, None) => record.name.clone(),
                 }),
             );
             if !existed && !record.confirmed {
@@ -499,6 +596,35 @@ async fn register(
                 );
             }
             audit_allow_changes(&relay, &record, &old_allow, actor.as_deref());
+            // A team code adds the machine to that team, as its minting
+            // owner or admin would (`POST /v1/teams/{id}/machines`). If that
+            // is refused now (the minter is no longer a manager, a macOS
+            // Space), the machine stays the account's own.
+            if let Some((p, team)) = pairing
+                .as_ref()
+                .and_then(|p| p.team.as_deref().map(|t| (p, t)))
+            {
+                let added = relay.teams.add_machine(
+                    team,
+                    &crate::teams::Actor {
+                        who: &who,
+                        device: p.created_by.as_deref(),
+                    },
+                    &record,
+                    None,
+                    None,
+                );
+                if let Err(e) = added {
+                    tracing::info!(machine = %record.id, error = %e, "pairing code: not added to its team");
+                    relay.devices.audit(
+                        &who.account,
+                        AuditEvent::new("pairing_team_refused")
+                            .device(actor.as_deref())
+                            .machine(&record.id)
+                            .detail(format!("{team}: {e}")),
+                    );
+                }
+            }
             let reply = RegisterReply {
                 machine: view(&relay, &headers, &record, Role::Owner),
                 machine_token: token,
@@ -537,18 +663,112 @@ async fn list(State(relay): State<Relay>, headers: HeaderMap) -> Response {
         }
     }
     let machines = match &caller {
-        Caller::Account(who, _) => relay
-            .directory
-            .visible_to(who)
-            .into_iter()
-            .map(|(r, role)| {
-                if locked {
-                    locked_view(&relay, &r, role)
-                } else {
-                    view(&relay, &headers, &r, role)
+        Caller::Account(who, gate) => {
+            // An enrolled device of an invited email joins the teams that
+            // invited it (any client, also one that predates teams).
+            let source = relay.org.source();
+            if let (false, Ok(g), false) =
+                (locked, gate, source == crate::org_access::TeamsSource::Org)
+            {
+                let device = g.device();
+                let name = device
+                    .and_then(|d| relay.devices.get(d))
+                    .map(|d| d.name)
+                    .unwrap_or_default();
+                relay
+                    .teams
+                    .accept_email_invites(&crate::teams::Actor { who, device }, &name);
+            }
+            // The account's own and shared machines, then its teams'.
+            let mut visible: Vec<(MachineRecord, Role, Option<String>)> = relay
+                .directory
+                .visible_to(who)
+                .into_iter()
+                .map(|(r, role)| (r, role, None))
+                .collect();
+            // Organizations (shadow / org): each org's machine list from
+            // the Spaces API. Listing is not access: opening one still asks
+            // the API (member, device approval).
+            let mut org_listed: Vec<(MachineRecord, String)> = Vec::new();
+            if source.evaluates_orgs() {
+                for org in &who.orgs {
+                    let Ok(ids) = relay.org.org_machines(org.key()).await else {
+                        continue;
+                    };
+                    for machine in ids {
+                        if visible.iter().any(|(r, ..)| r.id == machine)
+                            || org_listed.iter().any(|(r, _)| r.id == machine)
+                        {
+                            continue;
+                        }
+                        let Some(r) = relay.directory.get(&machine) else {
+                            continue;
+                        };
+                        // Listed only while the record's owner is a member
+                        // of the same org (a binding takes any id).
+                        let owner_in_org = relay
+                            .org
+                            .access(&r.owner.id, org.key(), &machine, None)
+                            .await
+                            .is_ok_and(|a| a.member);
+                        if owner_in_org {
+                            org_listed.push((r, org.key().to_owned()));
+                        }
+                    }
                 }
-            })
-            .collect::<Vec<_>>(),
+            }
+            if source == crate::org_access::TeamsSource::Org {
+                for (r, org) in org_listed {
+                    visible.push((r, Role::Shared, Some(org)));
+                }
+            } else {
+                let own = visible.len();
+                for (machine, team) in relay.teams.machines_for(&who.account) {
+                    if visible.iter().any(|(r, ..)| r.id == machine) {
+                        continue;
+                    }
+                    // Only while the team's grant on it still holds.
+                    if let Some(r) = relay.directory.get(&machine) {
+                        if relay
+                            .machine_role(&r, who)
+                            .is_some_and(|(_, t)| t.contains(&team))
+                        {
+                            visible.push((r, Role::Shared, Some(team)));
+                        }
+                    }
+                }
+                if source == crate::org_access::TeamsSource::Shadow {
+                    let file: std::collections::BTreeSet<&str> =
+                        visible[own..].iter().map(|(r, ..)| r.id.as_str()).collect();
+                    let org: std::collections::BTreeSet<&str> =
+                        org_listed.iter().map(|(r, _)| r.id.as_str()).collect();
+                    for m in file.symmetric_difference(&org) {
+                        let decision = if org.contains(m) {
+                            crate::org_access::OrgDecision::Granted { org: String::new() }
+                        } else {
+                            crate::org_access::OrgDecision::NotShared
+                        };
+                        relay
+                            .org
+                            .shadow("list", &who.user, m, file.contains(m), &decision);
+                    }
+                }
+            }
+            // A team machine the caller left stays out of their listing.
+            visible.retain(|(r, _, team)| team.is_none() || !r.hidden_from(&who.account));
+            visible
+                .into_iter()
+                .map(|(r, role, team)| {
+                    let mut v = if locked {
+                        locked_view(&relay, &r, role)
+                    } else {
+                        view(&relay, &headers, &r, role)
+                    };
+                    v.team = team;
+                    v
+                })
+                .collect::<Vec<_>>()
+        }
         Caller::Machine(record) => vec![view(&relay, &headers, record, Role::Owner)],
     };
     let mut response = Json(serde_json::json!({ "machines": machines })).into_response();
@@ -588,6 +808,7 @@ fn locked_view(relay: &Relay, record: &MachineRecord, role: Role) -> MachineView
         host: record.host.clone(),
         confirmed: record.confirmed,
         meta: record.meta.clone(),
+        team: None,
     }
 }
 
@@ -604,11 +825,15 @@ async fn get_one(
         return r;
     }
     match authorize(&caller, &relay, &id) {
-        Ok((record, role)) => finish(
-            &relay,
-            &caller,
-            Json(view(&relay, &headers, &record, role)).into_response(),
-        ),
+        Ok((record, role)) => {
+            let mut v = view(&relay, &headers, &record, role);
+            if let Caller::Account(who, _) = &caller {
+                v.team = relay
+                    .machine_role(&record, who)
+                    .and_then(|(_, t)| t.into_iter().next());
+            }
+            finish(&relay, &caller, Json(v).into_response())
+        }
         Err(r) => r,
     }
 }
@@ -635,7 +860,7 @@ async fn patch_one(
     if let Caller::Machine(_) = caller {
         return error(
             StatusCode::FORBIDDEN,
-            "a machine token cannot rename the machine or change who it is shared with; use your account",
+            "a computer token cannot rename the computer or change who it is shared with; use your account",
         );
     }
     if let Err(r) = caller.require_device() {
@@ -648,36 +873,28 @@ async fn patch_one(
     if let Err(r) = require_owner(role) {
         return r;
     }
+    // Team-only sharing (hosted relay).
+    #[cfg(feature = "hosted")]
+    if let Err(r) = crate::team_sharing::check_added_shares(&relay, &id, &before, &patch).await {
+        return r;
+    }
     let actor = caller.actor();
     match relay.directory.update(&id, &patch) {
         Ok(record) => {
             apply_sharing(&relay, &record);
             audit_allow_changes(&relay, &record, &before.allow, actor.as_deref());
             audit_viewer_changes(&relay, &record, &before.viewers, actor.as_deref());
+            #[cfg(feature = "hosted")]
+            crate::hosted::notify_email_invites(&relay, &before, &record);
             if before.sharing != record.sharing {
                 audit_sharing(&relay, &record, actor.as_deref());
             }
             if patch.allow.is_some() || patch.viewers.is_some() {
-                // Revoked accounts lose their open streams too, and so does
-                // an account whose role changed (an editor turned viewer
-                // must not keep an input stream it opened as an editor).
-                if let Some(machine) = relay.machine(&id) {
-                    let changed = machine.presence().into_iter().any(|(user, c)| {
-                        let who = Identity {
-                            user: user.clone(),
-                            account: user,
-                            email: c.email,
-                            name: None,
-                            auth_time: None,
-                            mfa: false,
-                        };
-                        let now = record.role_of(&who);
-                        now.is_none() || now != before.role_of(&who)
-                    });
-                    if changed {
-                        machine.cut_clients();
-                    }
-                }
+                // Revoked accounts lose their open streams and outstanding
+                // tickets, and so does an account whose role dropped (an
+                // editor turned viewer must not keep an input stream it
+                // opened as an editor). No one else is cut (CUA-1417).
+                relay.reauthorize(Some(std::slice::from_ref(&id)));
             }
             Json(view(&relay, &headers, &record, Role::Owner)).into_response()
         }
@@ -707,6 +924,7 @@ async fn delete_one(
     match relay.directory.remove(&id) {
         Ok(removed) => {
             relay.drop_machine(&id);
+            relay.teams.forget_machine(&id);
             tracing::info!(machine = %id, "machine removed");
             relay.devices.audit(
                 &removed.owner.id,
@@ -778,7 +996,7 @@ async fn confirm(
     if let Caller::Machine(_) = caller {
         return error(
             StatusCode::FORBIDDEN,
-            "a machine cannot confirm itself; confirm it from an enrolled device",
+            "a computer cannot confirm itself; confirm it from an enrolled device",
         );
     }
     if let Err(r) = caller.require_device() {
@@ -822,6 +1040,96 @@ async fn start_sharing(
     headers: HeaderMap,
 ) -> Response {
     set_sharing(relay, id, headers, true).await
+}
+
+/// `POST /v1/machines/{id}/leave` answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaveReply {
+    /// The machine left.
+    pub id: String,
+    /// The caller's own entries removed from its allowlist and viewers.
+    pub removed: Vec<String>,
+    /// The team the caller reaches it through: hidden from their listing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_team: Option<String>,
+}
+
+/// A person takes themself off a machine shared with them: their own
+/// `allow` and `viewers` entries go; a machine they reach through a team
+/// is hidden from their listing (the team keeps it). Their open streams
+/// are cut. The owner's audit log records `share_left`; the caller's
+/// records `machine_left`. The owner cannot leave (they delete instead),
+/// and a machine token cannot leave on anyone's behalf.
+async fn leave(State(relay): State<Relay>, Path(id): Path<String>, headers: HeaderMap) -> Response {
+    let (who, gate) = match account_caller(&relay, &headers).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let caller = Caller::Account(who.clone(), gate);
+    if let Err(r) = caller.require_device() {
+        return r;
+    }
+    let (record, role) = match authorize(&caller, &relay, &id) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if role == Role::Owner {
+        return error(
+            StatusCode::FORBIDDEN,
+            "you own this computer; delete it instead of leaving it",
+        );
+    }
+    let actor = caller.actor();
+    let removed = record.entries_of(&who);
+    let record = if removed.is_empty() {
+        record
+    } else {
+        match relay.directory.remove_shares(&id, &removed) {
+            Ok(Some(r)) => r,
+            Ok(None) => record,
+            Err(e) => return directory_error(e),
+        }
+    };
+    // Still reached through a team: hide it from this member's listing.
+    let hidden_team = relay
+        .machine_role(&record, &who)
+        .and_then(|(_, teams)| teams.into_iter().next());
+    if hidden_team.is_some() {
+        if let Err(e) = relay.directory.hide_for(&id, &who.account) {
+            return directory_error(e);
+        }
+    }
+    let leaver = who.email.clone().unwrap_or_else(|| who.account.clone());
+    tracing::info!(machine = %id, account = %crate::ident::tag(&who.account), team = hidden_team.is_some(), "left a shared machine");
+    relay.devices.audit(
+        &record.owner.id,
+        AuditEvent::new("share_left")
+            .machine(&id)
+            .subject(leaver)
+            .detail(match &hidden_team {
+                Some(team) => format!("{} (left the team machine; {team} keeps it)", record.name),
+                None => record.name.clone(),
+            }),
+    );
+    relay.devices.audit(
+        &who.account,
+        AuditEvent::new("machine_left")
+            .device(actor.as_deref())
+            .machine(&id)
+            .detail(record.name.clone()),
+    );
+    // Removed entries lose their streams and tickets; a team member who
+    // keeps access through the team is cut once so their open view closes.
+    relay.reauthorize(Some(std::slice::from_ref(&id)));
+    if let Some(machine) = relay.machine(&id) {
+        machine.cut_user(&who.user);
+    }
+    let reply = LeaveReply {
+        id,
+        removed,
+        hidden_team,
+    };
+    finish(&relay, &caller, Json(reply).into_response())
 }
 
 /// Records allowlist entries added to or removed from `record` in the

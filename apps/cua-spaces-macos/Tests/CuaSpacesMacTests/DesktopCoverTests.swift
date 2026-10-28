@@ -61,6 +61,21 @@ struct DesktopCoverTests {
         #expect(R.phase(.failed("x"), hasFrame: false) == .failed)
     }
 
+    /// A stream that dropped says Reconnecting until its first frame, and
+    /// the core's cover says so without a button.
+    @Test func aDroppedStreamSaysReconnecting() async throws {
+        typealias R = StreamPhaseReader<EmptyView>
+        #expect(R.phase(.connecting, hasFrame: false, reconnecting: true) == .reconnecting)
+        #expect(R.phase(.streaming, hasFrame: false, reconnecting: true) == .reconnecting)
+        #expect(R.phase(.streaming, hasFrame: true, reconnecting: true) == .streaming)
+        #expect(R.phase(.failed("x"), hasFrame: false, reconnecting: true) == .failed)
+        let model = ViewModelTests().makeModel()
+        let detail = try await runningDetail(model)
+        let cover = model.cover(detail, requested: false, stream: .reconnecting)
+        #expect(cover.kind == .connecting && cover.text == "Reconnecting\u{2026}")
+        #expect(cover.button == nil && !cover.openStream && !cover.retry)
+    }
+
     @Test func theNotchAndTheCoverReadOneEntry() async throws {
         let model = ViewModelTests().makeModel()
         #expect(model.thumbnails === model.notch.thumbnails)

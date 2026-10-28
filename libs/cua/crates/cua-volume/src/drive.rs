@@ -185,6 +185,35 @@ impl Drive {
         }
     }
 
+    /// Deletes the drive's own bookkeeping in the home of `agent`, an
+    /// agent that no longer exists: the sync manifest, a lease, folder
+    /// markers (every `.cua-` name under `agents/<agent>/`). Its files stay;
+    /// once they are deleted the folder is gone, which the reserved names
+    /// would otherwise prevent. Returns the keys deleted.
+    pub async fn forget_agent_home(&self, agent: &str) -> Result<Vec<String>> {
+        let home = crate::path::agent_home(agent)?;
+        let b = self.backend();
+        let mut gone = vec![];
+        for m in b.list(&home).await? {
+            let Some(rel) = m.key.strip_prefix(&home) else {
+                continue;
+            };
+            if !is_internal(rel) {
+                continue;
+            }
+            match b.delete(&m.key, Condition::None).await {
+                Ok(()) | Err(Error::NotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+            self.notify(Change::Delete(m.key.clone()));
+            gone.push(m.key);
+        }
+        if !gone.is_empty() {
+            self.log("user", "forget_agent_home", &home, &gone.join(", "));
+        }
+        Ok(gone)
+    }
+
     fn log(&self, principal: &str, action: &str, path: &str, detail: &str) {
         if let Err(e) = self.inner.audit.append(principal, action, path, detail) {
             // The audit log failing must be loud, but a read should not fail
@@ -531,6 +560,8 @@ impl Session {
         }
         // The areas this session always has, even while empty.
         let mut own = vec![];
+        // The folders this Space mounted, even while empty.
+        own.extend(self.ctx.mounts.iter().map(|m| m.prefix.clone()));
         if self.ctx.principal == Principal::User {
             own.extend([
                 path::PUBLIC.to_string(),
@@ -881,6 +912,41 @@ impl Session {
         Ok(())
     }
 
+    /// Deletes every file under folder `path` (delete markers: history
+    /// stays) and its folder markers. Returns how many files went. The
+    /// session needs write access to the folder; the root and the area
+    /// folders are refused.
+    pub async fn remove_tree(&self, path: &str) -> Result<usize> {
+        let folder = path::folder(path)?;
+        if is_internal(&folder) {
+            return Err(Error::Invalid(format!(
+                "names starting with {INTERNAL_PREFIX} are reserved"
+            )));
+        }
+        if matches!(path::area(&folder), Area::Root) {
+            return Err(Error::Invalid(format!(
+                "{folder:?} is not a folder to remove"
+            )));
+        }
+        self.require(&folder, Mode::ReadWrite, "delete")?;
+        let backend = self.drive.backend();
+        let mut files = 0;
+        for m in backend.list(&folder).await? {
+            let internal = is_internal(&m.key);
+            match backend.delete(&m.key, Condition::None).await {
+                Ok(()) | Err(Error::NotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+            if !internal {
+                files += 1;
+            }
+            self.drive.notify(Change::Delete(m.key));
+        }
+        self.drive
+            .log(&self.who(), "delete", &folder, &format!("{files} files"));
+        Ok(files)
+    }
+
     /// Copies a file inside the drive (a server-side copy on S3). The
     /// secret scanner runs on the source when the copy lands in an agent
     /// home it was not already in.
@@ -1104,6 +1170,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_removed_agents_home_can_be_deleted_down_to_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let b = d.backend();
+        let user = d.session(Context::user());
+        user.write("agents/gone/notes.md", b"n".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        for k in [
+            "agents/gone/.cua-manifest.json",
+            "agents/gone/.cua-lease",
+            "agents/gone/sub/.cua-keep",
+            "agents/kept/.cua-manifest.json",
+        ] {
+            b.put(k, b"{}".to_vec(), Condition::None).await.unwrap();
+        }
+        // The user cannot touch the reserved names themselves.
+        assert_eq!(
+            user.delete("agents/gone/.cua-manifest.json", Condition::None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "invalid_argument"
+        );
+        let mut gone = d.forget_agent_home("gone").await.unwrap();
+        gone.sort();
+        assert_eq!(
+            gone,
+            [
+                "agents/gone/.cua-lease",
+                "agents/gone/.cua-manifest.json",
+                "agents/gone/sub/.cua-keep"
+            ]
+        );
+        // Its own files stay until the user deletes them; then nothing is left.
+        user.delete("agents/gone/notes.md", Condition::None)
+            .await
+            .unwrap();
+        assert!(b.list("agents/gone/").await.unwrap().is_empty());
+        // Another agent's home is untouched.
+        assert_eq!(b.list("agents/kept/").await.unwrap().len(), 1);
+        assert!(d.forget_agent_home("../x").await.is_err());
+    }
+
+    #[tokio::test]
     async fn listings_show_only_what_the_session_can_reach() {
         let dir = tempfile::tempdir().unwrap();
         let (d, _) = drive(dir.path());
@@ -1139,5 +1250,166 @@ mod tests {
         assert!(hist[0].latest && hist[0].version == m1.version);
         user.restore("public/p.md", &hist[1].version).await.unwrap();
         assert_eq!(user.read("public/p.md", None).await.unwrap().0, b"x");
+    }
+
+    fn mount(prefix: &str, mode: Mode) -> crate::acl::MountAccess {
+        crate::acl::MountAccess {
+            prefix: prefix.into(),
+            mode,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_space_sees_only_the_named_volumes_it_mounted() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let user = d.session(Context::user());
+        for k in [
+            "volumes/shared/a.txt",
+            "volumes/shared/sub/b.txt",
+            "volumes/secret/s.txt",
+            "volumes/other/o.txt",
+        ] {
+            user.write(k, b"x".to_vec(), Condition::None).await.unwrap();
+        }
+        let ctx = Context::space("local:w").with_mounts(vec![
+            mount("volumes/shared/", Mode::ReadWrite),
+            mount("volumes/other/", Mode::Read),
+        ]);
+        let s = d.session(ctx);
+        let names = |v: Vec<Entry>| v.into_iter().map(|e| e.path).collect::<Vec<_>>();
+        assert_eq!(
+            names(s.ls("").await.unwrap()),
+            ["public/", "spaces/", "volumes/"]
+        );
+        assert_eq!(
+            names(s.ls("volumes/").await.unwrap()),
+            ["volumes/other/", "volumes/shared/"]
+        );
+        assert_eq!(s.read("volumes/shared/a.txt", None).await.unwrap().0, b"x");
+        s.write("volumes/shared/new.txt", b"n".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        assert_eq!(
+            user.read("volumes/shared/new.txt", None).await.unwrap().0,
+            b"n"
+        );
+        // Read-only means read-only.
+        assert_eq!(s.read("volumes/other/o.txt", None).await.unwrap().0, b"x");
+        assert_eq!(
+            s.write("volumes/other/o.txt", b"y".to_vec(), Condition::None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        assert_eq!(
+            s.delete("volumes/other/o.txt", Condition::None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        // A volume it did not mount is invisible and refused.
+        assert_eq!(
+            s.read("volumes/secret/s.txt", None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        assert_eq!(
+            s.ls("volumes/secret/").await.unwrap_err().tag(),
+            "forbidden"
+        );
+        assert_eq!(
+            s.write("volumes/secret/x", b"y".to_vec(), Condition::None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        // A Space without mounts sees none of them, and a mount made by
+        // one Space does not leak to another.
+        let bare = d.session(Context::space("local:v"));
+        assert_eq!(names(bare.ls("").await.unwrap()), ["public/", "spaces/"]);
+        assert_eq!(
+            bare.read("volumes/shared/a.txt", None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        // An agent acting in the Space keeps the mounts of that Space.
+        let ada = d.session(
+            Context::agent("ada", Some("local:w"))
+                .with_mounts(vec![mount("volumes/shared/", Mode::Read)]),
+        );
+        assert!(ada.read("volumes/shared/a.txt", None).await.is_ok());
+        assert!(
+            ada.write("volumes/shared/z", b"y".to_vec(), Condition::None)
+                .await
+                .is_err()
+        );
+        // The user's context never takes mounts.
+        assert!(
+            Context::user()
+                .with_mounts(vec![mount("volumes/x/", Mode::Read)])
+                .mounts
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mounted_subfolder_grants_only_that_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let user = d.session(Context::user());
+        for k in [
+            "volumes/v/in/a.txt",
+            "volumes/v/out/b.txt",
+            "volumes/v/top.txt",
+        ] {
+            user.write(k, b"x".to_vec(), Condition::None).await.unwrap();
+        }
+        let s = d.session(
+            Context::space("local:w").with_mounts(vec![mount("volumes/v/in/", Mode::ReadWrite)]),
+        );
+        assert!(s.read("volumes/v/in/a.txt", None).await.is_ok());
+        assert!(s.read("volumes/v/out/b.txt", None).await.is_err());
+        assert!(s.read("volumes/v/top.txt", None).await.is_err());
+        let names = |v: Vec<Entry>| v.into_iter().map(|e| e.path).collect::<Vec<_>>();
+        assert_eq!(names(s.ls("volumes/v/").await.unwrap()), ["volumes/v/in/"]);
+    }
+
+    #[tokio::test]
+    async fn removing_a_volume_tree_keeps_history_and_other_volumes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let user = d.session(Context::user());
+        user.mkdir("volumes/gone/empty").await.unwrap();
+        for k in [
+            "volumes/gone/a.txt",
+            "volumes/gone/d/b.txt",
+            "volumes/kept/c.txt",
+        ] {
+            user.write(k, b"x".to_vec(), Condition::None).await.unwrap();
+        }
+        assert_eq!(user.remove_tree("volumes/gone/").await.unwrap(), 2);
+        assert!(d.backend().list("volumes/gone/").await.unwrap().is_empty());
+        assert_eq!(d.backend().list("volumes/kept/").await.unwrap().len(), 1);
+        // The deleted file is restorable.
+        assert!(!user.history("volumes/gone/a.txt").await.unwrap().is_empty());
+        // The root and the areas are not a volume.
+        assert!(user.remove_tree("").await.is_err());
+        assert!(user.remove_tree("spaces/").await.is_err());
+        // A Space cannot remove a tree it only reads.
+        let s = d.session(
+            Context::space("local:w").with_mounts(vec![mount("volumes/kept/", Mode::Read)]),
+        );
+        assert_eq!(
+            s.remove_tree("volumes/kept/").await.unwrap_err().tag(),
+            "forbidden"
+        );
     }
 }

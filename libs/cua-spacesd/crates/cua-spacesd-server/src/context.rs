@@ -70,14 +70,17 @@ struct Inner {
     relay: std::sync::Mutex<Option<RelayAttachment>>,
     token_rotations: tokio::sync::watch::Sender<u64>,
     session_revocations: tokio::sync::watch::Sender<u64>,
-    /// This guest's sealed-delivery keypair (S1), generated at
-    /// `<data_dir>/machine-seal.key` (0600) on first start. `None` only if
-    /// loading or generating it failed (reported to callers exactly like
-    /// an older image that never had one, rather than crashing the
-    /// server over it).
-    machine_seal: Option<Arc<cua_machine_seal::MachineKeypair>>,
+    connection_revocations: tokio::sync::watch::Sender<u64>,
+    machine_renewals: tokio::sync::watch::Sender<u64>,
+    /// This guest's sealed-delivery keypair (S1), at
+    /// `<data_dir>/machine-seal.key` (0600), loaded or generated on first
+    /// use ([`ServerContext::machine_seal`]). `None` until then, and for
+    /// good if loading or generating it failed (reported to callers
+    /// exactly like an older image that never had one, rather than
+    /// crashing the server over it).
+    machine_seal: std::sync::Mutex<Option<Arc<cua_machine_seal::MachineKeypair>>>,
     /// Rejects a replayed sealed envelope on unseal.
-    seal_replay_guard: Arc<cua_machine_seal::ReplayGuard>,
+    seal_replay_guard: RwLock<Arc<cua_machine_seal::ReplayGuard>>,
 }
 
 /// A relay this running driver attached to (see
@@ -111,20 +114,11 @@ impl ServerContext {
                 config.access_log_path(),
             )));
         }
-        let machine_seal = match cua_machine_seal::MachineKeypair::load_or_create(
-            &config.data_dir.join("machine-seal.key"),
-        ) {
-            Ok(k) => Some(Arc::new(k)),
-            Err(e) => {
-                tracing::warn!(error = %e, "sealed delivery unavailable: could not load or create this guest's keypair");
-                None
-            }
-        };
         Self {
             inner: Arc::new(Inner {
                 config: Arc::new(config),
-                machine_seal,
-                seal_replay_guard: Arc::new(cua_machine_seal::ReplayGuard::new()),
+                machine_seal: std::sync::Mutex::new(None),
+                seal_replay_guard: RwLock::new(Arc::new(cua_machine_seal::ReplayGuard::new())),
                 auth,
                 mode,
                 init: RwLock::new(InitState::default()),
@@ -140,6 +134,8 @@ impl ServerContext {
                 relay: std::sync::Mutex::new(None),
                 token_rotations: tokio::sync::watch::channel(0).0,
                 session_revocations: tokio::sync::watch::channel(0).0,
+                connection_revocations: tokio::sync::watch::channel(0).0,
+                machine_renewals: tokio::sync::watch::channel(0).0,
             }),
         }
     }
@@ -154,26 +150,126 @@ impl ServerContext {
         &self.inner.auth
     }
 
-    /// This guest's sealed-delivery keypair (S1), if loading or generating
-    /// one at start succeeded.
-    pub fn machine_seal(&self) -> Option<&Arc<cua_machine_seal::MachineKeypair>> {
-        self.inner.machine_seal.as_ref()
+    /// Where this guest keeps its sealed-delivery key.
+    pub fn machine_seal_path(&self) -> PathBuf {
+        self.inner.config.data_dir.join("machine-seal.key")
+    }
+
+    /// Whether this guest may hold a machine-seal key yet. A driver that
+    /// waits for its token (await-token-file, gateway bootstrap) creates
+    /// none before the first token exists, so an image or golden snapshot
+    /// taken before a Space owned the guest never contains one.
+    fn machine_seal_allowed(&self) -> bool {
+        self.inner.mode == AccessMode::OpenLoopback || self.inner.auth.has_token()
+    }
+
+    /// This guest's sealed-delivery keypair (S1), loaded from (or generated
+    /// at) [`Self::machine_seal_path`] on first use. `None` while
+    /// [`Self::machine_seal_allowed`] says no, or if loading or generating
+    /// it failed.
+    pub fn machine_seal(&self) -> Option<Arc<cua_machine_seal::MachineKeypair>> {
+        let mut slot = self.inner.machine_seal.lock().expect("machine seal lock");
+        if let Some(keypair) = slot.as_ref() {
+            return Some(keypair.clone());
+        }
+        if !self.machine_seal_allowed() {
+            return None;
+        }
+        match cua_machine_seal::MachineKeypair::load_or_create(&self.machine_seal_path()) {
+            Ok(keypair) => Some(slot.insert(Arc::new(keypair)).clone()),
+            Err(e) => {
+                tracing::warn!(error = %e, "sealed delivery unavailable: could not load or create this guest's keypair");
+                None
+            }
+        }
     }
 
     /// This guest's public sealed-delivery key, for
     /// `GetCapabilitiesResponse::machine_seal_public_key` (empty when
     /// unavailable).
     pub fn machine_seal_public_key(&self) -> Vec<u8> {
-        self.inner
-            .machine_seal
-            .as_ref()
+        self.machine_seal()
             .map(|k| k.public().0.to_vec())
             .unwrap_or_default()
     }
 
     /// The replay guard for unsealing a delivery (S1).
-    pub fn seal_replay_guard(&self) -> &Arc<cua_machine_seal::ReplayGuard> {
-        &self.inner.seal_replay_guard
+    pub fn seal_replay_guard(&self) -> Arc<cua_machine_seal::ReplayGuard> {
+        self.inner
+            .seal_replay_guard
+            .read()
+            .expect("replay guard lock")
+            .clone()
+    }
+
+    /// This guest became a new machine (`InitRequest.new_machine`):
+    /// regenerates the machine-seal keypair (saved over the old one, mixed
+    /// with `entropy`; or, while no key may exist yet, removes any stale
+    /// one), starts a fresh replay guard, renews the ticket secret used
+    /// without a token, and tells providers to renew theirs
+    /// ([`Self::machine_renewals`]: the media QUIC certificate). Returns
+    /// false when the new key could not be saved (it is used from memory
+    /// and the old file is removed, so a restart makes yet another one).
+    pub fn renew_machine(&self, entropy: &[u8]) -> bool {
+        let path = self.machine_seal_path();
+        let mut saved = true;
+        {
+            let mut slot = self.inner.machine_seal.lock().expect("machine seal lock");
+            if self.machine_seal_allowed() {
+                let keypair = match cua_machine_seal::MachineKeypair::regenerate(&path, entropy) {
+                    Ok(keypair) => keypair,
+                    Err(e) => {
+                        saved = false;
+                        tracing::warn!(error = %e, "could not save the regenerated machine-seal key; using it from memory");
+                        let _ = std::fs::remove_file(&path);
+                        cua_machine_seal::MachineKeypair::generate_mixed(entropy)
+                    }
+                };
+                *slot = Some(Arc::new(keypair));
+            } else {
+                *slot = None;
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {
+                        tracing::info!(path = %path.display(), "removed a machine-seal key that predates this guest's token")
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        saved = false;
+                        tracing::warn!(path = %path.display(), error = %e, "could not remove a stale machine-seal key");
+                    }
+                }
+            }
+        }
+        self.renew_process_secrets(entropy);
+        saved
+    }
+
+    /// The in-memory part of [`Self::renew_machine`]: replay guard, ticket
+    /// secret, providers' keys. Also run when the first token arrives in
+    /// await-token-file and bootstrap modes, so a guest snapshotted while
+    /// it waited for one (a warm-pool member, a microVM golden) never
+    /// shares those with its clones.
+    fn renew_process_secrets(&self, entropy: &[u8]) {
+        *self
+            .inner
+            .seal_replay_guard
+            .write()
+            .expect("replay guard lock") = Arc::new(cua_machine_seal::ReplayGuard::new());
+        self.inner.auth.renew_boot_secret(entropy);
+        self.inner.machine_renewals.send_modify(|count| *count += 1);
+    }
+
+    /// The first token of a driver that waited for one (bootstrap Init,
+    /// await-token-file) was installed: see [`Self::renew_process_secrets`].
+    pub fn first_token_installed(&self) {
+        self.renew_process_secrets(&[]);
+    }
+
+    /// Changes whenever this guest's machine secrets were renewed
+    /// ([`Self::renew_machine`], [`Self::first_token_installed`]).
+    /// Providers holding per-machine keys of their own regenerate them.
+    pub fn machine_renewals(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.inner.machine_renewals.subscribe()
     }
 
     /// How callers are treated while no token is configured.
@@ -189,10 +285,23 @@ impl ServerContext {
         principal: Option<&Principal>,
         ttl: Duration,
     ) -> (String, SystemTime) {
+        self.mint_ticket_issued(scope, resource, principal, None, ttl)
+    }
+
+    /// [`Self::mint_ticket`] for a call the relay asserted at `issued`
+    /// (`RelayCaller::issued_at`), recorded in the ticket.
+    pub fn mint_ticket_issued(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal: Option<&Principal>,
+        issued: Option<u64>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
         let principal_id = principal.map(|p| p.id.as_str()).unwrap_or("");
         self.inner
             .auth
-            .mint_ticket(scope, resource, principal_id, ttl)
+            .mint_ticket_issued(scope, resource, principal_id, issued, ttl)
     }
 
     /// Validates a ticket string for `scope`.
@@ -353,6 +462,9 @@ impl ServerContext {
         if token.is_none() {
             self.update_init(|state| *state = InitState::default());
         }
+        if !had_token && token.is_some() {
+            self.first_token_installed();
+        }
         self.notify_token_rotated();
         if had_token {
             self.revoke_sessions();
@@ -361,17 +473,35 @@ impl ServerContext {
     }
 
     /// Drops every session authorized by the previous token (see
-    /// [`Self::session_revocations`]).
+    /// [`Self::session_revocations`]) and every open connection.
     pub fn revoke_sessions(&self) {
+        self.revoke_sessions_keep_connections();
+        self.inner
+            .connection_revocations
+            .send_modify(|count| *count += 1);
+    }
+
+    /// Stops forwards, the hotspot and the volume mount opened before
+    /// ([`Self::session_revocations`]) but keeps connections open: every
+    /// later call on them is checked against the current token anyway, and
+    /// the caller that renewed the machine (`Init`) keeps its channel.
+    pub fn revoke_sessions_keep_connections(&self) {
         self.inner
             .session_revocations
             .send_modify(|count| *count += 1);
     }
 
-    /// Changes whenever sessions must be revoked: the server drops open
-    /// connections, the tunnel service stops forwards and the hotspot.
+    /// Changes whenever sessions must be revoked: the tunnel service stops
+    /// forwards and the hotspot, the volume unmounts.
     pub fn session_revocations(&self) -> tokio::sync::watch::Receiver<u64> {
         self.inner.session_revocations.subscribe()
+    }
+
+    /// Changes whenever open connections must be dropped (the token file
+    /// rotated or revoked the token: no stream outlives the token that
+    /// authorized it).
+    pub fn connection_revocations(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.inner.connection_revocations.subscribe()
     }
 
     /// True while waiting for the token file to provide a token.
@@ -421,7 +551,7 @@ impl ServerContext {
             return Err("this driver joined a relay at start (cua-spacesd join)".into());
         }
         if !cua_relay::valid_machine_id(machine_id) {
-            return Err(format!("invalid machine id {machine_id:?}"));
+            return Err(format!("invalid computer id {machine_id:?}"));
         }
         if machine_token.is_empty() || relay_url.is_empty() || owner.is_empty() {
             return Err("relay_url, machine_token and owner are required".into());
@@ -471,9 +601,68 @@ impl ServerContext {
         if let Some(p) = previous {
             p.stop.cancel();
         }
-        tracing::info!(relay = %relay_url, machine = %machine_id, "attached to relay");
+        tracing::info!(machine = %machine_id, "attached to relay");
+        let mut mesh = self.mesh_host_config(
+            relay_url,
+            machine_token,
+            None,
+            machine_id,
+            join.account.clone(),
+            local,
+        );
+        // A machine attached at run time is a Space: it runs no gangs.
+        mesh.gang_home = None;
+        tokio::spawn(crate::mesh_host::run(mesh, stop.clone()));
         tokio::spawn(cua_relay::client::run(join, stop));
         Ok(())
+    }
+
+    /// The machine's mesh settings next to a relay join: its node lives in
+    /// `<data dir>/mesh`, peers reach this listener and the QUIC media
+    /// port, and static-mode pairing proofs are checked against the env
+    /// token. The node runs only while [`cua_mesh::policy`] allows it:
+    /// `CUA_MESH`, else the channel the Cua Spaces app recorded in this
+    /// machine's Cua home (the data dir's parent). Gang jobs of that Cua
+    /// home reach the account's other machines through it
+    /// ([`crate::mesh_host::MeshHostConfig::gang_home`]).
+    pub fn mesh_host_config(
+        &self,
+        relay_url: &str,
+        relay_token: &str,
+        relay_token_file: Option<std::path::PathBuf>,
+        machine_id: &str,
+        account: Arc<cua_relay::client::AccountLink>,
+        local: std::net::SocketAddr,
+    ) -> crate::mesh_host::MeshHostConfig {
+        let ip = if local.ip().is_unspecified() {
+            std::net::IpAddr::from([127, 0, 0, 1])
+        } else {
+            local.ip()
+        };
+        let quic_port = self.config().media_quic_port;
+        let auth = self.inner.auth.clone();
+        let home = self
+            .config()
+            .data_dir
+            .parent()
+            .map(std::path::Path::to_path_buf);
+        crate::mesh_host::MeshHostConfig {
+            relay_url: relay_url.to_owned(),
+            relay_token: relay_token.to_owned(),
+            relay_token_file,
+            machine_id: machine_id.to_owned(),
+            dir: self.config().data_dir.join("mesh"),
+            local: std::net::SocketAddr::new(ip, local.port()),
+            quic: (quic_port != 0).then(|| std::net::SocketAddr::new(ip, quic_port)),
+            media_udp_port: self.config().mesh_udp_port,
+            account,
+            env_token: Arc::new(move || auth.token().map(|t| t.to_string())),
+            name: cua_mesh::node::hostname(),
+            policy: Arc::new(cua_mesh::Policy::current),
+            recheck: crate::mesh_host::GATE_RECHECK,
+            gang_home: home,
+            gang_wait: crate::mesh_host::GANG_WAIT,
+        }
     }
 
     /// Leaves the relay attached with [`Self::attach_relay`]. Returns
@@ -551,6 +740,32 @@ mod tests {
             None,
         );
         assert!(!off.cursor_probe());
+    }
+
+    #[test]
+    fn the_mesh_media_port_follows_the_config() {
+        let host = |ctx: &ServerContext| {
+            ctx.mesh_host_config(
+                "https://relay.example",
+                "token",
+                None,
+                "machine-1",
+                Arc::default(),
+                "127.0.0.1:3211".parse().unwrap(),
+            )
+        };
+        // Unset: the port every release has used.
+        let ctx = ServerContext::new(ServerConfig::default(), None);
+        assert_eq!(host(&ctx).media_udp_port, 3212);
+        // An override (`--mesh-udp-port`) reaches the mesh node.
+        let local = ServerContext::new(
+            ServerConfig {
+                mesh_udp_port: 3222,
+                ..ServerConfig::default()
+            },
+            None,
+        );
+        assert_eq!(host(&local).media_udp_port, 3222);
     }
 
     #[test]

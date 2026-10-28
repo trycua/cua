@@ -22,6 +22,36 @@ final class SharedVM {
     func removeVM(name: String) {
         runningVMs.removeValue(forKey: name)
     }
+
+    /// A VM other than `name` this process runs with MAC address `mac`.
+    func runningName(withMAC mac: String, except name: String) -> String? {
+        runningVMs.first { $0.key != name && $0.value.config.macAddress?.lowercased() == mac.lowercased() }?.key
+    }
+
+    /// Removes the entry for `name` only while it still holds `vm`, so a run
+    /// that ends never drops a later run's entry.
+    func removeVM(name: String, ifSame vm: VM) {
+        if runningVMs[name] === vm {
+            runningVMs.removeValue(forKey: name)
+        }
+    }
+
+    /// The cached VM for `name` while its guest still runs in this process.
+    /// An entry for a guest that already stopped is dropped.
+    func liveVM(name: String) -> VM? {
+        guard let vm = runningVMs[name] else { return nil }
+        guard vm.isRunActive else {
+            runningVMs.removeValue(forKey: name)
+            return nil
+        }
+        return vm
+    }
+
+    /// Drops cached VMs whose guest no longer runs in this process, such as a
+    /// guest that shut itself down.
+    func removeStoppedVMs() {
+        runningVMs = runningVMs.filter { $0.value.isRunActive }
+    }
 }
 
 // MARK: - Pull Progress Tracker
@@ -181,6 +211,15 @@ final class LumeController {
 
     // MARK: - Public VM Management Methods
 
+    /// The VMs whose guests are running, across all storage locations unless
+    /// `storage` names one. Cache entries for guests that already stopped are
+    /// dropped first, so a guest that shut itself down is not counted as running.
+    @MainActor
+    public func runningVMs(storage: String? = nil) throws -> [VMDetails] {
+        SharedVM.shared.removeStoppedVMs()
+        return try list(storage: storage).filter { $0.status == "running" }
+    }
+
     /// Lists all virtual machines in the system
     /// Uses a lightweight path that reads config directly without instantiating full VM objects
     @MainActor
@@ -302,7 +341,7 @@ final class LumeController {
         }
 
         // Check if VM is running via SharedVM cache (same-process fast path)
-        let runningVM = SharedVM.shared.getVM(name: vmName)
+        let runningVM = SharedVM.shared.liveVM(name: vmName)
         var isRunning = runningVM != nil
 
         // Get VNC URL and IP address only if running
@@ -414,9 +453,17 @@ final class LumeController {
         vmDir.hasResizeMarker() ? .resizeInProgress(name) : .vmRunning(name)
     }
 
+    /// Clones a stopped VM (APFS copy-on-write). The clone gets a new MAC
+    /// address and machine identifier, unless `withSavedState` asks for the
+    /// source's saved machine state too: a state restores only into the
+    /// configuration it was saved from, so such a clone keeps both, and its
+    /// first run resumes the saved guest. Two clones of one state share an
+    /// address, so a run whose address a running VM already has boots
+    /// instead (`runVM`).
     @MainActor
     public func clone(
-        name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil
+        name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil,
+        withSavedState: Bool = false
     ) throws {
         let normalizedName = normalizeVMName(name: name)
         let normalizedNewName = normalizeVMName(name: newName)
@@ -455,9 +502,14 @@ final class LumeController {
                 try? destinationGuard.close()
             }
 
-            // Get the source VM and check if it's running
-            let sourceVM = try get(name: normalizedName, storage: sourceLocation)
-            if sourceVM.details.status == "running" {
+            // Check the source is not running: this process runs it, or
+            // its session proves another one does. Not by its MAC address:
+            // a clone with a saved state shares its source's address, so a
+            // stopped clone would look running while its source runs.
+            if getVMDetailsLightweight(
+                vmDir: sourceVmDir, locationName: actualSourceLocation ?? "home")?.status
+                == "running"
+            {
                 Logger.error("Cannot clone a running VM", metadata: ["source": normalizedName])
                 throw VMError.alreadyRunning(normalizedName)
             }
@@ -477,12 +529,23 @@ final class LumeController {
             }
 
             // Clone the VM directory (uses APFS clonefile for disk.img)
+            if withSavedState && !sourceVmDir.hasSavedState() {
+                throw VMError.internalError(
+                    "VM '\(normalizedName)' has no saved state to clone (suspend it first)")
+            }
             try home.cloneVMDirectory(
                 from: normalizedName,
                 to: normalizedNewName,
                 sourceLocation: sourceLocation,
-                destLocation: destLocation
+                destLocation: destLocation,
+                includeSavedState: withSavedState
             )
+            if withSavedState {
+                Logger.info(
+                    "VM cloned with its saved state",
+                    metadata: ["source": normalizedName, "destination": normalizedNewName])
+                return
+            }
 
             // Update MAC address in the cloned VM to ensure uniqueness
             let clonedVM = try get(name: normalizedNewName, storage: destLocation)
@@ -1039,7 +1102,7 @@ final class LumeController {
             }
 
             // Stop VM if it's running
-            if SharedVM.shared.getVM(name: normalizedName) != nil {
+            if SharedVM.shared.liveVM(name: normalizedName) != nil {
                 try await stopVM(name: normalizedName)
             }
 
@@ -1201,7 +1264,7 @@ final class LumeController {
 
             // Try to get VM from cache first
             let vm: VM
-            if let cachedVM = SharedVM.shared.getVM(name: normalizedName) {
+            if let cachedVM = SharedVM.shared.liveVM(name: normalizedName) {
                 vm = cachedVM
             } else {
                 vm = try get(name: normalizedName, storage: actualLocation)
@@ -1217,6 +1280,52 @@ final class LumeController {
             Logger.error("Failed to stop VM", metadata: ["error": error.localizedDescription])
             throw error
         }
+    }
+
+    /// Renames VM `name` to `newName`, running or not. A running VM must be
+    /// one this process runs (the guest keeps running; only its directory
+    /// moves); one another process runs (a detached `lume run`) is refused.
+    @MainActor
+    public func renameVM(name: String, newName: String, storage: String? = nil) throws {
+        let from = normalizeVMName(name: name)
+        let to = normalizeVMName(name: newName)
+        guard !to.isEmpty, !to.contains("/"), to != ".", to != "..", !to.hasPrefix(".") else {
+            throw ValidationError("Invalid VM name: \(newName)")
+        }
+        let location = try validateVMExists(from, storage: storage)
+        let source = try home.getVMDirectory(from, storage: location)
+        try validateNotProvisioning(source, name: from)
+        let destination = try home.getVMDirectory(to, storage: location)
+        if destination.exists() {
+            throw HomeError.directoryAlreadyExists(path: destination.dir.path)
+        }
+        let hosted = SharedVM.shared.getVM(name: from)
+        if hosted == nil,
+            getVMDetailsLightweight(vmDir: source, locationName: location ?? "home")?.status
+                == "running"
+        {
+            throw VMError.internalError(
+                "VM '\(from)' runs in another process; stop it before renaming it")
+        }
+        try FileManager.default.moveItem(at: source.dir.url, to: destination.dir.url)
+        if let vm = hosted {
+            vm.relocate(to: destination)
+            SharedVM.shared.removeVM(name: from)
+            SharedVM.shared.setVM(name: to, vm: vm)
+        }
+        Logger.info("VM renamed", metadata: ["from": from, "to": to])
+    }
+
+    /// Saves the state of VM `name`, which this process runs, and stops it:
+    /// its next run resumes where it was (`VM.suspend`).
+    @MainActor
+    public func suspendVM(name: String) async throws {
+        let normalizedName = normalizeVMName(name: name)
+        guard let vm = SharedVM.shared.getVM(name: normalizedName) else {
+            throw VMError.notRunning(normalizedName)
+        }
+        try await vm.suspend()
+        SharedVM.shared.removeVM(name: normalizedName)
     }
 
     @MainActor
@@ -1365,6 +1474,18 @@ final class LumeController {
             let vm = try self.loadVM(vmDir: vmDir, storage: effectiveStorage, diskPath: diskPath, nvramPath: nvramPath)
             vm.telemetryTransport = telemetryTransport
 
+            // A saved state restores with the MAC address it was saved with:
+            // when a running VM already has it (another clone of the same
+            // state, or the VM a checkpoint was taken from), boot this one as
+            // a new machine instead of putting two guests on one address.
+            if vmDir.hasSavedState(), let mac = vm.config.macAddress,
+                let other = SharedVM.shared.runningName(withMAC: mac, except: normalizedName)
+            {
+                Logger.info(
+                    "The saved state's MAC address is in use; booting with a new identity",
+                    metadata: ["name": normalizedName, "running": other])
+                try vm.dropSavedStateForNewIdentity()
+            }
             SharedVM.shared.setVM(name: normalizedName, vm: vm)
             try await vm.run(
                 displayMode: effectiveDisplayMode,
@@ -1378,7 +1499,10 @@ final class LumeController {
                 networkMode: networkMode,
                 clipboard: clipboard,
                 vncPolicy: vncPolicy)
-            Logger.info("VM started successfully", metadata: ["name": normalizedName])
+            // `run` returns once the guest has stopped, including when it shut
+            // itself down, so the VM no longer runs in this process.
+            SharedVM.shared.removeVM(name: normalizedName, ifSame: vm)
+            Logger.info("VM run ended", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)
             Logger.error("Failed to run VM", metadata: ["error": error.localizedDescription])

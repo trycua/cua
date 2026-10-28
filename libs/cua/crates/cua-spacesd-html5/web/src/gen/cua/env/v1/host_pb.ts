@@ -4,15 +4,83 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { HostNodeStatus } from "./capacity_pb";
+import { file_cua_env_v1_capacity } from "./capacity_pb";
+import type { DiagnoseReport } from "./diagnose_pb";
+import { file_cua_env_v1_diagnose } from "./diagnose_pb";
+import type { HostEgressPolicy, SetHostSpaceEgressRequestSchema, SetHostSpaceEgressResponseSchema } from "./host_egress_pb";
+import { file_cua_env_v1_host_egress } from "./host_egress_pb";
 import type { AttachRelayRequest } from "./system_pb";
 import { file_cua_env_v1_system } from "./system_pb";
+import type { SetHostWarmRequestSchema, SetHostWarmResponseSchema } from "./warm_pb";
+import { file_cua_env_v1_warm } from "./warm_pb";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file cua/env/v1/host.proto.
  */
 export const file_cua_env_v1_host: GenFile = /*@__PURE__*/
-  fileDesc("ChVjdWEvZW52L3YxL2hvc3QucHJvdG8SCmN1YS5lbnYudjEibgoSSG9zdFNwYWNlc1NldHRpbmdzEhUKDXNoYXJlX2Rlc2t0b3AYASABKAgSFgoOcHJvdmlkZV9zcGFjZXMYAiABKAgSEgoKbWF4X3NwYWNlcxgDIAEoDRIVCg1tYXhfbWFjb3Nfdm1zGAQgASgNIlMKEkhvc3RTcGFjZXNDYXBhY2l0eRIQCghyZXNvdXJjZRgBIAEoCRIMCgR1c2VkGAIgASgNEg0KBWxpbWl0GAMgASgNEg4KBnJlYXNvbhgEIAEoCSLVAQoJSG9zdFNwYWNlEhUKDXJlbGF5X21hY2hpbmUYASABKAkSEwoLbG9jYWxfc3BhY2UYAiABKAkSDAoEbmFtZRgDIAEoCRINCgVpbWFnZRgEIAEoCRIKCgJvcxgFIAEoCRIMCgRraW5kGAYgASgJEg8KB3J1bnRpbWUYByABKAkSEgoKY3JlYXRlZF9ieRgIIAEoCRIVCg1jcmVhdGVkX2F0X21zGAkgASgDEhMKC2RpcmVjdF9wb3J0GAogASgNEhQKDGRpcmVjdF90b2tlbhgLIAEoCSJhChRIb3N0U3BhY2VzQXVkaXRFdmVudBINCgV0c19tcxgBIAEoAxIOCgZhY3Rpb24YAiABKAkSCwoDd2hvGAMgASgJEg0KBXNwYWNlGAQgASgJEg4KBmRldGFpbBgFIAEoCSIWChRHZXRIb3N0U3BhY2VzUmVxdWVzdCL9AQoVR2V0SG9zdFNwYWNlc1Jlc3BvbnNlEgwKBG5hbWUYASABKAkSCgoCb3MYAiABKAkSMAoIc2V0dGluZ3MYAyABKAsyHi5jdWEuZW52LnYxLkhvc3RTcGFjZXNTZXR0aW5ncxIwCghjYXBhY2l0eRgEIAMoCzIeLmN1YS5lbnYudjEuSG9zdFNwYWNlc0NhcGFjaXR5EiUKBnNwYWNlcxgFIAMoCzIVLmN1YS5lbnYudjEuSG9zdFNwYWNlEi8KBWF1ZGl0GAYgAygLMiAuY3VhLmVudi52MS5Ib3N0U3BhY2VzQXVkaXRFdmVudBIOCgZpbWFnZXMYByADKAkixgEKFkNyZWF0ZUhvc3RTcGFjZVJlcXVlc3QSDQoFaW1hZ2UYASABKAkSDAoEa2luZBgCIAEoCRIPCgdydW50aW1lGAMgASgJEgwKBG5hbWUYBCABKAkSDAoEY3B1cxgFIAEoDRIRCgltZW1vcnlfbWIYBiABKAQSDwoHZGlza19nYhgHIAEoDRIuCgZhdHRhY2gYCCABKAsyHi5jdWEuZW52LnYxLkF0dGFjaFJlbGF5UmVxdWVzdBIOCgZkaXJlY3QYCSABKAgiPwoXQ3JlYXRlSG9zdFNwYWNlUmVzcG9uc2USJAoFc3BhY2UYASABKAsyFS5jdWEuZW52LnYxLkhvc3RTcGFjZSInChZEZWxldGVIb3N0U3BhY2VSZXF1ZXN0Eg0KBXNwYWNlGAEgASgJIioKF0RlbGV0ZUhvc3RTcGFjZVJlc3BvbnNlEg8KB21lc3NhZ2UYASABKAkiKAoXRGVsZXRlQ2xvdWRTcGFjZVJlcXVlc3QSDQoFc3BhY2UYASABKAkiKwoYRGVsZXRlQ2xvdWRTcGFjZVJlc3BvbnNlEg8KB21lc3NhZ2UYASABKAkiJwoWQ2FuY2VsSG9zdFNwYWNlUmVxdWVzdBINCgVzcGFjZRgBIAEoCSIqChdDYW5jZWxIb3N0U3BhY2VSZXNwb25zZRIPCgdtZXNzYWdlGAEgASgJIjUKGFNldEhvc3RTcGFjZVBvd2VyUmVxdWVzdBINCgVzcGFjZRgBIAEoCRIKCgJvbhgCIAEoCCJKChlTZXRIb3N0U3BhY2VQb3dlclJlc3BvbnNlEg0KBXN0YXRlGAEgASgJEg0KBXBvd2VyGAIgASgJEg8KB21lc3NhZ2UYAyABKAkyvgQKEUhvc3RTcGFjZXNTZXJ2aWNlElQKDUdldEhvc3RTcGFjZXMSIC5jdWEuZW52LnYxLkdldEhvc3RTcGFjZXNSZXF1ZXN0GiEuY3VhLmVudi52MS5HZXRIb3N0U3BhY2VzUmVzcG9uc2USWgoPQ3JlYXRlSG9zdFNwYWNlEiIuY3VhLmVudi52MS5DcmVhdGVIb3N0U3BhY2VSZXF1ZXN0GiMuY3VhLmVudi52MS5DcmVhdGVIb3N0U3BhY2VSZXNwb25zZRJaCg9EZWxldGVIb3N0U3BhY2USIi5jdWEuZW52LnYxLkRlbGV0ZUhvc3RTcGFjZVJlcXVlc3QaIy5jdWEuZW52LnYxLkRlbGV0ZUhvc3RTcGFjZVJlc3BvbnNlEloKD0NhbmNlbEhvc3RTcGFjZRIiLmN1YS5lbnYudjEuQ2FuY2VsSG9zdFNwYWNlUmVxdWVzdBojLmN1YS5lbnYudjEuQ2FuY2VsSG9zdFNwYWNlUmVzcG9uc2USYAoRU2V0SG9zdFNwYWNlUG93ZXISJC5jdWEuZW52LnYxLlNldEhvc3RTcGFjZVBvd2VyUmVxdWVzdBolLmN1YS5lbnYudjEuU2V0SG9zdFNwYWNlUG93ZXJSZXNwb25zZRJdChBEZWxldGVDbG91ZFNwYWNlEiMuY3VhLmVudi52MS5EZWxldGVDbG91ZFNwYWNlUmVxdWVzdBokLmN1YS5lbnYudjEuRGVsZXRlQ2xvdWRTcGFjZVJlc3BvbnNlYgZwcm90bzM", [file_cua_env_v1_system]);
+  fileDesc("ChVjdWEvZW52L3YxL2hvc3QucHJvdG8SCmN1YS5lbnYudjEiJgoTRGlhZ25vc2VIb3N0UmVxdWVzdBIPCgdtYWNoaW5lGAEgASgJImMKFERpYWdub3NlSG9zdFJlc3BvbnNlEioKBnJlcG9ydBgBIAEoCzIaLmN1YS5lbnYudjEuRGlhZ25vc2VSZXBvcnQSEwoLY3VhX3ZlcnNpb24YAiABKAkSCgoCb3MYAyABKAkibgoSSG9zdFNwYWNlc1NldHRpbmdzEhUKDXNoYXJlX2Rlc2t0b3AYASABKAgSFgoOcHJvdmlkZV9zcGFjZXMYAiABKAgSEgoKbWF4X3NwYWNlcxgDIAEoDRIVCg1tYXhfbWFjb3Nfdm1zGAQgASgNIlMKEkhvc3RTcGFjZXNDYXBhY2l0eRIQCghyZXNvdXJjZRgBIAEoCRIMCgR1c2VkGAIgASgNEg0KBWxpbWl0GAMgASgNEg4KBnJlYXNvbhgEIAEoCSKoAgoJSG9zdFNwYWNlEhUKDXJlbGF5X21hY2hpbmUYASABKAkSEwoLbG9jYWxfc3BhY2UYAiABKAkSDAoEbmFtZRgDIAEoCRINCgVpbWFnZRgEIAEoCRIKCgJvcxgFIAEoCRIMCgRraW5kGAYgASgJEg8KB3J1bnRpbWUYByABKAkSEgoKY3JlYXRlZF9ieRgIIAEoCRIVCg1jcmVhdGVkX2F0X21zGAkgASgDEhMKC2RpcmVjdF9wb3J0GAogASgNEhQKDGRpcmVjdF90b2tlbhgLIAEoCRIXCg9lZ3Jlc3NfZW5mb3JjZWQYFCABKAkSDwoHbmV0d29yaxgVIAEoCRInCgRkaXNrGBYgASgLMhkuY3VhLmVudi52MS5Ib3N0U3BhY2VEaXNrIlYKDUhvc3RTcGFjZURpc2sSEgoFYnl0ZXMYASABKARIAIgBARIRCglhbGxvY2F0ZWQYAiABKAQSFAoMc2hhcmVzX3NwYWNlGAMgASgIQggKBl9ieXRlcyIkChRHZXRIb3N0U3BhY2VzUmVxdWVzdBIMCgRkaXNrGAEgASgIItgCChVHZXRIb3N0U3BhY2VzUmVzcG9uc2USDAoEbmFtZRgBIAEoCRIKCgJvcxgCIAEoCRIwCghzZXR0aW5ncxgDIAEoCzIeLmN1YS5lbnYudjEuSG9zdFNwYWNlc1NldHRpbmdzEjAKCGNhcGFjaXR5GAQgAygLMh4uY3VhLmVudi52MS5Ib3N0U3BhY2VzQ2FwYWNpdHkSJQoGc3BhY2VzGAUgAygLMhUuY3VhLmVudi52MS5Ib3N0U3BhY2USLwoFYXVkaXQYBiADKAsyIC5jdWEuZW52LnYxLkhvc3RTcGFjZXNBdWRpdEV2ZW50Eg4KBmltYWdlcxgHIAMoCRIvCghjcmVhdGluZxgIIAMoCzIdLmN1YS5lbnYudjEuSG9zdFNwYWNlQ3JlYXRpbmcSKAoEbm9kZRgJIAEoCzIaLmN1YS5lbnYudjEuSG9zdE5vZGVTdGF0dXMiwwMKFkNyZWF0ZUhvc3RTcGFjZVJlcXVlc3QSDQoFaW1hZ2UYASABKAkSDAoEa2luZBgCIAEoCRIPCgdydW50aW1lGAMgASgJEgwKBG5hbWUYBCABKAkSDAoEY3B1cxgFIAEoDRIRCgltZW1vcnlfbWIYBiABKAQSDwoHZGlza19nYhgHIAEoDRIuCgZhdHRhY2gYCCABKAsyHi5jdWEuZW52LnYxLkF0dGFjaFJlbGF5UmVxdWVzdBIOCgZkaXJlY3QYCSABKAgSEgoKY3JlYXRlX2tleRgKIAEoCRIPCgduZXR3b3JrGAwgASgJEhMKC2Zvcmtfc291cmNlGAsgASgJEhAKCGhlYWRsZXNzGA4gASgIEiwKBmVncmVzcxgTIAEoCzIcLmN1YS5lbnYudjEuSG9zdEVncmVzc1BvbGljeRIOCgZyb3V0ZWQYDSABKAgSOAoDZW52GA8gAygLMisuY3VhLmVudi52MS5DcmVhdGVIb3N0U3BhY2VSZXF1ZXN0LkVudkVudHJ5EgsKA2dwdRgQIAEoCRoqCghFbnZFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIj8KF0NyZWF0ZUhvc3RTcGFjZVJlc3BvbnNlEiQKBXNwYWNlGAEgASgLMhUuY3VhLmVudi52MS5Ib3N0U3BhY2UiJwoWRGVsZXRlSG9zdFNwYWNlUmVxdWVzdBINCgVzcGFjZRgBIAEoCSIqChdEZWxldGVIb3N0U3BhY2VSZXNwb25zZRIPCgdtZXNzYWdlGAEgASgJIigKF0RlbGV0ZUNsb3VkU3BhY2VSZXF1ZXN0Eg0KBXNwYWNlGAEgASgJIisKGERlbGV0ZUNsb3VkU3BhY2VSZXNwb25zZRIPCgdtZXNzYWdlGAEgASgJIicKFkNhbmNlbEhvc3RTcGFjZVJlcXVlc3QSDQoFc3BhY2UYASABKAkiKgoXQ2FuY2VsSG9zdFNwYWNlUmVzcG9uc2USDwoHbWVzc2FnZRgBIAEoCSI1ChhTZXRIb3N0U3BhY2VQb3dlclJlcXVlc3QSDQoFc3BhY2UYASABKAkSCgoCb24YAiABKAgiSgoZU2V0SG9zdFNwYWNlUG93ZXJSZXNwb25zZRINCgVzdGF0ZRgBIAEoCRINCgVwb3dlchgCIAEoCRIPCgdtZXNzYWdlGAMgASgJIvcCCgtIb3N0Sm9iU3BlYxIOCgZqb2JfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRINCgVpbWFnZRgDIAEoCRIMCgRraW5kGAQgASgJEg8KB3J1bnRpbWUYBSABKAkSEQoJbWlsbGljcHVzGAYgASgNEhEKCW1lbW9yeV9tYhgHIAEoBBIMCgRhcmd2GAggAygJEi0KA2VudhgJIAMoCzIgLmN1YS5lbnYudjEuSG9zdEpvYlNwZWMuRW52RW50cnkSFAoMdGltZW91dF9zZWNzGAogASgNEhMKC3Jlc3VsdF9wYXRoGAsgASgJEhgKEG1heF9vdXRwdXRfYnl0ZXMYDCABKA0SDgoGYnVuZGxlGA0gASgMEg4KBnJ1bl9pZBgOIAEoCRITCgthY2NlbGVyYXRvchgPIAEoCRIQCghzZXJ2aWNlcxgQIAMoCRoqCghFbnZFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIk4KElJ1bkhvc3RKb2JzUmVxdWVzdBIlCgRqb2JzGAEgAygLMhcuY3VhLmVudi52MS5Ib3N0Sm9iU3BlYxIRCglzY2hlZHVsZXIYAiABKAkicAoKSG9zdEpvYkFjaxIOCgZqb2JfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdvdXRjb21lGAMgASgJEg4KBnJlYXNvbhgEIAEoCRIgCgNqb2IYBSABKAsyEy5jdWEuZW52LnYxLkhvc3RKb2IiZQoTUnVuSG9zdEpvYnNSZXNwb25zZRIkCgRhY2tzGAEgAygLMhYuY3VhLmVudi52MS5Ib3N0Sm9iQWNrEigKBG5vZGUYAiABKAsyGi5jdWEuZW52LnYxLkhvc3ROb2RlU3RhdHVzIsYCCgdIb3N0Sm9iEg4KBmpvYl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg0KBXN0YXRlGAMgASgJEhYKCWV4aXRfY29kZRgEIAEoBUgAiAEBEhEKCXRpbWVkX291dBgFIAEoCBIOCgZzdGRvdXQYBiABKAwSDgoGc3RkZXJyGAcgASgMEg4KBnJlc3VsdBgIIAEoDBINCgVlcnJvchgJIAEoCRILCgNzZXEYCiABKAQSDQoFc3BhY2UYCyABKAkSFgoOYWNjZXB0ZWRfYXRfbXMYDCABKAMSFgoOZmluaXNoZWRfYXRfbXMYDSABKAMSEQoJY3JlYXRlX21zGA4gASgNEg4KBnJ1bl9tcxgPIAEoDRIRCglkZWxldGVfbXMYECABKA0SEQoJdHJ1bmNhdGVkGBEgASgIQgwKCl9leGl0X2NvZGUiTQoRR2V0SG9zdEpvYlJlcXVlc3QSDgoGam9iX2lkGAEgASgJEhgKC291dHB1dF9mcm9tGAIgASgESACIAQFCDgoMX291dHB1dF9mcm9tIosBChJHZXRIb3N0Sm9iUmVzcG9uc2USIAoDam9iGAEgASgLMhMuY3VhLmVudi52MS5Ib3N0Sm9iEigKBG5vZGUYAiABKAsyGi5jdWEuZW52LnYxLkhvc3ROb2RlU3RhdHVzEhQKDG91dHB1dF9jaHVuaxgDIAEoDBITCgtvdXRwdXRfc2l6ZRgEIAEoBCKJAQoTTGlzdEhvc3RKb2JzUmVxdWVzdBIRCglhZnRlcl9zZXEYASABKAQSDQoFbGltaXQYAiABKA0SDwoHd2FpdF9tcxgDIAEoDRIWCg53aXRob3V0X291dHB1dBgEIAEoCBInCgdyZWxlYXNlGAUgAygLMhYuY3VhLmVudi52MS5Ib3N0Sm9iUmVmIi0KCkhvc3RKb2JSZWYSDgoGam9iX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0iewoPSG9zdEpvYlByb2dyZXNzEg4KBmpvYl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg0KBXJlYWR5GAMgASgIEhAKCHJlbGVhc2VkGAQgASgIEhgKEGxhc3RfcHJvZ3Jlc3NfbXMYBSABKAMSDAoEc3RlcBgGIAEoAyKyAQoUTGlzdEhvc3RKb2JzUmVzcG9uc2USIQoEam9icxgBIAMoCzITLmN1YS5lbnYudjEuSG9zdEpvYhIQCghuZXh0X3NlcRgCIAEoBBIMCgRtb3JlGAMgASgIEigKBG5vZGUYBCABKAsyGi5jdWEuZW52LnYxLkhvc3ROb2RlU3RhdHVzEi0KCHByb2dyZXNzGAUgAygLMhsuY3VhLmVudi52MS5Ib3N0Sm9iUHJvZ3Jlc3MiRwoUQ2FuY2VsSG9zdEpvYlJlcXVlc3QSDgoGam9iX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDgoGcmVhc29uGAMgASgJIjkKFUNhbmNlbEhvc3RKb2JSZXNwb25zZRIgCgNqb2IYASABKAsyEy5jdWEuZW52LnYxLkhvc3RKb2IiYQoUSG9zdFNwYWNlc0F1ZGl0RXZlbnQSDQoFdHNfbXMYASABKAMSDgoGYWN0aW9uGAIgASgJEgsKA3dobxgDIAEoCRINCgVzcGFjZRgEIAEoCRIOCgZkZXRhaWwYBSABKAki6QEKEUhvc3RTcGFjZUNyZWF0aW5nEgsKA2tleRgBIAEoCRINCgVwaGFzZRgCIAEoCRIVCghmcmFjdGlvbhgDIAEoAUgAiAEBEg4KBmRldGFpbBgEIAEoCRIXCgpieXRlc19kb25lGAUgASgESAGIAQESGAoLYnl0ZXNfdG90YWwYBiABKARIAogBARIdChBieXRlc19wZXJfc2Vjb25kGAcgASgBSAOIAQFCCwoJX2ZyYWN0aW9uQg0KC19ieXRlc19kb25lQg4KDF9ieXRlc190b3RhbEITChFfYnl0ZXNfcGVyX3NlY29uZCJMChVDYWxsVGhyZWFkVG9vbFJlcXVlc3QSDQoFc3BhY2UYASABKAkSDAoEbmFtZRgCIAEoCRIWCg5hcmd1bWVudHNfanNvbhgDIAEoCSJsChZDYWxsVGhyZWFkVG9vbFJlc3BvbnNlEhQKDGNvbnRlbnRfanNvbhgBIAEoCRIXCg9zdHJ1Y3R1cmVkX2pzb24YAiABKAkSEAoIaXNfZXJyb3IYAyABKAgSEQoJbWV0YV9qc29uGAQgASgJIkkKClRocmVhZFZpZXcSDAoEa2luZBgBIAEoCRILCgNhcHAYAiABKAkSDQoFdGl0bGUYAyABKAkSEQoJd2luZG93X2lkGAQgASgJMsYGChFIb3N0U3BhY2VzU2VydmljZRJUCg1HZXRIb3N0U3BhY2VzEiAuY3VhLmVudi52MS5HZXRIb3N0U3BhY2VzUmVxdWVzdBohLmN1YS5lbnYudjEuR2V0SG9zdFNwYWNlc1Jlc3BvbnNlEloKD0NyZWF0ZUhvc3RTcGFjZRIiLmN1YS5lbnYudjEuQ3JlYXRlSG9zdFNwYWNlUmVxdWVzdBojLmN1YS5lbnYudjEuQ3JlYXRlSG9zdFNwYWNlUmVzcG9uc2USWgoPRGVsZXRlSG9zdFNwYWNlEiIuY3VhLmVudi52MS5EZWxldGVIb3N0U3BhY2VSZXF1ZXN0GiMuY3VhLmVudi52MS5EZWxldGVIb3N0U3BhY2VSZXNwb25zZRJaCg9DYW5jZWxIb3N0U3BhY2USIi5jdWEuZW52LnYxLkNhbmNlbEhvc3RTcGFjZVJlcXVlc3QaIy5jdWEuZW52LnYxLkNhbmNlbEhvc3RTcGFjZVJlc3BvbnNlEmAKEVNldEhvc3RTcGFjZVBvd2VyEiQuY3VhLmVudi52MS5TZXRIb3N0U3BhY2VQb3dlclJlcXVlc3QaJS5jdWEuZW52LnYxLlNldEhvc3RTcGFjZVBvd2VyUmVzcG9uc2USTgoLU2V0SG9zdFdhcm0SHi5jdWEuZW52LnYxLlNldEhvc3RXYXJtUmVxdWVzdBofLmN1YS5lbnYudjEuU2V0SG9zdFdhcm1SZXNwb25zZRJdChBEZWxldGVDbG91ZFNwYWNlEiMuY3VhLmVudi52MS5EZWxldGVDbG91ZFNwYWNlUmVxdWVzdBokLmN1YS5lbnYudjEuRGVsZXRlQ2xvdWRTcGFjZVJlc3BvbnNlEmMKElNldEhvc3RTcGFjZUVncmVzcxIlLmN1YS5lbnYudjEuU2V0SG9zdFNwYWNlRWdyZXNzUmVxdWVzdBomLmN1YS5lbnYudjEuU2V0SG9zdFNwYWNlRWdyZXNzUmVzcG9uc2USUQoMRGlhZ25vc2VIb3N0Eh8uY3VhLmVudi52MS5EaWFnbm9zZUhvc3RSZXF1ZXN0GiAuY3VhLmVudi52MS5EaWFnbm9zZUhvc3RSZXNwb25zZTLXAgoPSG9zdEpvYnNTZXJ2aWNlEk4KC1J1bkhvc3RKb2JzEh4uY3VhLmVudi52MS5SdW5Ib3N0Sm9ic1JlcXVlc3QaHy5jdWEuZW52LnYxLlJ1bkhvc3RKb2JzUmVzcG9uc2USSwoKR2V0SG9zdEpvYhIdLmN1YS5lbnYudjEuR2V0SG9zdEpvYlJlcXVlc3QaHi5jdWEuZW52LnYxLkdldEhvc3RKb2JSZXNwb25zZRJRCgxMaXN0SG9zdEpvYnMSHy5jdWEuZW52LnYxLkxpc3RIb3N0Sm9ic1JlcXVlc3QaIC5jdWEuZW52LnYxLkxpc3RIb3N0Sm9ic1Jlc3BvbnNlElQKDUNhbmNlbEhvc3RKb2ISIC5jdWEuZW52LnYxLkNhbmNlbEhvc3RKb2JSZXF1ZXN0GiEuY3VhLmVudi52MS5DYW5jZWxIb3N0Sm9iUmVzcG9uc2UybAoRSG9zdFRocmVhZFNlcnZpY2USVwoOQ2FsbFRocmVhZFRvb2wSIS5jdWEuZW52LnYxLkNhbGxUaHJlYWRUb29sUmVxdWVzdBoiLmN1YS5lbnYudjEuQ2FsbFRocmVhZFRvb2xSZXNwb25zZWIGcHJvdG8z", [file_cua_env_v1_capacity, file_cua_env_v1_diagnose, file_cua_env_v1_host_egress, file_cua_env_v1_system, file_cua_env_v1_warm]);
+
+/**
+ * Request for `HostSpacesService.DiagnoseHost`.
+ *
+ * @generated from message cua.env.v1.DiagnoseHostRequest
+ */
+export type DiagnoseHostRequest = Message<"cua.env.v1.DiagnoseHostRequest"> & {
+  /**
+   * Another of the owner's machines to check instead, by id or name: the
+   * cua daemon asks that machine's own `DiagnoseHost` over the relay (or
+   * the mesh, or its direct address). Only for a call made on this machine
+   * itself; a host's cua-spacesd clears it on calls it forwards. Empty:
+   * this machine.
+   *
+   * @generated from field: string machine = 1;
+   */
+  machine: string;
+};
+
+/**
+ * Describes the message cua.env.v1.DiagnoseHostRequest.
+ * Use `create(DiagnoseHostRequestSchema)` to create a new message.
+ */
+export const DiagnoseHostRequestSchema: GenMessage<DiagnoseHostRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 0);
+
+/**
+ * Response for `HostSpacesService.DiagnoseHost`.
+ *
+ * @generated from message cua.env.v1.DiagnoseHostResponse
+ */
+export type DiagnoseHostResponse = Message<"cua.env.v1.DiagnoseHostResponse"> & {
+  /**
+   * The checks (ids `machine.*`), in the report schema `cua doctor` uses.
+   *
+   * @generated from field: cua.env.v1.DiagnoseReport report = 1;
+   */
+  report?: DiagnoseReport | undefined;
+
+  /**
+   * The Cua version of the daemon that ran them.
+   *
+   * @generated from field: string cua_version = 2;
+   */
+  cuaVersion: string;
+
+  /**
+   * The machine's operating system (`macos`, `linux`, `windows`).
+   *
+   * @generated from field: string os = 3;
+   */
+  os: string;
+};
+
+/**
+ * Describes the message cua.env.v1.DiagnoseHostResponse.
+ * Use `create(DiagnoseHostResponseSchema)` to create a new message.
+ */
+export const DiagnoseHostResponseSchema: GenMessage<DiagnoseHostResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 1);
 
 /**
  * The host's two independent settings and its limits.
@@ -56,7 +124,7 @@ export type HostSpacesSettings = Message<"cua.env.v1.HostSpacesSettings"> & {
  * Use `create(HostSpacesSettingsSchema)` to create a new message.
  */
 export const HostSpacesSettingsSchema: GenMessage<HostSpacesSettings> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 0);
+  messageDesc(file_cua_env_v1_host, 2);
 
 /**
  * How much of one limit is in use.
@@ -100,7 +168,7 @@ export type HostSpacesCapacity = Message<"cua.env.v1.HostSpacesCapacity"> & {
  * Use `create(HostSpacesCapacitySchema)` to create a new message.
  */
 export const HostSpacesCapacitySchema: GenMessage<HostSpacesCapacity> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 1);
+  messageDesc(file_cua_env_v1_host, 3);
 
 /**
  * A Space this host provides.
@@ -189,6 +257,31 @@ export type HostSpace = Message<"cua.env.v1.HostSpace"> & {
    * @generated from field: string direct_token = 11;
    */
   directToken: string;
+
+  /**
+   * Where its egress policy is enforced: "host"; empty without one.
+   *
+   * @generated from field: string egress_enforced = 20;
+   */
+  egressEnforced: string;
+
+  /**
+   * The guest network the host applied, set only in the `CreateHostSpace`
+   * response: `none`, or empty for the default. A host older than
+   * `CreateHostSpaceRequest.network` leaves it empty.
+   *
+   * @generated from field: string network = 21;
+   */
+  network: string;
+
+  /**
+   * What the Space takes on the host's disk, set only when
+   * `GetHostSpacesRequest.disk` asked for it and the host could measure
+   * it. A host that predates it leaves it unset.
+   *
+   * @generated from field: cua.env.v1.HostSpaceDisk disk = 22;
+   */
+  disk?: HostSpaceDisk | undefined;
 };
 
 /**
@@ -196,56 +289,44 @@ export type HostSpace = Message<"cua.env.v1.HostSpace"> & {
  * Use `create(HostSpaceSchema)` to create a new message.
  */
 export const HostSpaceSchema: GenMessage<HostSpace> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 2);
+  messageDesc(file_cua_env_v1_host, 4);
 
 /**
- * One line of the host's Spaces audit log.
+ * What a Space takes on its host's disk (numbers only), as the host's
+ * resource sampler measured it: at most a few minutes old.
  *
- * @generated from message cua.env.v1.HostSpacesAuditEvent
+ * @generated from message cua.env.v1.HostSpaceDisk
  */
-export type HostSpacesAuditEvent = Message<"cua.env.v1.HostSpacesAuditEvent"> & {
+export type HostSpaceDisk = Message<"cua.env.v1.HostSpaceDisk"> & {
   /**
-   * Unix milliseconds.
+   * Bytes only this Space holds: what deleting it frees. Unset when they
+   * could not be measured.
    *
-   * @generated from field: int64 ts_ms = 1;
+   * @generated from field: optional uint64 bytes = 1;
    */
-  tsMs: bigint;
+  bytes?: bigint | undefined;
 
   /**
-   * `create`, `delete`, `refused`, or `config`.
+   * Blocks its files occupy, clones counted in full: an upper bound.
    *
-   * @generated from field: string action = 2;
+   * @generated from field: uint64 allocated = 2;
    */
-  action: string;
+  allocated: bigint;
 
   /**
-   * Who: an account (`name <email> (id)`), or `local` for this machine.
+   * Part of it is shared with other copies.
    *
-   * @generated from field: string who = 3;
+   * @generated from field: bool shares_space = 3;
    */
-  who: string;
-
-  /**
-   * The relay machine or Space the event is about.
-   *
-   * @generated from field: string space = 4;
-   */
-  space: string;
-
-  /**
-   * Detail for people.
-   *
-   * @generated from field: string detail = 5;
-   */
-  detail: string;
+  sharesSpace: boolean;
 };
 
 /**
- * Describes the message cua.env.v1.HostSpacesAuditEvent.
- * Use `create(HostSpacesAuditEventSchema)` to create a new message.
+ * Describes the message cua.env.v1.HostSpaceDisk.
+ * Use `create(HostSpaceDiskSchema)` to create a new message.
  */
-export const HostSpacesAuditEventSchema: GenMessage<HostSpacesAuditEvent> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 3);
+export const HostSpaceDiskSchema: GenMessage<HostSpaceDisk> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 5);
 
 /**
  * Request for `HostSpacesService.GetHostSpaces`.
@@ -253,6 +334,15 @@ export const HostSpacesAuditEventSchema: GenMessage<HostSpacesAuditEvent> = /*@_
  * @generated from message cua.env.v1.GetHostSpacesRequest
  */
 export type GetHostSpacesRequest = Message<"cua.env.v1.GetHostSpacesRequest"> & {
+  /**
+   * Also say what each listed Space takes on this host's disk
+   * (`HostSpace.disk`). The host measures each Space at most every few
+   * minutes and answers from that, so asking costs it little; another of
+   * your devices asks while a window shows the sizes.
+   *
+   * @generated from field: bool disk = 1;
+   */
+  disk: boolean;
 };
 
 /**
@@ -260,7 +350,7 @@ export type GetHostSpacesRequest = Message<"cua.env.v1.GetHostSpacesRequest"> & 
  * Use `create(GetHostSpacesRequestSchema)` to create a new message.
  */
 export const GetHostSpacesRequestSchema: GenMessage<GetHostSpacesRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 4);
+  messageDesc(file_cua_env_v1_host, 6);
 
 /**
  * Response for `HostSpacesService.GetHostSpaces`.
@@ -318,6 +408,25 @@ export type GetHostSpacesResponse = Message<"cua.env.v1.GetHostSpacesResponse"> 
    * @generated from field: repeated string images = 7;
    */
   images: string[];
+
+  /**
+   * The creates this host is running now (`CreateHostSpace` calls that
+   * have not returned), each with what it is doing: every one for the
+   * owner, the caller's own otherwise. A client polls this while its
+   * create runs, to show the download and the boot. Empty from a host
+   * that predates it.
+   *
+   * @generated from field: repeated cua.env.v1.HostSpaceCreating creating = 8;
+   */
+  creating: HostSpaceCreating[];
+
+  /**
+   * What a scheduler needs to place work here: capacity, what runs, the
+   * host's epoch and clock. Unset from hosts that predate it.
+   *
+   * @generated from field: cua.env.v1.HostNodeStatus node = 9;
+   */
+  node?: HostNodeStatus | undefined;
 };
 
 /**
@@ -325,7 +434,7 @@ export type GetHostSpacesResponse = Message<"cua.env.v1.GetHostSpacesResponse"> 
  * Use `create(GetHostSpacesResponseSchema)` to create a new message.
  */
 export const GetHostSpacesResponseSchema: GenMessage<GetHostSpacesResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 5);
+  messageDesc(file_cua_env_v1_host, 7);
 
 /**
  * Request for `HostSpacesService.CreateHostSpace`.
@@ -402,6 +511,66 @@ export type CreateHostSpaceRequest = Message<"cua.env.v1.CreateHostSpaceRequest"
    * @generated from field: bool direct = 9;
    */
   direct: boolean;
+
+  /**
+   * A key of the caller's for this create, under which
+   * `GetHostSpacesResponse.creating` lists its progress (a direct create
+   * has no relay machine to name it). Empty: `attach.machine_id`.
+   *
+   * @generated from field: string create_key = 10;
+   */
+  createKey: string;
+
+  /**
+   * Guest network: `none`, or empty for the default.
+   *
+   * @generated from field: string network = 12;
+   */
+  network: string;
+
+  /**
+   * Fork this checkpoint instead of creating from `image`.
+   *
+   * @generated from field: string fork_source = 11;
+   */
+  forkSource: string;
+
+  /**
+   * No desktop (`cua.daemon.v1.CreateSpaceRequest.headless`).
+   *
+   * @generated from field: bool headless = 14;
+   */
+  headless: boolean;
+
+  /**
+   * Egress policy, enforced by the host from the guest's first
+   * instruction. A host that does not enforce it leaves
+   * `HostSpace.egress_enforced` empty.
+   *
+   * @generated from field: cua.env.v1.HostEgressPolicy egress = 19;
+   */
+  egress?: HostEgressPolicy | undefined;
+
+  /**
+   * Reached through this host's channel (no relay machine of its own).
+   *
+   * @generated from field: bool routed = 13;
+   */
+  routed: boolean;
+
+  /**
+   * Guest environment; the host's driver settings win on a clash.
+   *
+   * @generated from field: map<string, string> env = 15;
+   */
+  env: { [key: string]: string };
+
+  /**
+   * A GPU option of the host's runtime; empty: none.
+   *
+   * @generated from field: string gpu = 16;
+   */
+  gpu: string;
 };
 
 /**
@@ -409,7 +578,7 @@ export type CreateHostSpaceRequest = Message<"cua.env.v1.CreateHostSpaceRequest"
  * Use `create(CreateHostSpaceRequestSchema)` to create a new message.
  */
 export const CreateHostSpaceRequestSchema: GenMessage<CreateHostSpaceRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 6);
+  messageDesc(file_cua_env_v1_host, 8);
 
 /**
  * Response for `HostSpacesService.CreateHostSpace`.
@@ -430,7 +599,7 @@ export type CreateHostSpaceResponse = Message<"cua.env.v1.CreateHostSpaceRespons
  * Use `create(CreateHostSpaceResponseSchema)` to create a new message.
  */
 export const CreateHostSpaceResponseSchema: GenMessage<CreateHostSpaceResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 7);
+  messageDesc(file_cua_env_v1_host, 9);
 
 /**
  * Request for `HostSpacesService.DeleteHostSpace`.
@@ -451,7 +620,7 @@ export type DeleteHostSpaceRequest = Message<"cua.env.v1.DeleteHostSpaceRequest"
  * Use `create(DeleteHostSpaceRequestSchema)` to create a new message.
  */
 export const DeleteHostSpaceRequestSchema: GenMessage<DeleteHostSpaceRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 8);
+  messageDesc(file_cua_env_v1_host, 10);
 
 /**
  * Response for `HostSpacesService.DeleteHostSpace`.
@@ -472,7 +641,7 @@ export type DeleteHostSpaceResponse = Message<"cua.env.v1.DeleteHostSpaceRespons
  * Use `create(DeleteHostSpaceResponseSchema)` to create a new message.
  */
 export const DeleteHostSpaceResponseSchema: GenMessage<DeleteHostSpaceResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 9);
+  messageDesc(file_cua_env_v1_host, 11);
 
 /**
  * Request for `HostSpacesService.DeleteCloudSpace`.
@@ -493,7 +662,7 @@ export type DeleteCloudSpaceRequest = Message<"cua.env.v1.DeleteCloudSpaceReques
  * Use `create(DeleteCloudSpaceRequestSchema)` to create a new message.
  */
 export const DeleteCloudSpaceRequestSchema: GenMessage<DeleteCloudSpaceRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 10);
+  messageDesc(file_cua_env_v1_host, 12);
 
 /**
  * Response for `HostSpacesService.DeleteCloudSpace`.
@@ -514,7 +683,7 @@ export type DeleteCloudSpaceResponse = Message<"cua.env.v1.DeleteCloudSpaceRespo
  * Use `create(DeleteCloudSpaceResponseSchema)` to create a new message.
  */
 export const DeleteCloudSpaceResponseSchema: GenMessage<DeleteCloudSpaceResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 11);
+  messageDesc(file_cua_env_v1_host, 13);
 
 /**
  * Request for `HostSpacesService.CancelHostSpace`.
@@ -535,7 +704,7 @@ export type CancelHostSpaceRequest = Message<"cua.env.v1.CancelHostSpaceRequest"
  * Use `create(CancelHostSpaceRequestSchema)` to create a new message.
  */
 export const CancelHostSpaceRequestSchema: GenMessage<CancelHostSpaceRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 12);
+  messageDesc(file_cua_env_v1_host, 14);
 
 /**
  * Response for `HostSpacesService.CancelHostSpace`.
@@ -556,7 +725,7 @@ export type CancelHostSpaceResponse = Message<"cua.env.v1.CancelHostSpaceRespons
  * Use `create(CancelHostSpaceResponseSchema)` to create a new message.
  */
 export const CancelHostSpaceResponseSchema: GenMessage<CancelHostSpaceResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 13);
+  messageDesc(file_cua_env_v1_host, 15);
 
 /**
  * Request for `HostSpacesService.SetHostSpacePower`.
@@ -584,7 +753,7 @@ export type SetHostSpacePowerRequest = Message<"cua.env.v1.SetHostSpacePowerRequ
  * Use `create(SetHostSpacePowerRequestSchema)` to create a new message.
  */
 export const SetHostSpacePowerRequestSchema: GenMessage<SetHostSpacePowerRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 14);
+  messageDesc(file_cua_env_v1_host, 16);
 
 /**
  * Response for `HostSpacesService.SetHostSpacePower`.
@@ -619,11 +788,958 @@ export type SetHostSpacePowerResponse = Message<"cua.env.v1.SetHostSpacePowerRes
  * Use `create(SetHostSpacePowerResponseSchema)` to create a new message.
  */
 export const SetHostSpacePowerResponseSchema: GenMessage<SetHostSpacePowerResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 15);
+  messageDesc(file_cua_env_v1_host, 17);
+
+/**
+ * What a job runs.
+ *
+ * @generated from message cua.env.v1.HostJobSpec
+ */
+export type HostJobSpec = Message<"cua.env.v1.HostJobSpec"> & {
+  /**
+   * Unique id, chosen by the scheduler (the idempotency key on the host).
+   *
+   * @generated from field: string job_id = 1;
+   */
+  jobId: string;
+
+  /**
+   * Delivery attempt, from 1. A higher attempt fences lower ones.
+   *
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+
+  /**
+   * Image of the job's Space (a reference or an alias); empty: the
+   * canonical Linux image.
+   *
+   * @generated from field: string image = 3;
+   */
+  image: string;
+
+  /**
+   * "auto" (empty: the host picks: its own Space when it is dedicated, a
+   * macOS VM for a macOS image, else a container), "container", "vm",
+   * "microvm", or "machine" (a dedicated host's own Space, on hosts that
+   * report `HostNodeStatus.dedicated`). "process" is refused.
+   *
+   * @generated from field: string kind = 4;
+   */
+  kind: string;
+
+  /**
+   * "auto" (empty) or a runtime this host offers.
+   *
+   * @generated from field: string runtime = 5;
+   */
+  runtime: string;
+
+  /**
+   * CPU reserved for the job, in thousandths (0: 1000).
+   *
+   * @generated from field: uint32 millicpus = 6;
+   */
+  millicpus: number;
+
+  /**
+   * Memory reserved, in MiB (0: 1024).
+   *
+   * @generated from field: uint64 memory_mb = 7;
+   */
+  memoryMb: bigint;
+
+  /**
+   * The command, run without a shell (`["sh", "-c", "..."]` for one).
+   *
+   * @generated from field: repeated string argv = 8;
+   */
+  argv: string[];
+
+  /**
+   * Its environment.
+   *
+   * @generated from field: map<string, string> env = 9;
+   */
+  env: { [key: string]: string };
+
+  /**
+   * Seconds the command may run (0: 600). The Space is deleted either way.
+   *
+   * @generated from field: uint32 timeout_secs = 10;
+   */
+  timeoutSecs: number;
+
+  /**
+   * A file in the Space to return as the job's result after the command
+   * ends (bounded by `max_output_bytes`). Empty: none.
+   *
+   * @generated from field: string result_path = 11;
+   */
+  resultPath: string;
+
+  /**
+   * Bytes of stdout, stderr and the result kept, each (the tail; 0:
+   * 65536).
+   *
+   * @generated from field: uint32 max_output_bytes = 12;
+   */
+  maxOutputBytes: number;
+
+  /**
+   * Files the job runs with: a gzip tar (at most 1 MiB) unpacked into the
+   * job's work directory (mounted into its Space; its working directory,
+   * `CUA_JOB_DIR`) before the command starts. Empty: none.
+   *
+   * @generated from field: bytes bundle = 13;
+   */
+  bundle: Uint8Array;
+
+  /**
+   * The run the job belongs to. A run keeps a data directory on each host
+   * (`CUA_JOB_DATA`, mounted into its members' Spaces) that every attempt
+   * of the run there shares (checkpoints), kept 7 days after its last
+   * attempt ended.
+   *
+   * @generated from field: string run_id = 14;
+   */
+  runId: string;
+
+  /**
+   * The accelerator asked for (`gpu`, `apple`, `nvidia`; empty: none):
+   * the job's Space gets that GPU.
+   *
+   * @generated from field: string accelerator = 15;
+   */
+  accelerator: string;
+
+  /**
+   * Host services the member reaches on its own loopback for its lifetime
+   * (for example `compat:e2b`). A host refuses a name it serves no
+   * provider for.
+   *
+   * @generated from field: repeated string services = 16;
+   */
+  services: string[];
+};
+
+/**
+ * Describes the message cua.env.v1.HostJobSpec.
+ * Use `create(HostJobSpecSchema)` to create a new message.
+ */
+export const HostJobSpecSchema: GenMessage<HostJobSpec> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 18);
+
+/**
+ * Request for `HostJobsService.RunHostJobs`.
+ *
+ * @generated from message cua.env.v1.RunHostJobsRequest
+ */
+export type RunHostJobsRequest = Message<"cua.env.v1.RunHostJobsRequest"> & {
+  /**
+   * The jobs, at most 512 per call.
+   *
+   * @generated from field: repeated cua.env.v1.HostJobSpec jobs = 1;
+   */
+  jobs: HostJobSpec[];
+
+  /**
+   * The scheduler's id, recorded with each job for people.
+   *
+   * @generated from field: string scheduler = 2;
+   */
+  scheduler: string;
+};
+
+/**
+ * Describes the message cua.env.v1.RunHostJobsRequest.
+ * Use `create(RunHostJobsRequestSchema)` to create a new message.
+ */
+export const RunHostJobsRequestSchema: GenMessage<RunHostJobsRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 19);
+
+/**
+ * What a host did with one delivered job.
+ *
+ * @generated from message cua.env.v1.HostJobAck
+ */
+export type HostJobAck = Message<"cua.env.v1.HostJobAck"> & {
+  /**
+   * The job.
+   *
+   * @generated from field: string job_id = 1;
+   */
+  jobId: string;
+
+  /**
+   * The attempt delivered.
+   *
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+
+  /**
+   * `accepted` (it runs now), `duplicate` (this attempt was delivered
+   * before: `job` is its record), `rejected` (no room or not allowed:
+   * place it elsewhere) or `stale` (a newer attempt was seen, or this one
+   * was canceled).
+   *
+   * @generated from field: string outcome = 3;
+   */
+  outcome: string;
+
+  /**
+   * Why, for `rejected` and `stale`.
+   *
+   * @generated from field: string reason = 4;
+   */
+  reason: string;
+
+  /**
+   * The job's record on this host, for `accepted` and `duplicate`.
+   *
+   * @generated from field: cua.env.v1.HostJob job = 5;
+   */
+  job?: HostJob | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.HostJobAck.
+ * Use `create(HostJobAckSchema)` to create a new message.
+ */
+export const HostJobAckSchema: GenMessage<HostJobAck> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 20);
+
+/**
+ * Response for `HostJobsService.RunHostJobs`.
+ *
+ * @generated from message cua.env.v1.RunHostJobsResponse
+ */
+export type RunHostJobsResponse = Message<"cua.env.v1.RunHostJobsResponse"> & {
+  /**
+   * One per delivered job, in order.
+   *
+   * @generated from field: repeated cua.env.v1.HostJobAck acks = 1;
+   */
+  acks: HostJobAck[];
+
+  /**
+   * The host after the batch.
+   *
+   * @generated from field: cua.env.v1.HostNodeStatus node = 2;
+   */
+  node?: HostNodeStatus | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.RunHostJobsResponse.
+ * Use `create(RunHostJobsResponseSchema)` to create a new message.
+ */
+export const RunHostJobsResponseSchema: GenMessage<RunHostJobsResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 21);
+
+/**
+ * A job's record on a host.
+ *
+ * @generated from message cua.env.v1.HostJob
+ */
+export type HostJob = Message<"cua.env.v1.HostJob"> & {
+  /**
+   * The job.
+   *
+   * @generated from field: string job_id = 1;
+   */
+  jobId: string;
+
+  /**
+   * The newest attempt the host has seen for it.
+   *
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+
+  /**
+   * `running`, `succeeded` (exit 0), `failed` (the command exited non-zero
+   * or ran out of time), `error` (the host could not run it: the Space did
+   * not start, the daemon restarted mid-job; running it again may work)
+   * or `canceled`.
+   *
+   * @generated from field: string state = 3;
+   */
+  state: string;
+
+  /**
+   * The command's exit code (`succeeded` and `failed`).
+   *
+   * @generated from field: optional int32 exit_code = 4;
+   */
+  exitCode?: number | undefined;
+
+  /**
+   * The command ran out of time.
+   *
+   * @generated from field: bool timed_out = 5;
+   */
+  timedOut: boolean;
+
+  /**
+   * The tail of its stdout.
+   *
+   * @generated from field: bytes stdout = 6;
+   */
+  stdout: Uint8Array;
+
+  /**
+   * The tail of its stderr.
+   *
+   * @generated from field: bytes stderr = 7;
+   */
+  stderr: Uint8Array;
+
+  /**
+   * The result file (`HostJobSpec.result_path`).
+   *
+   * @generated from field: bytes result = 8;
+   */
+  result: Uint8Array;
+
+  /**
+   * What went wrong, for `error`, `canceled` and a missing result file.
+   *
+   * @generated from field: string error = 9;
+   */
+  error: string;
+
+  /**
+   * Ledger sequence number of this change.
+   *
+   * @generated from field: uint64 seq = 10;
+   */
+  seq: bigint;
+
+  /**
+   * The Space it ran in (`local:<name>`).
+   *
+   * @generated from field: string space = 11;
+   */
+  space: string;
+
+  /**
+   * When the host accepted it (Unix milliseconds, host clock).
+   *
+   * @generated from field: int64 accepted_at_ms = 12;
+   */
+  acceptedAtMs: bigint;
+
+  /**
+   * When it ended (0 while running).
+   *
+   * @generated from field: int64 finished_at_ms = 13;
+   */
+  finishedAtMs: bigint;
+
+  /**
+   * Milliseconds to create its Space.
+   *
+   * @generated from field: uint32 create_ms = 14;
+   */
+  createMs: number;
+
+  /**
+   * Milliseconds the command ran.
+   *
+   * @generated from field: uint32 run_ms = 15;
+   */
+  runMs: number;
+
+  /**
+   * Milliseconds to delete its Space.
+   *
+   * @generated from field: uint32 delete_ms = 16;
+   */
+  deleteMs: number;
+
+  /**
+   * stdout, stderr or the result were cut to their tail.
+   *
+   * @generated from field: bool truncated = 17;
+   */
+  truncated: boolean;
+};
+
+/**
+ * Describes the message cua.env.v1.HostJob.
+ * Use `create(HostJobSchema)` to create a new message.
+ */
+export const HostJobSchema: GenMessage<HostJob> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 22);
+
+/**
+ * Request for `HostJobsService.GetHostJob`.
+ *
+ * @generated from message cua.env.v1.GetHostJobRequest
+ */
+export type GetHostJobRequest = Message<"cua.env.v1.GetHostJobRequest"> & {
+  /**
+   * The job.
+   *
+   * @generated from field: string job_id = 1;
+   */
+  jobId: string;
+
+  /**
+   * Also return the job's live output (its command's merged stdout and
+   * stderr, `output.log`) from this byte offset: `output_chunk` and
+   * `output_size` in the answer, while it runs and after it ended.
+   *
+   * @generated from field: optional uint64 output_from = 2;
+   */
+  outputFrom?: bigint | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.GetHostJobRequest.
+ * Use `create(GetHostJobRequestSchema)` to create a new message.
+ */
+export const GetHostJobRequestSchema: GenMessage<GetHostJobRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 23);
+
+/**
+ * Response for `HostJobsService.GetHostJob`.
+ *
+ * @generated from message cua.env.v1.GetHostJobResponse
+ */
+export type GetHostJobResponse = Message<"cua.env.v1.GetHostJobResponse"> & {
+  /**
+   * Its record (the call fails with `NOT_FOUND` when the host never saw
+   * it).
+   *
+   * @generated from field: cua.env.v1.HostJob job = 1;
+   */
+  job?: HostJob | undefined;
+
+  /**
+   * The host now.
+   *
+   * @generated from field: cua.env.v1.HostNodeStatus node = 2;
+   */
+  node?: HostNodeStatus | undefined;
+
+  /**
+   * With `output_from`: the job's output from that offset, at most 256
+   * KiB (empty when there is nothing new, or for a job that keeps no
+   * output log).
+   *
+   * @generated from field: bytes output_chunk = 3;
+   */
+  outputChunk: Uint8Array;
+
+  /**
+   * With `output_from`: the size of the job's output so far (read the
+   * next chunk from `output_from + len(output_chunk)`).
+   *
+   * @generated from field: uint64 output_size = 4;
+   */
+  outputSize: bigint;
+};
+
+/**
+ * Describes the message cua.env.v1.GetHostJobResponse.
+ * Use `create(GetHostJobResponseSchema)` to create a new message.
+ */
+export const GetHostJobResponseSchema: GenMessage<GetHostJobResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 24);
+
+/**
+ * Request for `HostJobsService.ListHostJobs`.
+ *
+ * @generated from message cua.env.v1.ListHostJobsRequest
+ */
+export type ListHostJobsRequest = Message<"cua.env.v1.ListHostJobsRequest"> & {
+  /**
+   * Changes after this ledger sequence number (0: from the start).
+   *
+   * @generated from field: uint64 after_seq = 1;
+   */
+  afterSeq: bigint;
+
+  /**
+   * At most this many (0: 1000).
+   *
+   * @generated from field: uint32 limit = 2;
+   */
+  limit: number;
+
+  /**
+   * Hold the call up to this long while nothing changed (0: answer now;
+   * at most 30000).
+   *
+   * @generated from field: uint32 wait_ms = 3;
+   */
+  waitMs: number;
+
+  /**
+   * Leave out stdout, stderr and the result.
+   *
+   * @generated from field: bool without_output = 4;
+   */
+  withoutOutput: boolean;
+
+  /**
+   * Gang members whose start barrier the scheduler releases: every member
+   * of their attempt reported ready (`ListHostJobsResponse.progress`). The
+   * host lets each go (`CUA_BARRIER/go`); sending one again is harmless.
+   *
+   * @generated from field: repeated cua.env.v1.HostJobRef release = 5;
+   */
+  release: HostJobRef[];
+};
+
+/**
+ * Describes the message cua.env.v1.ListHostJobsRequest.
+ * Use `create(ListHostJobsRequestSchema)` to create a new message.
+ */
+export const ListHostJobsRequestSchema: GenMessage<ListHostJobsRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 25);
+
+/**
+ * One attempt of one job.
+ *
+ * @generated from message cua.env.v1.HostJobRef
+ */
+export type HostJobRef = Message<"cua.env.v1.HostJobRef"> & {
+  /**
+   * The job.
+   *
+   * @generated from field: string job_id = 1;
+   */
+  jobId: string;
+
+  /**
+   * Its attempt.
+   *
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+};
+
+/**
+ * Describes the message cua.env.v1.HostJobRef.
+ * Use `create(HostJobRefSchema)` to create a new message.
+ */
+export const HostJobRefSchema: GenMessage<HostJobRef> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 26);
+
+/**
+ * What a running job reported about itself (its start barrier and its
+ * progress: heartbeats from the cua jobs runtime, else its output).
+ *
+ * @generated from message cua.env.v1.HostJobProgress
+ */
+export type HostJobProgress = Message<"cua.env.v1.HostJobProgress"> & {
+  /**
+   * The job.
+   *
+   * @generated from field: string job_id = 1;
+   */
+  jobId: string;
+
+  /**
+   * Its attempt.
+   *
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+
+  /**
+   * It is ready to start (its environment is up) and waits at its start
+   * barrier.
+   *
+   * @generated from field: bool ready = 3;
+   */
+  ready: boolean;
+
+  /**
+   * Its start barrier was released.
+   *
+   * @generated from field: bool released = 4;
+   */
+  released: boolean;
+
+  /**
+   * When it last reported progress, by the host's clock (Unix ms; 0:
+   * never). Compare with `HostNodeStatus.host_time_ms`.
+   *
+   * @generated from field: int64 last_progress_ms = 5;
+   */
+  lastProgressMs: bigint;
+
+  /**
+   * The step it last reported (-1: none).
+   *
+   * @generated from field: int64 step = 6;
+   */
+  step: bigint;
+};
+
+/**
+ * Describes the message cua.env.v1.HostJobProgress.
+ * Use `create(HostJobProgressSchema)` to create a new message.
+ */
+export const HostJobProgressSchema: GenMessage<HostJobProgress> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 27);
+
+/**
+ * Response for `HostJobsService.ListHostJobs`.
+ *
+ * @generated from message cua.env.v1.ListHostJobsResponse
+ */
+export type ListHostJobsResponse = Message<"cua.env.v1.ListHostJobsResponse"> & {
+  /**
+   * The latest record of each job that changed, by sequence number.
+   *
+   * @generated from field: repeated cua.env.v1.HostJob jobs = 1;
+   */
+  jobs: HostJob[];
+
+  /**
+   * Pass as `after_seq` next time.
+   *
+   * @generated from field: uint64 next_seq = 2;
+   */
+  nextSeq: bigint;
+
+  /**
+   * More changes are waiting (the limit cut the answer).
+   *
+   * @generated from field: bool more = 3;
+   */
+  more: boolean;
+
+  /**
+   * The host now: the heartbeat.
+   *
+   * @generated from field: cua.env.v1.HostNodeStatus node = 4;
+   */
+  node?: HostNodeStatus | undefined;
+
+  /**
+   * Each running job's start barrier and progress (only jobs that report
+   * them).
+   *
+   * @generated from field: repeated cua.env.v1.HostJobProgress progress = 5;
+   */
+  progress: HostJobProgress[];
+};
+
+/**
+ * Describes the message cua.env.v1.ListHostJobsResponse.
+ * Use `create(ListHostJobsResponseSchema)` to create a new message.
+ */
+export const ListHostJobsResponseSchema: GenMessage<ListHostJobsResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 28);
+
+/**
+ * Request for `HostJobsService.CancelHostJob`.
+ *
+ * @generated from message cua.env.v1.CancelHostJobRequest
+ */
+export type CancelHostJobRequest = Message<"cua.env.v1.CancelHostJobRequest"> & {
+  /**
+   * The job.
+   *
+   * @generated from field: string job_id = 1;
+   */
+  jobId: string;
+
+  /**
+   * Cancel this attempt and every lower one (0: whatever runs).
+   *
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+
+  /**
+   * Why, for the record.
+   *
+   * @generated from field: string reason = 3;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message cua.env.v1.CancelHostJobRequest.
+ * Use `create(CancelHostJobRequestSchema)` to create a new message.
+ */
+export const CancelHostJobRequestSchema: GenMessage<CancelHostJobRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 29);
+
+/**
+ * Response for `HostJobsService.CancelHostJob`.
+ *
+ * @generated from message cua.env.v1.CancelHostJobResponse
+ */
+export type CancelHostJobResponse = Message<"cua.env.v1.CancelHostJobResponse"> & {
+  /**
+   * The job's record after the cancel.
+   *
+   * @generated from field: cua.env.v1.HostJob job = 1;
+   */
+  job?: HostJob | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.CancelHostJobResponse.
+ * Use `create(CancelHostJobResponseSchema)` to create a new message.
+ */
+export const CancelHostJobResponseSchema: GenMessage<CancelHostJobResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 30);
+
+/**
+ * One line of the host's Spaces audit log.
+ *
+ * @generated from message cua.env.v1.HostSpacesAuditEvent
+ */
+export type HostSpacesAuditEvent = Message<"cua.env.v1.HostSpacesAuditEvent"> & {
+  /**
+   * Unix milliseconds.
+   *
+   * @generated from field: int64 ts_ms = 1;
+   */
+  tsMs: bigint;
+
+  /**
+   * `create`, `delete`, `refused`, or `config`.
+   *
+   * @generated from field: string action = 2;
+   */
+  action: string;
+
+  /**
+   * Who: an account (`name <email> (id)`), or `local` for this machine.
+   *
+   * @generated from field: string who = 3;
+   */
+  who: string;
+
+  /**
+   * The relay machine or Space the event is about.
+   *
+   * @generated from field: string space = 4;
+   */
+  space: string;
+
+  /**
+   * Detail for people.
+   *
+   * @generated from field: string detail = 5;
+   */
+  detail: string;
+};
+
+/**
+ * Describes the message cua.env.v1.HostSpacesAuditEvent.
+ * Use `create(HostSpacesAuditEventSchema)` to create a new message.
+ */
+export const HostSpacesAuditEventSchema: GenMessage<HostSpacesAuditEvent> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 31);
+
+/**
+ * A create a host is running, and what it is doing now. The progress
+ * fields are those of `cua.daemon.v1.CreateSpaceProgress`.
+ *
+ * @generated from message cua.env.v1.HostSpaceCreating
+ */
+export type HostSpaceCreating = Message<"cua.env.v1.HostSpaceCreating"> & {
+  /**
+   * The create's key: `CreateHostSpaceRequest.create_key`, else the relay
+   * machine it attaches to (`attach.machine_id`).
+   *
+   * @generated from field: string key = 1;
+   */
+  key: string;
+
+  /**
+   * "preparing", "pulling", "creating", "booting", "waiting_for_services",
+   * "connecting" or "ready", in that order.
+   *
+   * @generated from field: string phase = 2;
+   */
+  phase: string;
+
+  /**
+   * How far through the phase, 0.0 to 1.0, when its size is known (an
+   * image pull).
+   *
+   * @generated from field: optional double fraction = 3;
+   */
+  fraction?: number | undefined;
+
+  /**
+   * One short line, for example the image being pulled.
+   *
+   * @generated from field: string detail = 4;
+   */
+  detail: string;
+
+  /**
+   * Bytes downloaded so far, when the step counts them (an image pull).
+   *
+   * @generated from field: optional uint64 bytes_done = 5;
+   */
+  bytesDone?: bigint | undefined;
+
+  /**
+   * Bytes the download has in all.
+   *
+   * @generated from field: optional uint64 bytes_total = 6;
+   */
+  bytesTotal?: bigint | undefined;
+
+  /**
+   * Smoothed download rate, bytes per second.
+   *
+   * @generated from field: optional double bytes_per_second = 7;
+   */
+  bytesPerSecond?: number | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.HostSpaceCreating.
+ * Use `create(HostSpaceCreatingSchema)` to create a new message.
+ */
+export const HostSpaceCreatingSchema: GenMessage<HostSpaceCreating> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 32);
+
+/**
+ * Request for `HostThreadService.CallThreadTool`.
+ *
+ * @generated from message cua.env.v1.CallThreadToolRequest
+ */
+export type CallThreadToolRequest = Message<"cua.env.v1.CallThreadToolRequest"> & {
+  /**
+   * The Space: `relay:<machine>` (or `<machine>`), as other devices know
+   * it, or its id on the host (`local:<name>`).
+   *
+   * @generated from field: string space = 1;
+   */
+  space: string;
+
+  /**
+   * The tool's name (a former name works too).
+   *
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * The tool's arguments as a JSON object; its `space` is replaced by the
+   * host's id of `space`.
+   *
+   * @generated from field: string arguments_json = 3;
+   */
+  argumentsJson: string;
+};
+
+/**
+ * Describes the message cua.env.v1.CallThreadToolRequest.
+ * Use `create(CallThreadToolRequestSchema)` to create a new message.
+ */
+export const CallThreadToolRequestSchema: GenMessage<CallThreadToolRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 33);
+
+/**
+ * Response for `HostThreadService.CallThreadTool`.
+ *
+ * @generated from message cua.env.v1.CallThreadToolResponse
+ */
+export type CallThreadToolResponse = Message<"cua.env.v1.CallThreadToolResponse"> & {
+  /**
+   * MCP content parts, as a JSON array.
+   *
+   * @generated from field: string content_json = 1;
+   */
+  contentJson: string;
+
+  /**
+   * MCP structured content as JSON (empty: none).
+   *
+   * @generated from field: string structured_json = 2;
+   */
+  structuredJson: string;
+
+  /**
+   * The tool failed (a refusal, a bad argument): the content says why.
+   *
+   * @generated from field: bool is_error = 3;
+   */
+  isError: boolean;
+
+  /**
+   * MCP `_meta` as JSON (empty: none).
+   *
+   * @generated from field: string meta_json = 4;
+   */
+  metaJson: string;
+};
+
+/**
+ * Describes the message cua.env.v1.CallThreadToolResponse.
+ * Use `create(CallThreadToolResponseSchema)` to create a new message.
+ */
+export const CallThreadToolResponseSchema: GenMessage<CallThreadToolResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 34);
+
+/**
+ * What a person was looking at in a Space as they posted to its thread: the
+ * Space's desktop, or one of its windows. `thread_post` takes it as `view`,
+ * and every entry and task that has one returns it (`thread_read`,
+ * `thread_inbox`), as JSON with these field names (`CallThreadTool`'s
+ * `arguments_json` and `structured_json`). Typed clients read it as this
+ * message; the daemon's `thread::ViewContext` is held to it by a test.
+ *
+ * @generated from message cua.env.v1.ThreadView
+ */
+export type ThreadView = Message<"cua.env.v1.ThreadView"> & {
+  /**
+   * `desktop` or `window`.
+   *
+   * @generated from field: string kind = 1;
+   */
+  kind: string;
+
+  /**
+   * The window's app ("Firefox"); empty for the desktop.
+   *
+   * @generated from field: string app = 2;
+   */
+  app: string;
+
+  /**
+   * The window's title ("Pull requests"), at most 256 characters.
+   *
+   * @generated from field: string title = 3;
+   */
+  title: string;
+
+  /**
+   * The window's id in the Space, as `computer_window_list` gives it.
+   *
+   * @generated from field: string window_id = 4;
+   */
+  windowId: string;
+};
+
+/**
+ * Describes the message cua.env.v1.ThreadView.
+ * Use `create(ThreadViewSchema)` to create a new message.
+ */
+export const ThreadViewSchema: GenMessage<ThreadView> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 35);
 
 /**
  * Spaces a host provides: a machine set up with `cua host setup
- * --provide-spaces` creates Spaces (macOS VMs with Lume on a Mac, Linux
+ * --share both` creates Spaces (macOS VMs with Lume on a Mac, Linux
  * containers with Docker, whatever else runs locally) for the owner's
  * enrolled devices and the accounts it is shared with, through the relay.
  *
@@ -635,17 +1751,14 @@ export const SetHostSpacePowerResponseSchema: GenMessage<SetHostSpacePowerRespon
  * relay as its own machine, and records every create and delete in the
  * host's hash-chained audit log (`~/.cua/host/spaces-audit.jsonl`).
  *
- * Providing Spaces never exposes the host's own desktop or files: with the
- * host setting `share_desktop` off, a relayed caller reaches only this
- * service and `SystemService` `GetCapabilities` / `Health`.
+ * With `share_desktop` off, a relayed caller reaches only this service and
+ * `GetCapabilities` / `Health`, never the host's desktop or files.
  *
- * A host set up with `cua host setup --direct <ip:port> --provide-spaces`
- * serves this service on its direct listener too, without the relay: the
- * caller is the holder of the host's env token (the owner), and by default
- * only loopback, Tailscale (100.64.0.0/10, fd7a:115c:a1e0::/48) and private
- * LAN addresses may call it. A Space created with `direct` set is not
- * attached to the relay: the host forwards a TCP port on its own address
- * (`HostSpace.direct_port`) to the Space's cua-spacesd.
+ * A host set up with `cua host setup --direct <ip:port> --share both`
+ * also serves it on its direct listener, to the holder of its env token,
+ * by default only from loopback, Tailscale and private LAN addresses. A
+ * Space created with `direct` is reached on a TCP port the host forwards
+ * to it (`HostSpace.direct_port`).
  *
  * @generated from service cua.env.v1.HostSpacesService
  */
@@ -713,8 +1826,18 @@ export const HostSpacesService: GenService<{
     output: typeof SetHostSpacePowerResponseSchema;
   },
   /**
+   * Keeps Spaces of one shape ready for a prewarm (see `warm.proto`).
+   *
+   * @generated from rpc cua.env.v1.HostSpacesService.SetHostWarm
+   */
+  setHostWarm: {
+    methodKind: "unary";
+    input: typeof SetHostWarmRequestSchema;
+    output: typeof SetHostWarmResponseSchema;
+  },
+  /**
    * Deletes a Space in the owner's own cloud that this machine created (an
-   * AWS, Google Cloud or Modal sandbox, by the relay machine it joined as):
+   * AWS, Google Cloud, Hetzner or Modal sandbox, by the relay machine it joined as):
    * its cloud resources, through this machine's ownership records, and its
    * relay machine. Only the owner. Lets another of the owner's devices
    * delete it permanently without the cloud's credentials. Works whether or
@@ -727,6 +1850,138 @@ export const HostSpacesService: GenService<{
     input: typeof DeleteCloudSpaceRequestSchema;
     output: typeof DeleteCloudSpaceResponseSchema;
   },
+  /**
+   * Replaces the egress policy of a Space this host provides; the host
+   * enforces it outside the guest, at once. The owner sets any; another
+   * account only on the ones it created.
+   *
+   * @generated from rpc cua.env.v1.HostSpacesService.SetHostSpaceEgress
+   */
+  setHostSpaceEgress: {
+    methodKind: "unary";
+    input: typeof SetHostSpaceEgressRequestSchema;
+    output: typeof SetHostSpaceEgressResponseSchema;
+  },
+  /**
+   * This machine's health as a place to run Spaces, checked by its cua
+   * daemon (the process that runs them): Local Network access and the app
+   * macOS holds responsible for it, free disk, virtualization, memory, and
+   * the permissions sharing its desktop needs. Read-only and bounded (a
+   * few seconds). Only the owner. Works whether or not this machine
+   * provides Spaces. The Machines page shows the warnings and failures as
+   * the machine's issues; `cua doctor --machine` prints them.
+   *
+   * @generated from rpc cua.env.v1.HostSpacesService.DiagnoseHost
+   */
+  diagnoseHost: {
+    methodKind: "unary";
+    input: typeof DiagnoseHostRequestSchema;
+    output: typeof DiagnoseHostResponseSchema;
+  },
 }> = /*@__PURE__*/
   serviceDesc(file_cua_env_v1_host, 0);
+
+/**
+ * Jobs on a host: each runs once in a fresh Space that the host creates,
+ * runs the command in, and deletes. A host set up to provide Spaces serves
+ * this service to the same callers as `HostSpacesService` (the owner, its
+ * editors, and the env token holder of a direct host), through its
+ * cua-spacesd, which forwards each call to the host's cua daemon.
+ *
+ * The host keeps a durable ledger of the jobs it accepted, keyed by job id,
+ * so delivering a job again never runs it twice on this host, and a
+ * scheduler that restarts reads back what happened. Each job carries an
+ * attempt number that fences older deliveries: a host refuses an attempt
+ * lower than one it has seen for the job (`stale`), and a newer attempt
+ * cancels an older one still running here.
+ *
+ * @generated from service cua.env.v1.HostJobsService
+ */
+export const HostJobsService: GenService<{
+  /**
+   * Starts jobs (a batch): each is accepted (it runs now), or refused when
+   * the host has no room for it (the scheduler places it elsewhere).
+   * Idempotent per job id and attempt.
+   *
+   * @generated from rpc cua.env.v1.HostJobsService.RunHostJobs
+   */
+  runHostJobs: {
+    methodKind: "unary";
+    input: typeof RunHostJobsRequestSchema;
+    output: typeof RunHostJobsResponseSchema;
+  },
+  /**
+   * One job's record on this host.
+   *
+   * @generated from rpc cua.env.v1.HostJobsService.GetHostJob
+   */
+  getHostJob: {
+    methodKind: "unary";
+    input: typeof GetHostJobRequestSchema;
+    output: typeof GetHostJobResponseSchema;
+  },
+  /**
+   * The jobs that changed after a ledger sequence number, oldest first:
+   * a change feed. With `wait_ms` the host holds the call until something
+   * changes or the wait ends (a long poll), so a scheduler hears about
+   * completions at once; the call is also the node's heartbeat.
+   *
+   * @generated from rpc cua.env.v1.HostJobsService.ListHostJobs
+   */
+  listHostJobs: {
+    methodKind: "unary";
+    input: typeof ListHostJobsRequestSchema;
+    output: typeof ListHostJobsResponseSchema;
+  },
+  /**
+   * Stops a job (its Space is deleted) and fences the attempt: a delivery
+   * of that attempt arriving later is refused. Idempotent; a job this
+   * host never saw is recorded as canceled for that attempt.
+   *
+   * @generated from rpc cua.env.v1.HostJobsService.CancelHostJob
+   */
+  cancelHostJob: {
+    methodKind: "unary";
+    input: typeof CancelHostJobRequestSchema;
+    output: typeof CancelHostJobResponseSchema;
+  },
+}> = /*@__PURE__*/
+  serviceDesc(file_cua_env_v1_host, 1);
+
+/**
+ * A Space's thread and its agent members, for people on other devices. The
+ * thread of a Space a host provides lives in the host's cua daemon (its
+ * owner); a person the host is shared with reads it, posts to it and
+ * @mentions its agents through this service, from their own device.
+ *
+ * The host's cua-spacesd serves it while the host provides Spaces (feature
+ * `host_thread`), to relay-verified callers including view-only shares
+ * (they read only), and to the local token holder (the owner). It forwards
+ * each call to the host's cua daemon with the verified caller, which it
+ * sets itself (a caller a client sent is never forwarded). The daemon runs
+ * the tool as that caller: the thread records them as the author, and the
+ * Space's roles and each agent's rights decide what they may do. Only the
+ * thread and agent member tools are served, and only for the Spaces the
+ * host provides.
+ *
+ * @generated from service cua.env.v1.HostThreadService
+ */
+export const HostThreadService: GenService<{
+  /**
+   * Runs one thread or agent member tool (`thread_read`, `thread_post`,
+   * `thread_inbox`, `thread_claim`, `thread_reply`, `agent_members`,
+   * `agent_send`, and `agent_message`, `agent_status`, `agent_events`,
+   * `agent_interrupt`, `agent_stop` by a member's name) on a Space this
+   * host provides, as the verified caller. A tool error (a refusal
+   * included) is a result with `is_error`, as the MCP server answers it.
+   *
+   * @generated from rpc cua.env.v1.HostThreadService.CallThreadTool
+   */
+  callThreadTool: {
+    methodKind: "unary";
+    input: typeof CallThreadToolRequestSchema;
+    output: typeof CallThreadToolResponseSchema;
+  },
+}> = /*@__PURE__*/
+  serviceDesc(file_cua_env_v1_host, 2);
 

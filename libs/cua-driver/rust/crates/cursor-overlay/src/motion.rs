@@ -1,5 +1,15 @@
 //! Motion / timing configuration.
-//! Derived from trope-cua (MIT); see THIRD_PARTY_NOTICES.md.
+//!
+//! Lineage:
+//! - The arc knobs (`start_handle`, `end_handle`, `arc_size`, `arc_flow`,
+//!   `spring`), their defaults and clamp ranges, and the glide speed constants
+//!   originate in Cua Driver's Swift `CursorMotionPath.swift` (April 2026,
+//!   #1359). The Dubins glide they feed is from Cua Driver's Swift
+//!   `AgentCursorRenderer.swift` (#1360).
+//! - The `press_duration_ms` knob, the 80 ms `dwell_after_click_ms` default
+//!   and the `with_overrides` method shape follow trope-cua's C#
+//!   `AgentCursorMotion.cs` (MIT); see THIRD_PARTY_NOTICES.md.
+//! - The motion styles, timing modes and effects are Cua's own.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -166,7 +176,8 @@ impl MotionConfig {
             Some(Value::String(name)) => {
                 out.timing = MotionTiming::parse(name).ok_or_else(|| {
                     format!(
-                        "unknown cursor motion timing `{name}`; expected native, fitts or fixed"
+                        "unknown cursor motion timing `{name}`; expected one of {}",
+                        MotionTiming::names()
                     )
                 })?;
             }
@@ -176,13 +187,8 @@ impl MotionConfig {
             None | Some(Value::Null) => {}
             Some(Value::Object(map)) => {
                 for (key, value) in map {
-                    let flag = match value {
-                        Value::Null => None,
-                        Value::Bool(flag) => Some(*flag),
-                        other => {
-                            return Err(format!("effects.{key} must be a boolean, got {other}"))
-                        }
-                    };
+                    let flag =
+                        crate::motion_defaults::effect_flag(&format!("effects.{key}"), value)?;
                     match key.as_str() {
                         "trail" => out.effects.trail = flag,
                         "glow" => out.effects.glow = flag,

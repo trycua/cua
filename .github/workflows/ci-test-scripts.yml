@@ -6,7 +6,7 @@ on:
       - ".github/scripts/**"
       - ".github/workflows/**"
       - ".github/actions/**"
-      - "TESTING.md"
+      - "docs/contributing/TESTING.md"
       - "libs/cua-driver/rust/README.md"
       - "libs/cua-driver/rust/**/Cargo.toml"
       - "libs/cua-driver/rust/crates/*/tests/**"
@@ -36,8 +36,8 @@ on:
       - "libs/python/cua-sandbox/cua_sandbox/__init__.py"
       - "apps/cua-spaces-macos/VERSION"
       - "apps/cua-spaces-macos/Support/Info.plist"
+      - "apps/cua-spaces-desktop/package.json"
       - ".github/workflows/ci-test-scripts.yml"
-      - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/workflows/ci-contributor-attribution.yml"
       - ".github/workflows/e2e-rust-macos.yml"
       - ".github/workflows/e2e-rust-linux.yml"
@@ -56,6 +56,7 @@ on:
       - "libs/cua-driver/tests/manual-e2e-allowlist.txt"
       - "libs/cua-driver/rust/crates/cua-driver/tests/**"
       - "libs/cua-driver/rust/crates/cua-driver-e2e/tests/**"
+      - "scripts/install/install.ps1"
       - "scripts/ci/**"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"
@@ -65,7 +66,7 @@ on:
       - ".github/release-notes/**"
       - ".github/release-state/**"
       - "AGENTS.md"
-      - "CONTRIBUTING.md"
+      - ".github/CONTRIBUTING.md"
       - "docs/content/docs/reference/cua-driver/**"
       - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/rust/Cargo.lock"
@@ -189,6 +190,8 @@ jobs:
             node .github/scripts/tests/release_please_perception_preview.cjs
           NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
             node .github/scripts/tests/release_please_spaces_preview.cjs
+          NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
+            node .github/scripts/tests/release_please_enrolled_preview.cjs
 
       - name: Validate historical release backfill
         run: python3 .github/scripts/release_backfill.py validate

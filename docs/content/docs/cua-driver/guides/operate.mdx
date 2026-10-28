@@ -1,9 +1,14 @@
 ---
-title: Keep Cua Driver running and updated
-description: Keep the Cua Driver daemon running, update it, choose a release channel, personalize the agent cursor, and control telemetry.
+title: Operate Cua Driver
+description: Keep the Cua Driver daemon running, update it, choose a release channel, personalize the agent cursor, record what an agent did, and control telemetry.
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+How to run Cua Driver day to day: keep the daemon up, update it, change how
+the agent cursor looks and moves, record what an agent did, and decide what
+telemetry it sends.
 
 ## Keep it running
 
@@ -149,6 +154,22 @@ A bad configuration fails startup instead of falling back to `standard`. A
 user policy file works the same way: set `CUA_DRIVER_POLICY_FILE` in the
 plist's `EnvironmentVariables`, the unit, or the User environment.
 
+### Allow a brief foreground step (macOS)
+
+Some actions can't finish in the background. Today that means a drag that
+starts a macOS drag-and-drop session in a native window, such as reordering a
+list, because macOS follows the real pointer for those. By default the driver
+refuses them with `background_unavailable`.
+
+To let the driver finish them, set `CUA_DRIVER_ALLOW_BRIEF_FOREGROUND=1` in
+the daemon's environment (the plist's `EnvironmentVariables`). Then only that
+one step runs in the foreground: the window comes forward and the pointer moves
+for the drag, and afterwards the previous frontmost app and the pointer go
+back. The result carries a `foreground_step` object that says whether both were
+restored, and the daemon log records the step. A call that passes
+`delivery_mode: "background"` explicitly is never escalated. Leave the
+variable unset on a Mac someone is using.
+
 ## Update
 
 ```bash test="cli-shape" id="cua-driver-check-update"
@@ -158,7 +179,7 @@ cua-driver update --apply
 
 `check-update` only checks (`--json` for scripts, `--no-cache` to skip the
 1-hour cache); `update --apply` runs the canonical installer. Then restart the
-daemon with your usual start command (`open -n -g -a CuaDriver --args serve`,
+daemon with your usual start command (`cua-driver permissions grant`,
 `cua-driver autostart kick`, or `cua-driver serve`), keeping any mode flags. The
 same check is the `check_for_update` MCP tool.
 
@@ -185,6 +206,49 @@ If pacman owns the executable, update with `sudo pacman -Syu`; Driver's own
 update and channel commands refuse with pacman guidance (builds with
 [#3636](https://github.com/trycua/cua/pull/3636)).
 
+### Before updating to 0.35
+
+0.35 changes three things that scripts and wrappers may depend on. The typed
+Rust, Python and TypeScript SDKs keep the full `get_window_state` response, so
+they are only affected by item 3.
+
+1. **`get_window_state` is lean by default**
+   ([#4743](https://github.com/trycua/cua/pull/4743)). A read returns only the
+   compact `tree_markdown`, walks at most 250 nodes, and leaves out `_note` and
+   `background_input`. If you read `structuredContent.elements`, pass
+   `tree_format: "elements"` (or `"both"` if you also read `tree_markdown`).
+   Pass `verbose: true` for `_note` and `background_input`, and `max_elements`
+   for a larger walk. `full_output: true` returns the 0.34 response unchanged.
+   A row `[N]` of a read whose `snapshot_id` is `s0000002a` has the
+   `element_token` `s0000002a:N`.
+2. **macOS reads collapse closed menus**
+   ([#4892](https://github.com/trycua/cua/pull/4892)). A default read lists
+   only the menu bar's titles, in `tree_markdown` and in `elements`. Run a menu
+   item with `invoke_menu` and its path, or find it with `query`;
+   `full_output: true` still walks every menu. The walk diagnostics
+   `nodes_visited`, `nodes_pending`, `walk_elapsed_ms` and
+   `screenshot_refreshed_snapshot` need `verbose: true`.
+3. **macOS `type_text` sends `\n`, `\r` and `\t` as Return and Tab**
+   ([#4821](https://github.com/trycua/cua/pull/4821)) when it types keys
+   (Chromium and Electron fields, `delivery_mode: "foreground"`, pixel
+   targets). Text with a line break now submits a form or an address bar, and
+   a tab moves focus. Remove them from text that should not submit, or write
+   the value with `set_value` where the field supports it.
+
+Scripts that read raw `list_apps` JSON on macOS should also treat
+`bundle_id`, `launch_path`, `kind` and `last_used` as optional: since
+[#4916](https://github.com/trycua/cua/pull/4916) they are omitted when unknown
+instead of `null`, and the always-empty `windows: []` is gone. The typed SDKs
+already treat them as optional. For an app's windows, call
+`list_windows({app: "Name"})`.
+
+`tools/list` also grows by one: `run_script` (sandboxed JavaScript that drives
+the driver's own tools in one call) is on by default. Client allowlists and
+tool-count checks need the new name. Turn it off with
+`CUA_DRIVER_DISABLE_RUN_SCRIPT=1` or `"disable_run_script": true` in
+`~/.cua-driver/config.json`; the old opt-in `CUA_DRIVER_EXPERIMENTAL_SCRIPT=1`
+is no longer needed and is ignored.
+
 ### Before updating to token-only element targeting
 
 Releases that include [#3873](https://github.com/trycua/cua/pull/3873) address
@@ -193,7 +257,8 @@ wrappers that act on elements before you update:
 
 1. Pass `element_token` instead of `element_index` or `snapshot_id`. Read it
    from `structuredContent.elements[].element_token` in the latest
-   `get_window_state` result and send it with the window's `pid`. The token
+   `get_window_state` result (from 0.35, pass `tree_format: "elements"` to
+   get that array) and send it with the window's `pid`. The token
    names its window, so `window_id` is optional; a different `window_id` is
    refused with `conflicting_element_target`. `get_window_state` still returns
    `element_index` and `snapshot_id` for display and correlation.
@@ -265,12 +330,20 @@ to another release.
 ## Personalize the cursor
 
 The agent's cursor is an overlay, not the real pointer: a session-colored
-pointer (`cua.default`, the only built-in theme) with a badge showing the
-session name, delivery (`background` or `foreground`), and target (`ax`,
-`pixel`, `browser`, or `desktop`). It is a visual aid, not an authorization
-signal.
+pointer (`cua.default`, the only built-in theme). Its color tells agents apart.
+It is a visual aid, not an authorization signal.
 
-![All session badge combinations for background and foreground delivery across accessibility, pixel, browser, and desktop targets](https://github.com/user-attachments/assets/071dbfd0-b0d4-442f-9654-994c84db3029)
+By default the cursor carries no badge. A small chip appears for about a second
+when the agent brings something to the foreground or presses a key combo such
+as ⌘C. The session name appears when you hover over the cursor, or while two or
+more agent cursors are on screen. Nothing is shown while the cursor moves.
+
+The `cursor.badges` setting changes this for every cursor at once:
+`minimal` (the default), `verbose` (the session name on reveal, plus delivery
+and target chips on every action), or `off`. For example,
+`cua-driver config set cursor.badges verbose` restores the earlier badge:
+
+![Verbose badge combinations for background and foreground delivery across accessibility, pixel, browser, and desktop targets](https://github.com/user-attachments/assets/071dbfd0-b0d4-442f-9654-994c84db3029)
 
 ```bash test="cli-shape" id="cua-driver"
 cua-driver start_session '{"session":"research"}'
@@ -348,6 +421,133 @@ short straight glide with no effects, whatever you chose.
 
 Cua Driver has no settings window, so there is no cursor picker in the app. Use
 `cua-driver config set` or `start_session`.
+
+## Record a trajectory
+
+A recording saves every action with its arguments and before-and-after
+screenshots, plus an optional display video. Rendering needs `ffmpeg` on every
+platform; capture also needs it on Windows and Linux (macOS 15+ uses
+ScreenCaptureKit).
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/9eafceca-1738-4e34-949a-2fb0dbe1832e"
+  poster="https://github.com/user-attachments/assets/d896dd2f-3f0a-4978-93a3-c9a5c562c3e8"
+  title="Turn an agent trajectory into a zoom-on-click demo"
+  sourceUrl="https://x.com/trycua/status/2047383207612645426"
+>
+  The agent clicks cells in a numbered grid, then Cua Driver renders the recorded actions.
+</VideoDemo>
+
+Have your agent call `start_recording` before the task:
+
+```json test="config" id="json-config"
+{
+  "output_dir": "~/cua-trajectories/calendar-demo",
+  "record_video": true
+}
+```
+
+Actions such as `click`, `type_text`, `press_key`, and `scroll` are added
+automatically, one `turn-NNNNN` folder each. Call `stop_recording` with `{}`
+and wait for it: it finalizes `recording.mp4`. Then render:
+
+```bash test="cli-shape" id="cua-driver-recording-render"
+cua-driver recording render \
+  ~/cua-trajectories/calendar-demo \
+  ~/cua-trajectories/calendar-demo.mp4 \
+  --scale 2.5
+```
+
+The renderer zooms around each recorded action; `--scale` sets the strength
+and `--no-zoom` gives a plain render. All options:
+[`cua-driver recording`](/cua-driver/reference/cli) and the
+[recording tools](/cua-driver/reference/mcp-tools).
+
+## Computer History
+
+Computer History keeps an encrypted local record of actions performed through
+Cua Driver, so an agent can pick up where a previous run stopped. It is an
+opt-in preview in nightly builds (see [Channels](#channels)) on macOS, Windows, and Linux, and
+records nothing outside Cua-mediated actions.
+
+```bash test="cli-shape" id="cua-driver-history-enable"
+cua-driver channel set nightly
+cua-driver update --apply
+cua-driver history enable
+cua-driver history status
+```
+
+`enable` creates a key in the macOS Keychain, Windows Credential Manager, or
+Linux Secret Service (which must be unlocked; there is no plaintext fallback)
+and starts capture. Defaults: 7-day retention, 100 MiB quota, no network I/O.
+
+| Command | Effect |
+| --- | --- |
+| `cua-driver history list 50` | Newest 50 events. Add `--json` for scripts. |
+| `cua-driver history show 42` | One event by sequence number. |
+| `cua-driver history pause` / `resume` / `disable` | Stop or restart capture; existing history is kept. |
+| `cua-driver history delete --yes` | Destroy the key and the encrypted store. |
+
+```bash test="cli-shape" id="cua-driver-history-list"
+cua-driver history list 50
+cua-driver history show 42
+cua-driver history pause
+cua-driver history resume
+cua-driver history delete --yes
+```
+
+History stores timestamps, opaque IDs, capability names, app identity, and
+fixed outcome categories. It never stores screenshots, typed text,
+keystrokes, clipboard, tool arguments or results, accessibility trees, file
+paths, window titles, or URLs. Deleting destroys the key; it cannot erase
+backups or snapshots of the ciphertext.
+
+### Let an agent read history
+
+A runtime that admits the preview exposes two read-only tools:
+`history_status` (capability `history.status`) and `history_query`
+(`history.query`, at most 200 events, filters `limit`, `session_id`,
+`since_sequence`, `until_sequence`). Every call passes the normal
+[permission stack](/cua-driver/guides/permissions); a bounded manifest must
+name both:
+
+```yaml test="config" id="yaml-config"
+version: 3
+expires_after: 1h
+idle_timeout: 10m
+resources:
+  computer_history:
+    operations:
+      - status
+      - query
+allow:
+  tools:
+    - history_status
+    - history_query
+```
+
+Having the tools does not make a model use them. For "continue" or "what did I
+do" requests, give the agent a trusted instruction (or run the
+status-then-query preflight in your host) to check history first, treat events
+as metadata, and verify current state before acting. A query that returns
+events appends an encrypted access record. Agents cannot enable, pause,
+delete, or export history.
+
+| Error | Fix |
+| --- | --- |
+| `history_preview_not_admitted` | Restart a development daemon with `cua-driver serve --experimental-history`. |
+| `history_key_locked`, `history_key_unavailable` | Unlock the login keychain or start a Secret Service. |
+| `history_quota_reached` | Delete history; the action that hit the limit still ran. |
+| `history_storage_corrupt` | `cua-driver history delete --yes`, then enable again. |
+
+The event schema (CloudEvents 1.0, `urn:cua-driver:schema:history-event:v0`)
+and storage profile are specified in the
+[agent integration RFC](https://github.com/trycua/cua/blob/main/libs/cua-driver/docs/computer-history-agent-integration-rfc.md).
+
+<Callout type="info">
+  To return to stable: `cua-driver history disable`, `cua-driver channel set stable`,
+  `cua-driver update --apply`. History is kept unless you delete it.
+</Callout>
 
 ## Telemetry
 

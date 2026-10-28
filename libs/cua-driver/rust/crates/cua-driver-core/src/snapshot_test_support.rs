@@ -18,3 +18,15 @@ pub(crate) fn cache() -> Arc<SnapshotStore<Payload>> {
     register_runtime_store(&cache);
     cache
 }
+
+/// The first text block of a tool result.
+pub(crate) fn text(result: &crate::protocol::ToolResult) -> String {
+    result
+        .content
+        .iter()
+        .find_map(|content| match content {
+            crate::protocol::Content::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}

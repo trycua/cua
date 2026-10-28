@@ -48,13 +48,6 @@ pub enum Made {
         /// Nothing had that name before.
         fresh: bool,
     },
-    /// A Cua Cloud claim the create made.
-    FleetClaim {
-        /// Its namespace.
-        namespace: String,
-        /// Its name.
-        name: String,
-    },
     /// A relay machine the create registered.
     RelayMachine {
         /// Machine id.
@@ -571,18 +564,26 @@ impl Spaces {
                         Ok(false) => {}
                         Err(e) => failed.push(format!("{name}: {e}")),
                     }
+                    // Say exactly what is left: the engine is asked again,
+                    // so a container it finished making after the delete
+                    // is reported instead of "Cancelled" hiding it.
+                    // A removal the engine is still finishing gets a moment.
+                    let mut left = self.inner.sandboxes.local_name_in_use(name).await;
+                    for _ in 0..10 {
+                        if !left {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        left = self.inner.sandboxes.local_name_in_use(name).await;
+                    }
+                    if left && !failed.iter().any(|f| f.starts_with(name.as_str())) {
+                        failed.push(format!("{name}: its VM or container is still there"));
+                    }
                     let _ = self
                         .inner
                         .registry
                         .remove(&crate::SpaceId::Local { name: name.clone() }.to_string());
                 }
-                Made::FleetClaim { namespace, name } => match self.inner.fleet.as_ref() {
-                    Some(f) => match f.release(namespace, name).await {
-                        Ok(()) => done.push("released its cloud sandbox".into()),
-                        Err(e) => failed.push(format!("cloud:{name}: {e}")),
-                    },
-                    None => failed.push(format!("cloud:{name}: Fleet is not configured here")),
-                },
                 Made::HostSpace { host, machine } => {
                     match crate::host_spaces::cancel_on_host(self, host, machine).await {
                         Ok(m) => done.push(m),
@@ -598,12 +599,12 @@ impl Spaces {
                         .await;
                         match r {
                             Ok(()) | Err(cua_host::Error::NotFound(_)) => {
-                                done.push("removed its relay machine".into())
+                                done.push("removed its relay computer".into())
                             }
-                            Err(e) => failed.push(format!("relay machine {id}: {e}")),
+                            Err(e) => failed.push(format!("relay computer {id}: {e}")),
                         }
                     }
-                    Err(e) => failed.push(format!("relay machine {id}: {e}")),
+                    Err(e) => failed.push(format!("relay computer {id}: {e}")),
                 },
             }
         }

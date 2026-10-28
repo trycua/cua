@@ -620,7 +620,14 @@ fn sync_cap_dir(dir: &Dir) -> Result<()> {
 }
 
 pub fn run(args: &[String]) {
-    if let Err(error) = run_inner(args) {
+    let parsed = match parse_command(args) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("cua-driver extension: {error:#}");
+            std::process::exit(64);
+        }
+    };
+    if let Err(error) = run_inner(&parsed) {
         eprintln!("cua-driver extension: {error:#}");
         std::process::exit(1);
     }
@@ -813,8 +820,7 @@ fn install_review(
     }
 }
 
-fn run_inner(args: &[String]) -> Result<()> {
-    let parsed = parse_command(args)?;
+fn run_inner(parsed: &ParsedCommand) -> Result<()> {
     let subcommand = parsed.subcommand.as_str();
     let id = parsed.id.as_deref();
     let json = parsed.json;
@@ -830,7 +836,7 @@ fn run_inner(args: &[String]) -> Result<()> {
         ),
         "inspect" => {
             let entry = registry_entry(required_id(id, "inspect")?)?;
-            let source = resolve_install_source(entry, &parsed, &store)?;
+            let source = resolve_install_source(entry, parsed, &store)?;
             let inspected = inspect_without_mutation(entry, &source)?;
             print_preview(
                 &install_review(
@@ -850,7 +856,7 @@ fn run_inner(args: &[String]) -> Result<()> {
         "install" | "update" => {
             let id = required_id(id, subcommand)?;
             let entry = registry_entry(id)?;
-            let source = resolve_install_source(entry, &parsed, &store)?;
+            let source = resolve_install_source(entry, parsed, &store)?;
             let inspected = inspect_without_mutation(entry, &source)?;
             let request = if subcommand == "update" {
                 InstallReviewRequest::CliUpdate
@@ -2462,6 +2468,7 @@ impl ExtensionStore {
         let inspected = match inspect_archive(&source.archive, entry, &staging_handle) {
             Ok(inspected) => inspected,
             Err(error) => {
+                drop(staging_handle);
                 remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
                 return Err(error);
             }
@@ -2471,6 +2478,7 @@ impl ExtensionStore {
         {
             Ok(version) => version,
             Err(error) => {
+                drop(staging_handle);
                 remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
                 return Err(error);
             }
@@ -2479,6 +2487,7 @@ impl ExtensionStore {
         if let Some(active) = &active {
             let current = Version::parse(&active.version)?;
             if version < current {
+                drop(staging_handle);
                 remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
                 bail!("update version {version} must be newer than active version {current}");
             }
@@ -2490,6 +2499,7 @@ impl ExtensionStore {
                 verify_cap_directory_permissions_portable(&existing)?;
                 let verified =
                     verify_installed_version_at(&existing, entry, Some(&inspected.manifest_bytes));
+                drop(staging_handle);
                 let cleanup = remove_cap_subdirectory(&staging_parent_handle, staging_name);
                 let manifest = verified?;
                 verify_install_record_at(&existing, entry.id, &manifest.version)?;

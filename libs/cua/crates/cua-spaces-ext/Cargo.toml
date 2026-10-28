@@ -10,8 +10,8 @@ repository.workspace = true
 publish = false
 
 [features]
-# The Cua Volume on an S3-compatible bucket or the Cua cloud (the AWS SDK);
-# the local store needs no feature.
+# The Cua Volume on an S3-compatible bucket (the AWS SDK); the local store
+# needs no feature.
 s3 = ["cua-volume/s3"]
 # This machine's mount of Cua Volume: the localhost NFS server macOS mounts,
 # FUSE on Linux. (A Space's guest mount needs neither: NFS for macOS guests
@@ -27,8 +27,9 @@ cua-keyvault.workspace = true
 # Persistent-agent adoption counts (fixed words only).
 cua-telemetry.workspace = true
 cua-daemon = { workspace = true, features = ["server", "client", "spaces"] }
-cua-fleet.workspace = true
 cua-auth.workspace = true
+# The owner's teams (team admins count as admins for agent rights).
+cua-host.workspace = true
 cua-teleport.workspace = true
 cua-chromium-storage.workspace = true
 # The reserved `cookies.json` bundle entry format (`daemon::keyvault`'s
@@ -70,3 +71,4 @@ cua-sandbox-core = { workspace = true, features = ["testing"] }
 cua-proto = { workspace = true, features = ["client", "server", "serde"] }
 tonic = { workspace = true, default-features = false, features = ["codegen", "server", "router", "channel"] }
 tokio-stream = { workspace = true, features = ["net"] }
+tonic-web.workspace = true

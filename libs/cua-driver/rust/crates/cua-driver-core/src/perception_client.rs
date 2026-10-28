@@ -1813,7 +1813,8 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             .unwrap();
         let secret = evidence.path().join("credentials");
         std::fs::write(&secret, b"token").unwrap();
-        let socket = evidence.path().join("desktop.sock");
+        let socket_directory = tempfile::tempdir_in("/tmp").unwrap();
+        let socket = socket_directory.path().join("desktop.sock");
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         let targets = serde_json::json!({
             "secret": secret.display().to_string(),

@@ -3,7 +3,6 @@
 //! Platform renderers (macOS, Windows, Linux) depend on this crate for:
 //! - `CursorConfig` — theme, accessibility, visibility, and motion settings
 //! - `MotionConfig` — glide duration, spring, dwell, idle-hide timings
-//! - `CubicBezier` — Bezier path math (ported 1:1 from C#)
 //! - `trajectory` — the motion styles, timing and effect geometry, which live
 //!   in the `cua-cursor-motion` crate (shared with the `@trycua/cursor-motion` web package)
 //! - `OverlayCommand` — messages sent from MCP tools to the overlay thread
@@ -11,7 +10,7 @@
 //!   display geometry, so screen-coordinate cursors stay on the pointer
 
 pub mod badge_glyphs;
-pub mod bezier;
+pub mod badge_mode;
 pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
@@ -28,15 +27,15 @@ pub use cua_cursor_motion::dubins as path_planner;
 pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
-pub use bezier::CubicBezier;
+pub use badge_mode::BadgeMode;
 pub use motion::{
     MotionConfig, MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, Spring,
     DEFAULT_FIXED_MS,
 };
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
 pub use render_map::{
-    keyed_config, seed_position, CursorMap, MsgOutcome, RenderEntry, RenderMap, ScreenFrame,
-    DEFAULT_CURSOR_KEY, SEED_OFFSET,
+    keyed_config, seed_position, CursorMap, CursorThemeState, MsgOutcome, RenderEntry, RenderMap,
+    ScreenFrame, DEFAULT_CURSOR_KEY, SEED_OFFSET,
 };
 pub use render_state::{
     paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,
@@ -115,6 +114,7 @@ impl CursorConfig {
         // Load the saved `cursor.motion.*` defaults; the render map layers
         // them under each cursor it creates.
         motion_defaults::load_active();
+        badge_mode::load_active();
         Self::parse(&args[1..])
     }
 
@@ -400,6 +400,9 @@ pub enum OverlayCommand {
     },
     /// Set the sanitized public label shown beneath this cursor.
     SetSessionLabel(String),
+    /// Keys of a combo the agent is pressing (such as `["cmd", "c"]`). The
+    /// minimal badge shows it briefly; other badge modes ignore it.
+    ShowKeyCombo(Vec<String>),
     /// Show a focus-highlight rectangle around an AX-targeted element.
     /// `[x, y, width, height]` in screen coordinates (top-left origin).
     /// `None` clears the highlight.

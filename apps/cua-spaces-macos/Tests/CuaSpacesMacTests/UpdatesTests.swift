@@ -5,6 +5,7 @@ import CuaSDK
 import CuaSpacesFFI
 @testable import CuaSpacesMacKit
 import Foundation
+import Sparkle
 import Testing
 
 /// Settings → About over an in-memory updater, and the first launch after
@@ -48,7 +49,7 @@ struct UpdatesTests {
         var v = model.view
         #expect(v.title == "Cua Spaces for macOS")
         #expect(v.versionLine == "Version 0.2.0-staging.5 (0.2.0.105)")
-        #expect(v.links.map(\.label) == ["Acknowledgements", "Privacy Policy", "Terms of Service", "Report an Issue\u{2026}"])
+        #expect(v.links.map(\.label) == ["Acknowledgements", "Privacy Policy", "Terms of Service", "System Status", "Report an Issue\u{2026}"])
         #expect(v.updates?.lastCheck == "Last check: Never")
         #expect(v.updates?.autoInstallEnabled == true)
 
@@ -65,10 +66,21 @@ struct UpdatesTests {
         #expect(v.updates?.lastCheck != "Last check: Never")
     }
 
+    /// Updates check and download in the background out of the box, like
+    /// Windows and Linux; only a click on "Restart to update" restarts.
+    @Test func updatesDownloadInTheBackgroundByDefault() throws {
+        let plist = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Support/Info.plist")
+        let info = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: plist), format: nil) as? [String: Any])
+        #expect(info["SUEnableAutomaticChecks"] as? Bool == true)
+        #expect(info["SUAutomaticallyUpdate"] as? Bool == true)
+    }
+
     @Test func noUpdaterNoControls() {
         let model = UpdatesModel(updater: nil, info: Self.info)
         #expect(model.view.updates == nil)
-        #expect(model.view.links.count == 4)
+        #expect(model.view.links.count == 5)
     }
 
     @Test func theChannelIsSavedAndGivesSparkleItsChannels() {
@@ -84,6 +96,166 @@ struct UpdatesTests {
         model.choose(channel: "stable")
         #expect(updater.channels.isEmpty)
         #expect(saved == [.beta, .stable])
+    }
+
+    // MARK: - The in-app update flow
+
+    @Test func aFoundUpdateDownloadsThenWaitsForRestart() {
+        let updater = FixtureUpdater()
+        let telemetry = FixtureTelemetry()
+        let model = UpdatesModel(updater: updater, channel: .stable, info: Self.info)
+        model.telemetry = telemetry
+        #expect(model.updateState.status == .idle)
+        #expect(model.updateState.currentVersion == "0.2.0-staging.5")
+        updater.simulateFound(version: "0.2.0-staging.6")
+        #expect(model.updateState.status == .available)
+        #expect(model.updateState.notesUrl == "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.2.0-staging.6")
+        updater.simulateProgress(percent: 40)
+        #expect(model.updateState.status == .downloading && model.updateState.percent == 40)
+        #expect(!(model.input.checking))
+        updater.simulateDownloaded()
+        #expect(model.updateState.status == .downloaded && model.updateState.percent == nil)
+        // Nothing restarts until the user asks.
+        #expect(updater.installs == 0)
+        model.installUpdate()
+        #expect(updater.installs == 1)
+        #expect(model.updateState.status == .idle)
+        let words = telemetry.recorded.map { ParityTests.signalFrame($0)["action"] as! String }
+        #expect(words.contains("downloaded") && words.contains("installed"))
+    }
+
+    @Test func installingWithNothingDownloadedChangesNothing() {
+        let updater = FixtureUpdater()
+        let model = UpdatesModel(updater: updater, channel: .stable, info: Self.info)
+        model.installUpdate()
+        updater.simulateFound(version: "0.2.0-staging.6")
+        model.installUpdate()
+        #expect(updater.installs == 0)
+        #expect(model.updateState.status == .available)
+    }
+
+    @Test func theStateJSONHasTheContractsKeys() {
+        let idle = UpdateState.idle(currentVersion: "0.9.2").json
+        #expect(Set(idle.keys) == ["status", "currentVersion", "version", "percent", "notesUrl", "message"])
+        #expect(idle["status"] as? String == "idle")
+        #expect(idle["version"] is NSNull && idle["percent"] is NSNull && idle["notesUrl"] is NSNull && idle["message"] is NSNull)
+        let busy = UpdateState(status: .downloading, currentVersion: "0.9.2", version: "0.9.3", percent: 12,
+                               notesUrl: UpdateState.notesURL(version: "0.9.3")).json
+        #expect(busy["percent"] as? Int == 12)
+        #expect(busy["notesUrl"] as? String == "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3")
+    }
+
+    @Test func aFlowReducesSparklesStepsToPercent() {
+        var flow = UpdateFlow(currentVersion: "0.9.2")
+        flow.userCheckStarted()
+        #expect(flow.state.status == .checking)
+        flow.found(version: "0.9.3")
+        flow.downloadStarted()
+        flow.expectedLength(1000)
+        flow.receivedData(500)
+        #expect(flow.state.percent == 45)
+        flow.receivedData(500)
+        #expect(flow.state.percent == 90)
+        flow.extractionStarted()
+        flow.extractionProgress(0.5)
+        #expect(flow.state.percent == 95)
+        flow.downloaded()
+        #expect(flow.state.status == .downloaded && flow.state.percent == nil && flow.state.version == "0.9.3")
+        flow.dismissed()
+        #expect(flow.state.status == .idle && flow.state.version == nil)
+        // Unknown length stays at 0, never past 100.
+        flow.found(version: "0.9.4")
+        flow.receivedData(10)
+        #expect(flow.state.percent == 0)
+    }
+
+    final class Replies {
+        var choices: [SPUUserUpdateChoice] = []
+        var acks = 0
+    }
+
+    @Test func theDriverHoldsTheInstallReplyUntilTheUserRestarts() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        let replies = Replies()
+        var events: [String] = []
+        var changes = 0
+        driver.onEvent = { events.append($0) }
+        driver.onChange = { changes += 1 }
+        // A background check finds an update: download at once.
+        driver.handleFound(version: "0.9.3", informationOnly: false) { replies.choices.append($0) }
+        #expect(replies.choices == [.install])
+        #expect(driver.state.status == .available)
+        driver.showDownloadInitiated {}
+        driver.showDownloadDidReceiveExpectedContentLength(100)
+        driver.showDownloadDidReceiveData(ofLength: 50)
+        #expect(driver.state.status == .downloading && driver.state.percent == 45)
+        driver.showDownloadDidStartExtractingUpdate()
+        driver.showExtractionReceivedProgress(1)
+        #expect(driver.state.percent == 100)
+        // Ready to install: held, not replied.
+        driver.showReady(toInstallAndRelaunch: { replies.choices.append($0) })
+        #expect(driver.state.status == .downloaded)
+        #expect(events == ["downloaded"])
+        #expect(replies.choices == [.install])
+        #expect(changes > 0)
+        #expect(driver.installNow())
+        #expect(replies.choices == [.install, .install])
+        // Once is enough.
+        #expect(!driver.installNow() || replies.choices.count == 2)
+        driver.dismissUpdateInstallation()
+        #expect(driver.state.status == .idle)
+    }
+
+    @Test func theSilentPathReachesDownloadedWithItsImmediateInstall() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var events: [String] = []
+        var installs = 0
+        driver.onEvent = { events.append($0) }
+        driver.silentlyDownloaded(version: "0.9.3") { installs += 1 }
+        #expect(driver.state.status == .downloaded && driver.state.version == "0.9.3")
+        #expect(events == ["downloaded"])
+        #expect(installs == 0)
+        #expect(driver.installNow())
+        #expect(installs == 1)
+    }
+
+    @Test func nothingFoundAndBackgroundErrorsStayQuiet() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var alerts: [String] = []
+        driver.presentError = { alerts.append($0) }
+        var acks = 0
+        driver.showUpdateNotFoundWithError(NSError(domain: "t", code: 1)) { acks += 1 }
+        #expect(acks == 1 && driver.state.status == .idle)
+        driver.showUpdaterError(NSError(domain: "t", code: 2, userInfo: [NSLocalizedDescriptionKey: "offline"])) { acks += 1 }
+        #expect(acks == 2 && alerts.isEmpty)
+        #expect(driver.state.status == .error && driver.state.message == "offline")
+        driver.dismissUpdateInstallation()
+        #expect(driver.state.status == .error)
+    }
+
+    @Test func aUserCheckErrorShowsAnAlert() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var alerts: [String] = []
+        driver.presentError = { alerts.append($0) }
+        driver.beginUserCheck()
+        #expect(driver.state.status == .checking)
+        driver.showUpdaterError(NSError(domain: "t", code: 2, userInfo: [NSLocalizedDescriptionKey: "offline"])) {}
+        #expect(alerts == ["offline"])
+    }
+
+    @Test func aUserCheckThatFindsNothingEndsQuietly() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        driver.beginUserCheck()
+        driver.showUpdateNotFoundWithError(NSError(domain: "t", code: 1)) {}
+        #expect(driver.state.status == .idle)
+    }
+
+    @Test func anInformationOnlyItemIsNotInstalled() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        let replies = Replies()
+        driver.handleFound(version: "1.0.0", informationOnly: true) { replies.choices.append($0) }
+        #expect(replies.choices == [.dismiss])
+        #expect(driver.state.status == .idle)
     }
 
     // MARK: - The launch after an update
@@ -198,44 +370,6 @@ struct UpdatesTests {
         #expect(UpdateRefresh.launchPath(ProcessInfo.processInfo.processIdentifier).map {
             URL(fileURLWithPath: $0).resolvingSymlinksInPath().path
         } == URL(fileURLWithPath: me!).resolvingSymlinksInPath().path)
-    }
-
-    // MARK: - Acknowledgements
-
-    @Test func theNoticesParseIntoBlocks() {
-        let blocks = NoticeBlock.parse("""
-            # Third-party notices
-
-            Intro line one
-            line two.
-
-            | Project | Used in | What |
-            |---|---|---|
-            | [A](https://a) | `x.swift` | a thing |
-
-            ## Sparkle
-
-            ```
-            Copyright (c) 2006 Someone
-              indented
-            ```
-            """)
-        #expect(blocks == [
-            .heading(1, "Third-party notices"),
-            .paragraph("Intro line one line two."),
-            .row(["[A](https://a)", "`x.swift`", "a thing"]),
-            .heading(2, "Sparkle"),
-            .verbatim("Copyright (c) 2006 Someone\n  indented"),
-        ])
-    }
-
-    @Test func theBundledNoticesNameSparkle() throws {
-        let file = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("THIRD_PARTY_NOTICES.md")
-        let blocks = NoticeBlock.parse(try String(contentsOf: file, encoding: .utf8))
-        #expect(blocks.contains(.heading(2, "Sparkle")))
-        #expect(blocks.contains { if case .verbatim(let t) = $0 { t.contains("Andy Matuschak") } else { false } })
     }
 }
 

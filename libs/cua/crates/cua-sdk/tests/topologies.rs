@@ -1,7 +1,7 @@
 #![allow(deprecated)] // also exercises the deprecated `apply_pool` wrapper
 //! One suite, three topologies: embedded, daemon over the Unix socket, and
 //! daemon over loopback + token. Everything runs against in-process fakes
-//! (`MockServer` spacesd with a scripted `/media` socket, `FakeFleet`);
+//! (`MockServer` spacesd with a scripted `/media` socket);
 //! nothing touches host apps. Every wait loop is bounded.
 
 use cua_daemon::{
@@ -9,11 +9,10 @@ use cua_daemon::{
     fixtures::{self, SpacesdFixture},
     server::{self, DaemonHandle, ServerConfig},
 };
-use cua_fleet::testing::FakeFleet;
 use cua_sdk::{
     AudioPacket, AudioSink, Cua, CuaError, CuaMode, FrameSink, MediaEvent, MediaOpenOptions,
     MediaSession, ProcessEventKind, ReadinessProbe, SandboxCreateOptions, SpacesdCommand,
-    VideoFrame,
+    UploadOptions, VideoFrame,
 };
 use std::{
     collections::HashMap,
@@ -26,8 +25,6 @@ const POOL: &str = "cua-e2e-gw";
 
 struct World {
     env: SpacesdFixture,
-    gw: SpacesdFixture,
-    fake: FakeFleet,
     _dirs: tempfile::TempDir,
     daemon: Option<DaemonHandle>,
 }
@@ -54,14 +51,11 @@ async fn world_with_relay(
     env.mock
         .state
         .advertise(&[cua_spacesd_client::TUNNEL_FORWARD_FEATURE]);
-    let gw = fixtures::start_env(None, Some(fixtures::fake_gateway(POOL, POOL))).await;
-    let fake = FakeFleet::new();
     let dirs = tempfile::tempdir().unwrap();
     let runtime = Runtime::new(RuntimeConfig {
         state_dir: Some(dirs.path().join("sandboxes")),
         // Never the real ~/.cua registry.
         spaces_home: Some(dirs.path().join("cua")),
-        fleet_client: Some(fake.client_with_base(&gw.url)),
         env_probe_timeout: Some(Duration::from_secs(5)),
         ..Default::default()
     })
@@ -97,8 +91,6 @@ async fn world_with_relay(
     (
         World {
             env,
-            gw,
-            fake,
             _dirs: dirs,
             daemon,
         },
@@ -114,7 +106,6 @@ fn direct(url: &str, name: &str, token: Option<&str>) -> SandboxCreateOptions {
         image: String::new(),
         name: Some(name.into()),
         token: token.map(str::to_string),
-        pool: None,
         os: None,
         cpus: None,
         memory_mb: None,
@@ -123,12 +114,9 @@ fn direct(url: &str, name: &str, token: Option<&str>) -> SandboxCreateOptions {
         wait_for: vec![],
         ready_timeout_ms: None,
         env: HashMap::new(),
-        fleet_replicas: None,
-        fleet_ttl_seconds: None,
-        warm: None,
-        max_pool_size: None,
+        pool: None,
+        ttl_seconds: None,
         command: None,
-        cloud: None,
         sidecars: vec![],
         registry_secret: None,
         build: None,
@@ -136,6 +124,10 @@ fn direct(url: &str, name: &str, token: Option<&str>) -> SandboxCreateOptions {
         overlays: vec![],
         keep_on_failure: false,
         gpu: None,
+        headless: false,
+        spacesd: None,
+        profile: None,
+        forkable: None,
     }
 }
 
@@ -150,6 +142,10 @@ fn cmd(program: &str, args: &[&str]) -> SpacesdCommand {
         tag: None,
         stdin: false,
         pty: None,
+        request_id: None,
+        epoch: None,
+        scrollback_bytes: None,
+        kill_on_disconnect: false,
     }
 }
 
@@ -208,6 +204,116 @@ async fn assert_media(sink: &Arc<Collect>) {
         .map(|e| e.kind.clone())
         .collect();
     assert_eq!(&kinds[..2], ["hello", "session_opened"]);
+}
+
+/// Acting as another guest user, and extended-attribute metadata, through
+/// the mock guest (see `MOCK_USERS` in the client's testing module).
+async fn file_access(env: Arc<cua_sdk::SpacesdClient>) {
+    let as_alice = UploadOptions {
+        user: Some("alice".into()),
+        metadata: Some(HashMap::from([("origin".into(), "sdk".into())])),
+        xattr_namespace: Some("user.e2b.".into()),
+        ..Default::default()
+    };
+    env.upload(
+        "/tmp/sdk/as.bin".into(),
+        b"as alice".to_vec(),
+        Some(as_alice),
+    )
+    .await
+    .unwrap();
+    let st = env
+        .stat(
+            "/tmp/sdk/as.bin".into(),
+            Some("alice".into()),
+            Some("user.e2b.".into()),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(st.owner.as_deref(), Some("alice"));
+    assert_eq!(st.metadata.get("origin").map(String::as_str), Some("sdk"));
+    // The default namespace does not see the e2b one; a plain write is the
+    // guest's own user's.
+    let plain = env
+        .stat("/tmp/sdk/as.bin".into(), None, None, false)
+        .await
+        .unwrap();
+    assert!(plain.metadata.is_empty());
+    let listed = env
+        .list_dir(
+            "/tmp/sdk".into(),
+            1,
+            Some("alice".into()),
+            Some("user.e2b.".into()),
+        )
+        .await
+        .unwrap();
+    let row = listed.iter().find(|e| e.name == "as.bin").unwrap();
+    assert_eq!(row.metadata.get("origin").map(String::as_str), Some("sdk"));
+    assert_eq!(
+        env.download("/tmp/sdk/as.bin".into(), Some("alice".into()))
+            .await
+            .unwrap(),
+        b"as alice"
+    );
+    let moved = env
+        .move_path(
+            "/tmp/sdk/as.bin".into(),
+            "/tmp/sdk/as2.bin".into(),
+            false,
+            true,
+            Some("alice".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved.path, "/tmp/sdk/as2.bin");
+    env.remove("/tmp/sdk/as2.bin".into(), false, Some("alice".into()))
+        .await
+        .unwrap();
+    // `user` also rides on raw requests.
+    let raw = env
+        .call_json(
+            "FilesystemService/Stat".into(),
+            r#"{"path":"/tmp/sdk/blob.bin"}"#.into(),
+            Some("bob".into()),
+        )
+        .await
+        .unwrap();
+    let raw: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(raw["entry"]["path"].as_str().is_some(), "{raw}");
+    // Refusals keep their kind: a user the guest lacks (an `Env` error that
+    // names it, like every rejected argument of a typed guest call), an
+    // identity the agent may not take, `user` on a request that has none.
+    assert!(matches!(
+        env.stat(
+            "/tmp/sdk/blob.bin".into(),
+            Some("no-such".into()),
+            None,
+            false
+        )
+        .await,
+        Err(CuaError::Env(m)) if m.contains("no-such")
+    ));
+    assert!(matches!(
+        env.stat(
+            "/tmp/sdk/blob.bin".into(),
+            Some("locked".into()),
+            None,
+            false
+        )
+        .await,
+        Err(CuaError::PermissionDenied(_))
+    ));
+    assert!(matches!(
+        env.call_json(
+            "SystemService/Health".into(),
+            "{}".into(),
+            Some("alice".into())
+        )
+        .await,
+        Err(CuaError::InvalidArgument(_))
+    ));
 }
 
 async fn suite(t: Topology) {
@@ -302,15 +408,22 @@ async fn suite(t: Topology) {
         .unwrap();
     assert_eq!(up.size, data.len() as u64);
     assert_eq!(
-        env.download("/tmp/sdk/blob.bin".into()).await.unwrap(),
+        env.download("/tmp/sdk/blob.bin".into(), None)
+            .await
+            .unwrap(),
         data
     );
-    let st = env.stat("/tmp/sdk/blob.bin".into()).await.unwrap();
+    let st = env
+        .stat("/tmp/sdk/blob.bin".into(), None, None, false)
+        .await
+        .unwrap();
     assert_eq!(st.size, data.len() as u64);
     assert!(matches!(
-        env.download("/nope".into()).await,
+        env.download("/nope".into(), None).await,
         Err(CuaError::NotFound(_))
     ));
+
+    file_access(env.clone()).await;
 
     // Computer.
     env.click(10.0, 20.0).await.unwrap();
@@ -326,12 +439,12 @@ async fn suite(t: Topology) {
 
     // JSON escape hatch.
     let health = env
-        .call_json("SystemService/Health".into(), "{}".into())
+        .call_json("SystemService/Health".into(), "{}".into(), None)
         .await
         .unwrap();
     assert!(health.starts_with('{'), "{health}");
     assert!(matches!(
-        env.call_json("ProcessService/StartProcess".into(), "{}".into())
+        env.call_json("ProcessService/StartProcess".into(), "{}".into(), None)
             .await,
         Err(CuaError::InvalidArgument(_))
     ));
@@ -467,34 +580,14 @@ async fn suite(t: Topology) {
         "{t:?}"
     );
 
-    // ----------------------------------------------------------- fleet
-    // An explicit, user-owned pool (the gateway fixture knows its name).
-    w.fake
-        .client()
-        .apply_pool(&cua_fleet::PoolSpec::new(
-            POOL,
-            "ghcr.io/trycua/cua-desktop-linux:test",
-        ))
-        .await
-        .unwrap();
+    // ----------------------------------------------------------- cloud
+    // Cua Cloud has ended: a cloud create fails with the one message, in
+    // every topology.
     let mut o = direct("", POOL, None);
     o.on = Some("cloud".into());
-    o.pool = Some(POOL.into());
     o.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
-    let fsb = sbx.create(o).await.unwrap();
-    assert_eq!(fsb.location(), "cloud");
-    assert!(w.fake.exists("pool", POOL, POOL));
-    let fenv = fsb.spacesd(Some(5_000)).await.unwrap();
-    // Embedded: gRPC-Web through the gateway. Daemon: native gRPC to the
-    // daemon, which speaks gRPC-Web upstream.
-    let expected = if matches!(t, Topology::Embedded) {
-        "grpc-web"
-    } else {
-        "grpc"
-    };
-    assert_eq!(fenv.transport(), expected);
-    let out = fenv.run(cmd("echo", &["gw"])).await.unwrap();
-    assert_eq!(out.stdout, b"gw\n");
+    let e = sbx.create(o).await.err().expect("cloud create fails");
+    assert!(e.to_string().contains("Cua Cloud has ended"), "{t:?}: {e}");
     let spaces = cua.spaces();
     let direct_space = spaces
         .add(w.env.url.clone(), Some(TOKEN.into()), None)
@@ -514,198 +607,61 @@ async fn suite(t: Topology) {
     p.write_stdin(b"over stdin".to_vec()).await.unwrap();
     p.close_stdin().await.unwrap();
     assert_eq!(p.wait().await.unwrap().stdout, b"over stdin");
-    spaces.remove(direct_space.id).await.unwrap();
-    let cloud_space = spaces
-        .add(format!("cloud:{}", fsb.info().name), None, None)
-        .await
-        .unwrap();
-    let cenv = spaces
-        .space(cloud_space.id.clone())
-        .await
-        .unwrap()
-        .spacesd()
-        .unwrap();
-    assert_eq!(
-        cenv.run(cmd("echo", &["space"])).await.unwrap().stdout,
-        b"space\n"
-    );
-    assert!(
-        cenv.current_ws_headers()
-            .await
-            .unwrap()
-            .iter()
-            .any(|(k, _)| k == "authorization")
-    );
-    spaces.remove(cloud_space.id).await.unwrap();
-    let svc = fsb.service("env".into()).unwrap();
-    // Cloud: signed service URLs, no Fleet vocabulary outside the details.
-    let signed = svc.url().await.unwrap();
-    assert!(signed.starts_with("https://signed.fleet.test/"), "{signed}");
-    assert_eq!(svc.url().await.unwrap(), signed, "reused until near expiry");
-    let p = fsb.public_url("env".into(), Some(600), None).await.unwrap();
-    // The same from the service handle.
-    let sp = svc.public_url(Some(600), None).await.unwrap();
-    assert!(sp.url.starts_with("https://signed.fleet.test/"), "{sp:?}");
-    assert_eq!(sp.service, "env");
-    assert!(p.url.starts_with("https://signed.fleet.test/"), "{p:?}");
-    assert_eq!(p.service, "env");
-    assert_eq!(
-        p.provider_details.get("claim").map(String::as_str),
-        Some(POOL)
-    );
-    let finfo = fsb.info();
-    assert_eq!(finfo.location, "cloud");
-    // Listing: the default includes live cloud claims; `Local` never does,
-    // and `Fleet` lists only cloud ones.
-    let all = sbx.list_with_warnings(None).await.unwrap();
-    assert!(all.warnings.is_empty(), "{all:?}");
-    assert!(
-        all.sandboxes
-            .iter()
-            .any(|s| s.name == finfo.name && s.location == "cloud"),
-        "{all:?}"
-    );
-    assert!(
-        !sbx.list(Some("local".into()))
-            .await
-            .unwrap()
-            .iter()
-            .any(|s| s.location == "cloud")
-    );
-    let cloud = sbx.list(Some("cloud".into())).await.unwrap();
-    assert!(cloud.iter().all(|s| s.location == "cloud") && !cloud.is_empty());
-    // Deprecated alias.
-    assert_eq!(sbx.list_all().await.unwrap().len(), all.sandboxes.len());
-    assert_eq!(finfo.phase, cua_sdk::SandboxPhase::Ready);
-    assert_eq!(
-        finfo.provider_details.get("pool").map(String::as_str),
-        Some(POOL)
-    );
-    let hdr = |n: &str, v: &str| cua_sdk::HttpHeader {
-        name: n.into(),
-        value: v.into(),
-    };
-    // Service requests go straight to the gateway (the pipe itself is
-    // tested in tests/mcp.rs): the route carries the Fleet bearer and claim.
-    let ep = svc.endpoint().await.unwrap();
-    if matches!(t, Topology::Embedded) {
-        assert!(ep.url.ends_with("-env"), "{ep:?}");
-        assert!(
-            ep.headers
-                .iter()
-                .any(|h| h.name == "x-cua-fleet-claim" && h.value == POOL)
-        );
-    } else {
-        assert!(
-            ep.url.ends_with("/v1/sandboxes/cloud:cua-e2e-gw/svc/env"),
-            "daemon passthrough: {ep:?}"
-        );
-    }
-    // The gateway owns authorization.
-    assert!(matches!(
-        svc.request(
-            "GET".into(),
-            "/status".into(),
-            None,
-            Some(5_000),
-            Some(vec![hdr("authorization", "Bearer x")]),
-        )
-        .await,
-        Err(CuaError::InvalidArgument(_))
-    ));
-    // Fleet media carries the Fleet bearer and claim upstream.
-    let fsink = Arc::new(Collect::default());
-    let fs = fenv
-        .open_media(
-            MediaOpenOptions {
-                display: None,
-                window_handle: None,
-                max_fps: 0,
-                max_dimension: 0,
-                audio: false,
-                disable_video: false,
-                request_json: None,
-            },
-            fsink.clone(),
-        )
-        .await
-        .unwrap();
-    eventually("fleet frames", || fsink.frames.lock().unwrap().len() >= 2).await;
-    fs.close().await.unwrap();
-    {
-        let m = w.gw.media.lock().unwrap();
-        assert_eq!(
-            m.last_authorization.as_deref(),
-            Some("Bearer fake-fleet-token")
-        );
-        assert_eq!(m.last_claim.as_deref(), Some(POOL));
-    }
-    fsb.delete().await.unwrap();
-    assert!(
-        !w.fake.exists("claim", POOL, POOL),
-        "claim released on delete"
-    );
-    assert!(w.fake.exists("pool", POOL, POOL), "explicit pools stay");
-
-    // Managed pool (no `pool`): same API in every topology; the runtime
-    // (in daemon mode, the daemon) holds the claim and its heartbeat.
-    let mut o = direct("", "", None);
-    o.on = Some("cloud".into());
-    o.name = None;
-    o.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
-    // The runtime defaults from the image's manifest (a fixture here).
-    cua_fleet::testing::set_image_variant(&o.image, cua_fleet::ImageVariant::ContainerDisk);
-    o.warm = Some(true);
-    o.max_pool_size = Some(3);
-    o.fleet_ttl_seconds = Some(120);
-    let msb = sbx.create(o).await.unwrap();
-    assert!(msb.is_ephemeral());
-    let managed: Vec<String> = w
-        .fake
-        .all_namespaces()
-        .into_iter()
-        .filter(|n| n.starts_with("cua-auto-"))
-        .collect();
-    assert_eq!(managed.len(), 1, "{managed:?}");
-    let mp = &managed[0];
-    let pool = w.fake.object("pool", mp, mp).unwrap();
-    assert_eq!(pool["spec"]["replicas"], 1);
-    assert_eq!(pool["spec"]["autoscaling"]["maxPoolSize"], 3);
-    let claims = w.fake.names("claim", mp);
-    assert_eq!(claims.len(), 1);
-    let claim = w.fake.object("claim", mp, &claims[0]).unwrap();
-    assert_eq!(claim["spec"]["ttlSecondsAfterCreated"], 120);
-    msb.delete().await.unwrap();
-    assert!(w.fake.names("claim", mp).is_empty(), "claim released");
-    assert!(w.fake.exists("pool", mp, mp), "managed pool kept for reuse");
-
-    // Fleet's per-account size cap refuses a bigger sandbox: the caller
-    // gets the typed denial with Fleet's own message, in every topology.
-    w.fake.faults.lock().unwrap().size_cap = Some((8, 32 * 1024));
-    let mut big = direct("", "", None);
-    big.on = Some("cloud".into());
-    big.name = None;
-    big.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
-    big.cpus = Some(16);
-    big.memory_mb = Some(64 * 1024);
-    match sbx.create(big).await {
-        Err(CuaError::FleetAdmissionDenied(m)) => {
-            assert!(m.contains(cua_fleet::testing::SIZE_LIMIT_MESSAGE), "{m}");
+    // The channel: which way calls go (the daemon's own connection in daemon
+    // mode), and a TCP forward over the Space's connection.
+    let space = spaces.space(direct_space.id.clone()).await.unwrap();
+    let route = space.route().await.unwrap();
+    assert_eq!(route, format!("direct {}", w.env.url), "{t:?}");
+    assert_eq!(space.spacesd().unwrap().route().await.unwrap(), route);
+    let echo = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let echo_port = echo.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = echo.accept().await {
+            tokio::spawn(async move {
+                let (mut r, mut w) = s.split();
+                let _ = tokio::io::copy(&mut r, &mut w).await;
+            });
         }
-        Err(e) => panic!("{t:?}: expected FleetAdmissionDenied, got {e:?}"),
-        Ok(_) => panic!("{t:?}: a 16 vCPU sandbox was admitted over the size cap"),
+    });
+    // An explicit bind (what the E2B shim uses to serve a LAN) and a bad one.
+    let bound = space
+        .forward(echo_port, Some("127.0.0.1:0".into()))
+        .await
+        .unwrap();
+    assert!(bound.local_addr().unwrap().starts_with("127.0.0.1:"));
+    bound.close().await.unwrap();
+    assert!(matches!(
+        space
+            .forward(echo_port, Some("not-an-address".into()))
+            .await,
+        Err(cua_sdk::CuaError::InvalidArgument(_))
+    ));
+    let fwd = space.forward(echo_port, None).await.unwrap();
+    assert_eq!(fwd.guest_port(), echo_port);
+    let local = fwd.local_addr().expect("a loopback forward");
+    assert!(local.starts_with("127.0.0.1:"), "{local}");
+    {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let mut c = tokio::net::TcpStream::connect(&local).await.unwrap();
+        let (mut r, mut wr) = c.split();
+        let mut got = vec![0u8; payload.len()];
+        let (sent, read) = tokio::time::timeout(
+            Duration::from_secs(10),
+            futures_util::future::join(wr.write_all(&payload), r.read_exact(&mut got)),
+        )
+        .await
+        .expect("echo within 10 s");
+        sent.unwrap();
+        read.unwrap();
+        assert!(got == payload, "{t:?}: echoed bytes differ");
     }
-    w.fake.faults.lock().unwrap().size_cap = None;
-    if matches!(t, Topology::Embedded) {
-        let pools = cua.fleet().unwrap().pools();
-        let listed = pools.list().await.unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(&listed[0].name, mp);
-        assert!(listed[0].managed);
-        let r = pools.gc(Some(0)).await.unwrap();
-        assert_eq!(r.deleted_pools, vec![mp.clone()]);
-        assert!(!w.fake.exists("pool", mp, mp));
-    }
+    fwd.close().await.unwrap();
+    assert!(
+        tokio::net::TcpStream::connect(&local).await.is_err(),
+        "a closed forward stops listening"
+    );
+    spaces.remove(direct_space.id).await.unwrap();
 
     // ---------------------------------------------------------- errors
     assert!(matches!(
@@ -867,10 +823,74 @@ async fn discovery_refusal(t: Topology) {
     match error {
         CuaError::Unauthenticated(message) => assert_eq!(
             message,
-            "Relay authentication failed. Sign in again to refresh your machines."
+            "Relay authentication failed. Sign in again to refresh your computers."
         ),
         other => panic!("unexpected discovery refusal: {other:?}"),
     }
+}
+
+// Exercise the same public SDK route used by the native app, including a
+// daemon that retains its own cached session while the relay restarts.
+async fn discovery_session_recovery(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    relay.add_account("account", "owner", None);
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "account",
+            &cua_host::relay::RegisterRequest {
+                id: "sdk-roster-machine".into(),
+                name: "studio".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    relay.require_devices(true);
+    relay.fresh_sign_in("owner");
+    let tokens = Arc::new(cua_host::StaticToken("account".into()));
+    let device = Arc::new(
+        cua_host::DeviceAuth::new(
+            &relay.url,
+            tokens.clone(),
+            Arc::new(cua_host::MemoryKeySlot::default()),
+            "client",
+        )
+        .unwrap(),
+    );
+    device.enroll().await.unwrap();
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(&relay.url, tokens).with_device(device.clone())),
+    )
+    .await;
+    let rows = cua.spaces().list().await.unwrap();
+    assert!(rows.iter().any(|row| row.id == "relay:sdk-roster-machine"));
+    let before = device.session().await.unwrap();
+    relay.forget_sessions();
+    let rows = cua
+        .spaces()
+        .list()
+        .await
+        .expect("same runtime recovers its roster");
+    assert!(rows.iter().any(|row| row.id == "relay:sdk-roster-machine"));
+    assert_ne!(device.session().await.unwrap(), before);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_session_recovery_embedded() {
+    discovery_session_recovery(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_session_recovery_daemon_socket() {
+    discovery_session_recovery(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_session_recovery_daemon_loopback() {
+    discovery_session_recovery(Topology::DaemonLoopback).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -885,4 +905,59 @@ async fn discovery_refusal_daemon_socket() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn discovery_refusal_daemon_loopback() {
     discovery_refusal(Topology::DaemonLoopback).await;
+}
+
+/// A `cua auth login` session as relay account tokens, as the daemon and
+/// the apps configure it (`SessionTokens`).
+struct Session(cua_auth::Session);
+
+#[async_trait::async_trait]
+impl cua_host::AccountTokens for Session {
+    async fn access_token(&self) -> cua_host::Result<String> {
+        self.0
+            .access_token(false)
+            .await
+            .map_err(|e| cua_host::Error::Unauthenticated(e.to_string()))
+    }
+    async fn signed_in(&self) -> bool {
+        !matches!(self.0.credentials(), Ok(None))
+    }
+}
+
+/// Signed out (an empty session store), the list is this machine's Spaces
+/// (no relay error): the apps show local Spaces before anyone signs in.
+async fn signed_out_lists(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    let store = tempfile::tempdir().unwrap();
+    let session = cua_auth::Session::new(
+        cua_auth::Oidc::from_env(),
+        cua_auth::Store::File(store.path().join("credentials.json")),
+    );
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(
+            &relay.url,
+            Arc::new(Session(session)),
+        )),
+    )
+    .await;
+    let listed = cua.spaces().list().await.unwrap();
+    assert!(
+        listed.iter().all(|s| !s.id.starts_with("relay:")),
+        "{listed:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_embedded() {
+    signed_out_lists(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_daemon_socket() {
+    signed_out_lists(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_daemon_loopback() {
+    signed_out_lists(Topology::DaemonLoopback).await;
 }

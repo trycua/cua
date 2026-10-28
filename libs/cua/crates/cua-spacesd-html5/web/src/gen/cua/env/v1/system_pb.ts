@@ -18,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file cua/env/v1/system.proto.
  */
 export const file_cua_env_v1_system: GenFile = /*@__PURE__*/
-  fileDesc("ChdjdWEvZW52L3YxL3N5c3RlbS5wcm90bxIKY3VhLmVudi52MSIYChZHZXRDYXBhYmlsaXRpZXNSZXF1ZXN0IrsEChdHZXRDYXBhYmlsaXRpZXNSZXNwb25zZRIPCgd2ZXJzaW9uGAEgASgJEhgKEHByb3RvY29sX3ZlcnNpb24YAiABKA0SGQoRcHJvdG9jb2xfcmV2aXNpb24YAyABKA0SJwoCb3MYBCABKAsyGy5jdWEuZW52LnYxLk9wZXJhdGluZ1N5c3RlbRIkCgdydW50aW1lGAUgASgOMhMuY3VhLmVudi52MS5SdW50aW1lEhYKDnJ1bnRpbWVfZGV0YWlsGAYgASgJEiYKBGFyY2gYByABKA4yGC5jdWEuZW52LnYxLkFyY2hpdGVjdHVyZRIxCg5kaXNwbGF5X3NlcnZlchgIIAEoDjIZLmN1YS5lbnYudjEuRGlzcGxheVNlcnZlchIlCghkaXNwbGF5cxgJIAMoCzITLmN1YS5lbnYudjEuRGlzcGxheRIlCghmZWF0dXJlcxgKIAMoCzITLmN1YS5lbnYudjEuRmVhdHVyZRIQCghob3N0bmFtZRgLIAEoCRITCgtpbml0aWFsaXplZBgMIAEoCBItCglib290X3RpbWUYDSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KDXNpZGVfY2hhbm5lbHMYDiABKAsyGC5jdWEuZW52LnYxLlNpZGVDaGFubmVscxIiCgZsaW1pdHMYDyABKAsyEi5jdWEuZW52LnYxLkxpbWl0cxIfChdtYWNoaW5lX3NlYWxfcHVibGljX2tleRgQIAEoDCJ7Cg9PcGVyYXRpbmdTeXN0ZW0SJAoGZmFtaWx5GAEgASgOMhQuY3VhLmVudi52MS5Pc0ZhbWlseRIMCgRuYW1lGAIgASgJEg8KB3ZlcnNpb24YAyABKAkSDgoGa2VybmVsGAQgASgJEhMKC3ByZXR0eV9uYW1lGAUgASgJIqoBCgdGZWF0dXJlEgwKBG5hbWUYASABKAkSEQoJc3VwcG9ydGVkGAIgASgIEhIKCmxpbWl0YXRpb24YAyABKAkSNwoKYXR0cmlidXRlcxgEIAMoCzIjLmN1YS5lbnYudjEuRmVhdHVyZS5BdHRyaWJ1dGVzRW50cnkaMQoPQXR0cmlidXRlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEihgEKDFNpZGVDaGFubmVscxIVCg1tZWRpYV93c19wYXRoGAEgASgJEhcKD21lZGlhX3F1aWNfcG9ydBgCIAEoDRIWCg50dW5uZWxfd3NfcGF0aBgDIAEoCRIXCg9maWxlc19odHRwX3BhdGgYBCABKAkSFQoNbWNwX2h0dHBfcGF0aBgFIAEoCSJ9CgZMaW1pdHMSFwoPbWF4X2NodW5rX2J5dGVzGAEgASgNEhkKEW1heF9tZXNzYWdlX2J5dGVzGAIgASgNEh0KFXByZWZlcnJlZF9jaHVua19ieXRlcxgDIAEoDRIgChhkZWZhdWx0X3Njcm9sbGJhY2tfYnl0ZXMYBCABKAQiqwMKC0luaXRSZXF1ZXN0Eg0KBXRva2VuGAEgASgJEi0KA2VudhgCIAMoCzIgLmN1YS5lbnYudjEuSW5pdFJlcXVlc3QuRW52RW50cnkSFAoMZGVmYXVsdF91c2VyGAMgASgJEhcKD2RlZmF1bHRfd29ya2RpchgEIAEoCRIRCgljYV9idW5kbGUYBSABKAwSJwoDbm93GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIzCgZsYWJlbHMYByADKAsyIy5jdWEuZW52LnYxLkluaXRSZXF1ZXN0LkxhYmVsc0VudHJ5EjMKDGF1ZGlvX3VwbGluaxgIIAEoCzIdLmN1YS5lbnYudjEuQXVkaW9VcGxpbmtBY2Nlc3MSLgoIcHJlc2VuY2UYCSABKAsyHC5jdWEuZW52LnYxLlByZXNlbmNlU2V0dGluZ3MaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ARotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIj4KEFByZXNlbmNlU2V0dGluZ3MSGQoMY3Vyc29yX3Byb2JlGAEgASgISACIAQFCDwoNX2N1cnNvcl9wcm9iZSJVChFBdWRpb1VwbGlua0FjY2VzcxIpCgRtb2RlGAEgASgOMhsuY3VhLmVudi52MS5BdWRpb1VwbGlua01vZGUSFQoNcHJpbmNpcGFsX2lkcxgCIAMoCSI9CgxJbml0UmVzcG9uc2USFQoNdG9rZW5fY2hhbmdlZBgBIAEoCBIWCg5jbG9ja19hZGp1c3RlZBgCIAEoCCIPCg1IZWFsdGhSZXF1ZXN0IpYBCg5IZWFsdGhSZXNwb25zZRIoCgZzdGF0dXMYASABKA4yGC5jdWEuZW52LnYxLkhlYWx0aFN0YXR1cxIvCgpjb21wb25lbnRzGAIgAygLMhsuY3VhLmVudi52MS5Db21wb25lbnRIZWFsdGgSKQoGdXB0aW1lGAMgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uIlkKD0NvbXBvbmVudEhlYWx0aBIMCgRuYW1lGAEgASgJEigKBnN0YXR1cxgCIAEoDjIYLmN1YS5lbnYudjEuSGVhbHRoU3RhdHVzEg4KBmRldGFpbBgDIAEoCSIjCg5NZXRyaWNzUmVxdWVzdBIRCglkaXNrX3BhdGgYASABKAkiigMKD01ldHJpY3NSZXNwb25zZRIuCgpzYW1wbGVkX2F0GAEgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgljcHVfY291bnQYAiABKA0SEwoLY3B1X3BlcmNlbnQYAyABKAESFwoPbG9hZF9hdmVyYWdlXzFtGAQgASgBEhoKEm1lbW9yeV90b3RhbF9ieXRlcxgFIAEoBBIZChFtZW1vcnlfdXNlZF9ieXRlcxgGIAEoBBIYChBkaXNrX3RvdGFsX2J5dGVzGAcgASgEEhcKD2Rpc2tfdXNlZF9ieXRlcxgIIAEoBBIdChVtYW5hZ2VkX3Byb2Nlc3NfY291bnQYCSABKA0SGwoTbWVkaWFfc2Vzc2lvbl9jb3VudBgKIAEoDRIYChBuZXR3b3JrX3J4X2J5dGVzGAsgASgEEhgKEG5ldHdvcmtfdHhfYnl0ZXMYDCABKAQSFgoObWVtb3J5X2xpbWl0ZWQYDSABKAgSFAoMZGlza19saW1pdGVkGA4gASgIInoKD1NodXRkb3duUmVxdWVzdBImCgRtb2RlGAEgASgOMhguY3VhLmVudi52MS5TaHV0ZG93bk1vZGUSLwoMZ3JhY2VfcGVyaW9kGAIgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEg4KBnJlYXNvbhgDIAEoCSISChBTaHV0ZG93blJlc3BvbnNlItUBChlDcmVhdGVWaWV3ZXJUaWNrZXRSZXF1ZXN0EiYKA3R0bBgBIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIpCgZwb2xpY3kYAiABKA4yGS5jdWEuZW52LnYxLlNlc3Npb25Qb2xpY3kSEQoJY2xpcGJvYXJkGAMgASgIEhIKCmZpbGVzX3Jvb3QYBCABKAkSFAoMYXVkaW9fdXBsaW5rGAUgASgIEigKCXByaW5jaXBhbBgGIAEoCzIVLmN1YS5lbnYudjEuUHJpbmNpcGFsIoUBChpDcmVhdGVWaWV3ZXJUaWNrZXRSZXNwb25zZRIOCgZ0aWNrZXQYASABKAkSLgoKZXhwaXJlc19hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEwoLdmlld2VyX3BhdGgYAyABKAkSEgoKZmlsZXNfcm9vdBgEIAEoCSKPAQoSQXR0YWNoUmVsYXlSZXF1ZXN0EhEKCXJlbGF5X3VybBgBIAEoCRIVCg1tYWNoaW5lX3Rva2VuGAIgASgJEhIKCm1hY2hpbmVfaWQYAyABKAkSFwoPcmVsYXlfandrc19qc29uGAQgASgJEg0KBW93bmVyGAUgASgJEhMKC293bmVyX2VtYWlsGAYgASgJIikKE0F0dGFjaFJlbGF5UmVzcG9uc2USEgoKbWFjaGluZV9pZBgBIAEoCSIUChJEZXRhY2hSZWxheVJlcXVlc3QiJwoTRGV0YWNoUmVsYXlSZXNwb25zZRIQCghkZXRhY2hlZBgBIAEoCCpmCghPc0ZhbWlseRIZChVPU19GQU1JTFlfVU5TUEVDSUZJRUQQABITCg9PU19GQU1JTFlfTElOVVgQARITCg9PU19GQU1JTFlfTUFDT1MQAhIVChFPU19GQU1JTFlfV0lORE9XUxADKsIBCgdSdW50aW1lEhcKE1JVTlRJTUVfVU5TUEVDSUZJRUQQABITCg9SVU5USU1FX1VOS05PV04QARIUChBSVU5USU1FX0tVQkVWSVJUEAISEgoOUlVOVElNRV9HVklTT1IQAxIQCgxSVU5USU1FX0xVTUUQBBIQCgxSVU5USU1FX1FFTVUQBRIVChFSVU5USU1FX0NPTlRBSU5FUhAGEhAKDFJVTlRJTUVfQkFSRRAHEhIKDlJVTlRJTUVfSFlQRVJWEAgqXQoMQXJjaGl0ZWN0dXJlEhwKGEFSQ0hJVEVDVFVSRV9VTlNQRUNJRklFRBAAEhcKE0FSQ0hJVEVDVFVSRV9YODZfNjQQARIWChJBUkNISVRFQ1RVUkVfQVJNNjQQAiqxAQoNRGlzcGxheVNlcnZlchIeChpESVNQTEFZX1NFUlZFUl9VTlNQRUNJRklFRBAAEhcKE0RJU1BMQVlfU0VSVkVSX05PTkUQARIWChJESVNQTEFZX1NFUlZFUl9YMTEQAhIaChZESVNQTEFZX1NFUlZFUl9XQVlMQU5EEAMSGQoVRElTUExBWV9TRVJWRVJfUVVBUlRaEAQSGAoURElTUExBWV9TRVJWRVJfV0lOMzIQBSqQAQoPQXVkaW9VcGxpbmtNb2RlEiEKHUFVRElPX1VQTElOS19NT0RFX1VOU1BFQ0lGSUVEEAASHgoaQVVESU9fVVBMSU5LX01PREVfRElTQUJMRUQQARIfChtBVURJT19VUExJTktfTU9ERV9BTExPV0xJU1QQAhIZChVBVURJT19VUExJTktfTU9ERV9BTlkQAyqDAQoMSGVhbHRoU3RhdHVzEh0KGUhFQUxUSF9TVEFUVVNfVU5TUEVDSUZJRUQQABIZChVIRUFMVEhfU1RBVFVTX1NFUlZJTkcQARIaChZIRUFMVEhfU1RBVFVTX0RFR1JBREVEEAISHQoZSEVBTFRIX1NUQVRVU19OT1RfU0VSVklORxADKrABCgxTaHV0ZG93bk1vZGUSHQoZU0hVVERPV05fTU9ERV9VTlNQRUNJRklFRBAAEh0KGVNIVVRET1dOX01PREVfRFJJVkVSX0VYSVQQARIgChxTSFVURE9XTl9NT0RFX0RSSVZFUl9SRVNUQVJUEAISIAocU0hVVERPV05fTU9ERV9HVUVTVF9QT1dFUk9GRhADEh4KGlNIVVRET1dOX01PREVfR1VFU1RfUkVCT09UEAQykwYKDVN5c3RlbVNlcnZpY2USWgoPR2V0Q2FwYWJpbGl0aWVzEiIuY3VhLmVudi52MS5HZXRDYXBhYmlsaXRpZXNSZXF1ZXN0GiMuY3VhLmVudi52MS5HZXRDYXBhYmlsaXRpZXNSZXNwb25zZRI5CgRJbml0EhcuY3VhLmVudi52MS5Jbml0UmVxdWVzdBoYLmN1YS5lbnYudjEuSW5pdFJlc3BvbnNlEj8KBkhlYWx0aBIZLmN1YS5lbnYudjEuSGVhbHRoUmVxdWVzdBoaLmN1YS5lbnYudjEuSGVhbHRoUmVzcG9uc2USQgoHTWV0cmljcxIaLmN1YS5lbnYudjEuTWV0cmljc1JlcXVlc3QaGy5jdWEuZW52LnYxLk1ldHJpY3NSZXNwb25zZRJFCghTaHV0ZG93bhIbLmN1YS5lbnYudjEuU2h1dGRvd25SZXF1ZXN0GhwuY3VhLmVudi52MS5TaHV0ZG93blJlc3BvbnNlEkcKCERpYWdub3NlEhsuY3VhLmVudi52MS5EaWFnbm9zZVJlcXVlc3QaHC5jdWEuZW52LnYxLkRpYWdub3NlUmVzcG9uc2UwARJRCgxEaWFnbm9zZU9uY2USHy5jdWEuZW52LnYxLkRpYWdub3NlT25jZVJlcXVlc3QaIC5jdWEuZW52LnYxLkRpYWdub3NlT25jZVJlc3BvbnNlEmMKEkNyZWF0ZVZpZXdlclRpY2tldBIlLmN1YS5lbnYudjEuQ3JlYXRlVmlld2VyVGlja2V0UmVxdWVzdBomLmN1YS5lbnYudjEuQ3JlYXRlVmlld2VyVGlja2V0UmVzcG9uc2USTgoLQXR0YWNoUmVsYXkSHi5jdWEuZW52LnYxLkF0dGFjaFJlbGF5UmVxdWVzdBofLmN1YS5lbnYudjEuQXR0YWNoUmVsYXlSZXNwb25zZRJOCgtEZXRhY2hSZWxheRIeLmN1YS5lbnYudjEuRGV0YWNoUmVsYXlSZXF1ZXN0Gh8uY3VhLmVudi52MS5EZXRhY2hSZWxheVJlc3BvbnNlYgZwcm90bzM", [file_cua_env_v1_common, file_cua_env_v1_diagnose, file_cua_env_v1_stream, file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChdjdWEvZW52L3YxL3N5c3RlbS5wcm90bxIKY3VhLmVudi52MSIYChZHZXRDYXBhYmlsaXRpZXNSZXF1ZXN0It8EChdHZXRDYXBhYmlsaXRpZXNSZXNwb25zZRIPCgd2ZXJzaW9uGAEgASgJEhgKEHByb3RvY29sX3ZlcnNpb24YAiABKA0SGQoRcHJvdG9jb2xfcmV2aXNpb24YAyABKA0SJwoCb3MYBCABKAsyGy5jdWEuZW52LnYxLk9wZXJhdGluZ1N5c3RlbRIkCgdydW50aW1lGAUgASgOMhMuY3VhLmVudi52MS5SdW50aW1lEhYKDnJ1bnRpbWVfZGV0YWlsGAYgASgJEiYKBGFyY2gYByABKA4yGC5jdWEuZW52LnYxLkFyY2hpdGVjdHVyZRIxCg5kaXNwbGF5X3NlcnZlchgIIAEoDjIZLmN1YS5lbnYudjEuRGlzcGxheVNlcnZlchIlCghkaXNwbGF5cxgJIAMoCzITLmN1YS5lbnYudjEuRGlzcGxheRIlCghmZWF0dXJlcxgKIAMoCzITLmN1YS5lbnYudjEuRmVhdHVyZRIQCghob3N0bmFtZRgLIAEoCRITCgtpbml0aWFsaXplZBgMIAEoCBItCglib290X3RpbWUYDSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KDXNpZGVfY2hhbm5lbHMYDiABKAsyGC5jdWEuZW52LnYxLlNpZGVDaGFubmVscxIiCgZsaW1pdHMYDyABKAsyEi5jdWEuZW52LnYxLkxpbWl0cxIfChdtYWNoaW5lX3NlYWxfcHVibGljX2tleRgQIAEoDBIiCgRidWxrGBEgASgLMhQuY3VhLmVudi52MS5CdWxrTGFuZSJOCghCdWxrTGFuZRIKCgJpZBgBIAEoDBINCgVzbG90cxgCIAEoDRISCgpzbG90X2J5dGVzGAMgASgEEhMKC2RhdGFfb2Zmc2V0GAQgASgEInsKD09wZXJhdGluZ1N5c3RlbRIkCgZmYW1pbHkYASABKA4yFC5jdWEuZW52LnYxLk9zRmFtaWx5EgwKBG5hbWUYAiABKAkSDwoHdmVyc2lvbhgDIAEoCRIOCgZrZXJuZWwYBCABKAkSEwoLcHJldHR5X25hbWUYBSABKAkiqgEKB0ZlYXR1cmUSDAoEbmFtZRgBIAEoCRIRCglzdXBwb3J0ZWQYAiABKAgSEgoKbGltaXRhdGlvbhgDIAEoCRI3CgphdHRyaWJ1dGVzGAQgAygLMiMuY3VhLmVudi52MS5GZWF0dXJlLkF0dHJpYnV0ZXNFbnRyeRoxCg9BdHRyaWJ1dGVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKGAQoMU2lkZUNoYW5uZWxzEhUKDW1lZGlhX3dzX3BhdGgYASABKAkSFwoPbWVkaWFfcXVpY19wb3J0GAIgASgNEhYKDnR1bm5lbF93c19wYXRoGAMgASgJEhcKD2ZpbGVzX2h0dHBfcGF0aBgEIAEoCRIVCg1tY3BfaHR0cF9wYXRoGAUgASgJIn0KBkxpbWl0cxIXCg9tYXhfY2h1bmtfYnl0ZXMYASABKA0SGQoRbWF4X21lc3NhZ2VfYnl0ZXMYAiABKA0SHQoVcHJlZmVycmVkX2NodW5rX2J5dGVzGAMgASgNEiAKGGRlZmF1bHRfc2Nyb2xsYmFja19ieXRlcxgEIAEoBCLRAwoLSW5pdFJlcXVlc3QSDQoFdG9rZW4YASABKAkSLQoDZW52GAIgAygLMiAuY3VhLmVudi52MS5Jbml0UmVxdWVzdC5FbnZFbnRyeRIUCgxkZWZhdWx0X3VzZXIYAyABKAkSFwoPZGVmYXVsdF93b3JrZGlyGAQgASgJEhEKCWNhX2J1bmRsZRgFIAEoDBInCgNub3cYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjMKBmxhYmVscxgHIAMoCzIjLmN1YS5lbnYudjEuSW5pdFJlcXVlc3QuTGFiZWxzRW50cnkSMwoMYXVkaW9fdXBsaW5rGAggASgLMh0uY3VhLmVudi52MS5BdWRpb1VwbGlua0FjY2VzcxIuCghwcmVzZW5jZRgJIAEoCzIcLmN1YS5lbnYudjEuUHJlc2VuY2VTZXR0aW5ncxITCgtuZXdfbWFjaGluZRgKIAEoCBIPCgdlbnRyb3B5GAsgASgMGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASI+ChBQcmVzZW5jZVNldHRpbmdzEhkKDGN1cnNvcl9wcm9iZRgBIAEoCEgAiAEBQg8KDV9jdXJzb3JfcHJvYmUiVQoRQXVkaW9VcGxpbmtBY2Nlc3MSKQoEbW9kZRgBIAEoDjIbLmN1YS5lbnYudjEuQXVkaW9VcGxpbmtNb2RlEhUKDXByaW5jaXBhbF9pZHMYAiADKAkiUgoMSW5pdFJlc3BvbnNlEhUKDXRva2VuX2NoYW5nZWQYASABKAgSFgoOY2xvY2tfYWRqdXN0ZWQYAiABKAgSEwoLbmV3X21hY2hpbmUYAyABKAgiDwoNSGVhbHRoUmVxdWVzdCKWAQoOSGVhbHRoUmVzcG9uc2USKAoGc3RhdHVzGAEgASgOMhguY3VhLmVudi52MS5IZWFsdGhTdGF0dXMSLwoKY29tcG9uZW50cxgCIAMoCzIbLmN1YS5lbnYudjEuQ29tcG9uZW50SGVhbHRoEikKBnVwdGltZRgDIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbiJZCg9Db21wb25lbnRIZWFsdGgSDAoEbmFtZRgBIAEoCRIoCgZzdGF0dXMYAiABKA4yGC5jdWEuZW52LnYxLkhlYWx0aFN0YXR1cxIOCgZkZXRhaWwYAyABKAkiIwoOTWV0cmljc1JlcXVlc3QSEQoJZGlza19wYXRoGAEgASgJIooDCg9NZXRyaWNzUmVzcG9uc2USLgoKc2FtcGxlZF9hdBgBIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJY3B1X2NvdW50GAIgASgNEhMKC2NwdV9wZXJjZW50GAMgASgBEhcKD2xvYWRfYXZlcmFnZV8xbRgEIAEoARIaChJtZW1vcnlfdG90YWxfYnl0ZXMYBSABKAQSGQoRbWVtb3J5X3VzZWRfYnl0ZXMYBiABKAQSGAoQZGlza190b3RhbF9ieXRlcxgHIAEoBBIXCg9kaXNrX3VzZWRfYnl0ZXMYCCABKAQSHQoVbWFuYWdlZF9wcm9jZXNzX2NvdW50GAkgASgNEhsKE21lZGlhX3Nlc3Npb25fY291bnQYCiABKA0SGAoQbmV0d29ya19yeF9ieXRlcxgLIAEoBBIYChBuZXR3b3JrX3R4X2J5dGVzGAwgASgEEhYKDm1lbW9yeV9saW1pdGVkGA0gASgIEhQKDGRpc2tfbGltaXRlZBgOIAEoCCJ6Cg9TaHV0ZG93blJlcXVlc3QSJgoEbW9kZRgBIAEoDjIYLmN1YS5lbnYudjEuU2h1dGRvd25Nb2RlEi8KDGdyYWNlX3BlcmlvZBgCIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIOCgZyZWFzb24YAyABKAkiEgoQU2h1dGRvd25SZXNwb25zZSLVAQoZQ3JlYXRlVmlld2VyVGlja2V0UmVxdWVzdBImCgN0dGwYASABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SKQoGcG9saWN5GAIgASgOMhkuY3VhLmVudi52MS5TZXNzaW9uUG9saWN5EhEKCWNsaXBib2FyZBgDIAEoCBISCgpmaWxlc19yb290GAQgASgJEhQKDGF1ZGlvX3VwbGluaxgFIAEoCBIoCglwcmluY2lwYWwYBiABKAsyFS5jdWEuZW52LnYxLlByaW5jaXBhbCKFAQoaQ3JlYXRlVmlld2VyVGlja2V0UmVzcG9uc2USDgoGdGlja2V0GAEgASgJEi4KCmV4cGlyZXNfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhMKC3ZpZXdlcl9wYXRoGAMgASgJEhIKCmZpbGVzX3Jvb3QYBCABKAkijwEKEkF0dGFjaFJlbGF5UmVxdWVzdBIRCglyZWxheV91cmwYASABKAkSFQoNbWFjaGluZV90b2tlbhgCIAEoCRISCgptYWNoaW5lX2lkGAMgASgJEhcKD3JlbGF5X2p3a3NfanNvbhgEIAEoCRINCgVvd25lchgFIAEoCRITCgtvd25lcl9lbWFpbBgGIAEoCSIpChNBdHRhY2hSZWxheVJlc3BvbnNlEhIKCm1hY2hpbmVfaWQYASABKAkiFAoSRGV0YWNoUmVsYXlSZXF1ZXN0IicKE0RldGFjaFJlbGF5UmVzcG9uc2USEAoIZGV0YWNoZWQYASABKAgqZgoIT3NGYW1pbHkSGQoVT1NfRkFNSUxZX1VOU1BFQ0lGSUVEEAASEwoPT1NfRkFNSUxZX0xJTlVYEAESEwoPT1NfRkFNSUxZX01BQ09TEAISFQoRT1NfRkFNSUxZX1dJTkRPV1MQAyrCAQoHUnVudGltZRIXChNSVU5USU1FX1VOU1BFQ0lGSUVEEAASEwoPUlVOVElNRV9VTktOT1dOEAESFAoQUlVOVElNRV9LVUJFVklSVBACEhIKDlJVTlRJTUVfR1ZJU09SEAMSEAoMUlVOVElNRV9MVU1FEAQSEAoMUlVOVElNRV9RRU1VEAUSFQoRUlVOVElNRV9DT05UQUlORVIQBhIQCgxSVU5USU1FX0JBUkUQBxISCg5SVU5USU1FX0hZUEVSVhAIKl0KDEFyY2hpdGVjdHVyZRIcChhBUkNISVRFQ1RVUkVfVU5TUEVDSUZJRUQQABIXChNBUkNISVRFQ1RVUkVfWDg2XzY0EAESFgoSQVJDSElURUNUVVJFX0FSTTY0EAIqsQEKDURpc3BsYXlTZXJ2ZXISHgoaRElTUExBWV9TRVJWRVJfVU5TUEVDSUZJRUQQABIXChNESVNQTEFZX1NFUlZFUl9OT05FEAESFgoSRElTUExBWV9TRVJWRVJfWDExEAISGgoWRElTUExBWV9TRVJWRVJfV0FZTEFORBADEhkKFURJU1BMQVlfU0VSVkVSX1FVQVJUWhAEEhgKFERJU1BMQVlfU0VSVkVSX1dJTjMyEAUqkAEKD0F1ZGlvVXBsaW5rTW9kZRIhCh1BVURJT19VUExJTktfTU9ERV9VTlNQRUNJRklFRBAAEh4KGkFVRElPX1VQTElOS19NT0RFX0RJU0FCTEVEEAESHwobQVVESU9fVVBMSU5LX01PREVfQUxMT1dMSVNUEAISGQoVQVVESU9fVVBMSU5LX01PREVfQU5ZEAMqgwEKDEhlYWx0aFN0YXR1cxIdChlIRUFMVEhfU1RBVFVTX1VOU1BFQ0lGSUVEEAASGQoVSEVBTFRIX1NUQVRVU19TRVJWSU5HEAESGgoWSEVBTFRIX1NUQVRVU19ERUdSQURFRBACEh0KGUhFQUxUSF9TVEFUVVNfTk9UX1NFUlZJTkcQAyqwAQoMU2h1dGRvd25Nb2RlEh0KGVNIVVRET1dOX01PREVfVU5TUEVDSUZJRUQQABIdChlTSFVURE9XTl9NT0RFX0RSSVZFUl9FWElUEAESIAocU0hVVERPV05fTU9ERV9EUklWRVJfUkVTVEFSVBACEiAKHFNIVVRET1dOX01PREVfR1VFU1RfUE9XRVJPRkYQAxIeChpTSFVURE9XTl9NT0RFX0dVRVNUX1JFQk9PVBAEMpMGCg1TeXN0ZW1TZXJ2aWNlEloKD0dldENhcGFiaWxpdGllcxIiLmN1YS5lbnYudjEuR2V0Q2FwYWJpbGl0aWVzUmVxdWVzdBojLmN1YS5lbnYudjEuR2V0Q2FwYWJpbGl0aWVzUmVzcG9uc2USOQoESW5pdBIXLmN1YS5lbnYudjEuSW5pdFJlcXVlc3QaGC5jdWEuZW52LnYxLkluaXRSZXNwb25zZRI/CgZIZWFsdGgSGS5jdWEuZW52LnYxLkhlYWx0aFJlcXVlc3QaGi5jdWEuZW52LnYxLkhlYWx0aFJlc3BvbnNlEkIKB01ldHJpY3MSGi5jdWEuZW52LnYxLk1ldHJpY3NSZXF1ZXN0GhsuY3VhLmVudi52MS5NZXRyaWNzUmVzcG9uc2USRQoIU2h1dGRvd24SGy5jdWEuZW52LnYxLlNodXRkb3duUmVxdWVzdBocLmN1YS5lbnYudjEuU2h1dGRvd25SZXNwb25zZRJHCghEaWFnbm9zZRIbLmN1YS5lbnYudjEuRGlhZ25vc2VSZXF1ZXN0GhwuY3VhLmVudi52MS5EaWFnbm9zZVJlc3BvbnNlMAESUQoMRGlhZ25vc2VPbmNlEh8uY3VhLmVudi52MS5EaWFnbm9zZU9uY2VSZXF1ZXN0GiAuY3VhLmVudi52MS5EaWFnbm9zZU9uY2VSZXNwb25zZRJjChJDcmVhdGVWaWV3ZXJUaWNrZXQSJS5jdWEuZW52LnYxLkNyZWF0ZVZpZXdlclRpY2tldFJlcXVlc3QaJi5jdWEuZW52LnYxLkNyZWF0ZVZpZXdlclRpY2tldFJlc3BvbnNlEk4KC0F0dGFjaFJlbGF5Eh4uY3VhLmVudi52MS5BdHRhY2hSZWxheVJlcXVlc3QaHy5jdWEuZW52LnYxLkF0dGFjaFJlbGF5UmVzcG9uc2USTgoLRGV0YWNoUmVsYXkSHi5jdWEuZW52LnYxLkRldGFjaFJlbGF5UmVxdWVzdBofLmN1YS5lbnYudjEuRGV0YWNoUmVsYXlSZXNwb25zZWIGcHJvdG8z", [file_cua_env_v1_common, file_cua_env_v1_diagnose, file_cua_env_v1_stream, file_google_protobuf_duration, file_google_protobuf_timestamp]);
 
 /**
  * Request for `SystemService.GetCapabilities`.
@@ -161,6 +161,15 @@ export type GetCapabilitiesResponse = Message<"cua.env.v1.GetCapabilitiesRespons
    * @generated from field: bytes machine_seal_public_key = 16;
    */
   machineSealPublicKey: Uint8Array;
+
+  /**
+   * The bulk lane, when the guest has one: a second disk the host shares
+   * with it, through which same-machine file transfers skip the network.
+   * Unset when the guest has no such disk.
+   *
+   * @generated from field: cua.env.v1.BulkLane bulk = 17;
+   */
+  bulk?: BulkLane | undefined;
 };
 
 /**
@@ -169,6 +178,54 @@ export type GetCapabilitiesResponse = Message<"cua.env.v1.GetCapabilitiesRespons
  */
 export const GetCapabilitiesResponseSchema: GenMessage<GetCapabilitiesResponse> = /*@__PURE__*/
   messageDesc(file_cua_env_v1_system, 1);
+
+/**
+ * A disk shared between a guest and the machine hosting it, carrying file
+ * content for `ReadFileRequest.bulk_slot` and `UploadChunkRequest.bulk_slot`.
+ * The host-side client finds the disk's file, reads the identity from its
+ * first bytes (the guest writes them) and uses the lane only when it equals
+ * `id`: a client that cannot open that file, or finds another identity,
+ * transfers over the network as before.
+ *
+ * @generated from message cua.env.v1.BulkLane
+ */
+export type BulkLane = Message<"cua.env.v1.BulkLane"> & {
+  /**
+   * Identity the guest wrote at the start of the disk. 16 bytes.
+   *
+   * @generated from field: bytes id = 1;
+   */
+  id: Uint8Array;
+
+  /**
+   * Number of slots.
+   *
+   * @generated from field: uint32 slots = 2;
+   */
+  slots: number;
+
+  /**
+   * Size of each slot in bytes.
+   *
+   * @generated from field: uint64 slot_bytes = 3;
+   */
+  slotBytes: bigint;
+
+  /**
+   * Offset of slot 0 in the disk. Slot `i` starts at
+   * `data_offset + i * slot_bytes`.
+   *
+   * @generated from field: uint64 data_offset = 4;
+   */
+  dataOffset: bigint;
+};
+
+/**
+ * Describes the message cua.env.v1.BulkLane.
+ * Use `create(BulkLaneSchema)` to create a new message.
+ */
+export const BulkLaneSchema: GenMessage<BulkLane> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_system, 2);
 
 /**
  * Guest operating system description.
@@ -219,7 +276,7 @@ export type OperatingSystem = Message<"cua.env.v1.OperatingSystem"> & {
  * Use `create(OperatingSystemSchema)` to create a new message.
  */
 export const OperatingSystemSchema: GenMessage<OperatingSystem> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 2);
+  messageDesc(file_cua_env_v1_system, 3);
 
 /**
  * One capability and whether this guest supports it.
@@ -278,7 +335,7 @@ export type Feature = Message<"cua.env.v1.Feature"> & {
  * Use `create(FeatureSchema)` to create a new message.
  */
 export const FeatureSchema: GenMessage<Feature> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 3);
+  messageDesc(file_cua_env_v1_system, 4);
 
 /**
  * Where the non-gRPC sockets live, relative to the gRPC endpoint.
@@ -329,7 +386,7 @@ export type SideChannels = Message<"cua.env.v1.SideChannels"> & {
  * Use `create(SideChannelsSchema)` to create a new message.
  */
 export const SideChannelsSchema: GenMessage<SideChannels> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 4);
+  messageDesc(file_cua_env_v1_system, 5);
 
 /**
  * Server-enforced limits.
@@ -372,7 +429,7 @@ export type Limits = Message<"cua.env.v1.Limits"> & {
  * Use `create(LimitsSchema)` to create a new message.
  */
 export const LimitsSchema: GenMessage<Limits> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 5);
+  messageDesc(file_cua_env_v1_system, 6);
 
 /**
  * Request for `SystemService.Init`.
@@ -382,8 +439,8 @@ export const LimitsSchema: GenMessage<Limits> = /*@__PURE__*/
 export type InitRequest = Message<"cua.env.v1.InitRequest"> & {
   /**
    * Access token to install. If the driver has no token yet (first claim),
-   * the call must arrive over an already-authenticated channel such as the
-   * Fleet gateway or loopback. If a token is configured, the call must be
+   * the call must arrive over an already-authenticated channel such as a
+   * gateway or loopback. If a token is configured, the call must be
    * authenticated with it, and a different value here rotates it. Empty
    * leaves the token unchanged.
    *
@@ -453,6 +510,36 @@ export type InitRequest = Message<"cua.env.v1.InitRequest"> & {
    * @generated from field: cua.env.v1.PresenceSettings presence = 9;
    */
   presence?: PresenceSettings | undefined;
+
+  /**
+   * This guest just became a new machine: a Space claimed from a warm pool,
+   * or restored or forked from a memory snapshot that other Spaces share.
+   * The driver regenerates its per-machine secrets (the machine-seal
+   * keypair, the media QUIC certificate, the ticket key used without a
+   * token), resets the sealed-delivery replay guard, rewrites
+   * `/etc/machine-id` (and a separate dbus copy) where it may, mixes
+   * `entropy` into the guest's random pool (crediting it and forcing a
+   * reseed where it has the privilege), steps the clock to `now`, and
+   * revokes forwards, the hotspot, the volume mount and media sessions
+   * opened before, so no two Spaces share keys or random state. Senders
+   * that pinned the old machine-seal key for this Space must re-pin: send
+   * it only when the guest is a different Space than the one the snapshot
+   * was taken of (never to resume a Space from its own checkpoint).
+   * Drivers before protocol revision 10 ignore it (`InitResponse.new_machine`
+   * stays false).
+   *
+   * @generated from field: bool new_machine = 10;
+   */
+  newMachine: boolean;
+
+  /**
+   * Random bytes from the caller's CSPRNG, mixed into the guest's entropy
+   * pool and into every secret `new_machine` regenerates (a restored
+   * guest's pool is its snapshot's). At least 32 bytes; at most 4096.
+   *
+   * @generated from field: bytes entropy = 11;
+   */
+  entropy: Uint8Array;
 };
 
 /**
@@ -460,7 +547,7 @@ export type InitRequest = Message<"cua.env.v1.InitRequest"> & {
  * Use `create(InitRequestSchema)` to create a new message.
  */
 export const InitRequestSchema: GenMessage<InitRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 6);
+  messageDesc(file_cua_env_v1_system, 7);
 
 /**
  * Per-Space presence settings.
@@ -486,7 +573,7 @@ export type PresenceSettings = Message<"cua.env.v1.PresenceSettings"> & {
  * Use `create(PresenceSettingsSchema)` to create a new message.
  */
 export const PresenceSettingsSchema: GenMessage<PresenceSettings> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 7);
+  messageDesc(file_cua_env_v1_system, 8);
 
 /**
  * Per-principal permission for audio uplink.
@@ -515,7 +602,7 @@ export type AudioUplinkAccess = Message<"cua.env.v1.AudioUplinkAccess"> & {
  * Use `create(AudioUplinkAccessSchema)` to create a new message.
  */
 export const AudioUplinkAccessSchema: GenMessage<AudioUplinkAccess> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 8);
+  messageDesc(file_cua_env_v1_system, 9);
 
 /**
  * Response for `SystemService.Init`.
@@ -536,6 +623,14 @@ export type InitResponse = Message<"cua.env.v1.InitResponse"> & {
    * @generated from field: bool clock_adjusted = 2;
    */
   clockAdjusted: boolean;
+
+  /**
+   * True if `InitRequest.new_machine` was applied: this guest's
+   * per-machine secrets were regenerated (see `InitRequest.new_machine`).
+   *
+   * @generated from field: bool new_machine = 3;
+   */
+  newMachine: boolean;
 };
 
 /**
@@ -543,7 +638,7 @@ export type InitResponse = Message<"cua.env.v1.InitResponse"> & {
  * Use `create(InitResponseSchema)` to create a new message.
  */
 export const InitResponseSchema: GenMessage<InitResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 9);
+  messageDesc(file_cua_env_v1_system, 10);
 
 /**
  * Request for `SystemService.Health`.
@@ -558,7 +653,7 @@ export type HealthRequest = Message<"cua.env.v1.HealthRequest"> & {
  * Use `create(HealthRequestSchema)` to create a new message.
  */
 export const HealthRequestSchema: GenMessage<HealthRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 10);
+  messageDesc(file_cua_env_v1_system, 11);
 
 /**
  * Response for `SystemService.Health`.
@@ -594,7 +689,7 @@ export type HealthResponse = Message<"cua.env.v1.HealthResponse"> & {
  * Use `create(HealthResponseSchema)` to create a new message.
  */
 export const HealthResponseSchema: GenMessage<HealthResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 11);
+  messageDesc(file_cua_env_v1_system, 12);
 
 /**
  * Health of one subsystem.
@@ -629,7 +724,7 @@ export type ComponentHealth = Message<"cua.env.v1.ComponentHealth"> & {
  * Use `create(ComponentHealthSchema)` to create a new message.
  */
 export const ComponentHealthSchema: GenMessage<ComponentHealth> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 12);
+  messageDesc(file_cua_env_v1_system, 13);
 
 /**
  * Request for `SystemService.Metrics`.
@@ -651,7 +746,7 @@ export type MetricsRequest = Message<"cua.env.v1.MetricsRequest"> & {
  * Use `create(MetricsRequestSchema)` to create a new message.
  */
 export const MetricsRequestSchema: GenMessage<MetricsRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 13);
+  messageDesc(file_cua_env_v1_system, 14);
 
 /**
  * Response for `SystemService.Metrics`.
@@ -702,7 +797,9 @@ export type MetricsResponse = Message<"cua.env.v1.MetricsResponse"> & {
   memoryUsedBytes: bigint;
 
   /**
-   * Total bytes of the filesystem named by `disk_path`.
+   * Total bytes of the filesystem named by `disk_path`; 0 when it has no
+   * size of its own (gVisor's root overlay reports "unlimited"), never a
+   * sentinel such as 2^63.
    *
    * @generated from field: uint64 disk_total_bytes = 7;
    */
@@ -767,7 +864,7 @@ export type MetricsResponse = Message<"cua.env.v1.MetricsResponse"> & {
  * Use `create(MetricsResponseSchema)` to create a new message.
  */
 export const MetricsResponseSchema: GenMessage<MetricsResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 14);
+  messageDesc(file_cua_env_v1_system, 15);
 
 /**
  * Request for `SystemService.Shutdown`.
@@ -803,7 +900,7 @@ export type ShutdownRequest = Message<"cua.env.v1.ShutdownRequest"> & {
  * Use `create(ShutdownRequestSchema)` to create a new message.
  */
 export const ShutdownRequestSchema: GenMessage<ShutdownRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 15);
+  messageDesc(file_cua_env_v1_system, 16);
 
 /**
  * Response for `SystemService.Shutdown`. Sent before the shutdown begins.
@@ -818,7 +915,7 @@ export type ShutdownResponse = Message<"cua.env.v1.ShutdownResponse"> & {
  * Use `create(ShutdownResponseSchema)` to create a new message.
  */
 export const ShutdownResponseSchema: GenMessage<ShutdownResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 16);
+  messageDesc(file_cua_env_v1_system, 17);
 
 /**
  * Request for `SystemService.CreateViewerTicket`.
@@ -880,7 +977,7 @@ export type CreateViewerTicketRequest = Message<"cua.env.v1.CreateViewerTicketRe
  * Use `create(CreateViewerTicketRequestSchema)` to create a new message.
  */
 export const CreateViewerTicketRequestSchema: GenMessage<CreateViewerTicketRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 17);
+  messageDesc(file_cua_env_v1_system, 18);
 
 /**
  * Response for `SystemService.CreateViewerTicket`.
@@ -926,7 +1023,7 @@ export type CreateViewerTicketResponse = Message<"cua.env.v1.CreateViewerTicketR
  * Use `create(CreateViewerTicketResponseSchema)` to create a new message.
  */
 export const CreateViewerTicketResponseSchema: GenMessage<CreateViewerTicketResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 18);
+  messageDesc(file_cua_env_v1_system, 19);
 
 /**
  * Request for `SystemService.AttachRelay`.
@@ -984,7 +1081,7 @@ export type AttachRelayRequest = Message<"cua.env.v1.AttachRelayRequest"> & {
  * Use `create(AttachRelayRequestSchema)` to create a new message.
  */
 export const AttachRelayRequestSchema: GenMessage<AttachRelayRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 19);
+  messageDesc(file_cua_env_v1_system, 20);
 
 /**
  * Response for `SystemService.AttachRelay`.
@@ -1005,7 +1102,7 @@ export type AttachRelayResponse = Message<"cua.env.v1.AttachRelayResponse"> & {
  * Use `create(AttachRelayResponseSchema)` to create a new message.
  */
 export const AttachRelayResponseSchema: GenMessage<AttachRelayResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 20);
+  messageDesc(file_cua_env_v1_system, 21);
 
 /**
  * Request for `SystemService.DetachRelay`.
@@ -1020,7 +1117,7 @@ export type DetachRelayRequest = Message<"cua.env.v1.DetachRelayRequest"> & {
  * Use `create(DetachRelayRequestSchema)` to create a new message.
  */
 export const DetachRelayRequestSchema: GenMessage<DetachRelayRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 21);
+  messageDesc(file_cua_env_v1_system, 22);
 
 /**
  * Response for `SystemService.DetachRelay`.
@@ -1041,7 +1138,7 @@ export type DetachRelayResponse = Message<"cua.env.v1.DetachRelayResponse"> & {
  * Use `create(DetachRelayResponseSchema)` to create a new message.
  */
 export const DetachRelayResponseSchema: GenMessage<DetachRelayResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_system, 22);
+  messageDesc(file_cua_env_v1_system, 23);
 
 /**
  * Operating system family.
@@ -1105,7 +1202,7 @@ export enum Runtime {
   UNKNOWN = 1,
 
   /**
-   * A KubeVirt virtual machine (Fleet).
+   * A KubeVirt virtual machine.
    *
    * @generated from enum value: RUNTIME_KUBEVIRT = 2;
    */

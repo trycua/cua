@@ -1,0 +1,132 @@
+name: "CI: Cua Driver Bench"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver-bench/**"
+      - ".github/workflows/ci-cua-driver-bench.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver-bench/**"
+      - ".github/workflows/ci-cua-driver-bench.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cua-driver-bench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: Harness tests (no GUI, no model)
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Build BenchLab and BenchSentinel
+        working-directory: libs/cua-driver-bench/automated-eval/macos_bench
+        run: swift/build.sh "$RUNNER_TEMP/bench-build"
+
+      - name: Run harness, checker and sentinel tests
+        working-directory: libs/cua-driver-bench/automated-eval/macos_bench
+        env:
+          CDB_BENCH_WORK: ${{ runner.temp }}/cdb-bench-work
+        run: >-
+          uv run --no-project --python 3.12 --with pytest==8.4.2
+          python -m pytest -q tests probes/tests swift/tests
+
+  linux-desktop:
+    name: Linux headless desktop contracts (no model)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Install desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0 \
+            xdotool x11-utils libxss1 ffmpeg lsof python3-pytest
+      - name: Exercise GTK, doctor, sentinel and evidence contracts
+        working-directory: libs/cua-driver-bench/automated-eval/macos_bench
+        env:
+          CDB_BENCH_WORK: ${{ runner.temp }}/cdb-bench-work
+        run: |
+          timeout 180s xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            dbus-run-session -- bash -lc \
+            'openbox >/tmp/cua-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-picom.log 2>&1 & sleep 2; /usr/bin/python3 -m pytest -q tests/test_pilot_runner.py tests/test_runner_flow.py tests/test_bench_v2.py tests/test_analyze.py tests/test_cdb_adapter.py'
+
+  taskpack:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: Task pack tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Evaluator, reset and manifest tests
+        working-directory: libs/cua-driver-bench/taskpack/tasks/shared
+        run: |
+          set -euo pipefail
+          for task in */; do
+            [ -f "$task/task.cuabench.json" ] || continue
+            echo "::group::${task%/}"
+            (cd "$task" && uv run --no-project --python 3.12 python -m unittest discover -s tests)
+            (cd "$task" && python3 tools/refresh_manifest_digests.py --check)
+            echo "::endgroup::"
+          done
+
+      - name: App store tests
+        working-directory: libs/cua-driver-bench/taskpack/tasks/shared
+        run: |
+          set -euo pipefail
+          for dir in */apps/* */fixture/archive-site; do
+            [ -d "$dir/tests" ] || continue
+            echo "::group::$dir"
+            (cd "$dir" && node --test tests/*.test.js)
+            echo "::endgroup::"
+          done
+
+      - name: Pinned tree digests match the task pack
+        working-directory: libs/cua-driver-bench/automated-eval/macos_bench
+        env:
+          CDB_BENCH_WORK: ${{ runner.temp }}/cdb-bench-work
+        run: >-
+          uv run --no-project --python 3.12
+          python tools/check_pack_pins.py
+
+  lint:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: Python lint and format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Check Python files
+        run: |
+          uvx ruff==0.14.10 check --no-fix libs/cua-driver-bench
+          uvx ruff==0.14.10 format --check libs/cua-driver-bench

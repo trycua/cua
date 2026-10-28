@@ -1,0 +1,11 @@
+{"seq":1,"ts":1792859490863,"turn":0,"epoch":1,"type":"driver_start","session":"s1","attempt":1,"resume":false,"journal":false,"policy":"ask-model"}
+{"seq":2,"ts":1792859491186,"turn":0,"epoch":1,"type":"initialized","agentInfo":null,"protocolVersion":1,"agentCapabilities":{"loadSession":true},"authMethods":[]}
+{"seq":3,"ts":1792859491197,"turn":0,"epoch":1,"type":"session","sessionId":"mock-6462529f","resumed":false,"modes":{"currentModeId":"default","availableModes":[{"id":"default"},{"id":"ask","_meta":{"kind":"standard"}},{"id":"full","_meta":{"kind":"full_access"}}]}}
+{"seq":4,"ts":1792859491209,"turn":1,"epoch":1,"type":"turn_started","prompt":"do the thing","files":[],"msgId":"initial"}
+{"seq":5,"ts":1792859491223,"turn":1,"epoch":1,"type":"update","update":{"toolCallId":"call-1","title":"run call-1","kind":"execute","status":"pending","rawInput":{"cmd":"call-1"},"sessionUpdate":"tool_call"}}
+{"seq":6,"ts":1792859491240,"turn":1,"epoch":1,"type":"permission","toolCall":{"toolCallId":"call-1","kind":"execute","status":"pending","title":"run call-1","rawInput":{"cmd":"call-1"}},"chosen":"allow","kind":"allow_once","action":"approve"}
+{"seq":7,"ts":1792859491247,"turn":1,"epoch":1,"type":"update","update":{"toolCallId":"call-1","status":"in_progress","sessionUpdate":"tool_call_update"}}
+{"seq":8,"ts":1792859491256,"turn":1,"epoch":1,"type":"update","update":{"toolCallId":"call-1","status":"completed","rawOutput":"wrote 3 files","sessionUpdate":"tool_call_update"}}
+{"seq":9,"ts":1792859491256,"turn":1,"epoch":1,"type":"update","update":{"toolCallId":"call-2","title":"run call-2","kind":"execute","status":"pending","rawInput":{"cmd":"call-2"},"sessionUpdate":"tool_call"}}
+{"seq":10,"ts":1792859491271,"turn":1,"epoch":1,"type":"permission","toolCall":{"toolCallId":"call-2","kind":"execute","status":"pending","title":"run call-2","rawInput":{"cmd":"call-2"}},"chosen":"allow","kind":"allow_once","action":"approve"}
+{"seq":11,"ts":1792859491273,"turn":1,"epoch":1,"type":"update","update":{"toolCallId":"call-2","status":"in_progress","sessionUpdate":"tool_call_update"}}

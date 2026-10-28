@@ -310,7 +310,8 @@ extension Server {
                 name: request.name,
                 newName: request.newName,
                 sourceLocation: request.sourceLocation,
-                destLocation: request.destLocation
+                destLocation: request.destLocation,
+                withSavedState: request.withSavedState ?? false
             )
 
             return HTTPResponse(
@@ -366,6 +367,45 @@ extension Server {
                 statusCode: .ok,
                 headers: ["Content-Type": "application/json"],
                 body: try JSONEncoder().encode(["message": "VM settings updated successfully"])
+            )
+        } catch {
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: error.localizedDescription))
+            )
+        }
+    }
+
+    /// Renames a VM, running or not (`{"newName": "..."}`).
+    func handleRenameVM(name: String, body: Data?) async throws -> HTTPResponse {
+        guard let body, let request = try? JSONDecoder().decode(RenameVMRequest.self, from: body)
+        else {
+            return .badRequest(message: "Invalid request body")
+        }
+        do {
+            try LumeController().renameVM(
+                name: name, newName: request.newName, storage: request.storage)
+            return HTTPResponse(
+                statusCode: .ok,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode([
+                    "message": "VM renamed", "name": request.newName,
+                ])
+            )
+        } catch {
+            return .badRequest(message: error.localizedDescription)
+        }
+    }
+
+    /// Saves a running VM's state and stops it; its next run resumes it.
+    func handleSuspendVM(name: String) async throws -> HTTPResponse {
+        do {
+            try await LumeController().suspendVM(name: name)
+            return HTTPResponse(
+                statusCode: .ok,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(["message": "VM suspended", "name": name])
             )
         } catch {
             return HTTPResponse(
@@ -558,6 +598,24 @@ extension Server {
             let networkMode = try request.parseNetworkMode()
             let vncPolicy = try request.validatedVNCPolicy(noDisplayDefault: false)
             let noDisplay = request.noDisplay ?? false
+
+            // Virtualization.framework runs at most two macOS guests per host
+            // and fails a third start only after the async start was accepted,
+            // so refuse it up front. Linux guests are not limited.
+            let controller = LumeController()
+            if let target = try? controller.getDetails(name: name, storage: request.storage),
+                let capacityError = Self.macOSGuestCapacityError(
+                    targetOS: target.os,
+                    runningMacOSGuests: Self.runningMacOSGuestCount(
+                        try controller.runningVMs(), excluding: target.name)
+                )
+            {
+                return HTTPResponse(
+                    statusCode: .conflict,
+                    headers: ["Content-Type": "application/json"],
+                    body: try JSONEncoder().encode(APIError(message: capacityError))
+                )
+            }
 
             // Start VM in background
             Logger.info("Starting VM in background", metadata: ["name": name])
@@ -952,45 +1010,13 @@ extension Server {
 
     func handleGetLogs(type: String?, lines: Int?) async throws -> HTTPResponse {
         do {
-            let logType = type?.lowercased() ?? "all"
-            let infoPath = "/tmp/lume_daemon.log"
-            let errorPath = "/tmp/lume_daemon.error.log"
-
-            let fileManager = FileManager.default
-            var response: [String: String] = [:]
-
-            // Function to read log files
-            func readLogFile(path: String) -> String? {
-                guard fileManager.fileExists(atPath: path) else {
-                    return nil
-                }
-
-                do {
-                    let content = try String(contentsOfFile: path, encoding: .utf8)
-
-                    // If lines parameter is provided, return only the specified number of lines from the end
-                    if let lineCount = lines {
-                        let allLines = content.components(separatedBy: .newlines)
-                        let startIndex = max(0, allLines.count - lineCount)
-                        let lastLines = Array(allLines[startIndex...])
-                        return lastLines.joined(separator: "\n")
-                    }
-
-                    return content
-                } catch {
-                    return "Error reading log file: \(error.localizedDescription)"
-                }
-            }
-
-            // Get logs based on requested type
-            if logType == "info" || logType == "all" {
-                response["info"] = readLogFile(path: infoPath) ?? "Info log file not found"
-            }
-
-            if logType == "error" || logType == "all" {
-                response["error"] = readLogFile(path: errorPath) ?? "Error log file not found"
-            }
-
+            let channel = LumeChannel.current
+            let response = DaemonLogs.response(
+                type: type,
+                lines: lines,
+                infoPath: channel.lumeDaemonLogPath(),
+                errorPath: channel.lumeDaemonErrorLogPath()
+            )
             return try .json(response)
         } catch {
             return .badRequest(message: error.localizedDescription)
@@ -1002,8 +1028,11 @@ extension Server {
     /// Response structure for host status endpoint
     struct HostStatusResponse: Codable {
         let status: String
+        /// Running VMs, macOS and Linux.
         let vmCount: Int
+        /// The most macOS guests the host runs at once.
         let maxVMs: Int
+        /// macOS guests that can still start.
         let availableSlots: Int
         let version: String
 
@@ -1021,18 +1050,16 @@ extension Server {
         do {
             let vmController = LumeController()
 
-            // Get all VMs across all storage locations
-            let vms = try vmController.list(storage: nil)
-
-            // Count running VMs (Apple policy: max 2 VMs per host)
-            let runningVMs = vms.filter { $0.status == "running" }
-            let maxVMs = 2  // Apple Virtualization Framework limit
+            // Running VMs across all storage locations. Only macOS guests
+            // take one of the host's slots (Virtualization.framework limit).
+            let runningVMs = try vmController.runningVMs()
+            let maxVMs = Self.maxRunningMacOSGuests
 
             let response = HostStatusResponse(
                 status: "healthy",
                 vmCount: runningVMs.count,
                 maxVMs: maxVMs,
-                availableSlots: max(0, maxVMs - runningVMs.count),
+                availableSlots: max(0, maxVMs - Self.runningMacOSGuestCount(runningVMs)),
                 version: Lume.Version.current
             )
 
@@ -1044,6 +1071,30 @@ extension Server {
     }
 
     // MARK: - Private Helper Methods
+
+    /// Virtualization.framework runs at most two macOS guests per host at a
+    /// time. Linux guests do not count toward this limit.
+    static let maxRunningMacOSGuests = 2
+
+    static func isMacOSGuest(_ os: String) -> Bool {
+        os.lowercased() == "macos"
+    }
+
+    /// The running macOS guests in `vms`, leaving out the VM named `excluding`.
+    static func runningMacOSGuestCount(_ vms: [VMDetails], excluding name: String? = nil) -> Int {
+        vms.filter { $0.status == "running" && isMacOSGuest($0.os) && $0.name != name }.count
+    }
+
+    /// Why a VM with `targetOS` may not start while `runningMacOSGuests` macOS
+    /// guests run, or nil when it may.
+    static func macOSGuestCapacityError(
+        targetOS: String,
+        runningMacOSGuests: Int,
+        maxGuests: Int = maxRunningMacOSGuests
+    ) -> String? {
+        guard isMacOSGuest(targetOS), runningMacOSGuests >= maxGuests else { return nil }
+        return "VM start rejected: host limit of \(maxGuests) running macOS guests reached"
+    }
 
     nonisolated private func startVM(
         name: String,
@@ -1093,7 +1144,7 @@ extension Server {
                     vncPolicy: vncPolicy,
                     telemetryTransport: .http
                 )
-                Logger.info("VM started successfully in background task", metadata: ["name": name])
+                Logger.info("VM run ended in background task", metadata: ["name": name])
             } catch {
                 Logger.error(
                     "Failed to start VM in background task",

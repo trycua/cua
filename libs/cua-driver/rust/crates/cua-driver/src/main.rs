@@ -24,6 +24,8 @@ mod check_update_tool;
 mod cli;
 mod doctor;
 mod driver_service_http;
+#[cfg(any(target_os = "macos", all(test, unix)))]
+mod duplicate_copies;
 mod extension_manager;
 mod history_runtime;
 mod mcp_envelope;
@@ -43,14 +45,36 @@ mod updater;
 mod version_check;
 
 use std::sync::Arc;
+use tracing_subscriber::EnvFilter;
 
 fn init_logging() {
-    use tracing_subscriber::EnvFilter;
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(EnvFilter::from_env("CUA_LOG").add_directive(tracing::Level::WARN.into()))
+        .with_env_filter(log_filter(&std::env::var("CUA_LOG").unwrap_or_default()))
         .init();
     telemetry::register_stdio_observer();
+}
+
+fn log_filter(cua_log: &str) -> EnvFilter {
+    EnvFilter::builder().parse_lossy(format!("warn,{cua_log}"))
+}
+
+#[cfg(test)]
+mod log_filter_tests {
+    use super::log_filter;
+
+    #[test]
+    fn cua_log_sets_the_level_and_warn_is_the_default() {
+        assert_eq!(log_filter("").to_string(), "warn");
+        assert_eq!(log_filter("info").to_string(), "info");
+        assert_eq!(log_filter("debug").to_string(), "debug");
+        assert_eq!(log_filter("cua_driver=loud").to_string(), "warn");
+        let scoped = log_filter("cua_driver=info").to_string();
+        assert!(
+            scoped.contains("cua_driver=info") && scoped.contains("warn"),
+            "{scoped}"
+        );
+    }
 }
 
 fn configure_startup_permission_mode(
@@ -534,8 +558,8 @@ fn main() {
             let tools = inspect_tools_without_runtime();
             cli::run_describe(&tools, &name);
         }
-        cli::Command::McpConfig { client } => {
-            cli::run_mcp_config(client.as_deref());
+        cli::Command::McpConfig { client, no_skills } => {
+            cli::run_mcp_config(client.as_deref(), no_skills);
         }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
@@ -573,6 +597,7 @@ fn main() {
                 std::process::exit(64);
             }
             responsibility::reexec_disclaimed_if_needed();
+            responsibility::warn_if_unbundled();
             if let Err(error) = history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
                 history_runtime::preview_admitted_preference(),
@@ -652,9 +677,9 @@ fn main() {
             // is ungranted. Fresh helper processes poll TCC until the user
             // grants or the deadline elapses. If serve ran after the gate,
             // the daemon's socket wouldn't appear for minutes on first
-            // launch, so `permissions grant` / MCP clients launched via
-            // `open -n -g -a CuaDriver --args serve` (the correct-TCC-
-            // attribution path) couldn't reach the daemon to even report
+            // launch, so `permissions grant` / MCP clients launching the
+            // installed app bundle by path (the correct-TCC-attribution
+            // path) couldn't reach the daemon to even report
             // "pending". Binding the socket first makes the daemon
             // reachable within ~1s while the gate works toward the grant.
             //
@@ -758,9 +783,9 @@ fn main() {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             serve::run_revoke_cmd(&sp, session.as_deref(), all);
         }
-        cli::Command::Status { socket } => {
+        cli::Command::Status { socket, pid_file } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
+            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
             serve::run_status_cmd(&sp, &pid_path);
         }
         cli::Command::Sessions { json, socket } => {
@@ -800,7 +825,7 @@ fn main() {
         } => {
             cli::run_channel_cmd(&subcommand, value.as_deref(), json);
         }
-        cli::Command::Doctor { json } => {
+        cli::Command::Doctor { json, fix } => {
             // Long-running interactive entry point — kick off the
             // background "new version available?" check so the banner
             // can land on stderr if the user is on an outdated install.
@@ -808,7 +833,7 @@ fn main() {
             if !json {
                 version_check::maybe_announce_update();
             }
-            cli::run_doctor_cmd(json);
+            cli::run_doctor_cmd(json, fix);
         }
         cli::Command::Diagnose => {
             cli::run_diagnose_cmd();
@@ -954,8 +979,8 @@ fn main() -> anyhow::Result<()> {
             cli::run_describe(&tools, &name);
             Ok(())
         }
-        cli::Command::McpConfig { client } => {
-            cli::run_mcp_config(client.as_deref());
+        cli::Command::McpConfig { client, no_skills } => {
+            cli::run_mcp_config(client.as_deref(), no_skills);
             Ok(())
         }
         cli::Command::Manifest { pretty } => {
@@ -993,6 +1018,7 @@ fn main() -> anyhow::Result<()> {
                 &grants,
             )?;
             responsibility::reexec_disclaimed_if_needed();
+            responsibility::warn_if_unbundled();
             history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
                 history_runtime::preview_admitted_preference(),
@@ -1056,9 +1082,9 @@ fn main() -> anyhow::Result<()> {
             serve::run_revoke_cmd(&sp, session.as_deref(), all);
             Ok(())
         }
-        cli::Command::Status { socket } => {
+        cli::Command::Status { socket, pid_file } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
+            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
             serve::run_status_cmd(&sp, &pid_path);
             Ok(())
         }
@@ -1106,14 +1132,14 @@ fn main() -> anyhow::Result<()> {
             cli::run_channel_cmd(&subcommand, value.as_deref(), json);
             Ok(())
         }
-        cli::Command::Doctor { json } => {
+        cli::Command::Doctor { json, fix } => {
             // Long-running interactive entry point — kick off the
             // background update check so the banner can land on stderr.
             // Skip the banner in --json mode so output stays parseable.
             if !json {
                 version_check::maybe_announce_update();
             }
-            cli::run_doctor_cmd(json);
+            cli::run_doctor_cmd(json, fix);
             Ok(())
         }
         cli::Command::Diagnose => {

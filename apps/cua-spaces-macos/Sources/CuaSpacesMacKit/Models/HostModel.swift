@@ -22,8 +22,19 @@ public protocol HostRunning: AnyObject, Sendable {
     func resumeSignedIn(account: String) async throws -> HostStatus
     func remove() async throws
     /// Changes what this machine shares: its desktop, and Spaces for your
-    /// other devices.
+    /// other machines.
     func configure(change: HostSettingsChange) async throws -> HostStatus
+    /// Moves the host service from the old LaunchAgent into this app, as
+    /// its own login item ("Cua Spaces"), keeping this machine's id,
+    /// registration and Spaces; the old one comes back if the helper does
+    /// not take over (outcome `rolled-back`).
+    func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration
+}
+
+extension HostRunning {
+    public func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration {
+        HostServiceMigration(outcome: "not-needed", detail: "", permissionsNeeded: false)
+    }
 }
 
 extension CuaSDK.Host: HostRunning {}
@@ -36,6 +47,11 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
     public var failSetup: String?
     /// The next `configure` fails with this (once).
     public var failConfigure: String?
+    /// The next `resumeSignedIn` for another account fails with this (once),
+    /// after pausing the host as the real one does.
+    public var failResume: String?
+    /// What `migrateService` answers (nil: moved, needing permissions).
+    public var migration: HostServiceMigration?
 
     public init(status: HostStatus? = nil) {
         current = status ?? FixtureHost.unconfigured
@@ -58,10 +74,13 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         if let failSetup { throw CuaError.Runtime(message: failSetup) }
         let relay = request.mode == "relay"
         let spare = request.profile == "spare"
+        // As cua-host decides when the request leaves it out: a machine set
+        // up before keeps its setting; a new relay setup provides Spaces.
+        let keep = current.configured ? current.provideSpaces : relay
         current = HostStatus(
             configured: true, mode: request.mode, relayUrl: relay ? (request.relayUrl ?? "https://relay.cua.ai") : nil,
             directUrl: relay ? nil : "http://\(request.direct ?? "")", envTokenPath: nil, machineId: "0123abcd4567",
-            name: request.name ?? "This machine", sharing: true, serviceInstalled: true, serviceRunning: true,
+            name: request.name ?? "This computer", sharing: true, serviceInstalled: true, serviceRunning: true,
             serviceKind: "launchd", online: true, clients: [], allow: request.allow ?? [],
             permissions: [
                 HostPermission(id: "screen-recording", title: "Screen Recording",
@@ -73,7 +92,7 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
             ],
             error: nil,
             shareDesktop: request.shareDesktop ?? !spare,
-            provideSpaces: request.provideSpaces ?? spare,
+            provideSpaces: request.provideSpaces ?? (spare || keep),
             maxSpaces: 4, maxMacosVms: 2,
             owner: relay ? owner : nil, ownerEmail: relay ? ownerEmail : nil)
         return current
@@ -123,10 +142,24 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
 
     public func resumeSignedIn(account: String) async throws -> HostStatus {
         calls.append("resume:\(account)")
-        guard current.pausedSignedOut else { return current }
-        guard account == owner || account.caseInsensitiveCompare(ownerEmail) == .orderedSame else {
-            throw CuaError.InvalidArgument(message: "this machine is shared with another Cua account")
+        let isOwner = account == owner || account.caseInsensitiveCompare(ownerEmail) == .orderedSame
+        // Another account: the host registers again for it (as the real
+        // one does), paused or not.
+        if !isOwner, let why = failResume {
+            failResume = nil
+            current.pausedSignedOut = true
+            current.sharing = false
+            current.online = false
+            current.serviceRunning = false
+            throw CuaError.InvalidArgument(message: why)
         }
+        if !isOwner {
+            owner = account
+            ownerEmail = ""
+            current.owner = account
+            current.ownerEmail = nil
+        }
+        guard current.pausedSignedOut || !isOwner else { return current }
         current.pausedSignedOut = false
         current.sharing = true
         current.online = true
@@ -139,6 +172,34 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         calls.append("remove")
         current = FixtureHost.unconfigured
     }
+
+    public func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration {
+        calls.append("migrate:\(force)")
+        let m = migration ?? HostServiceMigration(
+            outcome: "migrated", detail: "the host service now runs inside the Cua Spaces app", permissionsNeeded: true)
+        if m.outcome == "migrated" || m.outcome == "cleaned-up" {
+            current.serviceKind = "app-helper"
+            current.legacyService = false
+        }
+        return m
+    }
+}
+
+/// The one-time move of the host service into this app, as its own login
+/// item (Cua Spaces 0.9.4 and earlier, and `cua host setup`
+/// without the app, ran it from a LaunchAgent of their own). Offered on the
+/// main window, so a person is there for the one thing macOS asks again:
+/// Screen Recording and Accessibility, now for "Cua Spaces". A login
+/// launch nobody sees never moves it.
+public enum HelperMove: Equatable {
+    /// "Cua Spaces moved its background helper": Continue or Not now.
+    case offer
+    case moving
+    /// Moved; `permissions`: macOS needs Screen Recording and Accessibility
+    /// for the helper.
+    case moved(permissions: Bool)
+    /// It did not take over; the old one runs as before (the reason).
+    case rolledBack(String)
 }
 
 /// "This machine": the host's state, its page and the host setup form.
@@ -155,6 +216,10 @@ public final class HostModel {
     public private(set) var machineId: String?
     /// The host setup form, while it shows.
     public private(set) var form: AppHostFormState?
+    /// What the system calls this computer (Sharing's Computer Name), which
+    /// the setup form's Name starts with: `cua host setup` uses the same
+    /// name when none is given. Tests pin it.
+    public var computerName: () -> String? = { Foundation.Host.current().localizedName }
     public private(set) var busy = false
     public private(set) var error: String?
     /// The last page button that failed (a setting, Stop sharing, ...), in
@@ -198,10 +263,29 @@ public final class HostModel {
         "Sign in to Cua in your browser to continue. Setup finishes on its own after that."
     /// Called whenever the state changes (the roster's entry follows it).
     public var onChange: (() -> Void)?
-    /// Asks macOS for Local Network access once this Mac provides Spaces
-    /// (see `LocalNetworkPermissionRequesting`); nil in fixtures and tests.
-    public var localNetwork: LocalNetworkPermissionRequesting?
-    private var askedLocalNetwork = false
+    /// Called when a setup, the Provide Spaces switch or joining with a code
+    /// turned providing Spaces on here (never for a Mac that already
+    /// provided them): the app asks for Local Network access then, on this
+    /// Mac, so macOS Spaces your other devices create here can connect.
+    public var onStartedProvidingSpaces: (() -> Void)?
+    /// This Mac provides Spaces now (as of the last status).
+    public var providesSpaces: Bool { status.map { $0.configured && $0.provideSpaces } ?? false }
+    /// The host's last status, as the SDK reported it.
+    public private(set) var status: HostStatus?
+    /// The move into the app's helper, while it shows.
+    public private(set) var helperMove: HelperMove? {
+        didSet { if oldValue != helperMove { onHelperMove?(helperMove) } }
+    }
+    /// Shows or hides the move's window (`HelperMoveWindow`).
+    public var onHelperMove: ((HelperMove?) -> Void)?
+    /// "Not now" this launch.
+    private var helperMoveDeclined = false
+    /// Restarts of a helper that should run but did not, this launch.
+    private var helperRepairs = 0
+    /// This app's version (a move that failed is not offered again by
+    /// itself with the same version).
+    public var appVersion = Bundle.main.infoDictionary?["CuaVersion"] as? String
+        ?? Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
 
     public init(host: HostRunning?) {
         self.host = host
@@ -212,20 +296,21 @@ public final class HostModel {
     /// What the roster's This machine entry reads.
     public var summaryInput: AppHostSummaryInput? { state.map { appHostSummaryInput(state: $0) } }
 
+    /// Calls `onStartedProvidingSpaces` when providing Spaces went from off
+    /// (`was`) to on with the last status.
+    func followProviding(from was: Bool) {
+        if !was && providesSpaces { onStartedProvidingSpaces?() }
+    }
+
     func apply(_ status: HostStatus) {
+        self.status = status
         var next = appHostState(status: status)
         next.account = account
         state = next
         machineId = status.machineId
-        // Setup that provides Spaces, launch on a Mac that already does, or
-        // Spaces turned on: ask now, while someone is at this Mac, not when
-        // the first Space boots (see `LocalNetworkPermissionRequesting`).
-        if let state, state.configured, state.provideSpaces, !askedLocalNetwork, let localNetwork {
-            askedLocalNetwork = true
-            localNetwork.request()
-        }
         onChange?()
     }
+
 
     public func refresh() async {
         guard let host else { return }
@@ -234,12 +319,82 @@ public final class HostModel {
         } catch {
             self.error = LiveSpacesBackend.words(error)
         }
+        await followHelper()
+    }
+
+    // MARK: - The app's login item (the host service, as "Cua Spaces")
+
+    /// After each status: offer the move when the old LaunchAgent runs this
+    /// machine and this app carries the helper; quietly remove what an
+    /// interrupted move left of the old one.
+    func followHelper() async {
+        guard let host, let status, status.configured, status.helperAvailable else { return }
+        // The helper should run but does not (launchd lost it after the app
+        // was replaced): starting it again registers it from this copy.
+        if status.serviceKind == "app-helper", !status.serviceRunning, status.sharing,
+           !status.pausedSignedOut, helperRepairs < 3 {
+            helperRepairs += 1
+            if let s = try? await host.startSharing() { apply(s) }
+            return
+        }
+        if status.serviceKind == "app-helper", status.legacyService {
+            if let m = try? await host.migrateService(force: false, appVersion: appVersion),
+               m.outcome == "cleaned-up" {
+                await refreshStatusOnly()
+            }
+            return
+        }
+        if status.serviceKind == "launchd", helperMove == nil, !helperMoveDeclined {
+            helperMove = .offer
+        }
+    }
+
+    private func refreshStatusOnly() async {
+        guard let host, let s = try? await host.status() else { return }
+        apply(s)
+    }
+
+    /// Continue: move it now (the old one comes back if the helper does not
+    /// take over).
+    public func moveToHelper() async {
+        guard let host, helperMove == .offer else { return }
+        helperMove = .moving
+        do {
+            // The person asked for it: try again even after a failed move.
+            let m = try await host.migrateService(force: true, appVersion: appVersion)
+            switch m.outcome {
+            case "migrated", "switched", "cleaned-up":
+                helperMove = .moved(permissions: m.permissionsNeeded)
+            case "not-needed":
+                helperMove = nil
+            default:
+                helperMove = .rolledBack(m.detail)
+            }
+        } catch {
+            helperMove = .rolledBack(LiveSpacesBackend.words(error))
+        }
+        await refreshStatusOnly()
+    }
+
+    /// Not now: asked again at the next launch.
+    public func declineHelperMove() {
+        helperMoveDeclined = true
+        helperMove = nil
+    }
+
+    /// Done (or OK) on the last step.
+    public func closeHelperMove() {
+        helperMoveDeclined = true
+        helperMove = nil
     }
 
     // MARK: - Form
 
     public func openForm() {
         form = appHostFormInitial()
+        if let name = computerName()?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            send(.setName(name: name))
+        }
         error = nil
         setupFailure = nil
     }
@@ -259,14 +414,9 @@ public final class HostModel {
     public func submit() async {
         guard let host, let view = formView, view.canSubmit, let request = view.request else { return }
         send(.submit)
-        defer { progress = nil }
         do {
-            let status = request.mode == "relay"
-                ? try await setUpRelay(host, request)
-                : try await host.setupRequest(request: request, accountToken: nil)
+            try await setUp(request, on: host)
             form = nil
-            setupFailure = nil
-            apply(status)
         } catch {
             let raw = LiveSpacesBackend.words(error)
             setupFailure = Self.isUnauthenticated(error)
@@ -274,6 +424,55 @@ public final class HostModel {
                 : HostSetupFailure.presenting(raw)
             send(.failed(error: raw))
         }
+    }
+
+    /// The setup a sign-in started (`addAfterSignIn`), while it runs: the
+    /// web UI's own "signing in adds this computer" waits for it instead of
+    /// setting up a second time.
+    public private(set) var signInSetUp: Task<Void, Never>?
+
+    /// Signing in adds this computer to the account: right after a sign-in,
+    /// a computer that isn't set up yet is set up to provide Spaces with its
+    /// screen kept private (the `spare` profile) and its own name. Sharing
+    /// its desktop is a choice on its page, never a side effect of signing
+    /// in. A computer already set up keeps its settings, so turning Provide
+    /// Spaces off stays off. Never throws: a failure shows on This
+    /// computer, where Set up for access retries.
+    public func addAfterSignIn() async {
+        if let running = signInSetUp { return await running.value }
+        let task = Task { @MainActor [weak self] in
+            guard let self, let host = self.host else { return }
+            if self.status == nil { await self.refresh() }
+            guard let status = self.status, !status.configured else { return }
+            var f = appHostFormReduce(state: appHostFormInitial(), action: .setProfile(profile: "spare"))
+            if let name = self.computerName()?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                f = appHostFormReduce(state: f, action: .setName(name: name))
+            }
+            guard let request = appHostFormView(state: f, identity: self.identity).request else { return }
+            do {
+                try await self.setUp(request, on: host)
+            } catch {
+                self.setupFailure = Self.isUnauthenticated(error)
+                    ? HostSetupFailure.presenting(LiveSpacesBackend.words(error), as: .signedOut)
+                    : HostSetupFailure.presenting(LiveSpacesBackend.words(error))
+            }
+        }
+        signInSetUp = task
+        await task.value
+        signInSetUp = nil
+    }
+
+    /// Host setup with a request the core's form built and validated (the
+    /// form's submit, and the web UI's): relay setup with the account token.
+    func setUp(_ request: AppHostSetupRequest, on host: HostRunning) async throws {
+        defer { progress = nil }
+        let was = providesSpaces
+        let status = request.mode == "relay"
+            ? try await setUpRelay(host, request)
+            : try await host.setupRequest(request: request, accountToken: nil)
+        setupFailure = nil
+        apply(status)
+        followProviding(from: was)
     }
 
     /// Relay setup always runs with a valid account token: signed out (or a
@@ -377,6 +576,10 @@ public final class HostModel {
         } catch {
             actionFailure = HostSetupFailure.presenting(LiveSpacesBackend.words(error))
             failedAction = .resumeSharing
+            // What the failure left behind: a switch of account pauses the
+            // old registration first, so Retry goes through the sign-in
+            // check again, never straight to starting the old one.
+            await refreshStatusOnly()
         }
     }
 
@@ -450,8 +653,10 @@ public final class HostModel {
     private func perform(_ id: AppHostActionId, on host: HostRunning) async throws {
         // The two settings: the core says what each switch changes.
         if let change = appHostSettingChange(id: id) {
+            let was = providesSpaces
             apply(try await host.configure(change: HostSettingsChange(
                 shareDesktop: change.shareDesktop, provideSpaces: change.provideSpaces)))
+            followProviding(from: was)
             return
         }
         switch id {

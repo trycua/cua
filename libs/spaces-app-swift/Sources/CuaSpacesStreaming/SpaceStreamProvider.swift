@@ -19,6 +19,18 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
     private let run: RunID?
     /// Frame-rate cap for sessions (0 = the driver's default).
     public var maxFPS: UInt32 = 0
+    /// Long-edge cap in pixels for sessions (0 = the surface's own size):
+    /// a small view (a Space tile) asks the Space to encode smaller.
+    public var maxDimension: UInt32 = 0
+    private let guestLock = NSLock()
+    private var guestOS = ""
+
+    /// A Linux or Windows guest (from the Space's own info, read on open)
+    /// takes ⌘ as Control, like the HTML5 viewer does on a Mac.
+    public var commandAsControl: Bool {
+        guestLock.lock(); defer { guestLock.unlock() }
+        return InputEncoder.commandAsControl(guestOS: guestOS)
+    }
 
     public init(space: CuaSpaces.Space, run: RunID? = nil) {
         self.space = space
@@ -53,14 +65,17 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
         if space.state == .starting {
             throw StreamError.noStream("\(space.id.rawValue) is still starting")
         }
-        var options = SpaceStreamOptions(maxFps: maxFPS, audio: audio != nil, policy: policy)
+        var options = SpaceStreamOptions(maxFps: maxFPS, maxDimension: maxDimension, audio: audio != nil, policy: policy)
         switch source {
         case .desktop:
             break
         case let .window(window):
             options.windowId = window.id
         }
-        return try await handle().streamSession(options: options, frames: frames, audio: audio)
+        let native = try await handle()
+        let os = native.info().os
+        guestLock.lock(); guestOS = os; guestLock.unlock()
+        return try await native.streamSession(options: options, frames: frames, audio: audio)
     }
 
     /// The input policy a viewer of `source` opens its session with.

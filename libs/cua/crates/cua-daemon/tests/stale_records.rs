@@ -124,3 +124,51 @@ async fn rm_removes_an_orphan_instance_with_no_record() {
     assert!(rt.instances.lock().unwrap().is_empty());
     assert!(d.delete("cua-e2e-orphan").await.is_err());
 }
+
+/// F47: a sandbox deleted through the sandboxes API (a fork batch's forks)
+/// takes its Space record with it, so `list_spaces` has no stale
+/// `local:<name>`; and the Space of a lifetime goes with its record.
+#[tokio::test]
+async fn deleting_a_sandbox_forgets_its_space_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = daemon(dir.path(), Arc::new(Runtime::default()));
+    d.sandboxes()
+        .state()
+        .save(&SandboxState::Local(LocalState {
+            name: "fm--g0-0".into(),
+            runtime_type: "qemu".into(),
+            host: "127.0.0.1".into(),
+            api_port: 1,
+            status: "running".into(),
+            ..Default::default()
+        }))
+        .unwrap();
+    d.spaces()
+        .registry()
+        .upsert(
+            cua_proto::daemon::v1::Space {
+                id: "local:fm--g0-0".into(),
+                name: "fm--g0-0".into(),
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap();
+    assert!(
+        d.spaces()
+            .registry()
+            .get("local:fm--g0-0")
+            .unwrap()
+            .is_some()
+    );
+    d.delete("fm--g0-0").await.unwrap();
+    assert!(d.sandboxes().state().load("fm--g0-0").is_none());
+    assert!(
+        d.spaces()
+            .registry()
+            .get("local:fm--g0-0")
+            .unwrap()
+            .is_none(),
+        "the Space record outlived its sandbox"
+    );
+}

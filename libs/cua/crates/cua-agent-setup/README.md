@@ -27,11 +27,30 @@ server (`cua mcp`) in their MCP configs. Used by `cua agents ...`,
 - **State**: `~/.cua/agent-setup.json` (or `$CUA_HOME`) records each entry and
   skill folder cua wrote. `remove` deletes only entries that still hold the
   value cua wrote (restoring a pre-existing non-cua entry of the same name)
-  and only skill folders nobody edited. `update` refreshes skill folders cua
-  owns and re-points managed MCP entries.
+  and only skill folders nobody edited. It removes Cua Spaces' entries only
+  (the `cua` server, `cua-local` for Local, and the Cua Spaces skills): Cua
+  Driver's `cua-driver` server and skill (`cua-driver-local` for Local) stay
+  unless `remove_with` is given `include_cua_driver`, and `dry_run` returns
+  the rows a real run would produce without writing. `update` refreshes skill
+  folders cua owns and re-points managed MCP entries.
 - **Host safety**: everything resolves from a `HostEnv` (HOME, XDG and agent
   override variables, PATH, app folders). `HostEnv::isolated(home)` is fully
   hermetic; all tests use it with a temporary home.
+
+## Connection status
+
+`connection.rs` is the one status the app (`agents.status`), the CLI
+(`cua connect status --json`) and MCP (`connect_status`) show: installed
+(a binary or app, not a leftover folder) and `--version`; signed in, from
+read-only checks of the agent's own sign-in files (`signin.rs`; `unknown`
+where Cua can't tell); Cua's MCP entry present, its command there and
+answering an MCP `initialize`; and the sign-in Connect copied to Keyvault
+on This Mac (a `SignInVault`: the Keychain-backed agent keys in the app and
+CLI, a fake in tests). Every broken state is `attention` with one line and
+one action. `connect` / `disconnect` are Connect and Disconnect: the
+backup-aware config edit plus the sign-in copy (Codex's `auth.json`, Claude
+Code's `claude setup-token`, Hermes' `.env` key), and both undone.
+`tests/connection_matrix.rs` runs every state against fake harness homes.
 
 ## Agents
 
@@ -57,6 +76,7 @@ effort and listed in `registry.rs`.
 | VS Code (Copilot agent mode) | `~/.agents/skills` | `<Code user dir>/mcp.json` (`servers`) (path unverified) | `type: stdio`, command, args, env |
 | Google Antigravity | `~/.gemini/config/skills` | `~/.gemini/config/mcp_config.json` (`mcpServers`) | command, args, env |
 | Hermes | `~/.hermes/skills` (`$HERMES_HOME/skills`; `%LOCALAPPDATA%\hermes\skills` on Windows) | `~/.hermes/config.yaml` (`$HERMES_HOME`; `%LOCALAPPDATA%\hermes` on Windows) (`mcp_servers`) | command, args, env |
+| T3 Code | `~/.agents/skills` | Codex's `~/.codex/config.toml` (`$CODEX_HOME`): T3 Code runs Codex's app-server with Codex's home (unverified that its sessions load the entry) | command, args, env |
 
 Not supported: Continue (global MCP config is a YAML list; no documented
 skills), Roo Code (global MCP file location undocumented).
@@ -95,6 +115,7 @@ list a skill twice when another agent that reads only `~/.agents/skills`
 - Zed: https://zed.dev/docs/ai/skills, https://zed.dev/docs/ai/mcp
 - VS Code: https://code.visualstudio.com/docs/copilot/customization/agent-skills, https://code.visualstudio.com/docs/copilot/customization/mcp-servers
 - Antigravity: https://antigravity.google/docs/skills/, https://antigravity.google/docs/mcp?app=antigravity-cli
+- T3 Code: https://github.com/pingdotgg/t3code (README; `apps/server/src/provider/CodexManagedRuntime.ts`, v0.1.2, checked 2026-10-24)
 - Hermes: https://hermes-agent.nousresearch.com/docs/user-guide/features/skills, https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference, https://hermes-agent.nousresearch.com/docs/getting-started/installation (install layout); the home and config path from `hermes_constants.py` (`_get_platform_default_hermes_home`) and `hermes_cli/config.py` (`get_config_path`), the `mcp_servers` loader from `tools/mcp_tool_config.py` (`_load_mcp_config`) in NousResearch/hermes-agent, checked 2026-09-30
 
 ## Bundled skills

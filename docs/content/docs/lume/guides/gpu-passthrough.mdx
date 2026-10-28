@@ -5,12 +5,13 @@ description: 'Unlock a tested Metal capability profile for one workload inside a
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-A stock macOS guest reports conservative Metal capabilities, so some apps skip
-GPU paths the paravirtualized device can run. A small MIT shim, injected into
-one process, raises two answers: `supportsFamily:` up to a configured Apple
-family, and the maximum threadgroup memory. It does not pass a physical GPU
-through, patch the host, or touch the guest kernel. Background and benchmarks:
-[technical writeup](/blog/gpu-passthrough-macos-vms).
+A macOS VM reports fewer Metal features than its virtual GPU can run, so some
+apps skip the GPU. A small MIT-licensed shim, loaded into one process, changes
+two of those answers: the Apple GPU family that `supportsFamily:` reports (up to
+a family you choose), and the maximum threadgroup memory. It does not pass a
+physical GPU to the VM, patch the host or touch the guest kernel. For background
+and benchmarks, read the
+[technical writeup](https://cua.ai/blog/gpu-passthrough-macos-vms).
 
 <Callout type="warn">
   Experimental. Tested on Lume 0.5.1, an M1 Ultra host on macOS 26.6.1, and the
@@ -146,4 +147,4 @@ The GPU acceleration checkbox in New Space (Resources), `--gpu` on
 cua sets the feature level before each start of that VM and removes it when
 the last GPU VM is deleted, if cua set it. While set, it applies to every VM
 your user starts. Steps 1 and 3 to 5 stay per workload. See
-[Add a Space](/spaces/guides/add-a-space#gpu-acceleration).
+[Create a Space](/spaces/guides/add-a-space#gpu-acceleration).

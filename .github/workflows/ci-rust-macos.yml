@@ -45,15 +45,21 @@ concurrency:
   group: ci-rust-macos-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   unit:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Rust macOS unit
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           shared-key: macos-unit
@@ -72,14 +78,14 @@ jobs:
       - name: Run cua-driver-core unit tests on macOS
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-core --lib
-      - name: Run macOS protocol schema contract
+      - name: Run macOS protocol schema and status pid-file contracts
         working-directory: libs/cua-driver/rust
         env:
           CUA_TEST_REQUIRE_DRIVER_BIN: "1"
           CUA_TEST_DRIVER_STDERR: "1"
         run: |
           cargo build --locked -p cua-driver
-          cargo test --locked -p cua-driver --test protocol_schema_test
+          cargo test --locked -p cua-driver --test protocol_schema_test --test status_pid_file_cli_test
       # Desktop E2E suites are #[ignore] and run in the Lume harness. Their
       # hermetic oracle and parser tests run here as a whole crate, including
       # the macOS-gated ones that have no other runner: the harness's FIFO

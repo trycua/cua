@@ -1,14 +1,27 @@
 ---
-title: Set up local runtimes
-description: Which runtime runs a local sandbox, how to check and set up the host, and how to pick a kind or runtime.
+title: Choose where sandboxes run
+description: Run sandboxes on this machine, in your own AWS, Google Cloud, Hetzner or Modal account, or on E2B, Daytona or Modal. Check the host, pick a runtime, and set the default.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Local sandboxes run on this machine with no account. Local is the built-in
-default: omit `on=` (`local=` in cua-sandbox, `--on` in the CLI), or
-[change the default](/cua-sdk/guides/cloud#choose-where-sandboxes-run-by-default).
-The SDK picks the kind and runtime from the image and starts it itself.
+A sandbox runs in one place. Pick it with `on=` in the SDK (`local=` in
+cua-sandbox) or `--on` in the CLI. Leave it out and the sandbox runs on this
+machine.
+
+| Where | `on` | What you set up |
+| --- | --- | --- |
+| [This machine](#this-machine) | `local` (the default) | A container engine, QEMU or Lume, with `cua runtime setup` |
+| [Your own cloud](#your-own-cloud) | `aws`, `gcp`, `hetzner`, `modal` | `cua cloud connect` |
+| [Another provider](#other-sandbox-providers) | `e2b`, `daytona`, `modal` | The provider's API key, and a `cua` build with `--features contrib` |
+| A machine that runs cua-spacesd | `direct:<host:port>` | [Attach to or run cua-spacesd](/cua-sdk/guides/spacesd) |
+
+To change where sandboxes run by default, see [Change the default](#change-the-default).
+
+## This machine
+
+Local sandboxes run on this machine with no account. The SDK picks the kind
+and runtime from the image and starts it itself.
 
 | Image | Runtime (`auto`) |
 | --- | --- |
@@ -16,16 +29,21 @@ The SDK picks the kind and runtime from the image and starts it itself.
 | Linux or Windows VM (`-disk` containerDisk, `kind="vm"`, qcow2, ISO) | `qemu`: KVM on Linux, HVF on macOS, WHPX on Windows, TCG otherwise |
 | macOS VM (`Image.macos()`) | `lume`, Apple silicon only (the SDK starts `lume serve`) |
 | Linux arm64 VM on Apple silicon without QEMU | `lume` |
+| Any OCI image as a microVM (`kind="microvm"`, never picked by `auto`) | `firecracker` on Linux with KVM; on a Mac `vz` (Apple silicon, macOS 14 or later) when installed, else `containerization` (macOS 26) |
 
-## Check and set up the host
+### Check and set up the host
 
 ```bash test="cli-shape" id="cua-runtime-doctor"
 cua runtime doctor              # what this host can run (read-only)
 cua runtime setup --dry-run     # the install plan
-cua runtime setup               # install what is missing; or name qemu, lume, container
+cua runtime setup               # install what is missing; or name qemu, lume, container, firecracker
 ```
 
 `cua doctor` checks the host, an image and a sandbox's guest in one report.
+
+A runtime installed separately from cua (an
+[external runtime provider](/cua-sdk/guides/external-runtimes)) adds its own
+row to `cua runtime doctor` and its own `--runtime` word.
 
 <Callout type="warn">
   Not supported locally: macOS containers, macOS images that are not Lume
@@ -34,7 +52,7 @@ cua runtime setup               # install what is missing; or name qemu, lume, c
   Apple silicon.
 </Callout>
 
-## Pick a kind or runtime
+### Pick a kind or runtime
 
 ```bash test="cli-shape" id="cua-sb-create-linux"
 cua sb create linux --name dev                       # a gVisor container
@@ -44,40 +62,249 @@ cua sb create macos:tahoe --name mac                 # a Lume VM
 cua sb rm dev
 ```
 
-`--runtime` takes `auto`, `gvisor` or `runc` for containers and `qemu` or
-`lume` for VMs; a runtime implies its kind. A combination that does not exist
+`--runtime` takes `auto`, `gvisor` or `runc` for containers, `qemu` or
+`lume` for VMs, and `firecracker`, `vz` or `containerization` for microVMs
+(`--kind microvm`); a runtime implies its kind. See
+[Space kinds](/spaces/concepts/space-kinds). A combination that does not exist
 fails with `InvalidPlacement` and lists the valid values:
 
 ```text output
 invalid placement: runtime qemu runs vm sandboxes, not container ones locally; valid runtime: auto, gvisor, runc
 ```
 
-`pool:<name>` runs a cloud pool's
-template image locally (it needs cloud credentials to read the template):
-
-```bash test="cli-shape" id="cua-sb-create"
-cua sb create pool:my-pool --name copy-of-my-pool
-```
-
 In code, pass `kind=` and `runtime=` (`Sandbox.create(image, kind="vm",
 runtime="qemu")`); cua-sandbox still accepts a `Runtime` object
 ([runtime support](/cua-sdk/reference/runtime-support)).
 
-## What differs locally
+### What differs locally
 
-- The host's architecture; others run emulated and slowly.
+- The host's architecture. Others run emulated and slowly.
 - Services and public URLs are served on loopback (public URLs by the cua
   daemon, which the SDK starts).
-- [Sidecars](/cua-sdk/guides/sidecars) need `runtime="runc"` where gVisor would run.
-- Image layers build into your container engine before boot; VM images apply
+- [Sidecars](/cua-sdk/guides/services#sidecars) need `runtime="runc"` where gVisor would run.
+- Image layers build into your container engine before boot. VM images apply
   them after boot through cua-spacesd.
-- A sandbox runs until you delete it; `keep_alive` and `cloud=` raise.
-- Images without cua-spacesd fall back to the runtime's agentless path (QMP,
+- A sandbox runs until you delete it. `keep_alive` raises.
+- Any OCI image is a full Space on containers and microVMs. An image that
+  carries no cua-spacesd (`alpine:3.20`, `node:20`, `python:3.12-slim`) gets a
+  static one put in, started beside the image's own command with its user and
+  working directory, so exec, files and ports work. `spacesd=False` (`--no-spacesd`
+  on the CLI) runs the image as it is. A VM needs a Cua disk image: for a bare
+  OCI image use kind `container` or `microvm`, or `cua build` FROM a Cua image.
+- VM images without cua-spacesd fall back to the runtime's agentless path (QMP,
   VNC, SSH or ADB) where there is one.
 
-## Disk usage and cleanup
+## Many VMs on one machine
 
-Images share a cache budget and are evicted least recently used first; a pull
-that would leave under 5 GiB free fails with `InsufficientDisk`. `cua cache du`
-shows what images and sandboxes take. See
-[Disk usage and cleanup](/cua-sdk/guides/disk-usage).
+Local QEMU VMs (`kind="vm"`) are admitted by what they really use, not by
+their reserved size. VMs started from one snapshot (warm starts and forks)
+share its unwritten memory, which is counted once. A new VM starts when:
+
+- the VMs together stay under `CUA_VM_MAX_RSS_FRACTION` of physical memory
+  (default `0.8`);
+- the machine keeps `CUA_VM_MIN_AVAILABLE_MB` available for everything else
+  (default an eighth of memory, 1 to 8 GiB) and its memory pressure is not
+  critical;
+- their vCPUs stay within `CUA_VM_VCPU_OVERCOMMIT` times the machine's CPUs
+  (default `8`, because rollouts and agents mostly wait).
+- on a Mac, the hypervisor has a free VM slot. macOS runs at most 128 VMs at
+  once (`sysctl kern.hv.max_address_spaces`), counting every QEMU and Apple
+  Virtualization VM on the machine.
+
+Past a limit, the create fails with `HostCapacity` and nothing starts. The
+message names the limit and by how much it was exceeded. With
+`on="auto"`, the next machine is tried. Hosts report the same measurements
+to placement, so `on="auto"` sends a VM where it fits.
+
+For RL rollouts and agent episodes, pass `profile="rollout"` (`cua sb create
+--profile rollout`): 1 vCPU, 1 GiB and no desktop. A VM then gets no display
+or input hardware. Exec, files, ports and processes work as usual, but
+screenshots and input do not. Explicit `cpus` and `memory_mb` still apply.
+
+On Linux hosts, a VM booted without a snapshot also reports the memory its
+guest frees (virtio-balloon free page reporting), and the host takes it back.
+On macOS, QEMU's discard leaves freed pages charged to QEMU, so this is off
+there (`CUA_QEMU_FREE_PAGE_REPORTING=1` turns it on).
+
+Images, VM disks and logs take disk space under `~/.cua`. See
+[Disk usage and cleanup](/cua-sdk/guides/lifecycle#disk-usage-and-cleanup).
+
+## The Linux runtime on a Mac
+
+A Mac with no container engine runs Linux Spaces and jobs in one Linux VM
+that cua sets up and boots itself. It is shared by every Linux Space of your
+cua home. By default it may use up to 75% of the Mac's memory (at most
+32 GiB, at least 4 GiB) and up to 4 CPUs; the Mac backs that memory only as
+the guest touches it. `cua config set runtime.linux_memory_gib` and
+`runtime.linux_cpus` (or `CUA_RUNTIME_LINUX_MEMORY_GIB` and
+`CUA_RUNTIME_LINUX_CPUS`) set a size; it applies when the VM next starts. It
+stops when none of its Spaces runs:
+
+- **After the last Space.** The VM stops about two minutes after the last
+  Linux Space is deleted or stopped (`CUA_RUNTIME_LINUX_IDLE_SECS`, default
+  `120`), and boots again on the next one.
+- **With the daemon.** `cua daemon stop` stops the VM too. If Linux Spaces
+  still run, the VM stays up and the command says so: `the Linux runtime
+  keeps running for 2 Spaces; it stops when they do`. A daemon that starts
+  and finds the VM running with no Space in it stops it, and checks again
+  every five minutes. A Space the host keeps warm on purpose (`pool.warm`)
+  holds the VM up.
+- **Open files.** A VM that shares host folders holds a host file descriptor
+  for each file its guest has cached, and macOS has one table of about
+  262,000 for the whole machine. cua keeps that bounded: the VM gives the
+  guest's cached files back after each job and when the count grows, so the
+  count follows the work in progress instead of every file ever read.
+  Before it starts a VM or a job, cua checks that at least 10 % of the
+  table is free (`CUA_FILE_TABLE_MIN_FREE_PCT`, `0` turns the check off).
+  When less is free it first stops this home's idle runtime VM, and if that
+  is not enough it refuses with `HostCapacity`, naming the processes that
+  hold the most descriptors. Fix it by stopping Spaces or VMs you do not use.
+
+## Your own cloud
+
+Sandboxes and Spaces can run in a cloud account you own: `--on aws` (EC2),
+`--on gcp` (Compute Engine), `--on hetzner` (Hetzner Cloud servers) or
+`--on modal` (Modal Sandboxes). The same images, SDK calls and `cua-bench`
+runs work there, each sandbox dials out to the cua.ai relay as a machine of
+your account, and you pay the cloud directly. Connect one with
+`cua cloud connect`; [Use your own cloud](/cua-sdk/guides/your-cloud) covers
+what you need, what Cua creates there, costs, notes for each cloud and
+cleanup.
+
+## Other sandbox providers
+
+The same images (the canonical `ghcr.io/trycua/linux`, or any registry image)
+also run on third-party sandbox platforms. The location is one more `--on`
+word: `--on e2b`, `--on daytona`, `--on modal`. Everything above the location
+works unchanged: services, `sb.spacesd()`, `cua doctor` and cua-bench.
+
+[Your own cloud](#your-own-cloud) needs no provider key, and its sandboxes join
+the cua.ai relay. Providers are opt-in. The default `cua` build knows the words
+and tells you how to get the provider. A build with `--features contrib`
+includes them. Modal works both ways: connect it as your own cloud and its
+sandboxes join the relay; with only a Modal key, the sandbox uses Modal's own
+tunnels.
+
+### Set up a provider
+
+```bash skip="host-install"
+cargo install --locked --path libs/cua/crates/cua-cli --features contrib
+cua auth provider set e2b          # reads E2B_API_KEY from stdin, never echoed
+cua auth provider ls               # where each key comes from, never the value
+```
+
+An environment variable wins over a stored key: `E2B_API_KEY`,
+`DAYTONA_API_KEY`, or `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`.
+
+Modal documents no HTTP API, so `--on modal` goes through Modal's official Go
+SDK in a small helper, `cua-modal-helper`. Build it once and put it next to
+`cua` or on `PATH` (or point `CUA_MODAL_HELPER` at it):
+
+```bash skip="host-install"
+(cd libs/cua/crates/cua-contrib/modal-helper && go build -o ~/.local/bin/cua-modal-helper .)
+```
+
+### Create a sandbox on a provider
+
+```bash test="cli-shape" id="contrib-cli"
+cua sb create linux --on e2b --name demo
+cua doctor e2b:demo --strict
+cua sb delete e2b:demo
+```
+
+The ref is `<provider>:<name>` (`e2b:demo`, `daytona:demo`). `--ttl` sets
+the platform's lifetime backstop (default one hour).
+
+```python test="contrib" id="contrib-python" prelude="contrib"
+from cua_sandbox import Image, Sandbox
+
+async with Sandbox.ephemeral(Image.linux(), on="daytona") as sb:
+    await sb.files.write_text("/tmp/hello.txt", "hello from daytona")
+    print(await sb.files.read_text("/tmp/hello.txt"))  # hello from daytona
+```
+
+cua-bench takes the same word: `cb run task <task> --on e2b`.
+
+### What happens to the image
+
+The SDK resolves and pins the image first, then maps it onto the platform:
+
+| Provider | Image step | Cached by | Entrypoint |
+|---|---|---|---|
+| E2B | a template built `fromImage` | digest, start command, shape | runs once at build (E2B snapshots it); the SDK installs the cua-spacesd token |
+| Daytona | a snapshot from `imageName` | digest, entrypoint, shape | runs in every sandbox, with the token in its environment |
+| Modal | `FROM` the pinned image, `ENTRYPOINT []` | Modal's image cache | the image's `ENTRYPOINT` and `CMD` as the command, with the token in its environment |
+
+A moved tag gets a new template. Requests a provider cannot run fail before
+any API call, with a typed error: VM variants (`--vm`), images without an amd64
+build, Windows and macOS images, `network="none"`, sidecars, and (Daytona,
+Modal) private registries. Modal tunnels are fixed at create: declare every
+port with `--port`.
+
+### Ports and services
+
+Declared services and cua-spacesd (3211) are reachable through the provider's
+HTTPS URLs. `sb.service(name).url()` and `sb.tunnel.forward(port)` return them.
+Ports are public on the provider's proxy. cua-spacesd authenticates with its
+own token, so keep your other services authenticated too.
+
+### Support matrix
+
+Each provider's lane runs nightly: it creates `ghcr.io/trycua/linux:24.04`,
+runs `cua doctor <ref> --strict --json` inside it, and generates this table
+from the latest reports. A regression shows up here on the next run.
+
+{/* GENERATED:contrib-matrix:start */}
+
+| Provider | Kind | Verdict | display | input | streaming | audio | files | process | teleport | tunnels | mcp | auth | Measured |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| e2b | container | not measured | - | - | - | - | - | - | - | - | - | - | never |
+| daytona | container | not measured | - | - | - | - | - | - | - | - | - | - | never |
+| modal | container | not measured | - | - | - | - | - | - | - | - | - | - | never |
+
+{/* GENERATED:contrib-matrix:end */}
+
+`full`: the desktop works (display, input through cua-driver, streaming, files,
+auth). `container-only`: cua-spacesd answers but the desktop does not.
+`headless-only`: no cua-spacesd answered. `not measured`: no run yet.
+
+## Change the default
+
+Without `--on` (or `on=` / `local=`) a sandbox runs on this machine. To default
+to [your own cloud](#your-own-cloud) instead, set `default.on`:
+
+```bash test="cli-shape" id="cua-config-set-default-on"
+cua config set default.on aws   # written to ~/.cua/config.toml
+cua config list                 # each setting, its value and its source
+```
+
+The first match wins:
+
+1. `--on`, `on=` or `local=`
+2. `CUA_DEFAULT_ON` (one shell or CI job)
+3. `default.on` in `$CUA_HOME/config.toml`
+4. `local`
+
+`default.kind` and `default.runtime` (`CUA_DEFAULT_KIND`,
+`CUA_DEFAULT_RUNTIME`) work the same way, and `cua doctor` shows each default
+with its source. Switch back with `cua config unset default.on`.
+
+## Choose what runs each kind
+
+Each kind of Space has its own setting: `runtime.container`, `runtime.vm` and
+`runtime.microvm`. Each is `auto` (the default), `builtin` (Cua's own, set up
+the first time it is needed) or `system` (only what is already installed on
+this machine; nothing is downloaded). With `system`, `runtime.<kind>_path`
+names the program to use instead of the one found on `PATH`, for example
+another Docker:
+
+```bash test="cli-shape" id="cua-config-set-runtime-container"
+cua config set runtime.container system
+cua config set runtime.container_path /opt/homebrew/bin/podman
+cua config unset runtime.container_path   # back to the one found
+```
+
+The Cua app's Settings, Advanced shows the same settings, one row per kind,
+with the programs it found and a check of the path. `cua` and the daemon read
+the same values, so they use the same program. The older `runtime.linux` and
+`runtime.lume` still work: they are `runtime.container` and `runtime.vm`.

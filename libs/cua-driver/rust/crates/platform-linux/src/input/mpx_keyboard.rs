@@ -121,31 +121,20 @@ fn tap_steps(keycode: u8, needs_shift: bool, shift: Option<u16>, steps: &mut Vec
 /// allocator) INLINE, one character at a time, so a mixed-script string
 /// (an in-map prefix, a character needing remap, more in-map text) keeps its
 /// original order in `steps` — remapping a character never defers it behind
-/// the characters that came after it in `text`. `remap` returns `None` when
-/// the character could neither be found in the keymap nor hosted on a spare
-/// keycode; such characters are returned in the second tuple element.
-pub(super) fn plan_text_with_fallback<F>(
+/// the characters that came after it in `text`.
+pub(super) fn plan_text_with_fallback<G>(
     mapping: &GetKeyboardMappingReply,
     shift_x_keycode: Option<u8>,
     text: &str,
-    mut remap: F,
-) -> (Vec<KeyStep>, Vec<char>)
-where
-    F: FnMut(char) -> Option<u8>,
-{
+    remap: impl FnMut(char, &mut GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
+) -> Result<(Vec<KeyStep>, Vec<G>)> {
     let shift = shift_x_keycode.and_then(evdev_code_for_x_keycode);
     let mut steps = Vec::with_capacity(text.len() * 2);
-    let mut skipped = Vec::new();
-    for ch in text.chars() {
-        match char_to_keycode_shift(mapping, keysym_for_char(ch)) {
-            Some((keycode, needs_shift)) => tap_steps(keycode, needs_shift, shift, &mut steps),
-            None => match remap(ch) {
-                Some(keycode) => tap_steps(keycode, false, shift, &mut steps),
-                None => skipped.push(ch),
-            },
-        }
-    }
-    (steps, skipped)
+    let guards = type_text_with_preflight(text, mapping, remap, |keycode, needs_shift| {
+        tap_steps(keycode, needs_shift, shift, &mut steps);
+        Ok(())
+    })?;
+    Ok((steps, guards))
 }
 
 /// Plan a chord: modifiers pressed in order, the key tapped (with Shift when
@@ -522,18 +511,29 @@ impl Keymap {
     }
 }
 
+/// Take the MPX operation lock for a call on `session`, or, with no session,
+/// for the live session whose click opened the `target_window` popup.
+fn session_guard(
+    session: Option<&str>,
+    target_window: u64,
+) -> Result<(std::sync::MutexGuard<'static, ()>, String)> {
+    match session {
+        Some(cursor_id) => Ok((mpx_op_guard(cursor_id), cursor_id.to_owned())),
+        None => popup_owner_guard(target_window),
+    }
+}
+
 /// Deliver `steps` to `target_window` through the session's virtual master
-/// keyboard. `remap_guards` keeps any spare-keycode remaps alive until the
-/// server has processed the events.
+/// keyboard. The caller holds the session's MPX operation guard.
+/// `remap_guards` keeps any spare-keycode remaps alive until the server has
+/// processed the events.
 fn deliver(
     cursor_id: &str,
     target_window: u64,
     steps: &[KeyStep],
-    skipped_characters: Vec<char>,
     remap_guards: Vec<RemappedKeycode<'_>>,
     keymap_conn: &RustConnection,
 ) -> Result<KeyboardDeliveryReport> {
-    let _op = mpx_op_guard(cursor_id);
     let display = open_display()?;
     let result = (|| -> Result<KeyboardDeliveryReport> {
         supports_parallel_pointer_injection(display)?;
@@ -640,7 +640,7 @@ fn deliver(
             core_focus_unchanged,
             delivery_confirmed,
             key_events: steps.len(),
-            skipped_characters,
+            skipped_characters: Vec::new(),
             focus_guard: None,
             released_stuck,
             path: MPX_UINPUT_PATH,
@@ -664,6 +664,19 @@ pub fn send_virtual_keyboard_text(
     target_window: u64,
     text: &str,
 ) -> Result<KeyboardDeliveryReport> {
+    keyboard_text(Some(cursor_id), target_window, text)
+}
+
+pub fn send_popup_keyboard_text(popup: u64, text: &str) -> Result<KeyboardDeliveryReport> {
+    keyboard_text(None, popup, text)
+}
+
+fn keyboard_text(
+    session: Option<&str>,
+    target_window: u64,
+    text: &str,
+) -> Result<KeyboardDeliveryReport> {
+    let (_op, cursor_id) = session_guard(session, target_window)?;
     let keymap = Keymap::load()?;
     // Characters absent from the keymap (a sparse layout, or a non-Latin
     // glyph) are hosted on spare keycodes, with a guard that
@@ -673,29 +686,11 @@ pub fn send_virtual_keyboard_text(
     // (e.g. an ASCII prefix, a character needing remap, then more ASCII)
     // would come out with all the in-map characters first, reordering the
     // typed text relative to what was asked for.
-    let mut guards = Vec::new();
-    let (steps, skipped) =
-        plan_text_with_fallback(
-            &keymap.mapping,
-            keymap.shift,
-            text,
-            |ch| match remap_spare_keycode(&keymap.conn, &keymap.mapping, keysym_for_char(ch)) {
-                Ok(guard) => {
-                    let keycode = guard.keycode;
-                    guards.push(guard);
-                    Some(keycode)
-                }
-                Err(_) => None,
-            },
-        );
-    deliver(
-        cursor_id,
-        target_window,
-        &steps,
-        skipped,
-        guards,
-        &keymap.conn,
-    )
+    let (steps, guards) =
+        plan_text_with_fallback(&keymap.mapping, keymap.shift, text, |ch, mapping| {
+            keycode_for_keysym(&keymap.conn, mapping, keysym_for_char(ch), &ch.to_string())
+        })?;
+    deliver(&cursor_id, target_window, &steps, guards, &keymap.conn)
 }
 
 /// Press `key` with `modifiers` held, into `target_window`, without touching
@@ -706,12 +701,31 @@ pub fn send_virtual_keyboard_key(
     key: &str,
     modifiers: &[&str],
 ) -> Result<KeyboardDeliveryReport> {
-    let keymap = Keymap::load()?;
+    keyboard_key(Some(cursor_id), target_window, key, modifiers)
+}
+
+pub fn send_popup_keyboard_key(
+    popup: u64,
+    key: &str,
+    modifiers: &[&str],
+) -> Result<KeyboardDeliveryReport> {
+    keyboard_key(None, popup, key, modifiers)
+}
+
+fn keyboard_key(
+    session: Option<&str>,
+    target_window: u64,
+    key: &str,
+    modifiers: &[&str],
+) -> Result<KeyboardDeliveryReport> {
+    let (_op, cursor_id) = session_guard(session, target_window)?;
+    let mut keymap = Keymap::load()?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::with_capacity(modifiers.len());
     for modifier in modifiers {
         let keysym = key_name_to_keysym(modifier)?;
-        let (keycode, guard) = keycode_for_keysym(&keymap.conn, &keymap.mapping, keysym, modifier)?;
+        let (keycode, guard) =
+            keycode_for_keysym(&keymap.conn, &mut keymap.mapping, keysym, modifier)?;
         guards.extend(guard);
         modifier_keycodes.push(keycode);
     }
@@ -719,25 +733,27 @@ pub fn send_virtual_keyboard_key(
     let (keycode, needs_shift) = match char_to_keycode_shift(&keymap.mapping, keysym) {
         Some(found) => found,
         None => {
-            let (keycode, guard) = keycode_for_keysym(&keymap.conn, &keymap.mapping, keysym, key)?;
+            let (keycode, guard) =
+                keycode_for_keysym(&keymap.conn, &mut keymap.mapping, keysym, key)?;
             guards.extend(guard);
             (keycode, false)
         }
     };
     let steps = plan_chord(&modifier_keycodes, keycode, needs_shift, keymap.shift);
-    deliver(
-        cursor_id,
-        target_window,
-        &steps,
-        Vec::new(),
-        guards,
-        &keymap.conn,
-    )
+    deliver(&cursor_id, target_window, &steps, guards, &keymap.conn)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_for_an_unowned_popup_report_the_owner_gone_before_any_keymap_work() {
+        let text = send_popup_keyboard_text(90_777, "\u{1F600}x").unwrap_err();
+        assert!(text.is::<PopupOwnerGone>());
+        let key = send_popup_keyboard_key(90_777, "NoSuchKey", &["NoSuchModifier"]).unwrap_err();
+        assert!(key.is::<PopupOwnerGone>());
+    }
 
     /// A tiny US-like keymap: keycode 38 = a/A, 10 = 1/!, 36 = Return,
     /// 50 = Shift_L, 37 = Control_L, 64 = Alt_L, 250 = spare (NoSymbol).
@@ -787,13 +803,20 @@ mod tests {
 
     #[test]
     fn text_plan_taps_keys_and_wraps_shifted_glyphs_in_shift() {
-        let (steps, missing) = plan_text_with_fallback(&mapping(), Some(50), "a!\n", |_| None);
-        assert!(missing.is_empty());
+        let (steps, _) =
+            plan_text_with_fallback::<()>(&mapping(), Some(50), "aA1!\n", |_, _| unreachable!())
+                .unwrap();
         assert_eq!(
             steps,
             vec![
                 step(30, true),
                 step(30, false),
+                step(42, true),
+                step(30, true),
+                step(30, false),
+                step(42, false),
+                step(2, true),
+                step(2, false),
                 step(42, true),
                 step(2, true),
                 step(2, false),
@@ -808,7 +831,8 @@ mod tests {
     fn text_plan_without_a_shift_keycode_types_the_unshifted_level() {
         // No Shift in the modifier map: the keycode is still tapped (the
         // server types the base glyph) rather than the character being lost.
-        let (steps, _) = plan_text_with_fallback(&mapping(), None, "A", |_| None);
+        let (steps, _) =
+            plan_text_with_fallback::<()>(&mapping(), None, "A", |_, _| unreachable!()).unwrap();
         assert_eq!(steps, vec![step(30, true), step(30, false)]);
     }
 
@@ -820,14 +844,14 @@ mod tests {
         // more ASCII. The remapped character must land in the MIDDLE of the
         // key-event sequence, not be deferred to the end.
         const REMAPPED_KEYCODE: u8 = 250; // spare, per the mapping() doc comment
-        let (steps, skipped) = plan_text_with_fallback(&mapping(), Some(50), "aé1", |ch| {
+        let (steps, _) = plan_text_with_fallback::<()>(&mapping(), Some(50), "aé1", |ch, _| {
             assert_eq!(
                 ch, 'é',
                 "only the out-of-keymap character should hit the fallback"
             );
-            Some(REMAPPED_KEYCODE)
-        });
-        assert!(skipped.is_empty());
+            Ok((REMAPPED_KEYCODE, None))
+        })
+        .unwrap();
         let remapped_evdev = evdev_code_for_x_keycode(REMAPPED_KEYCODE).unwrap();
         assert_eq!(
             steps,
@@ -847,10 +871,59 @@ mod tests {
     }
 
     #[test]
-    fn text_plan_with_fallback_reports_characters_the_remap_also_misses() {
-        let (steps, skipped) = plan_text_with_fallback(&mapping(), Some(50), "a€a", |_| None);
-        assert_eq!(steps.len(), 4); // both 'a's still tap
-        assert_eq!(skipped, vec!['€']);
+    fn text_plan_fails_without_steps_and_restores_remaps_when_spares_run_out() {
+        let mut keymap = mapping();
+        keymap
+            .keysyms
+            .iter_mut()
+            .filter(|sym| **sym == 0)
+            .skip(2)
+            .for_each(|sym| *sym = 1);
+        let restored = std::cell::Cell::new(0);
+        let error = plan_text_with_fallback(&keymap, Some(50), "aé€a", |ch, mapping| {
+            reserve_spare_keycode(mapping, keysym_for_char(ch), |_, _, _, _| {
+                Ok(Restore(&restored))
+            })
+            .map(|(keycode, guard)| (keycode, Some(guard)))
+        })
+        .err()
+        .unwrap();
+        assert!(
+            error
+                .to_string()
+                .starts_with("typed 0 of 4 characters: the text needs 2 spare keycodes"),
+            "{error:#}"
+        );
+        assert_eq!(restored.get(), 1);
+    }
+
+    struct Restore<'a>(&'a std::cell::Cell<usize>);
+
+    impl Drop for Restore<'_> {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    #[test]
+    fn text_plan_gives_distinct_missing_characters_distinct_keycodes() {
+        let mut remaps = Vec::new();
+        let (steps, _) = plan_text_with_fallback(&mapping(), Some(50), "é€é", |ch, mapping| {
+            let (keycode, ()) =
+                reserve_spare_keycode(mapping, keysym_for_char(ch), |_, _, _, _| Ok(()))?;
+            remaps.push(ch);
+            Ok((keycode, None::<()>))
+        })
+        .unwrap();
+        assert_eq!(remaps, ['é', '€']);
+        let presses: Vec<u16> = steps
+            .iter()
+            .filter(|step| step.press)
+            .map(|step| step.evdev_code)
+            .collect();
+        assert_eq!(presses.len(), 3);
+        assert_ne!(presses[0], presses[1]);
+        assert_eq!(presses[0], presses[2]);
     }
 
     #[test]

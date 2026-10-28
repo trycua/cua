@@ -31,7 +31,8 @@ pub struct Notification {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     /// `turn_ended`, `message` (the agent called `notify_user`), `error`,
-    /// `approval` (something waits for the user).
+    /// `approval` (something waits for the user), `budget` (a cloud passed
+    /// 50, 80 or 100% of its monthly budget).
     pub kind: String,
     pub title: String,
     pub body: String,
@@ -41,6 +42,65 @@ pub struct Notification {
     pub space: Option<String>,
     #[serde(default)]
     pub read: bool,
+    /// The Space thread entry it is about (an agent member's reply).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_seq: Option<u64>,
+}
+
+/// Longest reason in a failure's title.
+const MAX_REASON: usize = 80;
+
+/// The title of a failed run or turn: "<agent> stopped: <short reason>".
+pub fn stopped_title(agent: &str, error: &str) -> String {
+    // A rejected or missing sign-in is said in words, not as the provider's error.
+    if cua_agents::failure::is_auth_failure(error) {
+        return format!("{agent} needs you to connect it");
+    }
+    format!("{agent} stopped: {}", short_reason(error))
+}
+
+/// A provider error in a few words: its first line, with an embedded JSON
+/// error object (`API Error: 401 {"error":{"message":"invalid x-api-key"}}`)
+/// reduced to its message.
+pub fn short_reason(error: &str) -> String {
+    let r = reason(error);
+    if r == "unknown error" {
+        r
+    } else {
+        clip(&r, MAX_REASON)
+    }
+}
+
+/// [`short_reason`] without the clip: the error's first line as it is
+/// (surfaces that draw errors never cut them).
+pub fn reason(error: &str) -> String {
+    let first = error
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let short = match first.find('{') {
+        Some(i) => {
+            let message = serde_json::from_str::<serde_json::Value>(&first[i..])
+                .ok()
+                .and_then(|v| {
+                    [&v["error"]["message"], &v["message"], &v["error"]]
+                        .into_iter()
+                        .find_map(|m| m.as_str().map(str::to_string))
+                });
+            match message {
+                Some(m) => format!("{} {m}", first[..i].trim()).trim().to_string(),
+                None => first.to_string(),
+            }
+        }
+        None => first.to_string(),
+    };
+    let short = short.trim_end_matches('.').trim();
+    if short.is_empty() {
+        "unknown error".into()
+    } else {
+        short.to_string()
+    }
 }
 
 /// The feed file (`<home>/persistent/notifications.json`).
@@ -84,6 +144,21 @@ impl Feed {
         run_id: Option<&str>,
         space: Option<&str>,
     ) -> Result<Notification> {
+        self.post_anchored(agent, kind, title, body, run_id, space, None)
+    }
+
+    /// [`Feed::post`], anchored to a thread entry (`entry_seq`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn post_anchored(
+        &self,
+        agent: Option<&str>,
+        kind: &str,
+        title: &str,
+        body: &str,
+        run_id: Option<&str>,
+        space: Option<&str>,
+        entry_seq: Option<u64>,
+    ) -> Result<Notification> {
         let title = clip(title, MAX_TITLE);
         if title.is_empty() {
             return Err(Error::invalid("a notification needs a title"));
@@ -98,6 +173,7 @@ impl Feed {
             run_id: run_id.map(str::to_string),
             space: space.map(str::to_string),
             read: false,
+            entry_seq,
         };
         let out = n.clone();
         self.with(move |all| {
@@ -139,6 +215,27 @@ impl Feed {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failure_title_names_the_agent_and_a_short_reason() {
+        assert_eq!(
+            stopped_title("Claude Code", "rate limit reached for this model"),
+            "Claude Code stopped: rate limit reached for this model"
+        );
+        // A rejected or missing sign-in is said in words, never as the provider's error.
+        for raw in [
+            "Invalid API key · Please run /login",
+            r#"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+        ] {
+            assert_eq!(stopped_title("ada", raw), "ada needs you to connect it");
+        }
+        assert_eq!(
+            short_reason("Authentication required.\nsee the log"),
+            "Authentication required"
+        );
+        assert_eq!(short_reason("  "), "unknown error");
+        assert!(short_reason(&"x".repeat(500)).chars().count() <= 80);
+    }
 
     #[test]
     fn post_list_ack_and_cap() {

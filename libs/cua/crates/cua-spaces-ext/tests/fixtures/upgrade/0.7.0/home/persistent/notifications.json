@@ -1,0 +1,19 @@
+[
+  {
+    "id": "5522fe10c31a88bc",
+    "at_ms": 1792859193188,
+    "kind": "message",
+    "title": "Build finished",
+    "body": "All 12 tests passed",
+    "read": true
+  },
+  {
+    "id": "44d0fee7b23210f3",
+    "at_ms": 1792859193205,
+    "agent": "ada",
+    "kind": "message",
+    "title": "Need a decision",
+    "body": "Ship the fix?",
+    "read": false
+  }
+]

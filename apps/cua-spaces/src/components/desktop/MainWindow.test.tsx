@@ -2,52 +2,56 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { SpaceRow } from "../../model/spaces";
 import { createFakeHostBridge } from "../../native/host";
 import { createFakeInstallerBridge } from "../../native/installer";
-import type { CreateProgress, SpaceCreateConfig } from "../../native/fleet";
+import type { CreateProgress, SpaceCreateConfig } from "../../native/spacesBridge";
 import type { LocalStatus } from "../../native/local";
-import { fakeFleetBridge } from "../../test/fakeFleet";
+import { fakeSpacesBridge } from "../../test/fakeSpacesBridge";
 import { MainWindow } from "./MainWindow";
 import { createFakeCloudBridge, type CloudBridge } from '../../native/cloud';
 
+/** A Space created unnamed: the name the wizard generated and showed. */
+const GENERATED = /space-[0-9a-f]{10}/;
+
 const ROWS: SpaceRow[] = [
-  { id: "cloud:aurora", name: "aurora", provider: "cloud", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
+  { id: "relay:aurora", name: "aurora", provider: "relay", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
   { id: "local:cua-e2e-vm", name: "cua-e2e-vm", provider: "local", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
 ];
 
 const LOCAL: LocalStatus = { available: true, backends: ["container", "qemu"], containerImage: "", macosImage: null, error: null };
 
 function setup(
-  overrides: Parameters<typeof fakeFleetBridge>[0] = {},
+  overrides: Parameters<typeof fakeSpacesBridge>[0] = {},
   onboarded = true,
   cloud: CloudBridge = createFakeCloudBridge(),
+  strict = false,
 ) {
-  const createSpace = vi.fn(async (config?: SpaceCreateConfig) => (config?.on === "cloud" ? ROWS[0]! : ROWS[1]!));
-  const setDefaultLocation = vi.fn(async (on: "local" | "cloud") => ({ value: on, source: "config" as const, path: "/tmp/cua/config.toml" }));
-  const fleet = fakeFleetBridge({
+  const createSpace = vi.fn(async (config?: SpaceCreateConfig) => (config?.on === "yours" ? ROWS[0]! : ROWS[1]!));
+  const bridge = fakeSpacesBridge({
     isNative: true,
     listSpaces: async () => ROWS,
     localStatus: async () => LOCAL,
-    status: async () => ({ configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" }),
+    status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
     screenshot: async () => "data:image/png;base64,AAAA",
     createSpace,
-    setDefaultLocation,
     ...overrides,
   });
   const host = createFakeHostBridge({ onboarding: { completed: onboarded, mode: onboarded ? "client" : null } });
   const installer = createFakeInstallerBridge({ plan: { installed: true, upToDate: true, onPath: true } });
-  render(<MainWindow fleet={fleet} host={host} installer={installer} cloud={cloud} now={() => 1_000} />);
-  return { fleet, host, installer, createSpace, setDefaultLocation };
+  const tree = <MainWindow bridge={bridge} host={host} installer={installer} cloud={cloud} now={() => 1_000} />;
+  render(strict ? <StrictMode>{tree}</StrictMode> : tree);
+  return { bridge, host, installer, createSpace };
 }
 
 describe("MainWindow", () => {
   it("first run shows the welcome flow in the window, then the Spaces", async () => {
     const { host } = setup({}, false);
     fireEvent.click(await screen.findByRole("button", { name: "Get started" }));
-    // Already signed in (the fleet status names the account): just continue.
+    // Already signed in (the account status names the user): just continue.
     await screen.findByText("Signed in as ada@example.com.");
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     await screen.findByRole("heading", { name: "AI agents" });
@@ -56,38 +60,41 @@ describe("MainWindow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     // No Cua Volume page without its experiment (Settings, Experiments).
     expect(screen.queryByRole("heading", { name: "Cua Volume" })).toBeNull();
-    fireEvent.click(await screen.findByText("Access other machines"));
+    await screen.findByText("Just use this Mac to open my other machines");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Start using Cua Spaces" }));
-    expect(await screen.findByRole("listbox", { name: "Cua Cloud" })).toBeInTheDocument();
+    expect(await screen.findByRole("listbox", { name: "My machines" })).toBeInTheDocument();
     expect(host.state.onboarding).toMatchObject({ completed: true, mode: "client" });
   });
 
   it("lists Spaces by where they run, with This machine first", async () => {
     setup();
-    const cloud = await screen.findByRole("listbox", { name: "Cua Cloud" });
-    expect(within(cloud).getByRole("option", { name: /Aurora/ })).toBeInTheDocument();
-    expect(within(screen.getByRole("listbox", { name: "This Mac" })).getByRole("option", { name: /Cua E2e Vm/ })).toBeInTheDocument();
-    expect(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option")).toBeInTheDocument();
+    const cloud = await screen.findByRole("listbox", { name: "My machines" });
+    expect(within(cloud).getByRole("option", { name: /aurora/ })).toBeInTheDocument();
+    // The section named for this Mac holds its Spaces; the entry for This Mac is a list of its own.
+    const lists = screen.getAllByRole("listbox", { name: "This Mac" });
+    expect(within(lists.find((l) => within(l).queryByRole("option", { name: /cua-e2e-vm/ }))!).getByRole("option", { name: /cua-e2e-vm/ })).toBeInTheDocument();
+    expect(within(lists.find((l) => !within(l).queryByRole("option", { name: /cua-e2e-vm/ }))!).getByRole("option")).toBeInTheDocument();
     // Each row leads with its OS mark (the notch tiles' icon); This machine is this Mac.
-    const aurora = within(cloud).getByRole("option", { name: /Aurora/ });
+    const aurora = within(cloud).getByRole("option", { name: /aurora/ });
     expect(aurora.querySelector("[data-os-icon]")).not.toBeNull();
-    const host = within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option");
+    const host = within(lists.find((l) => !within(l).queryByRole("option", { name: /cua-e2e-vm/ }))!).getByRole("option");
     expect(host.querySelector('[data-os-icon="os-macos"]')).not.toBeNull();
   });
 
   it("shows the selected Space's detail and live preview", async () => {
     setup();
-    fireEvent.click(await screen.findByRole("option", { name: /Aurora/ }));
-    expect(await screen.findByRole("heading", { level: 1, name: "Aurora" })).toBeInTheDocument();
-    expect(await screen.findByAltText("Aurora desktop")).toHaveAttribute("src", "data:image/png;base64,AAAA");
+    fireEvent.click(await screen.findByRole("option", { name: /aurora/ }));
+    expect(await screen.findByRole("heading", { level: 1, name: "aurora" })).toBeInTheDocument();
+    expect(await screen.findByAltText("aurora desktop")).toHaveAttribute("src", "data:image/png;base64,AAAA");
     // The facts are the core's: no Location row (the sidebar section says where it runs).
-    expect(screen.getByLabelText("Details")).toHaveTextContent("cloud:aurora");
+    expect(screen.getByLabelText("Details")).toHaveTextContent("relay:aurora");
     expect(screen.getByLabelText("Details")).not.toHaveTextContent("Cua Cloud");
   });
 
   it("New Space (Cmd+N) runs the wizard and creates a local VM from the shared image list", async () => {
     const { createSpace } = setup();
-    await screen.findByRole("option", { name: /Aurora/ });
+    await screen.findByRole("option", { name: /aurora/ });
     fireEvent.keyDown(window, { key: "n", metaKey: true });
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Image" }), {
@@ -103,7 +110,7 @@ describe("MainWindow", () => {
         on: "local",
         kind: "vm",
         runtime: "auto",
-        name: undefined,
+        name: expect.stringMatching(/^space-[0-9a-f]{10}$/),
         cpus: 2,
         memoryMb: 4096,
         spacesd: true,
@@ -114,18 +121,19 @@ describe("MainWindow", () => {
     expect(screen.queryByRole("dialog", { name: "New Space" })).toBeNull();
   });
 
-  it("runs on this Mac, offers no cloud without the Your cloud experiment, never Cua Cloud", async () => {
+  it("runs on this Mac, offers no cloud with Your cloud turned off, never Cua Cloud", async () => {
+    window.localStorage.setItem("cua.settings.experiments", JSON.stringify({ yourCloud: false }));
     setup();
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
     expect(within(within(dialog).getByRole("combobox", { name: "Run on" })).getAllByRole("option").map((o) => o.textContent)).toEqual(["This Mac"]);
     expect(within(dialog).queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
     expect(within(dialog).queryByText(/Cua Cloud/)).toBeNull();
+    window.localStorage.removeItem("cua.settings.experiments");
   });
 
   it("connects a cloud from the wizard, tests it, then creates there", async () => {
-    // With the Your cloud experiment (Settings, Experiments).
-    window.localStorage.setItem("cua.settings.experiments", JSON.stringify({ yourCloud: true }));
+    // Your cloud is on by default (Settings, Experiments).
     const cloud = createFakeCloudBridge();
     const { createSpace } = setup({}, true, cloud);
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
@@ -144,7 +152,6 @@ describe("MainWindow", () => {
       expect(within(within(dialog).getByRole("combobox", { name: "Run on" })).getAllByRole("option").map((o) => o.getAttribute("value"))).toContain("aws"),
     );
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Run on" }), { target: { value: "aws" } });
-    window.localStorage.removeItem("cua.settings.experiments");
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
     await waitFor(() =>
@@ -153,9 +160,9 @@ describe("MainWindow", () => {
   });
   it("Run on starts on this Mac even with a cloud default", async () => {
     const { createSpace } = setup({
-      defaultLocation: async () => ({ value: "cloud", source: "config", path: "/tmp/cua/config.toml" }),
+      defaultLocation: async () => ({ value: "aws", source: "config", path: "/tmp/cua/config.toml" }),
     });
-    await screen.findByRole("option", { name: /Aurora/ });
+    await screen.findByRole("option", { name: /aurora/ });
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
     await waitFor(() =>
@@ -220,29 +227,29 @@ describe("MainWindow", () => {
         return () => {};
       },
     });
-    await screen.findByRole("option", { name: /Aurora/ });
+    await screen.findByRole("option", { name: /aurora/ });
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Run on" }), { target: { value: "local" } });
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
     // Before the create resolves: the row, selected, at 2%, and its detail.
-    const row = await screen.findByRole("option", { name: /New Space/ });
+    const row = await screen.findByRole("option", { name: GENERATED });
     expect(row).toHaveAttribute("aria-selected", "true");
     expect(row).toHaveTextContent("1%");
-    expect(await screen.findByRole("heading", { level: 1, name: "New Space" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: GENERATED })).toBeInTheDocument();
     expect(pendingId).toMatch(/^pending:/);
     // The SDK's pull moves it.
     act(() => progress.forEach((h) => h({ pendingId, phase: "pulling", fraction: 0.5, detail: "" })));
-    await waitFor(() => expect(screen.getByRole("option", { name: /New Space/ })).toHaveTextContent("42%"));
+    await waitFor(() => expect(screen.getByRole("option", { name: GENERATED })).toHaveTextContent("42%"));
     // Ready: it gives way to the registry's row.
     act(() => finish(ROWS[1]!));
-    await waitFor(() => expect(screen.queryByRole("option", { name: /New Space/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("option", { name: GENERATED })).toBeNull());
   });
 
   /** Starts a local create from the wizard; resolves with its pending id and
    * the progress handlers. */
-  async function startPendingCreate(overrides: Parameters<typeof fakeFleetBridge>[0]) {
+  async function startPendingCreate(overrides: Parameters<typeof fakeSpacesBridge>[0]) {
     let pendingId = "";
     let settle: { resolve: (row: SpaceRow) => void; reject: (e: Error) => void } | null = null;
     const progress: ((p: CreateProgress) => void)[] = [];
@@ -257,13 +264,13 @@ describe("MainWindow", () => {
       },
       ...overrides,
     });
-    await screen.findByRole("option", { name: /Aurora/ });
+    await screen.findByRole("option", { name: /aurora/ });
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Run on" }), { target: { value: "local" } });
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
-    await screen.findByRole("option", { name: /New Space/ });
+    await screen.findByRole("option", { name: GENERATED });
     const emit = (p: Omit<CreateProgress, "pendingId" | "detail">) =>
       act(() => progress.forEach((h) => h({ pendingId, detail: "", ...p })));
     return { ...ctx, pendingId: () => pendingId, emit, settle: () => settle! };
@@ -299,11 +306,11 @@ describe("MainWindow", () => {
     // The button keeps its label, disabled; the preview says Cancelling.
     await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled());
     expect(screen.getByText("Cancelling\u2026")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /New Space/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: GENERATED })).toBeInTheDocument();
     // The SDK cleans up; the create ends with its Cancelled error.
     act(() => settle().reject(new Error("cancelled: Cancelled local:space-1; removed its VM or container.")));
     await act(async () => done());
-    await waitFor(() => expect(screen.queryByRole("option", { name: /New Space/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("option", { name: GENERATED })).toBeNull());
     expect(screen.queryByText(/Failed/)).toBeNull();
     expect(screen.queryByRole("option", { name: /cancelled/i })).toBeNull();
   });
@@ -311,7 +318,7 @@ describe("MainWindow", () => {
   it("a cancelled create's error never shows as a failure, even from another client", async () => {
     const { settle } = await startPendingCreate({});
     act(() => settle().reject(new Error("cancelled: Cancelled local:space-1.")));
-    await waitFor(() => expect(screen.queryByRole("option", { name: /New Space/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("option", { name: GENERATED })).toBeNull());
   });
 
   it("a cancel that fails says so on the row", async () => {
@@ -337,7 +344,7 @@ describe("MainWindow", () => {
       gpuSupport,
       localStatus: async () => ({ ...LOCAL, backends: ["container", "lume"] }),
     });
-    await screen.findByRole("option", { name: /Aurora/ });
+    await screen.findByRole("option", { name: /aurora/ });
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Image" }), {
@@ -363,31 +370,31 @@ describe("MainWindow", () => {
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
     const row = await screen.findByRole("option", { name: /docker is not running/ });
-    expect(row).toHaveTextContent("New Space");
+    expect(row).toHaveTextContent(GENERATED);
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("the toolbar is the core's, in order, and This machine has its own page", async () => {
     setup();
-    fireEvent.click(await screen.findByRole("option", { name: /Aurora/ }));
-    await screen.findByRole("heading", { level: 1, name: "Aurora" });
+    fireEvent.click(await screen.findByRole("option", { name: /cua-e2e-vm/ }));
+    await screen.findByRole("heading", { level: 1, name: "cua-e2e-vm" });
     const labels = [...document.querySelectorAll(".dw-toolbar-actions button")].map(
       (b) => b.getAttribute("aria-label") ?? b.textContent,
     );
-    // No Share without the Sharing experiment (Settings, Experiments).
-    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Delete Space", "Open"]);
+    // Share is on by default (Settings, Experiments, Sharing).
+    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Share", "Delete Space", "Open"]);
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
       "Stream",
       "Agents",
       "Teleport",
     ]);
-    fireEvent.click(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option"));
-    fireEvent.click(await screen.findByRole("button", { name: "Set up for access" }));
+    fireEvent.click(within(screen.getAllByRole("listbox", { name: "This Mac" })[0]!).getByRole("option"));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
     expect(await screen.findByText("Set up this machine")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Set up for access" }));
+    fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));
     expect(await screen.findByRole("button", { name: "Stop sharing" })).toBeInTheDocument();
     await waitFor(() =>
-      expect(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option")).toHaveAttribute(
+      expect(within(screen.getAllByRole("listbox", { name: "This Mac" })[0]!).getByRole("option")).toHaveAttribute(
         "aria-selected",
         "true",
       ),
@@ -396,20 +403,20 @@ describe("MainWindow", () => {
 
   it("the sidebar foot carries the account and Settings", async () => {
     setup();
-    await screen.findByRole("option", { name: /Aurora/ });
+    await screen.findByRole("option", { name: /aurora/ });
     await waitFor(() => expect(document.querySelector(".dw-account")).toHaveTextContent("ada@example.com"));
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 
   it("deleting a Space asks first", async () => {
-    const deleteSpace = vi.fn(async () => "Deleted cloud:aurora");
+    const deleteSpace = vi.fn(async () => "Deleted local:cua-e2e-vm");
     setup({ deleteSpace });
-    fireEvent.click(await screen.findByRole("option", { name: /Aurora/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /cua-e2e-vm/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete Space" }));
     expect(deleteSpace).not.toHaveBeenCalled();
-    expect(screen.getByRole("alertdialog", { name: "Delete Aurora?" })).toHaveTextContent("Its sandbox is deleted.");
+    expect(screen.getByRole("alertdialog", { name: "Delete cua-e2e-vm?" })).toHaveTextContent("Everything inside it, including its files, is deleted and can't be recovered.");
     fireEvent.click(screen.getAllByRole("button", { name: "Delete Space" }).at(-1)!);
-    await waitFor(() => expect(deleteSpace).toHaveBeenCalledWith("cloud:aurora"));
+    await waitFor(() => expect(deleteSpace).toHaveBeenCalledWith("local:cua-e2e-vm"));
   });
 
   it("a Space in your cloud shows where it runs and offers Delete Permanently or Remove from List", async () => {
@@ -421,24 +428,24 @@ describe("MainWindow", () => {
     const deleteSpace = vi.fn(async () => "Deleted relay:cloud-0000000000000a01");
     const removeSpace = vi.fn(async () => {});
     setup({ listSpaces: async () => cloudRows, deleteSpace, removeSpace });
-    const mine = await screen.findByRole("option", { name: /Research Box/ });
+    const mine = await screen.findByRole("option", { name: /research-box/ });
     expect(mine).toHaveTextContent("AWS · us-west-2");
     fireEvent.click(mine);
     expect(await screen.findByText("Location")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Delete Space" }));
-    const ask = screen.getByRole("alertdialog", { name: "Delete Research Box?" });
+    const ask = screen.getByRole("alertdialog", { name: "Delete research-box?" });
     expect(ask).toHaveTextContent("everything Cua created for it in AWS · us-west-2");
     fireEvent.click(within(ask).getByRole("button", { name: "Delete Permanently" }));
     await waitFor(() => expect(deleteSpace).toHaveBeenCalledWith("relay:cloud-0000000000000a01"));
     expect(removeSpace).not.toHaveBeenCalled();
 
     // Another device created it: only Remove from List.
-    fireEvent.click(await screen.findByRole("option", { name: /Their Box/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /their-box/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete Space" }));
-    const theirs = screen.getByRole("alertdialog", { name: "Delete Their Box?" });
+    const theirs = screen.getByRole("alertdialog", { name: "Delete their-box?" });
     const permanent = within(theirs).getByRole("button", { name: "Delete Permanently" });
     expect(permanent).toBeDisabled();
-    expect(permanent).toHaveAttribute("title", "Created on another device: delete it there, or remove it from this list.");
+    expect(permanent).toHaveAttribute("title", "Created on another machine: delete it there, or remove it from this list.");
     fireEvent.click(within(theirs).getByRole("button", { name: "Remove from List" }));
     await waitFor(() => expect(removeSpace).toHaveBeenCalledWith("relay:cloud-0000000000000e01"));
     expect(deleteSpace).toHaveBeenCalledTimes(1);
@@ -448,7 +455,7 @@ describe("MainWindow", () => {
     let finish: (v: string) => void = () => {};
     const deleteSpace = vi.fn(() => new Promise<string>((resolve) => (finish = resolve)));
     setup({ deleteSpace });
-    fireEvent.click(await screen.findByRole("option", { name: /Aurora/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /cua-e2e-vm/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete Space" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Delete Space" }).at(-1)!);
     await waitFor(() => expect(deleteSpace).toHaveBeenCalledTimes(1));
@@ -458,8 +465,8 @@ describe("MainWindow", () => {
     expect(again).toBeDisabled();
     fireEvent.click(again);
     expect(deleteSpace).toHaveBeenCalledTimes(1);
-    finish("Deleted cloud:aurora");
-    await waitFor(() => expect(screen.queryByRole("option", { name: /Aurora/ })).not.toBeInTheDocument());
+    finish("Deleted local:cua-e2e-vm");
+    await waitFor(() => expect(screen.queryByRole("option", { name: /cua-e2e-vm/ })).not.toBeInTheDocument());
   });
 
   it("the power button next to Delete suspends, waits, and shows a failure inline", async () => {
@@ -472,19 +479,19 @@ describe("MainWindow", () => {
       os: "linux", reachable: true, power: "suspend", powerState: "running",
     };
     setup({ setSpacePower, listSpaces: async () => [...ROWS, box] });
-    fireEvent.click(await screen.findByRole("option", { name: /Box/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /box/ }));
     // The toolbar's power button sits right before Delete; the row has one too.
     const toolbar = document.querySelector(".dw-toolbar-actions")!;
     const labels = [...toolbar.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent);
-    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Suspend", "Delete Space", "Open"]);
+    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Share", "Suspend", "Delete Space", "Open"]);
     expect(screen.getAllByRole("button", { name: "Suspend" })).toHaveLength(2);
-    // Aurora (cloud) cannot be turned off: no power button on its row.
+    // aurora (a relay machine) cannot be turned off: no power button on its row.
     expect(document.querySelectorAll(".dw-row-power")).toHaveLength(1);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Suspend" })[0]!);
     await waitFor(() => expect(setSpacePower).toHaveBeenCalledWith("local:box", false));
     // While it runs: Suspending on the row, the buttons wait.
-    expect(await screen.findByRole("option", { name: /Box/ })).toHaveTextContent("Box");
+    expect(await screen.findByRole("option", { name: /box/ })).toHaveTextContent("box");
     const busy = screen.getAllByRole("button", { name: "Suspending…" });
     expect(busy).toHaveLength(2);
     for (const b of busy) expect(b).toBeDisabled();
@@ -500,21 +507,21 @@ describe("MainWindow", () => {
 
   it("Settings is a page of this window (Cmd+,)", async () => {
     setup();
-    await screen.findByRole("option", { name: /Aurora/ });
+    await screen.findByRole("option", { name: /aurora/ });
     fireEvent.keyDown(window, { key: ",", metaKey: true });
     expect(await screen.findByRole("heading", { level: 1, name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("radiogroup", { name: "Spaces tab in the notch" })).toBeInTheDocument();
   });
 
-  it("Settings has no default-location choice and opens the Teams waitlist", async () => {
+  it("Settings has no default-location choice and opens the account app for Teams", async () => {
     const openExternal = vi.fn(async () => {});
     setup({ openExternal });
-    await screen.findByRole("option", { name: /Aurora/ });
+    await screen.findByRole("option", { name: /aurora/ });
     fireEvent.keyDown(window, { key: ",", metaKey: true });
     await screen.findByRole("radiogroup", { name: "Spaces tab in the notch" });
     expect(screen.queryByRole("radiogroup", { name: "New Spaces run on" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Join the waitlist" }));
-    expect(openExternal).toHaveBeenCalledWith("https://cua.ai/teams");
+    fireEvent.click(screen.getByRole("button", { name: "Manage team" }));
+    expect(openExternal).toHaveBeenCalledWith("https://app.cua.ai/team");
   });
 });
 
@@ -531,8 +538,8 @@ describe("MainWindow launch at login", () => {
     window.localStorage.clear();
     const loginItem = fakeLoginItemBridge("notRegistered");
     const host = await spareHost();
-    const fleet = fakeFleetBridge({ isNative: true, listSpaces: async () => ROWS, localStatus: async () => LOCAL });
-    render(<MainWindow fleet={fleet} host={host} installer={createFakeInstallerBridge()} loginItem={loginItem} now={() => 1_000} />);
+    const bridge = fakeSpacesBridge({ isNative: true, listSpaces: async () => ROWS, localStatus: async () => LOCAL });
+    render(<MainWindow bridge={bridge} host={host} installer={createFakeInstallerBridge()} loginItem={loginItem} now={() => 1_000} />);
     await waitFor(() => expect(loginItem.calls).toEqual([true]));
     expect(readLaunchChoice()).toBe(true);
   });
@@ -545,11 +552,55 @@ describe("MainWindow launch at login", () => {
     const loginItem = fakeLoginItemBridge("notRegistered");
     const statusRead = vi.spyOn(loginItem, "status");
     const host = await spareHost();
-    const fleet = fakeFleetBridge({ isNative: true, listSpaces: async () => ROWS, localStatus: async () => LOCAL });
-    render(<MainWindow fleet={fleet} host={host} installer={createFakeInstallerBridge()} loginItem={loginItem} now={() => 1_000} />);
+    const bridge = fakeSpacesBridge({ isNative: true, listSpaces: async () => ROWS, localStatus: async () => LOCAL });
+    render(<MainWindow bridge={bridge} host={host} installer={createFakeInstallerBridge()} loginItem={loginItem} now={() => 1_000} />);
     await waitFor(() => expect(statusRead).toHaveBeenCalled());
     await act(async () => {});
     expect(loginItem.calls).toEqual([]);
+  });
+});
+
+describe("empty home", () => {
+  it("shows when the roster is only This machine", async () => {
+    setup({ listSpaces: async () => [] });
+    expect(await screen.findByRole("heading", { name: "No Spaces yet" })).toBeInTheDocument();
+    expect(screen.getByText("Pick a system to start it.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "This Mac" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Linux, About 3 minutes · 3.3–7.3 GB of disk" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^macOS, About .+ download$/ })).toBeInTheDocument();
+  });
+
+  it("creates the default Linux Space once under StrictMode and shows no dialog", async () => {
+    const { createSpace } = setup({ listSpaces: async () => [] }, true, createFakeCloudBridge(), true);
+    await screen.findByRole("heading", { name: "No Spaces yet" });
+    fireEvent.click(screen.getByRole("button", { name: /^Linux,/ }));
+    await waitFor(() => expect(createSpace).toHaveBeenCalledTimes(1));
+    expect(createSpace).toHaveBeenCalledWith(
+      expect.objectContaining({ image: "ghcr.io/trycua/linux:24.04", on: "local" }),
+      expect.stringMatching(/^pending:/),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens the wizard on the macOS refusal when Lume is not ready", async () => {
+    const { createSpace } = setup({ listSpaces: async () => [] });
+    await screen.findByRole("heading", { name: "No Spaces yet" });
+    fireEvent.click(screen.getByRole("button", { name: /^macOS,/ }));
+    expect(await screen.findByRole("dialog", { name: "New Space" })).toHaveTextContent(
+      "This Mac cannot run Lume Spaces.",
+    );
+    expect(createSpace).not.toHaveBeenCalled();
+  });
+
+  it("New Space opens the full wizard", async () => {
+    setup({ listSpaces: async () => [] });
+    await screen.findByRole("heading", { name: "No Spaces yet" });
+    const empty = screen.getByRole("heading", { name: "No Spaces yet" }).closest(".dw-empty");
+    fireEvent.click(within(empty as HTMLElement).getByRole("button", { name: "New Space" }));
+    const dialog = await screen.findByRole("dialog", { name: "New Space" });
+    expect(within(dialog).getByRole("combobox", { name: "Image" })).toHaveValue(
+      "ghcr.io/trycua/linux:24.04",
+    );
   });
 });
 
@@ -566,7 +617,7 @@ describe("discovery failures", () => {
     fails = false;
     await act(async () => { changed!(); });
     await waitFor(() => expect(screen.queryByText("Could not load Spaces. Try refreshing again.")).toBeNull());
-    expect(screen.queryByRole("option", { name: /Aurora/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /aurora/ })).toBeNull();
   });
 
   it("retains warm rows during failure, then removes them after empty success", async () => {
@@ -576,14 +627,14 @@ describe("discovery failures", () => {
       listSpaces: async () => { if (result instanceof Error) throw result; return result; },
       onSpacesChanged: async (handler) => { changed = handler; return () => {}; },
     });
-    await screen.findByRole("option", { name: /Aurora/ });
+    await screen.findByRole("option", { name: /aurora/ });
     result = new Error("transport failed: secret");
     await act(async () => { changed!(); });
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not refresh Spaces. Previously loaded rows may be out of date.");
-    expect(screen.getByRole("option", { name: /Aurora/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /aurora/ })).toBeInTheDocument();
     result = [];
     await act(async () => { changed!(); });
-    await waitFor(() => expect(screen.queryByRole("option", { name: /Aurora/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("option", { name: /aurora/ })).toBeNull());
     expect(screen.queryByText("Could not refresh Spaces. Previously loaded rows may be out of date.")).toBeNull();
   });
 });

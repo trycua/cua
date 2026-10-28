@@ -156,6 +156,26 @@ async fn e2e_harness_runs() {
             && r.text.contains(&format!("{id}-proof"))
             && arts.iter().any(|x| x.path.ends_with("/proof.txt"));
         // Follow-up in the same session.
+        let session = a.status(&run).await.unwrap().session_id;
+        let resumable = a
+            .events(&run, 0, 100_000)
+            .await
+            .unwrap()
+            .events
+            .iter()
+            .any(|e| {
+                e.kind == "initialized"
+                    && (e.raw["agentCapabilities"]["loadSession"] == true
+                        || e.raw["agentCapabilities"]["sessionCapabilities"]["resume"].is_object())
+            });
+        a.stop(&run).await.unwrap();
+        a.guest()
+            .run(cua_spacesd_client::Command::shell(format!(
+                "python3 -c 'import json; p=\"{}/state.json\"; s=json.load(open(p)); s.update(status=\"failed\", error=\"transport lost\"); json.dump(s,open(p,\"w\"))'",
+                started.run_dir
+            )))
+            .await
+            .unwrap();
         a.send(
             &run,
             "Now a follow-up. mock: tool list_windows; say followup-ok",
@@ -168,7 +188,19 @@ async fn e2e_harness_runs() {
         })
         .await;
         let r2 = a.result(&run).await.unwrap();
-        let followup_ok = fu && r2.turn == 2 && r2.text.contains("followup-ok");
+        let followup_ok = fu
+            && r2.turn == 2
+            && r2.text.contains("followup-ok")
+            && (!resumable || a.status(&run).await.unwrap().session_id == session);
+        let restarted = a.events(&run, 0, 100_000).await.unwrap().events;
+        assert_eq!(
+            restarted
+                .iter()
+                .filter(|e| e.kind == "turn_started")
+                .count(),
+            2,
+            "restart must not replay the introduction"
+        );
         // The sandbox's own MCP (cua-driver through the spacesd) was called.
         let evs = a.events(&run, 0, 100_000).await.unwrap().events;
         let mcp_ok = evs.iter().any(|e| {

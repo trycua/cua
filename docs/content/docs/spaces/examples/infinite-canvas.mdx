@@ -32,7 +32,7 @@ From a clone of [trycua/cua](https://github.com/trycua/cua), on macOS 26:
 
 ```bash skip="no-runner"
 (cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift)
-cd samples/infinite-canvas-swift
+cd examples/infinite-canvas-swift
 swift build -c release
 .build/release/infinite-canvas --spaces spaces.json --show
 ```
@@ -65,12 +65,12 @@ swift build -c release --product canvas-bench && .build/release/canvas-bench --t
 
 ## Source
 
-[samples/infinite-canvas-swift](https://github.com/trycua/cua/tree/main/samples/infinite-canvas-swift): SwiftUI and AppKit on `Cua`, `CuaSpaces`, `CuaSpacesStreaming` and `CuaSpacesTeleport`.
+[examples/infinite-canvas-swift](https://github.com/trycua/cua/tree/main/examples/infinite-canvas-swift): SwiftUI and AppKit on `Cua`, `CuaSpaces`, `CuaSpacesStreaming` and `CuaSpacesTeleport`.
 
 ## How each part works
 
 | Part | Guide |
 |------|-------|
 | Window streams and presence | [Stream a desktop](/spaces/guides/stream-a-desktop) |
-| Agent threads | [Use from an agent](/spaces/guides/use-from-an-agent#run-an-agent-inside-a-space) |
-| Adding Spaces by address | [Add a Space](/spaces/guides/add-a-space) |
+| Agent threads | [Agents in a Space](/spaces/guides/agents-in-a-space#from-code) |
+| Adding Spaces by address | [Create a Space](/spaces/guides/add-a-space) |

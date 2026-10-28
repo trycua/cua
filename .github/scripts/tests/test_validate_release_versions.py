@@ -22,6 +22,23 @@ def copy_release_sources(destination: Path) -> None:
     (destination / config).parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(REPO_ROOT / config, destination / config)
     shutil.copy(REPO_ROOT / ".release-please-manifest.json", destination)
+    shutil.copy(REPO_ROOT / "release-please-config.json", destination)
+    for relative in (
+        "uv.lock",
+        "libs/cua-bench/uv.lock",
+        "libs/cua-bench/pyproject.toml",
+        "libs/python/agent/pyproject.toml",
+        "libs/python/core/pyproject.toml",
+        "libs/python/bench-ui/pyproject.toml",
+        "libs/python/som/pyproject.toml",
+        "libs/python/cua-sandbox-apps/pyproject.toml",
+        "libs/python/cua-sandbox-apps/uv.lock",
+        "libs/typescript/core/package.json",
+        "libs/typescript/playground/package.json",
+        "libs/cuabot/package.json",
+    ):
+        (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO_ROOT / relative, destination / relative)
     for filename in ("VERSION", "pyproject.toml", "uv.lock", "cua_sandbox/__init__.py"):
         relative = Path("libs/python/cua-sandbox") / filename
         (destination / relative).parent.mkdir(parents=True, exist_ok=True)
@@ -43,6 +60,9 @@ def copy_release_sources(destination: Path) -> None:
         "libs/cua/python/src/cua/__init__.py",
         "libs/cua/typescript/package.json",
         "libs/cua/typescript/package-lock.json",
+        "libs/cua/Cargo.toml",
+        "libs/cua/Cargo.lock",
+        *(str(m.relative_to(REPO_ROOT)) for m in sorted((REPO_ROOT / "libs/cua").glob("crates/*/Cargo.toml"))),
         "apps/cua-spaces-macos/VERSION",
         "apps/cua-spaces-macos/Support/Info.plist",
         "apps/cua-spaces/package.json",
@@ -343,6 +363,9 @@ SDK_AND_SPACES_SOURCES = (
     "libs/cua/python/src/cua/__init__.py",
     "libs/cua/typescript/package.json",
     "libs/cua/typescript/package-lock.json",
+    "libs/cua/Cargo.toml",
+    "libs/cua/Cargo.lock",
+    *(str(m.relative_to(REPO_ROOT)) for m in sorted((REPO_ROOT / "libs/cua").glob("crates/*/Cargo.toml"))),
     "apps/cua-spaces-macos/VERSION",
     "apps/cua-spaces-macos/Support/Info.plist",
     "apps/cua-spaces/package.json",
@@ -399,6 +422,8 @@ def test_spaces_macos_info_plist_drift_fails(tmp_path: Path):
         ("VERSION", "cua SDK expects 9.9.9"),
         ("python/pyproject.toml", "python/pyproject.toml=9.9.9"),
         ("typescript/package-lock.json", "typescript/package-lock.json=9.9.9"),
+        ("Cargo.toml", "Cargo.toml:workspace.package.version=9.9.9"),
+        ("crates/cua-sdk/Cargo.toml", "crates/cua-sdk/Cargo.toml:dependencies.cua-proto=9.9.9"),
     ],
 )
 def test_sdk_version_drift_fails(tmp_path: Path, source: str, expected: str):

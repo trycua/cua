@@ -161,7 +161,12 @@ struct Fixtures {
             // Firefox's credentials are opt-ins: the server's default
             // selection carries none, so it needs no acknowledgement.
             XCTAssertTrue(manifest.defaultSelection.allSatisfy { !$0.isSensitive })
-            let approval = try manifest.approvingServerDefault(into: space)
+            // Only what is selected moves (#5504), so the signed-in state is
+            // named and acknowledged explicitly: the default moves none of it.
+            let cookies = manifest.items.filter { $0.relativePath.hasSuffix("cookies.sqlite") }
+            XCTAssertEqual(cookies.count, 1)
+            let approval = try manifest.approving(
+                cookies, into: space, acknowledgingSensitiveItems: true)
             let arrived = { (name: String) -> Bool in
                 FileManager.default.enumerator(atPath: f["spaces_teleport_home"]!)?
                     .allObjects.compactMap { $0 as? String }

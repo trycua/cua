@@ -37,22 +37,21 @@ view at launch in debug builds (release builds ignore the recording hooks).
                                    │      + loopback): media bridge, env
        shared registry ~/.cua/spaces.json          passthrough, MCP
                                    │
-            direct:host:port | cloud:name | local:name
+            direct:host:port | relay:id | local:name
                                    ▼
                      cua-spacesd :3211 in every Space
                      gRPC + gRPC-Web, /media (wire v2), /mcp, /health
 ```
 
 - **cua-spaces** (`libs/cua/crates/cua-spaces`) is the Spaces core: registry,
-  create / delete in Cua Cloud or on this Mac, files, streams, presence, teleport,
+  create / delete on this Mac, files, streams, presence, teleport,
   hotspot, agents. The app links it directly; `src-tauri` commands are
-  one-liners over it. There is no cloud REST client, Lume CLI, rcdp client or
+  one-liners over it. There is no Cua Cloud client, Lume CLI, rcdp client or
   WebSocket relay of the app's own any more.
 - **`cua daemon`** hosts the same SDK runtime out of process. The app connects
   to a running daemon or starts one (`cua daemon start`), so the CLI and MCP
-  clients share Spaces with the app. The daemon's **media bridge**
-  (`OpenMediaBridge`) serves ticketed WebSockets for Spaces whose socket needs
-  headers a webview cannot set (the Cua Cloud gateway).
+  clients share Spaces with the app. The app attaches to each Space's own
+  media ticket directly; it needs no daemon media bridge for any Space.
 - **MCP**: agents drive Spaces through `cua mcp` (`cua daemon mcp`).
   Settings → AI agents runs the SDK's agent onboarding (`cua-agent-setup`, same
   as `cua agents setup`): it installs the cua skills and registers `cua mcp` in
@@ -67,10 +66,8 @@ is a step-by-step sheet:
 
 1. **System**: Linux, Windows or macOS, the image (a dropdown of the published
    entries of `libs/images/sandbox-images.json`, the same list the docs show),
-   and where it runs: This Mac. "Your cloud (AWS, Azure, GCP...)" shows as
-   coming soon and cannot be picked (the core's `CLOUD_SPACES_OFFERED`; the
-   cua SDK and CLI still create cloud sandboxes, and cloud Spaces that already
-   exist still list). **Advanced** picks the kind (container or virtual
+   and where it runs: This Mac, one of your own computers, or your own cloud
+   account. Cua no longer rents cloud machines. **Advanced** picks the kind (container or virtual
    machine, when the image comes in both) and the runtime, offering only what
    the image runs there: containers `auto`, `gvisor`, `runc`; VMs `auto` and
    the image's `qemu` or `lume`.
@@ -82,7 +79,7 @@ Every create is one `create_space {image, on, kind, runtime, ...}` call.
 Spaces on this Mac run through
 `cua-vmm`. The notch "+" drop creates in the default location. **Connect by
 address** adds a machine that already runs cua-spacesd (`host:port` plus its
-token). Delete deletes a created Space's sandbox (cloud or local); a Space
+token). Delete deletes a created Space's sandbox; a Space
 added by address is only removed from the list.
 
 ### First run and "This machine"
@@ -94,8 +91,8 @@ asks first and shows its path.
 
 "This machine" asks what the machine is for:
 
-- **Access other machines**: nothing is installed. Cloud Spaces and the
-  signed-in account's own machines (`space://relay/<id>`) appear automatically.
+- **Access other machines**: nothing is installed. The signed-in account's
+  own machines (`relay:<id>`) appear automatically.
 - **Set up this machine for unattended access**: `cua-host` (the library
   behind `cua host setup`) installs cua-spacesd as a service that joins the Cua
   relay (`https://relay.cua.ai`, or `CUA_RELAY_URL`). Direct `ip:port` is
@@ -113,7 +110,7 @@ links `/usr/local/bin/cua` to the bundled CLI). Releases
 (`.github/workflows/cd-cua-spaces.yml`) ship this app for Linux and Windows
 only; the macOS release is the SwiftUI app (`apps/cua-spaces-macos`), and
 the release .pkg wraps that app.
-`.github/workflows/ci-cua-spaces.yml` builds them unsigned on pull requests. Silent / MDM installs can preselect the first-run choice
+`.github/workflows/ci-cua-spaces.yml` builds them unsigned on pushes to main and on pull requests labelled `ci:full`; other pull requests run the frontend and Rust command-layer tests only. Silent / MDM installs can preselect the first-run choice
 (the user still confirms in the app):
 
 | Installer | Flag |
@@ -143,19 +140,14 @@ cua-spaces `Approval` (which refuses unacknowledged sensitive items) and
 `TeleportService`, SHA-256 verified. Files dropped on the Teleport zone land
 in the Space's `~/Downloads`, digest-verified.
 
-### Cua Cloud configuration
+### Configuration
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CUA_FLEET_BASE_URL` | `https://run.cua.ai` | Cua Cloud API base URL |
-| `CUA_TOKEN_URL` | `https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token` | OAuth token endpoint |
-| `CUA_CLIENT_ID` / `CUA_CLIENT_SECRET` | none | client-credentials auth |
-| `FLEETS_TOKEN` | none | static bearer token (takes precedence) |
-
-The signed-in user (device grant, Settings → Sign in to Cua) takes precedence
-over the environment. The default location is `default.on` in
-`$CUA_HOME/config.toml` (Settings → Default location); `CUA_DEFAULT_ON`
-overrides it and Settings shows that read-only. `./run-live.sh` loads `~/.env` and starts the daemon.
+The app signs in with the device grant (Settings → Sign in to Cua); the session
+is the credential store shared with the CLI and the daemon, and it drives the
+relay account and this device's enrollment. Cua Cloud has ended, so the app
+builds no Cua Cloud client and reads no Cua Cloud credentials from the
+environment. The default location is `default.on` in `$CUA_HOME/config.toml`;
+`CUA_DEFAULT_ON` overrides it. `./run-live.sh` starts the daemon.
 
 The Tauri command contract is listed in `TELEPORT.md`.
 
@@ -259,4 +251,4 @@ only the intent is recorded.
 
 ## License
 
-Source-available under FSL-1.1-MIT ([LICENSE](LICENSE)). Offering it as a hosted or managed service needs a commercial licence: see [COMMERCIAL.md](../../COMMERCIAL.md).
+Source-available under FSL-1.1-MIT ([LICENSE](LICENSE)). Offering it as a hosted or managed service needs a commercial licence: see [COMMERCIAL.md](../../legal/COMMERCIAL.md).

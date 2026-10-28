@@ -240,6 +240,10 @@ pub struct ImportSpec {
     /// the destination browser's own key.
     #[serde(default)]
     pub passwords: bool,
+    /// The registrable domains whose saved passwords to read (the review's
+    /// own per-site choice of passwords); `None`: those of `domains`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_domains: Option<Vec<String>>,
 }
 
 /// One domain a browser holds secrets for, as the inventory shows it:
@@ -353,7 +357,7 @@ pub type StageSink = Arc<dyn Fn(TeleportStage) + Send + Sync>;
 #[async_trait::async_trait]
 pub trait Backend: Send + Sync {
     /// Resolves a target Space name to a STABLE, immutable identity: a
-    /// sandbox or Fleet-claim id, or a pinned receiver public key, that a
+    /// sandbox id, or a pinned receiver public key, that a
     /// rename or re-create cannot forge. Grants and rules pin this id at
     /// approval time and delivery re-resolves and verifies it, so a name that
     /// now maps to a different Space fails closed (red-team F1). Fails when the
@@ -632,6 +636,49 @@ pub struct AccessRequest {
     /// authority: the grant is still bound to the verified caller.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    /// For a whole-app (`Selector::App`) request: the exact bundle-relative
+    /// manifest paths the requester selected (the same `rel_path`s
+    /// [`ImportSpec::paths`] takes). The request is then for THOSE parts of
+    /// the app and nothing else: it never resolves to the items the vault
+    /// already holds for the app (they are not keyed by manifest path), so
+    /// approval always captures exactly these paths, and the grant covers
+    /// only what that capture produced. `None` keeps the whole-app request.
+    /// Only a single `Selector::App` may carry it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
+}
+
+/// Most manifest paths one request may name.
+const MAX_REQUEST_PATHS: usize = 256;
+/// Longest manifest path a request may name, in bytes.
+const MAX_REQUEST_PATH_LEN: usize = 1024;
+
+/// Checks the `paths` a request carries: they narrow exactly one whole-app
+/// selector, are plain non-empty relative names, and are bounded.
+fn validate_request_paths(req: &AccessRequest) -> Result<()> {
+    let Some(paths) = &req.paths else {
+        return Ok(());
+    };
+    if paths.is_empty() {
+        return Err(Error::Invalid(
+            "an empty path selection is ambiguous: name the parts to send".into(),
+        ));
+    }
+    if paths.len() > MAX_REQUEST_PATHS {
+        return Err(Error::Invalid("request too large".into()));
+    }
+    if !matches!(req.selectors.as_slice(), [Selector::App { .. }]) {
+        return Err(Error::Invalid(
+            "a path selection narrows exactly one whole-app selector".into(),
+        ));
+    }
+    for p in paths {
+        if p.trim().is_empty() || p.len() > MAX_REQUEST_PATH_LEN || p.chars().any(char::is_control)
+        {
+            return Err(Error::Invalid("a selected path is not valid".into()));
+        }
+    }
+    Ok(())
 }
 
 /// A pending request, as the consent UI sees it.
@@ -677,13 +724,12 @@ pub struct ApproveOptions {
     #[serde(default)]
     pub include_storage: bool,
     /// For a whole-app (`Selector::App`) request: the exact bundle-relative
-    /// paths to capture, same meaning as [`ImportSpec::paths`]. `None` keeps
-    /// the existing default (a provider's login-only selection). This is
-    /// the approver's OWN choice, set when a human reviews and widens what
-    /// an agent's `teleport_app` request asked for (shown to them as
-    /// `would_send` when they decide) -- never the requester's own
-    /// unverified `include`, which only ever reaches this call as text on
-    /// the consent screen.
+    /// paths to capture, same meaning as [`ImportSpec::paths`]. This is the
+    /// approver's OWN choice, set when a human reviews and widens or narrows
+    /// what an agent's `teleport_app` request asked for. `None` keeps what
+    /// the request itself named ([`AccessRequest::paths`], the selection the
+    /// requester made, which the daemon validated), and failing that the
+    /// existing default (a provider's login-only selection).
     #[serde(default)]
     pub paths: Option<Vec<String>>,
 }
@@ -760,6 +806,16 @@ pub struct TeleportOutcome {
     pub expires_ms: u64,
 }
 
+/// The [`ImportSpec::password_domains`] filter is honored: a capture
+/// reads only the saved passwords of those sites. A daemon that does not
+/// list it ignores the field and reads the passwords of `domains`, so a
+/// caller must not send a narrower choice of passwords to one.
+pub const FEATURE_PASSWORD_DOMAINS: &str = "password_domains";
+
+/// What this daemon supports beyond the original protocol
+/// ([`Status::features`]).
+pub const FEATURES: &[&str] = &[FEATURE_PASSWORD_DOMAINS];
+
 /// Vault status (safe for any caller).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
@@ -812,6 +868,10 @@ pub struct Status {
     /// new one is created (one line for the UI).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_notice: Option<String>,
+    /// What this daemon supports beyond the original protocol
+    /// ([`FEATURES`]); empty from a daemon that predates the list.
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 /// Creating a vault. Its `Debug` never prints the passphrase, and the
@@ -1133,16 +1193,21 @@ impl Broker {
                     .into(),
             );
         }
-        if cfg!(not(any(target_os = "macos", target_os = "windows"))) {
-            return Some("this platform has no OS key store protector yet".into());
+        if cfg!(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux"
+        ))) {
+            return Some("this platform has no OS key store protector".into());
         }
         None
     }
 
     /// Why this daemon cannot create a new OS key store protector (`None`: it
     /// can). On macOS only the signed Cua daemon may create one (red-team
-    /// F2), so this is checked here, before any presence prompt, rather
-    /// than discovered after the user confirmed.
+    /// F2); on Linux a desktop with no Secret Service on the session bus has
+    /// none to use. Checked here, before any presence prompt, rather than
+    /// discovered after the user confirmed.
     fn os_enroll_block(&self) -> Option<String> {
         if let Some(why) = self.os_use_block() {
             return Some(why);
@@ -1158,7 +1223,11 @@ impl Broker {
                                 .into()
                         })
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(target_os = "linux")]
+                {
+                    crate::protector::secret_service_available().err()
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 {
                     None
                 }
@@ -1311,6 +1380,7 @@ impl Broker {
                 }
                 _ => Vec::new(),
             },
+            features: FEATURES.iter().map(|f| f.to_string()).collect(),
         }
     }
 
@@ -1828,7 +1898,7 @@ impl Broker {
                 f(s);
             }
         };
-        policy::require_first_party(caller, "teleporting from this machine")?;
+        policy::require_first_party(caller, "teleporting from this computer")?;
         {
             let st = self.state.lock().await;
             if Self::settings(&st)?.disabled {
@@ -2315,6 +2385,7 @@ impl Broker {
         if req.selectors.len() > 32 || req.targets.len() > 8 || req.reason.len() > 500 {
             return Err(Error::Invalid("request too large".into()));
         }
+        validate_request_paths(&req)?;
         for t in &req.targets {
             validate_target(t)?;
         }
@@ -2383,6 +2454,14 @@ impl Broker {
         let mut items: Vec<ItemMeta> = Vec::new();
         let mut needs_import = Vec::new();
         for s in &req.selectors {
+            // A path selection never resolves to what the vault already
+            // holds for the app: those items are not keyed by manifest path,
+            // so the whole stored session would be granted. It is imported
+            // on approval instead, exactly as selected.
+            if req.paths.is_some() {
+                needs_import.push(s.clone());
+                continue;
+            }
             let found: Vec<&ItemMeta> = meta.items.values().filter(|i| s.matches(i)).collect();
             if found.is_empty() {
                 match s {
@@ -2740,7 +2819,7 @@ impl Broker {
 
         // Import what the request named but the vault does not hold yet.
         let mut item_ids: Vec<String> = view.items.iter().map(|i| i.id.clone()).collect();
-        for spec in imports_for(&view.needs_import, &opts) {
+        for spec in imports_for(&view.needs_import, &opts, view.request.paths.as_deref()) {
             for it in self.import_confirmed(caller, spec).await? {
                 if !item_ids.contains(&it.id) {
                     item_ids.push(it.id);
@@ -3653,10 +3732,19 @@ impl Broker {
                 .collect()
         };
         let mut wiped_ids = Vec::new();
+        let mut gone_ids: Vec<String> = Vec::new();
         let mut errors = Vec::new();
         for d in &live {
             match self.backend.wipe(&d.target, &d.import_id).await {
                 Ok(_) => wiped_ids.push(d.import_id.clone()),
+                // The Space or the import is gone (the user removed the
+                // Space, or the target's own expiry already wiped it): the
+                // copy no longer exists, so the delivery counts as wiped
+                // and must not block deleting the item.
+                Err(Error::NotFound(_)) => {
+                    gone_ids.push(d.import_id.clone());
+                    wiped_ids.push(d.import_id.clone());
+                }
                 Err(e) => errors.push(format!("{}: {e}", d.target)),
             }
         }
@@ -3673,7 +3761,14 @@ impl Broker {
         for d in live.iter().filter(|d| wiped_ids.contains(&d.import_id)) {
             let mut e = ev("target.wipe", caller, "ok");
             e.target = Some(d.target.clone());
-            e.detail = format!("import={}", d.import_id);
+            e.detail = if gone_ids.contains(&d.import_id) {
+                format!(
+                    "import={} already gone (target or import missing)",
+                    d.import_id
+                )
+            } else {
+                format!("import={}", d.import_id)
+            };
             Self::audit(&mut st, e);
         }
         if !errors.is_empty() {
@@ -3807,6 +3902,22 @@ fn describe_selection(view: &PendingView) -> String {
     for s in &view.needs_import {
         match s {
             Selector::Site { app, site } => parts.push(format!("{site} ({app}, import)")),
+            // A path selection says which parts (the prompt is the only
+            // place some platforms can show them).
+            Selector::App { app } if view.request.paths.is_some() => {
+                let paths = view.request.paths.as_deref().unwrap_or_default();
+                let shown: Vec<&str> = paths.iter().take(3).map(String::as_str).collect();
+                let more = paths.len().saturating_sub(shown.len());
+                parts.push(format!(
+                    "only {app}: {}{} (import)",
+                    shown.join(", "),
+                    if more > 0 {
+                        format!(" and {more} more")
+                    } else {
+                        String::new()
+                    }
+                ));
+            }
             Selector::App { app } => parts.push(format!("the whole {app} session (import)")),
             Selector::Item { id } => parts.push(id.clone()),
             Selector::Login { site } => parts.push(format!("the saved password for {site}")),
@@ -3848,7 +3959,14 @@ fn import_reason(spec: &ImportSpec, caller: &CallerIdentity) -> String {
     )
 }
 
-fn imports_for(needs: &[Selector], opts: &ApproveOptions) -> Vec<ImportSpec> {
+/// The imports approval runs for `needs`. A whole-app import captures the
+/// approver's own `paths` when they set them, else exactly the `requested`
+/// ones, else the provider's login-only default.
+fn imports_for(
+    needs: &[Selector],
+    opts: &ApproveOptions,
+    requested: Option<&[String]>,
+) -> Vec<ImportSpec> {
     let mut by_app: BTreeMap<String, ImportSpec> = BTreeMap::new();
     for s in needs {
         match s {
@@ -3870,7 +3988,10 @@ fn imports_for(needs: &[Selector], opts: &ApproveOptions) -> Vec<ImportSpec> {
                     .or_insert_with(|| ImportSpec {
                         app: app.clone(),
                         whole_app: true,
-                        paths: opts.paths.clone(),
+                        paths: opts
+                            .paths
+                            .clone()
+                            .or_else(|| requested.map(<[String]>::to_vec)),
                         ..Default::default()
                     });
             }

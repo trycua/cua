@@ -1,0 +1,453 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+/**
+ * Demo agents, in the hosts' wire shapes: four persistent agents (Claude
+ * Code, Codex, Hermes, OpenClaw), five runs in the demo's running Spaces,
+ * and each run's events as `agent_events` reports them. One run is live:
+ * its third turn is written over about twenty-five seconds after the
+ * adapter starts, so the timeline streams. All synthetic.
+ */
+
+import type { AgentEvent, AgentRunStatus, AgentSetupRow, ConnectionReport, ConnectionRow, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
+
+const MIN = 60_000;
+
+export function demoPersistentAgents(now: number): PersistentAgent[] {
+  return [
+    { name: "ada", harness: "claude-code", space: "local:design-review", paused: false, spaceState: "running", runId: "run-ada-7", savedMs: now - 2 * MIN },
+    { name: "atlas", harness: "openai-codex", space: "relay:linux-box/ubuntu-build", paused: false, spaceState: "running", runId: null, savedMs: now - 38 * MIN },
+    { name: "claw", harness: "openclaw", space: "relay:mac-mini/qa-windows", paused: false, spaceState: "running", runId: null, savedMs: now - 3 * 60 * MIN },
+    {
+      name: "scout",
+      harness: "hermes",
+      space: "relay:mac-mini/release-checks",
+      paused: true,
+      spaceState: "released",
+      runId: null,
+      savedMs: now - 26 * 60 * MIN,
+    },
+  ];
+}
+
+/** `fresh`: a first run, so Cua isn't in any agent's settings yet. `only`:
+ * just these agents installed (`[]`: none, `?demo=agents-none`; `codex`:
+ * `?demo=agents-codex`). */
+export function demoAgentSetup(fresh = false, only: string[] | null = null): AgentSetupRow[] {
+  const row = (agent: string, name: string, installed: boolean, configured: boolean, mcpConfig: string | null, skillsDir: string | null): AgentSetupRow => ({
+    agent,
+    name,
+    installed,
+    configured,
+    detail: !installed ? "Not installed" : configured ? "Skills and MCP server set up" : "Not set up",
+    skillsInstalled: configured ? 6 : 0,
+    skillsTotal: 6,
+    mcpConfig,
+    skillsDir,
+    // Codex signs in with ChatGPT on its own (`codex login`); the demo isn't signed in yet.
+    signIn: agent === "codex" ? "ChatGPT" : null,
+    signedIn: false,
+  });
+  const rows = [
+    row("claude-code", "Claude Code", true, true, "~/.claude.json", "~/.claude/skills"),
+    row("codex", "OpenAI Codex", true, true, "~/.codex/config.toml", "~/.agents/skills"),
+    row("hermes", "Hermes", true, false, "~/.hermes/config.yaml", "~/.hermes/skills"),
+    row("openclaw", "OpenClaw", true, false, "~/.openclaw/openclaw.json", "~/.agents/skills"),
+    row("cursor", "Cursor", true, true, "~/.cursor/mcp.json", "~/.cursor/skills"),
+    row("vscode", "VS Code (Copilot agent mode)", true, false, "~/Library/Application Support/Code/User/mcp.json", "~/.agents/skills"),
+    row("gemini-cli", "Gemini CLI", false, false, "~/.gemini/settings.json", "~/.gemini/skills"),
+    // The rest of the supported apps, not installed: "Show all" lists them with their marks.
+    ...(
+      [
+        ["cline", "Cline"],
+        ["kiro", "Kiro"],
+        ["opencode", "OpenCode"],
+        ["pi", "Pi"],
+        ["windsurf", "Windsurf (Devin Desktop)"],
+        ["copilot-cli", "GitHub Copilot CLI"],
+        ["amp", "Amp"],
+        ["goose", "Goose"],
+        ["zed", "Zed"],
+        ["antigravity", "Google Antigravity"],
+      ] as const
+    ).map(([agent, name]) => row(agent, name, false, false, null, null)),
+  ];
+  return rows.map((r) => {
+    const installed = only ? only.includes(r.agent) : r.installed;
+    const configured = fresh ? false : installed && r.configured;
+    return { ...r, installed, configured, skillsInstalled: configured ? r.skillsTotal : 0, detail: !installed ? "Not installed" : configured ? r.detail : "Not set up" };
+  });
+}
+
+/**
+ * The connection status (`agents.status`) the demo's agents give: the same
+ * rules as `cua_agent_setup::connection`, from the demo rows and the
+ * sign-ins it "copied" (`imported`).
+ */
+export function demoConnections(rows: AgentSetupRow[], imported: readonly string[], at: number): ConnectionReport {
+  const order = ["hermes", "claude-code", "codex", "cursor", "openclaw", "t3code"];
+  const copyable: Record<string, string> = { codex: "ChatGPT sign-in", "claude-code": "Claude sign-in", hermes: "OpenRouter key" };
+  const sorted = [...rows].sort((a, b) => (order.indexOf(a.agent) + 1 || 99) - (order.indexOf(b.agent) + 1 || 99));
+  const agents = sorted.map((r): ConnectionRow => {
+    const name = r.agent === "codex" ? "Codex" : r.name;
+    // Codex's demo sign-in waits for `codex login`; the others are signed in.
+    const signedIn: ConnectionRow["signed_in"] = r.agent === "codex" ? (r.signedIn ? "yes" : "no") : r.agent in copyable || r.agent === "cursor" ? "yes" : "unknown";
+    const copied = imported.includes(r.agent);
+    let state: ConnectionRow["state"];
+    let problem: ConnectionRow["problem"] = null;
+    if (!r.installed) state = r.configured ? "attention" : "not_installed";
+    else if (!r.configured) state = "not_connected";
+    else if (signedIn === "no") {
+      state = "attention";
+      problem = { line: `Connected. No ${copyable[r.agent] ?? "sign-in"} on This Mac yet.`, action: r.agent === "codex" ? "sign_in" : "none" };
+    } else state = "connected";
+    if (!r.installed && r.configured) problem = { line: `${name} isn't on This Mac anymore. Disconnect takes Cua out of its settings.`, action: "disconnect" };
+    return {
+      id: r.agent,
+      name,
+      installed: r.installed,
+      version: r.installed ? (DEMO_VERSIONS[r.agent] ?? null) : null,
+      previous_version: r.configured ? (DEMO_VERSIONS[r.agent] ?? null) : null,
+      signed_in: signedIn,
+      sign_in: copyable[r.agent] ?? null,
+      mcp: r.configured ? "ok" : r.mcpConfig ? "missing" : "unsupported",
+      mcp_config: r.mcpConfig,
+      signin_imported: copied,
+      signin_import: r.agent in copyable ? (copied ? "ok" : "missing") : "unsupported",
+      state,
+      problem,
+      checked_at_ms: at,
+    };
+  });
+  return { agents, checked_at_ms: at };
+}
+
+/** The harness versions the demo's agents report (the thread demo's). */
+const DEMO_VERSIONS: Record<string, string> = {
+  hermes: "0.9.2",
+  "claude-code": "2.4.1",
+  codex: "0.61.0",
+  cursor: "2026.10.21",
+  openclaw: "2026.10.7",
+};
+
+/* ---- Event scripts ---------------------------------------------------------- */
+
+/** Builds one run's events the way the runner writes them (summaries included). */
+class Script {
+  readonly events: AgentEvent[] = [];
+  private seq = 0;
+  private turn = 0;
+  private tools = 0;
+  constructor(private t: number) {}
+
+  /** Writes after `events` (a reply to a run that already has turns). */
+  static after(events: AgentEvent[], t: number): Script {
+    const s = new Script(t);
+    const last = events[events.length - 1];
+    s.seq = last?.seq ?? 0;
+    s.turn = events.reduce((n, e) => Math.max(n, e.turn), 0);
+    s.tools = events.filter((e) => e.kind === "tool_call").length;
+    return s;
+  }
+
+  private push(e: Omit<AgentEvent, "seq" | "ts_ms" | "turn">, gapMs: number): this {
+    this.t += gapMs;
+    this.events.push({ seq: ++this.seq, ts_ms: this.t, turn: this.turn, ...e });
+    return this;
+  }
+
+  /** Sets the clock. */
+  at(t: number): this {
+    this.t = t;
+    return this;
+  }
+
+  /** Moves the clock without writing anything. */
+  wait(ms: number): this {
+    this.t += ms;
+    return this;
+  }
+
+  prompt(text: string): this {
+    this.turn += 1;
+    return this.push({ kind: "turn_started", text, category: "user" }, 400);
+  }
+
+  thought(text: string, gapMs = 900): this {
+    return this.push({ kind: "thought", text, category: "activity", summary: `Thinking: ${text.split("\n")[0]}` }, gapMs);
+  }
+
+  tool(kind: string, title: string, status: "completed" | "failed" = "completed", output?: string, ms = 1400): this {
+    const id = `toolu_${String(++this.tools).padStart(2, "0")}`;
+    this.push({ kind: "tool_call", tool_id: id, tool_title: title, tool_kind: kind, tool_status: "pending", category: "activity", summary: `Tool ${title}` }, 500);
+    const tail = output ? `: ${output.split("\n")[0]}` : "";
+    return this.push(
+      { kind: "tool_update", tool_id: id, tool_title: title, tool_kind: kind, tool_status: status, text: output, category: "activity", summary: `Tool ${title} ${status}${tail}` },
+      ms,
+    );
+  }
+
+  /** The agent's words, in the small chunks a harness streams. */
+  say(markdown: string, chunkGapMs = 70): this {
+    const words = markdown.match(/\S+\s*|\s+/g) ?? [];
+    for (let i = 0; i < words.length; ) {
+      const n = 2 + ((i * 7) % 4);
+      this.push({ kind: "message", text: words.slice(i, i + n).join(""), category: "message" }, i === 0 ? 600 : chunkGapMs);
+      i += n;
+    }
+    return this;
+  }
+
+  end(stopReason = "end_turn"): this {
+    return this.push(
+      { kind: "turn_ended", stop_reason: stopReason, category: "activity", summary: `Turn ${this.turn} ended (${stopReason})` },
+      300,
+    );
+  }
+
+  error(text: string): this {
+    return this.push({ kind: "error", text, category: "activity", summary: `Error: ${text}` }, 200);
+  }
+
+  usage(): this {
+    return this.push({ kind: "usage", category: "hidden" }, 50);
+  }
+}
+
+export interface DemoRunRecord {
+  space: string;
+  run: SpaceAgentRun;
+  events: AgentEvent[];
+  /** The run is running until its last event is written. */
+  live: boolean;
+  /** Set when a pause cut the run short. */
+  stoppedAt?: number;
+  /** Shown as `needsYou` once every event is written, until a reply. */
+  asks?: { title: string; detail: string };
+}
+
+const ONBOARDING_DIFF = `## Onboarding copy
+
+I kept the structure and only changed the words. Three screens change:
+
+1. **Welcome**: one sentence instead of two, and no exclamation mark.
+2. **Sign in**: says what signing in is for before asking.
+3. **Agents**: names the MCP server once, then refers to it as "the server".
+
+\`\`\`diff
+- <h1>Welcome to Cua Spaces!</h1>
+- <p>Let's get you set up. It only takes a minute!</p>
++ <h1>Welcome to Cua Spaces</h1>
++ <p>Set up takes about a minute.</p>
+
+- <p>Sign in to sync your Spaces across all your machines!</p>
++ <p>Sign in to see your Spaces on every computer you use.</p>
+\`\`\`
+
+The longest sentence went from 31 words to 14. Nothing else in \`routes/onboarding\` reads the old strings, and \`pnpm test\` still passes.
+
+Want me to commit this as \`onboarding: shorter copy\`, or keep going on the Settings page first?`;
+
+function adaRun(t0: number): DemoRunRecord {
+  const s = new Script(t0 - 52 * MIN)
+    .prompt("Look at the Spaces grid in the web UI. Tiles overflow their column at 1280 px wide. Find out why.")
+    .thought("The grid uses auto-fill with a 232 px minimum, so the tile itself must refuse to shrink.")
+    .tool("read", "Read apps/cua-spaces-web/src/routes/spaces/index.tsx")
+    .tool("execute", 'rg -n "shrink|min-w" apps/cua-spaces-web/src/components', "completed", "3 matches in 2 files")
+    .say(
+      "The overflow comes from the state label. `StateLabel` sits in a flex row next to the Space name, and it has no `shrink-0`, so a long computer name pushes it out of the tile instead of truncating.\n\nThe name already has `truncate`, but its wrapper needs `min-w-0` for that to work inside flex:\n\n```tsx\n<div className=\"min-w-0 flex-1\">\n  <div className=\"truncate\">{space.name}</div>\n</div>\n```\n\nI haven't changed anything yet.",
+    )
+    .usage()
+    .end()
+    .wait(6 * MIN)
+    .prompt("Fix it and add a test.")
+    .tool("edit", "Edit apps/cua-spaces-web/src/routes/spaces/index.tsx")
+    .tool("edit", "Edit apps/cua-spaces-web/src/lib/spaces.test.ts")
+    .tool("execute", "pnpm test -- spaces", "completed", "12 passed")
+    .say(
+      "Fixed. The name column is `min-w-0 flex-1` and the label is `shrink-0`, so long names truncate and the label stays put.\n\n- `routes/spaces/index.tsx`: two class changes\n- `lib/spaces.test.ts`: a case with a 60-character machine name\n\nAll 12 tests pass.",
+    )
+    .usage()
+    .end()
+    .wait(40 * MIN)
+    .prompt("Now tighten the onboarding copy: shorter sentences, no exclamation marks. Show me the diff before you commit.")
+    .thought("Read the onboarding route first, then the strings it imports.")
+    .tool("read", "Read apps/cua-spaces-web/src/routes/onboarding/index.tsx")
+    // Everything above was written before the demo started; what follows is
+    // written live, starting a moment after the adapter starts.
+    .at(t0 + 1_000)
+    .tool("execute", "rg -n '!' apps/cua-spaces-web/src/routes/onboarding", "completed", "4 matches in 1 file", 2200)
+    .thought("Four exclamation marks, all in the first two screens. The agents screen repeats \"MCP server\" three times.", 1600)
+    .tool("edit", "Edit apps/cua-spaces-web/src/routes/onboarding/index.tsx", "completed", undefined, 2600)
+    .tool("execute", "pnpm test -- onboarding", "completed", "8 passed", 3200)
+    .say(ONBOARDING_DIFF, 180)
+    .usage()
+    .end();
+  const events = s.events;
+  return {
+    space: "local:design-review",
+    live: true,
+    events,
+    run: {
+      runId: "run-ada-7",
+      agent: "claude-code",
+      status: "running",
+      reason: "a turn is running",
+      summary: "Tidy the Spaces grid and the onboarding copy",
+      createdAt: Math.floor((t0 - 52 * MIN) / 1000),
+      phase: "tool",
+      turn: 3,
+    },
+  };
+}
+
+function finished(space: string, run: Omit<SpaceAgentRun, "turn" | "phase">, script: Script, phase = "waiting"): DemoRunRecord {
+  const turn = script.events.reduce((n, e) => Math.max(n, e.turn), 0);
+  return { space, live: false, events: script.events, run: { ...run, turn, phase } };
+}
+
+export function demoRunRecords(t0: number): DemoRunRecord[] {
+  const snapshots = new Script(t0 - 2 * 60 * MIN)
+    .prompt("Update the Playwright snapshots for the dark theme. Only the ones that changed because of the new tokens.")
+    .tool("execute", "pnpm exec playwright test --grep @dark", "completed", "6 failed, 8 passed")
+    .thought("All six failures are colour diffs on the sidebar and the top bar. Nothing moved.")
+    .tool("execute", "pnpm exec playwright test --grep @dark --update-snapshots", "completed", "14 passed, 6 updated")
+    .say(
+      "Updated 6 dark-theme snapshots. Every diff is the sidebar and top bar picking up the new `--chrome` colour; no layout changed.\n\nI left the light snapshots alone.",
+    )
+    .end();
+
+  const bisect = new Script(t0 - 95 * MIN)
+    .prompt("Bisect the flaky reconnect test in cua-spacesd. It fails about one run in five on the Linux box.")
+    .tool("execute", "cargo test -p cua-spacesd reconnect -- --nocapture", "failed", "1 failed: reconnect_after_suspend timed out after 5s")
+    .thought("Run it in a loop to get a reliable signal before bisecting.")
+    .tool("execute", "for i in $(seq 20); do cargo test -q -p cua-spacesd reconnect || echo FAIL; done", "completed", "4 of 20 failed")
+    .tool("execute", "git bisect run scripts/flaky.sh 20", "completed", "first bad commit: 6c1e2a4", 4200)
+    .say(
+      "The first bad commit is `6c1e2a4` (\"spacesd: reuse the stream socket across suspends\").\n\nAfter a suspend, the reconnect races the old socket's close. When the close lands second, the new stream reads the old `EOF` and gives up:\n\n```rust\n// stream.rs, after resume\nlet sock = self.sock.take().unwrap_or_else(|| connect(addr))?;\n```\n\nDropping the old socket before resuming fixes it: 0 failures in 100 runs.",
+    )
+    .end()
+    .wait(12 * MIN)
+    .prompt("Write the fix up as a draft commit. Don't push.")
+    .tool("edit", "Edit libs/cua-spacesd/src/stream.rs")
+    .tool("execute", 'git commit -am "spacesd: drop the old stream socket before resuming"', "completed", "[fix/reconnect 9d03b1f]")
+    .say("Committed as `9d03b1f` on `fix/reconnect`. Nothing is pushed.")
+    .end();
+
+  const deb = new Script(t0 - 4 * 60 * MIN)
+    .prompt("Build the arm64 .deb and attach it to the draft release.")
+    .tool("execute", "dpkg-buildpackage -a arm64 -us -uc", "failed", "unmet build dependencies: libssl-dev:arm64", 5200)
+    .say("The build stopped before compiling: `libssl-dev:arm64` isn't installed in this Space, and I can't install packages here without sudo.")
+    .error("the runner exited with code 2");
+
+  const installer = new Script(t0 - 3 * 60 * MIN)
+    .prompt("Install the 0.6.1 Windows build and note anything that breaks.")
+    .tool("execute", "msiexec /i CuaSpaces-0.6.1.msi /qn /l*v install.log", "completed", "exit code 0", 6400)
+    .tool("read", "Read %LOCALAPPDATA%\\Cua\\logs\\spaces.log")
+    .say(
+      "It installs and starts. Two things to look at:\n\n1. The first launch shows the window for about a second before the sign-in sheet, unstyled.\n2. `spaces.log` warns that the hotkey `Ctrl+Shift+Space` is already taken by another app. The app doesn't say so anywhere.\n\nNothing crashed.",
+    )
+    .end();
+
+  return [
+    adaRun(t0),
+    finished(
+      "local:design-review",
+      { runId: "run-3f1c", agent: "openai-codex", status: "idle", reason: "waiting for a follow-up", summary: "Update the Playwright snapshots for the dark theme", createdAt: Math.floor((t0 - 2 * 60 * MIN) / 1000) },
+      snapshots,
+    ),
+    finished(
+      "relay:linux-box/ubuntu-build",
+      { runId: "run-atlas-12", agent: "openai-codex", status: "idle", reason: "waiting for a follow-up", summary: "Bisect the flaky reconnect test in cua-spacesd", createdAt: Math.floor((t0 - 95 * MIN) / 1000) },
+      bisect,
+    ),
+    finished(
+      "relay:linux-box/ubuntu-build",
+      { runId: "run-9b20", agent: "hermes", status: "failed", reason: "the runner exited with code 2", summary: "Build the arm64 .deb and attach it to the draft release", createdAt: Math.floor((t0 - 4 * 60 * MIN) / 1000) },
+      deb,
+      "exited",
+    ),
+    finished(
+      "relay:mac-mini/qa-windows",
+      { runId: "run-claw-4", agent: "openclaw", status: "idle", reason: "waiting for a follow-up", summary: "Install the 0.6.1 Windows build and note what breaks", needsYou: { title: "OpenClaw needs you to sign in to GitHub", detail: "It is checking the installer in qa-windows and can't go on until you sign in." }, createdAt: Math.floor((t0 - 3 * 60 * MIN) / 1000) },
+      installer,
+    ),
+  ];
+}
+
+/** A run started from the app (`agents.start`): it reads the task, gets the
+ * code, runs the tests and answers, then asks to sign in to GitHub before it
+ * posts anything, so the conversation shows every step. Written over about
+ * twenty seconds from `t0`. */
+export function demoStartedRun(space: string, runId: string, agent: string, prompt: string, t0: number, repo?: string): DemoRunRecord {
+  const where = repo ?? "the project";
+  const s = new Script(t0)
+    .prompt(prompt)
+    .thought("Get the code first, then find out how its tests run.", 1400)
+    .tool("execute", `git clone ${where}`, "completed", "Cloned into ./project", 2600)
+    .tool("read", "Read pyproject.toml", "completed", undefined, 900)
+    .tool("execute", "python -m pip install -e '.[dev]'", "completed", "Installed 31 packages", 3400)
+    .tool("execute", "python -m pytest -q", "completed", "70 passed in 41.2s", 4200)
+    .say(
+      "All **70 tests pass** on this clean computer (Python 3.12, 41 seconds). Nothing was skipped.\n\nTo post the result on your pull request I need to be signed in to GitHub here. Can you sign in, or should I skip posting?",
+      90,
+    )
+    .end();
+  return {
+    space,
+    live: true,
+    events: s.events,
+    asks: { title: "Sign in to GitHub", detail: "The agent needs a GitHub sign-in on this machine to post the result." },
+    run: {
+      runId,
+      agent,
+      status: "running",
+      reason: "a turn is running",
+      summary: prompt.split("\n")[0]!.slice(0, 120),
+      createdAt: Math.floor(t0 / 1000),
+      phase: "thinking",
+      turn: 1,
+    },
+  };
+}
+
+/** `agents.message` on a demo run: the reply is a new turn, answered in a few seconds. */
+export function demoReply(rec: DemoRunRecord, text: string, t: number): void {
+  const written = writtenEvents(rec, t);
+  const s = Script.after(written, t).prompt(text);
+  if (/sign|signed|logged|done|go ahead|yes/i.test(text)) {
+    s.tool("execute", "gh pr comment --body-file result.md", "completed", "Posted a comment", 2200)
+      .say("Posted the result on your pull request. You can keep this machine for the next check, or throw it away.", 80);
+  } else {
+    s.thought("Read the reply and carry on.", 800).say("Got it. I'll go on with that.", 80);
+  }
+  s.end();
+  rec.events = [...written, ...s.events];
+  rec.live = true;
+  rec.stoppedAt = undefined;
+  rec.asks = undefined;
+}
+
+/** The events written by `now`. */
+export function writtenEvents(rec: DemoRunRecord, now: number): AgentEvent[] {
+  const until = rec.stoppedAt ?? now;
+  return rec.events.filter((e) => e.ts_ms <= until);
+}
+
+/** A record's run as `list_space_agents` would report it at `now`. */
+export function runAt(rec: DemoRunRecord, now: number): SpaceAgentRun {
+  if (!rec.live) return rec.run;
+  const written = writtenEvents(rec, now);
+  const last = written[written.length - 1];
+  const done = rec.stoppedAt !== undefined || written.length === rec.events.length;
+  const status: AgentRunStatus = done ? "idle" : "running";
+  return {
+    ...rec.run,
+    turn: last?.turn ?? rec.run.turn,
+    needsYou: done && rec.asks ? rec.asks : null,
+    status,
+    reason: done ? "waiting for a follow-up" : "a turn is running",
+    phase: done ? "waiting" : last?.kind === "message" ? "responding" : "tool",
+  };
+}

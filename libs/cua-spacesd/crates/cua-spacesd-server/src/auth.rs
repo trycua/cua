@@ -174,6 +174,10 @@ struct TicketPayload {
     p: String,
     e: u64,
     n: String,
+    /// The minting call's relay assertion `iat`, when relayed (the relay
+    /// refuses a ticket from before a revoke of `p`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    a: Option<u64>,
 }
 
 /// What an external credential authorized.
@@ -204,6 +208,19 @@ pub struct RelayCaller {
     pub name: Option<String>,
     /// `owner` or `shared` (an editor).
     pub role: String,
+    /// The relay assertion's `iat` (seconds, relay clock). Tickets minted
+    /// for the call carry it, so the relay can refuse one that predates a
+    /// revoke of this account.
+    pub issued_at: u64,
+    /// Teams (or organizations) the relay admitted the account through;
+    /// empty for the owner and a direct share. Share links to a team check
+    /// these.
+    pub teams: Vec<String>,
+    /// A thread grant: the one Space this machine provides (its relay
+    /// machine id) whose thread the account may reach, because that Space
+    /// is shared with it; `role` is its role on that Space. Such a caller
+    /// reaches [`THREAD_GRANT_GRPC_METHODS`] only.
+    pub space: Option<String>,
 }
 
 /// The only calls a relayed caller may make on a machine that does not
@@ -218,7 +235,28 @@ pub const HOST_ONLY_GRPC_METHODS: &[&str] = &[
     "/cua.env.v1.HostSpacesService/DeleteHostSpace",
     "/cua.env.v1.HostSpacesService/CancelHostSpace",
     "/cua.env.v1.HostSpacesService/SetHostSpacePower",
+    "/cua.env.v1.HostSpacesService/SetHostWarm",
     "/cua.env.v1.HostSpacesService/DeleteCloudSpace",
+    "/cua.env.v1.HostSpacesService/SetHostSpaceEgress",
+    "/cua.env.v1.HostJobsService/RunHostJobs",
+    "/cua.env.v1.HostJobsService/GetHostJob",
+    "/cua.env.v1.HostJobsService/ListHostJobs",
+    "/cua.env.v1.HostJobsService/CancelHostJob",
+    "/cua.env.v1.HostSnapshotsService/ListHostSnapshots",
+    "/cua.env.v1.HostSnapshotsService/ExportHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/PullHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/PublishHostSnapshot",
+    // A Space this host provides routed (reached through the host, with no
+    // relay machine of its own): the forward is checked to be to that
+    // Space's loopback port ([`crate::host_spaces::routed_port_allowed`]).
+    "/cua.env.v1.TunnelService/Forward",
+    "/cua.env.v1.TunnelService/CloseForward",
+    "/cua.env.v1.HostSnapshotsService/CreateHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/DeleteHostSnapshot",
+    "/cua.env.v1.HostSpacesService/DiagnoseHost",
+    // The threads of the Spaces this host provides (the daemon checks who
+    // may read and write).
+    "/cua.env.v1.HostThreadService/CallThreadTool",
 ];
 
 impl ExternalGrant {
@@ -246,6 +284,22 @@ impl ExternalGrant {
     }
 }
 
+/// `ErrorInfo.metadata["kind"]` of a refused Space thread grant, as the
+/// relay types its own (`cua_relay::server::THREAD_GRANT_REFUSED`).
+pub const THREAD_GRANT_REFUSED: &str = "thread_grant_refused";
+
+/// How the reasons this machine refuses a thread grant with begin
+/// ([`crate::relay_account`]), so the refusal is typed.
+pub const THREAD_GRANT_REASON_PREFIX: &str = "Space thread grant: ";
+
+/// The only calls a thread grant may make ([`RelayCaller::space`]): the
+/// capability probe and the Space's thread, nothing else of this machine.
+pub const THREAD_GRANT_GRPC_METHODS: &[&str] = &[
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+    "/cua.env.v1.HostThreadService/CallThreadTool",
+];
+
 /// The only calls a view-only share (a relay account the owner shared the
 /// Space with to watch) may make: capabilities, the view-only stream, and
 /// presence with its own cursor. Anything else is refused with
@@ -262,6 +316,9 @@ pub const SHARED_VIEWER_GRPC_METHODS: &[&str] = &[
     "/cua.env.v1.PresenceService/Join",
     "/cua.env.v1.PresenceService/UpdateCursor",
     "/cua.env.v1.PresenceService/Leave",
+    // A Space thread on a host that provides Spaces: forwarded to its cua
+    // daemon as role `viewer`, which lets a viewer read and nothing else.
+    "/cua.env.v1.HostThreadService/CallThreadTool",
 ];
 
 /// A credential other than the root token, verified by the embedding
@@ -272,12 +329,23 @@ pub trait ExternalAuthenticator: Send + Sync {
     /// token). `Some(Ok(grant))`: authorized as `grant.principal`, view-only
     /// when `grant.view_only`. `Some(Err(reason))`: presented but refused.
     fn authenticate(&self, headers: &http::HeaderMap) -> Option<Result<ExternalGrant, String>>;
+
+    /// The cua daemon's share gateway socket while the host policy turns
+    /// shares on (`/share/*`), else `None`. `Err` when the policy cannot be
+    /// read or the machine stopped sharing (fail closed).
+    fn share_gateway(&self) -> Result<Option<std::path::PathBuf>, String> {
+        Ok(None)
+    }
 }
 
 /// Holds the root token and derives every HMAC key.
 pub struct Auth {
     token: RwLock<Option<Arc<str>>>,
-    boot_secret: [u8; 32],
+    /// Keys tickets while no token is configured. From the OS randomness;
+    /// replaced by [`Auth::renew_boot_secret`] when the guest becomes a new
+    /// machine (a memory snapshot would otherwise share it with every
+    /// clone).
+    boot_secret: RwLock<[u8; 32]>,
     external: RwLock<Option<Arc<dyn ExternalAuthenticator>>>,
     access_log: RwLock<Option<Arc<crate::access_log::AccessLog>>>,
 }
@@ -285,15 +353,19 @@ pub struct Auth {
 impl Auth {
     /// Creates the store with an optional initial token (empty → none).
     pub fn new(token: Option<String>) -> Self {
-        use rand::RngCore as _;
-        let mut boot_secret = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut boot_secret);
         Self {
             token: RwLock::new(token.filter(|t| !t.is_empty()).map(Arc::from)),
-            boot_secret,
+            boot_secret: RwLock::new(crate::identity::fresh_secret(b"boot-secret", &[])),
             external: RwLock::new(None),
             access_log: RwLock::new(None),
         }
+    }
+
+    /// Replaces the per-boot ticket secret (this guest became a new
+    /// machine). Tickets minted without a token stop validating.
+    pub fn renew_boot_secret(&self, extra: &[u8]) {
+        *self.boot_secret.write().expect("boot secret lock") =
+            crate::identity::fresh_secret(b"boot-secret", extra);
     }
 
     /// Records every authorized remote access in `log` from now on.
@@ -344,11 +416,13 @@ impl Auth {
     pub fn record_headers(&self, headers: &http::HeaderMap, what: &str) {
         match self.authenticate_external(headers) {
             Some(Ok(g)) if g.view_only => self.record_access(
-                "relay",
+                via_of(&g.principal),
                 &principal_label(&g.principal),
                 &format!("refused {what} (view-only share)"),
             ),
-            Some(Ok(g)) => self.record_access("relay", &principal_label(&g.principal), what),
+            Some(Ok(g)) => {
+                self.record_access(via_of(&g.principal), &principal_label(&g.principal), what)
+            }
             Some(Err(_)) => {}
             None if self.has_token() => {
                 self.record_access("token", &token_label(principal_from_headers(headers)), what)
@@ -365,6 +439,15 @@ impl Auth {
     /// Removes the external authenticator (a relay was detached).
     pub fn clear_external(&self) {
         *self.external.write().expect("external lock") = None;
+    }
+
+    /// The share gateway socket the external authenticator's host policy
+    /// names (`shares` on), if any.
+    pub fn share_gateway(&self) -> Result<Option<std::path::PathBuf>, String> {
+        match self.external.read().expect("external lock").clone() {
+            Some(external) => external.share_gateway(),
+            None => Ok(None),
+        }
     }
 
     /// Runs the external authenticator, if any.
@@ -432,8 +515,9 @@ impl Auth {
     }
 
     /// Checks the token in `authorization` **or** `x-cua-env-authorization`
-    /// (the Fleet gateway consumes and strips `authorization`, so the SDK
-    /// sends the env token in the alternate header through `/api/svc`).
+    /// (a gateway in front of the daemon may consume and strip
+    /// `authorization`, so the SDK sends the env token in the alternate header
+    /// when it goes through one).
     /// Always true with no token.
     pub fn check_headers(&self, headers: &http::HeaderMap) -> bool {
         match self.authenticate_external(headers) {
@@ -461,9 +545,13 @@ impl Auth {
     /// Derives a purpose-specific HMAC key from the token (or boot secret).
     pub fn derive_key(&self, purpose: &str) -> [u8; 32] {
         let token = self.token();
+        let boot_secret;
         let base: &[u8] = match &token {
             Some(token) => token.as_bytes(),
-            None => &self.boot_secret,
+            None => {
+                boot_secret = *self.boot_secret.read().expect("boot secret lock");
+                &boot_secret
+            }
         };
         let mut mac = HmacSha256::new_from_slice(base).expect("hmac accepts any key");
         mac.update(b"cua-spacesd/");
@@ -479,6 +567,19 @@ impl Auth {
         principal_id: &str,
         ttl: Duration,
     ) -> (String, SystemTime) {
+        self.mint_ticket_issued(scope, resource, principal_id, None, ttl)
+    }
+
+    /// [`Self::mint_ticket`] for a relayed call: records its assertion's
+    /// `iat` (`issued`) in the ticket.
+    pub fn mint_ticket_issued(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal_id: &str,
+        issued: Option<u64>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
         let expires_at = SystemTime::now() + ttl.min(MAX_TICKET_TTL);
         let exp_ms = expires_at
             .duration_since(UNIX_EPOCH)
@@ -490,6 +591,7 @@ impl Auth {
             p: principal_id.to_owned(),
             e: exp_ms,
             n: random_id(9),
+            a: issued,
         };
         let payload = serde_json::to_vec(&payload).expect("ticket payload serializes");
         let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -648,6 +750,16 @@ pub fn encode_principal(principal: &Principal) -> String {
 }
 
 /// `name (id)` of a verified principal, or the id alone.
+/// Who vouched for an external grant, for the access log: the host's tailnet
+/// (`tailnet:` principals) or the relay (an assertion, also over the mesh).
+pub fn via_of(p: &Principal) -> &'static str {
+    if p.id.starts_with("tailnet:") {
+        "tailnet"
+    } else {
+        "relay"
+    }
+}
+
 pub fn principal_label(p: &Principal) -> String {
     if p.display_name.is_empty() || p.display_name == p.id {
         p.id.clone()
@@ -674,6 +786,40 @@ pub fn token_label(claimed: Option<Principal>) -> String {
     }
 }
 
+/// Separates an access line's caller from the agent session that made the
+/// call (` · agent Claude Code (agent:claude-code-4242)`).
+pub const AGENT_SESSION_TAG: &str = " \u{b7} agent ";
+
+/// The agent session a caller says it is, as an access line's suffix:
+/// ` · agent <name> (<id>)` for an agent principal (`agent:<label>-<pid>`,
+/// one per `cua mcp` process), empty for anything else. The name and id
+/// are the client's claim; the line's caller before the tag stays the
+/// verified identity. Readers use it to tell two agents of one account
+/// apart (the second-agent prompt in the apps).
+pub fn agent_session_suffix(claimed: Option<&Principal>) -> String {
+    let Some(p) = claimed.filter(|p| {
+        p.kind == cua_proto::env::v1::PrincipalKind::Agent as i32 && p.id.starts_with("agent:")
+    }) else {
+        return String::new();
+    };
+    let clean = |s: &str| -> String {
+        s.chars()
+            .filter(|c| !c.is_control() && !matches!(c, '(' | ')'))
+            .take(64)
+            .collect::<String>()
+            .trim()
+            .to_string()
+    };
+    let id = clean(&p.id);
+    let name = clean(&p.display_name);
+    let name = if name.is_empty() {
+        "Agent".to_string()
+    } else {
+        name
+    };
+    format!("{AGENT_SESSION_TAG}{name} ({id})")
+}
+
 /// The gRPC service of a `/pkg.Service/Method` path (`ProcessService`).
 pub fn grpc_service(path: &str) -> &str {
     let service = path.trim_start_matches('/').split('/').next().unwrap_or("");
@@ -697,6 +843,8 @@ pub const BACKGROUND_GRPC_METHODS: &[&str] = &[
     "/cua.env.v1.StreamService/ListTargets",
     "/cua.env.v1.ComputerService/ListDisplays",
     "/cua.env.v1.HostSpacesService/GetHostSpaces",
+    "/cua.env.v1.HostJobsService/ListHostJobs",
+    "/cua.env.v1.HostJobsService/GetHostJob",
     "/cua.env.v1.TunnelService/ListForwards",
     "/cua.env.v1.TunnelService/GetHotspotStatus",
     "/cua.env.v1.VolumeService/GetVolumeStatus",
@@ -887,7 +1035,7 @@ where
                     let who = principal_label(&grant.principal);
                     if !SHARED_VIEWER_GRPC_METHODS.contains(&path.as_str()) {
                         self.auth.record_access(
-                            "relay",
+                            via_of(&grant.principal),
                             &who,
                             &format!("refused {} (view-only share)", grpc_service(&path)),
                         );
@@ -902,7 +1050,7 @@ where
                     }
                     if grant.host_only && !HOST_ONLY_GRPC_METHODS.contains(&path.as_str()) {
                         self.auth.record_access(
-                            "relay",
+                            via_of(&grant.principal),
                             &who,
                             &format!("refused {} (desktop not shared)", grpc_service(&path)),
                         );
@@ -911,15 +1059,20 @@ where
                             tonic::Code::PermissionDenied,
                             cua_proto::env::v1::ErrorReason::PermissionDenied,
                             format!(
-                                "this machine does not share its desktop (it only provides Spaces): \
+                                "this computer does not share its desktop (it only provides Spaces): \
                                  {who} cannot call {path}"
                             ),
                         )
                         .into_http::<R>();
                         return Box::pin(async move { Ok(response) });
                     }
-                    self.auth
-                        .record_call(req.extensions_mut(), "relay", &who, &path, false);
+                    self.auth.record_call(
+                        req.extensions_mut(),
+                        via_of(&grant.principal),
+                        &who,
+                        &path,
+                        false,
+                    );
                     let viewer = Arc::new(grant.viewer_grant());
                     req.extensions_mut().insert(CallerIdentity {
                         principal: Some(grant.principal),
@@ -935,10 +1088,38 @@ where
                 }
                 Ok(grant) => {
                     let path = req.uri().path().to_owned();
+                    let thread_space = grant
+                        .account
+                        .as_ref()
+                        .and_then(|a| a.space.as_deref())
+                        .filter(|_| !THREAD_GRANT_GRPC_METHODS.contains(&path.as_str()));
+                    if let Some(space) = thread_space {
+                        let who = principal_label(&grant.principal);
+                        self.auth.record_access(
+                            via_of(&grant.principal),
+                            &who,
+                            &format!(
+                                "refused {} (thread of relay:{space} only)",
+                                grpc_service(&path)
+                            ),
+                        );
+                        let response = crate::error::StatusBuilder::new(
+                            tonic::Code::PermissionDenied,
+                            cua_proto::env::v1::ErrorReason::PermissionDenied,
+                            format!(
+                                "{who} reaches only the thread of relay:{space} on this computer, \
+                                 not {path}"
+                            ),
+                        )
+                        .meta("kind", THREAD_GRANT_REFUSED)
+                        .build()
+                        .into_http::<R>();
+                        return Box::pin(async move { Ok(response) });
+                    }
                     if grant.host_only && !HOST_ONLY_GRPC_METHODS.contains(&path.as_str()) {
                         let who = principal_label(&grant.principal);
                         self.auth.record_access(
-                            "relay",
+                            via_of(&grant.principal),
                             &who,
                             &format!("refused {} (desktop not shared)", grpc_service(&path)),
                         );
@@ -947,7 +1128,7 @@ where
                             tonic::Code::PermissionDenied,
                             cua_proto::env::v1::ErrorReason::PermissionDenied,
                             format!(
-                                "this machine does not share its desktop (it only provides Spaces): \
+                                "this computer does not share its desktop (it only provides Spaces): \
                                  {who} cannot call {path}"
                             ),
                         )
@@ -955,10 +1136,19 @@ where
                         return Box::pin(async move { Ok(response) });
                     }
                     let owner = grant.account.as_ref().is_some_and(|a| a.role == "owner");
+                    // Only an owner keeps the agent kind (`principal_for`):
+                    // name which of its agent sessions this is.
+                    let session = if grant.principal.kind
+                        == cua_proto::env::v1::PrincipalKind::Agent as i32
+                    {
+                        agent_session_suffix(principal_from_headers(req.headers()).as_ref())
+                    } else {
+                        String::new()
+                    };
                     self.auth.record_call(
                         req.extensions_mut(),
-                        "relay",
-                        &principal_label(&grant.principal),
+                        via_of(&grant.principal),
+                        &format!("{}{session}", principal_label(&grant.principal)),
                         &path,
                         owner,
                     );
@@ -981,12 +1171,17 @@ where
                         &reason.chars().take(120).collect::<String>(),
                     );
                     tracing::debug!(path = %req.uri().path(), %reason, "rejected external credential");
-                    let response = crate::error::status(
+                    // A thread grant this machine does not take says so,
+                    // typed ([`THREAD_GRANT_REFUSED`]).
+                    let mut status = crate::error::StatusBuilder::new(
                         tonic::Code::PermissionDenied,
                         cua_proto::env::v1::ErrorReason::PermissionDenied,
                         format!("relay assertion refused: {reason}"),
-                    )
-                    .into_http::<R>();
+                    );
+                    if reason.starts_with(THREAD_GRANT_REASON_PREFIX) {
+                        status = status.meta("kind", THREAD_GRANT_REFUSED);
+                    }
+                    let response = status.build().into_http::<R>();
                     return Box::pin(async move { Ok(response) });
                 }
             }
@@ -1070,13 +1265,13 @@ where
                 let principal = principal_from_headers(req.headers());
                 if token_verified {
                     let path = req.uri().path().to_owned();
-                    self.auth.record_call(
-                        req.extensions_mut(),
-                        "token",
-                        &token_label(principal.clone()),
-                        &path,
-                        true,
+                    let who = format!(
+                        "{}{}",
+                        token_label(principal.clone()),
+                        agent_session_suffix(principal.as_ref())
                     );
+                    self.auth
+                        .record_call(req.extensions_mut(), "token", &who, &path, true);
                 }
                 req.extensions_mut().insert(CallerIdentity {
                     principal,
@@ -1204,6 +1399,33 @@ mod tests {
     }
 
     #[test]
+    fn a_relayed_ticket_records_the_assertion_time_and_still_validates() {
+        use base64::Engine as _;
+        let auth = Auth::new(Some("secret".into()));
+        let payload = |ticket: &str| -> serde_json::Value {
+            let body = ticket.split('.').nth(1).unwrap();
+            let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(body)
+                .unwrap();
+            serde_json::from_slice(&raw).unwrap()
+        };
+        let (relayed, _) = auth.mint_ticket_issued(
+            TicketScope::Media,
+            "m",
+            "bob",
+            Some(1_791_773_000),
+            Duration::from_secs(60),
+        );
+        assert_eq!(payload(&relayed)["a"], 1_791_773_000);
+        assert_eq!(payload(&relayed)["p"], "bob");
+        let claims = auth.validate_ticket(&relayed, TicketScope::Media).unwrap();
+        assert_eq!(claims.principal_id, "bob");
+        // A local caller's ticket carries no `a` (same wire form as before).
+        let (local, _) = auth.mint_ticket(TicketScope::Media, "m", "", Duration::from_secs(60));
+        assert!(payload(&local).get("a").is_none());
+    }
+
+    #[test]
     fn ticket_expiry_is_enforced() {
         let auth = Auth::new(None);
         let (ticket, _) = auth.mint_ticket(TicketScope::Media, "m", "", Duration::ZERO);
@@ -1297,6 +1519,33 @@ mod tests {
         let found = ticket_from_parts(&"/tunnel".parse().unwrap(), &headers).unwrap();
         assert_eq!(found.ticket, "v1.c.d");
         assert_eq!(found.subprotocol.as_deref(), Some("cua.ticket.v1.c.d"));
+    }
+
+    #[test]
+    fn an_agent_caller_names_its_session_on_the_access_line() {
+        let agent = |id: &str, name: &str| Principal {
+            id: id.into(),
+            display_name: name.into(),
+            color: String::new(),
+            kind: cua_proto::env::v1::PrincipalKind::Agent as i32,
+        };
+        assert_eq!(
+            agent_session_suffix(Some(&agent("agent:claude-code-4242", "Claude Code"))),
+            " \u{b7} agent Claude Code (agent:claude-code-4242)"
+        );
+        // A person, a non-agent id, or nobody: nothing added.
+        let human = Principal {
+            kind: cua_proto::env::v1::PrincipalKind::Human as i32,
+            ..agent("agent:x-1", "Ada")
+        };
+        assert_eq!(agent_session_suffix(Some(&human)), "");
+        assert_eq!(agent_session_suffix(Some(&agent("u1", "Codex"))), "");
+        assert_eq!(agent_session_suffix(None), "");
+        // The claim can't break the line's shape.
+        assert_eq!(
+            agent_session_suffix(Some(&agent("agent:a-1", "Evil) (x\n"))),
+            " \u{b7} agent Evil x (agent:a-1)"
+        );
     }
 
     #[test]

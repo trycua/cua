@@ -1,0 +1,8 @@
+{
+  "installer.flow.label": "Configurar Cua",
+  "installer.flow.steps_label": "Pasos de configuración",
+  "installer.prompts.label": "Prueba a preguntarle a tu agente:",
+  "installer.prompts.copied": "Copiado",
+  "installer.agents.results_label": "Resultados de la configuración",
+  "installer.agents.detected_label": "Agentes detectados"
+}

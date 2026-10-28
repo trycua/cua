@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 pub const THIS_MACHINE_ID: &str = "this-mac";
 
 /// The parts of the host status the summary reads (`cua-host`'s status).
+/// The summary is about this machine's own desktop (its row in the Spaces
+/// list), so `sharing` is on only while the desktop is shared.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostSummaryInput {
@@ -51,11 +53,11 @@ pub fn host_summary(status: Option<&HostSummaryInput>) -> String {
     if s.paused_signed_out {
         return PAUSED_SUMMARY.into();
     }
-    if !s.service_running {
-        return "Host service stopped".into();
-    }
     if !s.sharing {
         return "Not sharing".into();
+    }
+    if !s.service_running {
+        return "Host service stopped".into();
     }
     let via = if s.mode.as_deref() == Some("direct") {
         "Direct"
@@ -124,14 +126,13 @@ pub fn this_machine_status(status: Option<&HostSummaryInput>) -> SpaceStatus {
 pub fn this_machine_space(status: Option<&HostSummaryInput>, now: i64, os: SpaceOs) -> Space {
     Space {
         id: THIS_MACHINE_ID.into(),
-        name: "This machine".into(),
+        name: os.this_machine().into(),
         os,
         status: this_machine_status(status),
         detail: host_summary(status),
         last_used_at: now,
         started_at: None,
         scene: scene_for_os(os),
-        fleet_id: None,
         size: None,
         region: None,
         provider: None,
@@ -149,6 +150,7 @@ pub fn this_machine_space(status: Option<&HostSummaryInput>, now: i64, os: Space
         cloud: None,
         cloud_place: None,
         cloud_delete: None,
+        access: None,
     }
 }
 
@@ -211,33 +213,49 @@ pub struct HostSetupRequest {
     /// Accounts (ids or emails) allowed besides the owner.
     #[serde(default)]
     pub allow: Option<Vec<String>>,
-    /// What the machine is for: `desktop` (share this desktop; the
-    /// default) or `spare` (only run Spaces for your other devices).
+    /// What the machine is for: `spare` (the default: other machines
+    /// create Spaces here, its desktop stays private) or `desktop` (also
+    /// let other machines control this desktop).
     #[serde(default)]
     pub profile: Option<String>,
     /// Share this machine's own desktop (overrides the profile).
     #[serde(default)]
     pub share_desktop: Option<bool>,
-    /// Create Spaces for your other devices (overrides the profile).
+    /// Let other machines create Spaces here (overrides the profile).
+    /// `None`: on for a new relay setup; a machine set up before keeps
+    /// its setting (the host decides, `cua_host::default_provide_spaces`).
     #[serde(default)]
     pub provide_spaces: Option<bool>,
 }
 
 impl HostSetupRequest {
     /// `(share_desktop, provide_spaces)` the request asks for: the
-    /// profile's, then each explicit setting.
-    pub fn settings(&self) -> (bool, bool) {
+    /// profile's, then each explicit setting. `None`: not asked, so the
+    /// host's default (on for a new relay setup, else what the machine
+    /// has).
+    pub fn settings(&self) -> (bool, Option<bool>) {
         let (mut desktop, mut provide) = match self.profile.as_deref() {
-            Some("spare") => (false, true),
-            _ => (true, false),
+            Some("desktop") => (true, None),
+            Some("spare") => (false, Some(true)),
+            // The default setup turns on Spaces only (a new relay setup
+            // provides them; a machine set up before keeps its setting);
+            // the desktop stays private until the person turns it on.
+            _ => (false, None),
         };
         if let Some(d) = self.share_desktop {
             desktop = d;
         }
         if let Some(p) = self.provide_spaces {
-            provide = p;
+            provide = Some(p);
         }
         (desktop, provide)
+    }
+
+    /// `(share_desktop, provide_spaces)` for a machine set up for the
+    /// first time: providing Spaces is on in relay mode unless asked off.
+    pub fn new_setup_settings(&self) -> (bool, bool) {
+        let (desktop, provide) = self.settings();
+        (desktop, provide.unwrap_or(self.mode == "relay"))
     }
 }
 
@@ -270,11 +288,18 @@ pub fn validate_setup(mut request: HostSetupRequest) -> Result<HostSetupRequest,
         Some(p) if p == "desktop" || p == "spare" => Some(p),
         Some(p) => return Err(format!("unknown profile {p:?} (desktop or spare)")),
     };
+    // A direct connection always shares the desktop (it has no Spaces).
+    if request.mode == "direct"
+        && request.share_desktop.is_none()
+        && request.profile.as_deref() != Some("spare")
+    {
+        request.share_desktop = Some(true);
+    }
     let (desktop, provide) = request.settings();
-    if !desktop && !provide {
+    if !desktop && !request.new_setup_settings().1 {
         return Err("share this desktop, provide Spaces, or both".into());
     }
-    if request.mode == "direct" && provide {
+    if request.mode == "direct" && provide == Some(true) {
         return Err("providing Spaces needs the relay".into());
     }
     if request.mode == "direct" && !desktop {
@@ -312,10 +337,39 @@ pub fn validate_setup(mut request: HostSetupRequest) -> Result<HostSetupRequest,
     }
 }
 
-/// The relay host setup joins unless the form names another.
+/// The switch that lets other machines create Spaces on this one (a
+/// Settings row on this Mac, read-only on a machine's page).
+pub const SPACES_SWITCH: &str = "Let other machines create Spaces here";
+/// One line under [`SPACES_SWITCH`].
+pub const SPACES_HELP: &str = "Your other machines can create Spaces here.";
+/// The switch that shows this machine's own desktop as a Space on the
+/// others.
+pub const DESKTOP_SWITCH: &str = "Let other machines control this desktop";
+/// One line under [`DESKTOP_SWITCH`].
+pub const DESKTOP_HELP: &str = "Your other machines can see and control this screen.";
+
+/// The production relay. Host setup joins [`default_relay_url`] unless the
+/// form names another.
 pub const DEFAULT_RELAY_URL: &str = "https://relay.cua.ai";
-/// The direct mode's default listen address.
-pub const DEFAULT_LISTEN: &str = "0.0.0.0:3211";
+
+/// The relay host setup joins unless the form names another:
+/// `CUA_RELAY_URL`, else the relay of `CUA_ENV` ([`DEFAULT_RELAY_URL`] in
+/// production). For native callers: the form does not prefill it, because
+/// this core also runs in the page (wasm), which has no environment.
+pub fn default_relay_url() -> String {
+    cua_home::env::relay_url()
+}
+
+/// The direct mode's default listen address: every interface, on the
+/// channel's spacesd port (3211, or 3221 for Cua Spaces Local, so its host
+/// runs beside a Stable one).
+pub fn default_listen() -> String {
+    listen_on(cua_home::channel::CuaChannel::current())
+}
+
+fn listen_on(channel: cua_home::channel::CuaChannel) -> String {
+    format!("0.0.0.0:{}", channel.ports().tcp)
+}
 
 /// Adds the "This machine" entry to a roster, first (it is always present
 /// in the live app; `status` is `None` until the host answers).
@@ -517,8 +571,9 @@ pub enum HostAccountStep {
     Resume,
 }
 
-/// Relay sharing follows the sign-in: nobody signed in (or another
-/// account) pauses it, the owner signing in again resumes it. `account` is
+/// Relay sharing follows the sign-in: nobody signed in pauses it, the owner
+/// signing in again resumes it, and another account signing in moves this
+/// computer over to it (the host registers again). `account` is
 /// `None` only when the app knows nobody is signed in (not when it could
 /// not tell, offline). Direct mode does not use the account.
 pub fn account_step(state: &HostState, account: Option<&HostAccount>) -> HostAccountStep {
@@ -527,7 +582,11 @@ pub fn account_step(state: &HostState, account: Option<&HostAccount>) -> HostAcc
     }
     let owner = account.map(|a| owned_by(state, a).unwrap_or(true));
     match (state.paused_signed_out, owner) {
-        (false, None | Some(false)) => HostAccountStep::Pause,
+        (false, None) => HostAccountStep::Pause,
+        // Another account signed in: `Resume` makes the host register again
+        // for it (name and Provide Spaces stay), paused or not, so there
+        // is no manual remove and set up.
+        (_, Some(false)) => HostAccountStep::Resume,
         (true, Some(true)) => HostAccountStep::Resume,
         _ => HostAccountStep::Keep,
     }
@@ -591,7 +650,9 @@ impl HostState {
             configured: self.configured,
             error: self.error.clone(),
             service_running: self.service_running,
-            sharing: self.sharing,
+            // The summary is the desktop's: sharing Spaces alone does not
+            // make this Mac's desktop shared.
+            sharing: self.sharing && self.share_desktop,
             clients: self.clients.len() as u32,
             mode: self.mode.clone(),
             online: self.online,
@@ -800,6 +861,16 @@ pub fn access_what(what: &str) -> String {
 /// Who, in words: the token holder is named by the credential (a name it
 /// sends is only its claim).
 pub fn access_who(via: &str, who: &str) -> String {
+    // An agent's call names its session after the caller
+    // (`crate::nudges::agent_session`): say which agent, not its id.
+    if let (caller, Some((agent, _))) = crate::nudges::agent_session(who) {
+        let caller = access_who(via, caller);
+        return if via == "token" {
+            caller
+        } else {
+            format!("{agent} for {caller}")
+        };
+    }
     if via == "token" {
         if let Some(claimed) = who
             .strip_prefix("token (claims ")
@@ -1016,21 +1087,35 @@ pub struct HostSetupChoice {
 }
 
 /// The intro over the setup choices.
-pub const HOST_INTRO: &str = "This is the computer you are using now. Set it \
-up for access to reach it and its Spaces from your other devices and your \
-agents, over the Cua relay with no port forwarding.";
+pub const HOST_INTRO: &str = "This is the machine you\u{2019}re using now. Set \
+it up so you, your teammates and your AI agents can use it from other machines. \
+Cua connects them for you, with no network setup.";
+
+/// The "Use it to" option that lets other machines create Spaces here and control this desktop.
+pub const DESKTOP_CHOICE: &str = "Let other machines create Spaces and control this desktop";
+/// The "Use it to" option for a spare computer that only runs Spaces.
+pub const SPARE_CHOICE: &str = "Let other machines create Spaces here";
+/// The button that sets this computer up (shares its screen).
+pub const SET_UP_LABEL: &str = "Turn on remote access";
+/// The form's button for a spare computer.
+pub const SPARE_SUBMIT: &str = "Start running Spaces";
+
+/// What the desktop setup also turns on, in the form's words (it says
+/// "this computer" on every system, like the rest of the form, so every
+/// shell draws the same text).
+pub const PROVIDES_SPACES_NOTE: &str = "You and the people you share with can create Spaces on this machine, and see and control its screen if you turn that on, from other machines. Cua connects them for you, with no network setup.";
 
 /// The setup choices (the form's "Use for" options).
 pub fn setup_choices() -> Vec<HostSetupChoice> {
     vec![
         HostSetupChoice {
             id: "desktop".into(),
-            label: "Share this desktop".into(),
+            label: DESKTOP_CHOICE.into(),
             button_label: "Set Up\u{2026}".into(),
         },
         HostSetupChoice {
             id: "spare".into(),
-            label: "Use as a spare machine for Spaces".into(),
+            label: SPARE_CHOICE.into(),
             button_label: "Set Up\u{2026}".into(),
         },
     ]
@@ -1095,12 +1180,12 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         return v;
     };
     if !s.configured {
-        v.summary = "Other devices can\u{2019}t reach this machine yet.".into();
+        v.summary = "Your other machines can\u{2019}t reach this machine yet.".into();
         v.intro = Some(HOST_INTRO.into());
         v.setup_choices = setup_choices();
         v.actions = vec![HostAction {
             id: HostActionId::SetUp,
-            label: "Set up for access".into(),
+            label: SET_UP_LABEL.into(),
             destructive: false,
             confirm: None,
             enabled: true,
@@ -1207,8 +1292,8 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
     v.toggles = vec![
         HostToggle {
             id: "desktop".into(),
-            label: "Share this desktop".into(),
-            help: "Your devices can see and control this screen.".into(),
+            label: DESKTOP_SWITCH.into(),
+            help: DESKTOP_HELP.into(),
             on: s.share_desktop,
             // Both may be off: then sharing stops (nothing to share).
             enabled: relay,
@@ -1220,9 +1305,9 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         },
         HostToggle {
             id: "spaces".into(),
-            label: "Provide Spaces".into(),
+            label: SPACES_SWITCH.into(),
             help: if relay {
-                "Your devices can create Spaces here.".into()
+                SPACES_HELP.into()
             } else {
                 "Needs the relay.".into()
             },
@@ -1237,7 +1322,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
     ];
     if s.provide_spaces {
         v.limits = Some(limits_line(s.max_spaces, s.max_macos_vms));
-        v.provided_title = Some("Spaces for your devices".into());
+        v.provided_title = Some("Spaces from your other machines".into());
         v.provided = provided_rows(&s.provided_spaces);
         v.provided_empty = s.provided_spaces.is_empty().then(|| "None yet".into());
     }
@@ -1265,10 +1350,19 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
     };
     if relay && s.paused_signed_out {
         match s.account.as_ref().map(|a| owned_by(s, a)) {
-            // Signed in to another account: this registration is not
-            // theirs to share. Removing it, then setting up again, is.
+            // Signed in to another account: the app moves this computer
+            // over by itself (see [`account_step`]); this is the button
+            // when that failed.
             Some(Some(false)) => {
                 v.notice = Some(OTHER_ACCOUNT_NOTICE.into());
+                v.notice_action = Some(HostAction {
+                    id: HostActionId::ResumeSharing,
+                    label: "Share With This Account".into(),
+                    destructive: false,
+                    confirm: None,
+                    enabled: true,
+                    help: None,
+                });
                 v.actions = vec![remove];
             }
             // The owner is signed in again (the app resumes on its own;
@@ -1329,16 +1423,16 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
 }
 
 /// Resume sharing's tooltip while both settings are off.
-pub const NOTHING_TO_SHARE_HELP: &str =
-    "Turn on Share this desktop or Provide Spaces to share this machine.";
+pub const NOTHING_TO_SHARE_HELP: &str = "Turn on one of the two switches to share this machine.";
 
 /// The page's line while another account is signed in and this machine's
 /// relay sharing (registered to the account that signed out) is paused.
-pub const OTHER_ACCOUNT_NOTICE: &str = "This Mac is shared with another Cua \
-account, so sharing stays paused. Remove the host setup, then set it up again \
-to share it with yours.";
+pub const OTHER_ACCOUNT_NOTICE: &str = "This Mac was set up with another Cua \
+account, so sharing is paused. Share it with the account you are signed in to \
+now; its name and settings stay.";
 
-/// "Up to 4 Spaces · 2 macOS VMs (Apple's license allows two per Mac)".
+/// "Up to 4 Spaces · 2 macOS VMs". The macOS part is for a Mac: a shell on
+/// another system drops it (the web UI's `limitsFor`).
 pub fn limits_line(max_spaces: u32, max_macos_vms: u32) -> String {
     let spaces = if max_spaces == 0 {
         "No Space limit".to_string()
@@ -1352,7 +1446,7 @@ pub fn limits_line(max_spaces: u32, max_macos_vms: u32) -> String {
         return spaces;
     }
     format!(
-        "{spaces} \u{b7} {max_macos_vms} macOS VM{} (Apple\u{2019}s license allows two per Mac)",
+        "{spaces} \u{b7} {max_macos_vms} macOS VM{}",
         if max_macos_vms == 1 { "" } else { "s" }
     )
 }
@@ -1466,8 +1560,12 @@ impl Default for HostFormState {
             allow: String::new(),
             advanced: false,
             direct: false,
-            listen: DEFAULT_LISTEN.into(),
-            relay_url: DEFAULT_RELAY_URL.into(),
+            listen: default_listen(),
+            // Empty: the form leaves the relay to the host, which resolves it
+            // from its own `CUA_RELAY_URL` / `CUA_ENV`. This core also runs
+            // in the page (wasm), which has no environment and would name
+            // the production relay under `CUA_ENV=staging` (CUA-1610).
+            relay_url: String::new(),
             busy: false,
             error: None,
             spare: false,
@@ -1583,6 +1681,13 @@ pub struct HostFormView {
     pub request: Option<HostSetupRequest>,
 }
 
+/// The form's profile for a self-hosted relay or a direct connection
+/// (`set-profile`), opened only from Settings → Advanced. Setup, first run
+/// and the This machine page offer Cua's relay alone, so its fields
+/// (Direct connection, Relay) show only while Advanced is open, and the
+/// apps draw no Advanced toggle of their own.
+pub const SELF_HOSTED_PROFILE: &str = "self-hosted";
+
 /// The first form.
 pub fn form_initial() -> HostFormState {
     HostFormState::default()
@@ -1608,7 +1713,9 @@ fn form_request(s: &HostFormState) -> Result<HostSetupRequest, String> {
         provide_spaces: None,
     })
     .and_then(|r| {
-        if r.mode == "relay" && r.relay_url.is_none() {
+        // Only self-hosting (Advanced) must name its relay; otherwise an
+        // empty relay means "the host decides".
+        if r.mode == "relay" && s.advanced && r.relay_url.is_none() {
             Err("relay URL needed".into())
         } else {
             Ok(r)
@@ -1626,6 +1733,12 @@ pub fn form_reduce(s: &HostFormState, a: &HostFormAction) -> HostFormState {
         HostFormAction::SetDirect { on } => n.direct = *on,
         HostFormAction::SetListen { listen } => n.listen = listen.clone(),
         HostFormAction::SetRelayUrl { url } => n.relay_url = url.clone(),
+        HostFormAction::SetProfile { profile } if profile == SELF_HOSTED_PROFILE => {
+            // Settings → Advanced: the team's own relay (or Direct). The
+            // relay field starts empty, for their address.
+            n.advanced = true;
+            n.relay_url = String::new();
+        }
         HostFormAction::SetProfile { profile } => n.spare = profile == "spare",
         HostFormAction::Submit => {
             if !s.busy && form_request(s).is_ok() {
@@ -1668,7 +1781,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
     let mut fields = vec![text(
         "name",
         "Name",
-        "This computer\u{2019}s name",
+        "How it shows on your other machines",
         &s.name,
         false,
         false,
@@ -1676,7 +1789,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
     if !s.direct {
         fields.push(HostFormField {
             id: "profile".into(),
-            label: "Use for".into(),
+            label: "Use it to".into(),
             placeholder: None,
             value: if s.spare { "spare" } else { "desktop" }.into(),
             toggle: false,
@@ -1686,18 +1799,18 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             choices: vec![
                 HostFormChoice {
                     id: "desktop".into(),
-                    label: "Its desktop".into(),
+                    label: DESKTOP_CHOICE.into(),
                 },
                 HostFormChoice {
                     id: "spare".into(),
-                    label: "A spare machine for Spaces".into(),
+                    label: SPARE_CHOICE.into(),
                 },
             ],
         });
         fields.push(text(
             "allow",
-            "Also allow",
-            "Emails, optional",
+            "Share with (optional)",
+            "Teammates\u{2019} emails",
             &s.allow,
             false,
             false,
@@ -1720,7 +1833,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             fields.push(text(
                 "listen",
                 "Listen on",
-                DEFAULT_LISTEN,
+                &default_listen(),
                 &s.listen,
                 bad,
                 true,
@@ -1729,8 +1842,8 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             let bad = !s.relay_url.trim().is_empty() && form_request(s).is_err();
             fields.push(text(
                 "relay",
-                "Relay",
-                DEFAULT_RELAY_URL,
+                "Relay server",
+                "https://relay.example.com",
                 &s.relay_url,
                 bad,
                 true,
@@ -1738,16 +1851,27 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
         }
     }
     let lede = if s.direct {
-        "Other machines connect to this address with an access token.".to_string()
+        "Other machines on your network connect to this address with an access token.".to_string()
     } else {
         let what = if s.spare {
-            " Runs Spaces for your devices; its desktop stays private."
+            "This machine runs Spaces, separate computers inside it, that you and your team open from your other machines. Its own screen stays private.".to_string()
         } else {
-            ""
+            PROVIDES_SPACES_NOTE.to_string()
         };
         match identity.filter(|i| !i.is_empty()) {
-            Some(id) => format!("Joins the Cua relay as {id}. No port forwarding.{what}"),
-            None => format!("Joins the Cua relay. No port forwarding.{what}"),
+            _ if s.advanced => {
+                // Self-hosting: Cua's relay is not involved, so only the
+                // spare-computer sentence, or what the desktop setup also
+                // turns on, carries over.
+                let also = if s.spare {
+                    what
+                } else {
+                    PROVIDES_SPACES_NOTE.to_string()
+                };
+                format!("For self-hosting teams: joins your own relay at the address below. {also}")
+            }
+            Some(id) => format!("{what} Signed in as {id}."),
+            None => what.to_string(),
         }
     };
     let request = form_request(s).ok();
@@ -1760,8 +1884,10 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
         back_label: "Back".into(),
         submit_label: if s.busy {
             "Setting up\u{2026}"
+        } else if s.spare && !s.direct {
+            SPARE_SUBMIT
         } else {
-            "Set up for access"
+            SET_UP_LABEL
         }
         .into(),
         can_submit: request.is_some() && !s.busy,
@@ -1774,6 +1900,18 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The "Listen on" default is the channel's spacesd port: Cua Spaces
+    /// Local's host does not take Stable's 3211.
+    #[test]
+    fn the_default_listen_address_follows_the_channel() {
+        use cua_home::channel::CuaChannel;
+        assert_eq!(listen_on(CuaChannel::Stable), "0.0.0.0:3211");
+        assert_eq!(listen_on(CuaChannel::Local), "0.0.0.0:3221");
+        for channel in CuaChannel::ALL {
+            assert!(looks_like_listen(&listen_on(channel)));
+        }
+    }
 
     #[test]
     fn listen_needs_a_port() {
@@ -1796,6 +1934,37 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(host_summary(Some(&s)), "Sharing \u{b7} 2 connected");
+    }
+
+    /// This Mac's desktop row reads the desktop switch, not Spaces alone:
+    /// providing Spaces with the desktop off is "Not sharing".
+    #[test]
+    fn the_desktop_row_is_shared_only_while_the_desktop_is() {
+        let spaces_only = HostState {
+            configured: true,
+            sharing: true,
+            service_running: true,
+            share_desktop: false,
+            provide_spaces: true,
+            ..Default::default()
+        };
+        let input = spaces_only.summary_input();
+        assert_eq!(host_summary(Some(&input)), "Not sharing");
+        assert_eq!(this_machine_status(Some(&input)), SpaceStatus::Suspended);
+        let shared = HostState {
+            share_desktop: true,
+            ..spaces_only
+        };
+        assert_eq!(
+            this_machine_status(Some(&shared.summary_input())),
+            SpaceStatus::Local
+        );
+        // The row is named for the system it runs on, never "computer".
+        assert_eq!(
+            this_machine_space(None, 0, SpaceOs::Linux).name,
+            "This machine"
+        );
+        assert_eq!(this_machine_space(None, 0, SpaceOs::Macos).name, "This Mac");
     }
 
     #[test]
@@ -2217,6 +2386,68 @@ mod tests {
     }
 
     #[test]
+    fn the_form_leaves_the_relay_to_the_host_unless_named() {
+        // CUA-1610: the page's core has no `CUA_ENV`; a prefilled prod relay
+        // was sent with the staging token. Empty means "the host decides".
+        let s = form_initial();
+        assert_eq!(s.relay_url, "");
+        let r = form_view(&s, None).request.expect("valid");
+        assert_eq!(r.mode, "relay");
+        assert_eq!(r.relay_url, None);
+        // Self-hosting (Advanced) must name its relay; naming one sends it.
+        let own = form_reduce(
+            &s,
+            &HostFormAction::SetProfile {
+                profile: SELF_HOSTED_PROFILE.into(),
+            },
+        );
+        assert!(form_view(&own, None).request.is_none());
+        let named = form_reduce(
+            &own,
+            &HostFormAction::SetRelayUrl {
+                url: " https://relay.example/ ".into(),
+            },
+        );
+        let r = form_view(&named, None).request.expect("valid");
+        assert_eq!(r.relay_url.as_deref(), Some("https://relay.example"));
+    }
+
+    #[test]
+    fn self_hosting_opens_only_from_its_profile() {
+        // Setup and first run: Cua's relay, nothing about self-hosting.
+        let s = form_initial();
+        let v = form_view(&s, Some("ada@example.com"));
+        assert!(v.fields.iter().all(|f| !f.advanced), "{:?}", v.fields);
+        assert!(
+            v.lede.starts_with("You and the people you share with"),
+            "{}",
+            v.lede
+        );
+        // Settings → Advanced: the team's own relay, typed in.
+        let s = form_reduce(
+            &s,
+            &HostFormAction::SetProfile {
+                profile: SELF_HOSTED_PROFILE.into(),
+            },
+        );
+        let v = form_view(&s, Some("ada@example.com"));
+        assert!(v.advanced_open);
+        assert!(v.lede.starts_with("For self-hosting teams"), "{}", v.lede);
+        let relay = v.fields.iter().find(|f| f.id == "relay").unwrap();
+        assert_eq!(relay.value, "");
+        assert!(!v.can_submit, "needs the relay's address");
+        let s = form_reduce(
+            &s,
+            &HostFormAction::SetRelayUrl {
+                url: "https://relay.example.com".into(),
+            },
+        );
+        let r = form_view(&s, None).request.unwrap();
+        assert_eq!(r.relay_url.as_deref(), Some("https://relay.example.com"));
+        assert_eq!(r.profile.as_deref(), Some("desktop"));
+    }
+
+    #[test]
     fn the_form_submits_only_a_valid_request() {
         let mut s = form_initial();
         let v = form_view(&s, None);
@@ -2347,16 +2578,26 @@ mod tests {
             HostActionId::ResumeSharing
         );
 
-        // Another account: never re-share the old one's registration.
+        // Another account signs in: the host registers again for it, with
+        // no manual step, whether sharing was paused or not.
         let s = owned(true, Some(bob.clone()));
-        assert_eq!(account_step(&s, s.account.as_ref()), HostAccountStep::Keep);
+        assert_eq!(
+            account_step(&s, s.account.as_ref()),
+            HostAccountStep::Resume
+        );
+        // The button, if that failed.
         let v = panel(Some(&s));
         assert_eq!(v.notice.as_deref(), Some(OTHER_ACCOUNT_NOTICE));
-        assert!(v.notice_action.is_none());
+        assert_eq!(
+            v.notice_action.as_ref().unwrap().id,
+            HostActionId::ResumeSharing
+        );
         assert_eq!(v.actions[0].id, HostActionId::Remove);
-        // ...and one signed in while it shares pauses it.
         let s = owned(false, Some(bob));
-        assert_eq!(account_step(&s, s.account.as_ref()), HostAccountStep::Pause);
+        assert_eq!(
+            account_step(&s, s.account.as_ref()),
+            HostAccountStep::Resume
+        );
 
         // Direct mode and a machine that is not set up never follow it.
         let direct = HostState {
@@ -2377,7 +2618,7 @@ mod tests {
         let desktop = &v.toggles[0];
         assert_eq!(
             (desktop.label.as_str(), desktop.on),
-            ("Share this desktop", true)
+            ("Let other machines control this desktop", true)
         );
         assert!(desktop.enabled, "the only setting on can be turned off too");
         assert_eq!(v.toggles[1].action, HostActionId::ProvideSpaces);
@@ -2393,7 +2634,7 @@ mod tests {
         assert!(v.permissions.is_empty() && v.permissions_title.is_none());
         assert_eq!(
             v.limits.as_deref(),
-            Some("Up to 4 Spaces \u{b7} 2 macOS VMs (Apple\u{2019}s license allows two per Mac)")
+            Some("Up to 4 Spaces \u{b7} 2 macOS VMs")
         );
         assert_eq!(v.provided_empty.as_deref(), Some("None yet"));
 
@@ -2478,7 +2719,10 @@ mod tests {
             },
         ];
         let v = panel(Some(&s));
-        assert_eq!(v.provided_title.as_deref(), Some("Spaces for your devices"));
+        assert_eq!(
+            v.provided_title.as_deref(),
+            Some("Spaces from your other machines")
+        );
         assert_eq!(v.provided[0].text, "mac-1 \u{b7} macOS \u{b7} Ada");
         assert!(v.provided_empty.is_none());
         assert_eq!(v.activity_title.as_deref(), Some("Spaces activity"));
@@ -2513,18 +2757,117 @@ mod tests {
                 .iter()
                 .map(|c| c.label.as_str())
                 .collect::<Vec<_>>(),
-            ["Its desktop", "A spare machine for Spaces"]
+            [DESKTOP_CHOICE, SPARE_CHOICE]
         );
-        assert!(v.lede.contains("its desktop stays private"), "{}", v.lede);
+        assert!(
+            v.lede.contains("Its own screen stays private"),
+            "{}",
+            v.lede
+        );
+        assert!(
+            v.lede.ends_with("Signed in as ada@example.com."),
+            "{}",
+            v.lede
+        );
+        assert_eq!(v.submit_label, SPARE_SUBMIT);
+        // The desktop choice: plain words, an everyday button, no jargon.
+        let desk = form_view(&form_initial(), None);
+        assert_eq!(desk.submit_label, SET_UP_LABEL);
+        for word in ["relay", "port forwarding", "host"] {
+            assert!(!desk.lede.to_lowercase().contains(word), "{}", desk.lede);
+        }
+        let allow = desk.fields.iter().find(|f| f.id == "allow").unwrap();
+        assert_eq!(allow.label, "Share with (optional)");
         let request = v.request.unwrap();
         assert_eq!(request.profile.as_deref(), Some("spare"));
-        assert_eq!(request.settings(), (false, true));
+        assert_eq!(request.settings(), (false, Some(true)));
         // Direct has no profile: it always shares the desktop.
         let mut d = form_reduce(&s, &HostFormAction::ToggleAdvanced);
         d = form_reduce(&d, &HostFormAction::SetDirect { on: true });
         let v = form_view(&d, None);
         assert!(v.fields.iter().all(|f| f.id != "profile"));
-        assert_eq!(v.request.unwrap().settings(), (true, false));
+        let direct = v.request.unwrap();
+        assert_eq!(direct.settings(), (true, None));
+        assert_eq!(direct.new_setup_settings(), (true, false));
+    }
+
+    /// The desktop setup provides Spaces on a new machine and says so,
+    /// with where to turn it off; it never asks to turn them on, so a
+    /// machine set up before keeps its setting (the host decides).
+    #[test]
+    fn the_desktop_setup_provides_spaces_and_says_so() {
+        let v = form_view(&form_initial(), Some("ada@example.com"));
+        assert!(v.lede.contains(PROVIDES_SPACES_NOTE), "{}", v.lede);
+        assert!(
+            v.lede.ends_with("Signed in as ada@example.com."),
+            "{}",
+            v.lede
+        );
+        let request = v.request.unwrap();
+        assert_eq!(request.profile.as_deref(), Some("desktop"));
+        assert_eq!(request.provide_spaces, None, "left to the host");
+        assert_eq!(request.settings(), (true, None));
+        assert_eq!(request.new_setup_settings(), (true, true));
+        // An explicit off stays off.
+        let off = validate_setup(HostSetupRequest {
+            mode: "relay".into(),
+            profile: Some("desktop".into()),
+            provide_spaces: Some(false),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(off.new_setup_settings(), (true, false));
+        // Self-hosted relay: the same note; Direct: no Spaces, no note.
+        let adv = form_reduce(&form_initial(), &HostFormAction::ToggleAdvanced);
+        assert!(form_view(&adv, None).lede.ends_with(PROVIDES_SPACES_NOTE));
+        let direct = form_reduce(&adv, &HostFormAction::SetDirect { on: true });
+        assert!(!form_view(&direct, None).lede.contains("provides Spaces"));
+        // The spare form says what it does instead.
+        let spare = form_reduce(
+            &form_initial(),
+            &HostFormAction::SetProfile {
+                profile: "spare".into(),
+            },
+        );
+        assert!(!form_view(&spare, None).lede.contains(PROVIDES_SPACES_NOTE));
+    }
+
+    #[test]
+    fn the_default_setup_turns_on_spaces_only() {
+        let relay = validate_setup(HostSetupRequest {
+            mode: "relay".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        // Other machines can create Spaces here; the desktop stays private.
+        assert_eq!(relay.new_setup_settings(), (false, true));
+        // Asking for the desktop turns it on besides.
+        let desktop = validate_setup(HostSetupRequest {
+            mode: "relay".into(),
+            profile: Some("desktop".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(desktop.new_setup_settings(), (true, true));
+        // Both off is only refused when asked for outright (the switches
+        // themselves never error: the machine just is not shared).
+        assert_eq!(SPACES_SWITCH, "Let other machines create Spaces here");
+        assert_eq!(DESKTOP_SWITCH, "Let other machines control this desktop");
+        let direct = validate_setup(HostSetupRequest {
+            mode: "direct".into(),
+            direct: Some("0.0.0.0:3211".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(direct.new_setup_settings(), (true, false));
+        // The form's desktop choice asks for both.
+        assert_eq!(
+            form_view(&form_initial(), None)
+                .request
+                .unwrap()
+                .new_setup_settings(),
+            (true, true)
+        );
     }
 
     #[test]
@@ -2544,6 +2887,13 @@ mod tests {
             },
             HostSetupRequest {
                 mode: "relay".into(),
+                share_desktop: Some(false),
+                provide_spaces: Some(false),
+                ..Default::default()
+            },
+            HostSetupRequest {
+                mode: "direct".into(),
+                direct: Some("0.0.0.0:3211".into()),
                 share_desktop: Some(false),
                 ..Default::default()
             },

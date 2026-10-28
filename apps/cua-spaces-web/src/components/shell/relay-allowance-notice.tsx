@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+import { XIcon } from "lucide-react";
+import { useSyncExternalStore } from "react";
+
+import { usePlanLimitTelemetry, useRelayUsage, useRelayUsageView, useSession, useUpsellCardAvailable, useUpsellGate } from "@/bridge";
+import { Button } from "@/components/ui/button";
+import { UpgradeCard } from "@/components/upgrade-card";
+
+const DISMISSED_KEY = "cua.relayAllowance.dismissed";
+
+function readDismissed(): string | null {
+  try {
+    return globalThis.localStorage?.getItem(DISMISSED_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const listeners = new Set<() => void>();
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => listeners.delete(l);
+};
+
+/**
+ * The relay allowance for the month: one line above every page with
+ * Upgrade, until dismissed (for that month and reason: the core's
+ * `dismissKey`). At 80% of the hours it is a heads-up (`warn`: a prompt, held
+ * back while a live session or an agent run is going); past the allowance it
+ * is the status (`limit`) and always shows. Nothing stops at the limit, so it
+ * only says so. Free leads to Pro, Pro to Teams.
+ */
+export function RelayAllowanceNotice() {
+  const notice = useRelayUsageView()?.notice;
+  const { openExternal } = useSession();
+  const dismissed = useSyncExternalStore(subscribe, readDismissed, () => null);
+  const hidden = !notice || dismissed === notice.dismissKey;
+  // With the limit cards on, a used allowance is a card, not the thin line.
+  const usage = useRelayUsage();
+  // The session cap, when it is the one reached (the raw reasons can be empty).
+  const sessionsHit = (usage?.liveSessionsLimit ?? 0) > 0 && (usage?.liveSessions ?? 0) >= (usage?.liveSessionsLimit ?? 0);
+  const hoursHit = (usage?.hoursLimit ?? 0) > 0 && (usage?.hoursUsed ?? 0) >= (usage?.hoursLimit ?? 0);
+  const reason = (usage?.reasons?.includes("sessions") || sessionsHit) && !hoursHit && !usage?.reasons?.includes("hours") ? "sessions" : "hours";
+  // Only where there is a card to show; otherwise the notice stays as it was.
+  const cardAvailable = useUpsellCardAvailable(notice?.level === "limit" ? reason : null, usage);
+  const asCard = cardAvailable;
+  // Past a limit, its cap and plan make it `cua_plan_limit_shown` too.
+  const gate = useUpsellGate("meter", !hidden && !asCard, notice?.level === "warn", { kind: notice?.kind, plan: notice?.plan });
+  const plans = usePlanLimitTelemetry();
+  if (notice && !hidden && asCard) {
+    const remember = () => {
+      try {
+        globalThis.localStorage?.setItem(DISMISSED_KEY, notice.dismissKey);
+      } catch {
+        // Not kept: it shows again next launch.
+      }
+      for (const l of [...listeners]) l();
+    };
+    return (
+      <div className="shrink-0 border-b px-4 py-3" data-relay-allowance="limit-card">
+        <UpgradeCard reason={reason} onClose={remember} className="max-w-xl" />
+      </div>
+    );
+  }
+  if (!notice || hidden || !gate.show) return null;
+  const dismiss = () => {
+    gate.dismiss();
+    try {
+      globalThis.localStorage?.setItem(DISMISSED_KEY, notice.dismissKey);
+    } catch {
+      // Not kept: it shows again next launch.
+    }
+    for (const l of [...listeners]) l();
+  };
+  const upgradeUrl = notice.upgradeUrl;
+  return (
+    <div role="status" data-relay-allowance={notice.level} className="flex shrink-0 items-center gap-3 bg-muted/60 px-4 py-2 text-xs text-muted-foreground">
+      <span className="min-w-0 flex-1">{notice.text}</span>
+      {upgradeUrl ? (
+        <Button
+          size="sm"
+          variant="secondary"
+          data-relay-upgrade=""
+          onClick={() => {
+            gate.click();
+            void openExternal(plans.link(upgradeUrl, "app_meter")).catch(() => {});
+          }}
+        >
+          {notice.upgrade}
+        </Button>
+      ) : null}
+      <Button size="icon-sm" variant="ghost" aria-label={notice.dismiss} data-relay-dismiss="" onClick={dismiss}>
+        <XIcon className="size-3.5" />
+      </Button>
+    </div>
+  );
+}

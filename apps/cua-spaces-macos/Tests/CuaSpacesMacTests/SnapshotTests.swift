@@ -4,6 +4,8 @@
 import AppKit
 import CuaSDK
 import CuaSpacesFFI
+import CuaSpacesNotchHelper
+import CuaSpacesNotchUI
 import CuaSpacesStreaming
 @testable import CuaSpacesMacKit
 import SwiftUI
@@ -32,189 +34,14 @@ struct SnapshotTests {
                                            kv: kv ? FakeKeyvault(try overview ?? fixtureOverview()) : nil,
                                            host: FixtureHost(), account: FixtureAccount(),
                                            agents: FixtureAgentSetup(), loginItem: loginItem)
-        m.onboarding.finish()
+        // Done's "Launch at login" ticked, as the first run's default had it.
+        m.onboarding.finish(launchAtLogin: true)
         await m.refresh()
         await m.keyvault.refresh()
         return m
     }
 
-    @Test func onboardingWelcome() throws {
-        let o = OnboardingModel(statePath: nil)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding", size: CGSize(width: 820, height: 560))
-    }
-
-    /// Every first-run page (the Tauri app's pages, from the same core).
-    @Test func onboardingPages() async throws {
-        let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup())
-        let size = CGSize(width: 820, height: 560)
-        // Every page, the Volume page included (its experiment on).
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)))
-        o.send(.start)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-signin", size: size)
-        o.send(.signinDone)
-        await o.loadAgents()
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-agents", size: size)
-        o.finishAgents(skipped: true)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-presentation", size: size)
-        o.send(.presentationDone)
-        o.send(.driveChecked(os: .macos, status: try appDriveMountFromJson(
-            json: #"{"enabled":false,"state":"off","method":"fskit","volume_name":"Cua Volume"}"#)))
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-drive", size: size)
-        o.send(.driveContinue)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-mode", size: size)
-        o.send(.modeChosen(mode: .client))
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-done", size: size)
-    }
-
-    /// The AI agents page with twelve agents at the window's minimum size:
-    /// the list scrolls in two columns, so Back and Set up stay in view.
-    @Test func onboardingAgentsLongListAtMinimumSize() async throws {
-        let names = ["Claude Code", "Codex", "Cursor", "Gemini CLI", "GitHub Copilot", "Windsurf", "Cline",
-                     "Roo Code", "OpenCode", "Goose", "Amp", "Hermes"]
-        let statuses = names.map { n in
-            AppAgentSetupStatus(id: n.lowercased().replacingOccurrences(of: " ", with: "-"), name: n, installed: true,
-                                skillsDir: "~/.agents/skills", mcpConfig: nil, cuaConfigured: false,
-                                skillsInstalled: [], skillsOutdated: [], error: nil)
-        }
-        let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup(statuses: statuses))
-        o.send(.start)
-        o.send(.signinDone)
-        await o.loadAgents()
-        #expect(o.installedAgents.count == 12)
-        #expect(o.view.canBack)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-agents-long", size: CGSize(width: 720, height: 520))
-    }
-
-    /// The AI agents page's background computer-use card at beats of its
-    /// loop (the agent gliding while the user drags a selection, the agent
-    /// clicking a box, both idle at the loop's end), ticked, and the Reduce
-    /// Motion still.
-    @Test func driverCard() throws {
-        let copy = appOnboardingCopy()
-        func card(_ ms: UInt32?, on: Bool = false, still: Bool? = nil) -> some View {
-            DriverCardView(title: copy.agentsDriver, imageLabel: copy.agentsDriverImage, isOn: .constant(on),
-                           fixedMs: ms, still: still)
-                .padding(12)
-        }
-        let size = CGSize(width: 380, height: 180)
-        for (ms, name) in [(UInt32(1500), "working"), (1750, "click"), (4799, "idle")] {
-            try assertSnapshot(card(ms), "onboarding-driver-\(name)", size: size)
-        }
-        try assertSnapshot(card(nil, on: true, still: true), "onboarding-driver-still-on", size: size)
-        let still = appDriverPreviewStill()
-        #expect(still.ripple > 0 && still.checked[0] == 1 && !still.agentPressed)
-    }
-
-    /// The presentation cards' miniatures (both cards) at beats of the loop:
-    /// the pointer gliding up, the notch's hover cue, the notch springing
-    /// open while the menu drops down, both expanded; then the Reduce Motion
-    /// still (the expanded state, no loop).
-    @Test func presentationPreviews() async throws {
-        let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup())
-        o.send(.start)
-        o.send(.signinDone)
-        o.finishAgents(skipped: true)
-        let cards = o.view.presentations
-        #expect(cards.count == 2)
-        func pair(_ ms: UInt32?, still: Bool? = nil) -> some View {
-            VStack(spacing: 10) {
-                ForEach(cards, id: \.id) { PresentationCardView(card: $0, fixedMs: ms, still: still) {} }
-            }
-            .padding(12)
-        }
-        let size = CGSize(width: 320, height: 300)
-        for (ms, name) in [(UInt32(900), "glide"), (1550, "dwell"), (1760, "opening"), (2400, "open")] {
-            try assertSnapshot(pair(ms), "onboarding-preview-\(name)", size: size)
-        }
-        try assertSnapshot(pair(nil, still: true), "onboarding-preview-still", size: size)
-        let still = [false, true].map { appPresentationPreviewStill(menuBar: $0) }
-        #expect(still[0].open == 1 && still[0].content == 1, "the notch open")
-        #expect(still[1].open == 1 && still[1].highlighted != nil, "the menu down")
-    }
-
-    @Test func newSpaceWizard() async throws {
-        let m = try await model()
-        await m.openNewSpace()
-        try assertSnapshot(NewSpaceWizardView(wizard: m.wizard, onCreate: { _ in }, onAdd: { _, _, _ in },
-                                              onCancel: {}), "new-space", size: CGSize(width: 560, height: 520))
-    }
-
-    /// The Space detail's Stream section: Desktop with the OS mark and the
-    /// resolution, window rows by title with their app icons (none for
-    /// xterm), a truncated long title, one panel open.
-    @Test func streamSection() async throws {
-        let m = StreamFixture.model()
-        await m.refresh()
-        await m.loadIcons()
-        let open: Set<String> = [StreamSource.window(StreamFixture.windows[2]).pipKey]
-        let view = Form {
-            Section("Stream") {
-                StreamRowList(section: m.section(openKeys: open), image: m.image(for:)) { _ in }
-            }
-        }
-        .formStyle(.grouped)
-        try assertSnapshot(view, "stream-section", size: CGSize(width: 520, height: 280))
-    }
-
-    /// The detail's facts from the core with live usage: Image (copy),
-    /// the full System string, Memory, Identifier (copy), before and right
-    /// after a copy (never the real pasteboard).
-    @Test func spaceFacts() async throws {
-        let backend = FixtureSpacesBackend()
-        let space = appRowsToSpaces(rows: FixtureSpacesBackend.sample, nowMs: 0)[0]
-        let usage = await backend.usage(id: space.id)
-        let facts = appSpaceDetailLive(space: space, usage: usage, hostArch: nil).facts
-        let size = CGSize(width: 520, height: 300)
-        func form(_ copied: Bool) -> some View {
-            Form { Section { FactRows(facts: facts, write: { _ in }, copied: copied) } }.formStyle(.grouped)
-        }
-        try assertSnapshot(form(false), "space-facts", size: size)
-        try assertSnapshot(form(true), "space-facts-copied", size: size)
-    }
-
-    /// OS-only regression: the real app core, facts view and icon renderer.
-    @Test func relayOperatingSystemFacts() throws {
-        for (os, name, expected) in [(Optional<AppSpaceOs>.none, "Unknown", "Unknown"), (.macos, "macOS", "macOS")] {
-            let row = AppSpaceRow(id: "relay:test-host", name: "Test host", provider: "relay",
-                spacesdVersion: "0.4.1", features: [], addedAt: nil, os: os,
-                osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
-                kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
-            let space = appRowsToSpaces(rows: [row], nowMs: 0)[0]
-            let facts = appSpaceDetail(space: space).facts
-            #expect(facts.first { $0.label == "System" }?.value == expected)
-            #expect(space.os.label == expected)
-            var notch = appNotchInitial()
-            notch.open = true
-            let tile = try #require(appNotchView(state: notch, spaces: [space]).tiles.first)
-            #expect(tile.symbol == (os == nil ? "computer" : "os-macos"))
-            let view = VStack(alignment: .leading, spacing: 12) {
-                HStack { OsIconImage(id: tile.symbol, size: 18); Text(space.name) }
-                Form { Section { FactRows(facts: facts, write: { _ in }, copied: false) } }.formStyle(.grouped)
-            }.padding().background(Color.white)
-            try assertSnapshot(view, "relay-os-" + name, size: CGSize(width: 520, height: 300))
-        }
-    }
-
-    /// The live desktop's card: its content runs flush to the card's edges
-    /// (no row inset, no letterbox) at the default desktop's 16:10, with
-    /// only the card's corner radius, above the facts card.
-    @Test func spacePreview() async throws {
-        let space = appRowsToSpaces(rows: FixtureSpacesBackend.sample, nowMs: 0)[0]
-        let facts = appSpaceDetail(space: space).facts
-        let view = Form {
-            Section {
-                PreviewCard(session: nil) {
-                    LinearGradient(colors: [.indigo, .orange], startPoint: .top, endPoint: .bottom)
-                }
-            }
-            Section { FactRows(facts: facts, write: { _ in }, copied: false) }
-        }
-        .formStyle(.grouped)
-        try assertSnapshot(view, "space-preview", size: CGSize(width: 520, height: 480))
-    }
-
-    /// The preview card while the stream opens and while it waits for
+    /// A Space's window while the stream opens and while it waits for
     /// Connect: the Space's thumbnail blurred and dimmed with the core's
     /// words centered, or plain black when there is no thumbnail yet.
     @Test func desktopCover() async throws {
@@ -223,12 +50,7 @@ struct SnapshotTests {
         let detail = m.detail(space)
         let preview = DesktopCoverTests.desktop()
         func card(_ cover: AppDesktopCover, _ image: NSImage?) -> some View {
-            Form {
-                Section {
-                    PreviewCard(session: nil) { DesktopCoverView(cover: cover, image: image) }
-                }
-            }
-            .formStyle(.grouped)
+            DesktopCoverView(cover: cover, image: image)
         }
         let size = CGSize(width: 520, height: 360)
         let connecting = m.cover(detail, requested: false, stream: .noSession)
@@ -247,27 +69,6 @@ struct SnapshotTests {
         try assertSnapshot(card(stopped, preview), "space-cover-stopped", size: size)
     }
 
-    /// Settings, General: "Connect to the desktop automatically", on by
-    /// default (the `settings` reference), then off.
-    @Test func settingsAutoConnectOff() async throws {
-        let m = try await model()
-        m.settings.experiments.cuaVolume = true
-        await m.choose(row: "auto-connect", option: "off")
-        await m.loadSettings()
-        try assertSnapshot(SettingsView(model: m), "settings-auto-connect-off", size: CGSize(width: 520, height: 640))
-    }
-
-    /// "Teleport an app…" as the core's grid: sections, a tile previewing
-    /// its app's frontmost window, icons, the app that cannot move dimmed.
-    @Test func teleportPickerGrid() async throws {
-        let m = TeleportModel(spaceName: "Aurora", teleport: nil, space: nil, sources: PickerFixture.sources())
-        m.send(.loaded(entries: try PickerFixture.entries()))
-        await m.loadWindows()
-        for tile in m.grid.sections.flatMap(\.tiles) { await m.loadThumbnail(tile) }
-        try assertSnapshot(TeleportPickerSheet(teleport: m, onClose: {}), "teleport-picker-grid",
-                           size: CGSize(width: 640, height: 540))
-    }
-
     /// A Keyvault sign-in live in Aurora (auto-wipe off: no expiry).
     func signedInOverview() throws -> KeyvaultOverview {
         var o = try fixtureOverview()
@@ -278,183 +79,11 @@ struct SnapshotTests {
         return o
     }
 
-    /// "Signed in" beside the Space a Keyvault sign-in is live in.
-    @Test func mainWindowSidebarSignedIn() async throws {
-        let m = try await model(overview: try signedInOverview())
-        m.select("cloud:builder")
-        try assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar-signed-in", size: CGSize(width: 260, height: 520))
-    }
-
-    /// Access from that badge: the Space's copy brought forward, kept until
-    /// wiped (auto-wipe off), with Dismiss beside Wipe.
-    @Test func keyvaultAccessFocused() async throws {
-        let m = try await model(overview: try signedInOverview())
-        m.showAccess(spaceId: "local:aurora")
-        m.keyvault.selection = .category(category: .access)
-        #expect(m.keyvault.focusKey == "d:local:aurora")
-        try assertSnapshot(CategoryList(keyvault: m.keyvault, page: m.keyvault.page), "keyvault-access",
-                           size: CGSize(width: 640, height: 360))
-    }
-
-    /// Settings, Keyvault: the auto-wipe switch, off by default.
+    /// Settings, Keyvault (the page's, over this model): its section is there.
     @Test func settingsKeyvault() async throws {
         let m = try await model(overview: try signedInOverview())
         await m.loadSettings()
         #expect(m.settingsPage.sections.contains { $0.id == "keyvault" })
-        try assertSnapshot(SettingsView(model: m), "settings-keyvault", size: CGSize(width: 520, height: 1000))
-    }
-
-    /// The teleport run says which step it is on: reading the browser's
-    /// cookies (naming the Keychain prompt), then the upload's bytes.
-    @Test func teleportRunning() async throws {
-        let m = TeleportModel(spaceName: "Aurora", teleport: nil, space: nil, sources: PickerFixture.sources())
-        let flow = try PickerFixture.json("teleport-review")
-        func json(_ v: Any?) throws -> String {
-            String(decoding: try JSONSerialization.data(withJSONObject: v!), as: UTF8.self)
-        }
-        m.send(.loaded(entries: try appCatalogEntriesFromJson(json: json(flow["entries"]))))
-        m.send(.select(id: "slack"))
-        m.send(.choose(id: nil))
-        m.send(.move(moves: .appWithState))
-        m.send(.plan)
-        m.send(.planned(plan: try appTeleportPlanFromJson(json: json(flow["plan"]))))
-        m.send(.acknowledge(value: true))
-        m.send(.acknowledgeRelayPlaintext(value: true))
-        m.send(.confirm)
-        func ev(_ detail: String, _ done: UInt64 = 0, _ total: UInt64 = 0) -> AppPickerEvent {
-            .progress(event: AppTeleportRunEvent(step: 1, steps: 3, kind: "state", phase: .progress, detail: detail,
-                                                 doneBytes: done, totalBytes: total))
-        }
-        #expect(m.state.step == .running)
-        let size = CGSize(width: 640, height: 540)
-        m.send(ev("Reading Slack cookies (macOS will ask for Keychain access)\u{2026}"))
-        try assertSnapshot(TeleportPickerSheet(teleport: m, onClose: {}), "teleport-running-reading", size: size)
-        m.send(ev("Uploading", 12 << 20, 80 << 20))
-        try assertSnapshot(TeleportPickerSheet(teleport: m, onClose: {}), "teleport-running-upload", size: size)
-    }
-
-    @Test func mainWindowSidebar() async throws {
-        let m = try await model()
-        m.select("local:aurora")
-        try assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar", size: CGSize(width: 260, height: 520))
-    }
-
-    /// The first Linux Space on a Mac with no Docker: the built-in Linux
-    /// runtime's download shows on the new Space's row, in words, with its
-    /// bytes (simulated progress).
-    @Test func mainWindowSidebarSettingUpLinuxRuntime() async throws {
-        let m = try await model()
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        m.sendCreate(.start(id: "pending:linux", name: "linux-dev", os: .linux, provider: .local, now: now,
-                            image: "ghcr.io/trycua/linux:24.04", kind: .container, hostArch: "arm64",
-                            gpu: false))
-        m.sendCreate(.progress(id: "pending:linux", phase: "preparing", fraction: 0.4, now: now,
-                               bytesDone: 192 << 20, bytesTotal: 478 << 20, bytesPerSecond: 24e6))
-        let space = try #require(m.spaces.first { $0.id == "pending:linux" })
-        let detail = m.detail(space)
-        #expect(detail.progressText?.contains("of 478 MB") == true)
-        let cover = m.cover(detail, requested: false, stream: .noSession)
-        let view = HStack(spacing: 0) {
-            Sidebar(model: m).frame(width: 260)
-            Form {
-                Section {
-                    PreviewCard(session: nil) {
-                        DesktopCoverView(cover: cover, image: nil, progress: detail.progress,
-                                         progressText: detail.progressText)
-                    }
-                }
-            }
-            .formStyle(.grouped)
-        }
-        try assertSnapshot(view, "setting-up-linux-runtime", size: CGSize(width: 820, height: 420))
-    }
-
-    /// The power button next to Delete on the rows: a suspended Space
-    /// (selected: Resume), a macOS VM turning off (a spinner), and one whose
-    /// turn-off failed (why, inline).
-    @Test func mainWindowSidebarPower() async throws {
-        func row(_ id: String, _ os: AppSpaceOs, _ osName: String, power: String, state: String,
-                 reachable: Bool) -> AppSpaceRow {
-            AppSpaceRow(id: id, name: String(id.dropFirst("local:".count)), provider: "local",
-                        spacesdVersion: "0.4.0", features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z",
-                        os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
-                        kind: os == .macos ? .vm : .container, arch: "arm64", reachable: reachable,
-                        error: nil, host: nil, hostName: nil, power: power, powerState: state,
-                        cloud: nil, cloudPlace: nil, cloudDelete: nil)
-        }
-        let backend = FixtureSpacesBackend(rows: [
-            row("local:aurora", .linux, "Ubuntu", power: "suspend", state: "suspended", reachable: false),
-            row("local:mac-studio", .macos, "macOS", power: "stop", state: "running", reachable: true),
-            row("local:build-box", .linux, "Debian", power: "suspend", state: "running", reachable: true),
-        ])
-        let m = ViewModelTests().makeModel(backend, kv: FakeKeyvault(try fixtureOverview()),
-                                           host: FixtureHost(), account: FixtureAccount(),
-                                           agents: FixtureAgentSetup())
-        m.onboarding.finish()
-        await m.refresh()
-        await m.keyvault.refresh()
-        m.select("local:aurora")
-        backend.powerError = "Docker is not running"
-        m.setPower(try #require(m.spaces.first { $0.id == "local:build-box" }), on: false)
-        for _ in 0..<200 where m.creates.powering.first?.error == nil {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        backend.holdPower = true
-        m.setPower(try #require(m.spaces.first { $0.id == "local:mac-studio" }), on: false)
-        try assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar-power", size: CGSize(width: 260, height: 520))
-        backend.releasePower()
-    }
-
-    @Test func thisMachine() async throws {
-        let m = try await model()
-        await m.host.refresh()
-        // Before setup: the explainer and both choices inline.
-        #expect(m.host.panel.intro != nil)
-        #expect(m.host.panel.setupChoices.map(\.id) == ["desktop", "spare"])
-        try assertSnapshot(ThisMachineView(host: m.host), "this-machine-unset", size: CGSize(width: 640, height: 420))
-        m.host.openForm()
-        try assertSnapshot(ThisMachineView(host: m.host), "host-setup", size: CGSize(width: 640, height: 420))
-        m.host.send(.setName(name: "Studio"))
-        await m.host.submit()
-        try assertSnapshot(ThisMachineView(host: m.host), "this-machine", size: CGSize(width: 640, height: 520))
-    }
-
-    /// Relay sharing and the sign-in: shared with your account; paused
-    /// while signed out (one line and Sign In); both settings off (Resume
-    /// sharing disabled).
-    @Test func thisMachineAndTheSignIn() async throws {
-        let account = FakeAccountTokens()
-        account.token = "tok-ada"
-        let who = HostSignInSharingTests.Box(HostSignInSharingTests.ada)
-        let h = HostModel(host: FixtureHost())
-        account.wire(h)
-        h.currentAccount = { who.value }
-        h.openForm()
-        h.send(.setName(name: "Studio"))
-        await h.submit()
-        await h.reconcileAccount()
-        try assertSnapshot(ThisMachineView(host: h), "this-machine-shared-with-account", size: CGSize(width: 640, height: 520))
-        account.token = nil
-        who.value = nil
-        await h.reconcileAccount()
-        #expect(h.panel.notice != nil)
-        try assertSnapshot(ThisMachineView(host: h), "this-machine-signed-out", size: CGSize(width: 640, height: 520))
-
-        let off = HostModel(host: FixtureHost())
-        off.openForm()
-        off.send(.setName(name: "Studio"))
-        await off.submit()
-        await off.run(.hideDesktop)
-        #expect(off.panel.actions.first?.enabled == false)
-        try assertSnapshot(ThisMachineView(host: off), "this-machine-nothing-shared", size: CGSize(width: 640, height: 520))
-    }
-
-    @Test func settings() async throws {
-        let m = try await model()
-        // With Storage (the Cua Volume experiment on), as recorded.
-        m.settings.experiments.cuaVolume = true
-        await m.loadSettings()
-        try assertSnapshot(SettingsView(model: m), "settings", size: CGSize(width: 520, height: 640))
     }
 
     /// Launch at login waiting for approval in System Settings (a fake
@@ -462,51 +91,8 @@ struct SnapshotTests {
     @Test func settingsLoginItemApproval() async throws {
         let item = FixtureLoginItem()
         item.approval = true
-        let m = try await model(loginItem: item)
+        _ = try await model(loginItem: item)
         #expect(item.calls == ["register"], "the first run's Done registered it")
-        m.settings.experiments.cuaVolume = true
-        await m.loadSettings()
-        try assertSnapshot(SettingsView(model: m), "settings-login-approval", size: CGSize(width: 520, height: 640))
-    }
-
-    @Test func keyvaultAll() async throws {
-        let m = try await model()
-        let sel = KvSelection.category(category: .all)
-        m.keyvault.selection = sel
-        try assertSnapshot(VaultList(keyvault: m.keyvault, page: m.keyvault.page), "keyvault-all",
-                           size: CGSize(width: 640, height: 520))
-    }
-
-    @Test func approvalSheet() async throws {
-        let m = try await model()
-        m.keyvault.openApproval("req-1")
-        m.keyvault.sendApproval(.toggle(key: "chrome|example.test"))
-        try assertSnapshot(ApprovalSheet(keyvault: m.keyvault), "approval", size: CGSize(width: 480, height: 360))
-    }
-
-    /// Settings → Devices on an account with this Mac enrolled, a new
-    /// device and an expired one asking, and recent access.
-    @Test func devicesPage() async throws {
-        let d = DevicesTests().model()
-        await d.refresh()
-        d.approval = nil
-        try assertSnapshot(DevicesSettingsView(devices: d), "devices", size: CGSize(width: 520, height: 700))
-    }
-
-    /// A new device asking: its name and the code it shows, Approve (after
-    /// Touch ID) and Deny; then this Mac waiting with its own code.
-    @Test func deviceSheets() async throws {
-        let d = DevicesTests().model()
-        await d.refresh()
-        d.setCode("k7qxm2rp")
-        try assertSnapshot(DeviceApprovalSheet(devices: d), "device-approval", size: CGSize(width: 420, height: 250))
-        var snap = FixtureDevices.sample(now: DevicesTests.now)
-        snap.devices[0].state = "pending"
-        let waiting = DevicesTests().model(FixtureDevices(snapshot: snap))
-        waiting.pollLimit = 1
-        waiting.startEnroll(in: .main)
-        await waiting.chooseEnroll(.approve)
-        try assertSnapshot(EnrollSheet(devices: waiting), "device-enroll-code", size: CGSize(width: 440, height: 300))
     }
 
     /// The notch panel in each state, settled, at its stage size (the
@@ -515,14 +101,75 @@ struct SnapshotTests {
         let m = try await model()
         setup(m.notch)
         let c = NotchController(model: m.notch)
-        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen, prompt: NotchController.needsRow(m.notch.view)))
+        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen.ffi, prompt: NotchController.needsRow(m.notch.view)))
         let g = c.geometry
-        try assertSnapshot(NotchContentView(model: m.notch, controller: c).background(Color(white: 0.85)),
+        try assertSnapshot(NotchContentView(surface: c).background(Color(white: 0.85)),
                            name, size: g.stage)
+        try assertHelperNotch(m.notch, name)
+    }
+
+    /// The Electron app's notch helper draws the same pixels for the same
+    /// core state: the state goes through the notch protocol as JSON (what
+    /// apps/cua-spaces-desktop/src/notch sends) into the helper's surface,
+    /// and its render is compared with the SwiftUI app's reference.
+    func assertHelperNotch(_ notch: NotchModel, _ name: String) throws {
+        let core = notch.view
+        var view = core.data
+        // Electron fills a ring's estimate (the helper has no core).
+        if var a = view.activity, a.permille == nil {
+            let start = a.startedAt ?? Int64(Date().timeIntervalSince1970 * 1000)
+            a.permille = appNotchEstimatedProgress(elapsedMs: Int64(Date().timeIntervalSince1970 * 1000) - start,
+                                                   estimateMs: a.estimateMs)
+            view.activity = a
+        }
+        let layout = appNotchLayout(screen: NotchGeometry.fallbackScreen.ffi, prompt: NotchController.needsRow(core)).data
+        var icons: [String: NotchData.OsIcon] = [:]
+        for t in view.tiles { icons[t.symbol] = NotchModel.osIcon(t.symbol) }
+        let state = HelperStateLine(view: view, query: notch.state.query, layout: layout, shown: true,
+                                    dragging: notch.state.drag.phase != .idle, icons: icons,
+                                    highlight: notch.highlight.map(Self.raw))
+        let hello = HelperHelloLine(motion: NotchModel.motion.data, radii: NotchModel.radii)
+        let helper = HelperNotch(emit: { _ in })
+        helper.makesPanel = false
+        let encoder = JSONEncoder()
+        #expect(helper.receive(try HostMessage.decode(try encoder.encode(hello))))
+        #expect(helper.receive(try HostMessage.decode(try encoder.encode(state))))
+        for tile in view.tiles {
+            guard let image = notch.thumbnails[tile.id], let tiff = image.tiffRepresentation,
+                  let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { continue }
+            let line = #"{"type":"thumbnail","id":"\#(tile.id)","image":"\#(png.base64EncodedString())"}"#
+            #expect(helper.receive(try HostMessage.decode(Data(line.utf8))))
+        }
+        #expect(helper.view == view)
+        try assertSnapshot(NotchContentView(surface: helper).background(Color(white: 0.85)),
+                           name, size: helper.geometry.stage)
+    }
+
+    /// A forced look as the protocol's `highlight` text.
+    static func raw(_ h: NotchHighlight) -> String {
+        let target: String
+        switch h.control {
+        case .tile(let id): target = "tile=\(id)"
+        case .button(let b): target = b.rawValue
+        case .search: target = "search"
+        case .tab: target = "tab"
+        }
+        return h.pressed ? target + ":pressed" : target
     }
 
     @Test func notchClosed() async throws {
         try await assertNotch("notch-closed") { _ in }
+    }
+
+    /// Every Space stopped: nothing on, so no tab beside the notch.
+    @Test func notchClosedNoneOn() async throws {
+        try await assertNotch("notch-closed-none-on") { n in
+            n.spaces = n.spaces.map { s in
+                var s = s
+                if s.id != "this-mac" { s.status = .suspended }
+                return s
+            }
+        }
     }
 
     @Test func notchHover() async throws {
@@ -565,7 +212,7 @@ struct SnapshotTests {
     @Test func notchActivityProvisioning() async throws {
         try await assertNotch("notch-activity-provisioning") { n in
             var s = n.spaces.first { $0.id != "this-mac" }!
-            s.id = "cloud:starter"
+            s.id = "direct:starter"
             s.name = "Starter"
             s.status = .provisioning
             s.startedAt = Int64(Date().timeIntervalSince1970 * 1000) - 40_000
@@ -626,11 +273,11 @@ struct SnapshotTests {
     @Test func notchTileLocations() async throws {
         func row(_ id: String, _ name: String, _ os: AppSpaceOs, _ osName: String, provider: String,
                  host: String? = nil, hostName: String? = nil) -> AppSpaceRow {
-            AppSpaceRow(id: id, name: name, provider: provider, spacesdVersion: "0.4.0",
+            AppSpaceRow(id: id, name: name, displayName: nil, provider: provider, spacesdVersion: "0.4.0",
                         features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z",
                         os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
                         kind: nil, arch: "arm64", reachable: true, error: nil, host: host, hostName: hostName,
-                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             row("local:dev", "Dev box", .linux, "Ubuntu", provider: "local"),
@@ -649,9 +296,10 @@ struct SnapshotTests {
         #expect(places["relay:m1/studio"] == "Mac mini")
         #expect(places["relay:m2/ci"] == "Dillon's Mac Studio in the Back Office Rack 3")
         let c = NotchController(model: m.notch)
-        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen, prompt: NotchController.needsRow(m.notch.view)))
-        try assertSnapshot(NotchContentView(model: m.notch, controller: c).background(Color(white: 0.85)),
+        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen.ffi, prompt: NotchController.needsRow(m.notch.view)))
+        try assertSnapshot(NotchContentView(surface: c).background(Color(white: 0.85)),
                            "notch-tile-locations", size: c.geometry.stage)
+        try assertHelperNotch(m.notch, "notch-tile-locations")
     }
 
     @Test func notchButtonPressed() async throws {
@@ -674,21 +322,6 @@ struct SnapshotTests {
 
     @Test func notchTabPressed() async throws {
         try await assertNotch("notch-tab-pressed") { $0.highlight = NotchHighlight(.tab, pressed: true) }
-    }
-
-    /// The host form inside onboarding: its Back and Set up take the
-    /// bottom corners like every other page.
-    @Test func onboardingHostForm() async throws {
-        let o = OnboardingModel(statePath: nil, host: FixtureHost(), agentSetup: FixtureAgentSetup())
-        // The page dots as recorded (the Cua Volume experiment on).
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)))
-        o.send(.start)
-        o.send(.signinDone)
-        o.finishAgents(skipped: true)
-        o.send(.presentationDone)
-        o.send(.driveContinue)
-        o.host.openForm()
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-host-form", size: CGSize(width: 820, height: 560))
     }
 
     // MARK: - Harness
@@ -758,4 +391,24 @@ struct SnapshotTests {
         }
         return total == 0 ? 0 : Double(differing) / Double(total)
     }
+}
+
+/// The `hello` line Electron sends.
+struct HelperHelloLine: Encodable {
+    var type = "hello"
+    var v = NotchProtocol.version
+    var motion: NotchData.Motion
+    var radii: NotchData.RadiiPair
+}
+
+/// The `state` line Electron sends.
+struct HelperStateLine: Encodable {
+    var type = "state"
+    var view: NotchData.View
+    var query: String
+    var layout: NotchData.Layout
+    var shown: Bool
+    var dragging: Bool
+    var icons: [String: NotchData.OsIcon]
+    var highlight: String?
 }

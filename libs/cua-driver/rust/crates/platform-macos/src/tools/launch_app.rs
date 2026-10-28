@@ -16,7 +16,8 @@ fn def() -> &'static ToolDef {
         description:
             "Launch a macOS app in the background — the target does NOT come to the foreground.\n\n\
              Provide either `bundle_id` (preferred — unambiguous, e.g. `com.apple.calculator`) \
-             or `name` (e.g. \"Calculator\"). If both are given, bundle_id wins.\n\n\
+             or `name` (e.g. \"Calculator\", or the absolute `.app` path from `list_apps` \
+             `launch_path`). If both are given, bundle_id wins.\n\n\
              Optional `urls` are handed to the app as open targets — for Finder, pass a folder \
              path to open a backgrounded Finder window there.\n\n\
              Browser DevTools setup belongs to `browser_prepare`, which can prove that a \
@@ -49,7 +50,7 @@ fn def() -> &'static ToolDef {
                 },
                 "name": {
                     "type": "string",
-                    "description": "App display name. Used only when bundle_id is absent."
+                    "description": "App display name, or absolute path to a .app bundle (e.g. launch_path from list_apps). Used only when bundle_id is absent."
                 },
                 "urls": {
                     "type": "array",
@@ -87,6 +88,8 @@ impl Tool for LaunchAppTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        crate::window_change_detector::end_tail();
+        crate::window_change_detector::note_intentional_activation();
         let bundle_id = args.opt_str("bundle_id");
         let name = args.opt_str("name");
         let mut response_bundle_id = bundle_id.clone();
@@ -512,15 +515,11 @@ fn protected_host_launch_refusal() -> ToolResult {
 
 // ── Blocking helpers ──────────────────────────────────────────────────────────
 
-/// Poll for the pid's layer-0 windows, retrying up to 5x100ms to absorb
-/// LaunchServices → WindowServer latency (mirrors the Swift reference).
 fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
     for attempt in 0..5 {
-        let mut found: Vec<_> = crate::windows::all_windows()
-            .into_iter()
-            .filter(|w| w.pid == pid && w.layer == 0)
-            .filter(|w| w.bounds.width > 1.0 && w.bounds.height > 1.0)
-            .collect();
+        let mut found = crate::windows::pid_windows_with_space_snapshot(pid, false).windows;
+        found.retain(|w| w.bounds.width > 1.0 && w.bounds.height > 1.0);
+        crate::windows::prefer_layer0(&mut found);
         if !found.is_empty() {
             rank_launch_windows(&mut found);
             return found;

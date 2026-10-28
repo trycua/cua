@@ -3,7 +3,7 @@
 //! polls, results appended to `$CUA_E2E_RESULTS/rust.jsonl`.
 //!
 //! The SDK is used exactly as a Rust application would: the `cua-sdk`
-//! crate's exported API (`Cua`, `Sandboxes`, `SpacesdClient`, `Fleet`, ...).
+//! crate's exported API (`Cua`, `Sandboxes`, `SpacesdClient`, ...).
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 pub use cua_sdk::{self as cua, CuaError};
 use cua_sdk::{
-    Cua, CuaConfig, SpacesdClient, SpacesdCommand, FleetPoolSpec, FleetSettings, ReadinessProbe, SandboxCreateOptions,
+    Cua, CuaConfig, ReadinessProbe, ReplayMode, SandboxCreateOptions, SpacesdClient, SpacesdCommand,
 };
 
 pub type Res<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -57,12 +57,8 @@ pub fn host_arch() -> &'static str {
 }
 
 pub fn desktop_image() -> String {
-    std::env::var("CUA_E2E_DESKTOP_IMAGE").unwrap_or_else(|_| {
-        format!(
-            "cua-e2e-local/linux:docker-local-{}",
-            host_arch()
-        )
-    })
+    std::env::var("CUA_E2E_DESKTOP_IMAGE")
+        .unwrap_or_else(|_| format!("cua-e2e-local/linux:docker-local-{}", host_arch()))
 }
 
 pub fn plain_image(n: &str) -> String {
@@ -89,10 +85,6 @@ pub fn disk_path(image: &str) -> PathBuf {
     })
 }
 
-pub const LEGACY_FLEET_ROOTFS: &str =
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81";
-pub const LEGACY_FLEET_IMAGE: &str = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d";
-
 fn binary(var: &str, exe: &str) -> Option<PathBuf> {
     if let Ok(p) = std::env::var(var) {
         return Some(p.into());
@@ -107,22 +99,35 @@ fn flag(v: &str) -> bool {
     std::env::var(v).map(|x| x == "1").unwrap_or(false)
 }
 
-/// Fleet pools have no env/secret field yet: a gVisor pod of the spacesd
-/// image gets its token through an entrypoint override (the image reads
-/// /etc/cua/env-token). KubeVirt containerDisk guests have no such hook.
-pub const KUBEVIRT_ENV_SKIP: &str = "KubeVirt spacesd lane needs a per-claim secret field (cloud PR): \
-     no way to deliver the env token to a containerDisk guest yet";
+/// Cua Cloud has ended: every cloud create fails with this message
+/// (`CLOUD_ENDED` in cua-sandbox-core).
+pub const CLOUD_ENDED: &str = "Cua Cloud has ended";
 
-/// Pod command that installs `token` as the spacesd token, then runs the
-/// image's entrypoint.
-pub fn env_token_command(token: &str) -> Vec<String> {
-    vec![
-        "/bin/sh".into(),
-        "-c".into(),
-        format!(
-            "mkdir -p /etc/cua && printf %s {token} >/etc/cua/env-token && exec /opt/cua/desktop/entrypoint.sh"
-        ),
-    ]
+pub fn is_cloud_ended(e: &CuaError) -> bool {
+    matches!(e, CuaError::Unsupported(m) if m.contains(CLOUD_ENDED))
+}
+
+/// A cloud create (`on: "cloud"`, shaped further by `shape`) fails with the
+/// one `Unsupported` message; nothing is created.
+pub async fn assert_cloud_ended(
+    c: &Arc<Cua>,
+    shape: impl FnOnce(&mut SandboxCreateOptions),
+) -> Res {
+    let mut o = opts("cloud");
+    o.image = "registry.test/cua-e2e:fake".into();
+    shape(&mut o);
+    match c.sandboxes().create(o).await {
+        Err(e) => assert!(is_cloud_ended(&e), "{e}"),
+        Ok(_) => panic!("a cloud create must fail: Cua Cloud has ended"),
+    }
+    assert!(
+        !c.sandboxes()
+            .list(None)
+            .await?
+            .iter()
+            .any(|s| s.location == "cloud")
+    );
+    Ok(())
 }
 
 /// `None` when `lane` can run here, else the skip reason.
@@ -131,25 +136,14 @@ pub fn lane_enabled(lane: &str) -> Option<String> {
         "hermetic" => binary("CUA_TEST_FIXTURES", "cua-test-fixtures")
             .is_none()
             .then(|| "cua-test-fixtures is not built".into()),
-        "container" => (!flag("CUA_E2E_CONTAINER")).then(|| "set CUA_E2E_CONTAINER=1 for the container lane".into()),
+        "container" => (!flag("CUA_E2E_CONTAINER"))
+            .then(|| "set CUA_E2E_CONTAINER=1 for the container lane".into()),
         "qemu" => (!flag("CUA_E2E_QEMU")).then(|| "set CUA_E2E_QEMU=1 for the QEMU lane".into()),
         "lume" => (!flag("CUA_E2E_LUME")).then(|| "set CUA_E2E_LUME=1 for the Lume lane".into()),
-        "fleet" => {
-            if !flag("CUA_E2E_FLEET") {
-                Some("set CUA_E2E_FLEET=1 for live Fleet".into())
-            } else if std::env::var("FLEETS_TOKEN").is_err() && std::env::var("CUA_CLIENT_ID").is_err() {
-                Some("no Fleet credentials".into())
-            } else {
-                None
-            }
-        }
-        "fleet-env" => lane_enabled("fleet").or_else(|| {
-            std::env::var("CUA_E2E_FLEET_ENV_IMAGE").is_err().then(|| {
-                "CUA_E2E_FLEET_ENV_IMAGE is unset: no linux (spacesd) image in a registry Fleet can pull".into()
-            })
+        "conformance" => (!flag("CUA_E2E_CONFORMANCE") || !flag("CUA_E2E_CONTAINER")).then(|| {
+            "set CUA_E2E_CONTAINER=1 CUA_E2E_CONFORMANCE=1 to run the spacesd conformance suite"
+                .into()
         }),
-        "conformance" => (!flag("CUA_E2E_CONFORMANCE") || !flag("CUA_E2E_CONTAINER"))
-            .then(|| "set CUA_E2E_CONTAINER=1 CUA_E2E_CONFORMANCE=1 to run the spacesd conformance suite".into()),
         other => panic!("unknown lane {other}"),
     }
 }
@@ -211,7 +205,7 @@ pub async fn e2e<F, Fut>(
     // Lanes that start a local container or VM run one at a time even when
     // the harness uses several test threads: two desktops booting at once
     // double the host's memory footprint (see AGENT_BRIEF memory rules).
-    // Fleet and hermetic lanes stay parallel.
+    // Hermetic lanes stay parallel.
     static LOCAL_RUNTIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _local = if matches!(lane, "container" | "qemu" | "lume" | "conformance") {
         Some(LOCAL_RUNTIME.lock().await)
@@ -271,27 +265,6 @@ pub fn tmp_dir(tag: &str) -> PathBuf {
 pub fn embedded_local() -> Arc<Cua> {
     Cua::embedded(CuaConfig {
         state_dir: Some(tmp_dir("state").display().to_string()),
-        fleet: None,
-        fleet_from_env: false,
-        env_probe_timeout_ms: None,
-        spaces_home: Some(tmp_dir("spaces").display().to_string()),
-        ..Default::default()
-    })
-    .unwrap()
-}
-
-pub fn embedded_fleet(fake: Option<(&str, &str)>) -> Arc<Cua> {
-    Cua::embedded(CuaConfig {
-        state_dir: Some(tmp_dir("state").display().to_string()),
-        fleet: fake.map(|(base, token)| FleetSettings {
-            base_url: Some(base.into()),
-            token_url: None,
-            client_id: None,
-            client_secret: None,
-            token: Some(token.into()),
-        }),
-        fleet_from_env: fake.is_none(),
-        env_probe_timeout_ms: None,
         spaces_home: Some(tmp_dir("spaces").display().to_string()),
         ..Default::default()
     })
@@ -301,49 +274,7 @@ pub fn embedded_fleet(fake: Option<(&str, &str)>) -> Arc<Cua> {
 pub fn opts(on: &str) -> SandboxCreateOptions {
     SandboxCreateOptions {
         on: Some(on.into()),
-        kind: None,
-        runtime: None,
-        image: String::new(),
-        name: None,
-        token: None,
-        pool: None,
-        os: None,
-        cpus: None,
-        memory_mb: None,
-        ports: vec![],
-        services: HashMap::new(),
-        wait_for: vec![],
-        ready_timeout_ms: None,
-        env: HashMap::new(),
-        fleet_replicas: None,
-        fleet_ttl_seconds: None,
-        warm: None,
-        max_pool_size: None,
-        command: None,
-        cloud: None,
-        sidecars: vec![],
-        registry_secret: None,
-        build: None,
-        network: None,
-        overlays: vec![],
-        keep_on_failure: false,
-        gpu: None,
-    }
-}
-
-pub fn pool_spec(name: &str, image: &str) -> FleetPoolSpec {
-    FleetPoolSpec {
-        name: name.into(),
-        image: image.into(),
-        runtime: None,
-        replicas: None,
-        cpu: None,
-        memory_mb: None,
-        services: HashMap::new(),
-        readiness_tcp_port: None,
-        efi: false,
-        command: None,
-        ttl_seconds_after_created: None,
+        ..Default::default()
     }
 }
 
@@ -367,6 +298,10 @@ pub fn cmd(program: &str, args: &[&str]) -> SpacesdCommand {
         tag: None,
         stdin: false,
         pty: None,
+        request_id: None,
+        epoch: None,
+        kill_on_disconnect: false,
+        scrollback_bytes: None,
     }
 }
 
@@ -532,8 +467,6 @@ impl Drop for DriverContainer {
 pub struct Fixtures {
     pub env_url: String,
     pub env_token: String,
-    pub fleet_base_url: String,
-    pub fleet_token: String,
     child: std::process::Child,
 }
 
@@ -559,8 +492,6 @@ impl Fixtures {
         Ok(Fixtures {
             env_url: s("env_url"),
             env_token: s("env_token"),
-            fleet_base_url: s("fleet_base_url"),
-            fleet_token: s("fleet_token"),
             child,
         })
     }
@@ -626,6 +557,113 @@ impl Drop for Daemon {
     }
 }
 
+// ---------------------------------------------------------------- cua share
+
+pub const SHARE_MACHINE: &str = "0123456789abcdef0123456789abcdef";
+
+/// A real `cua daemon` that is a signed-in relay host, with the relay and the
+/// host's cua-spacesd stood in by fixtures/share_relay.py (the daemon's own
+/// side is not mocked). The relay's owner token is `owner`, another account's
+/// `other`; no token is anonymous.
+pub struct ShareDaemon {
+    pub socket: PathBuf,
+    pub relay_url: String,
+    home: PathBuf,
+    relay: std::process::Child,
+    daemon: std::process::Child,
+}
+
+impl ShareDaemon {
+    pub fn start() -> Res<Self> {
+        let bin = binary("CUA_CLI", "cua").ok_or("the cua CLI is not built")?;
+        let home = PathBuf::from(format!("/tmp/cua-share-{}-{}", run_id(), hex(3)));
+        std::fs::create_dir_all(home.join("host"))?;
+        std::fs::write(
+            home.join("credentials.json"),
+            r#"{"access_token":"owner","refresh_token":null,"expires_at":"2099-01-01T00:00:00Z","token_type":"Bearer"}"#,
+        )?;
+        let mut relay = Command::new("python3")
+            .arg(repo().join("tests/e2e/cua-sdk/fixtures/share_relay.py"))
+            .arg("--gateway")
+            .arg(home.join("share/gateway.sock"))
+            .args(["--machine-id", SHARE_MACHINE])
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut line = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(relay.stdout.take().ok_or("no relay stdout")?),
+            &mut line,
+        )?;
+        let relay_url = serde_json::from_str::<serde_json::Value>(&line)?["url"]
+            .as_str()
+            .ok_or("share_relay.py printed no url")?
+            .to_string();
+        std::fs::write(
+            home.join("host/config.json"),
+            serde_json::json!({"mode": "relay", "relay_url": relay_url, "name": "share-e2e",
+                "machine_id": SHARE_MACHINE, "runner": "process", "driver_bin": "/bin/true",
+                "share_desktop": false})
+            .to_string(),
+        )?;
+        std::fs::write(
+            home.join("host/host.json"),
+            r#"{"owner":"acct-owner","owner_email":"owner@example.com"}"#,
+        )?;
+        let socket = home.join("cua.sock");
+        let daemon = Command::new(bin)
+            .args(["daemon", "start", "--foreground", "--socket"])
+            .arg(&socket)
+            .env("CUA_HOME", &home)
+            .env("CUA_CREDENTIAL_STORE", "file")
+            .env("CUA_RELAY_URL", &relay_url)
+            .env("CUA_TELEMETRY", "0")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let me = ShareDaemon {
+            socket: socket.clone(),
+            relay_url,
+            home: home.clone(),
+            relay,
+            daemon,
+        };
+        for _ in 0..150 {
+            if socket.exists() && home.join("share/gateway.sock").exists() {
+                return Ok(me);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Err("daemon did not start".into())
+    }
+
+    pub fn client(&self) -> Arc<Cua> {
+        Cua::connect(Some(self.socket.display().to_string()), None).unwrap()
+    }
+
+    /// GET `url` with an optional bearer: (status, body).
+    pub fn get(&self, url: &str, bearer: Option<&str>) -> Res<(u16, String)> {
+        let rest = url.strip_prefix("http://").ok_or("not an http URL")?;
+        let (addr, path) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i..]),
+            None => (rest, "/"),
+        };
+        let auth = bearer.map(|b| format!("Bearer {b}"));
+        let headers: Vec<(&str, &str)> = auth.iter().map(|a| ("authorization", a.as_str())).collect();
+        http_request(addr, "GET", path, &headers, "")
+    }
+}
+
+impl Drop for ShareDaemon {
+    fn drop(&mut self) {
+        let _ = self.daemon.kill();
+        let _ = self.daemon.wait();
+        let _ = self.relay.kill();
+        let _ = self.relay.wait();
+        let _ = std::fs::remove_dir_all(&self.home);
+    }
+}
+
 // ---------------------------------------------------------------- env smoke
 
 pub fn is_png(b: &[u8]) -> bool {
@@ -648,17 +686,33 @@ pub async fn env_smoke(env: &SpacesdClient, desktop: bool, mock: bool) -> Res<se
     p.write_stdin(b"xyz".to_vec()).await?;
     p.close_stdin().await?;
     assert_eq!(p.wait().await?.stdout, b"xyz");
+    // kill_on_disconnect: letting go of the starting stream ends the process.
+    let mut c = cmd("cat", &[]);
+    c.stdin = true;
+    c.kill_on_disconnect = true;
+    c.tag = Some(format!("kod-rs-{}", run_id()));
+    let p = env.spawn(c.clone()).await?;
+    p.detach().await;
+    let ended = env
+        .attach(None, c.tag.clone(), ReplayMode::None)
+        .await?
+        .wait()
+        .await?;
+    assert!(
+        !ended.exit.success,
+        "kill_on_disconnect left it running: {ended:?}"
+    );
     let blob: Vec<u8> = (0..(1usize << 20)).map(|i| (i % 251) as u8).collect();
     let path = format!("/tmp/cua-e2e-{}/blob-rs.bin", run_id());
     let up = env.upload(path.clone(), blob.clone(), None).await?;
     assert_eq!(up.size, blob.len() as u64);
-    assert!(env.download(path).await? == blob);
+    assert!(env.download(path, None).await? == blob);
     assert!(matches!(
-        env.download("/definitely/not/here".into()).await,
+        env.download("/definitely/not/here".into(), None).await,
         Err(CuaError::NotFound(_))
     ));
     let health: serde_json::Value = serde_json::from_str(
-        &env.call_json("SystemService/Health".into(), "{}".into())
+        &env.call_json("SystemService/Health".into(), "{}".into(), None)
             .await?,
     )?;
     let mut keys: Vec<String> = health
@@ -694,7 +748,7 @@ pub async fn sh_ok(env: &SpacesdClient, line: &str) -> Res<String> {
 
 pub async fn fixture_log(env: &SpacesdClient, fixture: &str) -> Res<Vec<serde_json::Value>> {
     match env
-        .download(format!("/tmp/cua-fixtures/{fixture}.jsonl"))
+        .download(format!("/tmp/cua-fixtures/{fixture}.jsonl"), None)
         .await
     {
         Ok(b) => Ok(String::from_utf8_lossy(&b)

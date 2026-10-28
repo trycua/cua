@@ -1,25 +1,23 @@
 ---
 name: cua-sandboxes
-description: Create, use and clean up cua sandboxes (disposable Linux or macOS computers) locally or in the Cua cloud with the `cua` CLI or the cua SDK, and browse the web inside one. Use when a task needs an isolated machine to run code, test an app, drive a desktop GUI, browse or test a website, fill a web form, take a web page screenshot, or reproduce something without touching the user's own computer.
+description: Create, use and clean up cua sandboxes (disposable Linux or macOS computers) on this computer with the `cua` CLI or the cua SDK, and browse the web inside one. Use when a task needs an isolated machine to run code, test an app, drive a desktop GUI, browse or test a website, fill a web form, take a web page screenshot, or reproduce something without touching the user's own computer.
 ---
 
 # cua sandboxes
 
-A sandbox is a disposable computer: a container or VM on this machine or in
-the Cua cloud. The `cua` CLI and the cua SDK (Python, TypeScript, Swift,
-Kotlin, Rust) share one runtime and one list of sandboxes.
+A sandbox is a disposable computer: a container or VM on this machine. The
+`cua` CLI and the cua SDK (Python, TypeScript, Swift, Kotlin, Rust) share one
+runtime and one list of sandboxes.
 
 ## Before you start
 
 ```bash
 cua --version            # the Rust cua CLI
-cua auth status          # the cloud needs `cua auth login` (or CUA_CLIENT_ID/CUA_CLIENT_SECRET)
 cua config get default.on   # where sandboxes run without --on (local unless changed)
 cua runtime doctor       # local runtimes (containers, gVisor, QEMU, Lume); read-only
 ```
 
-Local sandboxes need no account. Cloud sandboxes are metered: always delete
-them when done.
+Local sandboxes need no account. Delete them when you are done.
 
 ## Create
 
@@ -27,20 +25,18 @@ them when done.
 cua sb create linux --name dev                 # local (default): a gVisor container
 cua sb create linux --kind vm --name dev       # local Linux VM (QEMU)
 cua sb create macos --name mac                 # local macOS VM (Apple silicon, Lume)
-cua sb create linux --on cloud --name dev      # the Cua cloud
-cua sb create ghcr.io/org/image:tag --name x   # any OCI image, local or --on cloud
+cua sb create ghcr.io/org/image:tag --name x   # any OCI image
 cua sb create --on direct:127.0.0.1:3211 --token TOKEN --name mine   # an existing machine running cua-spacesd
 ```
 
-`--on` is where (`local`, `cloud`, `direct:<addr>`), `--kind` what
-(`auto`, `container`, `vm`), `--runtime` which engine (`auto`; local `gvisor`,
-`runc`, `qemu`, `lume`; cloud `gvisor`, `kubevirt`). An impossible combination
+`--on` is where (`local`, `direct:<addr>`), `--kind` what
+(`auto`, `container`, `vm`), `--runtime` which engine (`auto`, `gvisor`,
+`runc`, `qemu`, `lume`). An impossible combination
 fails with `invalid placement` and lists the valid values. Local
 runtimes are set up on first use (`cua runtime setup` does it explicitly).
 Omit `--name` for a generated name. `cua sb ls` prints each sandbox's ref
-(`local:dev`, `cloud:dev`, `direct:host:port`); every NAME argument takes a
-ref or a bare name that is unique across locations (`--local` / `--cloud`
-narrow it). Add `--json` to any command for
+(`local:dev`, `direct:host:port`); every NAME argument takes a
+ref or a bare name that is unique across locations (`--local` narrows it). Add `--json` to any command for
 machine-readable output. `exec`, `shell`, `cp`, screenshots and GUI control
 go through cua-spacesd, so use an image that ships it (the `linux` alias
 does). Plain images still get lifecycle, `logs` and `port-forward`.
@@ -48,7 +44,7 @@ does). Plain images still get lifecycle, `logs` and `port-forward`.
 ## Use
 
 ```bash
-cua sb ls                          # every location (--local or --cloud filters)
+cua sb ls                          # every location (--local filters)
 cua sb exec dev -- uname -a        # run a command
 cua sb shell dev                   # interactive shell
 cua sb screenshot dev              # save a screenshot
@@ -68,7 +64,6 @@ cua do click 400 300
 
 ```bash
 cua sb rm dev --force              # delete
-cua fleet pools gc                 # remove idle auto-managed cloud capacity
 cua sb suspend dev                 # or pause it and `cua sb resume dev` later
 ```
 
@@ -108,7 +103,7 @@ is `cua` MCP tool calls; no other browser tool or setup is needed.
 1. Pick an image: `images_list {"browser": true}` (the canonical
    `ghcr.io/trycua/linux:24.04` ships Chromium).
 2. Create it with a browser: `sandbox_create {"browser": true, "url":
-   "https://example.com"}` (add `"on": "cloud"` for the cloud). It returns
+   "https://example.com"}`. It returns
    `id`, `session` and `browser.target_id` / `browser.tab_id`.
 3. Drive the browser with `call_tool {"space": <id>, "tool": <tool>,
    "arguments": {"session", "target_id", "tab_id", ...}}`:
@@ -135,5 +130,7 @@ From a terminal: `cua images ls --browser`, `cua sb create --browser
 
 - Never run destructive commands on the user's own machine when a sandbox
   would do.
-- Delete cloud sandboxes you created as soon as the task ends.
+- Delete the sandboxes you created as soon as the task ends.
 - Report the sandbox name you used so the user can inspect or remove it.
+
+Any link to something you ran (preview, dashboard, file): use `cua share`, never localhost; open it once to check it works before sending.

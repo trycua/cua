@@ -94,7 +94,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     let root = screen.root;
 
     // Get _NET_CLIENT_LIST_STACKING (or fallback to _NET_CLIENT_LIST).
-    let windows = get_window_list(&conn, root)?;
+    let (windows, source) = get_window_list(&conn, root)?;
 
     let owners = OwnerResolver::new(&conn);
     let mut result = Vec::new();
@@ -107,7 +107,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
         }
 
         let title = get_window_title(&conn, xid).unwrap_or_default();
-        if title.trim().is_empty() {
+        if !window_is_listable(source, &title) {
             continue;
         }
         let app_name = get_window_class(&conn, xid)
@@ -150,7 +150,26 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     Ok(result)
 }
 
-pub(crate) fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowSource {
+    ClientList,
+    RootChildren,
+}
+
+/// A window the window manager manages is listed even without a title: GTK
+/// message dialogs (a LibreOffice or GIMP confirmation) are untitled, and one
+/// is often the modal window holding the focus. Without a window manager the
+/// title is the only hint that a mapped root child is an application window
+/// rather than a popup or tooltip.
+fn window_is_listable(source: WindowSource, title: &str) -> bool {
+    source == WindowSource::ClientList || !title.trim().is_empty()
+}
+
+pub(crate) fn get_window_list(
+    conn: &RustConnection,
+    root: Window,
+) -> Result<(Vec<Window>, WindowSource)> {
+    let mut ewmh = false;
     let atom_names = ["_NET_CLIENT_LIST_STACKING", "_NET_CLIENT_LIST"];
     for name in &atom_names {
         if let Ok(atom) = get_atom(conn, name) {
@@ -158,22 +177,77 @@ pub(crate) fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec
                 .get_property(false, root, atom, AtomEnum::WINDOW, 0, u32::MAX)?
                 .reply()
             {
+                ewmh |= reply.type_ != x11rb::NONE;
                 let windows: Vec<Window> = reply
                     .value32()
                     .map(|iter| iter.collect())
                     .unwrap_or_default();
                 if client_list_property(reply.type_, windows.as_slice()).is_some() {
-                    return Ok(windows);
+                    return Ok((windows, WindowSource::ClientList));
                 }
             }
         }
     }
 
-    // No EWMH client-list property means there may be no window manager. In
-    // that case only expose mapped root children; unmapped Electron children
-    // can otherwise be reported before a late-starting WM reparents them.
     let tree = conn.query_tree(root)?.reply()?;
-    Ok(tree
+    let state = get_atom(conn, "WM_STATE")?;
+    let pid = get_atom(conn, "_NET_WM_PID")?;
+    let name = get_atom(conn, "_NET_WM_NAME")?;
+    let clients = walk_clients(&tree.children, 1, &mut 0, &mut |windows| {
+        let requests = windows
+            .iter()
+            .map(|&w| {
+                Ok((
+                    conn.get_window_attributes(w)?,
+                    conn.get_property(false, w, state, state, 0, 2)?,
+                    conn.query_tree(w)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        requests
+            .into_iter()
+            .zip(windows)
+            .map(|((attrs, wm, tree), &w)| {
+                let valid = attrs
+                    .reply()
+                    .ok()
+                    .is_some_and(|a| a.map_state == MapState::VIEWABLE)
+                    && wm.reply().ok().is_some_and(|r| {
+                        valid_wm_state(
+                            r.value32()
+                                .map(|v| v.collect::<Vec<_>>())
+                                .unwrap_or_default()
+                                .as_slice(),
+                        )
+                    });
+                let client = if valid {
+                    let owner = conn.get_property(false, w, pid, AtomEnum::CARDINAL, 0, 1)?;
+                    let title = conn.get_property(false, w, name, AtomEnum::ANY, 0, 1024)?;
+                    let legacy =
+                        conn.get_property(false, w, AtomEnum::WM_NAME, AtomEnum::ANY, 0, 1024)?;
+                    let owner = owner
+                        .reply()
+                        .ok()
+                        .and_then(|r| r.value32().and_then(|mut v| v.next()));
+                    let title = title
+                        .reply()
+                        .ok()
+                        .filter(|r| !r.value.is_empty())
+                        .or_else(|| legacy.reply().ok());
+                    title.is_some_and(|r| {
+                        client_has_identity(owner, &String::from_utf8_lossy(&r.value))
+                    })
+                } else {
+                    false
+                };
+                Ok((tree.reply().map(|r| r.children).unwrap_or_default(), client))
+            })
+            .collect()
+    })?;
+    if let Some(clients) = clients.filter(|clients| ewmh || !clients.is_empty()) {
+        return Ok((clients, WindowSource::ClientList));
+    }
+    let windows = tree
         .children
         .into_iter()
         .filter(|window| {
@@ -183,11 +257,46 @@ pub(crate) fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec
                 .map(|attributes| fallback_window_is_listable(attributes.map_state))
                 .unwrap_or(false)
         })
-        .collect())
+        .collect();
+    Ok((windows, WindowSource::RootChildren))
 }
 
 fn client_list_property(property_type: Atom, windows: &[Window]) -> Option<&[Window]> {
-    (property_type != x11rb::NONE).then_some(windows)
+    (property_type != x11rb::NONE && !windows.is_empty()).then_some(windows)
+}
+
+fn client_has_identity(pid: Option<u32>, title: &str) -> bool {
+    pid.is_some() && !title.trim_end_matches('\0').trim().is_empty()
+}
+
+fn valid_wm_state(values: &[u32]) -> bool {
+    values.len() >= 2 && matches!(values[0], 1 | 3)
+}
+
+fn walk_clients(
+    windows: &[Window],
+    depth: usize,
+    queued: &mut usize,
+    lookup: &mut impl FnMut(&[Window]) -> Result<Vec<(Vec<Window>, bool)>>,
+) -> Result<Option<Vec<Window>>> {
+    if windows.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    if depth > 8 || windows.len() > 1024 - *queued {
+        return Ok(None);
+    }
+    *queued += windows.len();
+    let mut clients = Vec::new();
+    for (&window, (children, client)) in windows.iter().zip(lookup(windows)?) {
+        if client {
+            clients.push(window);
+        } else if let Some(found) = walk_clients(&children, depth + 1, queued, lookup)? {
+            clients.extend(found);
+        } else {
+            return Ok(None);
+        }
+    }
+    Ok(Some(clients))
 }
 
 fn fallback_window_is_listable(map_state: MapState) -> bool {
@@ -504,6 +613,28 @@ pub fn window_is_modal(xid: u64) -> bool {
         .is_some_and(|atoms| atoms.contains(&modal_atom))
 }
 
+/// `_NET_WM_WINDOW_TYPE` carries `_NET_WM_WINDOW_TYPE_SPLASH`: a startup
+/// screen, often drawn by a launcher process that never owns the app window.
+pub fn window_is_splash(xid: u64) -> bool {
+    let Ok(xid) = u32::try_from(xid) else {
+        return false;
+    };
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return false;
+    };
+    let (Ok(type_atom), Ok(splash_atom)) = (
+        get_atom(&conn, "_NET_WM_WINDOW_TYPE"),
+        get_atom(&conn, "_NET_WM_WINDOW_TYPE_SPLASH"),
+    ) else {
+        return false;
+    };
+    conn.get_property(false, xid, type_atom, AtomEnum::ATOM, 0, 64)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| reply.value32().map(|atoms| atoms.collect::<Vec<_>>()))
+        .is_some_and(|atoms| atoms.contains(&splash_atom))
+}
+
 /// True while `xid` exists on the server and is viewable.
 pub fn window_is_viewable(xid: u64) -> bool {
     window_info(xid).is_some_and(|w| w.is_on_screen)
@@ -705,8 +836,101 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_present_client_list_does_not_fall_back_to_query_tree() {
-        assert_eq!(client_list_property(1, &[]), Some([].as_slice()));
+    fn empty_present_client_list_allows_tree_fallback() {
+        assert_eq!(client_list_property(1, &[]), None);
+    }
+
+    #[test]
+    fn framed_clients_are_depth_first_and_stop_at_clients() {
+        let found = walk_clients(&[1, 2], 1, &mut 0, &mut |ids| {
+            Ok(ids
+                .iter()
+                .map(|id| match id {
+                    1 => (vec![3], false),
+                    3 => (vec![4], false),
+                    4 => (vec![99], true),
+                    2 => (vec![], true),
+                    _ => panic!("rendering descendant visited"),
+                })
+                .collect())
+        })
+        .unwrap();
+        assert_eq!(found, Some(vec![4, 2]));
+        assert_eq!(client_list_property(1, &[7]), Some([7].as_slice()));
+    }
+
+    #[test]
+    fn traversal_exhaustion_discards_partial_clients() {
+        let mut queued = 0;
+        assert_eq!(
+            walk_clients(&vec![7; 1024], 1, &mut queued, &mut |ids| {
+                Ok(ids.iter().map(|_| (vec![], true)).collect())
+            })
+            .unwrap()
+            .unwrap()
+            .len(),
+            1024
+        );
+        assert_eq!(queued, 1024);
+        let mut calls = 0;
+        assert!(walk_clients(&vec![7; 1025], 1, &mut 0, &mut |_| {
+            calls += 1;
+            Ok(vec![])
+        })
+        .unwrap()
+        .is_none());
+        assert_eq!(calls, 0);
+        for children in [vec![1; 1025], vec![1]] {
+            let mut calls = 0;
+            let result = walk_clients(&children, 1, &mut 0, &mut |ids| {
+                calls += 1;
+                Ok(ids.iter().map(|_| (vec![1], false)).collect())
+            })
+            .unwrap();
+            assert_eq!(result, None);
+            assert!(calls <= 8);
+        }
+        assert_eq!(
+            walk_clients(&[1], 1, &mut 0, &mut |_| Ok(vec![(vec![], false)])).unwrap(),
+            Some(vec![])
+        );
+    }
+
+    #[test]
+    fn no_wm_budget_exhaustion_keeps_complete_root_children() {
+        let roots = vec![1, 2];
+        let clients = walk_clients(&roots, 1, &mut 0, &mut |ids| {
+            Ok(ids.iter().map(|_| (vec![3; 1024], false)).collect())
+        })
+        .unwrap();
+        assert!(clients.is_none());
+        let selected = clients
+            .filter(|clients| !clients.is_empty())
+            .unwrap_or_else(|| {
+                roots
+                    .iter()
+                    .copied()
+                    .filter(|_| fallback_window_is_listable(MapState::VIEWABLE))
+                    .collect()
+            });
+        assert_eq!(selected, roots);
+    }
+
+    #[test]
+    fn clients_require_pid_and_nonblank_title() {
+        assert!(!client_has_identity(None, "browser"));
+        assert!(!client_has_identity(Some(42), ""));
+        assert!(!client_has_identity(Some(42), " \t"));
+        assert!(client_has_identity(Some(42), "browser"));
+    }
+
+    #[test]
+    fn only_normal_and_iconic_wm_states_are_clients() {
+        for state in [vec![], vec![1], vec![0, 0], vec![2, 0]] {
+            assert!(!valid_wm_state(&state));
+        }
+        assert!(valid_wm_state(&[1, 0]));
+        assert!(valid_wm_state(&[3, 0]));
     }
 
     #[test]
@@ -719,6 +943,17 @@ mod tests {
         assert!(window_owner_matches(Some(42), 42));
         assert!(!window_owner_matches(Some(43), 42));
         assert!(!window_owner_matches(None, 42));
+    }
+
+    #[test]
+    fn untitled_windows_are_listed_only_when_the_window_manager_manages_them() {
+        assert!(window_is_listable(WindowSource::ClientList, ""));
+        assert!(window_is_listable(WindowSource::ClientList, "Save Changes"));
+        assert!(window_is_listable(
+            WindowSource::RootChildren,
+            "Save Changes"
+        ));
+        assert!(!window_is_listable(WindowSource::RootChildren, " "));
     }
 
     #[test]

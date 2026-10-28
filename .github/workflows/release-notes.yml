@@ -1,0 +1,92 @@
+name: "Release: Changelog and contributor notes"
+
+# Cua Driver and Lume render their GitHub release body in their own CD release
+# job (release_attribution.py collect + render): a PR-first changelog and a
+# Contributors section whose @-mentions give the release GitHub's contributor
+# avatars. This gives every other Release Please component the same body when
+# Release Please pushes its stable tag. The component's own CD workflow still
+# builds, uploads and publishes; this job only replaces the release body, so it
+# works on a draft or an already published release. Prerelease tags (a Cua
+# Spaces beta) keep the notes their CD workflow writes.
+#
+# A failure here leaves Release Please's own changelog on the release; re-run
+# the job after fixing the attribution (for example an unresolved coauthor).
+
+on:
+  push:
+    tags:
+      - "cua-spaces-v*"
+      - "cua-sdk-v*"
+      - "cua-spacesd-v*"
+      - "sandbox-v*"
+      - "agent-v*"
+      - "core-v*"
+      - "bench-v*"
+      - "bench-ui-v*"
+      - "som-v*"
+      - "sandbox-apps-v*"
+      - "npm-core-v*"
+      - "npm-playground-v*"
+      - "cuabot-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Stable Release Please tag whose notes to re-render (e.g. cua-sdk-v0.4.2)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  issues: write # the rolling unresolved-attribution issue
+  pull-requests: read
+
+concurrency:
+  group: release-notes-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+          persist-credentials: false
+
+      - name: Is this a stable tag of a component rendered here?
+        id: plan
+        run: python3 .github/scripts/release_notes.py plan --tag "$TAG"
+
+      - name: Collect PR-first release attribution and render the body
+        if: steps.plan.outputs.render == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release_notes.py render \
+            --tag "$TAG" \
+            --sha "$(git rev-parse "refs/tags/$TAG^{commit}")" \
+            --repository "${{ github.repository }}" \
+            --out-dir release-metadata
+
+      - name: Preserve release evidence
+        if: steps.plan.outputs.render == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-${{ env.TAG }}
+          path: release-metadata/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Replace the release body
+        if: steps.plan.outputs.render == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/release_notes.py apply \
+            --tag "$TAG" \
+            --repository "${{ github.repository }}" \
+            --body release-metadata/release-body.md

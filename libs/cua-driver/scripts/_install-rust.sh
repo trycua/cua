@@ -119,6 +119,8 @@ if [[ "$_cua_install_common_loaded" == "0" ]]; then
     printf 'warning: could not load _install-common.sh (on-disk + network); daemon kill skipped\n' >&2
     stop_cua_driver_daemons() { :; }
     show_cua_driver_daemon_survivors() { :; }
+    unregister_other_cua_driver_copies() { :; }
+    cua_driver_lsregister_path() { return 1; }
 fi
 
 REPO="trycua/cua"
@@ -188,6 +190,32 @@ TMP_DIR=$(mktemp -d)
 
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
+
+print_path_hint() {
+    log "WARNING: $BIN_DIR is not on PATH."
+    echo "Add it for your shell with:"
+    local run_prefix=""
+    case "${SHELL:-}" in
+        */fish)
+            printf '  fish_add_path "%s"\n' "$BIN_DIR"
+            ;;
+        */nu|*/nushell)
+            printf '  $env.PATH = ($env.PATH | prepend "%s")\n' "$BIN_DIR"
+            run_prefix="^"
+            ;;
+        *)
+            echo "POSIX-compatible shells:"
+            printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
+            ;;
+    esac
+    echo "Or run the installed binary directly:"
+    printf '  %s"%s" --version\n' "$run_prefix" "$BIN_LINK"
+}
+
+# The integer "version" of a GNOME helper metadata.json, or nothing.
+helper_metadata_version() {
+    sed -n 's/.*"version"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -n 1 || true
+}
 
 # Return the source form of an app's designated code-signing requirement.
 macos_designated_requirement() {
@@ -324,8 +352,22 @@ release_install_lock() {
 # Combine TMP_DIR cleanup with lock release in a single trap so neither
 # clobbers the other. INT/TERM also re-raise via $? so the user-visible
 # exit code reflects the signal.
+# The release archive is unpacked into $TMP_DIR, which includes a CuaDriver.app
+# that is deleted on exit. Make sure LaunchServices never keeps that dead copy:
+# a registered temp copy can later be what `open -a CuaDriver` or a permission
+# row resolves to.
+forget_staged_macos_app() {
+    [[ "$(uname -s 2>/dev/null)" == "Darwin" && -n "${SRC_APP:-}" && -d "$SRC_APP" ]] || return 0
+    local lsregister
+    lsregister="$(cua_driver_lsregister_path 2>/dev/null || true)"
+    if [[ -x "$lsregister" ]]; then
+        "$lsregister" -u "$SRC_APP" >/dev/null 2>&1 || true
+    fi
+}
+
 cleanup_on_exit() {
     restore_macos_app_backup_on_exit
+    forget_staged_macos_app
     rm -rf "$TMP_DIR" 2>/dev/null || true
     release_install_lock
 }
@@ -626,7 +668,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.34.0" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.37.0" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a macOS archive published unsigned) are
@@ -865,8 +907,8 @@ version_is_at_least() {
 # macOS — fetch the directory tarball (cua-driver-rs-vN-darwin-universal.tar.gz).
 #   The directory layout includes `CuaDriver.app/` alongside the bare
 #   binary, which we need to install into /Applications so the TCC
-#   auto-relaunch path in `cua-driver-rs mcp` can resolve
-#   `com.trycua.driver` via `open -n -g -a CuaDriver`. The
+#   auto-relaunch path in `cua-driver-rs mcp` can launch the installed
+#   `com.trycua.driver` app by its exact path. The
 #   directory variant carries the same universal binary as the
 #   bare-binary tarball, so users on both Apple Silicon and Intel
 #   get a working install from one download.
@@ -1216,7 +1258,7 @@ fi
 # $HOME_DIR/packages/releases/<v>/ + current symlink layout used on
 # Linux. Reason: /Applications/CuaDriver.app placement is the
 # anchor for both TCC attribution (cdhash + bundle id) and
-# LaunchServices' `open -a CuaDriver` discovery — symlinking the
+# LaunchServices' bundle-id discovery — symlinking the
 # .app from /Applications to a versioned dir under $HOME_DIR breaks
 # both. The asymmetry is deliberate; rollback on macOS = reinstall
 # an older release tag.
@@ -1351,8 +1393,9 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         exit 1
     fi
 
-    # Register synchronously so both `open -a CuaDriver` and `tccutil reset`
-    # resolve the replacement bundle rather than a stale LaunchServices entry.
+    # Register synchronously so both `permissions grant` (which launches the
+    # bundle by its exact path) and `tccutil reset` resolve the replacement
+    # bundle rather than a stale LaunchServices entry.
     LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
     if [[ -x "$LSREGISTER" ]] \
        && "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1; then
@@ -1391,6 +1434,10 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     rm -rf "$MACOS_APP_BACKUP" || true
     ln -sf "$APP_BINARY" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $APP_BINARY"
+    # Other copies of the app (an old release in ~/Downloads, the Trash, a
+    # benchmark folder) make macOS open the wrong app and label the permission
+    # rows with the wrong name. Forget them; their files stay where they are.
+    unregister_other_cua_driver_copies "$APP_DEST" || true
     if ! macos_reset_tcc_after_requirement_change "$REQUIREMENT_COMPATIBILITY"; then
         exit 1
     fi
@@ -1423,10 +1470,18 @@ else
 
         INSTALLED_WAYLAND_HELPER="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/winrects@cua"
         if [[ -d "$INSTALLED_WAYLAND_HELPER" ]]; then
-            cp "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json" \
-                "$SRC_WAYLAND_HELPER/winrects@cua/extension.js" \
-                "$INSTALLED_WAYLAND_HELPER/"
-            log "updated installed GNOME helper; reload the GNOME session to activate it"
+            # The helper's API is additive and shared with other apps that
+            # bundle it, so never replace a newer installed helper.
+            BUNDLED_HELPER_VERSION=$(helper_metadata_version "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json")
+            INSTALLED_HELPER_VERSION=$(helper_metadata_version "$INSTALLED_WAYLAND_HELPER/metadata.json")
+            if (( ${INSTALLED_HELPER_VERSION:-0} > ${BUNDLED_HELPER_VERSION:-0} )); then
+                log "kept installed GNOME helper v$INSTALLED_HELPER_VERSION (newer than bundled v${BUNDLED_HELPER_VERSION:-?})"
+            else
+                cp "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json" \
+                    "$SRC_WAYLAND_HELPER/winrects@cua/extension.js" \
+                    "$INSTALLED_WAYLAND_HELPER/"
+                log "updated installed GNOME helper; reload the GNOME session to activate it"
+            fi
         fi
     fi
     log "installed $VERSIONED_DIR/$BINARY_NAME (version $VERSION, target $TARGET)"
@@ -1530,21 +1585,20 @@ CUA_DRIVER_RELEASE_VERSION="$VERSION" \
 disown 2>/dev/null || true
 
 # Auto-extend PATH for users whose shell doesn't already include BIN_DIR.
-if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     SHELL_RC=""
     case "${SHELL:-}" in
         */zsh)  SHELL_RC="$HOME/.zshrc"  ;;
         */bash) SHELL_RC="$HOME/.bashrc" ;;
     esac
-    if [[ -n "$SHELL_RC" ]]; then
+    if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ -n "$SHELL_RC" ]]; then
         {
             printf '\n# Added by cua-driver-rs installer — see https://github.com/trycua/cua\n'
             printf 'export PATH="%s:$PATH"\n' "$BIN_DIR"
         } >> "$SHELL_RC"
         log "appended PATH update to $SHELL_RC — open a new shell or run \`source $SHELL_RC\`"
-    else
-        log "WARNING: $BIN_DIR is not on PATH; add it manually."
     fi
+    print_path_hint
 fi
 
 echo ""
@@ -1586,17 +1640,11 @@ else
     # Network fetch failed — print a one-line essentials fallback so the
     # user always gets enough to recover, even if hint-text fetching is
     # blocked. Skip everything else.
-    echo "Next steps: $BIN_LINK --version  |  $BIN_LINK mcp-config  |  $BIN_LINK skills install"
+    echo "Next steps: $BIN_LINK permissions grant  |  $BIN_LINK mcp-config --client <name>  |  $BIN_LINK list-tools"
     echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
 fi
 
 case "$(uname -s)" in
-    Darwin)
-        echo ""
-        echo "macOS TCC: grant Accessibility + Screen Recording on first run:"
-        echo "  open -n -g -a CuaDriver --args serve"
-        echo "  $BIN_LINK check_permissions"
-        ;;
     Linux)
         echo ""
         echo "Auto-start at logon (optional):"

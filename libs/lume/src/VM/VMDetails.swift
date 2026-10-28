@@ -52,11 +52,14 @@ struct VMDetails: Codable {
     /// several throwaway clones stay a single machine to per-machine licensing.
     let machineIdentifier: String?
     let macAddress: String?
+    /// The VM has a saved machine state (`POST /lume/vms/:name/suspend`)
+    /// that its next run resumes.
+    let savedState: Bool?
 
     enum CodingKeys: String, CodingKey {
         case name, os, cpuCount, memorySize, diskSize, display, status
         case provisioningOperation, vncUrl, ipAddress, sshAvailable, locationName, sharedDirectories
-        case networkMode, downloadProgress, machineIdentifier, macAddress
+        case networkMode, downloadProgress, machineIdentifier, macAddress, savedState
     }
 
     init(
@@ -76,7 +79,8 @@ struct VMDetails: Codable {
         networkMode: String? = nil,
         downloadProgress: Double? = nil,
         machineIdentifier: String? = nil,
-        macAddress: String? = nil
+        macAddress: String? = nil,
+        savedState: Bool? = nil
     ) {
         self.name = name
         self.os = os
@@ -95,6 +99,7 @@ struct VMDetails: Codable {
         self.downloadProgress = downloadProgress
         self.machineIdentifier = machineIdentifier
         self.macAddress = macAddress
+        self.savedState = savedState
     }
 
     // Custom encoder to always include optional fields (even when nil)
@@ -117,5 +122,6 @@ struct VMDetails: Codable {
         try container.encode(downloadProgress, forKey: .downloadProgress)
         try container.encode(machineIdentifier, forKey: .machineIdentifier)
         try container.encode(macAddress, forKey: .macAddress)
+        try container.encode(savedState ?? false, forKey: .savedState)
     }
 }

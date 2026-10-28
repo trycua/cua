@@ -1987,7 +1987,7 @@ fn replace_utf16_range(value: &str, location: usize, length: usize, body: &str) 
     Some(format!("{head}{body}{tail}"))
 }
 
-fn is_text_input_role(role: &str) -> bool {
+pub(super) fn is_text_input_role(role: &str) -> bool {
     matches!(
         role,
         "AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField"

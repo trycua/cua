@@ -681,6 +681,26 @@ fn provided_of(f: &Fixture, n: u32, memory_mb: u64, disk_gb: u32) -> ProvidedSpa
     }
 }
 
+async fn ask_bob(
+    f: &Fixture,
+    memory_mb: u64,
+    disk_gb: u32,
+    attach: pb::AttachRelayRequest,
+) -> cua_spaces::Result<pb::HostSpace> {
+    f.server
+        .create(
+            &bob(),
+            pb::CreateHostSpaceRequest {
+                image: "linux".into(),
+                memory_mb,
+                disk_gb,
+                attach: Some(attach),
+                ..Default::default()
+            },
+        )
+        .await
+}
+
 async fn configure(f: &Fixture, change: HostSettingsChange) {
     Host::new(&f.home)
         .with_service_manager(Arc::new(FakeServiceManager::default()))
@@ -707,18 +727,6 @@ async fn memory_and_disk_limits_refuse_what_does_not_fit_and_stop_nothing() {
         },
     )
     .await;
-    let ask = |memory_mb: u64, disk_gb: u32, attach: pb::AttachRelayRequest| {
-        f.server.create(
-            &bob(),
-            pb::CreateHostSpaceRequest {
-                image: "linux".into(),
-                memory_mb,
-                disk_gb,
-                attach: Some(attach),
-                ..Default::default()
-            },
-        )
-    };
     // 6 GB are given out of 8: another 4 GB does not fit, whoever asks (an
     // editor of the machine, as an agent or a child Space's overflow would).
     for (who, id) in [(bob(), "space-mem00001"), (ada(), "space-mem00002")] {
@@ -746,9 +754,14 @@ async fn memory_and_disk_limits_refuse_what_does_not_fit_and_stop_nothing() {
     assert!(f.rt.started.lock().unwrap().is_empty(), "nothing started");
     assert_eq!(f.audit().last().unwrap().0, "refused");
     // A smaller one fits exactly (6 + 2 = 8 GB), and the use says so.
-    ask(2048, 10, f.register("ada-token", "space-mem00003").await)
-        .await
-        .unwrap();
+    ask_bob(
+        &f,
+        2048,
+        10,
+        f.register("ada-token", "space-mem00003").await,
+    )
+    .await
+    .unwrap();
     let caps = f.server.get(&ada()).await.unwrap().capacity;
     let c = |r: &str| {
         caps.iter()
@@ -764,6 +777,7 @@ async fn memory_and_disk_limits_refuse_what_does_not_fit_and_stop_nothing() {
         &f,
         HostSettingsChange {
             max_disk_gb: Some(30),
+            max_memory_gb: Some(0),
             ..Default::default()
         },
     )
@@ -775,7 +789,7 @@ async fn memory_and_disk_limits_refuse_what_does_not_fit_and_stop_nothing() {
             .map(|c| (c.used, c.limit)),
         Some((50, 30))
     );
-    let e = ask(1024, 5, f.register("ada-token", "space-disk0001").await)
+    let e = ask_bob(&f, 1024, 5, f.register("ada-token", "space-disk0001").await)
         .await
         .unwrap_err();
     assert_eq!(e.tag(), "limit_exceeded", "{e}");
@@ -799,7 +813,7 @@ async fn memory_and_disk_limits_refuse_what_does_not_fit_and_stop_nothing() {
         },
     )
     .await;
-    ask(1024, 5, f.register("ada-token", "space-disk0002").await)
+    ask_bob(&f, 1024, 5, f.register("ada-token", "space-disk0002").await)
         .await
         .unwrap();
 }

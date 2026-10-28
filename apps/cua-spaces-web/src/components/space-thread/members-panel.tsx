@@ -4,7 +4,7 @@
 import { ChevronRightIcon, PanelRightCloseIcon, PanelRightOpenIcon, PictureInPicture2Icon, PlusIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import type { AgentRights, SpaceFact, StreamRow } from "@/bridge";
+import type { AgentRight, AgentRights, SpaceFact, StreamRow } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
@@ -36,6 +36,8 @@ export function MembersPanel({
   desktop,
   selected,
   onSelect,
+  streamHidden = false,
+  onToggleStream,
   onStream,
   folded,
   onFold,
@@ -56,6 +58,10 @@ export function MembersPanel({
   selected?: string | null;
   /** Shows that row in the main view. */
   onSelect?: (row: StreamRow) => void;
+  /** The stream view is hidden (only the thread shows): the selected row looks unselected. */
+  streamHidden?: boolean;
+  /** Hides the stream view, or shows it again: the selected row is the toggle. */
+  onToggleStream?: () => void;
   /** Opens that row in its own window (picture in picture where the host has it). */
   onStream: (row: StreamRow) => void;
   folded: boolean;
@@ -136,7 +142,10 @@ export function MembersPanel({
             {[...(desktop ? [desktop] : []), ...railStreams(windows, selected ?? null)].map((w) => {
               const pip = w.actions.find((a) => a.id === "pip");
               const isDesktop = w.kind === "desktop";
-              const current = isDesktop ? !selected || selected === w.id : selected === w.id;
+              // The row the stream shows; while the stream is hidden it looks unselected, so the next click obviously shows it.
+              const atRow = isDesktop ? !selected || selected === w.id : selected === w.id;
+              const current = atRow && !streamHidden;
+              const toggles = atRow && Boolean(onToggleStream);
               const name = isDesktop ? "Desktop" : (appOf(w) ?? w.label);
               return (
                 <li key={w.id} className="group/stream relative">
@@ -144,8 +153,8 @@ export function MembersPanel({
                     type="button"
                     {...(isDesktop ? { "data-stream-desktop": "" } : { "data-stream-window": w.id })}
                     aria-current={current ? "true" : undefined}
-                    title={w.help}
-                    onClick={() => (onSelect ? onSelect(w) : onStream(w))}
+                    title={toggles ? (streamHidden ? "Show stream" : "Hide stream") : w.help}
+                    onClick={() => (toggles ? onToggleStream!() : onSelect ? onSelect(w) : onStream(w))}
                     className={cn(
                       "flex h-8 w-full cursor-default items-center gap-2.5 rounded-lg pr-8 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent",
                       current && "bg-accent font-medium",
@@ -297,7 +306,7 @@ function Row({
 function ProfileRow({ person, agent, children }: { person?: RosterPerson; agent?: RosterAgent; children: ReactNode }) {
   return (
     <li>
-      <ProfileTrigger person={person} agent={agent} side="left" className="block w-full rounded-lg">
+      <ProfileTrigger person={person} agent={agent} side="left" className="block w-full rounded-lg data-[selected]:bg-accent" rowKey={person?.id}>
         {children}
       </ProfileTrigger>
     </li>
@@ -305,8 +314,19 @@ function ProfileRow({ person, agent, children }: { person?: RosterPerson; agent?
 }
 
 /** Who can task, stop and approve: the selects alone, for the agent card's Details. */
-export function RightsEditor({ agent, onSetRights }: { agent: RosterAgent; onSetRights: (name: string, rights: Partial<AgentRights>) => Promise<void> }) {
-  return <AgentRightsRows agent={agent} onSetRights={onSetRights} bare />;
+export function RightsEditor({
+  agent,
+  onSetRights,
+  people,
+  labels,
+}: {
+  agent: RosterAgent;
+  onSetRights: (name: string, rights: Partial<AgentRights>) => Promise<void>;
+  people?: readonly RosterPerson[];
+  /** The rows' words, when the page has its own ("Can give it tasks"). */
+  labels?: Partial<Record<AgentRight, string>>;
+}) {
+  return <AgentRightsRows agent={agent} onSetRights={onSetRights} people={people} labels={labels} bare />;
 }
 
 const CHOICES: readonly { value: HolderChoice; label: string }[] = [
@@ -317,7 +337,22 @@ const CHOICES: readonly { value: HolderChoice; label: string }[] = [
 
 /** Who can task, stop and approve an agent: three plain rows under its name.
  * The owner and admins change them; everyone else reads them. */
-function AgentRightsRows({ agent, onSetRights, onRemove, bare }: { agent: RosterAgent; onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>; onRemove?: () => Promise<void>; bare?: boolean }) {
+function AgentRightsRows({
+  agent,
+  onSetRights,
+  onRemove,
+  people = [],
+  labels,
+  bare,
+}: {
+  agent: RosterAgent;
+  onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>;
+  onRemove?: () => Promise<void>;
+  /** Specific people a right can go to (each its own choice). */
+  people?: readonly RosterPerson[];
+  labels?: Partial<Record<AgentRight, string>>;
+  bare?: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const remove = () => {
     if (!onRemove) return;
@@ -332,22 +367,33 @@ function AgentRightsRows({ agent, onSetRights, onRemove, bare }: { agent: Roster
   };
   return (
     <div data-agent-rights={agent.name} className={bare ? "" : "mb-1 ml-9 divide-y divide-border/60 border-y border-border/60"}>
-      {RIGHT_ROWS.map(({ right, label }) => {
+      {RIGHT_ROWS.map(({ right, label: short }) => {
+        const label = labels?.[right] ?? short;
         const value = agent.rights[right];
         const choice = holderChoice(value);
+        // One person alone, as their name; several, as a count.
+        const named = Array.isArray(value) ? (value.length === 1 ? (people.find((p) => p.id === value[0])?.label ?? null) : null) : null;
+        const solo = Array.isArray(value) && value.length === 1 && named ? `person:${value[0]}` : null;
+        const options: { value: string; label: string }[] = [
+          ...CHOICES,
+          ...people.map((p) => ({ value: `person:${p.id}`, label: p.me ? "Only you" : `Only ${p.label}` })),
+          ...(choice === "named" && !solo ? [{ value: "named", label: holdersLabel(value) }] : []),
+        ];
+        const current = solo ?? choice;
         return (
           <div key={right} data-agent-right={right} className="flex h-8 items-center justify-between gap-3 pr-1 pl-1 text-[12.5px]">
             <span className="text-muted-foreground">{label}</span>
             {onSetRights ? (
-              <Select<HolderChoice>
+              <Select<string>
                 aria-label={`${label}: ${agent.label}`}
-                value={choice}
+                value={current}
                 disabled={busy}
-                options={choice === "named" ? [...CHOICES, { value: "named", label: holdersLabel(value) }] : CHOICES}
+                options={options}
                 onValueChange={(v) => {
-                  if (v === "named" || v === choice) return;
+                  if (v === "named" || v === current) return;
+                  const next = v.startsWith("person:") ? [v.slice("person:".length)] : v;
                   setBusy(true);
-                  onSetRights(agent.name, { [right]: v }).then(
+                  onSetRights(agent.name, { [right]: next }).then(
                     () => setBusy(false),
                     (e: unknown) => {
                       setBusy(false);

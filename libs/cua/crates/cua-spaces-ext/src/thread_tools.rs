@@ -56,18 +56,37 @@ pub(crate) async fn call(
             if a.after.is_some() && a.before.is_some() {
                 return Err(Error::invalid("give `after` or `before`, not both"));
             }
+            let space = t.store().space().to_string();
             if let (Some(after), Some(ms)) = (a.after, a.follow_ms.filter(|ms| *ms > 0)) {
-                t.store()
-                    .wait_after(after, Duration::from_millis(ms))
-                    .await?;
+                // A follow also returns when an agent's live stage changed
+                // from the one the reader last saw (`live_after`).
+                match a.live_after.as_deref() {
+                    Some(seen) => {
+                        t.store()
+                            .wait_after_or(after, Duration::from_millis(ms), || {
+                                p.live_rows(&space).is_ok_and(|(key, _)| key != seen)
+                            })
+                            .await?;
+                    }
+                    None => {
+                        t.store()
+                            .wait_after(after, Duration::from_millis(ms))
+                            .await?;
+                    }
+                }
             }
-            Ok(ToolOutcome::json(&t.read(
+            let mut out = t.read(
                 a.after,
                 a.before,
                 a.limit.unwrap_or(100) as usize,
                 a.mark_read.unwrap_or(false),
                 a.with.as_deref().filter(|w| !w.is_empty()),
-            )?))
+            )?;
+            // What each agent is doing now: the thread's live rows.
+            if let Ok((key, agents)) = p.live_rows(&space) {
+                out["live"] = json!({"key": key, "agents": agents});
+            }
+            Ok(ToolOutcome::json(&out))
         }
         "thread_post" => {
             let a: i::ThreadPost = crate::args(tool, a)?;

@@ -4,7 +4,7 @@
 import { CheckIcon, FileTextIcon, ImageIcon, XIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
-import { useBridge, type TaskState, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadView } from "@/bridge";
+import { useBridge, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadView } from "@/bridge";
 import { Inlines } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { parseInline } from "@/lib/markdown";
@@ -78,9 +78,13 @@ export function ThreadView({
   const keep = useRef<number | null>(null);
   const first = items.length ? items[0]!.key : "";
   const last = items.length ? items[items.length - 1]!.key : "";
+  // Your own message just went in: the thread follows it to the end, wherever you were reading.
+  const lastItem = items.length ? items[items.length - 1]! : null;
+  const mineLast = Boolean(lastItem && "entry" in lastItem && roster.people.some((p) => p.me && p.id === lastItem.entry.author.id));
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !items.length) return;
+    if (mineLast && opened.current) atEnd.current = true;
     if (keep.current !== null) {
       el.scrollTop += el.scrollHeight - keep.current;
       keep.current = null;
@@ -100,7 +104,7 @@ export function ThreadView({
     if (atEnd.current) el.scrollTop = el.scrollHeight;
     // Follows the first and last items, not every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [first, last, items.length]);
+  }, [first, last, items.length, mineLast]);
   // The mini-player moved to (or grew at) the bottom: keep the newest entry in view above it.
   useLayoutEffect(() => {
     const el = ref.current;
@@ -194,8 +198,8 @@ export const ThreadItemView = memo(function Item({
     case "task":
       return (
         <div data-task={item.entry.seq} data-task-state={item.state}>
-          {/* An agent that failed is marked on its own reply, never on the person's message. */}
-          <Message entry={item.entry} {...m} status={item.state === "failed" ? null : <TaskChip state={item.state} />} footnote={keysLine(item.entry, roster)} />
+          {/* How the task is going is told by the chat: the live row, the agent's reply or its failure message. No chip here. */}
+          <Message entry={item.entry} {...m} footnote={keysLine(item.entry, roster)} />
           {item.replies.length || item.notes.length ? (
             <div data-task-replies="" className="pl-10">
               {[...item.notes.map((n) => ({ seq: n.entry.seq, note: n.text, entry: n.entry })), ...item.replies.map((r) => ({ seq: r.seq, note: null, entry: r }))]
@@ -206,7 +210,7 @@ export const ThreadItemView = memo(function Item({
                       {x.note}
                     </p>
                   ) : (
-                    <Message key={x.seq} entry={x.entry} {...m} nested status={x.entry.failure ? <TaskChip state="failed" /> : undefined} task={{ text: item.entry.text, onRetry }} />
+                    <Message key={x.seq} entry={x.entry} {...m} nested task={{ text: item.entry.text, onRetry }} />
                   ),
                 )}
             </div>
@@ -220,30 +224,11 @@ export const ThreadItemView = memo(function Item({
   }
 });
 
-const TASK_STATUS: Record<TaskState, { label: string; dot: string; text: string }> = {
-  queued: { label: "Queued", dot: "bg-muted-foreground/50", text: "text-muted-foreground" },
-  claimed: { label: "Working", dot: "bg-success", text: "text-muted-foreground" },
-  working: { label: "Working", dot: "bg-success", text: "text-muted-foreground" },
-  done: { label: "Done", dot: "bg-success/60", text: "text-muted-foreground" },
-  failed: { label: "Failed", dot: "bg-destructive", text: "text-destructive" },
-};
-
 /** "Runs on Ada's keys" under a task someone else gave an agent that uses the owner's provider keys. */
 function keysLine(entry: ThreadEntry, roster: Roster): string | null {
   const k = entry.runsOnKeysOf;
   if (!k) return null;
   return roster.people.some((p) => p.me && p.id === k.id) ? "Runs on your keys" : `Runs on ${k.name}'s keys`;
-}
-
-/** A task's state: a dot and a word beside the name and time. */
-export function TaskChip({ state }: { state: TaskState }) {
-  const c = TASK_STATUS[state];
-  return (
-    <span data-task-chip={state} className={cn("inline-flex items-center gap-1.5 text-[11px]", c.text)}>
-      <span aria-hidden className={cn("size-1.5 rounded-full", c.dot)} />
-      {c.label}
-    </span>
-  );
 }
 
 function Message({

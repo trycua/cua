@@ -498,12 +498,11 @@ impl Persistent {
             };
             let activity = match state {
                 "paused" if held.is_some() => held.map(|n| format!("{n} has control")),
+                // The stage in a word ("Thinking"), never the task's text.
                 "working" => sessions
                     .iter()
                     .find(|s| s.state == "working")
-                    .and_then(|s| s.task_seq)
-                    .and_then(|seq| fold.tasks.get(&seq))
-                    .map(|t| format!("task #{}: {}", t.seq, clip_words(&t.text, 80))),
+                    .and_then(|s| s.activity.clone()),
                 "failed" if r.setup == super::durable::setup::FAILED => {
                     Some(super::notify::reason(&r.setup_note))
                 }
@@ -720,41 +719,42 @@ impl Persistent {
         };
         // How long the join takes is measured from the message.
         let posted_ms = posted.as_ref().map(|e| e.ts_ms).unwrap_or(picked_ms);
-        let woke = super::phases::Woke {
-            posted_ms,
-            picked_ms,
-            store: store.clone(),
-            task: task.seq,
-            label: session_name(rec),
-        };
         if cold {
-            // Said at once; "woke up and joined" follows when the agent has
-            // a session (the start itself is quick, the install is not).
-            store.append(Draft::note(
-                "dispatch",
-                Some(task.seq),
-                format!("{} is joining...", session_name(rec)),
-            ))?;
             super::phases::set_woke(
                 &self.dir,
                 &format!("{}#{}", rec.name, rec.k()),
-                woke.clone(),
+                super::phases::Woke {
+                    posted_ms,
+                    picked_ms,
+                },
             );
         }
-        match Box::pin(self.send_session(rec, &framed, entry)).await {
+        // Show it at once: a run to start is `starting`, a warm one `thinking`.
+        self.set_stage(
+            rec,
+            Some(if rec.run_id.is_some() {
+                "thinking"
+            } else {
+                "starting"
+            }),
+        );
+        let sent = Box::pin(self.send_session(rec, &framed, entry)).await;
+        if sent.is_err() {
+            self.set_stage(rec, None);
+        }
+        match sent {
             Ok(d) => {
                 let base = if d.started { 0 } else { base };
                 if !d.started {
                     // A follow-up to a running agent: its steps are timed too.
                     Box::pin(self.follow_warm(rec, &d.run_id, posted_ms, picked_ms)).await;
-                } else if !cold {
-                    // The run was ended and started again (new credentials):
-                    // nothing said it was joining, so say it has.
-                    store.append(Draft::note(
-                        "dispatch",
-                        Some(task.seq),
-                        format!("{} woke up and joined", session_name(rec)),
-                    ))?;
+                } else {
+                    // The note ("woke up and joined") comes when the agent is up.
+                    self.live
+                        .lock()
+                        .await
+                        .joining
+                        .insert(d.run_id.clone(), task.seq);
                 }
                 store.claim(
                     task.seq,
@@ -831,7 +831,6 @@ impl Persistent {
                     ("dispatch_picked", picked_ms.saturating_sub(posted_ms)),
                 ],
                 0,
-                None,
             );
         }
     }
@@ -1042,8 +1041,70 @@ impl Persistent {
             let written = store.release(t.seq, drafts)?;
             anchor = written.first().map(|e| e.seq);
         }
-        self.update_in(rec, |r| r.task = None)?;
+        self.update_in(rec, |r| {
+            r.task = None;
+            r.activity = None;
+        })?;
+        store.wake();
         Ok(anchor)
+    }
+
+    /// Sets what the session `rec` shows is doing (`starting`, `thinking`,
+    /// ...; `None`: nothing) and wakes the thread's followers when it changed.
+    pub(crate) fn set_stage(&self, rec: &AgentRecord, stage: Option<&str>) {
+        let stage = stage.map(str::to_string);
+        let changed = self
+            .update_in(rec, |r| {
+                let changed = r.activity != stage;
+                r.activity = stage;
+                changed
+            })
+            .unwrap_or(false);
+        if changed {
+            self.thread_store(&rec.space).wake();
+        }
+    }
+
+    /// What each agent member of `space` is doing now, for the thread's live
+    /// rows: `{agent, stage}` for every member with a turn on its way (a
+    /// task open for it, so a stale stage never shows). `key` changes when
+    /// any of them does.
+    pub(crate) fn live_rows(&self, space: &str) -> Result<(String, Vec<Value>)> {
+        let store = self.thread_store(space);
+        let fold = if store.exists() {
+            Some(store.fold()?)
+        } else {
+            None
+        };
+        let mut rows: Vec<Value> = vec![];
+        for rec in self.members_of(space)? {
+            if rec.paused || super::identity::is_external(&rec) {
+                continue;
+            }
+            let stage = rec
+                .session_views()
+                .into_iter()
+                .find_map(|s| s.activity.clone());
+            let open = fold
+                .as_ref()
+                .is_some_and(|f| !f.open_tasks(Some(&rec.name)).is_empty());
+            if let (Some(stage), true) = (stage, open) {
+                rows.push(json!({"agent": rec.handle(), "stage": stage}));
+            }
+        }
+        rows.sort_by_key(|r| r["agent"].as_str().unwrap_or_default().to_string());
+        let key = rows
+            .iter()
+            .map(|r| {
+                format!(
+                    "{}={}",
+                    r["agent"].as_str().unwrap_or_default(),
+                    r["stage"].as_str().unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        Ok((key, rows))
     }
 
     /// Puts the in-flight task of the session `rec` shows back in the
@@ -1426,6 +1487,23 @@ impl Thread {
         });
         d.runs_on_keys_of = keys_of;
         d.view = view;
+        // The agent shows as at work in the thread's live row right away
+        // (the dispatcher gives it the task within a second).
+        if let Some(to) = &task_to
+            && let Ok(rec) = self.p.get(to)
+            && !rec.paused
+            && !super::identity::is_external(&rec)
+            && rec.session_views().iter().all(|s| s.activity.is_none())
+        {
+            self.p.set_stage(
+                &rec,
+                Some(if rec.run_id.is_some() {
+                    "thinking"
+                } else {
+                    "starting"
+                }),
+            );
+        }
         let e = self.store.append(d)?;
         if let Some((seq, approve)) = answered_join {
             self.p
@@ -2007,7 +2085,7 @@ pub(crate) enum Delivered {
 }
 
 /// `ada`, or `ada (session 2)`.
-fn session_name(rec: &AgentRecord) -> String {
+pub(crate) fn session_name(rec: &AgentRecord) -> String {
     match rec.k() {
         1 => rec.name.clone(),
         k => format!("{} (session {k})", rec.name),
@@ -2082,11 +2160,11 @@ pub fn session_state(
         }
     };
     let activity = match state {
-        "working" => s.activity.clone().or_else(|| {
-            task_seq
-                .and_then(|seq| fold.tasks.get(&seq))
-                .map(|t| format!("task #{}: {}", t.seq, clip_words(&t.text, 80)))
-        }),
+        "working" => Some(
+            s.activity
+                .as_deref()
+                .map_or_else(|| "Working".to_string(), sentence_case),
+        ),
         "waiting" => asked.map(|a| format!("waiting for an answer to #{a}")),
         "failed" => s.last_error.as_deref().map(|e| failed_line(&s.harness, e)),
         _ => None,
@@ -2108,6 +2186,14 @@ pub fn session_state(
         task_seq,
         run_id: s.run_id.clone(),
     }
+}
+
+/// `thinking` as `Thinking`.
+fn sentence_case(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .unwrap_or_default()
 }
 
 /// The member's state: paused, or the busiest of its sessions.

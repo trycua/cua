@@ -175,6 +175,18 @@ function ProviderSheet() {
                   );
                 })}
               </div>
+              {v.others.length ? (
+                <div data-provider-others="" className="mt-3">
+                  <p className="text-xs text-muted-foreground">{v.othersLabel}</p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {v.others.map((o) => (
+                      <Button key={o.provider} size="sm" variant="outline" disabled={busy} data-provider-other={o.provider} onClick={() => c.openProvider(o.provider, c.sheetApp)}>
+                        {o.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="mt-4 flex justify-end">
                 <Button variant="outline" onClick={close}>
                   {v.cancelLabel}

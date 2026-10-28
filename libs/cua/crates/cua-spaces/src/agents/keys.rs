@@ -952,6 +952,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // The fake login shell is a /bin/sh script: unix only.
+    #[cfg(unix)]
     #[test]
     fn a_key_from_your_shell_is_saved_and_only_its_name_is_answered() {
         let (keys, dir) = temp_keys();

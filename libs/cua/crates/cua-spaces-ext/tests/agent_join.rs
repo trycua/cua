@@ -58,6 +58,16 @@ async fn setup() -> Fx {
     }
 }
 
+/// Whether the agent has answered the task (the mock guest cannot run a
+/// start, so the answer is its plain "could not start" reply).
+fn answered(thread: &Value) -> bool {
+    thread["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["kind"] == "message" && e["author"]["kind"] == "agent")
+}
+
 fn notes(thread: &Value) -> Vec<String> {
     thread["entries"]
         .as_array()
@@ -83,14 +93,13 @@ async fn a_posted_task_wakes_the_supervisor_without_waiting_for_the_poll() {
     )
     .await
     .unwrap();
-    // The supervisor answers with its first step (a member with no run is
-    // joining) well inside the minute.
+    // The supervisor serves it well inside the minute.
     let mut waited = None;
     for _ in 0..40 {
         let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
             .await
             .unwrap();
-        if notes(&t).iter().any(|n| n == "ada is joining...") {
+        if answered(&t) {
             waited = Some(posted.elapsed());
             break;
         }
@@ -102,7 +111,7 @@ async fn a_posted_task_wakes_the_supervisor_without_waiting_for_the_poll() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_member_with_no_run_says_it_is_joining_before_it_has_joined() {
+async fn a_member_with_no_run_is_not_said_to_have_joined_before_it_has() {
     let fx = setup().await;
     let p = fx.spaces.persistent();
     call(
@@ -117,13 +126,10 @@ async fn a_member_with_no_run_says_it_is_joining_before_it_has_joined() {
     let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
         .await
         .unwrap();
+    assert!(answered(&t), "the failed start is answered");
     let said = notes(&t);
     assert!(
-        said.iter().any(|n| n == "ada is joining..."),
-        "joining is said at once: {said:?}"
-    );
-    assert!(
         !said.iter().any(|n| n.contains("woke up and joined")),
-        "joined waits for the agent's session: {said:?}"
+        "joined waits for the agent being up: {said:?}"
     );
 }

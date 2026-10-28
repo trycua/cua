@@ -1135,11 +1135,27 @@ impl ThreadStore {
     /// Waits up to `for_` for an entry after `after` (in-process writers
     /// wake it at once; other processes' writes are seen within 250 ms).
     pub async fn wait_after(&self, after: u64, for_: Duration) -> Result<()> {
+        self.wait_after_or(after, for_, || false).await
+    }
+
+    /// Wakes the readers that follow this thread (what they show besides
+    /// its entries changed: an agent's live stage).
+    pub fn wake(&self) {
+        self.notifier().notify_waiters();
+    }
+
+    /// [`Self::wait_after`], also returning as soon as `changed` says so.
+    pub async fn wait_after_or(
+        &self,
+        after: u64,
+        for_: Duration,
+        changed: impl Fn() -> bool,
+    ) -> Result<()> {
         let deadline = tokio::time::Instant::now() + for_.min(MAX_FOLLOW);
         let n = self.notifier();
         loop {
             let notified = n.notified();
-            if self.last_seq()? > after {
+            if self.last_seq()? > after || changed() {
                 return Ok(());
             }
             let now = tokio::time::Instant::now();

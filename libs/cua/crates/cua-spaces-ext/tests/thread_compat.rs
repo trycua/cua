@@ -774,6 +774,196 @@ async fn a_mention_wakes_the_member_and_its_answer_is_the_reply() {
     assert!(inbox(&fx)[1].contains("and then lint"));
 }
 
+/// What `thread_read` says each agent is doing.
+async fn live(fx: &Fx) -> Value {
+    call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap()["live"]
+        .clone()
+}
+
+/// Raw runner events (for the ones `events` has no shape for).
+fn raw_events(fx: &Fx, evs: &[Value]) {
+    let path = format!("{RUNS}/{RUN}/events.jsonl");
+    let mut log = fx
+        .srv
+        .state
+        .file(&path)
+        .map(|b| String::from_utf8(b).unwrap())
+        .unwrap_or_default();
+    let seq = log.lines().count();
+    for (i, e) in evs.iter().enumerate() {
+        let mut e = e.clone();
+        e["seq"] = json!(seq + i + 1);
+        e["ts"] = json!(0);
+        log.push_str(&e.to_string());
+        log.push('\n');
+    }
+    fx.srv.state.put_file(&path, log.into_bytes());
+}
+
+/// A task shows the agent at work in the thread at once, each stage the run
+/// reports follows in order, the follow wakes on a change, and the row is
+/// gone when the reply arrives. The member list says the same word.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_live_row_follows_the_stage_and_clears_on_the_reply() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    assert_eq!(live(&fx).await["agents"], json!([]));
+    let posted = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@ada summarize the failures"}),
+    )
+    .await
+    .unwrap();
+    let task = posted["entry"]["seq"].as_u64().unwrap();
+    // Right away, before the dispatcher's next pass.
+    assert_eq!(
+        live(&fx).await["agents"],
+        json!([{"agent": "ada", "stage": "thinking"}])
+    );
+    Box::pin(p.tick()).await;
+    run_state(&fx, json!({"status": "running", "turn": 2}));
+    let mut seen = vec![];
+    let steps: Vec<(&str, Vec<Value>)> = vec![
+        (
+            "installing",
+            vec![
+                json!({"turn": 2, "type": "install", "id": "claude-code", "phase": "start", "detail": ""}),
+            ],
+        ),
+        (
+            "starting",
+            vec![
+                json!({"turn": 2, "type": "install", "id": "claude-code", "phase": "done", "detail": ""}),
+            ],
+        ),
+        ("starting", vec![json!({"turn": 2, "type": "initialized"})]),
+        ("thinking", vec![json!({"turn": 2, "type": "turn_started"})]),
+        (
+            "using cargo test",
+            vec![
+                json!({"turn": 2, "type": "update", "update": {"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "cargo test", "kind": "execute", "status": "pending"}}),
+            ],
+        ),
+    ];
+    for (want, evs) in steps {
+        raw_events(&fx, &evs);
+        Box::pin(p.tick()).await;
+        let l = live(&fx).await;
+        assert_eq!(
+            l["agents"],
+            json!([{"agent": "ada", "stage": want}]),
+            "{want}"
+        );
+        assert_eq!(l["key"], format!("ada={want}"));
+        seen.push(want);
+    }
+    assert_eq!(
+        seen,
+        [
+            "installing",
+            "starting",
+            "starting",
+            "thinking",
+            "using cargo test"
+        ]
+    );
+    // The member list names the stage, not the task.
+    let m = call(&fx.mcp, "agent_members", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    assert_eq!(m["members"][0]["status"]["activity"], "Using cargo test");
+    // A follow that last saw this stage waits for the next one and returns
+    // the moment it changes, long before its timeout.
+    let key = live(&fx).await["key"].as_str().unwrap().to_string();
+    let cursor = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap()["cursor"]
+        .as_u64()
+        .unwrap();
+    let t0 = std::time::Instant::now();
+    let (followed, ()) = tokio::join!(
+        call(
+            &fx.mcp,
+            "thread_read",
+            json!({"space": fx.space, "after": cursor, "follow_ms": 20000, "live_after": key}),
+        ),
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            events(&fx, &[("message", 2, Some("2 failures"))]);
+            Box::pin(p.tick()).await;
+        }
+    );
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(10),
+        "{:?}",
+        t0.elapsed()
+    );
+    let followed = followed.unwrap();
+    assert_eq!(
+        followed["live"]["agents"],
+        json!([{"agent": "ada", "stage": "replying"}])
+    );
+    assert_eq!(followed["entries"], json!([]));
+    // The turn ends: the reply is the answer and nobody is at work.
+    events(&fx, &[("turn_ended", 2, None)]);
+    run_state(&fx, json!({"status": "idle", "turn": 2}));
+    Box::pin(p.tick()).await;
+    let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    assert!(
+        entries(&t)
+            .iter()
+            .any(|e| e["reply_to"] == task && e["kind"] == "message")
+    );
+    assert_eq!(t["live"], json!({"key": "", "agents": []}));
+    assert_eq!(
+        call(&fx.mcp, "agent_members", json!({"space": fx.space}))
+            .await
+            .unwrap()["members"][0]["status"],
+        json!({"state": "idle"})
+    );
+}
+
+/// An agent with no run shows as starting at once; when it can't start, the
+/// row goes and the failure is its own message.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cold_start_shows_starting_and_a_failure_clears_the_row() {
+    let fx = setup().await;
+    let p = fx.spaces.persistent();
+    call(
+        &fx.mcp,
+        "agent_add",
+        json!({"space": fx.space, "name": "ada", "harness": "claude-code"}),
+    )
+    .await
+    .unwrap();
+    call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@ada hello"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        live(&fx).await["agents"],
+        json!([{"agent": "ada", "stage": "starting"}])
+    );
+    // The mock guest can't start a run: the delivery fails.
+    Box::pin(p.tick()).await;
+    let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    assert_eq!(t["live"]["agents"], json!([]), "{t}");
+    let failed = entries(&t)
+        .into_iter()
+        .find(|e| e["author"]["id"] == "agent:ada" && !e["failure"].is_null());
+    assert!(failed.is_some(), "the failure is the agent's own message");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_agent_that_replies_itself_is_not_answered_twice() {
     let fx = setup().await;
@@ -1424,10 +1614,8 @@ async fn members_show_what_each_is_doing() {
         .unwrap();
     let row = &m["members"][0];
     assert_eq!(row["status"]["state"], "working");
-    assert_eq!(
-        row["status"]["activity"],
-        "task #1: @ada look at the flaky test"
-    );
+    // The stage in a word, never the task's text.
+    assert_eq!(row["status"]["activity"], "Thinking");
     assert_eq!(row["added_by"]["id"], "owner");
     assert_eq!(row["open_tasks"], 1);
 }

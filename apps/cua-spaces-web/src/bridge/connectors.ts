@@ -69,6 +69,8 @@ export interface ConnectorsView {
   appsTitle: string;
   apps: ConnectorAppRow[];
   appsEmpty: string | null;
+  /** Apps that are not on this machine and cannot run as agents (under Show all, with where to get them). */
+  more: { agent: string; name: string }[];
   autoLabel: string;
   autoHelp: string;
   auto: boolean;
@@ -112,6 +114,9 @@ export interface ProviderSheetView {
   saveLabel: string;
   keyProvider: "anthropic" | "openai" | "other";
   keyEnv: string | null;
+  /** "Or choose another provider", when opened for an app that signs in with more than one. */
+  othersLabel: string | null;
+  others: { provider: string; label: string }[];
 }
 
 export interface ConnectorToggle {
@@ -181,8 +186,8 @@ export const connectorsView = (core: CoreClient, input: ConnectorsInput, os: Hos
 export const connectPlan = (core: CoreClient, input: ConnectorsInput, agent: string): ConnectPlan | null =>
   core.tryCall<ConnectPlan>("connectors.connectPlan", { input: input as unknown as Json, agent }) ?? null;
 
-export const providerSheet = (core: CoreClient, input: ConnectorsInput, provider: string, os: HostOs = hostOs()): ProviderSheetView | null =>
-  core.tryCall<ProviderSheetView | null>("connectors.providerSheet", { input: input as unknown as Json, provider, hostOs: os }) ?? null;
+export const providerSheet = (core: CoreClient, input: ConnectorsInput, provider: string, os: HostOs = hostOs(), forApp: string | null = null): ProviderSheetView | null =>
+  core.tryCall<ProviderSheetView | null>("connectors.providerSheet", { input: input as unknown as Json, provider, hostOs: os, forApp }) ?? null;
 
 export const appDetail = (core: CoreClient, input: ConnectorsInput, agent: string): AppDetailView | null =>
   core.tryCall<AppDetailView | null>("connectors.appDetail", { input: input as unknown as Json, agent }) ?? null;

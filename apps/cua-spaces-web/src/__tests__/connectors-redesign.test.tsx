@@ -53,10 +53,58 @@ describe.skipIf(!wasmBuilt)("Settings, Connectors (redesign)", () => {
     expect(claude.querySelector("[data-connector-connect]")?.textContent).toBe("Connect");
     expect(claude.textContent).toContain("Needs a sign-in to Anthropic.");
     expect(qa("[data-connectors-apps] [role=switch]").length).toBe(1); // Set up new apps automatically only
-    expect(qa("[data-connector-provider]").map((r) => r.dataset.connectorProvider)).toEqual(["anthropic", "openai", "github"]);
+    expect(qa("[data-connector-provider]").map((r) => r.dataset.connectorProvider)).toEqual(["anthropic", "openai", "google", "openrouter", "github"]);
     expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Not connected");
     expect(q("[data-connector-provider=openai]")!.textContent).toContain("Sign out");
     expect(document.body.textContent).not.toContain("Account keys");
+  });
+
+  it("lists every agent harness without Show all, installed or not, each with Connect when not connected", async () => {
+    await mountApp("/settings/connectors", host([]));
+    await found("[data-connector-app=claude-code]");
+    const ids = qa("[data-connectors-apps] [data-connector-app]").map((r) => r.dataset.connectorApp);
+    // Hermes, OpenCode, Goose and the rest are there with Show all still closed.
+    for (const harness of ["claude-code", "codex", "gemini-cli", "antigravity", "opencode", "goose", "pi", "hermes", "openclaw"]) expect(ids).toContain(harness);
+    expect(q("[data-connected-show-all]")!.getAttribute("aria-expanded")).toBe("false");
+    // Not installed on this machine, not connected: Connect (never a bare Get it) and what it needs.
+    const gemini = q("[data-connector-app=gemini-cli]")!;
+    expect(gemini.dataset.state).toBe("not-connected");
+    expect(gemini.querySelector("[data-connector-connect]")?.textContent).toBe("Connect");
+    expect(gemini.textContent).toContain("Needs an API key for Google.");
+    expect(gemini.textContent).not.toContain("Get it");
+    // The demo has an OpenAI key saved: the apps that read it are connected, and say where they run.
+    expect(q("[data-connector-app=goose]")!.dataset.state).toBe("connected");
+    expect(q("[data-connector-app=goose]")!.textContent).toContain("Runs in your Spaces");
+    // Show all keeps the apps that cannot run as agents, with Get it.
+    await click(q("[data-connected-show-all]")!);
+    await found("[data-connected-missing]");
+    const more = qa("[data-connected-missing]").map((r) => r.dataset.connectedMissing);
+    expect(more).toContain("cline");
+    for (const harness of ["goose", "opencode", "hermes", "pi", "antigravity", "gemini-cli"]) expect(more).not.toContain(harness);
+  });
+
+  it("Connect on an agent that is not installed here asks for a provider and a key, and connects what it can read", async () => {
+    const calls: { op: string; args: unknown }[] = [];
+    await mountApp("/settings/connectors", host(calls));
+    // The demo has an OpenAI key saved; sign out first so nothing reads one.
+    await click(await found("[data-connector-provider=openai] [data-connector-provider-action='sign-out']"));
+    await waitFor(() => expect(q("[data-connector-app=opencode]")!.dataset.state).toBe("not-connected"));
+    await click(q("[data-connector-app=opencode] [data-connector-connect]")!);
+    // The sheet for its first provider, with the others one click away.
+    await found("[data-provider-sheet=anthropic]");
+    expect(qa("[data-provider-other]").map((b) => b.dataset.providerOther)).toEqual(["openai", "google", "openrouter"]);
+    await click(q("[data-provider-other=openrouter]")!);
+    await found("[data-provider-sheet=openrouter]");
+    await click(q("[data-provider-way=key]")!);
+    fireEvent.change(await found("[data-provider-key]"), { target: { value: "sk-or-v1-0123456789abcdef" } });
+    await click(q("[data-provider-save]")!);
+    // OpenRouter is a key the harness reads: it is connected, and so are the others that read it.
+    await waitFor(() => expect(q("[data-connector-app=opencode]")!.dataset.state).toBe("connected"));
+    expect(q("[data-connector-app=opencode]")!.textContent).toContain("Runs in your Spaces");
+    expect(q("[data-connector-app=goose]")!.dataset.state).toBe("connected");
+    expect(q("[data-connector-app=claude-code]")!.dataset.state).not.toBe("connected");
+    // Nothing was run on this machine for it: no sign-in command, no tools written.
+    expect(calls.filter((c) => c.op === "agents.connect")).toEqual([]);
   });
 
   it("Connect on Claude Code runs its token command alone, and connects Anthropic", async () => {

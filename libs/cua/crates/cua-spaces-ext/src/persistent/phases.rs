@@ -31,8 +31,6 @@ use std::time::Duration;
 
 use cua_spaces::agents::Agents;
 
-use crate::thread::{Draft, ThreadStore};
-
 /// Longest one member's delivery may take inside the supervisor.
 pub(crate) const DISPATCH_BUDGET: Duration = Duration::from_secs(60);
 /// How long the steps of one join are followed.
@@ -106,11 +104,6 @@ pub(crate) struct Woke {
     pub posted_ms: u64,
     /// When the supervisor picked it up.
     pub picked_ms: u64,
-    /// The thread and task to leave the "joined" note under.
-    pub store: ThreadStore,
-    pub task: u64,
-    /// "claude" or "claude session 2".
-    pub label: String,
 }
 
 fn wakes() -> &'static Mutex<HashMap<String, Woke>> {
@@ -207,14 +200,13 @@ pub(crate) fn start_failed(key: &str, harness: &str, runtime: &str, posted_ms: u
 /// turn ends, the run fails or exits, or [`FOLLOW_FOR`] passes. `marks` are
 /// the host steps already passed (name, ms since the message);
 /// `guest_spawned_ms` is when the runner was spawned (ms since the message).
-/// For a cold join, `joined` leaves the "woke up and joined" note once the
-/// agent has a session.
+/// The "woke up and joined" note is the supervisor's (it reads the same
+/// events when the agent is up); this only reports timings.
 pub(crate) fn follow(
     agents: Agents,
     join: Join,
     marks: Vec<(&'static str, u64)>,
     guest_spawned_ms: u64,
-    joined: Option<Woke>,
 ) {
     let Ok(rt) = tokio::runtime::Handle::try_current() else {
         return;
@@ -286,13 +278,6 @@ pub(crate) fn follow(
                     }
                     "session" if once("session_ready", &mut reported) => {
                         join.send("session_ready", ms, "none", "none");
-                        if let Some(w) = &joined {
-                            let _ = w.store.append(Draft::note(
-                                "dispatch",
-                                Some(w.task),
-                                format!("{} woke up and joined", w.label),
-                            ));
-                        }
                     }
                     "turn_started" => {
                         turn_open = true;

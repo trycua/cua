@@ -1,0 +1,45 @@
+name: "CI: cua-sandbox local Linux Docker live (amd64)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Candidate image ref (blank = built-in default)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  live-local-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Record environment
+        run: |
+          uname -a
+          docker version
+          uv --version
+      - name: Run live local Docker sandbox test
+        env:
+          CANDIDATE_IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          args=(--allow-non-arm64 --artifact-dir "$RUNNER_TEMP/cua-linux-live")
+          if [[ -n "$CANDIDATE_IMAGE" ]]; then
+            args+=(--image "$CANDIDATE_IMAGE")
+          fi
+          uv run --script libs/python/cua-sandbox/scripts/live_local_linux_docker.py "${args[@]}"
+      - name: Show summary
+        if: always()
+        run: cat "$RUNNER_TEMP/cua-linux-live/summary.json" || true
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-linux-live-amd64
+          path: ${{ runner.temp }}/cua-linux-live
+          if-no-files-found: ignore

@@ -203,6 +203,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["notifications.markAllRead", {}],
       ["host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } }],
       ["host.action", { action: "provide-spaces" }],
+      ["host.limits", { maxSpaces: 2 }],
       ["host.openSettings", { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" }],
       ["settings.get", {}],
       ["settings.choose", { row: "telemetry", option: "off" }],

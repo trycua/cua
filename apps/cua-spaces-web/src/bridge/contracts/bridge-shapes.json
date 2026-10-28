@@ -9037,6 +9037,12 @@
                   },
                   "stage": {
                     "type": "string"
+                  },
+                  "sinceMs": {
+                    "type": "number"
+                  },
+                  "text": {
+                    "type": "string"
                   }
                 },
                 "required": [

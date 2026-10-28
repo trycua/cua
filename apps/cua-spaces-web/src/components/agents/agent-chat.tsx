@@ -318,8 +318,8 @@ export function AgentDmView({ chat, space, onSpace, identity, onInfo, me }: { ch
           ) : (
             <>
               {asleepHere ? <p className="my-1 text-center text-xs text-muted-foreground">{chat.label} is asleep here. A message wakes it.</p> : null}
-              {dm.items.map((d) => (
-                <DmRow key={`${d.spaceId}${d.item.key}`} d={d} roster={rosters[d.spaceId]!} spaces={chat.spaces} multi={multi && !space} onAnswer={(seq, ok) => dm.answer(d.spaceId, seq, ok)} onOpenAttachment={openAttachment} onRetry={(text) => dm.send(d.spaceId, text)} />
+              {dm.items.map((d, i) => (
+                <DmRow key={`${d.spaceId}${d.item.key}`} d={d} above={dmAbove(dm.items, i)} roster={rosters[d.spaceId]!} spaces={chat.spaces} multi={multi && !space} onAnswer={(seq, ok) => dm.answer(d.spaceId, seq, ok)} onOpenAttachment={openAttachment} onRetry={(text) => dm.send(d.spaceId, text)} />
               ))}
             </>
           )}
@@ -345,11 +345,23 @@ export function AgentDmView({ chat, space, onSpace, identity, onInfo, me }: { ch
   );
 }
 
-function DmRow({ d, roster, spaces, multi, onAnswer, onOpenAttachment, onRetry }: { d: DmItem; roster: Roster; spaces: AgentChatSpace[]; multi: boolean; onAnswer: (seq: number, ok: boolean) => Promise<void>; onOpenAttachment: (a: ThreadAttachment) => void; onRetry: (text: string) => Promise<void> }) {
+/** The seq of the entry above `items[i]` in the same Space (a reply quotes only what is not right above it). */
+function dmAbove(items: readonly DmItem[], i: number): number | null {
+  const mine = items[i]!;
+  for (let j = i - 1; j >= 0; j--) {
+    const it = items[j]!;
+    if (it.spaceId !== mine.spaceId) continue;
+    if (it.item.type === "system" || it.item.type === "unread") continue;
+    return it.item.entry.seq;
+  }
+  return null;
+}
+
+function DmRow({ d, above, roster, spaces, multi, onAnswer, onOpenAttachment, onRetry }: { d: DmItem; above: number | null; roster: Roster; spaces: AgentChatSpace[]; multi: boolean; onAnswer: (seq: number, ok: boolean) => Promise<void>; onOpenAttachment: (a: ThreadAttachment) => void; onRetry: (text: string) => Promise<void> }) {
   const s = spaces.find((x) => x.spaceId === d.spaceId);
   // Every message says its Space when the DM shows several.
   const label = multi && s ? <SpaceLabel name={s.spaceName} os={s.os} /> : undefined;
-  return <ThreadItemView item={d.item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRetry={onRetry} label={label} />;
+  return <ThreadItemView item={d.item} above={above} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRetry={onRetry} label={label} />;
 }
 
 function SpaceLabel({ name, os }: { name: string; os: AgentChatSpace["os"] }) {

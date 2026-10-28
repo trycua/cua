@@ -146,6 +146,9 @@
     "partial-line": 1,
     "radius": 1
   },
+  "components/space-thread/thread-view.tsx": {
+    "partial-line": 1
+  },
   "components/spaces/selection.tsx": {
     "radius": 2
   },

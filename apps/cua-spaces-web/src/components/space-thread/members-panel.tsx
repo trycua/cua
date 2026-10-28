@@ -12,6 +12,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 import { MemberAvatar } from "./avatar";
+import { FailureDetails } from "./failure-note";
 import { AiTag, OwnerSuffix } from "./identity";
 import { ProfileTrigger } from "./profile-card";
 import { RAIL_WINDOWS, railStreams } from "./rail";
@@ -116,7 +117,7 @@ export function MembersPanel({
           </ProfileRow>
         ))}
         {roster.agents.map((a) => (
-          <ProfileRow key={a.id} agent={a}>
+          <ProfileRow key={a.id} agent={a} below={a.failure ? <FailureDetails message={a.failure.message} /> : undefined}>
           <Row
             member={a.id}
             mark={<MemberAvatar kind="agent" name={a.name} harness={a.harness} identity={a.identity} surface="chrome" size={24} dim={a.dim} presence={presence?.[a.id] ?? null} />}
@@ -268,9 +269,9 @@ function Row({
       {mark}
       <span className="min-w-0 flex-1">
         <span className={dim ? "block truncate text-[13px] text-muted-foreground" : "block truncate text-[13px]"}>{label}</span>
-        {/* A failed agent's reason is shown whole (wrapped, selectable), never cut with an ellipsis. */}
+        {/* A failed agent says one word here ("Stopped", "Not connected"); its error is under Show details. */}
         {caption ? (
-          <span data-member-caption="" className={cn("block text-[11px] text-muted-foreground", status === "failed" ? "break-words select-text" : "truncate")}>
+          <span data-member-caption="" className="block truncate text-[11px] text-muted-foreground">
             {caption}
           </span>
         ) : null}
@@ -303,12 +304,17 @@ function Row({
 }
 
 /** A row in "In this space" that opens its person's or agent's card. */
-function ProfileRow({ person, agent, children }: { person?: RosterPerson; agent?: RosterAgent; children: ReactNode }) {
+function ProfileRow({ person, agent, children, below }: { person?: RosterPerson; agent?: RosterAgent; children: ReactNode; /** Under the row, outside its card trigger (a failed agent's Show details). */ below?: ReactNode }) {
   return (
     <li>
       <ProfileTrigger person={person} agent={agent} side="left" className="block w-full rounded-lg data-[selected]:bg-accent" rowKey={person?.id}>
         {children}
       </ProfileTrigger>
+      {below ? (
+        <div data-member-details="" className="flex flex-wrap items-center gap-1 pb-1 pl-[44px]">
+          {below}
+        </div>
+      ) : null}
     </li>
   );
 }

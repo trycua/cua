@@ -43,7 +43,7 @@ export function FailureNote({
     <div data-failure={failure.class} className="mt-1.5">
       <div className="flex flex-wrap items-center gap-2">
         {needsConnect ? <ConnectActions harness={harness} provider={failure.provider} taskText={taskText} onRetry={onRetry} /> : <RetryButton taskText={taskText} onRetry={failure.retryable ? onRetry : undefined} enabled />}
-        <Details message={failure.message} />
+        <FailureDetails message={failure.message} />
       </div>
     </div>
   );
@@ -107,7 +107,7 @@ function RetryButton({ taskText, onRetry, enabled }: { taskText: string | null; 
 }
 
 /** "Show details": the complete error, selectable, with Copy. */
-function Details({ message }: { message: string }) {
+export function FailureDetails({ message }: { message: string }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   if (!message) return null;

@@ -117,7 +117,8 @@ const CLAUDE_EXTRA: &str = r#"  auth)
     echo '{"authMethod":"none"}'; exit 1 ;;
   setup-token)
     if [ -f "$HOME/.fake-claude-cancel" ]; then echo "Login cancelled"; exit 1; fi
-    printf 'Your OAuth token:\r\n\r\n  sk-ant-oat01-FAKEtoken_0123456789abcdef\r\n' ; exit 0 ;;
+    if [ -f "$HOME/.fake-claude-short" ]; then printf 'Your OAuth token:\r\n\r\n  sk-ant-oat01-FAKEtoken_0123456789\r\n' ; exit 0; fi
+    printf 'Your OAuth token:\r\n\r\n  sk-ant-oat01-FAKEtoken_0123456789abcdef_ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz_0123456789_QQQQ\r\n' ; exit 0 ;;
 "#;
 
 impl World {
@@ -419,6 +420,42 @@ fn connected_but_not_signed_in_says_so_and_offers_sign_in_where_cua_can_start_it
     assert_eq!(r.signed_in, SignedInState::Unknown);
 }
 
+/// A token cut short (a redraw, a wrapped line) is never saved, and the line
+/// says what happened in plain words, never "Connected" next to "not copied".
+#[test]
+fn a_truncated_token_is_refused_with_a_plain_line_and_a_whole_one_is_saved() {
+    let w = World::new();
+    w.install("claude-code", "2.4.1");
+    w.sign_in("claude-code");
+    w.write(".fake-claude-short", "1");
+    let mut env = w.env.clone();
+    env.run_agent_clis = true;
+    let r = AgentSetup::new(env)
+        .connect(
+            &["claude-code".into()],
+            &w.server(),
+            ConnectParts {
+                skills: false,
+                mcp: false,
+                sign_in: true,
+            },
+            Some(&w.vault),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+    let s = r[0].sign_in.as_ref().unwrap();
+    assert_eq!(
+        s.line.as_deref(),
+        Some("Couldn't read the sign-in from Claude. Try Connect again.")
+    );
+    assert!(!s.line.as_ref().unwrap().contains("Connected"));
+    assert_eq!(w.vault.value("claude-code"), None);
+    // The whole token (about 108 characters) is saved with no network involved.
+    std::fs::remove_file(w.home.join(".fake-claude-short")).unwrap();
+    w.connect("claude-code", true);
+    assert_eq!(w.vault.value("claude-code").unwrap().len(), 109);
+}
+
 #[test]
 fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
     // Codex: its own device-code login in a folder Cua owns; your auth.json is never read.
@@ -509,7 +546,9 @@ fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
     assert_eq!(r.signin_import, ImportState::Ok);
     assert_eq!(
         w.vault.value("claude-code").as_deref(),
-        Some("sk-ant-oat01-FAKEtoken_0123456789abcdef")
+        Some(
+            "sk-ant-oat01-FAKEtoken_0123456789abcdef_ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz_0123456789_QQQQ"
+        )
     );
 
     // Hermes: its .env is never copied; it uses the providers connected in Settings.
@@ -571,7 +610,7 @@ fn a_refused_sign_in_copy_leaves_the_tools_connected_with_one_line() {
         s.line
             .as_ref()
             .unwrap()
-            .starts_with("Connected. Sign-in not copied")
+            .starts_with("The browser approval was cancelled")
     );
     // Hermes on an OAuth provider: not yet.
     w.install("hermes", "0.22.5");

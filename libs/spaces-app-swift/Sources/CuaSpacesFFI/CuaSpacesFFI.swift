@@ -4431,6 +4431,10 @@ public struct AppAgentKeyInput: Equatable, Hashable {
      * When it was added (Unix ms).
      */
     public var addedMs: UInt64
+    /**
+     * A sign-in past its expiry: not used by any run until reconnected.
+     */
+    public var expired: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4446,11 +4450,15 @@ public struct AppAgentKeyInput: Equatable, Hashable {
          */last4: String,
         /**
          * When it was added (Unix ms).
-         */addedMs: UInt64) {
+         */addedMs: UInt64,
+        /**
+         * A sign-in past its expiry: not used by any run until reconnected.
+         */expired: Bool) {
         self.provider = provider
         self.env = env
         self.last4 = last4
         self.addedMs = addedMs
+        self.expired = expired
     }
 
 
@@ -4472,7 +4480,8 @@ public struct FfiConverterTypeAppAgentKeyInput: FfiConverterRustBuffer {
                 provider: FfiConverterString.read(from: &buf),
                 env: FfiConverterString.read(from: &buf),
                 last4: FfiConverterString.read(from: &buf),
-                addedMs: FfiConverterUInt64.read(from: &buf)
+                addedMs: FfiConverterUInt64.read(from: &buf),
+                expired: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -4481,6 +4490,7 @@ public struct FfiConverterTypeAppAgentKeyInput: FfiConverterRustBuffer {
         FfiConverterString.write(value.env, into: &buf)
         FfiConverterString.write(value.last4, into: &buf)
         FfiConverterUInt64.write(value.addedMs, into: &buf)
+        FfiConverterBool.write(value.expired, into: &buf)
     }
 }
 
@@ -20092,9 +20102,9 @@ public struct AppHostSetupRequest: Equatable, Hashable {
      */
     public var allow: [String]?
     /**
-     * What the machine is for: `desktop` (share this desktop, and
-     * provide Spaces on a new relay setup; the default) or `spare` (only
-     * run Spaces for your other devices).
+     * What the machine is for: `spare` (the default: other machines
+     * create Spaces here, its desktop stays private) or `desktop` (also
+     * let other machines control this desktop).
      */
     public var profile: String?
     /**
@@ -20102,10 +20112,9 @@ public struct AppHostSetupRequest: Equatable, Hashable {
      */
     public var shareDesktop: Bool?
     /**
-     * Create Spaces for your other devices (overrides the profile).
-     * `None` with the desktop profile: on for a new relay setup; a
-     * machine set up before keeps its setting (the host decides,
-     * `cua_host::default_provide_spaces`).
+     * Let other machines create Spaces here (overrides the profile).
+     * `None`: on for a new relay setup; a machine set up before keeps
+     * its setting (the host decides, `cua_host::default_provide_spaces`).
      */
     public var provideSpaces: Bool?
 
@@ -20128,18 +20137,17 @@ public struct AppHostSetupRequest: Equatable, Hashable {
          * Accounts (ids or emails) allowed besides the owner.
          */allow: [String]?,
         /**
-         * What the machine is for: `desktop` (share this desktop, and
-         * provide Spaces on a new relay setup; the default) or `spare` (only
-         * run Spaces for your other devices).
+         * What the machine is for: `spare` (the default: other machines
+         * create Spaces here, its desktop stays private) or `desktop` (also
+         * let other machines control this desktop).
          */profile: String?,
         /**
          * Share this machine's own desktop (overrides the profile).
          */shareDesktop: Bool?,
         /**
-         * Create Spaces for your other devices (overrides the profile).
-         * `None` with the desktop profile: on for a new relay setup; a
-         * machine set up before keeps its setting (the host decides,
-         * `cua_host::default_provide_spaces`).
+         * Let other machines create Spaces here (overrides the profile).
+         * `None`: on for a new relay setup; a machine set up before keeps
+         * its setting (the host decides, `cua_host::default_provide_spaces`).
          */provideSpaces: Bool?) {
         self.mode = mode
         self.relayUrl = relayUrl
@@ -21809,7 +21817,7 @@ public struct AppListView: Equatable, Hashable {
     public var empty: Bool
     /**
      * One quiet line where the Spaces go while the list is not complete
-     * ("Reaching 6 computers…"), below what is known so far.
+     * ("Reaching 6 machines…"), below what is known so far.
      */
     public var reachingLine: String?
 
@@ -21823,7 +21831,7 @@ public struct AppListView: Equatable, Hashable {
          */empty: Bool,
         /**
          * One quiet line where the Spaces go while the list is not complete
-         * ("Reaching 6 computers…"), below what is known so far.
+         * ("Reaching 6 machines…"), below what is known so far.
          */reachingLine: String?) {
         self.empty = empty
         self.reachingLine = reachingLine
@@ -23968,7 +23976,8 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
      */
     public var noticeAction: AppHostAction?
     /**
-     * Provide Spaces, then Share this desktop.
+     * Create Spaces here, then control this desktop (This Mac: the
+     * desktop switch only).
      */
     public var toggles: [AppMachinesViewToggle]
     /**
@@ -24067,7 +24076,8 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
          * The notice's button (Sign In).
          */noticeAction: AppHostAction?,
         /**
-         * Provide Spaces, then Share this desktop.
+         * Create Spaces here, then control this desktop (This Mac: the
+         * desktop switch only).
          */toggles: [AppMachinesViewToggle],
         /**
          * Under read-only switches: where they change.
@@ -24322,7 +24332,7 @@ public struct AppMachinesViewRelay: Equatable, Hashable {
      */
     public var ownerEmail: String?
     /**
-     * It creates Spaces for your devices (`None`: it did not say).
+     * It lets your other machines create Spaces (`None`: it did not say).
      */
     public var providesSpaces: Bool?
 
@@ -24342,7 +24352,7 @@ public struct AppMachinesViewRelay: Equatable, Hashable {
          * Its owner's email, when the relay says.
          */ownerEmail: String?,
         /**
-         * It creates Spaces for your devices (`None`: it did not say).
+         * It lets your other machines create Spaces (`None`: it did not say).
          */providesSpaces: Bool?) {
         self.id = id
         self.role = role
@@ -24782,7 +24792,8 @@ public struct AppMachinesViewToggle: Equatable, Hashable {
      */
     public var id: String
     /**
-     * "Provide Spaces", "Share this desktop".
+     * "Let other machines create Spaces here", "Let other machines control
+     * this desktop".
      */
     public var label: String
     /**
@@ -24818,7 +24829,8 @@ public struct AppMachinesViewToggle: Equatable, Hashable {
          * `spaces` or `desktop`.
          */id: String,
         /**
-         * "Provide Spaces", "Share this desktop".
+         * "Let other machines create Spaces here", "Let other machines control
+         * this desktop".
          */label: String,
         /**
          * One line under it.

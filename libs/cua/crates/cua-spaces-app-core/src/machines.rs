@@ -421,13 +421,13 @@ pub fn spaces_label(n: u32) -> String {
 /// The words for a machine that shares its own desktop with no Spaces.
 pub const DESKTOP_SHARED: &str = "Desktop shared";
 
-/// "Desktop shared", or "Desktop \u{b7} 2 Spaces" when the machine also
+/// "Desktop shared", or "Desktop and 2 Spaces" when the machine also
 /// provides Spaces. Every UI shows this label for a machine that shares
 /// its own desktop.
 pub fn desktop_spaces_label(n: u32) -> String {
     match n {
         0 => DESKTOP_SHARED.into(),
-        n => format!("Desktop \u{b7} {}", spaces_label(n)),
+        n => format!("Desktop and {}", spaces_label(n)),
     }
 }
 
@@ -902,7 +902,7 @@ mod tests {
         assert_eq!(
             words,
             [
-                ("Online", "Desktop \u{b7} 1 Space"),
+                ("Online", "Desktop and 1 Space"),
                 ("Not sharing", "No Spaces"),
                 ("Online", "1 Space"),
                 ("Offline", ""),
@@ -1004,7 +1004,7 @@ mod tests {
                 ],
                 "m-mini"
             ),
-            (1, "Desktop \u{b7} 1 Space".into())
+            (1, "Desktop and 1 Space".into())
         );
         assert_eq!(
             label_of(
@@ -1015,7 +1015,7 @@ mod tests {
                 ],
                 "this-mac"
             ),
-            (2, "Desktop \u{b7} 2 Spaces".into())
+            (2, "Desktop and 2 Spaces".into())
         );
     }
 

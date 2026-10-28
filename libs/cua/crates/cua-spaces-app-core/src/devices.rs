@@ -467,7 +467,7 @@ pub fn labels() -> DevicesLabels {
         rename_title: "Rename Device".into(),
         rename_confirm: "Rename".into(),
         cancel: "Cancel".into(),
-        signed_out: "Sign in to Cua to see the devices that can reach your computers.".into(),
+        signed_out: "Sign in to Cua to see the devices that can reach your machines.".into(),
         new_machines: "New Computers".into(),
         confirm_machine: "Confirm".into(),
     }
@@ -504,11 +504,11 @@ fn revoke_confirm(name: &str, this: bool) -> DeviceConfirm {
     DeviceConfirm {
         title: format!("Revoke \u{201c}{name}\u{201d}?"),
         message: if this {
-            "This device will no longer list or reach your computers until you enroll it again."
+            "This device will no longer list or reach your machines until you enroll it again."
                 .into()
         } else {
             format!(
-                "{name} will no longer list or reach your computers. To use it again, enroll it again."
+                "{name} will no longer list or reach your machines. To use it again, enroll it again."
             )
         },
         confirm_label: "Revoke".into(),
@@ -578,7 +578,7 @@ pub fn devices_view(input: &DevicesInput, now: u64) -> DevicesView {
         )),
         Some(("revoked", _)) => Some(enroll(
             BannerTone::Critical,
-            "This device was revoked. Enroll it again to reach your computers.".into(),
+            "This device was revoked. Enroll it again to reach your machines.".into(),
         )),
         // Signing in again enrolls it at once: the banner offers that
         // before the code.
@@ -598,10 +598,10 @@ pub fn devices_view(input: &DevicesInput, now: u64) -> DevicesView {
             },
             match input.enforce_after {
                 Some(t) if t > now => format!(
-                    "Enroll this device within {} to keep reaching your computers.",
+                    "Enroll this device within {} to keep reaching your machines.",
                     days(t - now)
                 ),
-                _ => "Enroll this device to reach your computers.".into(),
+                _ => "Enroll this device to reach your machines.".into(),
             },
         )),
     };
@@ -680,7 +680,7 @@ pub fn devices_view(input: &DevicesInput, now: u64) -> DevicesView {
                         format!("Re-verify \u{201c}{name}\u{201d} for another 30 days?")
                     } else {
                         format!(
-                            "Let \u{201c}{name}\u{201d} list and open your computers? Only approve a device you just signed in on."
+                            "Let \u{201c}{name}\u{201d} list and open your machines? Only approve a device you just signed in on."
                         )
                     },
                     requires_presence: true,
@@ -690,9 +690,9 @@ pub fn devices_view(input: &DevicesInput, now: u64) -> DevicesView {
                         format!("Approve \u{201c}{name}\u{201d}?")
                     },
                     notify_body: if expired {
-                        "It needs one approval to keep reaching your computers.".into()
+                        "It needs one approval to keep reaching your machines.".into()
                     } else {
-                        "A device signed in to your Cua account and asks to reach your computers."
+                        "A device signed in to your Cua account and asks to reach your machines."
                             .into()
                     },
                     name,
@@ -795,7 +795,7 @@ pub fn machine_access_notice(
         EnrollmentKind::Enrolled | EnrollmentKind::Grace => None,
         EnrollmentKind::NeedsEnrollment => Some(notice(
             "Not enrolled",
-            "Enroll this Mac to connect to your other computers.".into(),
+            "Enroll this Mac to connect to your other machines.".into(),
             ENROLL_THIS_MAC_LABEL,
         )),
         EnrollmentKind::Waiting => Some(notice(
@@ -810,12 +810,12 @@ pub fn machine_access_notice(
         )),
         EnrollmentKind::Due => Some(notice(
             "Re-verification due",
-            "This Mac\u{2019}s access expired. Re-verify it to connect to your other computers.".into(),
+            "This Mac\u{2019}s access expired. Re-verify it to connect to your other machines.".into(),
             REVERIFY_THIS_MAC_LABEL,
         )),
         EnrollmentKind::Revoked => Some(notice(
             "Revoked",
-            "This Mac was revoked. Enroll it again to connect to your other computers.".into(),
+            "This Mac was revoked. Enroll it again to connect to your other machines.".into(),
             ENROLL_THIS_MAC_LABEL,
         )),
     }
@@ -1016,7 +1016,7 @@ pub fn enroll_view(state: &EnrollState) -> EnrollView {
     };
     EnrollView {
         title: "Enroll This Device".into(),
-        lede: "Your computers can be reached only from enrolled devices.".into(),
+        lede: "Your machines can be reached only from enrolled devices.".into(),
         options,
         code: state.code.clone(),
         code_help: state.code.as_ref().map(|code| {
@@ -1240,16 +1240,14 @@ pub fn approve_view(state: &ApproveSheetState, devices: &[DeviceInput]) -> Appro
             format!("Approve \u{201c}{name}\u{201d}?")
         },
         message: if state.expired {
-            format!(
-                "{name} needs one approval to keep reaching your computers for another 30 days."
-            )
+            format!("{name} needs one approval to keep reaching your machines for another 30 days.")
         } else if fallback.is_some() {
             format!(
                 "The code expired. Approve \u{201c}{name}\u{201d} by ID instead? Only approve a device you just signed in on."
             )
         } else {
             format!(
-                "Enter the code {name} shows to let it list and open your computers. Only approve a device you just signed in on."
+                "Enter the code {name} shows to let it list and open your machines. Only approve a device you just signed in on."
             )
         },
         needs_code: !state.expired,
@@ -1323,7 +1321,7 @@ mod tests {
         assert_eq!(b.tone, BannerTone::Warning);
         assert_eq!(
             b.text,
-            "Enroll this device within 5 days to keep reaching your computers."
+            "Enroll this device within 5 days to keep reaching your machines."
         );
         assert_eq!(b.action, Some(DeviceAction::Enroll));
         assert!(!v.enrolled);

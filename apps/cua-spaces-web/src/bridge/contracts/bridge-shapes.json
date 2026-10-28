@@ -195,6 +195,9 @@
               },
               "addedMs": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -254,6 +257,9 @@
         "name": {
           "type": "string"
         },
+        "handle": {
+          "type": "string"
+        },
         "harness": {
           "type": "string"
         },
@@ -264,6 +270,38 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "failure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "class": {
+              "enum": [
+                "needs_connect",
+                "error"
+              ]
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "class",
+            "provider",
+            "message",
+            "retryable"
           ]
         },
         "sessions": {
@@ -5499,6 +5537,38 @@
             "title",
             "windowId"
           ]
+        },
+        "failure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "class": {
+              "enum": [
+                "needs_connect",
+                "error"
+              ]
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "class",
+            "provider",
+            "message",
+            "retryable"
+          ]
         }
       },
       "required": [
@@ -8948,6 +9018,36 @@
             "$ref": "#/$defs/ThreadEntry"
           }
         },
+        "live": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "stage": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent",
+                  "stage"
+                ]
+              }
+            }
+          },
+          "required": [
+            "key",
+            "agents"
+          ]
+        },
         "cursor": {
           "type": "number"
         },
@@ -8985,6 +9085,7 @@
       },
       "required": [
         "entries",
+        "live",
         "cursor",
         "caughtUp",
         "unread",
@@ -9088,6 +9189,9 @@
               },
               "added_ms": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -9154,6 +9258,9 @@
               },
               "added_ms": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -9220,6 +9327,9 @@
               },
               "added_ms": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -9286,6 +9396,9 @@
               },
               "added_ms": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
               }
             },
             "required": [

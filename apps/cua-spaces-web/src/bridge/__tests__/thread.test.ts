@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { HostError, UnsupportedOperationError } from "../adapter";
 import { createDemoAdapter } from "../adapters/demo";
 import { DEMO_THREAD_SPACE } from "../adapters/demo/thread";
-import { agentMembersFromTool, isMissingThreadTool, threadEntryFromTool, threadPageFromTool, threadPostArgs, threadReadArgs, threadSetRightsArgs, threadViewFromTool, webkitThreadOps, type ThreadEntry } from "../ops/thread";
+import { agentMembersFromTool, isMissingThreadTool, threadEntryFromTool, threadLiveFromTool, threadPageFromTool, threadPostArgs, threadReadArgs, threadSetRightsArgs, threadViewFromTool, webkitThreadOps, type ThreadEntry } from "../ops/thread";
 import { foldThread, readSeqFrom } from "../thread";
 
 let seq = 0;
@@ -133,6 +133,9 @@ describe("the thread tools' JSON", () => {
   it("builds the tools' arguments, bounding the long poll", () => {
     expect(threadReadArgs({ spaceId: "local:dev", after: 0, limit: 100, markRead: true, followMs: 90_000 })).toEqual({ space: "local:dev", after: 0, limit: 100, mark_read: true, follow_ms: 25_000 });
     expect(threadReadArgs({ spaceId: "local:dev" })).toEqual({ space: "local:dev" });
+    // The stage key rides only a follow, so the wait ends when an agent's stage changes.
+    expect(threadReadArgs({ spaceId: "local:dev", after: 3, followMs: 25_000, liveAfter: "claude=thinking" })).toEqual({ space: "local:dev", after: 3, follow_ms: 25_000, live_after: "claude=thinking" });
+    expect(threadReadArgs({ spaceId: "local:dev", after: 3, liveAfter: "claude=thinking" })).toEqual({ space: "local:dev", after: 3 });
     expect(threadReadArgs({ spaceId: "local:dev", before: 40, limit: 100 })).toEqual({ space: "local:dev", before: 40, limit: 100 });
     expect(threadPostArgs({ spaceId: "local:dev", text: "Denied", answer: { approval: 9, approve: false } })).toEqual({ space: "local:dev", text: "Denied", answer: { approval: 9, approve: false } });
   });
@@ -384,5 +387,19 @@ describe("the view a post was sent from", () => {
     expect(threadEntryFromTool({ seq: 5, kind: "message", text: "hi", author: { kind: "person", id: "o", name: "A" } })).not.toHaveProperty("view");
     expect(threadViewFromTool({ kind: "tab" })).toBeNull();
     expect(threadViewFromTool({ kind: "desktop" })).toEqual({ kind: "desktop", app: null, title: null, windowId: null });
+  });
+});
+
+describe("the live rows' JSON", () => {
+  it("reads who is at work and the key that changes with it; a daemon without it says nobody", () => {
+    expect(threadLiveFromTool({ key: "ada=using Bash;bo=thinking", agents: [{ agent: "ada", stage: "using Bash" }, { agent: "bo", stage: "thinking" }, { agent: "", stage: "x" }, { stage: "y" }] })).toEqual({
+      key: "ada=using Bash;bo=thinking",
+      agents: [
+        { agent: "ada", stage: "using Bash" },
+        { agent: "bo", stage: "thinking" },
+      ],
+    });
+    expect(threadPageFromTool({ entries: [], cursor: 0 }).live).toEqual({ key: "", agents: [] });
+    expect(threadPageFromTool({ entries: [], cursor: 0, live: { key: "k", agents: [{ agent: "a", stage: "starting" }] } }).live.agents).toEqual([{ agent: "a", stage: "starting" }]);
   });
 });

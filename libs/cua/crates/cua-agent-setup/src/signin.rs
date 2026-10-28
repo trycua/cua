@@ -273,14 +273,94 @@ fn claude_says_signed_out(env: &HostEnv, bin: &Path) -> bool {
 /// How long `claude setup-token` waits for the browser approval.
 pub const SETUP_TOKEN_WAIT: Duration = Duration::from_secs(600);
 
+/// The shortest string taken as a `claude setup-token` token. Real ones are
+/// about 108 characters (`sk-ant-oat01-` and 95 more); a shorter run is
+/// output cut off by a wrapped line or a redraw, and Claude answers it with
+/// a 401.
+const SETUP_TOKEN_MIN: usize = 100;
+/// The longest a token is taken to be (stops a joined line from running on).
+const SETUP_TOKEN_MAX: usize = 200;
+
+fn token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
+/// `s` without terminal escape sequences (colors, cursor moves, erases) and
+/// carriage returns.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        match c {
+            '\u{1b}' => match it.peek() {
+                // CSI: parameters, then a final byte in @..~.
+                Some('[') => {
+                    it.next();
+                    for d in it.by_ref() {
+                        if ('@'..='~').contains(&d) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: up to BEL or ESC \.
+                Some(']') => {
+                    it.next();
+                    while let Some(d) = it.next() {
+                        if d == '\u{7}' {
+                            break;
+                        }
+                        if d == '\u{1b}' {
+                            it.next();
+                            break;
+                        }
+                    }
+                }
+                Some(_) => {
+                    it.next();
+                }
+                None => {}
+            },
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// A `claude setup-token` token (`sk-ant-oat01-…`) in its output.
+///
+/// The output comes from a terminal: it holds color codes, and a token
+/// longer than the terminal is wide is wrapped onto the next line. Escape
+/// sequences are dropped, and lines that run on as one unbroken word are
+/// joined. Anything shorter than a real token is refused (`None`) rather
+/// than saved cut off.
 pub fn find_setup_token(out: &str) -> Option<String> {
-    let start = out.find("sk-ant-oat")?;
-    let tok: String = out[start..]
+    let clean = strip_ansi(out);
+    let start = clean.find("sk-ant-oat")?;
+    let mut lines = clean[start..].lines();
+    let mut tok: String = lines
+        .next()?
         .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take_while(|c| token_char(*c))
         .collect();
-    (tok.len() > 20).then_some(tok)
+    // The first line ran to its end: the token goes on if the next line is
+    // one unbroken word.
+    let mut ran_to_end = clean[start..]
+        .lines()
+        .next()
+        .is_some_and(|l| l.chars().all(token_char));
+    for line in lines {
+        if !ran_to_end || tok.len() >= SETUP_TOKEN_MAX {
+            break;
+        }
+        let l = line.trim_end();
+        if l.is_empty() || !l.chars().all(token_char) {
+            break;
+        }
+        tok.push_str(l);
+        ran_to_end = true;
+    }
+    (tok.len() >= SETUP_TOKEN_MIN && tok.len() <= SETUP_TOKEN_MAX).then_some(tok)
 }
 
 fn claude_copy(env: &HostEnv, wait: Duration) -> Result<SignInCopy, CopyRefusal> {
@@ -295,22 +375,27 @@ fn claude_copy(env: &HostEnv, wait: Duration) -> Result<SignInCopy, CopyRefusal>
     // system has it. The browser opens for the one approval.
     let script = Path::new("/usr/bin/script");
     let bin_s = bin.display().to_string();
+    // A wide terminal, so the token (about 108 characters) is never wrapped
+    // onto a second line.
+    let wide = format!(
+        "stty cols 1000 rows 50 2>/dev/null; exec {} setup-token",
+        shell_quote(&bin_s)
+    );
     let out = match env.os {
         crate::Os::MacOs if script.exists() => crate::connection::run_capture(
             env,
             script,
-            &["-q", "/dev/null", &bin_s, "setup-token"],
+            &["-q", "/dev/null", "/bin/sh", "-c", &wide],
             wait,
         ),
         crate::Os::Linux if script.exists() => {
-            let cmd = format!("{} setup-token", shell_quote(&bin_s));
-            crate::connection::run_capture(env, script, &["-qec", &cmd, "/dev/null"], wait)
+            crate::connection::run_capture(env, script, &["-qec", &wide, "/dev/null"], wait)
         }
         _ => crate::connection::run_capture(env, &bin, &["setup-token"], wait),
     };
     let Some((code, stdout)) = out else {
         return Err(CopyRefusal::Cancelled(
-            "Connected. Sign-in not copied: the browser approval didn't finish.".into(),
+            "The browser approval didn't finish. Try Connect again.".into(),
         ));
     };
     match find_setup_token(&stdout) {
@@ -323,10 +408,10 @@ fn claude_copy(env: &HostEnv, wait: Duration) -> Result<SignInCopy, CopyRefusal>
             expires_ms: Some(now_ms() + 365 * 24 * 3600 * 1000),
         }),
         None if code == Some(0) => Err(CopyRefusal::Failed(
-            "Connected. Sign-in not copied: claude setup-token printed no token.".into(),
+            "Couldn't read the sign-in from Claude. Try Connect again.".into(),
         )),
         None => Err(CopyRefusal::Cancelled(
-            "Connected. Sign-in not copied: the browser approval was cancelled.".into(),
+            "The browser approval was cancelled. Try Connect again.".into(),
         )),
     }
 }
@@ -868,13 +953,53 @@ mod tests {
 
     #[test]
     fn setup_token_is_found_in_terminal_output() {
-        let out = "\u{1b}[2K Your token:\r\n\r\n  sk-ant-oat01-AbC_d3f-xyz0123456789AAAA\r\n\r\nStore it safely.";
-        assert_eq!(
-            find_setup_token(out).as_deref(),
-            Some("sk-ant-oat01-AbC_d3f-xyz0123456789AAAA")
+        // A realistic token: `sk-ant-oat01-` and 95 more characters (108).
+        let token = format!(
+            "sk-ant-oat01-{}",
+            "AbC_d3f-xyZ0123456789"
+                .repeat(5)
+                .chars()
+                .take(95)
+                .collect::<String>()
         );
+        assert_eq!(token.len(), 108);
+        let out =
+            format!("\x1b[2K Your token:\r\n\r\n  \x1b[1m{token}\x1b[0m\r\n\r\nStore it safely.");
+        assert_eq!(find_setup_token(&out).as_deref(), Some(token.as_str()));
         assert_eq!(find_setup_token("Login cancelled"), None);
         assert_eq!(find_setup_token("sk-ant-oat"), None);
+    }
+
+    #[test]
+    fn a_wrapped_token_is_joined_and_a_cut_one_refused() {
+        let token = format!(
+            "sk-ant-oat01-{}",
+            "Qw3_rT-yUi0pAsDfGh"
+                .repeat(6)
+                .chars()
+                .take(95)
+                .collect::<String>()
+        );
+        // Wrapped at 80 columns by the terminal.
+        let (a, b) = token.split_at(80);
+        let out = format!("Your OAuth token:\r\n\r\n{a}\r\n{b}\r\n\r\nStore this token securely.");
+        assert_eq!(find_setup_token(&out).as_deref(), Some(token.as_str()));
+        // Wrapped at 40: three pieces.
+        let out = format!(
+            "{}\r\n{}\r\n{}\r\n\r\nDone",
+            &token[..40],
+            &token[40..80],
+            &token[80..]
+        );
+        assert_eq!(find_setup_token(&out).as_deref(), Some(token.as_str()));
+        // Only the first fragment printed (a redraw cut it): refused, not saved.
+        assert_eq!(find_setup_token(&format!("{a}\r\n")), None);
+        assert_eq!(find_setup_token(&format!("{}\r\n", &token[..60])), None);
+        // The old 36-character fake is not a plausible token.
+        assert_eq!(
+            find_setup_token("sk-ant-oat01-AbC_d3f-xyz0123456789AAAA"),
+            None
+        );
     }
 
     #[test]

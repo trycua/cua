@@ -119,7 +119,13 @@ pub struct Recreate {
 /// One persistent agent.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentRecord {
+    /// The record's key on this machine: unique across Spaces.
     pub name: String,
+    /// What its Space calls it (`@claude`), when that is not `name`: a
+    /// second Space's `claude` is stored as `claude-2` and still answers to
+    /// `@claude` there. Absent: the name is the handle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
     /// Harness id (`claude-code`, `openai-codex`, `hermes`, `openclaw`, ...).
     pub harness: String,
     /// The Space it works in (a Space id).
@@ -269,6 +275,11 @@ pub struct SessionRun {
 pub const MAX_SESSIONS: u32 = 8;
 
 impl AgentRecord {
+    /// What its Space calls it: the `@handle`.
+    pub fn handle(&self) -> &str {
+        self.handle.as_deref().unwrap_or(&self.name)
+    }
+
     /// The session this record shows (1-based).
     pub fn k(&self) -> u32 {
         self.session_k.max(1)
@@ -455,6 +466,9 @@ pub(crate) struct Live {
     setups: std::collections::HashSet<String>,
     /// Journal shippers of durable runs, by `<run>#<epoch>`.
     shippers: HashMap<String, crate::session_journal::Shipper>,
+    /// Runs started for a task whose "woke up and joined" note waits until
+    /// the agent is up: run id to the task's seq.
+    joining: HashMap<String, u64>,
 }
 
 /// The persistent agents of one cua home. Cheap to clone.
@@ -595,6 +609,7 @@ impl Persistent {
         }
         let rec = AgentRecord {
             name: spec.name.clone(),
+            handle: None,
             harness: h.id.into(),
             space,
             model: spec.model,
@@ -1025,6 +1040,27 @@ impl Persistent {
                         "{name} is in the middle of a turn (it crashed and is being resumed); try again when it ends"
                     )));
                 }
+                // An idle run whose credentials are not the ones forwarded
+                // now (the person reconnected in Settings), or whose last
+                // turn failed to authenticate, ends and starts again: it
+                // would otherwise keep using what it began with.
+                Ok(st)
+                    if st.accepts_message
+                        && st.status == RunStatus::Idle
+                        && self.credentials_changed(&rec, &agents, run, &st).await =>
+                {
+                    tracing::info!(
+                        agent = name,
+                        "credentials changed or rejected: starting a fresh run"
+                    );
+                    if rec.k() == 1 {
+                        let _ = self.save(name).await;
+                    }
+                    if let Err(e) = agents.stop(run).await {
+                        tracing::warn!(agent = name, "the old run did not stop: {e}");
+                    }
+                    self.release_writer(&rec).await;
+                }
                 Ok(st) if st.accepts_message && st.status == RunStatus::Idle => {
                     if rec.k() == 1 && !self.live.lock().await.leases.contains_key(name) {
                         self.take_lease(&rec).await?;
@@ -1042,6 +1078,35 @@ impl Persistent {
             }
         }
         self.start_session(&rec, text, entry, None).await
+    }
+
+    /// Whether the idle run `run` of `rec` must not take another message:
+    /// it was started with other credentials than the ones forwarded now, or
+    /// its last turn failed to authenticate.
+    async fn credentials_changed(
+        &self,
+        rec: &AgentRecord,
+        agents: &cua_spaces::agents::Agents,
+        run: &str,
+        st: &ag::RunInfo,
+    ) -> bool {
+        if let Some(started) = st.meta.as_ref().and_then(|m| m.cred_hash.as_deref())
+            && let Ok((env, _)) = cua_spaces::agents::run_env(
+                &rec.harness,
+                &rec.env,
+                &rec.env_from_host,
+                rec.base_url.is_some(),
+            )
+            && ag::runs::credential_hash(&rec.harness, &env) != started
+        {
+            return true;
+        }
+        if st.stop_reason.as_deref() == Some("error")
+            && let Ok(r) = agents.result(run).await
+        {
+            return r.error.as_deref().is_some_and(ag::failure::is_auth_failure);
+        }
+        false
     }
 
     async fn stop_run(&self, rec: &AgentRecord) -> Result<Option<String>> {
@@ -1703,7 +1768,25 @@ impl Persistent {
             };
             if line != rec.activity {
                 self.update_in(&rec, |r| r.activity = line)?;
+                // The thread's followers show it at once.
+                self.thread_store(&rec.space).wake();
             }
+        }
+        // "woke up and joined" says so once the agent is up (an agent that
+        // never gets there fails instead, and says that).
+        if agent_ready(&page.events)
+            && let Some(seq) = self.live.lock().await.joining.remove(&run)
+        {
+            let _ = self
+                .thread_store(&rec.space)
+                .append(crate::thread::Draft::note(
+                    "dispatch",
+                    Some(seq),
+                    format!("{} woke up and joined", members::session_name(&rec)),
+                ));
+        }
+        if failed.is_some() || ended.is_some() {
+            self.live.lock().await.joining.remove(&run);
         }
         if let Some(turn) = ended
             && turn > rec.saved_turn
@@ -1798,45 +1881,57 @@ enum Activity {
     Line(String),
 }
 
-/// The latest tool title or plan step in `events` (one line, at most 80
-/// characters, never a secret), `Cleared` when the turn ended after it.
+/// The stage `events` put the turn in, in a few plain words: `installing`,
+/// `starting`, `thinking`, `replying` or `using <tool>` (never the task's
+/// text, never a secret). `Cleared` when the turn ended or failed after it.
 fn activity_line(events: &[ag::AgentEvent]) -> Activity {
     for e in events.iter().rev() {
         let line = match e.kind {
-            "turn_ended" | "exited" => return Activity::Cleared,
-            "tool_call" => e
-                .tool_title
-                .clone()
-                .filter(|t| !t.trim().is_empty())
-                .or_else(|| e.tool_kind.clone()),
-            "plan" => {
-                let entries = e.raw["update"]["entries"]
-                    .as_array()
-                    .cloned()
+            "turn_ended" | "exited" | "error" => return Activity::Cleared,
+            "tool_call" => {
+                let title = e
+                    .tool_title
+                    .clone()
+                    .filter(|t| !t.trim().is_empty())
+                    .or_else(|| e.tool_kind.clone())
                     .unwrap_or_default();
-                let pick = |status: &str| {
-                    entries
-                        .iter()
-                        .find(|x| x["status"] == status)
-                        .and_then(|x| x["content"].as_str())
-                        .map(str::to_string)
-                };
-                pick("in_progress").or_else(|| pick("pending"))
+                let one: String = title.split_whitespace().collect::<Vec<_>>().join(" ");
+                Some(if one.is_empty() {
+                    "working".to_string()
+                } else if !cua_volume::scan::scan(one.as_bytes()).is_empty() {
+                    "using a tool".to_string()
+                } else {
+                    format!("using {}", members::clip_line(&one, 48))
+                })
+            }
+            "message" => Some("replying".to_string()),
+            "thought" | "plan" | "turn_started" | "user_message" => Some("thinking".to_string()),
+            "session" | "initialized" | "authenticated" => Some("starting".to_string()),
+            "install" => {
+                let phase = e.raw["phase"].as_str().unwrap_or_default();
+                Some(
+                    if matches!(phase, "done" | "cached" | "skipped" | "ready") {
+                        "starting"
+                    } else {
+                        "installing"
+                    }
+                    .to_string(),
+                )
             }
             _ => None,
         };
         if let Some(l) = line {
-            let one: String = l.split_whitespace().collect::<Vec<_>>().join(" ");
-            if one.is_empty() {
-                continue;
-            }
-            if !cua_volume::scan::scan(one.as_bytes()).is_empty() {
-                return Activity::Line("Working (a step that looked like a secret)".into());
-            }
-            return Activity::Line(members::clip_line(&one, 80));
+            return Activity::Line(l);
         }
     }
     Activity::Unchanged
+}
+
+/// Whether `events` show the agent up and ready (past install and start).
+fn agent_ready(events: &[ag::AgentEvent]) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e.kind, "initialized" | "session" | "turn_started"))
 }
 
 /// In a page of a run's events: the last turn that ended, and the last

@@ -13,6 +13,7 @@
 
 pub mod durable;
 pub mod events;
+pub mod failure;
 pub mod harness;
 pub mod installables;
 pub mod runs;

@@ -22,6 +22,14 @@ struct ThreadBridgeTests {
         #expect(args["follow_ms"] as? Int == 25_000)
     }
 
+    @Test func readCarriesTheLiveKeyOnlyWithAFollow() throws {
+        let (_, followed) = try WebUIBridge.threadToolCall(
+            "thread.read", ["spaceId": "local:dev", "after": 41, "followMs": 25_000, "liveAfter": "claude=thinking"])
+        #expect(followed["live_after"] as? String == "claude=thinking")
+        let (_, plain) = try WebUIBridge.threadToolCall("thread.read", ["spaceId": "local:dev", "after": 41, "liveAfter": "claude=thinking"])
+        #expect(plain["live_after"] == nil)
+    }
+
     @Test func readPagesBack() throws {
         let (_, args) = try WebUIBridge.threadToolCall("thread.read", ["spaceId": "local:dev", "before": 40, "limit": 100])
         #expect((args["before"] as? NSNumber)?.intValue == 40)

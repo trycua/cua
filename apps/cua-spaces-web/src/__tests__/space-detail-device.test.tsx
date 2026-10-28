@@ -18,7 +18,7 @@ stubBrowserApis();
 const NOTICE = {
   kind: "needs-enrollment",
   status: "Not enrolled",
-  text: "Enroll this Mac to connect to your other computers.",
+  text: "Enroll this Mac to connect to your other machines.",
   actionLabel: "Enroll This Mac…",
 };
 
@@ -42,14 +42,15 @@ function host(rows: unknown[], over: { access?: boolean; sharing?: boolean } = {
 }
 
 describe.skipIf(!wasmBuilt)("this machine's own desktop opened as a Space page (real routes, wasm core)", () => {
-  // Regression: the Computers page's "This computer · Desktop" row opened a
+  // Regression: the Machines page's "This computer · Desktop" row opened a
   // Space page that said "Loading the desktop…" forever, "No windows: the
   // Space's window host is not up" and "Could not read this Space's agents":
   // nothing streams this machine's own screen here, and it is not a Space to
-  // ask for windows or agents. Its page now says why, with one action.
-  it("says why instead of loading forever, asks it for no windows or agents, and links to Computers", async () => {
+  // ask for windows or agents. Its page now says whether the desktop is shared,
+  // with the switch right there.
+  it("says whether the desktop is shared instead of loading forever, and asks it for no windows or agents", async () => {
     // As the SwiftUI app sends This Mac while it shares its desktop (`spaceToRow`).
-    const thisMac = { id: "this-mac", name: "This computer", provider: "local", os: "macos", spacesdVersion: "", features: [], reachable: true, powerState: "running" };
+    const thisMac = { id: "this-mac", name: "This Mac", provider: "local", os: "macos", spacesdVersion: "", features: [], reachable: true, powerState: "running" };
     const asked: string[] = [];
     const { router } = await mountApp("/spaces", {
       ...host([thisMac]),
@@ -60,12 +61,12 @@ describe.skipIf(!wasmBuilt)("this machine's own desktop opened as a Space page (
       },
     });
     await act(() => router.navigate({ to: "/spaces/$spaceId", params: { spaceId: "this-mac" } }));
-    const note = await waitFor(() => {
-      const n = document.querySelector("[data-machine-desktop-note]");
+    const page = await waitFor(() => {
+      const n = document.querySelector("[data-this-mac-desktop]");
       expect(n).not.toBeNull();
       return n!;
     });
-    expect(note.textContent).toContain("This is this Mac’s own screen");
+    expect(page.textContent).toContain("You're sharing your desktop as a Space");
     expect(screen.queryByText("Loading the desktop…")).toBeNull();
     expect(document.querySelector("[data-stream-surface]")).toBeNull();
     expect(document.querySelector('[data-section="agents"]')).toBeNull();
@@ -73,8 +74,6 @@ describe.skipIf(!wasmBuilt)("this machine's own desktop opened as a Space page (
     // Give the page's polls a chance to run: none asks This Mac.
     await new Promise((r) => setTimeout(r, 50));
     expect(asked.filter((op) => op === "spaces.windows" || op === "agents.runs")).toEqual([]);
-    fireEvent.click(screen.getByRole("link", { name: "Open Computers" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
   });
 });
 

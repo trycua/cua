@@ -319,7 +319,7 @@ export function AgentDmView({ chat, space, onSpace, identity, onInfo, me }: { ch
             <>
               {asleepHere ? <p className="my-1 text-center text-xs text-muted-foreground">{chat.label} is asleep here. A message wakes it.</p> : null}
               {dm.items.map((d) => (
-                <DmRow key={`${d.spaceId}${d.item.key}`} d={d} roster={rosters[d.spaceId]!} spaces={chat.spaces} multi={multi && !space} onAnswer={(seq, ok) => dm.answer(d.spaceId, seq, ok)} onOpenAttachment={openAttachment} />
+                <DmRow key={`${d.spaceId}${d.item.key}`} d={d} roster={rosters[d.spaceId]!} spaces={chat.spaces} multi={multi && !space} onAnswer={(seq, ok) => dm.answer(d.spaceId, seq, ok)} onOpenAttachment={openAttachment} onRetry={(text) => dm.send(d.spaceId, text)} />
               ))}
             </>
           )}
@@ -345,11 +345,11 @@ export function AgentDmView({ chat, space, onSpace, identity, onInfo, me }: { ch
   );
 }
 
-function DmRow({ d, roster, spaces, multi, onAnswer, onOpenAttachment }: { d: DmItem; roster: Roster; spaces: AgentChatSpace[]; multi: boolean; onAnswer: (seq: number, ok: boolean) => Promise<void>; onOpenAttachment: (a: ThreadAttachment) => void }) {
+function DmRow({ d, roster, spaces, multi, onAnswer, onOpenAttachment, onRetry }: { d: DmItem; roster: Roster; spaces: AgentChatSpace[]; multi: boolean; onAnswer: (seq: number, ok: boolean) => Promise<void>; onOpenAttachment: (a: ThreadAttachment) => void; onRetry: (text: string) => Promise<void> }) {
   const s = spaces.find((x) => x.spaceId === d.spaceId);
   // Every message says its Space when the DM shows several.
   const label = multi && s ? <SpaceLabel name={s.spaceName} os={s.os} /> : undefined;
-  return <ThreadItemView item={d.item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} label={label} />;
+  return <ThreadItemView item={d.item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRetry={onRetry} label={label} />;
 }
 
 function SpaceLabel({ name, os }: { name: string; os: AgentChatSpace["os"] }) {

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * One persistent agent's Memory, Routines and Access to this computer: the
+ * One persistent agent's Memory, Routines and Access to this machine: the
  * commands the app core's Agents page asks for (`AgentsRequest` in
  * `cua-spaces-app-core/src/persistent.rs`), one operation each. Every one is
  * a daemon Spaces tool the SwiftUI app's `PersistentModel.send` already

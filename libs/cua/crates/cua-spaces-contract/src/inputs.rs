@@ -155,7 +155,7 @@ pub struct CreateSpace {
     /// only when connected and no computer has room), `aws`, `gcp` or
     /// `modal` (your own cloud account, billed there), or `host:<computer>`:
     /// one of the user's own computers that
-    /// provides Spaces (`cua host setup --provide-spaces` on it), named by
+    /// provides Spaces (`cua host setup --share both` on it), named by
     /// id or by words from its name ("host:spare mac mini" matches "Mac
     /// mini (spare)" or `dillons-mac-mini`). Default: the user's default
     /// location (`cua config set default.on`, `CUA_DEFAULT_ON`), else
@@ -820,6 +820,11 @@ pub struct ThreadRead {
     /// a new entry when there is none after it. Default 0 (answer at once).
     #[serde(default)]
     pub follow_ms: Option<u64>,
+    /// With `follow_ms`: the `live.key` of the previous call. The wait also
+    /// ends when an agent's live stage (`live.agents`) is no longer the one
+    /// that key names, so a reader sees "thinking", "using Bash" as it changes.
+    #[serde(default)]
+    pub live_after: Option<String>,
     /// Only your DM with this agent member (its handle): its entries, yours
     /// that task or @mention it, and their replies, task updates, answers
     /// and notes. Paging, `unread` and `mark_read` then apply to the DM,

@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BridgeProvider } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
-import { DEMO_THREAD_SPACE } from "@/bridge/adapters/demo/thread";
+import { DEMO_THREAD_SPACE, JOIN_LINE_STEPS } from "@/bridge/adapters/demo/thread";
 import { testCore } from "@/bridge/__tests__/testCore";
 import { threadOpAvailable } from "@/bridge/ops/thread";
 import { AddAgentSheet, freeHandle } from "@/components/add-agent/add-agent-sheet";
@@ -24,7 +24,7 @@ stubBrowserApis();
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
 const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
-const LINE = 'Join my Cua Space "ubuntu-build": https://cua.ai/join/7KQ2-9FXA';
+const LINE = `Join my Cua Space "ubuntu-build": https://cua.ai/join/7KQ2-9FXA ${JOIN_LINE_STEPS}`;
 
 let clipboard: string[] = [];
 beforeEach(() => {
@@ -121,7 +121,7 @@ describe("Add an agent", () => {
     await found("[data-join-expired]", 5000);
     expect(q("[data-prompt-copy]")?.hasAttribute("disabled")).toBe(true);
     await click(q("[data-join-renew]")!);
-    await waitFor(() => expect(line()?.value).toMatch(/^Join my Cua Space "ubuntu-build": https:\/\/cua\.ai\/join\/[2-9A-Z]{4}-[2-9A-Z]{4}$/));
+    await waitFor(() => expect(line()?.value).toMatch(/^Join my Cua Space "ubuntu-build": https:\/\/cua\.ai\/join\/[2-9A-Z]{4}-[2-9A-Z]{4} After you join: /));
     expect(line()?.value).not.toBe(LINE);
     expect(q("[data-join-expired]")).toBeNull();
   });

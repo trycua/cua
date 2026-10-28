@@ -32,6 +32,8 @@ export interface RosterAgent {
   identity: MemberIdentity | null;
   /** Another agent here uses the same name: its owner shows after the AI tag. */
   collides: boolean;
+  /** What the Space calls it (`@claude`); `name` is its key on this machine (`claude-2` in a second Space). */
+  handle: string;
 }
 
 /** How an author shows in the thread. */
@@ -99,6 +101,15 @@ export function postsFrom(identity: MemberIdentity): string {
   return identity.origin === "space" ? "Runs in this Space" : "Connected";
 }
 
+/** How long since a connected agent last asked its inbox before it reads as one that only runs when someone messages it. */
+const LOOP_QUIET_MS = 2 * 60_000;
+
+/** The line under an idle agent's name: a connected one that is not watching the thread (a CLI session that runs only when prompted) says it waits for you; others say where they post from. */
+export function idleCaption(identity: MemberIdentity, nowMs = Date.now()): string {
+  if (identity.origin === "external" && identity.state === "active" && (identity.lastSeenMs == null || nowMs - identity.lastSeenMs > LOOP_QUIET_MS)) return "Waits for you to message it";
+  return postsFrom(identity);
+}
+
 /** The agents whose name another agent here also uses (by handle). The daemon's `collides` counts too. */
 export function collidingNames(agents: readonly { name: string; label: string; identity: MemberIdentity | null }[]): Set<string> {
   const count = new Map<string, number>();
@@ -122,12 +133,13 @@ export function buildRoster(input: {
     kind: "agent",
     id: `agent:${m.name}`,
     name: m.name,
+    handle: m.handle || m.name,
     // The name the agent chose; without an identity, the harness's name when it is named after it.
     label: m.identity?.displayName || agentLabel(m.name, m.harness, input.harnessName),
     harness: m.identity?.harness.id || m.harness,
     status: m.status,
     // What it says it is doing (`task #12: …`, `2 open tasks`), else the state in a word, else where it posts from.
-    caption: m.activity ?? AGENT_CAPTION[m.status] ?? (m.identity ? postsFrom(m.identity) : null),
+    caption: m.activity ?? AGENT_CAPTION[m.status] ?? (m.identity ? idleCaption(m.identity) : null),
     dim: m.status === "asleep" || m.status === "paused",
     sessions: m.sessions,
     rights: m.rights ?? DEFAULT_AGENT_RIGHTS,
@@ -161,7 +173,7 @@ export function buildRoster(input: {
   for (const a of posted.values()) add({ kind: "person", id: a.id, label: a.name, me: false }, a.id, a.name.toLowerCase());
 
   const candidates: MentionCandidate[] = [
-    ...agents.map((a) => ({ handle: a.name, label: a.label, kind: "agent" as const })),
+    ...agents.map((a) => ({ handle: a.handle, label: a.label, kind: "agent" as const })),
     ...people.filter((p) => !p.me).map((p) => ({ handle: p.label.toLowerCase().replace(/\s+/g, ""), label: p.label, kind: "person" as const })),
   ];
   const labels = new Set(agents.map((a) => a.label.trim().toLowerCase()));

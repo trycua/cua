@@ -12938,6 +12938,57 @@
    "usage": "cua computers [OPTIONS]"
   },
   {
+   "abstract": "Your computers on the relay: remove one that is gone",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "machines",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "Remove a computer that is gone: its row leaves your relay directory, then the signed-in device with exactly its name is revoked (never this device; nothing when several match). A computer that is connected now is refused: run `cua host remove` on it",
+     "after_help": "Examples:\n  cua machines rm old-laptop\n  cua machines rm relay:0123abcd4567ef89 --yes --json",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The computer's name, machine id or `relay:<id>` (`cua spaces ls`)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "NAME",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Remove without asking",
+       "hidden": false,
+       "name": "yes",
+       "repeatable": false,
+       "short_name": "y",
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "rm",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua machines rm [OPTIONS] <NAME>"
+    }
+   ],
+   "usage": "cua machines [OPTIONS] <COMMAND>"
+  },
+  {
    "abstract": "Unattended access to this computer (setup, status, stop, start, remove)",
    "aliases": [],
    "arguments": [],
@@ -12949,8 +13000,8 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. By default (the `desktop` profile) it shares this computer's desktop and, on a computer set up for the first time through the relay, provides Spaces to your devices (a host in your pool: `cua run` jobs and `--on auto` Spaces can run here, within its limits); `--no-provide-spaces` leaves that off, and `cua host config --provide-spaces off` turns it off later. A computer set up before keeps what it provides. `--profile spare` or `--no-desktop` provides Spaces only, so its own desktop stays private. Running it again with the same options changes nothing (a stopped service starts again)",
-     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop and\n  # provides Spaces to your devices)\n  cua host setup\n  # Share this desktop only\n  cua host setup --no-provide-spaces\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only):\n  # run setup with CUA_MESH=off in the environment\n  # Self-hosting teams: cua help advanced",
+     "abstract": "Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. By default it shares this computer's desktop and, on a computer set up for the first time through the relay, provides Spaces to your devices (a host in your pool: `cua run` jobs and `--on auto` Spaces can run here, within its limits). `--share` picks what it shares: `desktop`, `spaces` (its own desktop stays private), `both` or `none`; `cua host config` changes it later. A computer set up before keeps what it provides. Running it again with the same options changes nothing (a stopped service starts again)",
+     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop and\n  # provides Spaces to your devices)\n  cua host setup\n  # Share this desktop only\n  cua host setup --share desktop\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --share spaces --name \"Mac mini (spare)\"\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only):\n  # run setup with CUA_MESH=off in the environment\n  # Self-hosting teams: cua help advanced",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -12969,8 +13020,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Share this computer's own desktop as a Space",
-       "hidden": false,
+       "help": "Hidden alias of the desktop half of `--share`",
+       "hidden": true,
        "name": "desktop",
        "repeatable": false,
        "short_name": null,
@@ -12980,8 +13031,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Do not share this computer's own desktop (screen, input, shell, files): relayed callers reach only the Spaces it provides",
-       "hidden": false,
+       "help": "Hidden alias of `--share spaces` with `--provide-spaces`",
+       "hidden": true,
        "name": "no-desktop",
        "repeatable": false,
        "short_name": null,
@@ -12991,8 +13042,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Create Spaces for your enrolled devices on this computer's runtimes (Lume macOS VMs, Docker Linux containers). The default for a new relay setup; a computer set up before keeps its setting unless this (or `--no-provide-spaces`) is given. On its own it keeps the default `desktop` profile, so this computer's desktop is shared too; add `--no-desktop` (or use `--profile spare`) to provide Spaces only",
-       "hidden": false,
+       "help": "Hidden alias: with the default profile, `--share both`",
+       "hidden": true,
        "name": "provide-spaces",
        "repeatable": false,
        "short_name": null,
@@ -13002,8 +13053,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Do not create Spaces for other devices (only share this desktop)",
-       "hidden": false,
+       "help": "Hidden alias: with the default profile, `--share desktop`",
+       "hidden": true,
        "name": "no-provide-spaces",
        "repeatable": false,
        "short_name": null,
@@ -13163,8 +13214,29 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "What this computer is for: `desktop` (share this desktop, and provide Spaces on a new relay setup; the default) or `spare` (do not share the desktop; provide Spaces)",
+       "help": "What this computer shares: its own desktop (screen, input, shell, files), the Spaces it creates for your enrolled devices (Lume macOS VMs, Docker Linux containers), both, or neither (refused). Default: the desktop, plus Spaces on a new relay setup; a computer set up before keeps what it provides",
        "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "share",
+       "possible_values": [
+        "desktop",
+        "spaces",
+        "both",
+        "none"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "desktop | spaces | both | none",
+       "value_name": "WHAT"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Hidden alias: `--share spaces` is `--profile spare`",
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "profile",
@@ -13716,7 +13788,7 @@
     },
     {
      "abstract": "Register a Space after a capabilities handshake with its cua-spacesd (or, for another URL, an MCP initialize). Re-adding an address updates it. The token is stored apart from the registry, 0600",
-     "after_help": "Examples:\n  cua spaces add 10.0.0.5:3211 --token \"$TOKEN\" --name studio\n  cua spaces add local:my-sandbox\n  cua spaces add http://127.0.0.1:8765/mcp --service tools\n  # A computer that provides Spaces over Tailscale, without the relay\n  # (`cua host setup --direct ... --provide-spaces` on it prints this)\n  cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"",
+     "after_help": "Examples:\n  cua spaces add 10.0.0.5:3211 --token \"$TOKEN\" --name studio\n  cua spaces add local:my-sandbox\n  cua spaces add http://127.0.0.1:8765/mcp --service tools\n  # A computer that provides Spaces over Tailscale, without the relay\n  # (`cua host setup --direct ... --share both` on it prints this)\n  cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"",
      "aliases": [],
      "arguments": [
       {
@@ -13801,7 +13873,7 @@
      "usage": "cua spaces add [OPTIONS] <URL>"
     },
     {
-     "abstract": "Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --no-desktop --provide-spaces` there), or in your own cloud account",
+     "abstract": "Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --share spaces` there), or in your own cloud account",
      "after_help": "Examples:\n  cua spaces create linux\n  # On the least-loaded of your machines\n  cua spaces create linux --on auto\n  # Two macOS VMs on your spare Mac mini (matched by name)\n  cua spaces create macos:26 --on \"spare mac mini\" --count 2\n  cua spaces create --on host:0123abcd4567ef89 linux --json\n  # Kept on your machines: created again on another one if its machine goes away\n  cua spaces create linux --on auto --durable --name research\n  # In your AWS account, on a pool host of exactly this type and region\n  cua spaces create linux --on aws --instance-type c7g.xlarge --region us-west-2\n  # Labels are kept with the Space; `cua spaces ls --label team=research` filters\n  cua spaces create linux --label team=research --label run=7",
      "aliases": [],
      "arguments": [

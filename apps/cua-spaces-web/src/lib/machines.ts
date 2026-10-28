@@ -74,7 +74,7 @@ export function spaceCount(n: number): string {
 /** The row's Spaces count: the core's (`machines::spaces_label`, the same
  * the SwiftUI Machines list shows), else `n` counted here. Empty for a
  * device of its own (it runs no Spaces). `desktop`: the machine shares its
- * own desktop ("Desktop shared", "Desktop · 2 Spaces"). */
+ * own desktop ("Desktop shared", "Desktop and 2 Spaces"). */
 export function spacesLabel(m: Pick<Machine, "spacesLabel">, n: number, desktop = false): string {
   return m.spacesLabel ?? machineSpacesLabel(desktop, n);
 }
@@ -86,5 +86,5 @@ export function selectedMachine<T extends Pick<Machine, "id">>(machines: readonl
 
 /** The Machines header: "1 machine, 1 online", "3 machines, 2 online". */
 export function machinesSummary(total: number, online: number): string {
-  return `${plural(total, "computer")}, ${online} online`;
+  return `${plural(total, "machine")}, ${online} online`;
 }

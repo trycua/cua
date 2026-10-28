@@ -1002,6 +1002,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<String>("provider")?,
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
+            a.get::<Option<String>>("forApp")?.as_deref(),
         )),
         "connectors.appDetail" => out(connectors::app_detail(
             &a.get("input")?,
@@ -1724,7 +1725,7 @@ mod tests {
                 .contains("on this PC in Windows Credential Manager,")
         );
         let linux = intro(json!({ "input": input, "hostOs": "linux" }));
-        assert!(linux.contains("on this computer,") && !linux.contains("Keychain"));
+        assert!(linux.contains("on this machine,") && !linux.contains("Keychain"));
         let help = |os: Value| {
             call_value(
                 "agentKeys.form",
@@ -1742,7 +1743,7 @@ mod tests {
         assert!(help(json!("windows")).contains("in Windows Credential Manager on this PC"));
         assert_eq!(
             help(json!("linux")),
-            "It's saved on this computer and won't be shown again."
+            "It's saved on this machine and won't be shown again."
         );
     }
 

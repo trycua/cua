@@ -44,7 +44,7 @@ struct NavTarget: Identifiable {
 
     @MainActor static func all(_ model: AppModel) -> [NavTarget] {
         [NavTarget(command: "nav.spaces", label: "Spaces", symbol: "square.grid.2x2"),
-         NavTarget(command: "nav.machines", label: "Computers", symbol: "server.rack"),
+         NavTarget(command: "nav.machines", label: "Machines", symbol: "server.rack"),
          NavTarget(command: "nav.agents", label: "Agents", symbol: "person.2"),
          NavTarget(command: "nav.keyvault", label: model.chrome.keyvaultTitle, symbol: "key")]
     }

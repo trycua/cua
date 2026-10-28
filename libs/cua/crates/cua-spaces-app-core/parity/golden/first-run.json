@@ -8,7 +8,7 @@
       "welcome": {
         "lede": "Run agents in Spaces on this Mac, or on any computer your team connects.",
         "primary": "start:Get started",
-        "title": "Your computers, shared by your team and its agents."
+        "title": "Your machines, shared by your team and its agents."
       }
     },
     {
@@ -122,16 +122,16 @@
       "art": "hermes on outline",
       "case": "08 connect your other devices",
       "devices": {
-        "lede": "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces.",
+        "lede": "Sign in to Cua here and on your other machines. Then they can all use this Mac's Spaces.",
         "note": "Not now keeps Cua on this Mac only. You can sign in later.",
         "primary": "sign-in:Sign in",
         "rows": [
-          "Your other computers — Sign in with the same account",
+          "Your other machines — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "not-now:Not now",
         "status": null,
-        "title": "Add your other computers."
+        "title": "Add your other machines."
       },
       "step": "devices"
     },
@@ -139,16 +139,16 @@
       "art": "hermes on outline",
       "case": "09 connect your other devices, signing in",
       "devices": {
-        "lede": "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces.",
+        "lede": "Sign in to Cua here and on your other machines. Then they can all use this Mac's Spaces.",
         "note": "Not now keeps Cua on this Mac only. You can sign in later.",
         "primary": "sign-in:Sign in",
         "rows": [
-          "Your other computers — Sign in with the same account",
+          "Your other machines — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "not-now:Not now",
         "status": "[checking] Signing in — Finish signing in to Cua in your browser.",
-        "title": "Add your other computers."
+        "title": "Add your other machines."
       },
       "step": "devices"
     },
@@ -156,11 +156,11 @@
       "art": "hermes on outline",
       "case": "10 this Mac being added to the account",
       "devices": {
-        "lede": "Sign in on your other computers to use its Spaces.",
+        "lede": "Sign in on your other machines to use its Spaces.",
         "note": null,
         "primary": "continue:Continue",
         "rows": [
-          "Your other computers — Sign in with the same account",
+          "Your other machines — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "",
@@ -173,11 +173,11 @@
       "art": "hermes on outline",
       "case": "11 this Mac in the account",
       "devices": {
-        "lede": "Sign in on your other computers to use its Spaces.",
+        "lede": "Sign in on your other machines to use its Spaces.",
         "note": null,
         "primary": "continue:Continue",
         "rows": [
-          "Your other computers — Sign in with the same account",
+          "Your other machines — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "",
@@ -218,7 +218,7 @@
           "[ ] Make this Mac your first Space — After you sign in.",
           "[x] Try your first request — Ask Hermes or Claude Code: “Make a Linux Space on this Mac and show its desktop in a new window.”",
           "[ ] Make a first Space (optional) — A separate computer on this Mac, away from your files and your mouse. (add:Add a Space)",
-          "[ ] Add your other computers (optional) — Sign in to use this Mac's Spaces from your other computers. (sign-in:Sign in)"
+          "[ ] Add your other machines (optional) — Sign in to use this Mac's Spaces from your other machines. (sign-in:Sign in)"
         ],
         "lede": "One thing is left.",
         "progress": "1 of 5 done"
@@ -264,7 +264,7 @@
         "items": [
           "[ ] Make this Mac your first Space — After you sign in.",
           "[ ] Make a first Space (optional) — A separate computer on this Mac, away from your files and your mouse. (add:Add a Space)",
-          "[ ] Add your other computers (optional) — Sign in to use this Mac's Spaces from your other computers. (sign-in:Sign in)"
+          "[ ] Add your other machines (optional) — Sign in to use this Mac's Spaces from your other machines. (sign-in:Sign in)"
         ],
         "lede": "You're all set.",
         "progress": "0 of 3 done"
@@ -331,7 +331,7 @@
           "[ ] Let Cua control this Mac — So your agent can click and type. macOS asks you once. (open-settings:Open Settings)",
           "[ ] Try your first request — Ask Claude Code: “Make a Linux Space on this Mac and show its desktop in a new window.” (copy:Copy)",
           "[ ] Make a first Space (optional) — A separate computer on this Mac, away from your files and your mouse. (add:Add a Space)",
-          "[x] Add your other computers (optional) — Signed in to Cua."
+          "[x] Add your other machines (optional) — Signed in to Cua."
         ],
         "lede": "A couple of things are left.",
         "progress": "1 of 5 done"
@@ -512,11 +512,11 @@
       "art": "hermes on outline",
       "case": "19 this Mac in the account, Continue goes to permissions",
       "devices": {
-        "lede": "Sign in on your other computers to use its Spaces.",
+        "lede": "Sign in on your other machines to use its Spaces.",
         "note": null,
         "primary": "continue:Continue",
         "rows": [
-          "Your other computers — Sign in with the same account",
+          "Your other machines — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "",
@@ -648,16 +648,16 @@
       "art": "hermes on outline",
       "case": "25 not signed in: Not now skips permissions",
       "devices": {
-        "lede": "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces.",
+        "lede": "Sign in to Cua here and on your other machines. Then they can all use this Mac's Spaces.",
         "note": "Not now keeps Cua on this Mac only. You can sign in later.",
         "primary": "sign-in:Sign in",
         "rows": [
-          "Your other computers — Sign in with the same account",
+          "Your other machines — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "not-now:Not now",
         "status": null,
-        "title": "Add your other computers."
+        "title": "Add your other machines."
       },
       "step": "devices",
       "steps": [
@@ -690,11 +690,11 @@
       "art": "hermes on outline",
       "case": "27 a Windows PC: no permissions screen",
       "devices": {
-        "lede": "Sign in on your other computers to use its Spaces.",
+        "lede": "Sign in on your other machines to use its Spaces.",
         "note": null,
         "primary": "continue:Continue",
         "rows": [
-          "Your other computers — Sign in with the same account",
+          "Your other machines — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "",

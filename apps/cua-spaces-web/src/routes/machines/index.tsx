@@ -35,6 +35,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { useNewSpace } from "@/hooks/use-new-space";
+import { showDesktop } from "@/lib/hidden-desktops";
 import { machineOs, selectedMachine } from "@/lib/machines";
 import { cn } from "@/lib/utils";
 import { useFlag } from "@/bridge/flags";
@@ -98,16 +99,16 @@ function MachinesPage() {
   return (
     <Page contained className="max-w-6xl">
       <PageHeader
-        title="Computers"
-        description={isLoading ? "Loading computers…" : view?.machines.length ? view.summary : "Computers that can run your Spaces."}
+        title="Machines"
+        description={isLoading ? "Loading machines…" : view?.machines.length ? view.summary : "Machines that can run your Spaces."}
         actions={
           <Button onClick={() => setAdding(true)} data-machines-add>
-            <PlusIcon /> Add a computer
+            <PlusIcon /> Add a machine
           </Button>
         }
       />
       {error ? (
-        <EmptyState icon={<ServerIcon />} title="Couldn't load computers">
+        <EmptyState icon={<ServerIcon />} title="Couldn't load machines">
           {error.message}
         </EmptyState>
       ) : isLoading || (!view && machines.length > 0) ? (
@@ -115,14 +116,14 @@ function MachinesPage() {
       ) : !view || view.machines.length === 0 ? (
         <EmptyState
           icon={<ServerIcon />}
-          title="No computers yet"
+          title="No machines yet"
           action={
             <Button onClick={() => setAdding(true)}>
-              <PlusIcon /> Add a computer
+              <PlusIcon /> Add a machine
             </Button>
           }
         >
-          Set up a Mac, Linux or Windows computer and it shows here, ready to run Spaces.
+          Set up a Mac, Linux or Windows machine and it shows here, ready to run Spaces.
         </EmptyState>
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,320px)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-8" data-machines-split="">
@@ -235,7 +236,7 @@ function MachineList({
           className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground/70"
         />
       </label>
-      <div role="listbox" aria-label="Computers">
+      <div role="listbox" aria-label="Machines">
         {(view.order ?? ["clouds", ...view.groups.map((g) => g.id)]).map((section) => {
           if (section === "clouds") return cloudsSection;
           const g = view.groups.find((x) => x.id === section);
@@ -434,6 +435,8 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
     void (async () => {
       try {
         for (const a of t.actions) await host.run(a);
+        // Turning this Mac's desktop on shows its row in the Spaces list again, if it was hidden.
+        if (m.current && t.id === "desktop" && !t.on) showDesktop("this-mac");
       } catch (e) {
         fail(`Couldn't change ${t.label}`)(e);
       } finally {
@@ -480,7 +483,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
         ) : null}
       </div>
       <p className="mt-1 flex items-center gap-1.5 text-[13px] text-muted-foreground" data-machine-status>
-        <StatusDot online={m.online} className="size-[7px]" />
+        <StatusDot online={m.online} health={m.health} className="size-[7px]" />
         {m.status}
         {m.sharedBy ? <span className="ml-2">{m.sharedBy}</span> : null}
       </p>
@@ -719,7 +722,7 @@ function RenameDialog({ open, machine: m, onClose }: { open: boolean; machine: M
 
 function LoadingState() {
   return (
-    <div aria-busy="true" aria-label="Loading computers" className="grid grid-cols-[minmax(0,320px)_minmax(0,1fr)] items-start gap-8">
+    <div aria-busy="true" aria-label="Loading machines" className="grid grid-cols-[minmax(0,320px)_minmax(0,1fr)] items-start gap-8">
       <div className="space-y-1">
         <div className="mb-3 h-[30px] animate-pulse rounded-lg bg-muted" />
         {[0, 1, 2].map((i) => (

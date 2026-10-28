@@ -90,8 +90,8 @@ describe("an agent's identity", () => {
     expect(q("[data-member='agent:hermes'] [data-harness-mark]")?.dataset.harnessMark).toBe("hermes");
     expect(q("[data-member='agent:cursor'] [data-harness-mark]")?.dataset.harnessMark).toBe("cursor");
     expect(q("[data-member='agent:claude'] [data-harness-mark]")?.dataset.harnessMark).toBe("claude-code");
-    // Where it posts from, under its name; the asleep Hermes is quieter but keeps its badge.
-    expect(q("[data-member='agent:cursor']")?.textContent).toContain("linus-thinkpad");
+    // A connected agent that isn't watching the thread says it waits for you; the asleep Hermes is quieter but keeps its badge.
+    expect(q("[data-member='agent:cursor']")?.textContent).toContain("Waits for you to message it");
     expect(q("[data-member='agent:hermes']")?.textContent).toContain("Runs in this Space");
     expect(q("[data-member='agent:hermes'] [data-agent-tile]")?.className).toContain("opacity-45");
     expect(q("[data-member='agent:hermes'] [data-owner-badge]")?.closest(".opacity-45")).toBeNull();
@@ -154,8 +154,10 @@ describe("an agent's identity", () => {
       Handle: "@claude",
       Runs: "Claude Code 2.4.1",
       Joined: expect.stringMatching(/^Connected by Grace with a prompt, \d+ (hour|day)s? ago$/),
-      "Owner's id": "acct_grace",
     });
+    // The owner is a person (their mark and name), never an id.
+    expect(card.querySelector("[data-card-owner-open]")?.getAttribute("data-card-owner-open")).toBe("Grace");
+    expect(card.textContent).not.toContain("acct_grace");
     // The owner may change who can task, stop and approve it: the selects, under Details.
     expect(card.querySelectorAll("[data-agent-right]")).toHaveLength(3);
     // The old card's facts and fine print are gone.

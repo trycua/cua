@@ -69,6 +69,67 @@ describe.skipIf(!wasmBuilt)("profile cards (redesign)", () => {
     expect(card.querySelector("[role=combobox]")).toBeNull();
   });
 
+  it("an agent's card says the owner as a person, not an id; clicking selects them in In this Space and opens their card", async () => {
+    await mountApp(path, { failsCreates: false, listsGhost: false });
+    await ready();
+    await click(await found("[data-profile-trigger='claude']"));
+    const card = await found("[data-profile-card='agent'][data-profile='claude']");
+    await click(card.querySelector("[data-card-details]")!);
+    const owner = card.querySelector<HTMLElement>("[data-card-owner]")!;
+    expect(owner.textContent).toContain("Owner");
+    expect(owner.textContent).toContain("Grace");
+    expect(card.textContent).not.toContain("acct_grace");
+    await click(card.querySelector("[data-card-owner-open]")!);
+    // Grace is in the Space: her row is selected and her card is open there.
+    await found("[data-profile-card='person'][data-profile='Grace']");
+    expect(q("[data-members] [data-profile-trigger='Grace']")?.hasAttribute("data-selected")).toBe(true);
+    expect(q("[data-profile-card='agent']")).toBeNull();
+  });
+
+  it("an owner who is not in the Space opens their profile card in place, with a way back", async () => {
+    await mountApp(path, { failsCreates: false, listsGhost: false, demo: { threadStranger: true } });
+    await ready();
+    await click(await found("[data-profile-trigger='gemini']"));
+    const card = await found("[data-profile-card='agent'][data-profile='gemini']");
+    await click(card.querySelector("[data-card-details]")!);
+    await click(card.querySelector("[data-card-owner-open]")!);
+    const person = await found("[data-profile-card='person'][data-profile='Dana']");
+    expect(person.textContent).toContain("Dana");
+    // Still in the same popup; Back returns to the agent.
+    expect(q("[data-profile-card-owner]")).not.toBeNull();
+    await click(q("[data-card-back]")!);
+    await found("[data-profile-card='agent'][data-profile='gemini']");
+  });
+
+  it("default permissions are one line with an Edit link; Edit shows the three selects, each saved at once", async () => {
+    const calls: { op: string; args: unknown }[] = [];
+    // Ada's Hermes in release-checks has the default rights.
+    await mountApp(`/spaces/${encodeURIComponent("relay:mac-mini/release-checks")}`, { failsCreates: false, listsGhost: false, intercept: (op, args) => (calls.push({ op, args }), undefined) });
+    await ready();
+    await click(await found("[data-profile-trigger='hermes']"));
+    const card = await found("[data-profile-card='agent'][data-profile='hermes']");
+    await click(card.querySelector("[data-card-details]")!);
+    const line = card.querySelector("[data-card-default-permissions]")!;
+    expect(line.textContent).toContain("Default permissions");
+    expect(card.querySelectorAll("[data-agent-right]")).toHaveLength(0);
+    await click(card.querySelector("[data-card-edit-rights]")!);
+    expect(card.querySelectorAll("[data-agent-right]")).toHaveLength(3);
+    // Who can give it tasks: Owner, Admins, Members and each person in the Space.
+    await click(card.querySelector("[data-agent-right='task'] button")!);
+    const options = [...document.querySelectorAll("[role=option]")].map((o) => o.textContent);
+    expect(options).toEqual(expect.arrayContaining(["Owner", "Admins", "Members"]));
+    expect(options.some((o) => o?.startsWith("Only "))).toBe(true);
+    const owner = [...document.querySelectorAll("[role=option]")].find((o) => o.textContent === "Owner")!;
+    await act(async () => {
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) fireEvent(owner, new MouseEvent(type, { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.setRights" && (c.args as { name: string; task: string }).task === "owner")).toBe(true));
+    // Saved: it is no longer the defaults, so the three rows stay.
+    await waitFor(() => expect(card.querySelector("[data-card-default-permissions]")).toBeNull());
+    expect(card.querySelectorAll("[data-agent-right]")).toHaveLength(3);
+  });
+
   it("your agent with no sign-in it can use: Not connected, with Connect", async () => {
     await mountApp(path, { failsCreates: false, listsGhost: false, answer: (op, out) => (op === "agentKeys.list" ? { ...(out as object), keys: [] } : out) });
     await ready();

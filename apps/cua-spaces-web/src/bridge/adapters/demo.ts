@@ -129,6 +129,10 @@ export interface DemoOptions {
   threadRole?: "member" | "guest";
   /** Extra scenes in the demo's thread: `?demo=thread-lookalike` (CUA-2262). */
   threadLookalike?: boolean;
+  /** `?demo=thread-auth-failed`: Claude and Hermes answer "hi" with "not connected" (CUA-2638). */
+  threadAuthFailed?: boolean;
+  /** `?demo=thread-stranger`: an agent whose owner is not in the Space (its card opens their profile in place). */
+  threadStranger?: boolean;
   /** Join codes: redeemed this long after they are made (null: never, `?demo=thread-join-slow`). */
   joinRedeemMs?: number | null;
   /** Join codes expire this long after they are made (`?demo=thread-join-expire`). */
@@ -212,6 +216,8 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     noThread: flags.has("nothread"),
     ...(flags.has("thread-guest") ? { threadRole: "guest" as const } : flags.has("thread-member") ? { threadRole: "member" as const } : {}),
     threadLookalike: flags.has("thread-lookalike"),
+    threadAuthFailed: flags.has("thread-auth-failed"),
+    threadStranger: flags.has("thread-stranger"),
     threadRequest: flags.has("thread-request"),
     ...(flags.has("thread-join-slow") || flags.has("thread-join-expire") ? { joinRedeemMs: null } : {}),
     ...(flags.has("thread-join-expire") ? { joinExpireMs: 6_000 } : {}),
@@ -886,7 +892,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
     ...demoLinksHandlers(ctx),
-    ...demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false,
+    ...demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false,
       joinRedeemMs: options.joinRedeemMs,
       joinExpireMs: options.joinExpireMs,
       request: options.threadRequest ?? false,

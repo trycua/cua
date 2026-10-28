@@ -18,9 +18,10 @@ import { registerAddAgent } from "@/components/add-agent/add-agent-launcher";
 
 import { CallSplit } from "./call-split";
 import { Composer } from "./composer";
+import { LiveRows } from "./live-row";
 import { MembersPanel, type MemberPresence } from "./members-panel";
 import { panelFacts } from "./rail";
-import type { SpaceLayout } from "./layout-mode";
+import { useStreamHidden, type SpaceLayout } from "./layout-mode";
 import { MiniPlayer } from "./mini-player";
 import { GUEST_COMPOSER } from "./rights";
 import { buildRoster } from "./roster";
@@ -114,6 +115,8 @@ export function SpaceCall({
   useEffect(() => (canAdd ? registerAddAgent(spaceId, () => setAddOpen(true)) : undefined), [canAdd, spaceId]);
   const [reserve, setReserve] = useState(0);
   const threadMode = layout === "thread" && Boolean(smallStage);
+  // Clicking the already-selected stream hides the stream view (thread only); again shows it.
+  const [streamHidden, setStreamHidden] = useStreamHidden(spaceId);
   // ⌘⇧T (Ctrl+Shift+T): thread view and back.
   useEffect(() => {
     if (!onLayout) return;
@@ -156,7 +159,8 @@ export function SpaceCall({
       notes?.filter((n) => n.seq === seq).map(noteView)
     );
   // The person and agent cards read the Space from here (names, avatars, mentions, the rail).
-  // The owner and admins change agents' rights (a daemon that does not say your role: you are its owner).
+  // The Space's owner and admins change agents' rights, and so does an agent's own owner (the daemon decides; a guest only reads).
+  const [selectedMember, setSelectedMember] = useState<string | null>(null);
   const scope = {
     spaceId,
     roster: shown,
@@ -165,7 +169,9 @@ export function SpaceCall({
     role: thread.role,
     identity,
     onRemoveAgent: thread.removeAgent ?? undefined,
-    onSetRights: thread.role === null || thread.role === "owner" || thread.role === "admin" ? thread.setRights : undefined,
+    onSetRights: thread.role === "guest" ? undefined : thread.setRights,
+    selected: selectedMember,
+    select: setSelectedMember,
   };
   const harnessOf = (handle: string) => roster.agents.find((a) => a.name === handle)?.harness ?? summon.candidates.find((c) => c.handle === handle)?.harness ?? "";
   // Attachments are Cua Volume paths: show the file where the Volume is mounted.
@@ -182,10 +188,16 @@ export function SpaceCall({
       items={items}
       roster={shown}
       after={after}
-      tail={notes?.filter((n) => n.seq === null).map(noteView)}
+      tail={
+        <>
+          {notes?.filter((n) => n.seq === null).map(noteView)}
+          <LiveRows live={thread.live} roster={shown} />
+        </>
+      }
       onAnswer={thread.answer}
       onOpenAttachment={openAttachment}
       onRemoveAgent={thread.removeAgent ?? undefined}
+      onRetry={(text) => summon.send(text, view ?? null)}
       onReachTop={thread.hasMoreBefore ? thread.loadEarlier : undefined}
       empty={
         thread.status === "loading" ? null : (
@@ -224,10 +236,18 @@ export function SpaceCall({
           <div data-thread-layout="" className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative flex min-h-0 flex-1 flex-col">
               {threadView(reserve)}
-              <MiniPlayer spaceId={spaceId} label={stageLabel} aspect={aspect} onExpand={() => onLayout?.("call")} onReserve={setReserve}>
-                {smallStage}
-              </MiniPlayer>
+              {streamHidden ? null : (
+                <MiniPlayer spaceId={spaceId} label={stageLabel} aspect={aspect} onExpand={() => onLayout?.("call")} onReserve={setReserve}>
+                  {smallStage}
+                </MiniPlayer>
+              )}
             </div>
+            {composer}
+          </div>
+        ) : streamHidden ? (
+          // The stream is hidden: not drawn, so its connection is released; the thread and the composer take the room.
+          <div data-thread-only="" className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {threadView(0)}
             {composer}
           </div>
         ) : (
@@ -264,7 +284,17 @@ export function SpaceCall({
           windows={windows}
           desktop={desktop}
           selected={selected}
-          onSelect={onSelect}
+          onSelect={
+            onSelect
+              ? (row) => {
+                  // Picking another stream shows the stream again.
+                  setStreamHidden(false);
+                  onSelect(row);
+                }
+              : undefined
+          }
+          streamHidden={streamHidden}
+          onToggleStream={() => setStreamHidden(!streamHidden)}
           onStream={onStream}
           folded={folded}
           onFold={setFolded}

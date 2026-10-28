@@ -73,7 +73,7 @@ import type { HostChecklistState } from "../ops/checklist";
 import type { TipsState } from "./spaces-page";
 import type { ShareLink } from "../ops/links";
 import type { CliInstallPlan } from "./first-run";
-import type { AgentMember, JoinCode, JoinCodeRow, MemberIdentity, ThreadAttachment, ThreadAuthor, ThreadEntry, ThreadPage } from "../ops/thread";
+import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, MemberIdentity, ThreadAttachment, ThreadAuthor, ThreadEntry, ThreadFailure, ThreadLive, ThreadPage } from "../ops/thread";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
@@ -543,7 +543,7 @@ const NotificationShape = ref(
 const AgentKeysShape = ref(
   "AgentKeysReport",
   obj<AgentKeysReport>()({
-    keys: list(object({ provider: oneOf("anthropic", "openai", "other"), env: str, last4: str, addedMs: num })),
+    keys: list(object({ provider: oneOf("anthropic", "openai", "other"), env: str, last4: str, addedMs: num, expired: opt(bool) })),
     providers: list(object({ id: oneOf("anthropic", "openai", "other"), label: str, env: str })),
     available: bool,
     unavailable: nullable(str),
@@ -931,6 +931,7 @@ const MemberIdentityShape = ref(
 
 /** One Space thread entry as the page reads it (`ops/thread.ts`, DESIGN §3.2). */
 const taskState = oneOf("queued", "claimed", "working", "done", "failed");
+const ThreadFailureShape = obj<ThreadFailure>()({ class: oneOf("needs_connect", "error"), provider: nullable(str), message: str, retryable: bool });
 const ThreadEntryShape = ref(
   "ThreadEntry",
   obj<ThreadEntry>()({
@@ -956,6 +957,7 @@ const ThreadEntryShape = ref(
       ),
     ),
     view: opt(nullable(object({ kind: oneOf("desktop", "window"), app: nullable(str), title: nullable(str), windowId: nullable(str) }))),
+    failure: opt(nullable(ThreadFailureShape)),
   }),
 );
 
@@ -973,6 +975,7 @@ const JoinCodeRowShape = obj<JoinCodeRow>()({
 });
 const ThreadPageShape = obj<ThreadPage>()({
   entries: list(ThreadEntryShape),
+  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str })) }),
   cursor: num,
   caughtUp: bool,
   unread: num,
@@ -986,9 +989,11 @@ const AgentMemberShape = ref(
   "AgentMember",
   obj<AgentMember>()({
     name: str,
+    handle: opt(str),
     harness: str,
     status: str,
     activity: nullable(str),
+    failure: opt(nullable(ThreadFailureShape)),
     sessions: num,
     rights: nullable(object({ task: rightHolders, control: rightHolders, approve: rightHolders })),
     youCan: nullable(object({ task: bool, control: bool, approve: bool })),
@@ -1621,7 +1626,7 @@ const WkMachinesShape = ref(
 
 /** The daemon's `agent_keys.*` answer, which `agentKeysFromWire` reads. */
 const AgentKeysWire = object({
-  keys: list(object({ provider: str, env: str, last4: str, added_ms: num })),
+  keys: list(object({ provider: str, env: str, last4: str, added_ms: num, expired: opt(bool) })),
   providers: list(object({ id: str, env: str, label: opt(str) })),
   available: bool,
   unavailable: optNull(str),

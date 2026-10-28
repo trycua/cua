@@ -40,7 +40,7 @@ struct IncompleteListTests {
         #expect(m.loaded)
         #expect(m.listIncomplete)
         #expect(m.listView.empty == false)
-        #expect(m.listView.reachingLine == "Reaching 6 computers…")
+        #expect(m.listView.reachingLine == "Reaching 6 machines…")
         let answer = try #require(try await bridge.handle("spaces.list", [:]) as? [String: Any])
         #expect(answer["incomplete"] as? Bool == true)
         #expect(answer["reaching"] as? Int == 6)
@@ -65,7 +65,7 @@ struct IncompleteListTests {
         await m.refresh()
         #expect(!m.spaces.isEmpty)
         #expect(m.listView.empty == false)
-        #expect(m.listView.reachingLine == "Reaching 1 computer…")
+        #expect(m.listView.reachingLine == "Reaching 1 machine…")
     }
 
     @Test func aSpaceAnotherComputerIsCreatingReachesThePage() async throws {

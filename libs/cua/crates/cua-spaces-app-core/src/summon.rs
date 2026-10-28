@@ -262,7 +262,7 @@ fn cant_wake(
             } else {
                 format!(
                     "It needs a sign-in to {} to work in your Spaces. Your message is saved: it goes again once {name} is connected.",
-                    providers.join(" or ")
+                    connectors::or_list(&providers)
                 )
             },
             true,
@@ -495,6 +495,7 @@ mod tests {
                             env: (*e).into(),
                             last4: "abcd".into(),
                             added_ms: 1,
+                            expired: false,
                         })
                         .collect(),
                     ..Default::default()

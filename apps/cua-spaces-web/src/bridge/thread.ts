@@ -28,6 +28,7 @@ import {
   THREAD_FOLLOW_MAX_MS,
   type AgentMember,
   type AgentRights,
+  type LiveAgent,
   type TaskState,
   type ThreadAuthor,
   type ThreadEntry,
@@ -169,6 +170,8 @@ export interface SpaceThread {
   members: AgentMember[];
   /** Who the Space is shared with (`sharing.list`). */
   shares: ShareEntry[];
+  /** Who is at work now and at what stage ("starting", "thinking", "using Bash"): the live rows at the end of the thread. */
+  live: LiveAgent[];
   /** The reader's own author id, when known. */
   me: string | null;
   /** The reader's role (a guest reads only); null from a daemon that does not say (the owner's). */
@@ -210,6 +213,7 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
   const [error, setError] = useState<string | null>(null);
   const [members, setMembers] = useState<AgentMember[]>([]);
   const [shares, setShares] = useState<ShareEntry[]>([]);
+  const [live, setLive] = useState<LiveAgent[]>([]);
   const [hasMoreBefore, setHasMoreBefore] = useState(false);
   const loadingEarlier = useRef(false);
   const merge = useCallback((more: readonly ThreadEntry[]) => {
@@ -228,10 +232,13 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
     setError(null);
     setMembers([]);
     setShares([]);
+    setLive([]);
     setHasMoreBefore(false);
     if (!spaceId || !data) return;
     let alive = true;
     let cursor = 0;
+    // The stage key last seen: the follow also returns when it changes.
+    let liveKey = "";
     const markRead = () => {
       if (!alive || !visible() || cursor <= 0) return;
       // Re-reads the last entry with mark_read: the daemon moves the
@@ -248,6 +255,8 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
         const first = await data.call("thread.read", { spaceId, limit: FIRST_PAGE });
         if (!alive) return;
         cursor = first.cursor;
+        liveKey = first.live.key;
+        setLive(first.live.agents);
         merge(first.entries);
         setMe(first.me);
         setRole(first.role);
@@ -266,16 +275,20 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
       }
       while (alive) {
         try {
-          const page = await data.call("thread.read", { spaceId, after: cursor, followMs: THREAD_FOLLOW_MAX_MS, markRead: visible() });
+          const page = await data.call("thread.read", { spaceId, after: cursor, followMs: THREAD_FOLLOW_MAX_MS, markRead: visible(), liveAfter: liveKey });
           if (!alive) return;
           setStatus("ready");
           setError(null);
           backoff = 1_000;
           cursor = Math.max(cursor, page.cursor);
+          const stageMoved = page.live.key !== liveKey;
+          liveKey = page.live.key;
+          // The stages ride the follow (not the members poll), so a row shows as it changes.
+          setLive(page.live.agents);
           merge(page.entries);
-          if (page.entries.some((e) => e.kind !== "message")) membersDue.current();
+          if (page.entries.some((e) => e.kind !== "message") || stageMoved) membersDue.current();
           // A daemon that answers a follow at once (no long poll) is read every 2 s.
-          if (!page.entries.length) await sleep(2_000);
+          if (!page.entries.length && !stageMoved) await sleep(2_000);
         } catch (e) {
           if (!alive) return;
           if (isMissingThreadTool(e)) {
@@ -379,6 +392,7 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
     entries,
     members,
     shares,
+    live,
     me,
     role,
     error,

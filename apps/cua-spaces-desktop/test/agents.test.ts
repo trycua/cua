@@ -162,7 +162,7 @@ describe.skipIf(!built)("agents", () => {
     await p.send(new A.Select({ name: "ada" }));
     expect(p.view(now).detail?.memory.map((l) => l.text)).toEqual(["hermes/MEMORY.md"]);
     await p.send(new A.AllowComputer({ machine: "relay:0123" }));
-    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This computer"]);
+    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This machine"]);
     await p.send(new A.Resume({ name: "ada" }));
     expect(daemon.calls).toContain("agent_resume");
     expect(p.view(now).rows[0]!.state).toBe("Running");

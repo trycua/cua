@@ -61,7 +61,7 @@ describe.skipIf(!wasmBuilt)("the Spaces page", () => {
     await pickMenu("sort", "Name");
     await waitFor(() => expect(router.state.location.search).toEqual({ on: "this-mac", sort: "name" }));
     await waitFor(() => expect(tiles()).toEqual(["local:agent-sandbox", "local:design-review"]));
-    await pickMenu("computer", "All computers");
+    await pickMenu("computer", "All machines");
     await waitFor(() => expect(router.state.location.search).toEqual({ sort: "name" }));
   });
 

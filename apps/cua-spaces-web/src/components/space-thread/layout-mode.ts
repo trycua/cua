@@ -48,3 +48,26 @@ export function useSpaceLayout(spaceId: string): [SpaceLayout, (next: SpaceLayou
   );
   return [layout, set];
 }
+
+/**
+ * Whether the Space's stream is hidden (only the thread shows): a click on
+ * the already-selected stream in the sidebar hides it, another shows it
+ * again. Remembered per Space on this device; while hidden the stream is not
+ * drawn at all, so its connection is released.
+ */
+const hiddenKey = (spaceId: string) => `cua-spaces:stream-hidden:${spaceId}`;
+
+export const savedStreamHidden = (spaceId: string): boolean => read(hiddenKey(spaceId)) === "1";
+
+export function useStreamHidden(spaceId: string): [boolean, (hidden: boolean) => void] {
+  const [state, setState] = useState<{ spaceId: string; hidden: boolean }>(() => ({ spaceId, hidden: savedStreamHidden(spaceId) }));
+  const hidden = state.spaceId === spaceId ? state.hidden : savedStreamHidden(spaceId);
+  const set = useCallback(
+    (next: boolean) => {
+      write(hiddenKey(spaceId), next ? "1" : "0");
+      setState({ spaceId, hidden: next });
+    },
+    [spaceId],
+  );
+  return [hidden, set];
+}

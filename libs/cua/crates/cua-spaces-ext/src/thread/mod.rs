@@ -551,6 +551,11 @@ pub struct ThreadEntry {
     /// What the person was looking at when they posted ([`ViewContext`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<ViewContext>,
+    /// On an agent's reply to a task that failed: what failed
+    /// (`needs_connect` with the provider to connect, or an error), with
+    /// the complete text. `text` says it in plain words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<cua_agents::failure::Failure>,
     /// Fields of a newer format, kept as they are.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -579,6 +584,7 @@ pub struct Draft {
     pub event: Option<Value>,
     pub join_request: Option<JoinRequest>,
     pub view: Option<ViewContext>,
+    pub failure: Option<cua_agents::failure::Failure>,
 }
 
 impl Draft {
@@ -602,6 +608,7 @@ impl Draft {
             event: None,
             join_request: None,
             view: None,
+            failure: None,
         }
     }
 
@@ -968,6 +975,7 @@ impl ThreadStore {
                 event: d.event,
                 join_request: d.join_request,
                 view: d.view,
+                failure: d.failure,
                 extra: Map::new(),
             };
             self.write_entry(&mut head, &e)?;
@@ -1116,11 +1124,27 @@ impl ThreadStore {
     /// Waits up to `for_` for an entry after `after` (in-process writers
     /// wake it at once; other processes' writes are seen within 250 ms).
     pub async fn wait_after(&self, after: u64, for_: Duration) -> Result<()> {
+        self.wait_after_or(after, for_, || false).await
+    }
+
+    /// Wakes the readers that follow this thread (what they show besides
+    /// its entries changed: an agent's live stage).
+    pub fn wake(&self) {
+        self.notifier().notify_waiters();
+    }
+
+    /// [`Self::wait_after`], also returning as soon as `changed` says so.
+    pub async fn wait_after_or(
+        &self,
+        after: u64,
+        for_: Duration,
+        changed: impl Fn() -> bool,
+    ) -> Result<()> {
         let deadline = tokio::time::Instant::now() + for_.min(MAX_FOLLOW);
         let n = self.notifier();
         loop {
             let notified = n.notified();
-            if self.last_seq()? > after {
+            if self.last_seq()? > after || changed() {
                 return Ok(());
             }
             let now = tokio::time::Instant::now();

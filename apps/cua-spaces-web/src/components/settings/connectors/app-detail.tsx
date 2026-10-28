@@ -34,7 +34,7 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
     return (
       <div>
         {back}
-        <p className="text-[13px] text-muted-foreground">This app isn't on this computer.</p>
+        <p className="text-[13px] text-muted-foreground">This app isn't on this machine.</p>
       </div>
     );
   }
@@ -62,6 +62,7 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
         ) : null}
       </header>
 
+      {d.toggles.length ? (
       <SettingsGroup title={d.toolsTitle}>
         {d.toggles.map((t) => (
           <SettingsRow
@@ -73,6 +74,7 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
           />
         ))}
       </SettingsGroup>
+      ) : null}
 
       <SettingsGroup title={d.signInTitle} footer={d.signIn?.way}>
         {d.signIn ? (

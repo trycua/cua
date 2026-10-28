@@ -67,22 +67,22 @@ impl SpaceOs {
     }
 
     /// What the app calls the computer it runs on, when that runs this
-    /// system: "This Mac", "This PC", "This computer".
+    /// system: "This Mac", "This PC", "This machine".
     pub fn this_machine(self) -> &'static str {
         match self {
             SpaceOs::Macos => "This Mac",
             SpaceOs::Windows => "This PC",
-            SpaceOs::Linux | SpaceOs::Unknown => "This computer",
+            SpaceOs::Linux | SpaceOs::Unknown => "This machine",
         }
     }
 
     /// [`Self::this_machine`] mid-sentence: "this Mac", "this PC",
-    /// "this computer".
+    /// "this machine".
     pub fn this_machine_lower(self) -> &'static str {
         match self {
             SpaceOs::Macos => "this Mac",
             SpaceOs::Windows => "this PC",
-            SpaceOs::Linux | SpaceOs::Unknown => "this computer",
+            SpaceOs::Linux | SpaceOs::Unknown => "this machine",
         }
     }
 }
@@ -712,7 +712,7 @@ impl Location {
         match self {
             Location::Local => os.this_machine(),
             Location::Yours => "Your cloud",
-            Location::Host => "Your computer",
+            Location::Host => "Your machine",
             Location::Auto => "Auto",
         }
     }

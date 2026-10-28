@@ -4,11 +4,15 @@
 //! Settings, Connectors: the coding apps Cua works with and the providers
 //! they sign in to, with one Connect for each.
 //!
-//! - **Coding apps.** One row per app on this computer, with Connect (or
-//!   Connected) and a chevron to the app's own page. Connect does
-//!   everything once: Cua's skills and MCP server in the app, then the
-//!   app's model sign-in, so the matching provider is connected too
-//!   ([`connect_plan`]).
+//! - **Coding apps.** One row for every agent harness that can run in a Space
+//!   ([`HARNESS_APPS`]: Claude Code, Codex, Hermes, OpenCode, Goose and the
+//!   rest), installed on this machine or not, and one for every other app
+//!   found here, with Connect (or Connected) and a chevron to the app's own
+//!   page. Connect does everything once: Cua's skills and MCP server in the
+//!   app where it is installed, then the app's model sign-in (a sign-in
+//!   where one works, else a short provider choice and a key), so the
+//!   matching provider is connected too ([`connect_plan`]). Connected means
+//!   the app can read what is saved (`reads`), never more.
 //! - **An app's page** ([`app_detail`]): the separate switches (skills, MCP,
 //!   setting the app up again automatically), which provider it signs in
 //!   with and how, Sign in and Sign out, and taking Cua out of the app.
@@ -92,7 +96,7 @@ const PROVIDERS: &[Provider] = &[
         label: "Anthropic",
         env: "ANTHROPIC_API_KEY",
         also: &["CLAUDE_CODE_OAUTH_TOKEN"],
-        used_by: "Claude Code, Hermes and other apps that use Claude.",
+        used_by: "Claude Code. Hermes and other apps that use Claude need an API key.",
         key_help: "Create a key at console.anthropic.com. Every app that uses Claude can use it.",
         placeholder: "sk-ant-…",
         ways: &[CLAUDE_TOKEN, Way::Key, Way::Shell],
@@ -102,10 +106,30 @@ const PROVIDERS: &[Provider] = &[
         label: "OpenAI",
         env: "OPENAI_API_KEY",
         also: &["CODEX_AUTH_JSON"],
-        used_by: "Codex, Hermes and other apps that use OpenAI models.",
+        used_by: "Codex. Hermes and other apps that use OpenAI models need an API key.",
         key_help: "Create a key at platform.openai.com. Every app that uses OpenAI can use it.",
         placeholder: "sk-…",
         ways: &[CODEX_DEVICE, Way::Key, Way::Shell],
+    },
+    Provider {
+        id: "google",
+        label: "Google",
+        env: "GEMINI_API_KEY",
+        also: &["GOOGLE_API_KEY"],
+        used_by: "Gemini CLI, Google Antigravity, OpenCode and Pi.",
+        key_help: "Create a key at aistudio.google.com/apikey. Every app that uses Gemini can use it.",
+        placeholder: "AIza\u{2026}",
+        ways: &[Way::Key, Way::Shell],
+    },
+    Provider {
+        id: "openrouter",
+        label: "OpenRouter",
+        env: "OPENROUTER_API_KEY",
+        also: &[],
+        used_by: "OpenCode, Goose, Pi, Hermes and OpenClaw.",
+        key_help: "Create a key at openrouter.ai/keys. Every app that uses OpenRouter can use it.",
+        placeholder: "sk-or-\u{2026}",
+        ways: &[Way::Key, Way::Shell],
     },
     Provider {
         id: "github",
@@ -127,6 +151,10 @@ struct AppSignIn {
     /// The way Connect starts when none is connected (`None`: it asks with
     /// the provider's sheet).
     way: Option<Way>,
+    /// The saved credentials the app can read, as the variables a run gets
+    /// (the harness's `keys`; a drift test holds them equal). Empty: the app
+    /// takes any credential of its providers.
+    reads: &'static [&'static str],
 }
 
 const APPS: &[AppSignIn] = &[
@@ -134,28 +162,178 @@ const APPS: &[AppSignIn] = &[
         app: "claude-code",
         providers: &["anthropic"],
         way: Some(CLAUDE_TOKEN),
+        reads: &[
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "ANTHROPIC_AUTH_TOKEN",
+        ],
     },
     AppSignIn {
         app: "codex",
         providers: &["openai"],
         way: Some(CODEX_DEVICE),
+        reads: &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_AUTH_JSON"],
     },
     AppSignIn {
         app: "copilot-cli",
         providers: &["github"],
         way: None,
+        reads: &[],
+    },
+    AppSignIn {
+        app: "gemini-cli",
+        providers: &["google"],
+        way: None,
+        reads: &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    },
+    AppSignIn {
+        app: "antigravity",
+        providers: &["google"],
+        way: None,
+        reads: &["GEMINI_API_KEY"],
+    },
+    AppSignIn {
+        app: "opencode",
+        providers: &["anthropic", "openai", "google", "openrouter"],
+        way: None,
+        reads: &[
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+        ],
+    },
+    AppSignIn {
+        app: "goose",
+        // Not Google: it reads GOOGLE_API_KEY, which the Google row does not save.
+        providers: &["openai", "anthropic", "openrouter"],
+        way: None,
+        reads: &[
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GOOGLE_API_KEY",
+            "OPENROUTER_API_KEY",
+        ],
+    },
+    AppSignIn {
+        app: "pi",
+        providers: &["anthropic", "openai", "google", "openrouter"],
+        way: None,
+        reads: &[
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+        ],
+    },
+    AppSignIn {
+        app: "openclaw",
+        providers: &["anthropic", "openai", "openrouter"],
+        way: None,
+        reads: &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"],
     },
     AppSignIn {
         app: "hermes",
         providers: &["anthropic", "openai"],
         way: None,
+        // API keys only: the Claude Code and ChatGPT sign-ins are not Hermes'.
+        reads: &["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
     },
     AppSignIn {
         app: "t3code",
         providers: &["anthropic", "openai"],
         way: None,
+        reads: &[],
     },
 ];
+
+/// Every agent harness that can run in a Space (`cua_agents::harness`), with
+/// the setup id of its Connectors row, in the order the page lists them. A
+/// drift test fails when a harness is added without a row here and in
+/// [`APPS`], so one can never be missing from Settings.
+pub const HARNESS_APPS: &[HarnessApp] = &[
+    HarnessApp {
+        app: "claude-code",
+        harness: "claude-code",
+        name: "Claude Code",
+    },
+    HarnessApp {
+        app: "codex",
+        harness: "openai-codex",
+        name: "OpenAI Codex",
+    },
+    HarnessApp {
+        app: "gemini-cli",
+        harness: "gemini-cli",
+        name: "Gemini CLI",
+    },
+    HarnessApp {
+        app: "antigravity",
+        harness: "google-antigravity",
+        name: "Google Antigravity",
+    },
+    HarnessApp {
+        app: "opencode",
+        harness: "opencode",
+        name: "OpenCode",
+    },
+    HarnessApp {
+        app: "goose",
+        harness: "goose",
+        name: "Goose",
+    },
+    HarnessApp {
+        app: "pi",
+        harness: "pi",
+        name: "Pi",
+    },
+    HarnessApp {
+        app: "hermes",
+        harness: "hermes",
+        name: "Hermes",
+    },
+    HarnessApp {
+        app: "openclaw",
+        harness: "openclaw",
+        name: "OpenClaw",
+    },
+];
+
+/// One agent harness and its Connectors row.
+#[derive(Debug, Clone, Copy)]
+pub struct HarnessApp {
+    /// The setup id of the row (`codex`).
+    pub app: &'static str,
+    /// The harness id a run uses (`openai-codex`).
+    pub harness: &'static str,
+    /// The row's name when the host did not list the app.
+    pub name: &'static str,
+}
+
+/// The Connectors row (setup id) of `harness` (`openai-codex` is `codex`).
+pub fn app_for_harness(harness: &str) -> Option<&'static str> {
+    HARNESS_APPS
+        .iter()
+        .find(|h| h.harness == harness)
+        .map(|h| h.app)
+}
+
+/// The harness `app` runs as in a Space, when it is one.
+pub fn harness_of_app(app: &str) -> Option<&'static str> {
+    HARNESS_APPS
+        .iter()
+        .find(|h| h.app == app)
+        .map(|h| h.harness)
+}
+
+/// `names` as "A", "A or B", "A, B or C".
+pub fn or_list(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+    }
+}
 
 fn provider(id: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|p| p.id == id)
@@ -243,14 +421,39 @@ impl ConnectorsInput {
     fn app(&self, id: &str) -> Option<&ConnectorAppInput> {
         self.apps.iter().find(|a| a.agent == id)
     }
+    /// The app as a row reads it: what the host listed, or for an agent
+    /// harness the host did not list (or that is not installed here), one
+    /// that is not installed on this machine.
+    fn row_app(&self, id: &str) -> Option<ConnectorAppInput> {
+        self.app(id).cloned().or_else(|| {
+            HARNESS_APPS
+                .iter()
+                .find(|h| h.app == id)
+                .map(|h| ConnectorAppInput {
+                    agent: h.app.into(),
+                    name: h.name.into(),
+                    ..Default::default()
+                })
+        })
+    }
 }
 
 /// The saved credential that connects a provider, first match wins: the
 /// pasted key, then a sign-in token.
 fn provider_credential<'a>(input: &'a ConnectorsInput, p: &Provider) -> Option<&'a AgentKeyInput> {
-    input
-        .key(p.env)
-        .or_else(|| p.also.iter().find_map(|e| input.key(e)))
+    input.key(p.env).filter(|k| !k.expired).or_else(|| {
+        p.also
+            .iter()
+            .find_map(|e| input.key(e).filter(|k| !k.expired))
+    })
+}
+
+/// A sign-in saved for the provider has expired (and none that works is).
+fn provider_expired(input: &ConnectorsInput, p: &Provider) -> bool {
+    provider_credential(input, p).is_none()
+        && std::iter::once(p.env)
+            .chain(p.also.iter().copied())
+            .any(|e| input.key(e).is_some_and(|k| k.expired))
 }
 
 fn provider_connected(input: &ConnectorsInput, id: &str) -> bool {
@@ -259,11 +462,30 @@ fn provider_connected(input: &ConnectorsInput, id: &str) -> bool {
 
 /// The app's sign-in is in place: one of its providers is connected, or it
 /// signs in on its own.
+///
+/// Only a credential the app can read counts: a provider being connected is
+/// not enough when what is saved is a sign-in that app has no reader for (the
+/// ChatGPT sign-in is for Codex; Hermes reads an OpenAI API key, not it).
 fn app_signed_in(input: &ConnectorsInput, app: &str) -> bool {
-    match app_sign_in(app) {
-        Some(a) => a.providers.iter().any(|p| provider_connected(input, p)),
-        None => true,
+    let Some(a) = app_sign_in(app) else {
+        return true;
+    };
+    if a.reads.is_empty() {
+        return a.providers.iter().any(|p| provider_connected(input, p));
     }
+    a.reads
+        .iter()
+        .any(|k| input.key(k).is_some_and(|k| !k.expired))
+}
+
+/// An app's sign-in is saved but expired.
+fn app_expired(input: &ConnectorsInput, app: &str) -> bool {
+    app_sign_in(app).is_some_and(|a| {
+        a.providers
+            .iter()
+            .filter_map(|p| provider(p))
+            .any(|p| provider_expired(input, p))
+    })
 }
 
 fn dots(k: &AgentKeyInput) -> String {
@@ -277,7 +499,7 @@ fn dots(k: &AgentKeyInput) -> String {
 /// How a saved credential reads on its provider's row.
 fn credential_text(p: &Provider, k: &AgentKeyInput) -> String {
     match k.env.as_str() {
-        "CLAUDE_CODE_OAUTH_TOKEN" => "Claude sign-in, for Claude Code".into(),
+        "CLAUDE_CODE_OAUTH_TOKEN" => "Claude Code sign-in".into(),
         "CODEX_AUTH_JSON" => "ChatGPT sign-in, for Codex".into(),
         e if e == p.env => format!("API key {}", dots(k)),
         e => format!("{e} {}", dots(k)),
@@ -328,7 +550,7 @@ pub struct ConnectorProviderRow {
     pub label: String,
     /// `connected`, `not-connected`, `connecting`, `failed`.
     pub state: String,
-    /// "Not connected", "API key •••• 3f9a", "Claude sign-in, for Claude Code",
+    /// "Not connected", "API key •••• 3f9a", "Claude Code sign-in",
     /// "Approve in your browser…".
     pub status: String,
     /// Who uses it.
@@ -341,6 +563,14 @@ pub struct ConnectorProviderRow {
     pub sign_out_envs: Vec<String>,
 }
 
+/// An app that is not on this machine and cannot run as an agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoreApp {
+    pub agent: String,
+    pub name: String,
+}
+
 /// The page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -349,6 +579,9 @@ pub struct ConnectorsView {
     pub apps: Vec<ConnectorAppRow>,
     /// "We didn't find a coding app yet…", when there is none.
     pub apps_empty: Option<String>,
+    /// Other apps Cua knows that are not on this machine and cannot run as agents
+    /// (under Show all, each with where to get it).
+    pub more: Vec<MoreApp>,
     pub auto_label: String,
     pub auto_help: String,
     pub auto: bool,
@@ -395,15 +628,31 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
     let busy = input.busy(&id);
     let failure = input.failure(&id);
     let signed_in = app_signed_in(input, &a.agent);
-    let done = a.configured && signed_in;
+    // An agent harness runs in Spaces, so it is connected once it can read a
+    // sign-in, installed on this machine or not (installed, Cua's tools must
+    // be in it too).
+    let harness = harness_of_app(&a.agent).is_some();
+    let done = if a.installed || a.configured {
+        a.configured && signed_in
+    } else {
+        harness && signed_in
+    };
     let needs = app_sign_in(&a.agent).filter(|_| !signed_in).map(|s| {
-        s.providers
-            .iter()
-            .filter_map(|p| provider(p))
-            .map(|p| p.label)
-            .collect::<Vec<_>>()
-            .join(" or ")
+        let names = or_list(
+            &s.providers
+                .iter()
+                .filter_map(|p| provider(p))
+                .map(|p| p.label)
+                .collect::<Vec<_>>(),
+        );
+        // An app with no sign-in of its own takes API keys: say so.
+        if s.way.is_none() && !s.reads.is_empty() {
+            format!("Needs an API key for {names}.")
+        } else {
+            format!("Needs a sign-in to {names}.")
+        }
     });
+
     let (state, line, btn) = if let Some(step) = busy {
         let line = match step {
             "signing-in"
@@ -428,11 +677,21 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
             Some(button("try-again", "Try again", true)),
         )
     } else if done {
-        ("connected", None, None)
-    } else if a.configured {
+        // Not on this machine: say where it runs, once.
+        (
+            "connected",
+            (!a.installed && !a.configured).then(|| "Runs in your Spaces".to_string()),
+            None,
+        )
+    } else if a.configured || !a.installed {
+        // Cua's tools are in it (or it is not on this machine): what it still needs.
         (
             "not-connected",
-            needs.map(|n| format!("Needs a sign-in to {n}.")),
+            if app_expired(input, &a.agent) {
+                Some("The sign-in expired. Reconnect.".to_string())
+            } else {
+                needs
+            },
             Some(button("connect", "Connect", true)),
         )
     } else {
@@ -483,6 +742,12 @@ fn provider_row(input: &ConnectorsInput, p: &Provider, can_edit: bool) -> Connec
             credential_text(p, k),
             button("sign-out", "Sign out", can_edit),
         )
+    } else if provider_expired(input, p) {
+        (
+            "not-connected",
+            "Expired, reconnect".into(),
+            button("connect", "Reconnect", can_edit),
+        )
     } else {
         (
             "not-connected",
@@ -515,11 +780,18 @@ pub fn view(input: &ConnectorsInput) -> ConnectorsView {
 pub fn view_on(input: &ConnectorsInput, os: SpaceOs) -> ConnectorsView {
     let notice = notice(input);
     let can_edit = notice.is_none();
-    let apps: Vec<ConnectorAppRow> = input
-        .apps
+    // Every agent harness (installed here or not), then the other apps found here.
+    let apps: Vec<ConnectorAppRow> = HARNESS_APPS
         .iter()
-        .filter(|a| a.installed)
-        .map(|a| app_row(input, a))
+        .filter_map(|h| input.row_app(h.app))
+        .chain(
+            input
+                .apps
+                .iter()
+                .filter(|a| a.installed && harness_of_app(&a.agent).is_none())
+                .cloned(),
+        )
+        .map(|a| app_row(input, &a))
         .collect();
     let mut others: Vec<&AgentKeyInput> = input
         .keys
@@ -535,6 +807,15 @@ pub fn view_on(input: &ConnectorsInput, os: SpaceOs) -> ConnectorsView {
         apps_empty: apps
             .is_empty()
             .then(|| "We didn't find a coding app yet. Install one and Cua will notice.".into()),
+        more: input
+            .apps
+            .iter()
+            .filter(|a| !a.installed && !a.configured && harness_of_app(&a.agent).is_none())
+            .map(|a| MoreApp {
+                agent: a.agent.clone(),
+                name: a.name.clone(),
+            })
+            .collect(),
         apps,
         auto_label: "Set up new apps automatically".into(),
         auto_help: "When you install another coding app, Cua adds itself and tells you.".into(),
@@ -673,18 +954,33 @@ pub struct ProviderSheetView {
     /// What `agentKeys.set` gets with a pasted key: `anthropic`, `openai`, or `other` with `key_env`.
     pub key_provider: String,
     pub key_env: Option<String>,
+    /// "Or choose another provider", when the sheet was opened for an app
+    /// that signs in with more than one.
+    pub others_label: Option<String>,
+    /// The app's other providers, each one a choice that swaps this sheet.
+    pub others: Vec<ProviderChoice>,
+}
+
+/// One provider an app can sign in with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderChoice {
+    pub provider: String,
+    pub label: String,
 }
 
 /// The sheet for `provider` (None: an unknown provider).
 pub fn provider_sheet(input: &ConnectorsInput, provider_id: &str) -> Option<ProviderSheetView> {
-    provider_sheet_on(input, provider_id, SpaceOs::Macos)
+    provider_sheet_on(input, provider_id, SpaceOs::Macos, None)
 }
 
-/// [`provider_sheet`] in a shell on `os`.
+/// [`provider_sheet`] in a shell on `os`, opened for `for_app` (its other
+/// providers are offered as a choice).
 pub fn provider_sheet_on(
     input: &ConnectorsInput,
     provider_id: &str,
     os: SpaceOs,
+    for_app: Option<&str>,
 ) -> Option<ProviderSheetView> {
     let p = provider(provider_id)?;
     let installed = |app: &str| input.app(app).is_some_and(|a| a.installed);
@@ -692,9 +988,10 @@ pub fn provider_sheet_on(
         .ways
         .iter()
         .filter_map(|w| match *w {
+            // An app's own sign-in is that app's alone: another app's sheet offers a key.
             Way::AppToken {
                 app, label, help, ..
-            } => installed(app).then(|| ProviderWay {
+            } => (installed(app) && for_app.is_none_or(|a| a == app)).then(|| ProviderWay {
                 id: "app-token".into(),
                 label: label.into(),
                 help: help.into(),
@@ -704,7 +1001,7 @@ pub fn provider_sheet_on(
             }),
             Way::AppDevice {
                 app, label, help, ..
-            } => installed(app).then(|| ProviderWay {
+            } => (installed(app) && for_app.is_none_or(|a| a == app)).then(|| ProviderWay {
                 id: "app-device".into(),
                 label: label.into(),
                 help: help.into(),
@@ -735,6 +1032,20 @@ pub fn provider_sheet_on(
                 }),
         })
         .collect();
+    let others: Vec<ProviderChoice> = for_app
+        .and_then(app_sign_in)
+        .map(|a| {
+            a.providers
+                .iter()
+                .filter(|id| **id != p.id)
+                .filter_map(|id| provider(id))
+                .map(|o| ProviderChoice {
+                    provider: o.id.into(),
+                    label: o.label.into(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let this = os.this_machine_lower();
     let place = vault(os).map(|v| format!("in {v} ")).unwrap_or_default();
     Some(ProviderSheetView {
@@ -754,6 +1065,8 @@ pub fn provider_sheet_on(
         }
         .into(),
         key_env: (!matches!(p.id, "anthropic" | "openai")).then(|| p.env.into()),
+        others_label: (!others.is_empty()).then(|| "Or choose another provider".into()),
+        others,
     })
 }
 
@@ -775,7 +1088,7 @@ pub struct ConnectorToggle {
 pub struct ConnectorSignIn {
     /// "Signs in with Anthropic".
     pub title: String,
-    /// The provider row's status for it ("Claude sign-in, for Claude Code", "Not connected").
+    /// The provider row's status for it ("Claude Code sign-in", "Not connected").
     pub status: String,
     pub connected: bool,
     /// How Connect signs it in ("Claude sign-in, through claude setup-token").
@@ -819,23 +1132,31 @@ fn way_text(app: &str) -> &'static str {
             "Connect signs Codex in with ChatGPT: a code to enter on openai.com, using your ChatGPT plan. Or connect OpenAI with an API key."
         }
         "copilot-cli" => "Connect asks for a GitHub token with the Copilot Requests permission.",
+        "hermes" | "opencode" | "goose" | "pi" | "openclaw" => {
+            "It runs in your Spaces with a key from any of these providers."
+        }
         _ => "It uses whichever of these providers you connect.",
     }
 }
 
 /// `agent`'s page (None: not on this computer).
 pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView> {
-    let a = input.app(agent)?;
+    let a = &input.row_app(agent)?;
     let row = app_row(input, a);
+    // An agent harness that is not on this machine has no local tools to switch.
+    let local = a.installed || a.configured;
     let can_edit = notice(input).is_none();
     let busy = input.busy(&format!("app:{agent}")).is_some();
-    let mut toggles = vec![ConnectorToggle {
-        id: "skills".into(),
-        label: "Cua skills".into(),
-        help: format!("Teaches {} how to use your Spaces.", a.name),
-        on: a.skills,
-        enabled: !busy,
-    }];
+    let mut toggles = vec![];
+    if local {
+        toggles.push(ConnectorToggle {
+            id: "skills".into(),
+            label: "Cua skills".into(),
+            help: format!("Teaches {} how to use your Spaces.", a.name),
+            on: a.skills,
+            enabled: !busy,
+        });
+    }
     if let Some(on) = a.mcp {
         toggles.push(ConnectorToggle {
             id: "mcp".into(),
@@ -845,13 +1166,15 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
             enabled: !busy,
         });
     }
-    toggles.push(ConnectorToggle {
-        id: "auto".into(),
-        label: "Keep it set up".into(),
-        help: format!("If {} changes its settings, Cua adds itself again.", a.name),
-        on: !input.off.contains(&a.agent),
-        enabled: !busy,
-    });
+    if local {
+        toggles.push(ConnectorToggle {
+            id: "auto".into(),
+            label: "Keep it set up".into(),
+            help: format!("If {} changes its settings, Cua adds itself again.", a.name),
+            on: !input.off.contains(&a.agent),
+            enabled: !busy,
+        });
+    }
     let sign_in = app_sign_in(agent).map(|s| {
         // The provider it uses: the first connected one, else the first.
         let pid = s
@@ -871,7 +1194,7 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
             .map(|p| p.label)
             .collect();
         ConnectorSignIn {
-            title: format!("Signs in with {}", names.join(" or ")),
+            title: format!("Signs in with {}", or_list(&names)),
             status: prow.as_ref().map(|r| r.status.clone()).unwrap_or_default(),
             connected,
             way: way_text(agent).into(),
@@ -899,7 +1222,11 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
         },
         connected: row.state == "connected",
         connect: row.button.filter(|_| row.state != "connected"),
-        tools_title: format!("Cua in {}", a.name),
+        tools_title: if local {
+            format!("Cua in {}", a.name)
+        } else {
+            String::new()
+        },
         toggles,
         sign_in_title: "Sign-in".into(),
         sign_in,
@@ -990,6 +1317,7 @@ mod tests {
             env: env.into(),
             last4: last4.into(),
             added_ms: 1_000,
+            expired: false,
         }
     }
 
@@ -1002,6 +1330,224 @@ mod tests {
             ],
             ..Default::default()
         }
+    }
+
+    /// The credentials an app reads here are the ones its harness reads
+    /// (`cua_agents::harness`), so "connected" never outruns what a run gets.
+    #[test]
+    fn what_an_app_reads_is_what_its_harness_reads() {
+        for h in HARNESS_APPS {
+            let a = app_sign_in(h.app).unwrap_or_else(|| panic!("{} has no sign-in", h.app));
+            let real = cua_agents::harness::harness(h.harness).unwrap();
+            assert_eq!(a.reads, real.keys, "{}", h.app);
+        }
+    }
+
+    /// Drift guard: every agent harness has a row on the Connectors page. A
+    /// harness added to `cua_agents::harness::HARNESSES` without an entry in
+    /// `HARNESS_APPS` (and a sign-in in `APPS`) fails here.
+    #[test]
+    fn every_agent_harness_has_a_connectors_row() {
+        for h in cua_agents::harness::HARNESSES {
+            let row = HARNESS_APPS.iter().find(|x| x.harness == h.id);
+            let row = row.unwrap_or_else(|| {
+                panic!(
+                    "harness {:?} has no Connectors row: add it to HARNESS_APPS and APPS in connectors.rs",
+                    h.id
+                )
+            });
+            assert!(app_sign_in(row.app).is_some(), "{}: no sign-in", row.app);
+            // The row is the setup registry's app of that name.
+            let spec = cua_agent_setup::registry::find(row.app)
+                .unwrap_or_else(|| panic!("{} is not in the setup registry", row.app));
+            assert_eq!(spec.name, row.name, "{}", row.app);
+            // It shows with nothing installed and nothing saved, with Connect.
+            let v = view(&ConnectorsInput::default());
+            let shown = v.apps.iter().find(|a| a.agent == row.app);
+            let shown = shown.unwrap_or_else(|| panic!("{} is not listed", row.app));
+            assert_eq!(shown.state, "not-connected", "{}", row.app);
+            assert_eq!(
+                shown.button.as_ref().map(|b| b.label.as_str()),
+                Some("Connect")
+            );
+            assert!(shown.button.as_ref().is_some_and(|b| b.enabled));
+        }
+        assert_eq!(HARNESS_APPS.len(), cua_agents::harness::HARNESSES.len());
+        // Each provider an app offers saves a credential the app reads, so
+        // connecting it connects the app.
+        for h in HARNESS_APPS {
+            let a = app_sign_in(h.app).unwrap();
+            for id in a.providers {
+                let p = provider(id).unwrap();
+                let saves_a_read = a.reads.contains(&p.env)
+                    || p.ways.iter().any(|w| match w {
+                        Way::AppToken { env, .. } | Way::AppDevice { env, .. } => {
+                            a.reads.contains(env)
+                        }
+                        _ => false,
+                    });
+                assert!(saves_a_read, "{}: {id} saves nothing it reads", h.app);
+            }
+        }
+    }
+
+    #[test]
+    fn every_harness_is_listed_without_show_all_installed_or_not() {
+        // Nothing installed on this machine: still every harness, in order.
+        let v = view(&ConnectorsInput::default());
+        let ids: Vec<_> = v.apps.iter().map(|a| a.agent.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "claude-code",
+                "codex",
+                "gemini-cli",
+                "antigravity",
+                "opencode",
+                "goose",
+                "pi",
+                "hermes",
+                "openclaw"
+            ]
+        );
+        let hermes = v.apps.iter().find(|a| a.agent == "hermes").unwrap();
+        assert_eq!(hermes.name, "Hermes");
+        assert_eq!(
+            hermes.line.as_deref(),
+            Some("Needs an API key for Anthropic or OpenAI.")
+        );
+        // The other apps Cua knows (not agents) wait under Show all with where to get them.
+        let mut i = input();
+        i.apps.push(ConnectorAppInput {
+            agent: "windsurf".into(),
+            name: "Windsurf".into(),
+            ..Default::default()
+        });
+        let v = view(&i);
+        let more: Vec<_> = v.more.iter().map(|m| m.agent.as_str()).collect();
+        assert_eq!(more, ["windsurf"]);
+        // An installed app that is not an agent is listed after the harnesses.
+        assert_eq!(v.apps.last().unwrap().agent, "vscode");
+    }
+
+    #[test]
+    fn a_harness_off_this_machine_is_connected_by_what_it_can_read() {
+        let mut i = ConnectorsInput::default();
+        // Goose reads an OpenAI key; the Claude Code sign-in is Claude Code's alone.
+        i.keys.keys.push(key("OPENAI_API_KEY", "3f9a"));
+        let v = view(&i);
+        let row = |id: &str| v.apps.iter().find(|a| a.agent == id).unwrap().clone();
+        for id in ["goose", "opencode", "pi", "hermes", "openclaw"] {
+            let r = row(id);
+            assert_eq!(r.state, "connected", "{id}");
+            assert_eq!(r.line.as_deref(), Some("Runs in your Spaces"), "{id}");
+            assert!(r.button.is_none());
+        }
+        // Not what Gemini CLI reads.
+        assert_eq!(row("gemini-cli").state, "not-connected");
+        let mut t = ConnectorsInput::default();
+        t.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+        let v = view(&t);
+        let state = |id: &str| v.apps.iter().find(|a| a.agent == id).unwrap().state.clone();
+        // No harness but Claude Code reads the Claude Code sign-in.
+        for id in ["hermes", "goose", "opencode", "pi", "openclaw"] {
+            assert_eq!(state(id), "not-connected", "{id}");
+        }
+        // An OpenRouter key connects the ones that read it.
+        let mut r = ConnectorsInput::default();
+        r.keys.keys.push(key("OPENROUTER_API_KEY", "7777"));
+        let v = view(&r);
+        let state = |id: &str| v.apps.iter().find(|a| a.agent == id).unwrap().state.clone();
+        for id in ["opencode", "goose", "pi", "hermes", "openclaw"] {
+            assert_eq!(state(id), "connected", "{id}");
+        }
+        assert_eq!(state("claude-code"), "not-connected");
+    }
+
+    #[test]
+    fn connect_on_a_harness_off_this_machine_asks_for_a_provider_and_offers_the_rest() {
+        let i = ConnectorsInput::default();
+        let plan = connect_plan(&i, "opencode");
+        assert_eq!(
+            plan,
+            ConnectPlan {
+                tools: false,
+                app_token: false,
+                device: false,
+                provider: Some("anthropic".into()),
+                token_provider: None
+            }
+        );
+        let s = provider_sheet_on(&i, "anthropic", SpaceOs::Macos, Some("opencode")).unwrap();
+        let others: Vec<_> = s.others.iter().map(|o| o.provider.as_str()).collect();
+        assert_eq!(others, ["openai", "google", "openrouter"]);
+        assert_eq!(
+            s.others_label.as_deref(),
+            Some("Or choose another provider")
+        );
+        // OpenRouter is a key, saved under the variable its apps read.
+        let o = provider_sheet_on(&i, "openrouter", SpaceOs::Macos, Some("hermes")).unwrap();
+        assert_eq!(
+            (o.key_provider.as_str(), o.key_env.as_deref()),
+            ("other", Some("OPENROUTER_API_KEY"))
+        );
+        let ids: Vec<_> = o.ways.iter().map(|w| w.id.as_str()).collect();
+        assert_eq!(ids, ["key"]);
+        // Without an app there is no choice to offer.
+        assert!(provider_sheet(&i, "anthropic").unwrap().others.is_empty());
+    }
+
+    #[test]
+    fn a_harness_off_this_machine_has_a_page_with_its_sign_in_and_no_local_tools() {
+        let d = app_detail(&ConnectorsInput::default(), "goose").unwrap();
+        assert_eq!(d.name, "Goose");
+        assert!(d.toggles.is_empty() && d.tools_title.is_empty());
+        assert_eq!(
+            d.sign_in.as_ref().unwrap().title,
+            "Signs in with OpenAI, Anthropic or OpenRouter"
+        );
+        assert_eq!(d.connect.as_ref().unwrap().label, "Connect");
+        assert!(d.remove_label.is_none() && d.settings_file.is_none());
+        assert!(app_detail(&ConnectorsInput::default(), "vscode").is_none());
+    }
+
+    #[test]
+    fn hermes_is_connected_only_by_a_credential_it_reads() {
+        let mut i = input();
+        // The ChatGPT sign-in is for Codex; Hermes can't read it.
+        i.keys.keys.push(key("CODEX_AUTH_JSON", "AAAA"));
+        assert!(app_signed_in(&i, "codex"));
+        assert!(!app_signed_in(&i, "hermes"));
+        // An OpenAI API key, or the Claude sign-in token, it reads.
+        let mut k = input();
+        k.keys.keys.push(key("OPENAI_API_KEY", "AAAA"));
+        assert!(app_signed_in(&k, "hermes"));
+        let mut t = input();
+        t.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+        // The Claude Code sign-in is Claude Code's alone.
+        assert!(app_signed_in(&t, "claude-code"));
+        assert!(!app_signed_in(&t, "hermes"));
+        assert!(!app_signed_in(&t, "codex"));
+        let mut a = input();
+        a.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
+        assert!(app_signed_in(&a, "hermes") && app_signed_in(&a, "claude-code"));
+    }
+
+    #[test]
+    fn an_expired_sign_in_is_not_connected_and_says_reconnect() {
+        let mut i = input();
+        i.apps[0].configured = true;
+        let mut k = key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA");
+        k.expired = true;
+        i.keys.keys.push(k);
+        assert!(!app_signed_in(&i, "claude-code"));
+        let v = view(&i);
+        let p = v.providers.iter().find(|p| p.id == "anthropic").unwrap();
+        assert_eq!(p.state, "not-connected");
+        assert_eq!(p.status, "Expired, reconnect");
+        assert_eq!(p.button.label, "Reconnect");
+        let a = v.apps.iter().find(|a| a.agent == "claude-code").unwrap();
+        assert_eq!(a.line.as_deref(), Some("The sign-in expired. Reconnect."));
     }
 
     #[test]
@@ -1019,7 +1565,10 @@ mod tests {
         assert_eq!(codex.state, "not-connected");
         assert_eq!(codex.line.as_deref(), Some("Needs a sign-in to OpenAI."));
         let ids: Vec<_> = v.providers.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["anthropic", "openai", "github"]);
+        assert_eq!(
+            ids,
+            ["anthropic", "openai", "google", "openrouter", "github"]
+        );
         assert!(
             v.providers
                 .iter()
@@ -1032,9 +1581,10 @@ mod tests {
         let mut i = input();
         i.apps[2].configured = true;
         let v = view(&i);
-        assert_eq!(v.apps[2].state, "connected");
-        assert_eq!(v.apps[2].connected_label.as_deref(), Some("Connected"));
-        assert!(v.apps[2].button.is_none());
+        let vscode = v.apps.iter().find(|a| a.agent == "vscode").unwrap();
+        assert_eq!(vscode.state, "connected");
+        assert_eq!(vscode.connected_label.as_deref(), Some("Connected"));
+        assert!(vscode.button.is_none());
     }
 
     #[test]
@@ -1046,7 +1596,7 @@ mod tests {
         assert_eq!(v.apps[0].state, "connected");
         let a = &v.providers[0];
         assert_eq!(a.state, "connected");
-        assert_eq!(a.status, "Claude sign-in, for Claude Code");
+        assert_eq!(a.status, "Claude Code sign-in");
         assert_eq!(a.button.label, "Sign out");
         assert_eq!(a.sign_out_envs, ["CLAUDE_CODE_OAUTH_TOKEN"]);
         // The sign-in token is the provider's, not an Other key.

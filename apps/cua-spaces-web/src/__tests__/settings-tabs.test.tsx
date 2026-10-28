@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 // Settings' six tabs on the real routes and the wasm core: Account, General,
-// Connectors, Trusted devices, Advanced, About. The old addresses
+// Connectors, Trusted machines, Advanced, About. The old addresses
 // (Agents, Experiments) still land on the right tab, and what moved is where
 // the audit put it.
 
@@ -25,17 +25,17 @@ const tab = (id: string) => document.querySelector<HTMLElement>(`[data-settings-
 const labels = () => [...document.querySelectorAll<HTMLElement>('nav[aria-label="Settings"] a')].map((a) => a.textContent);
 
 describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
-  it("has Account, General, Connectors, Trusted devices, Advanced and About, in that order", async () => {
+  it("has Account, General, Connectors, Trusted machines, Advanced and About, in that order", async () => {
     await mountApp("/settings", host);
     await waitFor(() => expect(tab("account")).not.toBeNull());
-    expect(labels()).toEqual(["Account", "General", "Connectors", "Trusted devices", "Advanced", "About"]);
+    expect(labels()).toEqual(["Account", "General", "Connectors", "Trusted machines", "Advanced", "About"]);
   });
 
   it.each([
     ["/settings", "Account"],
     ["/settings/general", "General"],
     ["/settings/connectors", "Connectors"],
-    ["/settings/devices", "Trusted devices"],
+    ["/settings/devices", "Trusted machines"],
     ["/settings/advanced", "Advanced"],
     ["/settings/about", "About"],
   ])("marks only the tab for %s as selected (%s)", async (path, label) => {

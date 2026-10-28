@@ -4,7 +4,7 @@
 import { CheckIcon, FileTextIcon, ImageIcon, XIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
-import { useBridge, type TaskState, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadView } from "@/bridge";
+import { useBridge, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadView } from "@/bridge";
 import { Inlines } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { parseInline } from "@/lib/markdown";
@@ -12,6 +12,7 @@ import { mentionSegments } from "@/lib/mentions";
 import { cn } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
+import { FailureNote } from "./failure-note";
 import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
 import { MentionChip, ProfileTrigger } from "./profile-card";
 import { waitingFor } from "./rights";
@@ -43,6 +44,7 @@ export function ThreadView({
   onOpenAttachment,
   onReachTop,
   onRemoveAgent,
+  onRetry,
   empty,
   className,
   endInset = 0,
@@ -58,6 +60,8 @@ export function ThreadView({
   tail?: ReactNode;
   /** Removes an agent member from its card (absent: the host can't). */
   onRemoveAgent?: (handle: string) => Promise<void>;
+  /** Sends a message again (a failed agent's Retry); absent: no Retry. */
+  onRetry?: (text: string) => Promise<void>;
   /** Scrolled to the top: read the page before (when there is one). */
   onReachTop?: () => Promise<void>;
   roster: Roster;
@@ -74,9 +78,13 @@ export function ThreadView({
   const keep = useRef<number | null>(null);
   const first = items.length ? items[0]!.key : "";
   const last = items.length ? items[items.length - 1]!.key : "";
+  // Your own message just went in: the thread follows it to the end, wherever you were reading.
+  const lastItem = items.length ? items[items.length - 1]! : null;
+  const mineLast = Boolean(lastItem && "entry" in lastItem && roster.people.some((p) => p.me && p.id === lastItem.entry.author.id));
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !items.length) return;
+    if (mineLast && opened.current) atEnd.current = true;
     if (keep.current !== null) {
       el.scrollTop += el.scrollHeight - keep.current;
       keep.current = null;
@@ -96,7 +104,7 @@ export function ThreadView({
     if (atEnd.current) el.scrollTop = el.scrollHeight;
     // Follows the first and last items, not every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [first, last, items.length]);
+  }, [first, last, items.length, mineLast]);
   // The mini-player moved to (or grew at) the bottom: keep the newest entry in view above it.
   useLayoutEffect(() => {
     const el = ref.current;
@@ -138,7 +146,7 @@ export function ThreadView({
         <div ref={body} className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
           {items.map((item) => (
             <Fragment key={item.key}>
-              <ThreadItemView item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} />
+              <ThreadItemView item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} onRetry={onRetry} />
               {after && "entry" in item ? after(item.entry.seq) : null}
             </Fragment>
           ))}
@@ -156,6 +164,7 @@ export const ThreadItemView = memo(function Item({
   onAnswer,
   onOpenAttachment,
   onRemoveAgent,
+  onRetry,
   label,
 }: {
   item: ThreadItem;
@@ -163,6 +172,7 @@ export const ThreadItemView = memo(function Item({
   onAnswer: (approval: number, approve: boolean) => Promise<void>;
   onOpenAttachment: (a: ThreadAttachment) => void;
   onRemoveAgent?: (handle: string) => Promise<void>;
+  onRetry?: (text: string) => Promise<void>;
   /** Beside each message's time (the DM's Space). */
   label?: ReactNode;
 }) {
@@ -188,7 +198,8 @@ export const ThreadItemView = memo(function Item({
     case "task":
       return (
         <div data-task={item.entry.seq} data-task-state={item.state}>
-          <Message entry={item.entry} {...m} status={<TaskChip state={item.state} />} footnote={keysLine(item.entry, roster)} />
+          {/* How the task is going is told by the chat: the live row, the agent's reply or its failure message. No chip here. */}
+          <Message entry={item.entry} {...m} footnote={keysLine(item.entry, roster)} />
           {item.replies.length || item.notes.length ? (
             <div data-task-replies="" className="pl-10">
               {[...item.notes.map((n) => ({ seq: n.entry.seq, note: n.text, entry: n.entry })), ...item.replies.map((r) => ({ seq: r.seq, note: null, entry: r }))]
@@ -199,7 +210,7 @@ export const ThreadItemView = memo(function Item({
                       {x.note}
                     </p>
                   ) : (
-                    <Message key={x.seq} entry={x.entry} {...m} nested />
+                    <Message key={x.seq} entry={x.entry} {...m} nested task={{ text: item.entry.text, onRetry }} />
                   ),
                 )}
             </div>
@@ -213,30 +224,11 @@ export const ThreadItemView = memo(function Item({
   }
 });
 
-const TASK_STATUS: Record<TaskState, { label: string; dot: string; text: string }> = {
-  queued: { label: "Queued", dot: "bg-muted-foreground/50", text: "text-muted-foreground" },
-  claimed: { label: "Working", dot: "bg-success", text: "text-muted-foreground" },
-  working: { label: "Working", dot: "bg-success", text: "text-muted-foreground" },
-  done: { label: "Done", dot: "bg-success/60", text: "text-muted-foreground" },
-  failed: { label: "Failed", dot: "bg-destructive", text: "text-destructive" },
-};
-
 /** "Runs on Ada's keys" under a task someone else gave an agent that uses the owner's provider keys. */
 function keysLine(entry: ThreadEntry, roster: Roster): string | null {
   const k = entry.runsOnKeysOf;
   if (!k) return null;
   return roster.people.some((p) => p.me && p.id === k.id) ? "Runs on your keys" : `Runs on ${k.name}'s keys`;
-}
-
-/** A task's state: a dot and a word beside the name and time. */
-export function TaskChip({ state }: { state: TaskState }) {
-  const c = TASK_STATUS[state];
-  return (
-    <span data-task-chip={state} className={cn("inline-flex items-center gap-1.5 text-[11px]", c.text)}>
-      <span aria-hidden className={cn("size-1.5 rounded-full", c.dot)} />
-      {c.label}
-    </span>
-  );
 }
 
 function Message({
@@ -248,6 +240,7 @@ function Message({
   status,
   footnote,
   nested,
+  task,
   surface = "background",
 }: {
   entry: ThreadEntry;
@@ -262,6 +255,8 @@ function Message({
   /** A muted line under the text ("Runs on Ada's keys"). */
   footnote?: string | null;
   nested?: boolean;
+  /** The task this message replies to (its text, for a failed reply's Retry). */
+  task?: { text: string; onRetry?: (text: string) => Promise<void> };
 }) {
   const who = roster.author(entry.author);
   // A person's card: the roster's entry for this author (by id, else by name).
@@ -306,6 +301,7 @@ function Message({
           {status ? <span className="shrink-0">{status}</span> : null}
         </div>
         {entry.text ? <ThreadText text={entry.text} handles={roster.handles} /> : null}
+        {entry.failure ? <FailureNote failure={entry.failure} harness={who.harness ?? ""} taskText={task?.text ?? null} onRetry={task?.onRetry} /> : null}
         {entry.view ? <ViewLine view={entry.view} /> : null}
         {footnote ? (
           <p data-entry-footnote="" className="mt-0.5 text-[11px] text-muted-foreground">

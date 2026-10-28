@@ -22,7 +22,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{AgentRecord, AgentSpec, MAX_SESSIONS, Persistent};
+use super::{AgentRecord, AgentSpec, MAX_SESSIONS, Persistent, locked_json};
 use crate::DriveResult as _;
 use crate::thread::claims::{ClaimEntries, Holder};
 use crate::thread::policy::{self, Right, Rights};
@@ -32,6 +32,7 @@ use crate::thread::{
     refuse_secrets,
 };
 use cua_agents::RunStatus;
+use cua_spaces::agents as ag;
 use cua_spaces::extension::Caller;
 use cua_spaces::{Error, Result};
 
@@ -283,11 +284,35 @@ impl Persistent {
             .collect())
     }
 
+    /// A Space of this machine that is no longer there: its members' keys are
+    /// free again. Only the registry of this machine answers for itself, for a
+    /// local Space or an address added by hand (a Space on another computer
+    /// may be offline, not gone).
+    fn space_is_gone(&self, space: &str) -> bool {
+        (space.starts_with("local:") || space.starts_with("direct:"))
+            && self
+                .spaces
+                .list()
+                .map(|rows| !rows.iter().any(|s| s.id == space))
+                .unwrap_or(false)
+    }
+
+    /// `base`, or `base-2`, `base-3`, ... : the first key no persistent agent has.
+    fn free_key(&self, base: &str) -> Result<String> {
+        let taken: Vec<String> = self.list()?.into_iter().map(|r| r.name).collect();
+        (2..)
+            .map(|n| format!("{base}-{n}"))
+            .find(|k| k.len() <= 63 && !taken.contains(k))
+            .ok_or_else(|| Error::invalid(format!("no free name for {base}")))
+    }
+
     /// Adds an agent member: a persistent agent of `spec.space`, added by
     /// `caller`, with its policy (`durable`, `on`, `once`) and 1 to
     /// [`MAX_SESSIONS`] sessions. Its Space's `.cua/setup` runs before it
-    /// gets a task. A persistent agent that exists already (same harness and
-    /// Space, for example one an older Cua created) takes the new policy.
+    /// gets a task. A member of that name that exists already in the Space
+    /// (same harness, for example one an older Cua created) takes the new
+    /// policy. A name used by another Space does not matter: each Space's
+    /// `@claude` is its own.
     pub fn add_member(
         &self,
         caller: &Caller,
@@ -307,19 +332,45 @@ impl Persistent {
                 "on: auto needs the member's Space to be a durable Space",
             ));
         }
-        let existing = self.get(&spec.name).ok();
-        let rec = match existing {
+        let space = self.spaces.resolve(&spec.space)?.to_string();
+        let wanted = spec.name.clone();
+        // This Space's own member of that name (an older Cua's included).
+        let here = self
+            .members_of(&space)?
+            .into_iter()
+            .find(|r| r.handle() == wanted);
+        let rec = match here {
             Some(r) => {
-                let space = self.spaces.resolve(&spec.space)?.to_string();
-                if r.harness != spec.harness || r.space != space {
+                if r.harness != spec.harness {
                     return Err(Error::invalid(format!(
-                        "a persistent agent named {} exists with another harness or Space",
-                        r.name
+                        "{wanted} in this Space is {}, not {}: pick another name",
+                        r.harness, spec.harness
                     )));
                 }
                 r
             }
-            None => self.create(spec)?,
+            None => {
+                // Names are keys on this machine, but a Space's `@claude` is its
+                // own: when the key is taken elsewhere (or by a Space that is
+                // gone, which frees it), this Space's member gets a key of its
+                // own and answers to the name it was asked for.
+                let mut spec = spec;
+                if let Ok(other) = self.get(&wanted) {
+                    if self.space_is_gone(&other.space) {
+                        locked_json(&self.agents_path(), |all: &mut Vec<AgentRecord>| {
+                            all.retain(|a| a.name != other.name)
+                        })?;
+                    } else {
+                        spec.name = self.free_key(&wanted)?;
+                    }
+                }
+                let alias = (spec.name != wanted).then(|| wanted.clone());
+                let rec = self.create(spec)?;
+                if alias.is_some() {
+                    self.update(&rec.name, |r| r.handle = alias.clone())?;
+                }
+                self.get(&rec.name)?
+            }
         };
         let added_by = self.author_for(caller);
         self.update(&rec.name, |r| {
@@ -393,14 +444,13 @@ impl Persistent {
             };
             let activity = match state {
                 "paused" if held.is_some() => held.map(|n| format!("{n} has control")),
+                // The stage in a word ("Thinking"), never the task's text.
                 "working" => sessions
                     .iter()
                     .find(|s| s.state == "working")
-                    .and_then(|s| s.task_seq)
-                    .and_then(|seq| fold.tasks.get(&seq))
-                    .map(|t| format!("task #{}: {}", t.seq, clip_words(&t.text, 80))),
+                    .and_then(|s| s.activity.clone()),
                 "failed" if r.setup == super::durable::setup::FAILED => {
-                    Some(super::notify::short_reason(&r.setup_note))
+                    Some(super::notify::reason(&r.setup_note))
                 }
                 "waiting" => sessions
                     .iter()
@@ -410,7 +460,7 @@ impl Persistent {
                     .iter()
                     .find(|s| s.state == "failed")
                     .and_then(|s| s.activity.clone())
-                    .or_else(|| r.last_error.as_deref().map(super::notify::short_reason)),
+                    .or_else(|| r.last_error.as_deref().map(|e| failed_line(&r.harness, e))),
                 "idle" | "asleep" if open > 0 => Some(format!(
                     "{open} open task{}",
                     if open == 1 { "" } else { "s" }
@@ -420,6 +470,15 @@ impl Persistent {
             let mut status = json!({"state": state});
             if let Some(a) = activity {
                 status["activity"] = json!(a);
+            }
+            // The typed failure (and its complete text) of a failed member.
+            if state == "failed"
+                && let Some(f) = sessions
+                    .iter()
+                    .find_map(|s| s.failure.clone())
+                    .or_else(|| r.last_error.as_deref().map(|e| failure_for(&r, e)))
+            {
+                status["failure"] = json!(f);
             }
             let mut row = member_row(&r, &self.owner());
             row["run_id"] = json!(r.run_id);
@@ -572,15 +631,29 @@ impl Persistent {
                 },
             )
         };
-        match self.send_session(rec, &framed, entry).await {
+        // Show it at once: a run to start is `starting`, a warm one `thinking`.
+        self.set_stage(
+            rec,
+            Some(if rec.run_id.is_some() {
+                "thinking"
+            } else {
+                "starting"
+            }),
+        );
+        let sent = self.send_session(rec, &framed, entry).await;
+        if sent.is_err() {
+            self.set_stage(rec, None);
+        }
+        match sent {
             Ok(d) => {
                 let base = if d.started { 0 } else { base };
+                // The note ("woke up and joined") comes when the agent is up.
                 if d.started {
-                    store.append(Draft::note(
-                        "dispatch",
-                        Some(task.seq),
-                        format!("{} woke up and joined", session_name(rec)),
-                    ))?;
+                    self.live
+                        .lock()
+                        .await
+                        .joining
+                        .insert(d.run_id.clone(), task.seq);
                 }
                 store.claim(
                     task.seq,
@@ -604,12 +677,26 @@ impl Persistent {
                 Ok(Delivered::Busy)
             }
             Err(e) => {
+                // The agent answers in the thread: plain words, with the
+                // complete error (and a Connect button when it needs a
+                // sign-in) in `failure`.
+                let failure = failure_for(rec, &e.to_string());
+                let mut reply = Draft::new(
+                    Author::agent(&rec.name),
+                    EntryKind::Message,
+                    ag::failure::plain(&failure, &rec.harness),
+                );
+                reply.reply_to = Some(task.seq);
+                reply.failure = Some(failure);
                 store.release(
                     task.seq,
-                    vec![update(
-                        TaskState::Failed,
-                        format!("could not start {}: {e}", session_name(rec)),
-                    )],
+                    vec![
+                        reply,
+                        update(
+                            TaskState::Failed,
+                            format!("could not start {}", session_name(rec)),
+                        ),
+                    ],
                 )?;
                 Err(e)
             }
@@ -787,8 +874,10 @@ impl Persistent {
         {
             let mut drafts = vec![];
             if !t.replied {
-                let text = match (&error, &answer) {
-                    (Some(e), _) => format!("Failed: {}", super::notify::short_reason(e)),
+                let failure = error.as_deref().map(|e| failure_for(rec, e));
+                let text = match (&failure, &answer) {
+                    // Plain words; the complete error rides along as `failure`.
+                    (Some(f), _) => ag::failure::plain(f, &rec.harness),
                     (None, Some(a)) if !a.trim().is_empty() => a.trim().to_string(),
                     _ => "Finished.".to_string(),
                 };
@@ -800,6 +889,7 @@ impl Persistent {
                 };
                 let mut reply = Draft::new(Author::agent(&rec.name), EntryKind::Message, text);
                 reply.reply_to = Some(t.seq);
+                reply.failure = failure;
                 drafts.push(reply);
             }
             drafts.push(Draft::update(
@@ -819,8 +909,70 @@ impl Persistent {
             let written = store.release(t.seq, drafts)?;
             anchor = written.first().map(|e| e.seq);
         }
-        self.update_in(rec, |r| r.task = None)?;
+        self.update_in(rec, |r| {
+            r.task = None;
+            r.activity = None;
+        })?;
+        store.wake();
         Ok(anchor)
+    }
+
+    /// Sets what the session `rec` shows is doing (`starting`, `thinking`,
+    /// ...; `None`: nothing) and wakes the thread's followers when it changed.
+    pub(crate) fn set_stage(&self, rec: &AgentRecord, stage: Option<&str>) {
+        let stage = stage.map(str::to_string);
+        let changed = self
+            .update_in(rec, |r| {
+                let changed = r.activity != stage;
+                r.activity = stage;
+                changed
+            })
+            .unwrap_or(false);
+        if changed {
+            self.thread_store(&rec.space).wake();
+        }
+    }
+
+    /// What each agent member of `space` is doing now, for the thread's live
+    /// rows: `{agent, stage}` for every member with a turn on its way (a
+    /// task open for it, so a stale stage never shows). `key` changes when
+    /// any of them does.
+    pub(crate) fn live_rows(&self, space: &str) -> Result<(String, Vec<Value>)> {
+        let store = self.thread_store(space);
+        let fold = if store.exists() {
+            Some(store.fold()?)
+        } else {
+            None
+        };
+        let mut rows: Vec<Value> = vec![];
+        for rec in self.members_of(space)? {
+            if rec.paused || super::identity::is_external(&rec) {
+                continue;
+            }
+            let stage = rec
+                .session_views()
+                .into_iter()
+                .find_map(|s| s.activity.clone());
+            let open = fold
+                .as_ref()
+                .is_some_and(|f| !f.open_tasks(Some(&rec.name)).is_empty());
+            if let (Some(stage), true) = (stage, open) {
+                rows.push(json!({"agent": rec.handle(), "stage": stage}));
+            }
+        }
+        rows.sort_by_key(|r| r["agent"].as_str().unwrap_or_default().to_string());
+        let key = rows
+            .iter()
+            .map(|r| {
+                format!(
+                    "{}={}",
+                    r["agent"].as_str().unwrap_or_default(),
+                    r["stage"].as_str().unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        Ok((key, rows))
     }
 
     /// Puts the in-flight task of the session `rec` shows back in the
@@ -1015,7 +1167,7 @@ pub fn member_row(r: &AgentRecord, owner: &Author) -> Value {
     identity.collides.get_or_insert(false);
     json!({
         "identity": identity,
-        "name": r.name, "harness": r.harness, "space": r.space, "model": r.model,
+        "name": r.name, "handle": r.handle(), "harness": r.harness, "space": r.space, "model": r.model,
         "sessions": r.sessions, "policy": r.policy,
         "added_by": r.added_by.clone().unwrap_or_else(|| owner.clone()),
         "member_since_ms": if r.member_since_ms > 0 { r.member_since_ms } else { r.created_ms },
@@ -1072,8 +1224,18 @@ impl Thread {
             .p
             .members_of(self.store.space())?
             .into_iter()
-            .map(|r| r.name)
+            .map(|r| r.handle().to_string())
             .collect())
+    }
+
+    /// The key of this Space's member that answers to `@handle`.
+    fn member_key(&self, handle: &str) -> Option<String> {
+        self.p
+            .members_of(self.store.space())
+            .ok()?
+            .into_iter()
+            .find(|r| r.handle() == handle)
+            .map(|r| r.name)
     }
 
     /// Posts as the caller. An @mention of an agent member (not the author
@@ -1090,9 +1252,11 @@ impl Thread {
         }
         let author = self.author();
         let members = self.member_names()?;
+        // `@claude` of this Space is the member's key (`claude-2` in a second Space).
         let mentions: Vec<String> = parse_mentions(&args.text)
             .into_iter()
             .filter(|m| members.contains(m))
+            .filter_map(|m| self.member_key(&m))
             .collect();
         let fold = self.store.fold()?;
         let mut kind = EntryKind::Message;
@@ -1187,6 +1351,23 @@ impl Thread {
         });
         d.runs_on_keys_of = keys_of;
         d.view = view;
+        // The agent shows as at work in the thread's live row right away
+        // (the dispatcher gives it the task within a second).
+        if let Some(to) = &task_to
+            && let Ok(rec) = self.p.get(to)
+            && !rec.paused
+            && !super::identity::is_external(&rec)
+            && rec.session_views().iter().all(|s| s.activity.is_none())
+        {
+            self.p.set_stage(
+                &rec,
+                Some(if rec.run_id.is_some() {
+                    "thinking"
+                } else {
+                    "starting"
+                }),
+            );
+        }
         let e = self.store.append(d)?;
         if let Some((seq, approve)) = answered_join {
             self.p
@@ -1768,10 +1949,31 @@ pub(crate) enum Delivered {
 }
 
 /// `ada`, or `ada (session 2)`.
-fn session_name(rec: &AgentRecord) -> String {
+pub(crate) fn session_name(rec: &AgentRecord) -> String {
     match rec.k() {
         1 => rec.name.clone(),
         k => format!("{} (session {k})", rec.name),
+    }
+}
+
+/// The typed failure of `rec`'s turn or start with the error text `e`: its
+/// class, the provider to connect, and the complete text (a text that looks
+/// like a secret is withheld, as everything posted to the thread is).
+pub(crate) fn failure_for(rec: &AgentRecord, e: &str) -> ag::failure::Failure {
+    let mut f = ag::failure::classify(&rec.harness, e);
+    if check_text(&f.message).is_err() {
+        f.message = "(details withheld: they looked like they held a secret)".into();
+    }
+    f
+}
+
+/// A failed member's status line: "Not connected" when it needs a sign-in,
+/// else the error's first line, whole.
+fn failed_line(harness: &str, e: &str) -> String {
+    let f = ag::failure::classify(harness, e);
+    match f.class {
+        ag::failure::FailureClass::NeedsConnect => "Not connected".into(),
+        ag::failure::FailureClass::Error => super::notify::reason(e),
     }
 }
 
@@ -1786,6 +1988,10 @@ pub struct SessionState {
     /// what it waits for, or why it failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activity: Option<String>,
+    /// For a failed session: what failed, typed (`needs_connect` and the
+    /// provider, or an error) with the complete text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<ag::failure::Failure>,
     /// The task its turn works on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_seq: Option<u64>,
@@ -1818,22 +2024,40 @@ pub fn session_state(
         }
     };
     let activity = match state {
-        "working" => s.activity.clone().or_else(|| {
-            task_seq
-                .and_then(|seq| fold.tasks.get(&seq))
-                .map(|t| format!("task #{}: {}", t.seq, clip_words(&t.text, 80)))
-        }),
+        "working" => Some(
+            s.activity
+                .as_deref()
+                .map_or_else(|| "Working".to_string(), sentence_case),
+        ),
         "waiting" => asked.map(|a| format!("waiting for an answer to #{a}")),
-        "failed" => s.last_error.as_deref().map(super::notify::short_reason),
+        "failed" => s.last_error.as_deref().map(|e| failed_line(&s.harness, e)),
         _ => None,
     };
+    // An error is never cut: only a working line is clipped.
+    let activity = if state == "failed" {
+        activity
+    } else {
+        activity.map(|a| clip_line(&a, 80))
+    };
+    let failure = (state == "failed")
+        .then(|| s.last_error.as_deref().map(|e| failure_for(s, e)))
+        .flatten();
     SessionState {
         k: s.k(),
         state,
-        activity: activity.map(|a| clip_line(&a, 80)),
+        activity,
+        failure,
         task_seq,
         run_id: s.run_id.clone(),
     }
+}
+
+/// `thinking` as `Thinking`.
+fn sentence_case(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .unwrap_or_default()
 }
 
 /// The member's state: paused, or the busiest of its sessions.

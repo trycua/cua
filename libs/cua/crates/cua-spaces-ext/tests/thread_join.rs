@@ -188,7 +188,9 @@ async fn a_code_is_one_line_works_once_and_is_stored_hashed() {
     assert_eq!(c["url"], format!("https://cua.ai/join/{code}"));
     assert_eq!(
         c["line"],
-        format!("Join my Cua Space \"ubuntu-build\": https://cua.ai/join/{code}")
+        format!(
+            "Join my Cua Space \"ubuntu-build\": https://cua.ai/join/{code} After you join: set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself."
+        )
     );
     let ttl = c["expires_at_ms"].as_u64().unwrap() - cua_volume::now_ms();
     assert!((3_500_000..=3_600_000).contains(&ttl), "{ttl}");
@@ -499,6 +501,111 @@ async fn a_member_posts_as_itself_with_owner_and_device_from_its_key() {
             .contains("is connected from Ada's MacBook Pro"),
         "{e}"
     );
+}
+
+/// An agent that only calls `thread_join_redeem` is told what to do next by
+/// the result and by the descriptions of the tools it will use, posts as
+/// itself with the credential in the result, and can't task itself.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redeeming_teaches_the_next_steps_and_posts_are_the_agents() {
+    let fx = setup().await;
+    let (m, r) = join(&fx).await;
+    // The result says what to do next, in plain words.
+    let steps = r["next_steps"].as_str().unwrap();
+    for must in [
+        "You joined ubuntu-build as @agent.",
+        "thread_join",
+        "thread_inbox",
+        "in a loop",
+        "thread_post",
+        "never @mention yourself",
+        "scheduled poll",
+    ] {
+        assert!(steps.contains(must), "{must}: {steps}");
+    }
+    assert!(!steps.contains('\u{b7}'));
+    assert_eq!(
+        r["member_credential"],
+        json!({"member_id": r["member_id"], "key": r["key"]})
+    );
+
+    // The tools an agent reads say the same, and thread_post takes `_member`.
+    let listed = fx
+        .mcp
+        .handle(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        .await
+        .unwrap();
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    let tool = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap();
+    for name in ["thread_join_redeem", "thread_join", "thread_inbox"] {
+        let d = tool(name)["description"].as_str().unwrap();
+        assert!(d.contains("Next steps"), "{name}: {d}");
+        assert!(d.contains("never @mention yourself"), "{name}");
+    }
+    for name in ["thread_post", "thread_inbox", "thread_join", "thread_read"] {
+        assert_eq!(
+            tool(name)["inputSchema"]["properties"]["_member"]["required"],
+            json!(["member_id", "key"]),
+            "{name}"
+        );
+    }
+
+    // After redeeming, the agent names itself and posts with the credential:
+    // the post is the agent's, not the signed-in person's.
+    member_call(
+        &fx,
+        &m,
+        "thread_join",
+        json!({"space": fx.space, "name": "Claude Code", "harness": "claude-code"}),
+    )
+    .await
+    .unwrap();
+    let post = member_call(
+        &fx,
+        &m,
+        "thread_post",
+        json!({"space": fx.space, "text": "Hello from the agent."}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(post["entry"]["author"]["kind"], "agent");
+    assert_eq!(post["entry"]["author"]["name"], "Claude Code");
+    // Without it the same tool posts as the person (what the owner saw).
+    let plain = owner_call(
+        &fx,
+        "thread_post",
+        json!({"space": fx.space, "text": "As the person."}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(plain["entry"]["author"]["kind"], "person");
+    // The member list shows the name it chose.
+    let row = members(&fx).await.into_iter().next().unwrap();
+    assert_eq!(row["identity"]["display_name"], "Claude Code");
+
+    // Its own @name makes no task for itself, however it is written.
+    let handle = r["handle"].as_str().unwrap();
+    let handle = if handle == "agent" {
+        "claude-code"
+    } else {
+        handle
+    };
+    let me = members(&fx).await[0]["name"].as_str().unwrap().to_string();
+    for text in [format!("@{me} I will do it"), format!("note to self @{me}")] {
+        let e = member_call(
+            &fx,
+            &m,
+            "thread_post",
+            json!({"space": fx.space, "text": text}),
+        )
+        .await
+        .unwrap();
+        assert!(e["entry"]["task"].is_null(), "{text}: {e}");
+    }
+    let inbox = member_call(&fx, &m, "thread_inbox", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    assert_eq!(inbox["tasks"], json!([]), "{handle}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

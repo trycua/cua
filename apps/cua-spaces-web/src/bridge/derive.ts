@@ -370,7 +370,7 @@ export interface Machine {
 export function machineSpacesLabel(desktop: boolean, n: number): string {
   const count = n === 0 ? "No Spaces" : `${n} Space${n === 1 ? "" : "s"}`;
   if (!desktop) return count;
-  return n === 0 ? "Desktop shared" : `Desktop \u00b7 ${count}`;
+  return n === 0 ? "Desktop shared" : `Desktop and ${count}`;
 }
 
 /** One Machines row as the core lists it, from the page's own machine
@@ -620,20 +620,20 @@ export function hostPanelFromState(core: CoreClient, state: object | null, statu
 }
 
 function fallbackPanel(s: HostStatus | null): HostPanelView {
-  const base: HostPanelView = { title: "This computer", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
+  const base: HostPanelView = { title: "This machine", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
   if (!s) return base;
   if (!s.configured) {
-    return { ...base, summary: "Your other devices can’t reach this computer yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
+    return { ...base, summary: "Your other machines can’t reach this machine yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
   }
   const via = s.mode === "direct" ? "Direct" : "Relay";
   const summary = !s.service.running ? "Host service stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
-  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this computer’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
+  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this machine’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
   return {
     ...base,
     summary,
     configured: true,
     facts: [
-      { label: "Name", value: s.name || "This computer" },
+      { label: "Name", value: s.name || "This machine" },
       { label: "Access", value: access },
       { label: "Service", value: `${s.service.kind} · ${s.service.running ? "running" : s.service.installed ? "stopped" : "not installed"}` },
     ],
@@ -644,10 +644,10 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
 }
 
 const FALLBACK_INTRO =
-  "This is the computer you’re using now. Set it up so you, your teammates and your AI agents can use it from other devices. Cua connects them for you, with no network setup.";
+  "This is the machine you’re using now. Set it up so you, your teammates and your AI agents can use it from other machines. Cua connects them for you, with no network setup.";
 const FALLBACK_CHOICES: HostSetupChoice[] = [
-  { id: "desktop", label: "Let my other devices use this computer", buttonLabel: "Set Up…" },
-  { id: "spare", label: "Run Spaces here and keep its screen private", buttonLabel: "Set Up…" },
+  { id: "desktop", label: "Let other machines create Spaces and control this desktop", buttonLabel: "Set Up…" },
+  { id: "spare", label: "Let other machines create Spaces here", buttonLabel: "Set Up…" },
 ];
 
 /** What "Add a machine" explains: the core's words for host setup, as the
@@ -879,7 +879,7 @@ function fallbackListView(i: { loaded: boolean; incomplete: boolean; reaching: n
     : !i.incomplete
       ? null
       : i.reaching === 0
-        ? "Reaching your computers…"
-        : `Reaching ${i.reaching} computer${i.reaching === 1 ? "" : "s"}…`;
+        ? "Reaching your machines…"
+        : `Reaching ${i.reaching} machine${i.reaching === 1 ? "" : "s"}…`;
   return { empty: i.loaded && !i.incomplete && i.count === 0, reachingLine };
 }

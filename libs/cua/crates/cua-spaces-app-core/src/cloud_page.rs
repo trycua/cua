@@ -819,7 +819,7 @@ fn page(c: &CloudInput, input: &CloudsInput) -> CloudPage {
             id: "budget".into(),
             level: "warn".into(),
             text: format!(
-                "This month's {} budget is used. New Spaces go to your computers, or wait until {}.",
+                "This month's {} budget is used. New Spaces go to your machines, or wait until {}.",
                 money(c.budget_cents.unwrap_or(0)),
                 resets_on(input.now)
             ),
@@ -1001,7 +1001,7 @@ fn page(c: &CloudInput, input: &CloudsInput) -> CloudPage {
         lock: if state == State::TokenRefused {
             format!("Refused by {name}")
         } else {
-            "Sealed to your devices".into()
+            "Sealed to your machines".into()
         },
         note: "Only your own devices can open it. Cua's servers keep a sealed copy they can't read. Agents use it through Cua; they never see it.".into(),
         holders_label: if c.holders.is_empty() { String::new() } else { "Can open it".into() },

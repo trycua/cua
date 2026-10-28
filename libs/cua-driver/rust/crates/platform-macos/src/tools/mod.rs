@@ -259,6 +259,7 @@ fn pid_keyboard_guarded<T: Tool + 'static>(
 }
 
 pub use check_permissions::{
+    live_permission_probe,
     request_from_launchservices_host as request_permissions_from_launchservices_host,
     PERMISSIONS_HOST_REQUEST_ARG,
 };

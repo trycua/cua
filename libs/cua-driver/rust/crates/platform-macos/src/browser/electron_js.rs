@@ -10,7 +10,27 @@ pub struct ElectronJs;
 impl ElectronJs {
     /// Returns true if the process at `pid` is an Electron app.
     pub fn is_electron(pid: i32) -> bool {
-        // Look up the bundle path from list_running_apps.
+        // The executable check below is cheap and decides most apps, so it
+        // runs first; the answer is the same either way round.
+        if exe_has_electron_framework(pid) {
+            return true;
+        }
+
+        // Look up the bundle path from list_running_apps. Listing every
+        // running app costs tens of milliseconds, so first ask whether this
+        // pid's listed name, if it is listed at all, could lead to an Electron
+        // bundle; nearly every non-Electron app is decided here.
+        let could_be_electron = crate::apps::bundle_name_for_pid(pid)
+            .and_then(|name| find_bundle_path_for_app(&name))
+            .is_some_and(|bp| {
+                std::path::Path::new(&format!(
+                    "{bp}/Contents/Frameworks/Electron Framework.framework"
+                ))
+                .exists()
+            });
+        if !could_be_electron {
+            return false;
+        }
         let apps = crate::apps::list_running_apps();
         let app = apps.iter().find(|a| a.pid == pid);
 
@@ -21,22 +41,6 @@ impl ElectronJs {
                 let electron_fw = format!("{bp}/Contents/Frameworks/Electron Framework.framework");
                 if std::path::Path::new(&electron_fw).exists() {
                     return true;
-                }
-            }
-        }
-
-        // Fallback: check executable via lsof or ps.
-        // Check if the executable itself links Electron.
-        if let Ok(exe) = get_exe_path(pid) {
-            // Check parent dir for Electron Framework.
-            let exe_path = std::path::Path::new(&exe);
-            if let Some(parent) = exe_path.parent() {
-                // e.g. /Applications/Slack.app/Contents/MacOS/Slack → look for Frameworks sibling
-                if let Some(macos_dir) = parent.parent() {
-                    let electron_fw = macos_dir.join("Frameworks/Electron Framework.framework");
-                    if electron_fw.exists() {
-                        return true;
-                    }
                 }
             }
         }
@@ -113,16 +117,20 @@ impl ElectronJs {
     }
 }
 
-/// Get the executable path of a process using `ps`.
-fn get_exe_path(pid: i32) -> anyhow::Result<String> {
-    let out = std::process::Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "comm="])
-        .output()?;
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    if s.is_empty() {
-        anyhow::bail!("No exe for pid {pid}");
-    }
-    Ok(s)
+/// Whether the executable itself sits in a bundle that links Electron.
+fn exe_has_electron_framework(pid: i32) -> bool {
+    let Some(exe) = crate::apps::process_command(pid) else {
+        return false;
+    };
+    // e.g. /Applications/Slack.app/Contents/MacOS/Slack → look for Frameworks sibling
+    std::path::Path::new(&exe)
+        .parent()
+        .and_then(std::path::Path::parent)
+        .is_some_and(|contents| {
+            contents
+                .join("Frameworks/Electron Framework.framework")
+                .exists()
+        })
 }
 
 /// Find the .app bundle path for an app by name (searches common locations).

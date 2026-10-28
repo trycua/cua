@@ -1399,8 +1399,8 @@ impl Host {
         let provide_spaces = self.resolve_provide_spaces(&opts);
         if !opts.share_desktop && !provide_spaces {
             return Err(Error::InvalidArgument(
-                "with neither the desktop nor Spaces there is nothing to share; turn on \
-                 --desktop or --provide-spaces"
+                "with neither the desktop nor Spaces there is nothing to share; use \
+                 --share desktop, spaces or both"
                     .into(),
             ));
         }

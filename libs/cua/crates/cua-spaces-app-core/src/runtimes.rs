@@ -364,9 +364,9 @@ fn kind_rows(kind: &str, label: &str, input: &RuntimesInput) -> Vec<SettingsRow>
         None => row(&detected_id, Note, "Looking for what is installed\u{2026}"),
         Some([]) => {
             let label = if k.expected.is_empty() {
-                "Nothing found on this computer".to_string()
+                "Nothing found on this machine".to_string()
             } else {
-                format!("No {} found on this computer", join_or(&k.expected))
+                format!("No {} found on this machine", join_or(&k.expected))
             };
             row(&detected_id, Note, &label)
         }
@@ -691,7 +691,7 @@ mod tests {
         );
         assert_eq!(
             get(&s, "runtime-detected:container").label,
-            "No Docker or Podman found on this computer"
+            "No Docker or Podman found on this machine"
         );
     }
 

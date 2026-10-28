@@ -17,7 +17,7 @@ const rows = (n: number, what: string): HostAccessRow[] => Array.from({ length: 
 
 /** The core's "This machine" page for a machine sharing over the relay, with long logs. */
 const sharing: HostPanelView = {
-  title: "This computer",
+  title: "This machine",
   summary: "Sharing · Relay",
   configured: true,
   facts: [{ label: "Name", value: "Studio" }],

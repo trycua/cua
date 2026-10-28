@@ -610,15 +610,13 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
     }
 }
 
+/// Read the render map, treating a poisoned or uninitialised map as absent.
+fn read_render<T>(f: impl FnOnce(&RenderMap) -> T) -> Option<T> {
+    RENDER.lock().ok()?.as_ref().map(f)
+}
+
 pub fn is_enabled_for(key: &str) -> bool {
-    RENDER
-        .lock()
-        .ok()
-        .and_then(|g| {
-            g.as_ref()
-                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.visible))
-        })
-        .unwrap_or(false)
+    read_render(|map| map.is_enabled(key)).unwrap_or(false)
 }
 
 /// Truthful render acknowledgement for lifecycle inspection. This checks the
@@ -637,41 +635,15 @@ pub fn is_visible_for_session(key: &str) -> bool {
 }
 
 pub fn current_position_for(key: &str) -> Option<(f64, f64)> {
-    RENDER.lock().ok().and_then(|g| {
-        g.as_ref()
-            .and_then(|m| m.cursors.get(key))
-            .filter(|rs| rs.core.placed)
-            .map(|rs| rs.core.pos)
-    })
+    read_render(|map| map.placed_position(key)).flatten()
 }
 
 pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
-    RENDER
-        .lock()
-        .ok()
-        .and_then(|guard| {
-            guard.as_ref().and_then(|map| {
-                map.cursor_or_default(key)
-                    .map(|state| state.core.motion.clone())
-            })
-        })
-        .unwrap_or_default()
+    read_render(|map| map.motion(key)).unwrap_or_default()
 }
 
-pub fn current_theme_state_for(
-    key: &str,
-) -> Option<(
-    String,
-    String,
-    String,
-    Option<String>,
-    cursor_overlay::CursorVisualState,
-)> {
-    let guard = RENDER.lock().ok()?;
-    let map = guard.as_ref()?;
-    let state = map.cursor_or_default(key)?;
-    let (id, version, profile, fallback) = state.core.active_theme_metadata();
-    Some((id, version, profile, fallback, state.core.visual.clone()))
+pub fn current_theme_state_for(key: &str) -> Option<cursor_overlay::CursorThemeState> {
+    read_render(|map| map.theme_state(key)).flatten()
 }
 
 fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {

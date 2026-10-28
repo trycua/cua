@@ -73,6 +73,10 @@ export interface DemoOptions {
   keyvaultLocked?: boolean;
   /** Start with no Keyvault (`?demo=novault`). */
   noVault?: boolean;
+  /** Machines that are only signed in (`?demo=signed-in-machines`): rows in the one list, "Signed in, not sharing", and the two that wait to be added. */
+  signedInMachines?: boolean;
+  /** Saved credentials the provider refuses (`?demo=rejected-key`: the OpenAI key): a check marks them as needing a reconnect. */
+  rejectedKeys?: string[];
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
@@ -172,6 +176,16 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * Space and the first Space offers see it too), and `?demo=intel-mac` /
  * `?demo=linux-pc` (an Intel Mac, an x64 Linux PC with QEMU), and
  * `?demo=creating-elsewhere` (the Mac mini is creating a Space). */
+/** The account's signed-in machines that share nothing, as a host lists them (`?demo=signed-in-machines`): one enrolled, and the demo devices that wait. */
+function demoSignedInRows(nowMs: number): MachineRow[] {
+  const t = Math.floor(nowMs / 1000);
+  return [
+    { id: "dev_laptop", name: "Ana's laptop", via: "relay", online: false, os: "macos", device: true, deviceState: "enrolled", lastSeen: t - 2 * 3600, limits: [] },
+    { id: "dev_work", name: "Work laptop", via: "relay", online: false, os: "windows", device: true, deviceState: "pending", lastSeen: t - 120, limits: [] },
+    { id: "dev_old", name: "Old laptop", via: "relay", online: false, os: "linux", device: true, deviceState: "expired", lastSeen: t - 33 * 86_400, limits: [] },
+  ];
+}
+
 /** `count` plain Spaces for scale: alternating systems, places and states,
  * each with its own id, name and time (`?demo=scale-N`). */
 export function demoScaleRows(now: number, count: number): SpaceRow[] {
@@ -206,6 +220,8 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     onboarded: !flags.has("fresh"),
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
+    ...(flags.has("signed-in-machines") ? { signedInMachines: true } : {}),
+    ...(flags.has("rejected-key") ? { rejectedKeys: ["OPENAI_API_KEY"] } : {}),
     noSpaces: flags.has("empty"),
     ...(() => {
       const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
@@ -317,7 +333,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
     imported: [],
-    keyStore: demoKeyStore(now),
+    keyStore: demoKeyStore(now, options.rejectedKeys ?? []),
     readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
@@ -588,6 +604,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         ...demoMachineRows(now(), state.host, state.platform),
         ...(options.manyMachines ? Array.from({ length: 14 }, (_, i) => demoExtraMachine(i)) : []),
         ...state.paired.map((m) => ({ ...m, limits: [...m.limits] })),
+        ...(options.signedInMachines ? demoSignedInRows(now()) : []),
       ]
         .filter((m) => !state.removed.includes(m.id))
         .map((m) => (state.renamed[m.id] ? { ...m, name: state.renamed[m.id]! } : m)),
@@ -855,7 +872,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "agents.signIn": async ({ agent }) => {
       const row = state.agentSetup.find((r) => r.agent === agent);
       if (!row?.signIn) throw new Error(`${row?.name ?? agent} has no sign-in Cua can start`);
-      if (!row.installed) throw new Error(`${row.name} isn't installed on this computer`);
+      if (!row.installed) throw new Error(`${row.name} isn't installed on this machine`);
       setTimeout(() => {
         state.agentSetup = state.agentSetup.map((r) => (r.agent === agent ? { ...r, signedIn: true } : r));
       }, step * 40);

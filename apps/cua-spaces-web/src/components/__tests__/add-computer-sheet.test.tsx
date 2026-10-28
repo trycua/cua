@@ -68,7 +68,7 @@ const status = () => document.querySelector("[data-add-status]")?.textContent ??
 const prompt = () => document.querySelector<HTMLTextAreaElement>("#add-agent-prompt")!;
 const back = () => fireEvent.click(document.querySelector("[data-add-back]")!);
 
-describe("Add a computer: the methods", () => {
+describe("Add a machine: the methods", () => {
   it("lists one row per method, Sign in there first, and a prompt for an agent with the live code", async () => {
     const { adapter, calls } = host({}, neverUsed);
     await mount(adapter);
@@ -174,7 +174,7 @@ describe("Add a computer: the methods", () => {
   });
 });
 
-describe("Add a computer: states", () => {
+describe("Add a machine: states", () => {
   it("waits, then says which machine was added, however it was added", async () => {
     const { adapter, calls } = host();
     await mount(adapter);
@@ -267,7 +267,7 @@ describe("Add a computer: states", () => {
   });
 });
 
-describe("Add a computer: without a code", () => {
+describe("Add a machine: without a code", () => {
   it("signed out: only Sign in there, and a way to sign in", async () => {
     const { adapter, calls } = host({ signedIn: false });
     await mount(adapter);
@@ -322,7 +322,7 @@ describe("Add a computer: without a code", () => {
   });
 });
 
-describe("Add a computer: for a team", () => {
+describe("Add a machine: for a team", () => {
   const acme = "0f1e2d3c-0000-4000-8000-0000000000a1";
   const teams = (currentTeamId: string | null) => () =>
     Promise.resolve({

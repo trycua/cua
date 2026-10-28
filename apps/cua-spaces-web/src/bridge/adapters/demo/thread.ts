@@ -570,17 +570,20 @@ export function demoThreadHandlers({
     waiting.delete(space);
   };
   // Each agent's stage while it works on a task (`thread_read`'s `live`), by Space.
-  const stages = new Map<string, Map<string, string>>();
+  const stages = new Map<string, Map<string, { stage: string; since: number; text?: string }>>();
   const liveOf = (space: string) => {
-    const agents = [...(stages.get(space) ?? [])].map(([agent, stage]) => ({ agent, stage })).sort((a, b) => a.agent.localeCompare(b.agent));
-    return { key: agents.map((a) => `${a.agent}=${a.stage}`).join(";"), agents };
+    const agents = [...(stages.get(space) ?? [])]
+      .map(([agent, s]) => ({ agent, stage: s.stage, since_ms: s.since, ...(s.text ? { text: s.text } : {}) }))
+      .sort((a, b) => a.agent.localeCompare(b.agent));
+    // As the daemon keys it: the text's length moves it too, so a follow wakes for a new snapshot.
+    return { key: agents.map((a) => `${a.agent}=${a.stage}#${a.text?.length ?? 0}`).join(";"), agents };
   };
-  /** Sets (or with null clears) an agent's stage and wakes the thread's followers. */
-  const setStage = (space: string, agent: string, stage: string | null) => {
-    const m = stages.get(space) ?? new Map<string, string>();
+  /** Sets (or with null clears) an agent's stage, and what it has said so far, and wakes the thread's followers. */
+  const setStage = (space: string, agent: string, stage: string | null, text?: string) => {
+    const m = stages.get(space) ?? new Map<string, { stage: string; since: number; text?: string }>();
     stages.set(space, m);
     if (stage === null) m.delete(agent);
-    else m.set(agent, stage);
+    else m.set(agent, { stage, since: m.get(agent)?.since ?? now(), ...(text ? { text } : {}) });
     wake(space);
   };
   const append = (space: string, e: Json) => {
@@ -676,7 +679,13 @@ export function demoThreadHandlers({
     setStage(space, agent, "using Bash");
     if (member) Object.assign(member, { activity: "Using Bash" });
     await wait(stepMs * 2);
-    append(space, { author: { kind: "agent", id: `agent:${agent}`, name: agent, ...(member ? { identity: member.identity } : {}) }, reply_to: task, text: "Done. Nothing else needed from me." });
+    // It starts to answer: what it has said so far streams as one entry, replaced whole each time.
+    const said = "Done. Nothing else needed from me.";
+    for (const part of [said.slice(0, 5), said.slice(0, 18)]) {
+      setStage(space, agent, "replying", part);
+      await wait(stepMs);
+    }
+    append(space, { author: { kind: "agent", id: `agent:${agent}`, name: agent, ...(member ? { identity: member.identity } : {}) }, reply_to: task, text: said });
     setStage(space, agent, null);
     append(space, { author: system, kind: "task_update", update: { task, state: "done", session: 1, note: null } });
     if (member) Object.assign(member, { status: "idle", activity: null });

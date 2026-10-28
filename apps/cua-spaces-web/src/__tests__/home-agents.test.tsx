@@ -4,8 +4,7 @@
 // Home and the Agents page draw ONE list (`agentList.view`): a job whose
 // Space is still being made and an agent that isn't connected show on both,
 // with the same words and the same Connect; a row opens its Space's thread.
-// Home's order: the composer, Your agents, Your Spaces. With the redesign
-// off, Home keeps its Tasks list.
+// Home's order: the composer, Your agents, Your Spaces.
 
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -112,14 +111,5 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     expect(await screen.findByRole("heading", { name: "What do you want to do?" })).toBeTruthy();
     expect(q("[data-home-agents]")).toBeNull();
     expect(q("[data-home-spaces]")).toBeNull();
-  });
-
-  it("redesign off: Home keeps its Tasks list", async () => {
-    vi.stubEnv("VITE_CUA_FLAG_SPACES_REDESIGN", "0");
-    await mountApp("/home", { failsCreates: false, listsGhost: false });
-    await start("tidy the repo");
-    fireEvent.click(await found("a[href='/home']"));
-    await found("[data-task-row]");
-    expect(q("[data-home-agents]")).toBeNull();
   });
 });

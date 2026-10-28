@@ -37,38 +37,132 @@ pub struct Failure {
     pub retryable: bool,
 }
 
-/// The words providers and harnesses use for "your credential does not work".
-const AUTH_MARKERS: &[&str] = &[
-    "authentication_failed",
-    "authentication required",
-    "authentication failed",
-    "failed to authenticate",
-    "invalid x-api-key",
-    "invalid api key",
-    "incorrect api key",
-    "oauth token",
-    "oauth access token",
-    "not connected to any ai provider",
-    "no credential in this space",
-    "invalid bearer token",
-    "unauthorized",
-    "(code -32000)",
-    "code: -32000",
-    "\"code\":-32000",
-    "\"code\": -32000",
+/// One way a provider or harness says "your credential does not work".
+struct AuthText {
+    /// The harness that says it; empty: any of them (a provider's own words come through every harness).
+    harness: &'static str,
+    /// Lower-case text to find.
+    marker: &'static str,
+    /// The provider it names, when the words name one.
+    provider: Option<&'static str>,
+    /// Definite enough to read a short reply by (a normal answer that talks about authentication
+    /// would not say it this way), not only an error.
+    reply: bool,
+}
+
+const fn any(marker: &'static str, reply: bool) -> AuthText {
+    AuthText {
+        harness: "",
+        marker,
+        provider: None,
+        reply,
+    }
+}
+
+/// Every wording of an authentication failure, in one place. Per-harness tests walk it
+/// (`every_row_is_read_for_its_harness`): a harness that words it a new way gets a row and a test.
+const AUTH_TEXTS: &[AuthText] = &[
+    // What the providers say, through any harness.
+    any("authentication_failed", true),
+    any("authentication required", false),
+    any("authentication failed", false),
+    any("failed to authenticate", true),
+    any("invalid x-api-key", true),
+    any("invalid api key", true),
+    any("incorrect api key", true),
+    any("oauth token", false),
+    any("oauth access token", true),
+    any("invalid bearer token", true),
+    any("unauthorized", false),
+    // JSON-RPC's "internal error" that the ACP adapters use for a refused credential.
+    any("(code -32000)", false),
+    any("code: -32000", false),
+    any("\"code\":-32000", false),
+    any("\"code\": -32000", false),
+    // Claude Code.
+    AuthText {
+        harness: "claude-code",
+        marker: "invalid authentication credentials",
+        provider: Some("anthropic"),
+        reply: true,
+    },
+    AuthText {
+        harness: "claude-code",
+        marker: "please run /login",
+        provider: Some("anthropic"),
+        reply: true,
+    },
+    // Codex.
+    AuthText {
+        harness: "openai-codex",
+        marker: "incorrect api key provided",
+        provider: Some("openai"),
+        reply: true,
+    },
+    AuthText {
+        harness: "openai-codex",
+        marker: "refresh token",
+        provider: Some("openai"),
+        reply: false,
+    },
+    // Hermes answers a refused key as an ordinary reply, with its own advice.
+    AuthText {
+        harness: "hermes",
+        marker: "not connected to any ai provider",
+        provider: None,
+        reply: true,
+    },
+    AuthText {
+        harness: "hermes",
+        marker: "rejected your api key",
+        provider: None,
+        reply: true,
+    },
+    AuthText {
+        harness: "hermes",
+        marker: "hermes setup",
+        provider: None,
+        reply: true,
+    },
+    AuthText {
+        harness: "hermes",
+        marker: "no credential in this space",
+        provider: None,
+        reply: true,
+    },
 ];
 
-/// Whether `text` is an authentication failure.
+/// Statuses that read as a refused credential when the text is the status of an API error.
+const AUTH_STATUSES: &[&str] = &["api error: 401", "status 401", "http 401", "error 401"];
+
+/// The longest reply that can be an error in disguise: a real answer is longer than any harness's error sentence.
+const MAX_REPLY: usize = 900;
+
+fn says_auth(harness: &str, t: &str, reply_only: bool) -> bool {
+    AUTH_TEXTS
+        .iter()
+        .filter(|a| a.harness.is_empty() || a.harness == harness || harness.is_empty())
+        .filter(|a| !reply_only || a.reply)
+        .any(|a| t.contains(a.marker))
+}
+
+/// Whether `text` is an authentication failure (an error of a turn or a start: every wording counts).
 pub fn is_auth_failure(text: &str) -> bool {
     let t = text.to_ascii_lowercase();
-    if AUTH_MARKERS.iter().any(|m| t.contains(m)) {
-        return true;
+    says_auth("", &t, false) || AUTH_STATUSES.iter().any(|s| t.contains(s))
+}
+
+/// Whether `reply`, a harness's ordinary answer, is really an authentication failure it reported as
+/// text (Hermes answers "Anthropic rejected your API key ..." as a successful turn). Only a short
+/// reply that says it in a harness's definite words counts, so an answer that talks about
+/// authentication, or quotes a 401 it found in someone's code, is left alone.
+pub fn is_auth_failure_reply(harness: &str, reply: &str) -> bool {
+    let t = reply.trim().to_ascii_lowercase();
+    if t.is_empty() || t.chars().count() > MAX_REPLY {
+        return false;
     }
-    // A bare 401 counts when it is the status of an API error.
-    t.contains("api error: 401")
-        || t.contains("status 401")
-        || t.contains("http 401")
-        || t.contains("error 401")
+    says_auth(harness, &t, true)
+        || (AUTH_STATUSES.iter().any(|s| t.contains(s)) && t.contains("oauth"))
 }
 
 fn cap(text: &str) -> String {
@@ -86,6 +180,15 @@ fn cap(text: &str) -> String {
 /// from the text where the harness has more than one.
 fn provider_for(harness: &str, text: &str) -> Option<String> {
     let t = text.to_ascii_lowercase();
+    // A row that names its provider.
+    if let Some(p) = AUTH_TEXTS
+        .iter()
+        .filter(|a| a.harness == harness || a.harness.is_empty())
+        .find(|a| t.contains(a.marker))
+        .and_then(|a| a.provider)
+    {
+        return Some(p.into());
+    }
     let from_text = if t.contains("anthropic") || t.contains("claude") {
         Some("anthropic")
     } else if t.contains("openai") || t.contains("chatgpt") || t.contains("codex") {
@@ -121,13 +224,47 @@ pub fn classify(harness: &str, text: &str) -> Failure {
     }
 }
 
+/// The credential was there and the provider refused it (so signing in again, not connecting for
+/// the first time, is the fix).
+fn refused(text: &str) -> bool {
+    let t = text.to_ascii_lowercase();
+    [
+        "rejected your api key",
+        "invalid x-api-key",
+        "invalid api key",
+        "incorrect api key",
+        "oauth access token is invalid",
+        "invalid authentication credentials",
+        "401",
+    ]
+    .iter()
+    .any(|m| t.contains(m))
+}
+
+/// A provider's name for a person.
+fn provider_label(provider: Option<&str>) -> &'static str {
+    match provider {
+        Some("anthropic") => "Anthropic",
+        Some("openai") => "OpenAI",
+        _ => "The provider",
+    }
+}
+
 /// What a person reads instead of the raw error, in plain words from the
-/// agent's side (it is the agent's reply).
+/// agent's side (it is the agent's reply). The harness's own advice ("run
+/// `hermes setup`") is never in it: Cua manages the sign-in, and the complete
+/// text stays under Show details.
 pub fn plain(f: &Failure, harness: &str) -> String {
     match f.class {
         FailureClass::NeedsConnect => match (harness, f.provider.as_deref()) {
+            ("claude-code", _) if refused(&f.message) => "Claude needs you to sign in again.".into(),
+            ("openai-codex", _) if refused(&f.message) => "OpenAI needs you to sign in again.".into(),
             ("claude-code", _) => "I can't reach Claude yet. Connect Claude, then try again.".into(),
             ("openai-codex", _) => "I can't reach OpenAI yet. Connect OpenAI, then try again.".into(),
+            ("hermes", p) if refused(&f.message) => format!(
+                "{} rejected the key Hermes used. Update it, then try again.",
+                provider_label(p)
+            ),
             // The subscription sign-ins are Claude Code's and Codex's alone.
             ("hermes", _) => "Hermes needs an Anthropic API key or another provider. Your Claude subscription sign-in only works in Claude Code.".into(),
             (h, _) => {
@@ -197,5 +334,101 @@ mod tests {
         assert!(h.contains("only works in Claude Code"));
         assert!(!p.contains("401") && !p.contains('{'), "{p}");
         assert!(!p.contains('\u{b7}'));
+    }
+
+    /// Every row of the table is read for the harness that says it (and a row that is not for a harness
+    /// is read for all of them), as an error and, where it is definite, as a reply.
+    #[test]
+    fn every_row_is_read_for_its_harness() {
+        for row in AUTH_TEXTS {
+            let harnesses: Vec<&str> = if row.harness.is_empty() {
+                vec!["claude-code", "openai-codex", "hermes"]
+            } else {
+                vec![row.harness]
+            };
+            for h in harnesses {
+                let text = format!("Something failed: {} (please look)", row.marker);
+                assert!(is_auth_failure(&text), "{h}: {}", row.marker);
+                assert_eq!(
+                    is_auth_failure_reply(h, &text),
+                    row.reply,
+                    "{h} reply: {}",
+                    row.marker
+                );
+                assert_eq!(
+                    classify(h, &text).class,
+                    FailureClass::NeedsConnect,
+                    "{h}: {}",
+                    row.marker
+                );
+            }
+        }
+        // A harness's own wording is not another harness's.
+        assert!(!is_auth_failure_reply(
+            "claude-code",
+            "run `hermes setup` first"
+        ));
+    }
+
+    /// The owner's reply, word for word: Hermes answers a refused key as an ordinary turn.
+    #[test]
+    fn hermes_answering_a_refused_key_as_text_is_a_connect_failure() {
+        let reply = "Anthropic rejected your API key, so the model can't be reached. Update it in Settings -> Providers, or run `hermes setup` in a terminal. Provider said: HTTP 401: OAuth access token is invalid.";
+        assert!(is_auth_failure_reply("hermes", reply));
+        let f = classify("hermes", reply);
+        assert_eq!(f.class, FailureClass::NeedsConnect);
+        assert_eq!(f.provider.as_deref(), Some("anthropic"));
+        assert_eq!(f.message, reply, "the complete text stays for Show details");
+        let p = plain(&f, "hermes");
+        assert_eq!(
+            p,
+            "Anthropic rejected the key Hermes used. Update it, then try again."
+        );
+        // The harness's own advice never reaches the summary.
+        assert!(
+            !p.contains("hermes setup") && !p.contains("Settings ->") && !p.contains("401"),
+            "{p}"
+        );
+    }
+
+    #[test]
+    fn claude_and_codex_say_sign_in_again_when_their_credential_was_refused() {
+        let f = classify(
+            "claude-code",
+            "Internal error: Failed to authenticate. API Error: 401 OAuth access token is invalid",
+        );
+        assert_eq!(
+            plain(&f, "claude-code"),
+            "Claude needs you to sign in again."
+        );
+        let f = classify("openai-codex", "Incorrect API key provided: sk-...abcd");
+        assert_eq!(
+            plain(&f, "openai-codex"),
+            "OpenAI needs you to sign in again."
+        );
+        // Nothing saved at all is a first connect, not a sign-in again.
+        let f = classify("claude-code", "Authentication required");
+        assert_eq!(
+            plain(&f, "claude-code"),
+            "I can't reach Claude yet. Connect Claude, then try again."
+        );
+    }
+
+    /// An answer that talks about authentication is an answer.
+    #[test]
+    fn a_normal_reply_is_never_read_as_a_failure() {
+        for reply in [
+            "I fixed the login bug. The endpoint returned 401 Unauthorized when the token was missing, so I added the header.",
+            "Done. Tests pass. The OAuth token refresh now runs before each request.",
+            "Here is how authentication works in your app: the API checks the x-api-key header and answers HTTP 401 if it is missing.",
+            "",
+        ] {
+            for h in ["claude-code", "openai-codex", "hermes"] {
+                assert!(!is_auth_failure_reply(h, reply), "{h}: {reply}");
+            }
+        }
+        // A long answer that happens to contain the words is an answer too.
+        let long = format!("{} not connected to any AI provider", "word ".repeat(400));
+        assert!(!is_auth_failure_reply("hermes", &long));
     }
 }

@@ -19,8 +19,11 @@ import {
   type MachinesViewMachine,
   type MachinesViewRemove,
   type MachinesViewToggle,
+  type PendingMachine,
 } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
+import { EnrollSheet, PendingDetail, PendingRow, RecentAccess, TrustSection, useMachinesAccount, usePendingActions } from "@/components/machines/account-parts";
+import { accessFor } from "@/lib/machines-account";
 import { CloudDetail, CloudDot } from "@/components/clouds/cloud-detail";
 import { CloudLogo } from "@/components/cloud-logo";
 import { UpsellPrompt } from "@/components/upsell-prompt";
@@ -38,9 +41,6 @@ import { useNewSpace } from "@/hooks/use-new-space";
 import { showDesktop } from "@/lib/hidden-desktops";
 import { machineOs, selectedMachine } from "@/lib/machines";
 import { cn } from "@/lib/utils";
-import { useFlag } from "@/bridge/flags";
-import { AddMachineDialog } from "@/legacy/components/add-machine-dialog";
-import { JoinWithCodeDialog } from "@/legacy/components/join-with-code-dialog";
 
 export const Route = createFileRoute("/machines/")({
   component: MachinesPage,
@@ -56,6 +56,25 @@ export const Route = createFileRoute("/machines/")({
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** The view without the sign-ins that are waiting to be added (they are the top group). */
+function withoutPending(view: MachinesView, pending: readonly PendingMachine[]): MachinesView {
+  const waiting = new Set(pending.flatMap((p) => (p.kind === "sign-in" && p.device ? [p.device] : [])));
+  if (waiting.size === 0) return view;
+  return {
+    ...view,
+    machines: view.machines.filter((m) => !waiting.has(m.id)),
+    groups: view.groups.map((g) => ({ ...g, ids: g.ids.filter((id) => !waiting.has(id)) })).filter((g) => g.ids.length > 0),
+  };
+}
+
+/** "3 machines, 2 online", and what waits. */
+function summaryText(view: MachinesView | null, waiting: number): string {
+  const total = view?.machines.length ?? 0;
+  const online = view?.machines.filter((m) => m.online).length ?? 0;
+  const base = `${total} machine${total === 1 ? "" : "s"}, ${online} online`;
+  return waiting > 0 ? `${base}, ${waiting} waiting` : base;
+}
+
 /** How often the page asks the machines for their health while it is open. */
 const HEALTH_EVERY_MS = 60_000;
 
@@ -68,8 +87,11 @@ const HEALTH_EVERY_MS = 60_000;
  * actions (open, start, stop, teleport, drop files) stay on the Space.
  */
 function MachinesPage() {
-  const { data: machines = [], isLoading, error, view, checkHealth, setupGuide } = useMachines();
-  const redesign = useFlag("spaces_redesign");
+  const { data: machines = [], isLoading, error, view: fullView, checkHealth, remove } = useMachines();
+  const { account, pending, now } = useMachinesAccount();
+  const actions = usePendingActions();
+  // A machine waiting to be added is in the top group, not in the list below.
+  const view = useMemo(() => (fullView ? withoutPending(fullView, pending) : fullView), [fullView, pending]);
   // Each machine's issues come from its own daemon: asked on opening the
   // page and every minute while it stays open.
   useEffect(() => {
@@ -93,17 +115,18 @@ function MachinesPage() {
   const shown = view?.machines ?? [];
   // A cloud is selected as `cloud:<id>`; a machine by its id.
   const cloudPage = selectedId?.startsWith("cloud:") ? view?.clouds?.pages.find((c) => c.id === selectedId.slice(6)) : undefined;
-  const selected = cloudPage ? undefined : selectedMachine(shown, selectedId?.startsWith("cloud:") ? null : selectedId);
+  const pendingPage = selectedId?.startsWith("pending:") ? pending.find((p) => `pending:${p.id}` === selectedId) : undefined;
+  const selected = cloudPage || pendingPage ? undefined : selectedMachine(shown, selectedId?.startsWith("cloud:") || selectedId?.startsWith("pending:") ? null : selectedId);
   const row = (id: string) => machines.find((m) => m.id === id);
 
   return (
     <Page contained className="max-w-6xl">
       <PageHeader
         title="Machines"
-        description={isLoading ? "Loading machines…" : view?.machines.length ? view.summary : "Machines that can run your Spaces."}
+        description={isLoading ? "Loading machines…" : view?.machines.length || pending.length ? summaryText(view, pending.length) : "Machines that can run your Spaces."}
         actions={
           <Button onClick={() => setAdding(true)} data-machines-add>
-            <PlusIcon /> Add a machine
+            <PlusIcon /> Add machine
           </Button>
         }
       />
@@ -113,14 +136,19 @@ function MachinesPage() {
         </EmptyState>
       ) : isLoading || (!view && machines.length > 0) ? (
         <LoadingState />
-      ) : !view || view.machines.length === 0 ? (
+      ) : !view || (view.machines.length === 0 && pending.length === 0) ? (
         <EmptyState
           icon={<ServerIcon />}
-          title="No machines yet"
+          title="Add your first machine"
           action={
-            <Button onClick={() => setAdding(true)}>
-              <PlusIcon /> Add a machine
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => setAdding(true)} data-machines-add-this>
+                <PlusIcon /> This machine
+              </Button>
+              <Button variant="outline" onClick={() => setAdding(true)} data-machines-add-other>
+                Another machine
+              </Button>
+            </div>
           }
         >
           Set up a Mac, Linux or Windows machine and it shows here, ready to run Spaces.
@@ -128,27 +156,35 @@ function MachinesPage() {
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,320px)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-8" data-machines-split="">
           <div className="min-h-0 overflow-y-auto overscroll-contain pr-1 pb-10" data-machines-list-scroll="">
-            <MachineList view={view} rows={machines} query={query} onQuery={setQuery} selectedId={cloudPage ? `cloud:${cloudPage.id}` : (selected?.id ?? null)} onSelect={setSelectedId} />
+            <MachineList
+              view={view}
+              rows={machines}
+              query={query}
+              onQuery={setQuery}
+              selectedId={cloudPage ? `cloud:${cloudPage.id}` : pendingPage ? `pending:${pendingPage.id}` : (selected?.id ?? null)}
+              onSelect={setSelectedId}
+              pending={pending}
+              pendingTitle={account?.pendingTitle ?? "Waiting for you"}
+              pendingBusy={actions.busy}
+              onAdd={actions.add}
+              onNotMe={actions.notMe}
+            />
             <UpsellPrompt surface="machine" active={machines.length >= 2 && machines.some((m) => m.via === "relay")} className="mt-3" />
           </div>
           <div className="min-h-0 overflow-y-auto overscroll-contain pb-10" data-machines-detail-scroll="">
             {cloudPage ? (
               <CloudDetail key={cloudPage.id} page={cloudPage} onGone={() => setSelectedId(null)} />
+            ) : pendingPage ? (
+              <PendingDetail key={pendingPage.id} machine={pendingPage} now={now} busy={actions.busy === pendingPage.id} onAdd={() => actions.add(pendingPage)} onNotMe={() => actions.notMe(pendingPage)} />
             ) : selected ? (
               <MachineDetail key={selected.id} machine={selected} row={row(selected.id)} onRemoved={() => setSelectedId(null)} />
             ) : null}
           </div>
         </div>
       )}
-      {redesign ? (
-        <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={join !== undefined ? "enter" : "pick"} initialCode={join ?? ""} initialRelay={relay ?? null} />
-      ) : (
-        // `spaces_redesign` off: "Add a computer" and "Join with a code" as they were.
-        <>
-          <AddMachineDialog open={adding && join === undefined} onOpenChange={setAdding} guide={setupGuide} />
-          <JoinWithCodeDialog open={adding && join !== undefined} onOpenChange={setAdding} initialCode={join ?? ""} initialRelay={relay ?? null} />
-        </>
-      )}
+      <EnrollSheet />
+      {actions.notMeDialog((machine) => remove(machine, null))}
+      <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={join !== undefined ? "enter" : "pick"} initialCode={join ?? ""} initialRelay={relay ?? null} />
     </Page>
   );
 }
@@ -162,6 +198,11 @@ function MachineList({
   onQuery,
   selectedId,
   onSelect,
+  pending,
+  pendingTitle,
+  pendingBusy,
+  onAdd,
+  onNotMe,
 }: {
   view: MachinesView;
   rows: Machine[];
@@ -169,6 +210,11 @@ function MachineList({
   onQuery: (q: string) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  pending: PendingMachine[];
+  pendingTitle: string;
+  pendingBusy: string | null;
+  onAdd: (p: PendingMachine) => void;
+  onNotMe: (p: PendingMachine) => void;
 }) {
   const { remove } = useMachines();
   const connect = useConnectCloud();
@@ -236,6 +282,16 @@ function MachineList({
           className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground/70"
         />
       </label>
+      {pending.length > 0 ? (
+        <div data-machine-group="pending" data-pending-count={pending.length}>
+          <div className="px-2 pt-3.5 pb-1 text-[11px] font-semibold tracking-[0.02em] text-muted-foreground">{pendingTitle}</div>
+          {pending
+            .filter((p) => !q || p.name.toLowerCase().includes(q))
+            .map((p) => (
+              <PendingRow key={p.id} machine={p} selected={selectedId === `pending:${p.id}`} busy={pendingBusy === p.id} onSelect={() => onSelect(`pending:${p.id}`)} onAdd={() => onAdd(p)} onNotMe={() => onNotMe(p)} />
+            ))}
+        </div>
+      ) : null}
       <div role="listbox" aria-label="Machines">
         {(view.order ?? ["clouds", ...view.groups.map((g) => g.id)]).map((section) => {
           if (section === "clouds") return cloudsSection;
@@ -421,6 +477,7 @@ function MachineRow({
 
 function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMachine; row: Machine | undefined; onRemoved: () => void }) {
   const { data: session } = useSession();
+  const { account, now, devices } = useMachinesAccount();
   const host = useThisMachine(session?.identity ?? null);
   const { remove } = useMachines();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -535,32 +592,38 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
 
       {m.current ? <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} part="alerts" /> : null}
 
-      <h3 className="mt-7 mb-2 text-xs font-semibold text-muted-foreground">{m.spacesTitle}</h3>
-      <div className="border-y" data-machine-spaces>
-        {rows.map((s, i) => (
-          <Link
-            key={s.id}
-            to="/spaces/$spaceId"
-            params={{ spaceId: s.id }}
-            title={`Open ${s.name}`}
-            data-space-row={s.id}
-            className={cn("flex items-center gap-2.5 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50", i > 0 && "border-t")}
-          >
-            <span className="truncate font-mono text-xs">{s.name}</span>
-            {s.label ? <span className="shrink-0 rounded bg-muted px-1.5 text-2xs text-muted-foreground">{s.label}</span> : null}
-            {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
-            <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <StatusDot online={s.running} className="size-[7px]" />
-              {s.status}
-            </span>
-            <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
-          </Link>
-        ))}
-        {m.spacesEmpty ? <p className={cn("py-3.5 text-xs text-muted-foreground", rows.length > 0 && "border-t")}>{m.spacesEmpty}</p> : null}
-        <div className="border-t py-2.5">
-          <NewSpaceHere machine={m} />
-        </div>
-      </div>
+      {m.spacesTitle ? (
+        <>
+          <h3 className="mt-7 mb-2 text-xs font-semibold text-muted-foreground">{m.spacesTitle}</h3>
+          <div className="border-y" data-machine-spaces>
+            {rows.map((s, i) => (
+              <Link
+                key={s.id}
+                to="/spaces/$spaceId"
+                params={{ spaceId: s.id }}
+                title={`Open ${s.name}`}
+                data-space-row={s.id}
+                className={cn("flex items-center gap-2.5 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50", i > 0 && "border-t")}
+              >
+                <span className="truncate font-mono text-xs">{s.name}</span>
+                {s.label ? <span className="shrink-0 rounded bg-muted px-1.5 text-2xs text-muted-foreground">{s.label}</span> : null}
+                {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                  <StatusDot online={s.running} className="size-[7px]" />
+                  {s.status}
+                </span>
+                <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
+              </Link>
+            ))}
+            {m.spacesEmpty ? <p className={cn("py-3.5 text-xs text-muted-foreground", rows.length > 0 && "border-t")}>{m.spacesEmpty}</p> : null}
+            <div className="border-t py-2.5">
+              <NewSpaceHere machine={m} />
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      {account ? <RecentAccess lines={accessFor(account.access, m.current ? (row?.relayId ?? m.id) : m.id, m.current ? null : row?.device ? m.id : null)} title={account.recentTitle} empty={account.recentEmpty} now={now} error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null} /> : null}
 
       <div className="mt-6">
         <button
@@ -583,6 +646,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
                 </div>
               ))}
             </dl>
+            {m.current && account?.thisMachine ? <TrustSection trust={account.thisMachine} onTrust={devices.startEnroll} /> : null}
             {m.current ? <ThisMachineExtras panel={row?.panel ?? null} part="logs" /> : null}
           </div>
         ) : null}

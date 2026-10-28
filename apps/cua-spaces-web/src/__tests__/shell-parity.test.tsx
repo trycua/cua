@@ -52,22 +52,25 @@ const found = <T extends Element>(selector: string) =>
   });
 
 describe.skipIf(!wasmBuilt)("the shell as the SwiftUI main window (real routes, wasm core)", () => {
-  it("shows the enroll bar above every page while this device is not enrolled, and Enroll… opens the sheet", async () => {
+  it("shows the trust bar above every page while this machine is not trusted, and its button opens the sheet", async () => {
     const { router } = await mount("/spaces", { unenrolled: true });
     const bar = await found<HTMLElement>("[data-shell-devices-banner]");
-    expect(bar.textContent).toMatch(/Enroll this device/);
+    expect(bar.textContent).toMatch(/Trust this machine/);
 
     await router.navigate({ to: "/keyvault" });
     await found("[data-shell-devices-banner]");
 
     fireEvent.click(await found("[data-shell-banner-enroll]"));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/devices"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
     await found("[data-enroll]");
-    // The Devices page says it under its own row: no second bar there.
+    // This machine's page says it under its own name: no second bar there.
     expect(document.querySelector("[data-shell-devices-banner]")).toBeNull();
 
     fireEvent.click(await found('[data-enroll-option="sign-in"]'));
-    await waitFor(() => expect(document.querySelector('[data-this-device-status="enrolled"]')).toBeTruthy());
+    await waitFor(() => expect(document.querySelector("[data-machine-details-toggle]")).toBeTruthy());
+    const details = document.querySelector<HTMLElement>("[data-machine-details-toggle]")!;
+    if (details.getAttribute("aria-expanded") !== "true") fireEvent.click(details);
+    await waitFor(() => expect(document.querySelector('[data-machine-trust="enrolled"]')).toBeTruthy());
     await router.navigate({ to: "/spaces" });
     await found("[data-space-id]");
     expect(document.querySelector("[data-shell-devices-banner]")).toBeNull();

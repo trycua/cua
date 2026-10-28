@@ -311,6 +311,9 @@ enum Command {
   cua computers
   cua computers --json")]
     Computers,
+    /// Your computers on the relay: remove one that is gone.
+    #[command(subcommand)]
+    Machines(host::MachinesCmd),
     /// Unattended access to this computer (setup, status, stop, start, remove).
     #[command(subcommand)]
     Host(host::HostCmd),
@@ -1860,6 +1863,33 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
             return cloud_cmd::run(&cua, cmd, json, out).await;
         }
+        Command::Machines(host::MachinesCmd::Rm { name, yes }) => {
+            // Embedded: the row, the lookup and the device all use this
+            // process's relay, never a daemon's.
+            let rest = Cli {
+                command: Command::Spaces(host::SpacesCmd::Ls {
+                    relay: None,
+                    label: vec![],
+                    no_size: false,
+                }),
+                embedded: true,
+                ..cli
+            };
+            let cua = open(&rest, false).await?;
+            let home = util::cua_home();
+            host::attach_relay_account(&cua, || host::daemon_relay_account(&home));
+            let auth = devices_cmd::device_auth(&host::relay_url(None, &home))?;
+            return host::remove_machine(
+                &cua,
+                &auth,
+                &host::SessionTokens,
+                &name,
+                &|q| yes || (util::interactive() && util::confirm(q, false)),
+                json,
+                out,
+            )
+            .await;
+        }
         Command::Spaces(cmd) => {
             // Relay machines only when signed in; the registry either way.
             let tokens: Option<Arc<dyn cua_host::AccountTokens>> =
@@ -2218,6 +2248,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Build(_)
         | Command::Jobs(_)
         | Command::Computers
+        | Command::Machines(_)
         | Command::Spaces(_)
         | Command::Cloud(_)
         | Command::Devices(_)
@@ -2755,7 +2786,7 @@ Examples:
   cua host setup --direct 0.0.0.0:3211 --name studio-mac
   # A spare Mac on your tailnet that runs Spaces, without a relay
   # (prints the command that adds it on your laptop)
-  cua host setup --direct 100.101.102.103:3211 --profile spare
+  cua host setup --direct 100.101.102.103:3211 --share spaces
 ";
 
 /// The command `cua` parses with, named for `channel`. Stable's is `cli`
@@ -3412,7 +3443,7 @@ mod tests {
     /// `cua computers` is the one command that lists the pool's computers;
     /// `cua machines` and `cua sb runs --machines` (old spellings) are gone, not aliases.
     #[test]
-    fn computers_is_its_own_command_and_machines_is_gone() {
+    fn computers_is_its_own_command_and_machines_only_removes() {
         let parse =
             |a: &[&str]| Cli::try_parse_from(std::iter::once("cua").chain(a.iter().copied()));
         assert!(matches!(
@@ -3422,7 +3453,19 @@ mod tests {
         let j = parse(&["computers", "--json"]).unwrap();
         assert!(j.json && matches!(j.command, Command::Computers));
         assert!(parse(&["computers", "extra"]).is_err());
-        assert!(parse(&["machines"]).is_err());
+        assert_eq!(
+            parse(&["machines"]).unwrap_err().kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+        let Command::Machines(host::MachinesCmd::Rm { name, yes }) =
+            parse(&["machines", "rm", "old-laptop", "--yes"])
+                .unwrap()
+                .command
+        else {
+            panic!()
+        };
+        assert!(name == "old-laptop" && yes);
+        assert!(parse(&["machines", "ls"]).is_err());
         for sb in ["sb", "sandbox"] {
             let e = parse(&[sb, "runs", "--machines"]).unwrap_err();
             assert_eq!(

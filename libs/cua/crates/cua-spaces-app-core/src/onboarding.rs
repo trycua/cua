@@ -1237,7 +1237,7 @@ fn this_computer(os: SpaceOs) -> &'static str {
     match os {
         SpaceOs::Macos => "this Mac",
         SpaceOs::Windows => "this PC",
-        _ => "this computer",
+        _ => "this machine",
     }
 }
 
@@ -1700,7 +1700,7 @@ mod tests {
         );
         assert_eq!(
             view_on(&s, SpaceOs::Linux).title,
-            "How do you want to use this computer?"
+            "How do you want to use this machine?"
         );
     }
 

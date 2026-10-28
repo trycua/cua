@@ -452,6 +452,10 @@ describe.skipIf(!built)("agents", () => {
     const { bridge } = makeBridge();
     const listed = (await call(bridge, "agentKeys.list")) as { keys: { env: string }[] };
     expect(listed.keys.map((k) => k.env)).toEqual(["OPENAI_API_KEY"]);
+    // The check is the daemon's `agent_keys.check` (the providers are asked there), answered like the list.
+    const checked = (await call(bridge, "agentKeys.check")) as { keys: { env: string }[] };
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.check", {}]);
+    expect(checked.keys.map((k) => k.env)).toEqual(["OPENAI_API_KEY"]);
     const set = await call(bridge, "agentKeys.set", { provider: "anthropic", value: "sk-ant-test-0000" });
     expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "anthropic", value: "sk-ant-test-0000" }]);
     expect(JSON.stringify(set)).not.toContain("sk-ant");

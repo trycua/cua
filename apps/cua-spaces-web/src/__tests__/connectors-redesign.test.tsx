@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Settings, Connectors with the redesign: each coding app has Connect (Cua's
+// Settings, Connectors: each coding app has Connect (Cua's
 // tools and its sign-in, once) and a chevron to its own page; Providers has
 // Connect or Sign out. Connect on Claude Code runs only its own token
 // command (`signIn: true` for Claude Code alone) and connects Anthropic too.
@@ -43,7 +43,7 @@ function host(calls: { op: string; args: unknown }[]) {
   return { failsCreates: false, listsGhost: false, intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined) };
 }
 
-describe.skipIf(!wasmBuilt)("Settings, Connectors (redesign)", () => {
+describe.skipIf(!wasmBuilt)("Settings, Connectors", () => {
   it("lists apps with Connect and a chevron, then Providers; no switches per app", async () => {
     await mountApp("/settings/connectors", host([]));
     const claude = await found("[data-connector-app=claude-code]");
@@ -170,7 +170,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connectors (redesign)", () => {
     expect(way.textContent).toContain("Use ANTHROPIC_API_KEY from your shell");
     await click(way);
     await waitFor(() => expect(q("[data-connector-provider=anthropic]")!.dataset.state).toBe("connected"));
-    expect(calls.filter((c) => c.op.startsWith("agentKeys.") && c.op !== "agentKeys.list").map((c) => c.op)).toEqual(["agentKeys.shell", "agentKeys.fromShell"]);
+    expect(calls.filter((c) => c.op.startsWith("agentKeys.") && c.op !== "agentKeys.list" && c.op !== "agentKeys.check").map((c) => c.op)).toEqual(["agentKeys.shell", "agentKeys.fromShell"]);
   });
 
   it("an app's page switches one part off and on, leaving the other", async () => {
@@ -181,13 +181,5 @@ describe.skipIf(!wasmBuilt)("Settings, Connectors (redesign)", () => {
     expect(calls.find((c) => c.op === "agents.disconnect")!.args).toEqual({ agents: ["claude-code"], signIn: false, skills: false, mcp: true });
     await waitFor(() => expect(q("[data-connector-toggle=mcp]")!.getAttribute("aria-checked") ?? q("[data-connector-toggle=mcp]")!.dataset.checked).toMatch(/false|unchecked/));
     expect(q("[data-connector-toggle=skills]")!.getAttribute("aria-checked") ?? "true").not.toBe("false");
-  });
-
-  it("redesign off: the page as it was, with switches and Account keys", async () => {
-    vi.stubEnv("VITE_CUA_FLAG_SPACES_REDESIGN", "0");
-    await mountApp("/settings/connectors", host([]));
-    await found('[data-connected-app="claude-code"]');
-    expect(q("[data-connectors-redesign]")).toBeNull();
-    await found("[data-agent-keys]");
   });
 });

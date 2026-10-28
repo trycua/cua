@@ -140,7 +140,7 @@ export function elsewhereOs(c: Pick<CreatingElsewhere, "os">): SpaceOs {
 export function creatingElsewherePlace(c: Pick<CreatingElsewhere, "os" | "machineName">): string {
   const os = elsewhereOs(c);
   const what = os === "unknown" ? "a Space" : OS_NAME[os];
-  return `Creating ${what} on ${c.machineName.trim() || "another computer"}…`;
+  return `Creating ${what} on ${c.machineName.trim() || "another machine"}…`;
 }
 
 /** How far it got: "40%". */
@@ -268,7 +268,7 @@ export function canDelete(space: Pick<Space, "id" | "status" | "cloudDelete">): 
 
 const PROVIDER: Record<Exclude<NonNullable<Space["provider"]>, "local">, string> = {
   relay: "Your computer, through the Cua relay",
-  direct: "A computer added by address",
+  direct: "A machine added by address",
 };
 
 /** Where it runs, in words. */

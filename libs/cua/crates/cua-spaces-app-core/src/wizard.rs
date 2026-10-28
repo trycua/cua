@@ -1303,7 +1303,7 @@ fn microvm_support(
             Some(h) if h.online && host_runs_microvm(h) => Ok(vec![]),
             Some(h) => Err(MicrovmBlock::Why(host_microvm_why(h))),
             None => Err(MicrovmBlock::Why(
-                "needs a computer that runs microVMs".into(),
+                "needs a machine that runs microVMs".into(),
             )),
         },
         Location::Auto => {
@@ -3728,7 +3728,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         },
         Location::Host => host_why
             .clone()
-            .unwrap_or_else(|| "Choose a computer.".to_string()),
+            .unwrap_or_else(|| "Choose a machine.".to_string()),
         Location::Auto => "None of your machines can take it now.".to_string(),
         Location::Local if runtime_switch.is_some() => match image.local {
             Some(LocalEngine::Container) => {
@@ -4191,7 +4191,7 @@ pub struct FirstSpaceOffer {
 
 /// What the offers say while this machine's runtimes or free space are not
 /// read yet: a VM that may not fit or run here is not offered until they are.
-pub const OFFER_NOT_CHECKED: &str = "Still checking this computer.";
+pub const OFFER_NOT_CHECKED: &str = "Still checking this machine.";
 
 /// Why a macOS VM can't run on a host of this architecture, or none.
 pub const MACOS_NEEDS_APPLE_SILICON: &str = "macOS Spaces need a Mac with Apple silicon.";

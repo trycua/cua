@@ -63,13 +63,13 @@ describe("MainWindow", () => {
     await screen.findByText("Just use this Mac to open my other machines");
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Start using Cua Spaces" }));
-    expect(await screen.findByRole("listbox", { name: "My computers" })).toBeInTheDocument();
+    expect(await screen.findByRole("listbox", { name: "My machines" })).toBeInTheDocument();
     expect(host.state.onboarding).toMatchObject({ completed: true, mode: "client" });
   });
 
   it("lists Spaces by where they run, with This machine first", async () => {
     setup();
-    const cloud = await screen.findByRole("listbox", { name: "My computers" });
+    const cloud = await screen.findByRole("listbox", { name: "My machines" });
     expect(within(cloud).getByRole("option", { name: /aurora/ })).toBeInTheDocument();
     // The section named for this Mac holds its Spaces; the entry for This Mac is a list of its own.
     const lists = screen.getAllByRole("listbox", { name: "This Mac" });

@@ -176,7 +176,7 @@ describe.skipIf(!wasmBuilt)("useAgentDetail with the core", () => {
     await waitFor(() => expect(got.d!.view!.routines.map((l) => l.id)).not.toContain(added.id));
   });
 
-  it("revokes and allows this computer, and shows the agent's audit", async () => {
+  it("revokes and allows this machine, and shows the agent's audit", async () => {
     const got = mount(await testCore());
     await waitFor(() => expect(got.d?.view?.access.length).toBe(1));
     expect(got.d!.view!.access[0]).toMatchObject({ text: "This machine", actionLabel: "Revoke" });

@@ -35,7 +35,7 @@ if (!has("--no-build")) {
     ["node", ["scripts/build-core-wasm.mjs"]],
     ["npx", ["vite", "build", "--logLevel", "warn"]],
   ]) {
-    const r = spawnSync(cmd, a, { cwd: root, stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, VITE_CUA_FLAG_SPACES_REDESIGN: "1" } });
+    const r = spawnSync(cmd, a, { cwd: root, stdio: ["ignore", "ignore", "inherit"], env: process.env });
     if (r.status !== 0) process.exit(r.status ?? 1);
   }
 }

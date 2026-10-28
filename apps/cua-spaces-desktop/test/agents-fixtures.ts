@@ -91,6 +91,7 @@ export class FakeAgentKeysTools {
     this.calls.push([tool, args]);
     switch (tool) {
       case "agent_keys.list":
+      case "agent_keys.check":
         break;
       case "agent_keys.set": {
         const provider = String(args.provider ?? "");

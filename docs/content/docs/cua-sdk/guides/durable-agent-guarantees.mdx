@@ -88,7 +88,7 @@ cua-spacesd that runs commands on the same machine with the daemon's exec
 ledger and epoch fence on disk. `CRASH_SEED_BASE` makes a run reproducible.
 `redrive` needs the lab coordinator (`crates/cua-spaces-cluster/tests/lab_coordinator_live.rs`)
 and a container engine, so it runs on a machine you control, not in CI. The lab
-node provides Spaces like a `cua host setup --direct --provide-spaces` machine
+node provides Spaces like a `cua host setup --direct --share both` machine
 when `CUA_LAB_DIRECT_IP` is set (use the container bridge address, for example
 `172.17.0.1`): a real host service answers `HostSpacesService` over gRPC and
 forwards a port per Space, so `durable_create` places a durable Space with a
@@ -187,7 +187,7 @@ with the workspace, a machine checkpoint with the Space's memory.
   mode rebuilds the workspace from the log; checkpoint mode needs a
   `CheckpointStore` reachable from every driver, otherwise the session ends
   `failed` (permanent) with that reason. Only hosts that provide Spaces
-  directly (`cua host setup --direct --provide-spaces`) can hold a durable
+  directly (`cua host setup --direct --share both`) can hold a durable
   Space; the lease path was measured against such a host on Linux with Docker
   (runc), not on macOS or microVM hosts.
 - A session holds its durable Space's lease from each drive until the session

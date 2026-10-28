@@ -449,7 +449,7 @@ public final class DevicesModel {
     /// A row's second line: platform and state, then when it was last seen.
     public func rowDetail(_ r: AppDeviceRow) -> String {
         guard let seen = r.lastSeen else { return r.detail }
-        return "\(r.detail) \u{b7} \(view.labels.lastSeen) \(relativeText(seen))"
+        return "\(r.detail), \(view.labels.lastSeen.lowercased()) \(relativeText(seen))"
     }
 
     // MARK: - Refresh

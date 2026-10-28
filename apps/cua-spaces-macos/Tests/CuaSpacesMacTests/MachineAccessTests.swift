@@ -149,9 +149,9 @@ struct MachineAccessTests {
 
     @Test func notEnrolledPendingAndExpiredListMachinesWithConnectGreyedOut() async throws {
         for (e, kind, status) in [
-            (MachinesFixture.Enrollment.never, AppEnrollmentKind.needsEnrollment, "Not enrolled"),
-            (.pending, .waiting, "Waiting for approval"),
-            (.expired, .due, "Re-verification due"),
+            (MachinesFixture.Enrollment.never, AppEnrollmentKind.needsEnrollment, "Not trusted yet"),
+            (.pending, .waiting, "Waiting to be added"),
+            (.expired, .due, "Needs a quick check"),
         ] {
             let m = await MachinesFixture.model(rows: MachinesFixture.rows(reachable: false), enrollment: e)
             let notice = try #require(m.devices.accessNotice)

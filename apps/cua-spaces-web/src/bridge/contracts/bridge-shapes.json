@@ -7196,6 +7196,9 @@
     "about.set": {
       "$ref": "#/$defs/AboutInput"
     },
+    "agentKeys.check": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
     "agentKeys.fromShell": {
       "$ref": "#/$defs/AgentKeysReport"
     },
@@ -9100,6 +9103,12 @@
                   },
                   "stage": {
                     "type": "string"
+                  },
+                  "sinceMs": {
+                    "type": "number"
+                  },
+                  "text": {
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -9235,6 +9244,75 @@
     },
     "about.set": {
       "$ref": "#/$defs/AboutInput"
+    },
+    "agentKeys.check": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
     },
     "agentKeys.fromShell": {
       "type": "object",

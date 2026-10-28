@@ -63,6 +63,13 @@ declare module "../protocol" {
   interface HostOperations {
     /** The stored keys (no values) and whether this machine can keep them. */
     "agentKeys.list": { args: Record<string, never>; result: AgentKeysReport };
+    /**
+     * The list, after asking each provider whether the saved API keys still work (a cheap read-only
+     * request, answers reused for a few minutes, never logged). A key the provider refuses comes back
+     * `expired`: it needs a reconnect. A sign-in token has no check that is known to accept it, so it
+     * is listed as it is.
+     */
+    "agentKeys.check": { args: Record<string, never>; result: AgentKeysReport };
     /** Adds or replaces a key; `env` names an `other` key. Answers the list after. */
     "agentKeys.set": { args: { provider: AgentKeyProvider; env?: string | null; value: string }; result: AgentKeysReport };
     /** Removes the key named `env`. Answers the list after. */
@@ -74,7 +81,7 @@ declare module "../protocol" {
   }
 }
 
-export const AGENT_KEYS_OPERATIONS = ["agentKeys.list", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell"] as const;
+export const AGENT_KEYS_OPERATIONS = ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell"] as const;
 export type AgentKeysOp = (typeof AGENT_KEYS_OPERATIONS)[number];
 
 /** The SwiftUI host routes each under its own name. */
@@ -83,6 +90,7 @@ export const AGENT_KEYS_WEBKIT_METHODS = AGENT_KEYS_OPERATIONS;
 /** The daemon method each operation calls. */
 export const AGENT_KEYS_METHODS = {
   "agentKeys.list": "agent_keys.list",
+  "agentKeys.check": "agent_keys.check",
   "agentKeys.set": "agent_keys.set",
   "agentKeys.remove": "agent_keys.remove",
   "agentKeys.shell": "agent_keys.shell",
@@ -91,6 +99,7 @@ export const AGENT_KEYS_METHODS = {
 
 export const AGENT_KEYS_COVERAGE = {
   "agentKeys.list": { webkit: { methods: ["agentKeys.list"] }, tauri: ["agents_tool"] },
+  "agentKeys.check": { webkit: { methods: ["agentKeys.check"] }, tauri: ["agents_tool"] },
   "agentKeys.set": { webkit: { methods: ["agentKeys.set"] }, tauri: ["agents_tool"] },
   "agentKeys.remove": { webkit: { methods: ["agentKeys.remove"] }, tauri: ["agents_tool"] },
   "agentKeys.shell": { webkit: { methods: ["agentKeys.shell"] }, tauri: ["agents_tool"] },
@@ -100,6 +109,7 @@ export const AGENT_KEYS_COVERAGE = {
 /** Arguments that take each operation down its usual path (the coverage test). */
 export const AGENT_KEYS_ARGS: { [K in AgentKeysOp]: OpArgs<K> } = {
   "agentKeys.list": {},
+  "agentKeys.check": {},
   "agentKeys.set": { provider: "anthropic", value: "sk-ant-test-0000" },
   "agentKeys.remove": { env: "ANTHROPIC_API_KEY" },
   "agentKeys.shell": {},
@@ -161,6 +171,7 @@ export function tauriAgentKeysOps(invoke: Invoke): Handlers {
     agentKeysFromWire(await invoke<unknown>("agents_tool", { tool: AGENT_KEYS_METHODS[op], args }));
   return {
     "agentKeys.list": () => tool("agentKeys.list"),
+    "agentKeys.check": () => tool("agentKeys.check"),
     "agentKeys.set": (args) => tool("agentKeys.set", setArgs(args)),
     "agentKeys.remove": ({ env }) => tool("agentKeys.remove", { env }),
     "agentKeys.shell": async () => shellNamesFromWire(await invoke<unknown>("agents_tool", { tool: AGENT_KEYS_METHODS["agentKeys.shell"], args: {} })),
@@ -173,6 +184,7 @@ export function webkitAgentKeysOps(request: Request): Handlers {
   const call = async (op: AgentKeysOp, args: Record<string, unknown> = {}) => agentKeysFromWire(await request<unknown>(op, args));
   return {
     "agentKeys.list": () => call("agentKeys.list"),
+    "agentKeys.check": () => call("agentKeys.check"),
     "agentKeys.set": (args) => call("agentKeys.set", setArgs(args)),
     "agentKeys.remove": ({ env }) => call("agentKeys.remove", { env }),
     "agentKeys.shell": async () => shellNamesFromWire(await request<unknown>("agentKeys.shell", {})),

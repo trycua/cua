@@ -792,6 +792,7 @@ impl Persistent {
                 // complete error (and a Connect button when it needs a
                 // sign-in) in `failure`.
                 let failure = failure_for(rec, &e.to_string());
+                note_rejected(rec, &failure);
                 let mut reply = Draft::new(
                     Author::agent(&rec.name),
                     EntryKind::Message,
@@ -1041,6 +1042,11 @@ impl Persistent {
             let written = store.release(t.seq, drafts)?;
             anchor = written.first().map(|e| e.seq);
         }
+        // Nothing is streaming any more: the reply (or the failure) is the entry.
+        self.partials
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&format!("{}/{}#{}", rec.space, rec.name, rec.k()));
         self.update_in(rec, |r| {
             r.task = None;
             r.activity = None;
@@ -1089,7 +1095,26 @@ impl Persistent {
                 .as_ref()
                 .is_some_and(|f| !f.open_tasks(Some(&rec.name)).is_empty());
             if let (Some(stage), true) = (stage, open) {
-                rows.push(json!({"agent": rec.handle(), "stage": stage}));
+                let mut row = json!({"agent": rec.handle(), "stage": stage});
+                // When its oldest open task was given (the working row's elapsed time) and what it
+                // has said so far this turn (the streaming entry, replaced whole each time).
+                if let Some(since) = fold
+                    .as_ref()
+                    .and_then(|f| f.open_tasks(Some(&rec.name)).iter().map(|t| t.ts_ms).min())
+                {
+                    row["since_ms"] = json!(since);
+                }
+                let key = format!("{}/{}#{}", rec.space, rec.name, rec.k());
+                if let Some(p) = self
+                    .partials
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&key)
+                    .filter(|p| !p.text.trim().is_empty())
+                {
+                    row["text"] = json!(p.text.trim_end());
+                }
+                rows.push(row);
             }
         }
         rows.sort_by_key(|r| r["agent"].as_str().unwrap_or_default().to_string());
@@ -1097,9 +1122,10 @@ impl Persistent {
             .iter()
             .map(|r| {
                 format!(
-                    "{}={}",
+                    "{}={}#{}",
                     r["agent"].as_str().unwrap_or_default(),
-                    r["stage"].as_str().unwrap_or_default()
+                    r["stage"].as_str().unwrap_or_default(),
+                    r["text"].as_str().map_or(0, str::len)
                 )
             })
             .collect::<Vec<_>>()
@@ -2103,13 +2129,24 @@ pub(crate) fn failure_for(rec: &AgentRecord, e: &str) -> ag::failure::Failure {
     f
 }
 
-/// A failed member's status line: "Not connected" when it needs a sign-in,
-/// else the error's first line, whole.
+/// A run that was refused its credential: what its harness read from the saved keys for that
+/// provider reads as needing a reconnect in Settings, and no run is given it again until it is saved
+/// again.
+pub(crate) fn note_rejected(rec: &AgentRecord, f: &ag::failure::Failure) {
+    if f.class == ag::failure::FailureClass::NeedsConnect
+        && let Some(provider) = f.provider.as_deref()
+    {
+        ag::keys::mark_rejected_for_run(&rec.harness, provider);
+    }
+}
+
+/// A failed member's status: one short word ("Not connected" when it needs a sign-in, else "Stopped").
+/// The error itself is never the status; the member's `failure` carries its complete text for Show
+/// details.
 fn failed_line(harness: &str, e: &str) -> String {
-    let f = ag::failure::classify(harness, e);
-    match f.class {
+    match ag::failure::classify(harness, e).class {
         ag::failure::FailureClass::NeedsConnect => "Not connected".into(),
-        ag::failure::FailureClass::Error => super::notify::reason(e),
+        ag::failure::FailureClass::Error => "Stopped".into(),
     }
 }
 
@@ -2169,7 +2206,8 @@ pub fn session_state(
         "failed" => s.last_error.as_deref().map(|e| failed_line(&s.harness, e)),
         _ => None,
     };
-    // An error is never cut: only a working line is clipped.
+    // A failed session's word is short already; a working line is clipped. (The error is not cut
+    // anywhere: its complete text is the session's `failure`.)
     let activity = if state == "failed" {
         activity
     } else {

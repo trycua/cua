@@ -66,9 +66,9 @@ struct DevicesTests {
         await m.refresh()
         #expect(announced.count == 2, "a device asks once per launch")
         #expect(m.view.thisDevice.kind == .enrolled)
-        #expect(m.thisDeviceText(m.view.thisDevice) == "Enrolled until Feb 8, 2027")
+        #expect(m.thisDeviceText(m.view.thisDevice) == "Trusted until Feb 8, 2027")
         let studio = m.view.rows.first { $0.id == "dev_studio" }!
-        #expect(m.rowDetail(studio) == "Linux \u{b7} Enrolled \u{b7} re-verify in 12 days \u{b7} Last seen 3 hours ago")
+        #expect(m.rowDetail(studio) == "Linux, Trusted, check again in 12 days, last seen 3 hours ago")
         #expect(m.view.recent.first?.text == "MacBook Pro opened build-box")
     }
 
@@ -82,7 +82,7 @@ struct DevicesTests {
         #expect(presence.asked.isEmpty, "Approve needs the whole code")
         m.setCode("k7qxm2rp")
         await m.approve()
-        #expect(presence.asked == ["approve \u{201c}Work laptop\u{201d} for your Cua account"])
+        #expect(presence.asked == ["add \u{201c}Work laptop\u{201d} to your Cua account"])
         #expect(fixture.calls.isEmpty, "no presence, no relay call")
         #expect(m.approvalView?.error == "Approval was cancelled")
         #expect(m.approvalView?.busy == false)
@@ -123,7 +123,7 @@ struct DevicesTests {
         await m.deny()
         #expect(fixture.calls == ["revoke:dev_work"])
         m.openApproval(deviceId: "dev_old", in: .settings)
-        #expect(m.approvalView?.denyLabel == "Not Now")
+        #expect(m.approvalView?.denyLabel == "Not now")
         await m.deny()
         #expect(fixture.calls == ["revoke:dev_work"], "Not Now calls nothing")
         #expect(m.approval == nil)
@@ -139,7 +139,7 @@ struct DevicesTests {
             "(ids in `cua devices ls`)"
         await m.approve()
         #expect(m.approvalView?.error == "The code expired.")
-        #expect(m.approvalView?.approveLabel == "Approve by ID")
+        #expect(m.approvalView?.approveLabel == "Add machine")
         #expect(m.approvalView?.canApprove == true)
         fixture.failApprove = nil
         await m.approve()

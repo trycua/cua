@@ -39,7 +39,7 @@ export const showCuaIn = (row: CoreRow): CoreRow => ({
 /**
  * Settings, General: the few things a person sets every day. Start at login,
  * where Cua lives (Mac), appearance, the shortcut (Mac) and usage data.
- * Everything else moved: Advanced, Connectors, Trusted machines, the Volume
+ * Everything else moved: Advanced, Connectors, the Volume
  * and Keyvault pages.
  */
 export function GeneralTab() {

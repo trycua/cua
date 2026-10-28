@@ -81,7 +81,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         // A persistent agent's Memory, Routines and Access (`PersistentModel`).
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
-        "agentKeys.list", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell",
+        "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell",
         // New Space's address form and Connect a cloud, Teleport and Share,
         // Cua Volume, Settings and Notifications, a Space's detail and This
         // machine (WebUIBridge+Pages.swift).

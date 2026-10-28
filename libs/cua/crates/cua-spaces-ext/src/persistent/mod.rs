@@ -484,10 +484,27 @@ pub struct Persistent {
     owner: Arc<std::sync::RwLock<crate::thread::Author>>,
     /// Account ids of the admins of the owner's teams.
     admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
+    /// What each working session has said so far this turn, for the thread's streaming row
+    /// (`live_rows`); gone when the turn ends (the reply is then the real entry).
+    partials: Partials,
     /// The supervisor serves each member's queued tasks on a task of its
     /// own instead of inside its pass (see [`Persistent::detached`]).
     detach_dispatch: bool,
 }
+
+/// What each working session has said so far this turn, by `<space>/<name>#<session>`; shared by every
+/// handle on one runtime (the tools and the supervisor each hold their own).
+pub(crate) type Partials = Arc<std::sync::Mutex<HashMap<String, Partial>>>;
+
+/// A turn's message so far.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Partial {
+    turn: u32,
+    text: String,
+}
+
+/// The longest streaming text a live row carries (characters): the whole message follows as the reply.
+const MAX_PARTIAL: usize = 8_000;
 
 impl std::fmt::Debug for Persistent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -509,6 +526,7 @@ impl Persistent {
         spaces: Spaces,
         drive: cua_volume::Drive,
         live: Arc<tokio::sync::Mutex<Live>>,
+        partials: Partials,
         owner: Arc<std::sync::RwLock<crate::thread::Author>>,
         admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     ) -> Persistent {
@@ -518,6 +536,7 @@ impl Persistent {
             drive,
             dir,
             live,
+            partials,
             owner,
             admins,
             detach_dispatch: false,
@@ -1731,6 +1750,49 @@ impl Persistent {
         r
     }
 
+    /// Keeps what the session's turn has said so far (`message` events), so the thread can show it
+    /// as one live entry that is replaced whole; clears it when the turn ends or fails, because the
+    /// reply then lands as the entry. Wakes the thread's followers when the text changed.
+    fn note_partial(
+        &self,
+        rec: &AgentRecord,
+        events: &[ag::AgentEvent],
+        ended: Option<u32>,
+        failed: Option<&(u32, String)>,
+    ) {
+        let key = format!("{}/{}#{}", rec.space, rec.name, rec.k());
+        let mut changed = false;
+        {
+            let mut map = self.partials.lock().unwrap_or_else(|p| p.into_inner());
+            for e in events.iter().filter(|e| e.kind == "message") {
+                let Some(text) = e.text.as_deref().filter(|t| !t.is_empty()) else {
+                    continue;
+                };
+                let p = map.entry(key.clone()).or_default();
+                if p.turn != e.turn {
+                    *p = Partial {
+                        turn: e.turn,
+                        text: String::new(),
+                    };
+                }
+                if p.text.chars().count() < MAX_PARTIAL {
+                    p.text.push_str(text);
+                    changed = true;
+                }
+            }
+            let over = |turn: u32| {
+                ended.is_some_and(|t| t >= turn) || failed.is_some_and(|(t, _)| *t >= turn)
+            };
+            if map.get(&key).is_some_and(|p| over(p.turn)) {
+                map.remove(&key);
+                changed = true;
+            }
+        }
+        if changed {
+            self.thread_store(&rec.space).wake();
+        }
+    }
+
     async fn tick_agent_inner(&self, rec: AgentRecord, report: &mut TickReport) -> Result<()> {
         let run = rec.run_id.clone().expect("filtered");
         let agents = self.cached_agents(&rec.space).await?;
@@ -1758,6 +1820,20 @@ impl Persistent {
         self.renew_claims(&rec, &agents, &run).await?;
         let rec = self.get(&rec.name)?.session(rec.k());
         let (ended, failed) = turn_outcome(&page.events);
+        self.note_partial(&rec, &page.events, ended, failed.as_ref());
+        // A harness may answer a refused credential as an ordinary turn (Hermes does, with its own
+        // advice): read the reply as the failed turn it is, so the person's message is not "Done",
+        // the reply is the standard Connect card and the credential reads as needing a reconnect.
+        let failed = match (&failed, ended) {
+            (None, Some(turn)) if turn > rec.saved_turn => agents
+                .result(&run)
+                .await
+                .ok()
+                .map(|r| r.text)
+                .filter(|text| ag::failure::is_auth_failure_reply(&rec.harness, text))
+                .map(|text| (turn, text.trim().to_string())),
+            _ => failed,
+        };
         // The thread task this run's turn worked on: its reply and state.
         let mut anchor = None;
         let mut task_ended = false;
@@ -1787,6 +1863,9 @@ impl Persistent {
                 anchor = self.finish_task(&rec, &inflight, None, Some(why)).await?;
                 task_ended = true;
             }
+        }
+        if let Some((_, err)) = &failed {
+            members::note_rejected(&rec, &members::failure_for(&rec, err));
         }
         if let Some((turn, err)) = &failed {
             // One notification per failed turn, posted before anything
@@ -2117,6 +2196,7 @@ impl SpacesPersistent for Spaces {
             self.clone(),
             ext.drive().clone(),
             ext.live(),
+            ext.partials(),
             ext.owner(),
             ext.team_admins(),
         )

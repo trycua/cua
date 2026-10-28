@@ -119,7 +119,7 @@ at the matching page (`MainUIRouter`): a launch (the first run at
 `/onboarding?due=1` while it is due; never at login), the Dock icon, the menu
 bar item, the notch, File, New Space (⌘N), the View menu, Help, Getting
 Started, ⌘⇧Space and the app's notifications (a Space that came up: its page;
-a device asking to join: Settings, Devices; an agent: Agents). A Space's
+a machine asking to be added: Machines; an agent: Agents). A Space's
 desktop opens in its own native window (video stays native).
 
 There is no native main window and no switch back: the "Use classic UI"

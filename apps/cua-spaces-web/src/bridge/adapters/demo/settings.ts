@@ -77,16 +77,17 @@ export function demoDevices(nowMs: number, unenrolled = false): DevicesInput {
       { id: "dev_old", name: "Old laptop", state: "expired", platform: "linux", enrolledUntil: now - 2 * DAY, lastSeen: now - 33 * DAY },
     ],
     audit: [
-      { ts: now - 5 * 3600, kind: "machine_access", device: "dev_studio", machine: "m1", detail: "owner" },
-      { ts: now - 2 * 3600, kind: "shared_access", machine: "m1", subject: "bob@example.com" },
+      { ts: now - 5 * 3600, kind: "machine_access", device: "dev_studio", machine: "studio-pc", detail: "owner" },
+      { ts: now - 2 * 3600, kind: "shared_access", machine: "studio-pc", subject: "bob@example.com" },
       { ts: now - 1800, kind: "device_registered", device: "dev_work" },
-      { ts: now - 600, kind: "machine_access", device: "dev_mac", machine: "m2", detail: "owner" },
+      { ts: now - 900, kind: "machine_access", device: "dev_studio", machine: "this-mac", detail: "owner" },
+      { ts: now - 600, kind: "machine_access", device: "dev_mac", machine: "mac-mini", detail: "owner" },
     ],
     enforceAfter: now - 30 * DAY,
-    machineNames: { m1: "studio-mac", m2: "mac-mini" },
+    machineNames: { "studio-pc": "Studio PC", "mac-mini": "Mac mini", "this-mac": "This Mac" },
     machines: [
-      { id: "m1", name: "studio-mac", confirmed: true },
-      { id: "m2", name: "mac-mini", confirmed: true },
+      { id: "studio-pc", name: "Studio PC", confirmed: true },
+      { id: "mac-mini", name: "Mac mini", confirmed: true },
     ],
   };
 }

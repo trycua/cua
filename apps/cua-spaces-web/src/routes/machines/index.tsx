@@ -621,7 +621,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
         </div>
       </div>
 
-      {account ? <RecentAccess lines={accessFor(account.access, m.id, m.current ? null : row?.device ? m.id : null)} title={account.recentTitle} empty={account.recentEmpty} now={now} error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null} /> : null}
+      {account ? <RecentAccess lines={accessFor(account.access, m.current ? (row?.relayId ?? m.id) : m.id, m.current ? null : row?.device ? m.id : null)} title={account.recentTitle} empty={account.recentEmpty} now={now} error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null} /> : null}
 
       <div className="mt-6">
         <button

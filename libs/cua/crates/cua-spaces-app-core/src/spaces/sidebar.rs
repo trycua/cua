@@ -1464,9 +1464,9 @@ mod tests {
         assert_eq!(enrolled, detail_with(&m, None, None, &x));
         assert!(enrolled.can_stream && enrolled.access.is_none());
         for (kind, status) in [
-            (EnrollmentKind::NeedsEnrollment, "Not enrolled"),
-            (EnrollmentKind::Waiting, "Waiting for approval"),
-            (EnrollmentKind::Due, "Re-verification due"),
+            (EnrollmentKind::NeedsEnrollment, "Not trusted yet"),
+            (EnrollmentKind::Waiting, "Waiting to be added"),
+            (EnrollmentKind::Due, "Needs a quick check"),
         ] {
             let notice = machine_access_notice(kind, Some("K7QX-M2RP")).unwrap();
             // Unreachable (the relay refuses it): still listed, still explained.

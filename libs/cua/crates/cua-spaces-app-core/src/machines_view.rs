@@ -537,7 +537,9 @@ fn remove_confirm(name: &str, current: bool, device_only: bool) -> HostConfirm {
          this machine leaves your machines. Turning a switch on again sets it up again."
             .to_string()
     } else if device_only {
-        format!("{name} will no longer see or reach your machines. Signing in on it again adds it back.")
+        format!(
+            "{name} will no longer see or reach your machines. Signing in on it again adds it back."
+        )
     } else {
         format!(
             "{name} leaves your machines, and its Spaces are no longer listed here. \

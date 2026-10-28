@@ -21,6 +21,7 @@ import type {
   EnrollMethod,
   EnrollState,
   EnrollView,
+  MachinesAccountView,
 } from "./contracts/devices";
 import type { SettingsPage, SettingsRow, SettingsSection } from "./contracts/host";
 import type { NotificationInput, NotificationsView, SystemNote } from "./contracts/notifications";
@@ -46,6 +47,7 @@ import {
   chooseExperiment,
   cleanDeviceName,
   devicesView,
+  machinesAccount,
   enrollInitial,
   enrollReduce,
   enrollView,
@@ -100,6 +102,8 @@ export interface LoginItemData {
 export interface DevicesData {
   input: DevicesInput;
   view: DevicesView | null;
+  /** The Machines page's account part: waiting machines, this machine's trust, recent access. */
+  account: MachinesAccountView | null;
   /** The enroll sheet, while open. */
   enroll: { state: EnrollState; view: EnrollView | null } | null;
   /** The approval sheet, while open. */
@@ -365,6 +369,7 @@ export class SettingsFeature {
         done({
           input: this.devices,
           view: devicesView(this.core, this.devices, now),
+          account: machinesAccount(this.core, this.devices, now),
           enroll: this.enroll ? { state: this.enroll, view: enrollView(this.core, this.enroll) } : null,
           approve: this.approve ? { state: this.approve, view: approveView(this.core, this.approve, list) } : null,
           busy: this.devicesBusy,

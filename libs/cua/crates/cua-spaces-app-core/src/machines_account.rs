@@ -133,53 +133,6 @@ pub struct MachinesAccountView {
     pub read_error: Option<String>,
 }
 
-/// Plain words for a status the devices view words in jargon.
-fn plain_status(title: &str) -> String {
-    let t = title.trim();
-    if t.starts_with("Enrolled until") {
-        "Trusted until".into()
-    } else if t == "Enrolled" {
-        "Trusted".into()
-    } else if t.starts_with("Needs enrollment") && t.contains("grace ends") {
-        "Not trusted yet, grace ends".into()
-    } else if t.starts_with("Needs enrollment") || t.starts_with("Not enrolled") {
-        "Not trusted yet".into()
-    } else if t == "Waiting for approval" {
-        "Waiting to be added".into()
-    } else if t.starts_with("Re-verification due") {
-        "Needs a quick check".into()
-    } else if t == "Revoked" {
-        "Revoked".into()
-    } else {
-        t.replace("Enrolled", "Trusted")
-            .replace("enrolled", "trusted")
-            .replace("Enrollment", "Trust")
-            .replace("enrollment", "trust")
-    }
-}
-
-/// A sentence from the devices view in plain words.
-fn plain_sentence(text: &str) -> String {
-    text.replace("unenrolled", "untrusted")
-        .replace("Enroll this device", "Trust this machine")
-        .replace("enroll this device", "trust this machine")
-        .replace("Re-verification is due", "It needs a quick check")
-        .replace("Re-verify this device", "Check this machine")
-        .replace("approve it from another enrolled device", "add it from a machine you already trust")
-        .replace("approve this device from another enrolled device", "add it from a machine you already trust")
-        .replace("approve it from an enrolled device", "add it from a machine you already trust")
-        .replace("This device was revoked. Enroll it again", "This machine was revoked. Trust it again")
-        .replace("Enroll it again", "Trust it again")
-        .replace("Enroll This Mac", "Trust this machine")
-        .replace("enrolled device", "trusted machine")
-        .replace("Enrolled", "Trusted")
-        .replace("enrolled", "trusted")
-        .replace("device", "machine")
-        .replace("Device", "Machine")
-        .replace("computers", "machines")
-        .replace("computer", "machine")
-}
-
 /// The account's part of the Machines page at `now` (Unix seconds).
 pub fn view(input: &DevicesInput, now: u64, read_error: Option<&str>) -> MachinesAccountView {
     let v = devices_view(input, now);
@@ -238,9 +191,9 @@ pub fn view(input: &DevicesInput, now: u64, read_error: Option<&str>) -> Machine
     let this = &v.this_device;
     let this_machine = Some(ThisMachineTrust {
         kind: this.kind,
-        status: plain_status(&this.title),
+        status: this.title.clone(),
         at: this.at,
-        text: v.banner.as_ref().map(|b| plain_sentence(&b.text)),
+        text: v.banner.as_ref().map(|b| b.text.clone()),
         tone: v.banner.as_ref().map(|b| {
             match b.tone {
                 BannerTone::Critical => "critical",
@@ -248,10 +201,7 @@ pub fn view(input: &DevicesInput, now: u64, read_error: Option<&str>) -> Machine
             }
             .to_string()
         }),
-        action_label: this
-            .action_label
-            .as_ref()
-            .map(|_| "Trust this machine".to_string()),
+        action_label: this.action_label.clone(),
     });
 
     let access: Vec<AccessLine> = input
@@ -262,7 +212,7 @@ pub fn view(input: &DevicesInput, now: u64, read_error: Option<&str>) -> Machine
         .filter(|(e, _)| devices::is_access(&e.kind))
         .map(|(e, row)| AccessLine {
             ts: row.ts,
-            text: plain_sentence(&row.text),
+            text: row.text.clone(),
             notable: row.notable,
             machine: e.machine.clone(),
             device: e.device.clone(),
@@ -380,7 +330,10 @@ mod tests {
             ]
         );
         for p in &v.pending {
-            assert_eq!((p.add_label.as_str(), p.not_me_label.as_str()), ("Add machine", "Not me"));
+            assert_eq!(
+                (p.add_label.as_str(), p.not_me_label.as_str()),
+                ("Add machine", "Not me")
+            );
             // The words are the machine's: no "device" and no "computer".
             for text in [&p.text, &p.line, &p.notify_title, &p.notify_body] {
                 assert!(!text.to_lowercase().contains("device"), "{text}");

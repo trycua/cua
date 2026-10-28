@@ -291,3 +291,61 @@ export interface TeamsList {
   /** The saved current team (Settings, Teams), or null. */
   currentTeamId: string | null;
 }
+
+/* ---- The account's part of the Machines page (`machines_account.rs`) --------- */
+
+/** `machines_account::PendingKind`. */
+export type PendingKind = "machine" | "sign-in";
+
+/** A machine waiting to be added (`machines_account::PendingMachine`). */
+export interface PendingMachine {
+  id: string;
+  kind: PendingKind;
+  name: string;
+  /** `macOS`, `Windows`, `Linux`, or empty. */
+  os: string;
+  line: string;
+  /** The question the "Add this machine?" page asks. */
+  text: string;
+  machine: string | null;
+  device: string | null;
+  expired: boolean;
+  requiresPresence: boolean;
+  notifyTitle: string;
+  notifyBody: string;
+  addLabel: string;
+  notMeLabel: string;
+}
+
+/** This machine's own trust, in plain words (`machines_account::ThisMachineTrust`). */
+export interface ThisMachineTrust {
+  kind: EnrollmentKind;
+  /** "Trusted until", "Not trusted yet", ... */
+  status: string;
+  /** Unix seconds; the page formats it. */
+  at: number | null;
+  text: string | null;
+  tone: "warning" | "critical" | null;
+  actionLabel: string | null;
+}
+
+/** Who reached a machine (`machines_account::AccessLine`). */
+export interface AccessLine {
+  ts: number;
+  text: string;
+  notable: boolean;
+  machine: string | null;
+  device: string | null;
+}
+
+/** `machines_account::MachinesAccountView`. */
+export interface MachinesAccountView {
+  pending: PendingMachine[];
+  pendingCount: number;
+  pendingTitle: string;
+  thisMachine: ThisMachineTrust | null;
+  access: AccessLine[];
+  recentTitle: string;
+  recentEmpty: string;
+  readError: string | null;
+}

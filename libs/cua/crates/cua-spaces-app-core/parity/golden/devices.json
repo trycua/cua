@@ -6,14 +6,14 @@
       "view": {
         "activity": [],
         "approvals": [],
-        "banner": "warning: Enroll this device within 5 days to keep reaching your machines. [Enroll…]",
+        "banner": "warning: Trust this machine within 5 days to keep reaching your machines. [Trust this machine]",
         "enrolled": false,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
         "recent": [],
         "rows": [
-          "Studio | Linux · Enrolled · re-verify in 12 days | seen 1799990000 | "
+          "Studio | Linux, Trusted, check again in 12 days | seen 1799990000 | "
         ],
-        "thisDevice": "grace: Needs enrollment · grace ends @1800432000 name=- [Enroll…]",
+        "thisDevice": "grace: Not trusted yet, grace ends @1800432000 name=- [Trust this machine]",
         "unconfirmedMachines": []
       }
     },
@@ -22,12 +22,12 @@
       "view": {
         "activity": [],
         "approvals": [],
-        "banner": "critical: Enroll this device to reach your machines. [Enroll…]",
+        "banner": "critical: Trust this machine to reach your machines. [Trust this machine]",
         "enrolled": false,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
         "recent": [],
         "rows": [],
-        "thisDevice": "needs-enrollment: Needs enrollment @null name=- [Enroll…]",
+        "thisDevice": "needs-enrollment: Not trusted yet @null name=- [Trust this machine]",
         "unconfirmedMachines": []
       }
     },
@@ -36,15 +36,15 @@
       "view": {
         "activity": [],
         "approvals": [],
-        "banner": "warning: Sign in again to enroll this device, or approve it from an enrolled device with the code K7QX-M2RP. [Enroll…]",
+        "banner": "warning: Sign in again to trust this machine, or add it from a machine you already trust with the code K7QX-M2RP. [Trust this machine]",
         "enrolled": false,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
         "recent": [],
         "rows": [
-          "MacBook Pro (this device) | macOS · Waiting for approval | seen null |  | current",
-          "Studio | Linux · Enrolled · re-verify in 12 days | seen null | "
+          "MacBook Pro (this machine) | macOS, Waiting to be added | seen null |  | current",
+          "Studio | Linux, Trusted, check again in 12 days | seen null | "
         ],
-        "thisDevice": "waiting: Waiting for approval @null name=MacBook Pro [Enroll…]",
+        "thisDevice": "waiting: Waiting to be added @null name=MacBook Pro [Trust this machine]",
         "unconfirmedMachines": []
       }
     },
@@ -65,21 +65,21 @@
         ],
         "banner": null,
         "enrolled": true,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
         "recent": [
           "1799990400 An untrusted machine opened build-box (notable)",
           "1799990200 bob@example.com opened studio-mac (notable)",
           "1799990100 MacBook Pro opened studio-mac"
         ],
         "rows": [
-          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 30 days | seen 1799999940 | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again.",
-          "Lost phone | iOS · Revoked | seen null | ",
-          "Old laptop | Linux · Re-verification due | seen 1797300000 | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer see or reach your machines. To use it again, add it again.",
-          "Work laptop | Windows · Waiting for approval | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer see or reach your machines. To use it again, add it again."
+          "MacBook Pro (this machine) | macOS, Trusted, check again in 30 days | seen 1799999940 | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again.",
+          "Lost phone | iOS, Revoked | seen null | ",
+          "Old laptop | Linux, Needs a quick check | seen 1797300000 | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer see or reach your machines. To use it again, add it again.",
+          "Work laptop | Windows, Waiting to be added | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer see or reach your machines. To use it again, add it again."
         ],
-        "thisDevice": "enrolled: Enrolled until @1802592000 name=MacBook Pro [-]",
+        "thisDevice": "enrolled: Trusted until @1802592000 name=MacBook Pro [-]",
         "unconfirmedMachines": [
-          "build-box: Confirm “build-box”? / build-box registered to your account without proof it was you: an enrolled device's signature or a sign-in with a second factor. Confirm it only if you recognize it."
+          "build-box: Add “build-box”? / build-box registered to your account without proof it was you. Add it only if you recognize it."
         ]
       }
     },
@@ -88,14 +88,14 @@
       "view": {
         "activity": [],
         "approvals": [],
-        "banner": "warning: Re-verify this device within 2 days: sign in again, or approve it from another enrolled device. [-]",
+        "banner": "warning: Check this machine within 2 days: sign in again, or add it from a machine you already trust. [-]",
         "enrolled": true,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
         "recent": [],
         "rows": [
-          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 2 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again."
+          "MacBook Pro (this machine) | macOS, Trusted, check again in 2 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again."
         ],
-        "thisDevice": "enrolled: Enrolled until @1800172800 name=MacBook Pro [-]",
+        "thisDevice": "enrolled: Trusted until @1800172800 name=MacBook Pro [-]",
         "unconfirmedMachines": []
       }
     },
@@ -109,14 +109,14 @@
         ],
         "banner": null,
         "enrolled": true,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
         "recent": [],
         "rows": [
-          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 30 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again.",
-          "Old laptop | Linux · Re-verification due | seen null | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer see or reach your machines. To use it again, add it again.",
-          "Work laptop | Windows · Waiting for approval | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer see or reach your machines. To use it again, add it again."
+          "MacBook Pro (this machine) | macOS, Trusted, check again in 30 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again.",
+          "Old laptop | Linux, Needs a quick check | seen null | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer see or reach your machines. To use it again, add it again.",
+          "Work laptop | Windows, Waiting to be added | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer see or reach your machines. To use it again, add it again."
         ],
-        "thisDevice": "enrolled: Enrolled until @1802592000 name=MacBook Pro [-]",
+        "thisDevice": "enrolled: Trusted until @1802592000 name=MacBook Pro [-]",
         "unconfirmedMachines": []
       }
     },
@@ -131,11 +131,11 @@
         "done": false,
         "error": null,
         "options": [
-          "sign-in: Sign in again / A fresh sign-in enrolls this device right away.",
-          "approve: Approve from another device / Show a one-time code to approve from an enrolled device."
+          "sign-in: Sign in again / A fresh sign-in trusts this machine right away.",
+          "approve: Add it from another machine / Show a one-time code to add it from a machine you already trust."
         ],
         "status": null,
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -150,11 +150,11 @@
         "done": false,
         "error": null,
         "options": [
-          "sign-in: Sign in again / A fresh sign-in enrolls this device right away.",
-          "approve: Approve from another device / Show a one-time code to approve from an enrolled device."
+          "sign-in: Sign in again / A fresh sign-in trusts this machine right away.",
+          "approve: Add it from another machine / Show a one-time code to add it from a machine you already trust."
         ],
         "status": null,
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -170,7 +170,7 @@
         "error": null,
         "options": [],
         "status": "Finish signing in in your browser…",
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -185,8 +185,8 @@
         "done": false,
         "error": null,
         "options": [],
-        "status": "Registering this device…",
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "status": "Registering this machine…",
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -197,12 +197,12 @@
         "busy": true,
         "buttons": "- / Cancel",
         "code": "K7QX-M2RP",
-        "codeHelp": "On an enrolled device, approve it in Cua Spaces or run `cua devices approve K7QX-M2RP`. The code expires in 10 minutes.",
+        "codeHelp": "On a machine you already trust, add it in Cua Spaces under Machines, or run `cua devices approve K7QX-M2RP`. The code expires in 10 minutes.",
         "done": false,
         "error": null,
         "options": [],
-        "status": "Waiting for approval…",
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "status": "Waiting to be added…",
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -217,8 +217,8 @@
         "done": true,
         "error": null,
         "options": [],
-        "status": "This device is enrolled.",
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "status": "This machine is trusted.",
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -232,11 +232,11 @@
         "done": false,
         "error": null,
         "options": [
-          "sign-in: Sign in again / A fresh sign-in enrolls this device right away.",
-          "approve: Approve from another device / Show a one-time code to approve from an enrolled device."
+          "sign-in: Sign in again / A fresh sign-in trusts this machine right away.",
+          "approve: Add it from another machine / Show a one-time code to add it from a machine you already trust."
         ],
         "status": null,
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -252,7 +252,7 @@
         "error": null,
         "options": [],
         "status": "Finish signing in in your browser…",
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -267,8 +267,8 @@
         "done": false,
         "error": null,
         "options": [],
-        "status": "Registering this device…",
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "status": "Registering this machine…",
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -283,8 +283,8 @@
         "done": true,
         "error": null,
         "options": [],
-        "status": "This device is enrolled.",
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "status": "This machine is trusted.",
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -298,11 +298,11 @@
         "done": false,
         "error": null,
         "options": [
-          "sign-in: Sign in again / A fresh sign-in enrolls this device right away.",
-          "approve: Approve from another device / Show a one-time code to approve from an enrolled device."
+          "sign-in: Sign in again / A fresh sign-in trusts this machine right away.",
+          "approve: Add it from another machine / Show a one-time code to add it from a machine you already trust."
         ],
         "status": null,
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -317,8 +317,8 @@
         "done": false,
         "error": null,
         "options": [],
-        "status": "Registering this device…",
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "status": "Registering this machine…",
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -334,7 +334,7 @@
         "error": "the relay is unreachable",
         "options": [],
         "status": null,
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -349,11 +349,11 @@
         "done": false,
         "error": null,
         "options": [
-          "sign-in: Sign in again / A fresh sign-in enrolls this device right away.",
-          "approve: Approve from another device / Show a one-time code to approve from an enrolled device."
+          "sign-in: Sign in again / A fresh sign-in trusts this machine right away.",
+          "approve: Add it from another machine / Show a one-time code to add it from a machine you already trust."
         ],
         "status": null,
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -368,8 +368,8 @@
         "done": false,
         "error": null,
         "options": [],
-        "status": "Registering this device…",
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "status": "Registering this machine…",
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -380,12 +380,12 @@
         "busy": true,
         "buttons": "- / Cancel",
         "code": "Z9WY-4TPN",
-        "codeHelp": "On an enrolled device, approve it in Cua Spaces or run `cua devices approve Z9WY-4TPN`. The code expires in 10 minutes.",
+        "codeHelp": "On a machine you already trust, add it in Cua Spaces under Machines, or run `cua devices approve Z9WY-4TPN`. The code expires in 10 minutes.",
         "done": false,
         "error": null,
         "options": [],
-        "status": "Waiting for approval…",
-        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+        "status": "Waiting to be added…",
+        "title": "Trust this machine / Your machines can be reached only from machines you trust."
       }
     },
     {
@@ -393,12 +393,12 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Approve / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = ",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": null,
         "title": "Add “Work laptop”?"
       }
@@ -408,12 +408,12 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Approve / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = ",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": null,
         "title": "Add “Work laptop”?"
       }
@@ -423,12 +423,12 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Approve / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = K7QX",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": null,
         "title": "Add “Work laptop”?"
       }
@@ -438,12 +438,12 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Approve / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": true,
         "code": "Code [XXXX-XXXX] = K7QX-M2RP",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": "code=K7QX-M2RP device=-",
         "title": "Add “Work laptop”?"
       }
@@ -453,12 +453,12 @@
       "approve": "dev_p",
       "view": {
         "busy": true,
-        "buttons": "Approve / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = K7QX-M2RP",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": "code=K7QX-M2RP device=-",
         "title": "Add “Work laptop”?"
       }
@@ -468,12 +468,12 @@
       "approve": "dev_p",
       "view": {
         "busy": true,
-        "buttons": "Approve / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = K7QX-M2RP",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": "code=K7QX-M2RP device=-",
         "title": "Add “Work laptop”?"
       }
@@ -483,12 +483,12 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Approve / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": true,
         "code": "Code [XXXX-XXXX] = K7QX-M2RP",
         "error": "authentication was cancelled",
-        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": "code=K7QX-M2RP device=-",
         "title": "Add “Work laptop”?"
       }
@@ -498,12 +498,12 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Approve / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": true,
         "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": "code=Z9WY-4TPN device=-",
         "title": "Add “Work laptop”?"
       }
@@ -513,12 +513,12 @@
       "approve": "dev_p",
       "view": {
         "busy": true,
-        "buttons": "Approve / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": "code=Z9WY-4TPN device=-",
         "title": "Add “Work laptop”?"
       }
@@ -528,12 +528,12 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Approve by ID / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": true,
         "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
         "error": "The code expired.",
-        "message": "The code expired. Approve “Work laptop” by ID instead? Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "The code expired. Add “Work laptop” without it instead? Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": "code=- device=dev_p",
         "title": "Add “Work laptop”?"
       }
@@ -543,12 +543,12 @@
       "approve": "dev_p",
       "view": {
         "busy": true,
-        "buttons": "Approve by ID / Deny (revokes)",
+        "buttons": "Add machine / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
         "error": null,
-        "message": "The code expired. Approve “Work laptop” by ID instead? Only approve a device you just signed in on.",
-        "presence": "approve “Work laptop” for your Cua account",
+        "message": "The code expired. Add “Work laptop” without it instead? Only add a machine you just signed in on.",
+        "presence": "add “Work laptop” to your Cua account",
         "request": "code=- device=dev_p",
         "title": "Add “Work laptop”?"
       }
@@ -558,12 +558,12 @@
       "approve": "dev_o",
       "view": {
         "busy": false,
-        "buttons": "Approve / Not Now",
+        "buttons": "Keep machine / Not now",
         "canApprove": true,
         "code": null,
         "error": null,
         "message": "Old laptop needs one approval to keep reaching your machines for another 30 days.",
-        "presence": "approve “Old laptop” for your Cua account",
+        "presence": "add “Old laptop” to your Cua account",
         "request": "code=- device=dev_o",
         "title": "Keep “Old laptop”?"
       }
@@ -573,12 +573,12 @@
       "approve": "dev_o",
       "view": {
         "busy": true,
-        "buttons": "Approve / Not Now",
+        "buttons": "Keep machine / Not now",
         "canApprove": false,
         "code": null,
         "error": null,
         "message": "Old laptop needs one approval to keep reaching your machines for another 30 days.",
-        "presence": "approve “Old laptop” for your Cua account",
+        "presence": "add “Old laptop” to your Cua account",
         "request": "code=- device=dev_o",
         "title": "Keep “Old laptop”?"
       }

@@ -858,7 +858,7 @@ mod tests {
         assert!(e.0.contains("expected on or off"), "{e}");
         // The environment wins over the file.
         let s = settings(d.path(), &[("CUA_CACHE_REPOS", "off")]);
-        assert_eq!(s.repo_cache().0, false);
+        assert!(!s.repo_cache().0);
     }
 
     /// explicit > env > config > default, for each axis.

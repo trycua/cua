@@ -1478,6 +1478,33 @@ pub fn agent_signin_imported(harness: &str) -> Event {
         .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
 }
 
+/// `cua_repo_cache`: what the repo cache did for one clone. Only fixed words
+/// and numbers: `outcome` is `hit`, `miss` or `fallback`, `source` `local` or
+/// `network`, `reason` one of [`schema::REPO_CACHE_REASONS`].
+pub fn repo_cache(
+    outcome: &str,
+    source: &str,
+    bytes_saved: u64,
+    seconds_saved: u64,
+    reason: &str,
+) -> Option<Event> {
+    let outcome = schema::REPO_CACHE_OUTCOMES
+        .iter()
+        .copied()
+        .find(|o| *o == outcome)?;
+    Some(
+        Event::new(event::REPO_CACHE)
+            .s("outcome", outcome)
+            .s(
+                "source",
+                pick(schema::REPO_CACHE_SOURCES, source, "network"),
+            )
+            .n("bytes_saved", bytes_saved.min(1_000_000_000_000))
+            .n("seconds_saved", seconds_saved.min(86_400))
+            .s("reason", pick(schema::REPO_CACHE_REASONS, reason, "other")),
+    )
+}
+
 /// `cua_agent_used_space`: an agent's tool call reached a Space and worked.
 /// None for a tool that does not act inside a Space.
 pub fn agent_used_space(tool: &str) -> Option<Event> {

@@ -306,6 +306,19 @@ fn all_builders(s: &str) -> Vec<Event> {
         )
         .is_none()
     );
+    v.push(events::repo_cache("hit", "local", 80_000_000, 4, "none").unwrap());
+    v.push(events::repo_cache("fallback", "network", 0, 0, "verify_failed").unwrap());
+    v.push(
+        events::repo_cache(
+            "miss",
+            "https://github.com/o/r",
+            1 << 60,
+            1 << 60,
+            "/Users/me/x",
+        )
+        .unwrap(),
+    );
+    assert!(events::repo_cache("https://github.com/o/r", "local", 0, 0, "none").is_none());
     v.push(events::agent_signin_imported("codex"));
     v.push(events::agent_signin_imported(s));
     v.push(events::agent_used_space("space_bash").unwrap());

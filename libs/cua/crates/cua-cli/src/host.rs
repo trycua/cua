@@ -195,7 +195,10 @@ pub enum HostCmd {
   cua host config --max-spaces 6
   # Give the Spaces other machines create here at most 32 GB of memory and
   # 200 GB of disk in total, and stop each after 8 hours (0: no limit)
-  cua host config --max-memory 32 --max-disk 200 --max-run-time 480")]
+  cua host config --max-memory 32 --max-disk 200 --max-run-time 480
+  # Keep no copies of public git repositories on this machine, or at most 2 GB
+  cua host config --repo-cache off
+  cua host config --repo-cache on --repo-cache-size 2")]
     Config {
         /// Share this computer's own desktop: on | off.
         #[arg(long, value_parser = ["on", "off"])]
@@ -221,7 +224,21 @@ pub enum HostCmd {
         /// it is stopped (0: no limit).
         #[arg(long, value_name = "MINUTES")]
         max_run_time: Option<u32>,
+        /// The repo cache: on | off. It keeps verified copies of public git
+        /// repositories on this machine so a repeat `git clone` in a Space
+        /// starts from one (never private repositories, never anything off
+        /// this machine's disk).
+        #[arg(long, value_parser = ["on", "off"])]
+        repo_cache: Option<String>,
+        /// The most disk the repo cache may use, in GB (`auto`: the smaller
+        /// of 5 GB and a tenth of the free disk). The least recently used
+        /// repositories go first.
+        #[arg(long, value_name = "GB")]
+        repo_cache_size: Option<String>,
     },
+    /// What the repo cache holds, and empty it.
+    #[command(subcommand)]
+    Cache(HostCacheCmd),
     /// Show whether this computer is set up, the service, and who is
     /// connected.
     #[command(after_help = "Examples:
@@ -2201,6 +2218,21 @@ pub async fn run_host(
     .await
 }
 
+/// `cua host cache`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum HostCacheCmd {
+    /// What the repo cache holds: repositories, size and what the last week
+    /// saved.
+    #[command(after_help = "Examples:
+  cua host cache status")]
+    Status,
+    /// Delete every repository the cache holds. They are copied again the
+    /// next time a Space clones them.
+    #[command(after_help = "Examples:
+  cua host cache clear")]
+    Clear,
+}
+
 /// [`run_host`] with an explicit stderr stream (warnings under `--json`) and
 /// the runner `auto` detects on this machine.
 #[allow(clippy::too_many_arguments)]
@@ -2519,8 +2551,18 @@ pub async fn run_host_to(
             max_memory,
             max_disk,
             max_run_time,
+            repo_cache,
+            repo_cache_size,
         } => {
             let on = |v: Option<String>| v.map(|v| v == "on");
+            let repo_flags = repo_cache.is_some() || repo_cache_size.is_some();
+            if repo_flags {
+                crate::repo_cache_cmd::set(
+                    home,
+                    repo_cache.as_deref(),
+                    repo_cache_size.as_deref(),
+                )?;
+            }
             let change = cua_host::HostSettingsChange {
                 share_desktop: on(desktop),
                 provide_spaces: on(provide_spaces),
@@ -2531,6 +2573,11 @@ pub async fn run_host_to(
                 max_run_minutes: max_run_time,
                 cua_bin: None,
             };
+            if repo_flags && change == cua_host::HostSettingsChange::default() {
+                // Only the repo cache changed: that needs no host setup.
+                crate::repo_cache_cmd::status(home, json, out);
+                return Ok(0);
+            }
             let s = if change == cua_host::HostSettingsChange::default() {
                 host.status().await.map_err(host_err)?
             } else {
@@ -2543,9 +2590,16 @@ pub async fn run_host_to(
                 return Ok(1);
             } else {
                 render_settings(&s, out);
+                for l in crate::repo_cache_cmd::lines(&crate::repo_cache_cmd::cache_for(home)) {
+                    line(out, l);
+                }
                 render_provided(&s, now_ms(), out);
             }
         }
+        HostCmd::Cache(cmd) => match cmd {
+            HostCacheCmd::Status => crate::repo_cache_cmd::status(home, json, out),
+            HostCacheCmd::Clear => crate::repo_cache_cmd::clear(home, json, out),
+        },
         HostCmd::Stop => emit(&host.stop_sharing().await.map_err(host_err)?, json, out)?,
         HostCmd::Start => emit(&host.start_sharing().await.map_err(host_err)?, json, out)?,
         HostCmd::Share {

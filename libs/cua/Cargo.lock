@@ -2481,6 +2481,7 @@ dependencies = [
  "cua-host",
  "cua-image",
  "cua-proto",
+ "cua-repo-cache",
  "cua-sandbox-core",
  "cua-sdk",
  "cua-spaces",

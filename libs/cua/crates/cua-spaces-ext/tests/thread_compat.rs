@@ -819,10 +819,12 @@ async fn a_live_row_follows_the_stage_and_clears_on_the_reply() {
     .unwrap();
     let task = posted["entry"]["seq"].as_u64().unwrap();
     // Right away, before the dispatcher's next pass.
-    assert_eq!(
-        live(&fx).await["agents"],
-        json!([{"agent": "ada", "stage": "thinking"}])
-    );
+    let first = live(&fx).await;
+    assert_eq!(first["agents"][0]["agent"], "ada");
+    assert_eq!(first["agents"][0]["stage"], "thinking");
+    // When the task was given, for the working row's clock; nothing said yet.
+    assert!(first["agents"][0]["since_ms"].as_u64().unwrap() > 0);
+    assert!(first["agents"][0]["text"].is_null());
     Box::pin(p.tick()).await;
     run_state(&fx, json!({"status": "running", "turn": 2}));
     let mut seen = vec![];
@@ -852,12 +854,10 @@ async fn a_live_row_follows_the_stage_and_clears_on_the_reply() {
         raw_events(&fx, &evs);
         Box::pin(p.tick()).await;
         let l = live(&fx).await;
-        assert_eq!(
-            l["agents"],
-            json!([{"agent": "ada", "stage": want}]),
-            "{want}"
-        );
-        assert_eq!(l["key"], format!("ada={want}"));
+        assert_eq!(l["agents"].as_array().unwrap().len(), 1, "{want}");
+        assert_eq!(l["agents"][0]["agent"], "ada", "{want}");
+        assert_eq!(l["agents"][0]["stage"], want, "{want}");
+        assert_eq!(l["key"], format!("ada={want}#0"));
         seen.push(want);
     }
     assert_eq!(
@@ -902,11 +902,17 @@ async fn a_live_row_follows_the_stage_and_clears_on_the_reply() {
         t0.elapsed()
     );
     let followed = followed.unwrap();
-    assert_eq!(
-        followed["live"]["agents"],
-        json!([{"agent": "ada", "stage": "replying"}])
-    );
+    // What it has said so far streams as one live entry, replaced whole by the next snapshot.
+    assert_eq!(followed["live"]["agents"][0]["text"], "2 failures");
     assert_eq!(followed["entries"], json!([]));
+    events(&fx, &[("message", 2, Some(": a, b"))]);
+    Box::pin(p.tick()).await;
+    let l = live(&fx).await;
+    assert_eq!(
+        l["agents"][0]["text"], "2 failures: a, b",
+        "the whole text so far, not a chunk"
+    );
+    assert_eq!(l["agents"][0]["stage"], "replying");
     // The turn ends: the reply is the answer and nobody is at work.
     events(&fx, &[("turn_ended", 2, None)]);
     run_state(&fx, json!({"status": "idle", "turn": 2}));
@@ -948,10 +954,9 @@ async fn a_cold_start_shows_starting_and_a_failure_clears_the_row() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        live(&fx).await["agents"],
-        json!([{"agent": "ada", "stage": "starting"}])
-    );
+    let cold = live(&fx).await;
+    assert_eq!(cold["agents"][0]["agent"], "ada");
+    assert_eq!(cold["agents"][0]["stage"], "starting");
     // The mock guest can't start a run: the delivery fails.
     Box::pin(p.tick()).await;
     let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))

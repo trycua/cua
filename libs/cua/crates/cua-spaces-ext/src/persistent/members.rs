@@ -910,6 +910,11 @@ impl Persistent {
             let written = store.release(t.seq, drafts)?;
             anchor = written.first().map(|e| e.seq);
         }
+        // Nothing is streaming any more: the reply (or the failure) is the entry.
+        self.partials
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&format!("{}/{}#{}", rec.space, rec.name, rec.k()));
         self.update_in(rec, |r| {
             r.task = None;
             r.activity = None;
@@ -958,7 +963,26 @@ impl Persistent {
                 .as_ref()
                 .is_some_and(|f| !f.open_tasks(Some(&rec.name)).is_empty());
             if let (Some(stage), true) = (stage, open) {
-                rows.push(json!({"agent": rec.handle(), "stage": stage}));
+                let mut row = json!({"agent": rec.handle(), "stage": stage});
+                // When its oldest open task was given (the working row's elapsed time) and what it
+                // has said so far this turn (the streaming entry, replaced whole each time).
+                if let Some(since) = fold
+                    .as_ref()
+                    .and_then(|f| f.open_tasks(Some(&rec.name)).iter().map(|t| t.ts_ms).min())
+                {
+                    row["since_ms"] = json!(since);
+                }
+                let key = format!("{}/{}#{}", rec.space, rec.name, rec.k());
+                if let Some(p) = self
+                    .partials
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&key)
+                    .filter(|p| !p.text.trim().is_empty())
+                {
+                    row["text"] = json!(p.text.trim_end());
+                }
+                rows.push(row);
             }
         }
         rows.sort_by_key(|r| r["agent"].as_str().unwrap_or_default().to_string());
@@ -966,9 +990,10 @@ impl Persistent {
             .iter()
             .map(|r| {
                 format!(
-                    "{}={}",
+                    "{}={}#{}",
                     r["agent"].as_str().unwrap_or_default(),
-                    r["stage"].as_str().unwrap_or_default()
+                    r["stage"].as_str().unwrap_or_default(),
+                    r["text"].as_str().map_or(0, str::len)
                 )
             })
             .collect::<Vec<_>>()

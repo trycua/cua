@@ -531,8 +531,11 @@ reads the state with `update.get` (`{status, currentVersion, version,
 percent, notesUrl, message}`; status is `idle`, `checking`, `available`,
 `downloading`, `downloaded` or `error`) and refetches on the `update.changed`
 event. Check Now (Settings, About) is quiet too: nothing found ends silently,
-and only an error from a check the user started shows a small "Update Error!"
-alert; background errors are logged. Usage telemetry records `found`,
+an error is logged and kept in the state (a plain line in the menus; no dialog).
+"Check for Updates…" is in the app menu and the menu bar menu too; both menus,
+the menu bar icon's up-arrow badge and Settings read the one `UpdatesModel`
+(`UpdateMenuItem`): a found update reads "Version X available" with "Click to
+install" or "Restart to update" under it. Usage telemetry records `found`,
 `not_found`, `downloaded`, `installed` and `failed`.
 
 Channels: an `X.Y.Z-suffix` release is a `beta` item, which only apps set to

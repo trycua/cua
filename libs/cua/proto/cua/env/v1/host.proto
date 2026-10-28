@@ -107,12 +107,22 @@ message HostSpacesSettings {
   // At most this many macOS VMs at once on this Mac (Apple's license allows
   // two; 0 on a host that cannot run macOS VMs).
   uint32 max_macos_vms = 4;
+  // The Spaces other machines create here may use at most this much memory
+  // in total, in GB (0: no limit).
+  uint32 max_memory_gb = 5;
+  // The Spaces other machines create here may use at most this much disk in
+  // total, in GB (0: no limit).
+  uint32 max_disk_gb = 6;
+  // A Space created here by another machine stops after running this many
+  // minutes (0: no limit).
+  uint32 max_run_minutes = 7;
 }
 
 // How much of one limit is in use.
 message HostSpacesCapacity {
-  // `spaces` (every provided Space) or `macos_vms` (macOS VMs on this Mac,
-  // provided or not).
+  // `spaces` (every provided Space), `macos_vms` (macOS VMs on this Mac,
+  // provided or not), `memory_gb` or `disk_gb` (what the provided Spaces
+  // were given, in GB).
   string resource = 1;
   // In use now.
   uint32 used = 2;

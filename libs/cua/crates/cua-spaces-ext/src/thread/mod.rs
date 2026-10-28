@@ -779,6 +779,13 @@ fn notifiers() -> &'static Mutex<HashMap<PathBuf, Arc<tokio::sync::Notify>>> {
     N.get_or_init(Default::default)
 }
 
+/// Wakes the agent supervisor of this process: a task was posted, so its
+/// member is served now instead of at the next poll.
+pub fn supervisor_wake() -> Arc<tokio::sync::Notify> {
+    static W: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
+    W.get_or_init(Default::default).clone()
+}
+
 fn fold_cache() -> &'static Mutex<HashMap<PathBuf, Fold>> {
     static CACHE: OnceLock<Mutex<HashMap<PathBuf, Fold>>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
@@ -952,6 +959,7 @@ impl ThreadStore {
         }
         let mut head = self.recovered_head()?;
         let mut out = vec![];
+        let wakes = drafts.iter().any(|d| d.task.is_some());
         for d in drafts {
             let e = ThreadEntry {
                 v: VERSION,
@@ -983,6 +991,9 @@ impl ThreadStore {
         }
         self.write_head(&head)?;
         self.notifier().notify_waiters();
+        if wakes {
+            supervisor_wake().notify_one();
+        }
         Ok(out)
     }
 

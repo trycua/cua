@@ -28558,6 +28558,18 @@ public struct HostSettingsChange: Equatable, Hashable {
      * macOS VMs at once (0 to 2, Apple's license).
      */
     public var maxMacosVms: UInt32?
+    /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxMemoryGb: UInt32?
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxDiskGb: UInt32?
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    public var maxRunMinutes: UInt32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -28573,11 +28585,23 @@ public struct HostSettingsChange: Equatable, Hashable {
          */maxSpaces: UInt32? = nil,
         /**
          * macOS VMs at once (0 to 2, Apple's license).
-         */maxMacosVms: UInt32? = nil) {
+         */maxMacosVms: UInt32? = nil,
+        /**
+         * Memory the provided Spaces may use in total, in GB (0: no limit).
+         */maxMemoryGb: UInt32? = nil,
+        /**
+         * Disk the provided Spaces may use in total, in GB (0: no limit).
+         */maxDiskGb: UInt32? = nil,
+        /**
+         * How long a provided Space may run, in minutes (0: no limit).
+         */maxRunMinutes: UInt32? = nil) {
         self.shareDesktop = shareDesktop
         self.provideSpaces = provideSpaces
         self.maxSpaces = maxSpaces
         self.maxMacosVms = maxMacosVms
+        self.maxMemoryGb = maxMemoryGb
+        self.maxDiskGb = maxDiskGb
+        self.maxRunMinutes = maxRunMinutes
     }
 
 
@@ -28599,7 +28623,10 @@ public struct FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer {
                 shareDesktop: FfiConverterOptionBool.read(from: &buf),
                 provideSpaces: FfiConverterOptionBool.read(from: &buf),
                 maxSpaces: FfiConverterOptionUInt32.read(from: &buf),
-                maxMacosVms: FfiConverterOptionUInt32.read(from: &buf)
+                maxMacosVms: FfiConverterOptionUInt32.read(from: &buf),
+                maxMemoryGb: FfiConverterOptionUInt32.read(from: &buf),
+                maxDiskGb: FfiConverterOptionUInt32.read(from: &buf),
+                maxRunMinutes: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
 
@@ -28608,6 +28635,9 @@ public struct FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.provideSpaces, into: &buf)
         FfiConverterOptionUInt32.write(value.maxSpaces, into: &buf)
         FfiConverterOptionUInt32.write(value.maxMacosVms, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxMemoryGb, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxDiskGb, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxRunMinutes, into: &buf)
     }
 }
 
@@ -28978,6 +29008,28 @@ public struct HostStatus: Equatable, Hashable {
      */
     public var maxMacosVms: UInt32
     /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxMemoryGb: UInt32
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxDiskGb: UInt32
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    public var maxRunMinutes: UInt32
+    /**
+     * What the provided Spaces were given now, in GB.
+     */
+    public var usedMemoryGb: UInt32
+    public var usedDiskGb: UInt32
+    /**
+     * This machine's own memory and disk, in GB (0: not known).
+     */
+    public var totalMemoryGb: UInt32
+    public var totalDiskGb: UInt32
+    /**
      * The Spaces this machine provides now.
      */
     public var providedSpaces: [HostProvidedSpace]
@@ -29083,6 +29135,21 @@ public struct HostStatus: Equatable, Hashable {
          * macOS VMs at once (at most two).
          */maxMacosVms: UInt32 = UInt32(0),
         /**
+         * Memory the provided Spaces may use in total, in GB (0: no limit).
+         */maxMemoryGb: UInt32 = UInt32(0),
+        /**
+         * Disk the provided Spaces may use in total, in GB (0: no limit).
+         */maxDiskGb: UInt32 = UInt32(0),
+        /**
+         * How long a provided Space may run, in minutes (0: no limit).
+         */maxRunMinutes: UInt32 = UInt32(0),
+        /**
+         * What the provided Spaces were given now, in GB.
+         */usedMemoryGb: UInt32 = UInt32(0), usedDiskGb: UInt32 = UInt32(0),
+        /**
+         * This machine's own memory and disk, in GB (0: not known).
+         */totalMemoryGb: UInt32 = UInt32(0), totalDiskGb: UInt32 = UInt32(0),
+        /**
          * The Spaces this machine provides now.
          */providedSpaces: [HostProvidedSpace] = [],
         /**
@@ -29130,6 +29197,13 @@ public struct HostStatus: Equatable, Hashable {
         self.provideSpaces = provideSpaces
         self.maxSpaces = maxSpaces
         self.maxMacosVms = maxMacosVms
+        self.maxMemoryGb = maxMemoryGb
+        self.maxDiskGb = maxDiskGb
+        self.maxRunMinutes = maxRunMinutes
+        self.usedMemoryGb = usedMemoryGb
+        self.usedDiskGb = usedDiskGb
+        self.totalMemoryGb = totalMemoryGb
+        self.totalDiskGb = totalDiskGb
         self.providedSpaces = providedSpaces
         self.spacesAudit = spacesAudit
         self.spacesAuditError = spacesAuditError
@@ -29178,6 +29252,13 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
                 provideSpaces: FfiConverterBool.read(from: &buf),
                 maxSpaces: FfiConverterUInt32.read(from: &buf),
                 maxMacosVms: FfiConverterUInt32.read(from: &buf),
+                maxMemoryGb: FfiConverterUInt32.read(from: &buf),
+                maxDiskGb: FfiConverterUInt32.read(from: &buf),
+                maxRunMinutes: FfiConverterUInt32.read(from: &buf),
+                usedMemoryGb: FfiConverterUInt32.read(from: &buf),
+                usedDiskGb: FfiConverterUInt32.read(from: &buf),
+                totalMemoryGb: FfiConverterUInt32.read(from: &buf),
+                totalDiskGb: FfiConverterUInt32.read(from: &buf),
                 providedSpaces: FfiConverterSequenceTypeHostProvidedSpace.read(from: &buf),
                 spacesAudit: FfiConverterSequenceTypeHostSpacesAuditRecord.read(from: &buf),
                 spacesAuditError: FfiConverterOptionString.read(from: &buf),
@@ -29212,6 +29293,13 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
         FfiConverterBool.write(value.provideSpaces, into: &buf)
         FfiConverterUInt32.write(value.maxSpaces, into: &buf)
         FfiConverterUInt32.write(value.maxMacosVms, into: &buf)
+        FfiConverterUInt32.write(value.maxMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.maxDiskGb, into: &buf)
+        FfiConverterUInt32.write(value.maxRunMinutes, into: &buf)
+        FfiConverterUInt32.write(value.usedMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.usedDiskGb, into: &buf)
+        FfiConverterUInt32.write(value.totalMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.totalDiskGb, into: &buf)
         FfiConverterSequenceTypeHostProvidedSpace.write(value.providedSpaces, into: &buf)
         FfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spacesAudit, into: &buf)
         FfiConverterOptionString.write(value.spacesAuditError, into: &buf)

@@ -250,6 +250,8 @@ setting at any time:
 cua host config                                    # show both settings and the Spaces it runs
 cua host config --desktop on --provide-spaces on   # share the desktop too
 cua host config --max-spaces 6                     # at most 6 Spaces at once (default 4)
+cua host config --max-memory 32 --max-disk 200     # at most 32 GB of memory and 200 GB of disk in total
+cua host config --max-run-time 480                 # a Space made here stops after 8 hours
 ```
 
 The app's **This computer** page has the same two switches, the Spaces the
@@ -353,6 +355,17 @@ the Space leaves the relay.
 |---|---|---|
 | macOS VMs on one Mac | 2 | Apple's macOS license allows two macOS VMs per Mac, and Apple Virtualization (which Lume runs on) enforces it. |
 | Spaces at once | 4 | Set with `cua host config --max-spaces N` (0: no limit). |
+| Memory in total | none | The most memory the Spaces other machines create here may use together. Set with `cua host config --max-memory GB`. |
+| Disk in total | none | The most disk those Spaces may use together. Set with `cua host config --max-disk GB`. |
+| Running time | none | A Space made here by another machine stops after this many minutes (`cua host config --max-run-time MINUTES`); starting it again brings it back. |
+
+The limits count only the Spaces other machines create on this computer, not the
+ones you make here yourself. They apply to everyone who asks: another machine, an
+agent, or a Space that overflows from a tree of Spaces. A create past a limit is
+refused with "&lt;machine&gt; has no room for another Space", and `on="auto"` picks
+another machine or your linked cloud instead. Lowering a limit never stops a Space
+that is running: it only refuses new ones, and Settings shows "Over limit" until
+use drops below it. The same numbers are in **Settings**, under **Sharing**.
 
 A request past a limit fails with `limit_exceeded` and says which limit and what
 to do. macOS Spaces need a Mac host: a Linux or Windows host refuses them with
@@ -545,7 +558,7 @@ restarts, the Mac opens the same port again.
 | `ambiguous_host` | Several of your computers fit the name. | Pick one of the listed IDs: `on="host:<id>"`. |
 | `not_found` | No computer fits the name. | Check `cua spaces ls`, or set the computer up with `--share spaces` or `--share both`. |
 | `host_capability_missing` | The computer is offline, does not provide Spaces, or cannot run that OS. | Run `cua host config --provide-spaces on` on it, or pick another computer. |
-| `limit_exceeded` | Two macOS VMs already run, or the computer is at its Space limit. | Delete one with `cua spaces delete`, or raise `--max-spaces`. |
+| `limit_exceeded` | Two macOS VMs already run, or the computer is at one of its limits (Spaces, memory or disk). | Delete one with `cua spaces delete`, or raise the limit with `cua host config`. |
 | `permission_denied` | The computer is shared with you to watch only. | Ask its owner to share it as an editor. |
 
 ## If it doesn't work

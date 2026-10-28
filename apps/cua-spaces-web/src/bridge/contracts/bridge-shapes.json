@@ -1832,6 +1832,27 @@
         "maxMacosVms": {
           "type": "number"
         },
+        "maxMemoryGb": {
+          "type": "number"
+        },
+        "maxDiskGb": {
+          "type": "number"
+        },
+        "maxRunMinutes": {
+          "type": "number"
+        },
+        "usedMemoryGb": {
+          "type": "number"
+        },
+        "usedDiskGb": {
+          "type": "number"
+        },
+        "totalMemoryGb": {
+          "type": "number"
+        },
+        "totalDiskGb": {
+          "type": "number"
+        },
         "recentAccess": {
           "type": "array",
           "items": {
@@ -6254,6 +6275,48 @@
             "null"
           ]
         },
+        "maxMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxRunMinutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usedMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usedDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "totalMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "totalDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "recentAccess": {
           "type": [
             "array",
@@ -7789,6 +7852,9 @@
       "$ref": "#/$defs/HostStatus"
     },
     "host.joinWithCode": {
+      "$ref": "#/$defs/HostStatus"
+    },
+    "host.limits": {
       "$ref": "#/$defs/HostStatus"
     },
     "host.openSettings": {
@@ -10195,6 +10261,16 @@
       ]
     },
     "host.joinWithCode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "host.limits": {
       "anyOf": [
         {
           "$ref": "#/$defs/WkHostState"

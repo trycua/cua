@@ -334,6 +334,19 @@ extension WebUIBridge {
             await model.host.run(id)
             if let failure = model.host.actionFailure { throw Self.hostFailure(failure) }
             return hostStatus()
+        case "host.limits":
+            guard model.host.host != nil else { throw Failure.unsupported("This Mac can't be set up for access in this build") }
+            func count(_ key: String) throws -> UInt32? {
+                guard let v = args[key], !(v is NSNull) else { return nil }
+                guard let n = (v as? NSNumber)?.doubleValue, n >= 0, n <= 1_000_000, n == n.rounded() else {
+                    throw Failure.badArgs("\(key): a whole number, 0 or more")
+                }
+                return UInt32(n)
+            }
+            await model.host.setLimits(maxSpaces: try count("maxSpaces"), maxMemoryGb: try count("maxMemoryGb"),
+                                       maxDiskGb: try count("maxDiskGb"), maxRunMinutes: try count("maxRunMinutes"))
+            if let failure = model.host.actionFailure { throw Self.hostFailure(failure) }
+            return hostStatus()
         case "host.openSettings":
             let url = try string(args, "url")
             guard url.hasPrefix("x-apple.systempreferences:"), let u = URL(string: url) else {

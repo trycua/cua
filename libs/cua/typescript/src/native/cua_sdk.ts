@@ -11889,7 +11889,19 @@ export type HostSettingsChange = {
     /**
      * macOS VMs at once (0 to 2, Apple's license).
      */
-    maxMacosVms?: number
+    maxMacosVms?: number,
+    /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    maxMemoryGb?: number,
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    maxDiskGb?: number,
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    maxRunMinutes?: number
 }
 
 /**
@@ -11900,7 +11912,10 @@ export const HostSettingsChange = (() => {
         shareDesktop: undefined,
         provideSpaces: undefined,
         maxSpaces: undefined,
-        maxMacosVms: undefined
+        maxMacosVms: undefined,
+        maxMemoryGb: undefined,
+        maxDiskGb: undefined,
+        maxRunMinutes: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<HostSettingsChange, ReturnType<typeof defaults>>(defaults);
@@ -11920,7 +11935,10 @@ const FfiConverterTypeHostSettingsChange = (() => {
                 shareDesktop: FfiConverterOptionalBoolean.read(from),
                 provideSpaces: FfiConverterOptionalBoolean.read(from),
                 maxSpaces: FfiConverterOptionalUInt32.read(from),
-                maxMacosVms: FfiConverterOptionalUInt32.read(from)
+                maxMacosVms: FfiConverterOptionalUInt32.read(from),
+                maxMemoryGb: FfiConverterOptionalUInt32.read(from),
+                maxDiskGb: FfiConverterOptionalUInt32.read(from),
+                maxRunMinutes: FfiConverterOptionalUInt32.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -11928,12 +11946,18 @@ const FfiConverterTypeHostSettingsChange = (() => {
             FfiConverterOptionalBoolean.write(value.provideSpaces, into);
             FfiConverterOptionalUInt32.write(value.maxSpaces, into);
             FfiConverterOptionalUInt32.write(value.maxMacosVms, into);
+            FfiConverterOptionalUInt32.write(value.maxMemoryGb, into);
+            FfiConverterOptionalUInt32.write(value.maxDiskGb, into);
+            FfiConverterOptionalUInt32.write(value.maxRunMinutes, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalBoolean.allocationSize(value.shareDesktop) +
              FfiConverterOptionalBoolean.allocationSize(value.provideSpaces) +
              FfiConverterOptionalUInt32.allocationSize(value.maxSpaces) +
-             FfiConverterOptionalUInt32.allocationSize(value.maxMacosVms);
+             FfiConverterOptionalUInt32.allocationSize(value.maxMacosVms) +
+             FfiConverterOptionalUInt32.allocationSize(value.maxMemoryGb) +
+             FfiConverterOptionalUInt32.allocationSize(value.maxDiskGb) +
+             FfiConverterOptionalUInt32.allocationSize(value.maxRunMinutes);
 
         }
     };
@@ -12223,6 +12247,28 @@ export type HostStatus = {
      */
     maxMacosVms: number,
     /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    maxMemoryGb: number,
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    maxDiskGb: number,
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    maxRunMinutes: number,
+    /**
+     * What the provided Spaces were given now, in GB.
+     */
+    usedMemoryGb: number,
+    usedDiskGb: number,
+    /**
+     * This machine's own memory and disk, in GB (0: not known).
+     */
+    totalMemoryGb: number,
+    totalDiskGb: number,
+    /**
      * The Spaces this machine provides now.
      */
     providedSpaces: Array<HostProvidedSpace>,
@@ -12269,6 +12315,13 @@ export const HostStatus = (() => {
         provideSpaces: false,
         maxSpaces: 0,
         maxMacosVms: 0,
+        maxMemoryGb: 0,
+        maxDiskGb: 0,
+        maxRunMinutes: 0,
+        usedMemoryGb: 0,
+        usedDiskGb: 0,
+        totalMemoryGb: 0,
+        totalDiskGb: 0,
         providedSpaces: [],
         spacesAudit: [],
         spacesAuditError: undefined,
@@ -12315,6 +12368,13 @@ const FfiConverterTypeHostStatus = (() => {
                 provideSpaces: FfiConverterBool.read(from),
                 maxSpaces: FfiConverterUInt32.read(from),
                 maxMacosVms: FfiConverterUInt32.read(from),
+                maxMemoryGb: FfiConverterUInt32.read(from),
+                maxDiskGb: FfiConverterUInt32.read(from),
+                maxRunMinutes: FfiConverterUInt32.read(from),
+                usedMemoryGb: FfiConverterUInt32.read(from),
+                usedDiskGb: FfiConverterUInt32.read(from),
+                totalMemoryGb: FfiConverterUInt32.read(from),
+                totalDiskGb: FfiConverterUInt32.read(from),
                 providedSpaces: FfiConverterSequenceTypeHostProvidedSpace.read(from),
                 spacesAudit: FfiConverterSequenceTypeHostSpacesAuditRecord.read(from),
                 spacesAuditError: FfiConverterOptionalString.read(from),
@@ -12348,6 +12408,13 @@ const FfiConverterTypeHostStatus = (() => {
             FfiConverterBool.write(value.provideSpaces, into);
             FfiConverterUInt32.write(value.maxSpaces, into);
             FfiConverterUInt32.write(value.maxMacosVms, into);
+            FfiConverterUInt32.write(value.maxMemoryGb, into);
+            FfiConverterUInt32.write(value.maxDiskGb, into);
+            FfiConverterUInt32.write(value.maxRunMinutes, into);
+            FfiConverterUInt32.write(value.usedMemoryGb, into);
+            FfiConverterUInt32.write(value.usedDiskGb, into);
+            FfiConverterUInt32.write(value.totalMemoryGb, into);
+            FfiConverterUInt32.write(value.totalDiskGb, into);
             FfiConverterSequenceTypeHostProvidedSpace.write(value.providedSpaces, into);
             FfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spacesAudit, into);
             FfiConverterOptionalString.write(value.spacesAuditError, into);
@@ -12380,6 +12447,13 @@ const FfiConverterTypeHostStatus = (() => {
              FfiConverterBool.allocationSize(value.provideSpaces) +
              FfiConverterUInt32.allocationSize(value.maxSpaces) +
              FfiConverterUInt32.allocationSize(value.maxMacosVms) +
+             FfiConverterUInt32.allocationSize(value.maxMemoryGb) +
+             FfiConverterUInt32.allocationSize(value.maxDiskGb) +
+             FfiConverterUInt32.allocationSize(value.maxRunMinutes) +
+             FfiConverterUInt32.allocationSize(value.usedMemoryGb) +
+             FfiConverterUInt32.allocationSize(value.usedDiskGb) +
+             FfiConverterUInt32.allocationSize(value.totalMemoryGb) +
+             FfiConverterUInt32.allocationSize(value.totalDiskGb) +
              FfiConverterSequenceTypeHostProvidedSpace.allocationSize(value.providedSpaces) +
              FfiConverterSequenceTypeHostSpacesAuditRecord.allocationSize(value.spacesAudit) +
              FfiConverterOptionalString.allocationSize(value.spacesAuditError) +

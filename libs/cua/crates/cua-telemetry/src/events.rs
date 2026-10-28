@@ -708,6 +708,36 @@ pub fn agent_run_started(
         )
 }
 
+/// `cua_agent_join_phase`: an agent joining a Space reached `phase`
+/// (one of [`schema::JOIN_PHASES`]) `ms_since_post` after the message that
+/// woke it. `run` is the salted hash of the run (see
+/// [`crate::Telemetry::agent_join_phase`]); `tool` is the installed tool for
+/// `install_done`; `failure` a fixed word for a `failed` phase.
+#[allow(clippy::too_many_arguments)]
+pub fn agent_join_phase(
+    phase: &str,
+    harness_id: &str,
+    runtime_id: &str,
+    cold: bool,
+    ms_since_post: u64,
+    run: &str,
+    tool: &str,
+    failure: &str,
+) -> Option<Event> {
+    let phase = schema::JOIN_PHASES.iter().copied().find(|p| *p == phase)?;
+    Some(
+        Event::new(event::AGENT_JOIN_PHASE)
+            .s("phase", phase)
+            .s("harness", harness(harness_id))
+            .s("runtime", pick(schema::JOIN_RUNTIMES, runtime_id, "other"))
+            .b("cold", cold)
+            .n("ms_since_post", ms_since_post.min(3_600_000))
+            .owned("run", run.to_string())
+            .s("tool", pick(schema::JOIN_TOOLS, tool, "other"))
+            .s("failure", pick(schema::JOIN_FAILURES, failure, "other")),
+    )
+}
+
 /// `cua_agent_run_completed`: a run's first turn ended (or the run failed,
 /// crashed or was stopped first).
 pub fn agent_run_completed(

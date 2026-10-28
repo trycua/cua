@@ -250,6 +250,9 @@ The host's two independent settings and its limits.
 | `provide_spaces` | 2 | `bool` | The host accepts Space create, list and delete requests. |
 | `max_spaces` | 3 | `uint32` | At most this many provided Spaces at once (0: no limit besides the runtimes' own). |
 | `max_macos_vms` | 4 | `uint32` | At most this many macOS VMs at once on this Mac (Apple's license allows two; 0 on a host that cannot run macOS VMs). |
+| `max_memory_gb` | 5 | `uint32` | The Spaces other machines create here may use at most this much memory in total, in GB (0: no limit). |
+| `max_disk_gb` | 6 | `uint32` | The Spaces other machines create here may use at most this much disk in total, in GB (0: no limit). |
+| `max_run_minutes` | 7 | `uint32` | A Space created here by another machine stops after running this many minutes (0: no limit). |
 
 ### HostSpacesCapacity
 
@@ -257,7 +260,7 @@ How much of one limit is in use.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `resource` | 1 | `string` | `spaces` (every provided Space) or `macos_vms` (macOS VMs on this Mac, provided or not). |
+| `resource` | 1 | `string` | `spaces` (every provided Space), `macos_vms` (macOS VMs on this Mac, provided or not), `memory_gb` or `disk_gb` (what the provided Spaces were given, in GB). |
 | `used` | 2 | `uint32` | In use now. |
 | `limit` | 3 | `uint32` | The limit (0: none). |
 | `reason` | 4 | `string` | Why the limit exists, for people ("Apple's macOS license allows two macOS VMs per Mac"). |

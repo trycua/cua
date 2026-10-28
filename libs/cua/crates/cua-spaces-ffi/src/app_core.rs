@@ -507,6 +507,13 @@ pub fn app_host_state(status: cua_sdk::HostStatus) -> AppHostState {
         provide_spaces: status.provide_spaces,
         max_spaces: status.max_spaces,
         max_macos_vms: status.max_macos_vms,
+        max_memory_gb: status.max_memory_gb,
+        max_disk_gb: status.max_disk_gb,
+        max_run_minutes: status.max_run_minutes,
+        used_memory_gb: status.used_memory_gb,
+        used_disk_gb: status.used_disk_gb,
+        total_memory_gb: status.total_memory_gb,
+        total_disk_gb: status.total_disk_gb,
         provided_spaces: status
             .provided_spaces
             .into_iter()

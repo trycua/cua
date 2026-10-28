@@ -36605,6 +36605,21 @@ data class HostSettingsChange (
      * macOS VMs at once (0 to 2, Apple's license).
      */
     var `maxMacosVms`: kotlin.UInt? = null
+    ,
+    /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    var `maxMemoryGb`: kotlin.UInt? = null
+    ,
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    var `maxDiskGb`: kotlin.UInt? = null
+    ,
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    var `maxRunMinutes`: kotlin.UInt? = null
 
 ){
 
@@ -36625,6 +36640,9 @@ public object FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer<HostSet
             FfiConverterOptionalBoolean.read(buf),
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
         )
     }
 
@@ -36632,7 +36650,10 @@ public object FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer<HostSet
             FfiConverterOptionalBoolean.allocationSize(value.`shareDesktop`) +
             FfiConverterOptionalBoolean.allocationSize(value.`provideSpaces`) +
             FfiConverterOptionalUInt.allocationSize(value.`maxSpaces`) +
-            FfiConverterOptionalUInt.allocationSize(value.`maxMacosVms`)
+            FfiConverterOptionalUInt.allocationSize(value.`maxMacosVms`) +
+            FfiConverterOptionalUInt.allocationSize(value.`maxMemoryGb`) +
+            FfiConverterOptionalUInt.allocationSize(value.`maxDiskGb`) +
+            FfiConverterOptionalUInt.allocationSize(value.`maxRunMinutes`)
     )
 
     override fun write(value: HostSettingsChange, buf: ByteBuffer) {
@@ -36640,6 +36661,9 @@ public object FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer<HostSet
             FfiConverterOptionalBoolean.write(value.`provideSpaces`, buf)
             FfiConverterOptionalUInt.write(value.`maxSpaces`, buf)
             FfiConverterOptionalUInt.write(value.`maxMacosVms`, buf)
+            FfiConverterOptionalUInt.write(value.`maxMemoryGb`, buf)
+            FfiConverterOptionalUInt.write(value.`maxDiskGb`, buf)
+            FfiConverterOptionalUInt.write(value.`maxRunMinutes`, buf)
     }
 }
 
@@ -36948,6 +36972,35 @@ data class HostStatus (
     var `maxMacosVms`: kotlin.UInt = 0u
     ,
     /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    var `maxMemoryGb`: kotlin.UInt = 0u
+    ,
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    var `maxDiskGb`: kotlin.UInt = 0u
+    ,
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    var `maxRunMinutes`: kotlin.UInt = 0u
+    ,
+    /**
+     * What the provided Spaces were given now, in GB.
+     */
+    var `usedMemoryGb`: kotlin.UInt = 0u
+    ,
+    var `usedDiskGb`: kotlin.UInt = 0u
+    ,
+    /**
+     * This machine's own memory and disk, in GB (0: not known).
+     */
+    var `totalMemoryGb`: kotlin.UInt = 0u
+    ,
+    var `totalDiskGb`: kotlin.UInt = 0u
+    ,
+    /**
      * The Spaces this machine provides now.
      */
     var `providedSpaces`: List<HostProvidedSpace> = listOf()
@@ -37026,6 +37079,13 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterBoolean.read(buf),
             FfiConverterUInt.read(buf),
             FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
             FfiConverterSequenceTypeHostProvidedSpace.read(buf),
             FfiConverterSequenceTypeHostSpacesAuditRecord.read(buf),
             FfiConverterOptionalString.read(buf),
@@ -37060,6 +37120,13 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterBoolean.allocationSize(value.`provideSpaces`) +
             FfiConverterUInt.allocationSize(value.`maxSpaces`) +
             FfiConverterUInt.allocationSize(value.`maxMacosVms`) +
+            FfiConverterUInt.allocationSize(value.`maxMemoryGb`) +
+            FfiConverterUInt.allocationSize(value.`maxDiskGb`) +
+            FfiConverterUInt.allocationSize(value.`maxRunMinutes`) +
+            FfiConverterUInt.allocationSize(value.`usedMemoryGb`) +
+            FfiConverterUInt.allocationSize(value.`usedDiskGb`) +
+            FfiConverterUInt.allocationSize(value.`totalMemoryGb`) +
+            FfiConverterUInt.allocationSize(value.`totalDiskGb`) +
             FfiConverterSequenceTypeHostProvidedSpace.allocationSize(value.`providedSpaces`) +
             FfiConverterSequenceTypeHostSpacesAuditRecord.allocationSize(value.`spacesAudit`) +
             FfiConverterOptionalString.allocationSize(value.`spacesAuditError`) +
@@ -37093,6 +37160,13 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterBoolean.write(value.`provideSpaces`, buf)
             FfiConverterUInt.write(value.`maxSpaces`, buf)
             FfiConverterUInt.write(value.`maxMacosVms`, buf)
+            FfiConverterUInt.write(value.`maxMemoryGb`, buf)
+            FfiConverterUInt.write(value.`maxDiskGb`, buf)
+            FfiConverterUInt.write(value.`maxRunMinutes`, buf)
+            FfiConverterUInt.write(value.`usedMemoryGb`, buf)
+            FfiConverterUInt.write(value.`usedDiskGb`, buf)
+            FfiConverterUInt.write(value.`totalMemoryGb`, buf)
+            FfiConverterUInt.write(value.`totalDiskGb`, buf)
             FfiConverterSequenceTypeHostProvidedSpace.write(value.`providedSpaces`, buf)
             FfiConverterSequenceTypeHostSpacesAuditRecord.write(value.`spacesAudit`, buf)
             FfiConverterOptionalString.write(value.`spacesAuditError`, buf)

@@ -697,18 +697,54 @@ impl Agents {
         };
         let dir = loc.resolve(&env).to_string_lossy().replace('\\', "/");
         let mut done = vec![];
+        let mut writes: Vec<(String, Vec<u8>)> = vec![];
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
         for skill in cua_agent_setup::skills::bundled() {
             for (rel, bytes) in cua_agent_setup::skills::files(&skill.name)? {
-                self.write(
-                    &format!("{dir}/{}/{rel}", skill.name),
-                    bytes.to_vec(),
-                    0o644,
-                )
-                .await?;
+                hasher.update(skill.name.as_bytes());
+                hasher.update(rel.as_bytes());
+                hasher.update((bytes.len() as u64).to_le_bytes());
+                hasher.update(bytes);
+                writes.push((format!("{dir}/{}/{rel}", skill.name), bytes.to_vec()));
             }
             done.push(format!("{dir}/{}", skill.name));
         }
+        // One marker names the bundle that is in place: a start finds it
+        // current and writes nothing, instead of one call per file.
+        let marker = format!("{dir}/.cua-skills-{}", hex::encode(&hasher.finalize()[..8]));
+        if self.read(&marker, 0, 1).await?.is_some() {
+            return Ok(done);
+        }
+        futures_util::future::try_join_all(
+            writes
+                .into_iter()
+                .map(|(path, bytes)| async move { self.write(&path, bytes, 0o644).await }),
+        )
+        .await?;
+        self.write(&marker, b"1".to_vec(), 0o644).await?;
         Ok(done)
+    }
+
+    /// Puts what every start of `h` needs in the guest, once and in
+    /// parallel: the bridge pipe, the runner and the cua skills, each skipped
+    /// when it is already there. Safe to run ahead of a start (when an agent
+    /// is added to a Space) and again at the start.
+    pub async fn prewarm(&self, h: &Harness, skills: bool) -> Result<()> {
+        let (bridge, runner, skills) =
+            futures_util::future::join3(self.bridge_path(), self.runner_dir(), async {
+                if skills {
+                    self.install_skills(h).await.map(|_| ())
+                } else {
+                    Ok(())
+                }
+            })
+            .await;
+        bridge?;
+        runner?;
+        // Skills are a nicety: a start notes the failure and goes on.
+        let _ = skills;
+        Ok(())
     }
 
     /// Uploads the bridge pipe once per version and returns its path.
@@ -874,15 +910,6 @@ impl Agents {
             None => format!("{rdir}/work"),
         });
         let mut notes = vec![];
-        // A run without a credential fails with "Authentication required"
-        // only after the install; refuse it before anything is installed.
-        if needs_probe(h, &opts) {
-            // A probe that cannot run decides nothing.
-            let probe = self.sh(&h.auth_probe(), Duration::from_secs(30)).await.ok();
-            if let Some(note) = credential_check(h, probe.as_deref())? {
-                notes.push(note);
-            }
-        }
         // The run directory is private to the guest user. With a repo, the
         // clone creates the working directory.
         let mk_cwd = if opts.repo.is_some() {
@@ -891,14 +918,57 @@ impl Agents {
             quote(&cwd)
         };
         let mk_home = home_dir.as_deref().map(quote).unwrap_or_default();
-        self.sh(
-            &format!(
-                "umask 077; mkdir -p {mk_cwd} {mk_home} {r}/inbox/done {r}/attachments {r}/{BRIDGE_DIR}",
-                r = quote(&rdir)
-            ),
-            Duration::from_secs(30),
-        )
-        .await?;
+        // These guest calls do not depend on each other, so they run
+        // together (they used to run one after the other): the credential
+        // probe (a run without a credential fails with "Authentication
+        // required" only after the install; refuse it before anything is
+        // installed), the run directory, and the files every start shares
+        // (bridge, runner, skills: each skipped when already in place).
+        let probe = async {
+            if needs_probe(h, &opts) {
+                // A probe that cannot run decides nothing.
+                self.sh(&h.auth_probe(), Duration::from_secs(30)).await.ok()
+            } else {
+                None
+            }
+        };
+        let mkdir_script = format!(
+            "umask 077; mkdir -p {mk_cwd} {mk_home} {r}/inbox/done {r}/attachments {r}/{BRIDGE_DIR}",
+            r = quote(&rdir)
+        );
+        let mkdirs = self.sh(&mkdir_script, Duration::from_secs(30));
+        let shared = async {
+            let (bridge, runner, skills) = futures_util::future::join3(
+                async {
+                    if opts.bridge {
+                        self.bridge_path().await.map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                },
+                self.runner_dir(),
+                async {
+                    if opts.skills.unwrap_or(true) {
+                        Some(self.install_skills(h).await)
+                    } else {
+                        None
+                    }
+                },
+            )
+            .await;
+            Ok::<_, Error>((bridge?, runner?, skills))
+        };
+        let (probe, mkdirs, shared) = futures_util::future::join3(probe, mkdirs, shared).await;
+        if needs_probe(h, &opts)
+            && let Some(note) = credential_check(h, probe.as_deref())?
+        {
+            notes.push(note);
+        }
+        mkdirs?;
+        let (bridge_file, runner_dir, skills_done) = shared?;
+        if let Some(Err(e)) = skills_done {
+            notes.push(format!("cua skills were not installed: {e}"));
+        }
         let endpoint = opts.endpoint.clone().map(|mut e| {
             if e.model.is_none() {
                 e.model = opts.model.clone();
@@ -916,14 +986,15 @@ impl Agents {
         if opts.durable.as_ref().is_some_and(|d| d.guard) {
             launch.env.extend(crate::durable::guard_env(h));
         }
-        for f in &launch.files {
+        futures_util::future::try_join_all(launch.files.iter().map(|f| {
             let path = if f.rel.starts_with('/') {
                 f.rel.clone()
             } else {
                 format!("{rdir}/{}", f.rel)
             };
-            self.write(&path, f.body.clone(), 0o600).await?;
-        }
+            async move { self.write(&path, f.body.clone(), 0o600).await }
+        }))
+        .await?;
         // Secrets: the caller's env, plus MCP header values.
         let mut secrets: BTreeMap<String, String> = opts.env.clone();
         // A ChatGPT sign-in copied from the person's Mac becomes the guest's
@@ -946,8 +1017,7 @@ impl Agents {
         {
             servers.insert(0, g.server_for(&run_id));
         }
-        if opts.bridge {
-            let bridge = self.bridge_path().await?;
+        if let Some(bridge) = bridge_file {
             servers.push(McpServer {
                 name: BRIDGE_SERVER.into(),
                 command: Some(format!("{}/.cua/bin/node", self.home.trim_end_matches('/'))),
@@ -999,16 +1069,11 @@ impl Agents {
             self.write(&path, a.bytes.clone(), 0o600).await?;
             files.push(path);
         }
-        if opts.skills.unwrap_or(true) {
-            match self.install_skills(h).await {
-                Ok(_) => {}
-                Err(e) => notes.push(format!("cua skills were not installed: {e}")),
-            }
-        }
+        // The run's files are uploaded together, once they are all known.
+        let mut uploads: Vec<(String, Vec<u8>, u32)> = vec![];
         let (command, args) = match &launch.wrapper {
             Some(w) => {
-                self.write(&format!("{rdir}/agent.sh"), w.clone(), 0o700)
-                    .await?;
+                uploads.push((format!("{rdir}/agent.sh"), w.clone().into(), 0o700));
                 ("/bin/sh".to_string(), vec![format!("{rdir}/agent.sh")])
             }
             None => {
@@ -1044,18 +1109,16 @@ impl Agents {
             "secretEnv": opts.durable.as_ref().map(|_| opts.env.keys().collect::<Vec<_>>()),
             "durable": opts.durable.as_ref().map(|d| d.run_section(Some(&rdir))),
         });
-        self.write(
-            &format!("{rdir}/run.json"),
+        uploads.push((
+            format!("{rdir}/run.json"),
             serde_json::to_vec_pretty(&run)?,
             0o600,
-        )
-        .await?;
-        self.write(
-            &format!("{rdir}/secrets.json"),
+        ));
+        uploads.push((
+            format!("{rdir}/secrets.json"),
             serde_json::to_vec(&secrets)?,
             0o600,
-        )
-        .await?;
+        ));
         let meta = RunMeta {
             run_id: run_id.clone(),
             harness: h.id.into(),
@@ -1067,12 +1130,11 @@ impl Agents {
             home: opts.home.clone(),
             cred_hash: Some(credential_hash(h.id, &opts.env)),
         };
-        self.write(
-            &format!("{rdir}/meta.json"),
+        uploads.push((
+            format!("{rdir}/meta.json"),
             serde_json::to_vec(&meta)?,
             0o600,
-        )
-        .await?;
+        ));
         if let Some(d) = &opts.durable {
             // A journal restored from the Cua Volume goes in before the
             // runner starts (its fence and plan read it at start).
@@ -1084,11 +1146,9 @@ impl Agents {
                         crate::durable::JOURNAL_FILES.join(", ")
                     )));
                 }
-                self.write(&format!("{state_dir}/{name}"), body.clone(), 0o600)
-                    .await?;
+                uploads.push((format!("{state_dir}/{name}"), body.clone(), 0o600));
             }
         }
-        let runner_dir = self.runner_dir().await?;
         let script = Self::launch_script(
             &self.home,
             h,
@@ -1100,8 +1160,13 @@ impl Agents {
                 .map(|r| (r, opts.branch.as_deref(), cwd.as_str())),
             &launch.prelude,
         )?;
-        self.write(&format!("{rdir}/launch.sh"), script, 0o700)
-            .await?;
+        uploads.push((format!("{rdir}/launch.sh"), script.into(), 0o700));
+        futures_util::future::try_join_all(
+            uploads
+                .into_iter()
+                .map(|(path, bytes, mode)| async move { self.write(&path, bytes, mode).await }),
+        )
+        .await?;
         let tag = self.spawn_run(&run_id).await?;
         Ok(Started {
             run_id,

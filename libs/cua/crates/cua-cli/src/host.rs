@@ -192,7 +192,10 @@ pub enum HostCmd {
   cua host config
   # Stop sharing this desktop; keep providing Spaces
   cua host config --desktop off --provide-spaces on
-  cua host config --max-spaces 6")]
+  cua host config --max-spaces 6
+  # Give the Spaces other machines create here at most 32 GB of memory and
+  # 200 GB of disk in total, and stop each after 8 hours (0: no limit)
+  cua host config --max-memory 32 --max-disk 200 --max-run-time 480")]
     Config {
         /// Share this computer's own desktop: on | off.
         #[arg(long, value_parser = ["on", "off"])]
@@ -206,6 +209,18 @@ pub enum HostCmd {
         /// macOS VMs at once, 0 to 2 (Apple's license allows two per Mac).
         #[arg(long)]
         max_macos_vms: Option<u32>,
+        /// Memory in GB the Spaces other machines create here may use in
+        /// total (0: no limit).
+        #[arg(long, value_name = "GB")]
+        max_memory: Option<u32>,
+        /// Disk in GB the Spaces other machines create here may use in
+        /// total (0: no limit).
+        #[arg(long, value_name = "GB")]
+        max_disk: Option<u32>,
+        /// Minutes a Space created here by another machine may run before
+        /// it is stopped (0: no limit).
+        #[arg(long, value_name = "MINUTES")]
+        max_run_time: Option<u32>,
     },
     /// Show whether this computer is set up, the service, and who is
     /// connected.
@@ -2021,6 +2036,38 @@ fn render_settings(s: &HostStatus, out: &mut dyn Write) {
                 }
             ),
         );
+        let gb = |used: u32, max: u32, total: u32| {
+            let of = if total > 0 {
+                format!(" (this machine has {total} GB)")
+            } else {
+                String::new()
+            };
+            if max == 0 {
+                format!("{used} GB in use, no limit{of}")
+            } else {
+                format!("{used} of {max} GB{of}")
+            }
+        };
+        line(
+            out,
+            format!(
+                "  memory for those Spaces: {}",
+                gb(s.used_memory_gb, s.max_memory_gb, s.total_memory_gb)
+            ),
+        );
+        line(
+            out,
+            format!(
+                "  disk for those Spaces: {}",
+                gb(s.used_disk_gb, s.max_disk_gb, s.total_disk_gb)
+            ),
+        );
+        if s.max_run_minutes > 0 {
+            line(
+                out,
+                format!("  each Space stops after {} minutes", s.max_run_minutes),
+            );
+        }
     } else {
         line(out, "  provides Spaces: off");
     }
@@ -2469,6 +2516,9 @@ pub async fn run_host_to(
             provide_spaces,
             max_spaces,
             max_macos_vms,
+            max_memory,
+            max_disk,
+            max_run_time,
         } => {
             let on = |v: Option<String>| v.map(|v| v == "on");
             let change = cua_host::HostSettingsChange {
@@ -2476,6 +2526,9 @@ pub async fn run_host_to(
                 provide_spaces: on(provide_spaces),
                 max_spaces,
                 max_macos_vms,
+                max_memory_gb: max_memory,
+                max_disk_gb: max_disk,
+                max_run_minutes: max_run_time,
                 cua_bin: None,
             };
             let s = if change == cua_host::HostSettingsChange::default() {

@@ -123,6 +123,41 @@ impl Telemetry {
         ))
     }
 
+    /// An agent joining a Space reached `phase` (see
+    /// [`crate::schema::JOIN_PHASES`]), `ms_since_post` after the message
+    /// that woke it. One event per phase; the run is sent as a per-install
+    /// salted hash, never its id, and nothing about the Space or the message.
+    #[allow(clippy::too_many_arguments)]
+    pub fn agent_join_phase(
+        &self,
+        run_id: &str,
+        phase: &str,
+        harness: &str,
+        runtime: &str,
+        cold: bool,
+        ms_since_post: u64,
+        tool: &str,
+        failure: &str,
+    ) -> Captured {
+        if self.in_agent_run() || !self.is_enabled() {
+            return Captured::Disabled;
+        }
+        let run = self.identity().hash("agent_join_run", run_id);
+        match events::agent_join_phase(
+            phase,
+            harness,
+            runtime,
+            cold,
+            ms_since_post,
+            &run,
+            tool,
+            failure,
+        ) {
+            Some(ev) => self.capture(ev),
+            None => Captured::Invalid(format!("unknown join phase {phase}")),
+        }
+    }
+
     /// Whether this install started `run_id` and has not seen it end yet.
     pub fn agent_run_pending(&self, run_id: &str) -> bool {
         self.pending_path(run_id).is_some_and(|p| p.exists())

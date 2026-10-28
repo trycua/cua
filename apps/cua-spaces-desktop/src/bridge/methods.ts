@@ -37,7 +37,7 @@ export const METHODS = [
   "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.windows", "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
-  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
+  "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings",
   "settings.get", "settings.choose", "settings.update",
   "runtimes.check", "runtimes.browse",
   "keyvault.get", "keyvault.lock", "keyvault.unlock",

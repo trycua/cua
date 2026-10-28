@@ -24,7 +24,10 @@ export const DEMO_MACHINES: MachineRow[] = [
     online: true,
     os: "macos",
     model: "Mac mini",
-    limits: [{ resource: "macos-vms", used: 1, limit: 2, reason: "macOS runs at most two VMs per Mac." }],
+    limits: [
+      { resource: "spaces", used: 1, limit: 4, reason: "This machine's limit." },
+      { resource: "macos-vms", used: 1, limit: 2, reason: "macOS runs at most two VMs per Mac." },
+    ],
   },
   { id: "linux-box", name: "Linux box", via: "relay", online: true, os: "linux", model: "ThinkCentre M90q", limits: [] },
   {
@@ -287,6 +290,17 @@ export function demoHostStatus(now = Date.now(), firstRun = false): HostStatus {
     provideSpaces: true,
     maxSpaces: 4,
     maxMacosVms: 2,
+    maxMemoryGb: 0,
+    maxDiskGb: 0,
+    maxRunMinutes: 0,
+    usedMemoryGb: 8,
+    usedDiskGb: 32,
+    totalMemoryGb: 32,
+    totalDiskGb: 994,
+    providedSpaces: [
+      { relayMachine: "space-build-1", localSpace: "local:build-1", name: "build-1", image: "ghcr.io/trycua/linux", os: "linux", kind: "container", createdBy: "Mac mini", createdAtMs: now - 40 * 60_000 },
+      { relayMachine: "space-build-2", localSpace: "local:build-2", name: "build-2", image: "ghcr.io/trycua/linux", os: "linux", kind: "container", createdBy: "Linux box", createdAtMs: now - 12 * 60_000 },
+    ],
     recentAccess: [
       { atMs: now - 4 * 60_000, via: "relay", who: DEMO_IDENTITY, what: "DesktopService" },
       { atMs: now - 52 * 60_000, via: "relay", who: DEMO_IDENTITY, what: "MCP" },

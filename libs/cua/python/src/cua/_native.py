@@ -17193,7 +17193,7 @@ class HostSettingsChange:
     """
     A change to this machine's Spaces settings (`None` keeps a value).
 """
-    def __init__(self, *, share_desktop:typing.Optional[bool] = _DEFAULT, provide_spaces:typing.Optional[bool] = _DEFAULT, max_spaces:typing.Optional[int] = _DEFAULT, max_macos_vms:typing.Optional[int] = _DEFAULT):
+    def __init__(self, *, share_desktop:typing.Optional[bool] = _DEFAULT, provide_spaces:typing.Optional[bool] = _DEFAULT, max_spaces:typing.Optional[int] = _DEFAULT, max_macos_vms:typing.Optional[int] = _DEFAULT, max_memory_gb:typing.Optional[int] = _DEFAULT, max_disk_gb:typing.Optional[int] = _DEFAULT, max_run_minutes:typing.Optional[int] = _DEFAULT):
         if share_desktop is _DEFAULT:
             self.share_desktop = None
         else:
@@ -17210,12 +17210,24 @@ class HostSettingsChange:
             self.max_macos_vms = None
         else:
             self.max_macos_vms = max_macos_vms
+        if max_memory_gb is _DEFAULT:
+            self.max_memory_gb = None
+        else:
+            self.max_memory_gb = max_memory_gb
+        if max_disk_gb is _DEFAULT:
+            self.max_disk_gb = None
+        else:
+            self.max_disk_gb = max_disk_gb
+        if max_run_minutes is _DEFAULT:
+            self.max_run_minutes = None
+        else:
+            self.max_run_minutes = max_run_minutes
 
 
 
 
     def __str__(self):
-        return "HostSettingsChange(share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={})".format(self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms)
+        return "HostSettingsChange(share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, max_memory_gb={}, max_disk_gb={}, max_run_minutes={})".format(self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.max_memory_gb, self.max_disk_gb, self.max_run_minutes)
     def __eq__(self, other):
         if self.share_desktop != other.share_desktop:
             return False
@@ -17224,6 +17236,12 @@ class HostSettingsChange:
         if self.max_spaces != other.max_spaces:
             return False
         if self.max_macos_vms != other.max_macos_vms:
+            return False
+        if self.max_memory_gb != other.max_memory_gb:
+            return False
+        if self.max_disk_gb != other.max_disk_gb:
+            return False
+        if self.max_run_minutes != other.max_run_minutes:
             return False
         return True
 
@@ -17235,6 +17253,9 @@ class _UniffiFfiConverterTypeHostSettingsChange(_UniffiConverterRustBuffer):
             provide_spaces=_UniffiFfiConverterOptionalBoolean.read(buf),
             max_spaces=_UniffiFfiConverterOptionalUInt32.read(buf),
             max_macos_vms=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_memory_gb=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_disk_gb=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_run_minutes=_UniffiFfiConverterOptionalUInt32.read(buf),
         )
 
     @staticmethod
@@ -17243,6 +17264,9 @@ class _UniffiFfiConverterTypeHostSettingsChange(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.check_lower(value.provide_spaces)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_spaces)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_macos_vms)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_memory_gb)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_disk_gb)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_run_minutes)
 
     @staticmethod
     def write(value, buf):
@@ -17250,6 +17274,9 @@ class _UniffiFfiConverterTypeHostSettingsChange(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.write(value.provide_spaces, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_spaces, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_macos_vms, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_memory_gb, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_disk_gb, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_run_minutes, buf)
 
 @dataclass
 class HostSetupOptions:
@@ -17502,7 +17529,7 @@ class HostStatus:
     """
     Host status.
 """
-    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False):
+    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, max_memory_gb:int = 0, max_disk_gb:int = 0, max_run_minutes:int = 0, used_memory_gb:int = 0, used_disk_gb:int = 0, total_memory_gb:int = 0, total_disk_gb:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False):
         self.configured = configured
         self.mode = mode
         self.relay_url = relay_url
@@ -17531,6 +17558,13 @@ class HostStatus:
         self.provide_spaces = provide_spaces
         self.max_spaces = max_spaces
         self.max_macos_vms = max_macos_vms
+        self.max_memory_gb = max_memory_gb
+        self.max_disk_gb = max_disk_gb
+        self.max_run_minutes = max_run_minutes
+        self.used_memory_gb = used_memory_gb
+        self.used_disk_gb = used_disk_gb
+        self.total_memory_gb = total_memory_gb
+        self.total_disk_gb = total_disk_gb
         if provided_spaces is _DEFAULT:
             self.provided_spaces = []
         else:
@@ -17559,7 +17593,7 @@ class HostStatus:
 
 
     def __str__(self):
-        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service)
+        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, max_memory_gb={}, max_disk_gb={}, max_run_minutes={}, used_memory_gb={}, used_disk_gb={}, total_memory_gb={}, total_disk_gb={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.max_memory_gb, self.max_disk_gb, self.max_run_minutes, self.used_memory_gb, self.used_disk_gb, self.total_memory_gb, self.total_disk_gb, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service)
     def __eq__(self, other):
         if self.configured != other.configured:
             return False
@@ -17605,6 +17639,20 @@ class HostStatus:
             return False
         if self.max_macos_vms != other.max_macos_vms:
             return False
+        if self.max_memory_gb != other.max_memory_gb:
+            return False
+        if self.max_disk_gb != other.max_disk_gb:
+            return False
+        if self.max_run_minutes != other.max_run_minutes:
+            return False
+        if self.used_memory_gb != other.used_memory_gb:
+            return False
+        if self.used_disk_gb != other.used_disk_gb:
+            return False
+        if self.total_memory_gb != other.total_memory_gb:
+            return False
+        if self.total_disk_gb != other.total_disk_gb:
+            return False
         if self.provided_spaces != other.provided_spaces:
             return False
         if self.spaces_audit != other.spaces_audit:
@@ -17649,6 +17697,13 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
             provide_spaces=_UniffiFfiConverterBoolean.read(buf),
             max_spaces=_UniffiFfiConverterUInt32.read(buf),
             max_macos_vms=_UniffiFfiConverterUInt32.read(buf),
+            max_memory_gb=_UniffiFfiConverterUInt32.read(buf),
+            max_disk_gb=_UniffiFfiConverterUInt32.read(buf),
+            max_run_minutes=_UniffiFfiConverterUInt32.read(buf),
+            used_memory_gb=_UniffiFfiConverterUInt32.read(buf),
+            used_disk_gb=_UniffiFfiConverterUInt32.read(buf),
+            total_memory_gb=_UniffiFfiConverterUInt32.read(buf),
+            total_disk_gb=_UniffiFfiConverterUInt32.read(buf),
             provided_spaces=_UniffiFfiConverterSequenceTypeHostProvidedSpace.read(buf),
             spaces_audit=_UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.read(buf),
             spaces_audit_error=_UniffiFfiConverterOptionalString.read(buf),
@@ -17683,6 +17738,13 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.check_lower(value.provide_spaces)
         _UniffiFfiConverterUInt32.check_lower(value.max_spaces)
         _UniffiFfiConverterUInt32.check_lower(value.max_macos_vms)
+        _UniffiFfiConverterUInt32.check_lower(value.max_memory_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.max_disk_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.max_run_minutes)
+        _UniffiFfiConverterUInt32.check_lower(value.used_memory_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.used_disk_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.total_memory_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.total_disk_gb)
         _UniffiFfiConverterSequenceTypeHostProvidedSpace.check_lower(value.provided_spaces)
         _UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.check_lower(value.spaces_audit)
         _UniffiFfiConverterOptionalString.check_lower(value.spaces_audit_error)
@@ -17716,6 +17778,13 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.provide_spaces, buf)
         _UniffiFfiConverterUInt32.write(value.max_spaces, buf)
         _UniffiFfiConverterUInt32.write(value.max_macos_vms, buf)
+        _UniffiFfiConverterUInt32.write(value.max_memory_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.max_disk_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.max_run_minutes, buf)
+        _UniffiFfiConverterUInt32.write(value.used_memory_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.used_disk_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.total_memory_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.total_disk_gb, buf)
         _UniffiFfiConverterSequenceTypeHostProvidedSpace.write(value.provided_spaces, buf)
         _UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spaces_audit, buf)
         _UniffiFfiConverterOptionalString.write(value.spaces_audit_error, buf)

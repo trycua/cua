@@ -664,6 +664,55 @@ pub const HARNESSES: &[&str] = &[
     "openclaw",
     "other",
 ];
+/// The steps of an agent joining a Space, in order (`cua_agent_join_phase`).
+pub const JOIN_PHASES: &[&str] = &[
+    "posted",
+    "dispatch_picked",
+    "host_prepared",
+    "guest_spawned",
+    "install_done",
+    "runner_started",
+    "agent_spawned",
+    "acp_initialized",
+    "acp_authenticated",
+    "session_ready",
+    "turn_started",
+    "first_token",
+    "turn_ended",
+    "failed",
+];
+/// What the Space an agent joined runs on: the guest OS and whether it is a
+/// container or a VM, `other` when not known.
+pub const JOIN_RUNTIMES: &[&str] = &[
+    "linux_container",
+    "linux_vm",
+    "macos_vm",
+    "windows_vm",
+    "other",
+];
+/// What an agent's join failed on: a sign-in, an install, a timeout, or
+/// anything else. `none` for a step that worked.
+pub const JOIN_FAILURES: &[&str] = &["none", "auth", "install", "timeout", "other"];
+/// The tools an agent's start installs (`cua-agents` installables), `other`
+/// for any other, `none` for a phase that is not an install.
+pub const JOIN_TOOLS: &[&str] = &[
+    "none",
+    "node",
+    "uv",
+    "acp-sdk",
+    "mcp-remote",
+    "claude-agent-acp",
+    "claude-code",
+    "codex-acp",
+    "gemini-cli",
+    "opencode",
+    "pi",
+    "openclaw",
+    "goose",
+    "hermes",
+    "antigravity-acp",
+    "other",
+];
 /// Agents whose sign-in Connect copies into Keyvault on This Mac
 /// (`cua-agent-setup` ids), or `other`.
 pub const SIGNIN_HARNESSES: &[&str] = &["hermes", "claude-code", "codex", "other"];
@@ -873,6 +922,7 @@ pub mod event {
     pub const ONBOARDING_STEP: &str = "cua_onboarding_step";
     pub const AGENT_RUN_STARTED: &str = "cua_agent_run_started";
     pub const AGENT_RUN_COMPLETED: &str = "cua_agent_run_completed";
+    pub const AGENT_JOIN_PHASE: &str = "cua_agent_join_phase";
     pub const BENCH_RUN_COMPLETED: &str = "cua_bench_run_completed";
     pub const DAEMON_STARTED: &str = "cua_daemon_started";
     pub const DAEMON_HEALTH: &str = "cua_daemon_health";
@@ -1238,6 +1288,52 @@ pub const EVENTS: &[EventSpec] = &[
             DURATION,
         ],
         purpose: "Activation (first agent run) and which coding-agent harnesses finish their first turn, and how reliably. Sent once per run, by the install that started it.",
+    },
+    EventSpec {
+        name: event::AGENT_JOIN_PHASE,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: AGENT_PRODUCTS,
+        props: &[
+            p(
+                "phase",
+                Kind::Enum(JOIN_PHASES),
+                "The step of an agent joining a Space that was just reached (posted, dispatch_picked, host_prepared, guest_spawned, install_done, runner_started, agent_spawned, acp_initialized, acp_authenticated, session_ready, turn_started, first_token, turn_ended) or failed.",
+            ),
+            AGENT_HARNESS,
+            p(
+                "runtime",
+                Kind::Enum(JOIN_RUNTIMES),
+                "What the Space the agent joined runs on: linux_container, linux_vm, macos_vm, windows_vm or other.",
+            ),
+            p(
+                "cold",
+                Kind::Bool,
+                "The agent had to start from nothing (no run to send to), not a follow-up to a running agent.",
+            ),
+            p(
+                "ms_since_post",
+                Kind::Count { max: 3_600_000 },
+                "Milliseconds from the message that woke the agent to this step.",
+            ),
+            p(
+                "run",
+                Kind::SaltedHash,
+                "A per-install salted hash of the run, so the steps of one join can be put together. Not the run id.",
+            ),
+            p(
+                "tool",
+                Kind::Enum(JOIN_TOOLS),
+                "install_done only: which tool was installed (or found cached); none otherwise.",
+            ),
+            p(
+                "failure",
+                Kind::Enum(JOIN_FAILURES),
+                "failed only: auth, install, timeout or other; none otherwise. Never the message.",
+            ),
+        ],
+        purpose: "How long an agent takes to join a Space and answer, step by step, per agent and runtime, cold and warm; where joins fail.",
     },
     EventSpec {
         name: event::BENCH_RUN_COMPLETED,

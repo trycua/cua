@@ -158,6 +158,7 @@ export const WEBKIT_METHODS = [
   "host.setUp",
   "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
   "settings.get",
   "settings.choose",
@@ -411,6 +412,13 @@ export interface WkHostState {
   provideSpaces: boolean;
   maxSpaces: number;
   maxMacosVms?: number | null;
+  maxMemoryGb?: number | null;
+  maxDiskGb?: number | null;
+  maxRunMinutes?: number | null;
+  usedMemoryGb?: number | null;
+  usedDiskGb?: number | null;
+  totalMemoryGb?: number | null;
+  totalDiskGb?: number | null;
   recentAccess?: { atMs: number; via: string; who: string; what: string }[] | null;
   accessLogError?: string | null;
   providedSpaces?: import("./contracts/host").HostProvidedSpace[] | null;

@@ -594,32 +594,36 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
         </div>
       ) : null}
 
-      <h3 className="mt-7 mb-2 text-xs font-semibold text-muted-foreground">{m.spacesTitle}</h3>
-      <div className="border-y" data-machine-spaces>
-        {rows.map((s, i) => (
-          <Link
-            key={s.id}
-            to="/spaces/$spaceId"
-            params={{ spaceId: s.id }}
-            title={`Open ${s.name}`}
-            data-space-row={s.id}
-            className={cn("flex items-center gap-2.5 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50", i > 0 && "border-t")}
-          >
-            <span className="truncate font-mono text-xs">{s.name}</span>
-            {s.label ? <span className="shrink-0 rounded bg-muted px-1.5 text-2xs text-muted-foreground">{s.label}</span> : null}
-            {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
-            <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <StatusDot online={s.running} className="size-[7px]" />
-              {s.status}
-            </span>
-            <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
-          </Link>
-        ))}
-        {m.spacesEmpty ? <p className={cn("py-3.5 text-xs text-muted-foreground", rows.length > 0 && "border-t")}>{m.spacesEmpty}</p> : null}
-        <div className="border-t py-2.5">
-          <NewSpaceHere machine={m} />
-        </div>
-      </div>
+      {m.spacesTitle ? (
+        <>
+          <h3 className="mt-7 mb-2 text-xs font-semibold text-muted-foreground">{m.spacesTitle}</h3>
+          <div className="border-y" data-machine-spaces>
+            {rows.map((s, i) => (
+              <Link
+                key={s.id}
+                to="/spaces/$spaceId"
+                params={{ spaceId: s.id }}
+                title={`Open ${s.name}`}
+                data-space-row={s.id}
+                className={cn("flex items-center gap-2.5 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50", i > 0 && "border-t")}
+              >
+                <span className="truncate font-mono text-xs">{s.name}</span>
+                {s.label ? <span className="shrink-0 rounded bg-muted px-1.5 text-2xs text-muted-foreground">{s.label}</span> : null}
+                {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                  <StatusDot online={s.running} className="size-[7px]" />
+                  {s.status}
+                </span>
+                <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
+              </Link>
+            ))}
+            {m.spacesEmpty ? <p className={cn("py-3.5 text-xs text-muted-foreground", rows.length > 0 && "border-t")}>{m.spacesEmpty}</p> : null}
+            <div className="border-t py-2.5">
+              <NewSpaceHere machine={m} />
+            </div>
+          </div>
+        </>
+      ) : null}
 
       {account ? <RecentAccess lines={accessFor(account.access, m.current ? (row?.relayId ?? m.id) : m.id, m.current ? null : row?.device ? m.id : null)} title={account.recentTitle} empty={account.recentEmpty} now={now} error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null} /> : null}
 

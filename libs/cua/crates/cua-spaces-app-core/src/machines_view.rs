@@ -706,6 +706,9 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         let (notice, notice_action) = if row.current {
             let p = crate::host::panel(host);
             (p.notice, p.notice_action)
+        } else if row.device_only {
+            // Nothing is shared from it: its state says so; there is no notice to add.
+            (None, None)
         } else if !row.online {
             (Some(OFFLINE_NOTICE.into()), None)
         } else if stopped {
@@ -742,7 +745,11 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         };
 
         let new_space = MachinesViewNewSpace {
-            label: NEW_SPACE_LABEL.into(),
+            label: if row.device_only {
+                String::new()
+            } else {
+                NEW_SPACE_LABEL.into()
+            },
             on: if row.current {
                 "local".into()
             } else {
@@ -951,9 +958,14 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             notice_action,
             toggles,
             toggles_note,
-            spaces_title: "Spaces on this machine".into(),
+            // A signed-in machine that shares nothing has no Spaces to list.
+            spaces_title: if row.device_only {
+                String::new()
+            } else {
+                "Spaces on this machine".into()
+            },
             desktop,
-            spaces_empty: on.is_empty().then(|| {
+            spaces_empty: (on.is_empty() && !row.device_only).then(|| {
                 if row.online && has_desktop {
                     "No other Spaces yet.".into()
                 } else if row.online {

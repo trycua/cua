@@ -139,8 +139,7 @@
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
           "Revoke -> dev_lap"
         ],
@@ -196,24 +195,19 @@
         ],
         [
           "Cua BYOC tests — Signed in, not sharing (rename: device)",
-          "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "spaces: No Spaces. The machine is offline.",
-          "New Space here on host:dev_byoc (disabled: It is signed in, but it does not share this machine.)",
+          " on host:dev_byoc (disabled: It is signed in, but it does not share this machine.)",
           "details: Last seen: 9 days ago; OS: macOS",
           "Revoke -> dev_byoc"
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
           "Revoke -> dev_lap"
         ],
         [
           "mac-mini-staging — Signed in, not sharing (rename: device)",
-          "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "spaces: No Spaces. The machine is offline.",
-          "New Space here on host:dev_old1 (disabled: It is signed in, but it does not share this machine.)",
+          " on host:dev_old1 (disabled: It is signed in, but it does not share this machine.)",
           "details: Last seen: 41 days ago; OS: macOS",
           "Revoke -> dev_old1"
         ]
@@ -315,8 +309,7 @@
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
           "Revoke -> dev_lap"
         ],
@@ -416,8 +409,7 @@
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
           "Revoke -> dev_lap"
         ],
@@ -517,8 +509,7 @@
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
           "Revoke -> dev_lap"
         ],
@@ -664,8 +655,7 @@
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
           "Revoke -> dev_lap"
         ],
@@ -812,8 +802,7 @@
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
           "Revoke -> dev_lap"
         ],

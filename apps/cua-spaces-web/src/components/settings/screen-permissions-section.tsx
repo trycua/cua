@@ -18,7 +18,7 @@ export function ScreenPermissionsSection() {
   const perms = useScreenPermissions();
   if (!perms) return null;
   const { view } = perms;
-  const place = view.rows.map((r) => /^See (.+)\u2019?'?s screen$/.exec(r.title)?.[1]).find(Boolean) ?? "this machine";
+  const place = view.rows.map((r) => /^See (.+?)\u2019?'?s screen$/.exec(r.title)?.[1]).find(Boolean) ?? "this machine";
   return (
     <SettingsGroup title="Let others use this machine">
       {view.rows.map((r) => (

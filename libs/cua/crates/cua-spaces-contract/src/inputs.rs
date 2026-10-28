@@ -155,7 +155,7 @@ pub struct CreateSpace {
     /// only when connected and no computer has room), `aws`, `gcp` or
     /// `modal` (your own cloud account, billed there), or `host:<computer>`:
     /// one of the user's own computers that
-    /// provides Spaces (`cua host setup --provide-spaces` on it), named by
+    /// provides Spaces (`cua host setup --share both` on it), named by
     /// id or by words from its name ("host:spare mac mini" matches "Mac
     /// mini (spare)" or `dillons-mac-mini`). Default: the user's default
     /// location (`cua config set default.on`, `CUA_DEFAULT_ON`), else

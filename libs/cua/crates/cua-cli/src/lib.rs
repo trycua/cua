@@ -2755,7 +2755,7 @@ Examples:
   cua host setup --direct 0.0.0.0:3211 --name studio-mac
   # A spare Mac on your tailnet that runs Spaces, without a relay
   # (prints the command that adds it on your laptop)
-  cua host setup --direct 100.101.102.103:3211 --profile spare
+  cua host setup --direct 100.101.102.103:3211 --share spaces
 ";
 
 /// The command `cua` parses with, named for `channel`. Stable's is `cli`

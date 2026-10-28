@@ -91,9 +91,7 @@ and rotates the token.
 | `--name NAME` | Display name (default: host name). |
 | `--allow ACCOUNT` | Also allow this account (id or email). Repeatable. |
 | `--runner KIND` | `auto`, `systemd`, `launchd`, `windows-task` or `process`. On Linux, `auto` uses systemd when it is running, otherwise `process`. |
-| `--profile spare` | A spare computer: do not share its desktop, create Spaces for your devices (`--no-desktop --provide-spaces`). See [Use a spare Mac to host Spaces](#use-a-spare-mac-to-host-spaces). |
-| `--no-desktop` / `--provide-spaces` | Each of the two settings on its own. `cua host config` changes them later. |
-| `--no-provide-spaces` | Share this desktop only. A computer set up for the first time provides Spaces to your devices by default; a computer set up before keeps its setting. |
+| `--share desktop\|spaces\|both\|none` | What this computer shares: `desktop` (this desktop only), `spaces` (create Spaces for your devices and keep its own desktop private; see [Use a spare Mac to host Spaces](#use-a-spare-mac-to-host-spaces)), `both`, or `none` (refused: there is nothing to share). Without it the desktop is shared, and a computer set up for the first time also provides Spaces; a computer set up before keeps its setting. `cua host config` changes it later. |
 
 ## What each system needs
 
@@ -213,10 +211,10 @@ steps above.
 On the spare Mac:
 
 ```bash test="cli-shape" id="cua-host-setup-spare"
-cua host setup --profile spare --name "Mac mini (spare)"
+cua host setup --share spaces --name "Mac mini (spare)"
 ```
 
-`--profile spare` is shorthand for `--no-desktop --provide-spaces`. Setup joins
+`--share spaces` shares no desktop and provides Spaces. Setup joins
 the relay the way the steps above do. It signs you in for that one command and
 keeps no account session, only the computer's own token.
 
@@ -231,13 +229,13 @@ For how this computer, its device record and its Spaces fit together, see
 
 The computer has two settings, and each works on its own:
 
-| Setting | What it does | `desktop` profile (default) | `spare` profile |
+| Setting | What it does | Default | `--share spaces` |
 |---|---|---|---|
 | Let other machines control this desktop (`--desktop`) | The computer itself is a Space: its screen, input, shell and files. | on | off |
 | Let other machines create Spaces here (`--provide-spaces`) | Your enrolled devices can create, list and delete Spaces on it. | on for a new setup | on |
 
 A computer set up before this default keeps what it had: setting it up again
-never turns **Provide Spaces** on unless you pass `--provide-spaces`. With
+never turns **Provide Spaces** on unless you pass `--share spaces` or `--share both`. With
 **Provide Spaces** on, your devices (and teammates you share the computer with
 as editors) can run Spaces and `cua run` jobs on it, at most 4 at once and two
 macOS VMs on a Mac. Nothing runs until a Space is created. When Provide Spaces
@@ -278,7 +276,7 @@ Cua Spaces app and hosting, and `--no-onboarding` skips the automatic
 with a device code:
 
 ```bash test="cli-shape" id="cua-host-setup-spare-ssh"
-cua host setup --remote --profile spare --name "Mac mini (spare)"
+cua host setup --remote --share spaces --name "Mac mini (spare)"
 ```
 
 If the mini has no saved account session, this prints a URL and a short code
@@ -389,7 +387,7 @@ cua agent allow-computer ada relay:space-0123456789abcdef
 
 Every computer signed in to your account that provides Spaces is part of one
 pool. There is nothing else to set up: sign in on each computer (the app, or
-`cua auth login` and `cua host setup --profile spare`), then ask for `auto`:
+`cua auth login` and `cua host setup --share spaces`), then ask for `auto`:
 
 ```bash test="cli-shape" id="cua-spaces-create-auto"
 cua spaces create linux --on auto
@@ -489,14 +487,14 @@ calls, so you and the teammates you `--allow` need no token: see
 [Use your tailnet](/spaces/guides/your-tailnet).
 
 ```bash test="cli-shape" id="cua-host-setup-tailnet-spare"
-cua host setup --tailnet --profile spare --name "Mac mini (spare)"
+cua host setup --tailnet --share spaces --name "Mac mini (spare)"
 ```
 
 Or, with the Mac's env token as the credential, set it up on its Tailscale
 address:
 
 ```bash test="cli-shape" id="cua-host-setup-direct-spare"
-cua host setup --direct 100.101.102.103:3211 --profile spare --name "Mac mini (spare)"
+cua host setup --direct 100.101.102.103:3211 --share spaces --name "Mac mini (spare)"
 ```
 
 Use the Mac's own address from `tailscale ip -4`. With `--direct 0.0.0.0:3211` it
@@ -544,7 +542,7 @@ restarts, the Mac opens the same port again.
 | Error | Meaning | Fix |
 |---|---|---|
 | `ambiguous_host` | Several of your computers fit the name. | Pick one of the listed IDs: `on="host:<id>"`. |
-| `not_found` | No computer fits the name. | Check `cua spaces ls`, or set the computer up with `--provide-spaces`. |
+| `not_found` | No computer fits the name. | Check `cua spaces ls`, or set the computer up with `--share spaces` or `--share both`. |
 | `host_capability_missing` | The computer is offline, does not provide Spaces, or cannot run that OS. | Run `cua host config --provide-spaces on` on it, or pick another computer. |
 | `limit_exceeded` | Two macOS VMs already run, or the computer is at its Space limit. | Delete one with `cua spaces delete`, or raise `--max-spaces`. |
 | `permission_denied` | The computer is shared with you to watch only. | Ask its owner to share it as an editor. |

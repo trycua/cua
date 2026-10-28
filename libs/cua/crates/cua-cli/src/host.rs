@@ -14,29 +14,52 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// What `cua host setup --share` shares, the app's sharing switch.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostShare {
+    /// Share this computer's own desktop only.
+    Desktop,
+    /// Provide Spaces for your devices; keep this desktop private.
+    Spaces,
+    /// Share this desktop and provide Spaces.
+    Both,
+    /// Share nothing (setup refuses: there is nothing to set up).
+    None,
+}
+
+impl HostShare {
+    /// `(share_desktop, provide_spaces)` the value asks for.
+    pub fn settings(self) -> (bool, bool) {
+        match self {
+            Self::Desktop => (true, false),
+            Self::Spaces => (false, true),
+            Self::Both => (true, true),
+            Self::None => (false, false),
+        }
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum HostCmd {
     /// Set this computer up for unattended access: install cua-spacesd as
     /// a service that joins the cua.ai relay as your account (default) or
-    /// serves on a direct ip:port. By default (the `desktop` profile) it
+    /// serves on a direct ip:port. By default it
     /// shares this computer's desktop and, on a computer set up for the
     /// first time through the relay, provides Spaces to your devices (a
     /// host in your pool: `cua run` jobs and `--on auto` Spaces can run
-    /// here, within its limits); `--no-provide-spaces` leaves that off, and
-    /// `cua host config --provide-spaces off` turns it off later. A
-    /// computer set up before keeps what it provides. `--profile spare` or
-    /// `--no-desktop` provides Spaces only, so its own desktop stays
-    /// private. Running it again with the same options changes nothing (a
-    /// stopped service starts again).
+    /// here, within its limits). `--share` picks what it shares: `desktop`,
+    /// `spaces` (its own desktop stays private), `both` or `none`;
+    /// `cua host config` changes it later. A computer set up before keeps
+    /// what it provides. Running it again with the same options changes
+    /// nothing (a stopped service starts again).
     #[command(after_help = "Examples:
   # Join the cua.ai relay as your account (shares this desktop and
   # provides Spaces to your devices)
   cua host setup
   # Share this desktop only
-  cua host setup --no-provide-spaces
+  cua host setup --share desktop
   # A spare computer: do not share its desktop, run Spaces for your devices
-  cua host setup --profile spare --name \"Mac mini (spare)\"
-  cua host setup --no-desktop --provide-spaces
+  cua host setup --share spaces --name \"Mac mini (spare)\"
   # Add this computer with a one-time code from the Cua Spaces app
   # (Add a computer) or `cua host pair`: no sign-in needed here
   cua host setup --pair K7QM-4XPB-2RHD
@@ -75,29 +98,32 @@ pub enum HostCmd {
         /// service runs as the app's own login item ("Cua Spaces").
         #[arg(long, default_value = "auto")]
         runner: String,
-        /// What this computer is for: `desktop` (share this desktop, and
-        /// provide Spaces on a new relay setup; the default) or `spare` (do
-        /// not share the desktop; provide Spaces).
-        #[arg(long, value_parser = ["desktop", "spare"])]
+        /// What this computer shares: its own desktop (screen, input,
+        /// shell, files), the Spaces it creates for your enrolled devices
+        /// (Lume macOS VMs, Docker Linux containers), both, or neither
+        /// (refused). Default: the desktop, plus Spaces on a new relay
+        /// setup; a computer set up before keeps what it provides.
+        #[arg(
+            long,
+            value_enum,
+            value_name = "WHAT",
+            conflicts_with_all = ["profile", "desktop", "no_desktop", "provide_spaces", "no_provide_spaces"]
+        )]
+        share: Option<HostShare>,
+        /// Hidden alias: `--share spaces` is `--profile spare`.
+        #[arg(long, hide = true, value_parser = ["desktop", "spare"])]
         profile: Option<String>,
-        /// Share this computer's own desktop as a Space.
-        #[arg(long, overrides_with = "no_desktop")]
+        /// Hidden alias of the desktop half of `--share`.
+        #[arg(long, hide = true, overrides_with = "no_desktop")]
         desktop: bool,
-        /// Do not share this computer's own desktop (screen, input, shell,
-        /// files): relayed callers reach only the Spaces it provides.
-        #[arg(long)]
+        /// Hidden alias of `--share spaces` with `--provide-spaces`.
+        #[arg(long, hide = true)]
         no_desktop: bool,
-        /// Create Spaces for your enrolled devices on this computer's
-        /// runtimes (Lume macOS VMs, Docker Linux containers). The default
-        /// for a new relay setup; a computer set up before keeps its
-        /// setting unless this (or `--no-provide-spaces`) is given. On its
-        /// own it keeps the default `desktop` profile, so this computer's
-        /// desktop is shared too; add `--no-desktop` (or use `--profile
-        /// spare`) to provide Spaces only.
-        #[arg(long, overrides_with = "no_provide_spaces")]
+        /// Hidden alias: with the default profile, `--share both`.
+        #[arg(long, hide = true, overrides_with = "no_provide_spaces")]
         provide_spaces: bool,
-        /// Do not create Spaces for other devices (only share this desktop).
-        #[arg(long)]
+        /// Hidden alias: with the default profile, `--share desktop`.
+        #[arg(long, hide = true)]
         no_provide_spaces: bool,
         /// Provided Spaces at once (default 4; 0: no limit).
         #[arg(long)]
@@ -302,7 +328,7 @@ Examples:
   cua spaces add local:my-sandbox
   cua spaces add http://127.0.0.1:8765/mcp --service tools
   # A computer that provides Spaces over Tailscale, without the relay
-  # (`cua host setup --direct ... --provide-spaces` on it prints this)
+  # (`cua host setup --direct ... --share both` on it prints this)
   cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"")]
     Add {
         /// The Space's cua-spacesd (`http(s)://host:port`, `host:port`,
@@ -326,7 +352,7 @@ Examples:
         host: bool,
     },
     /// Create Spaces: on this computer, on one of your computers that
-    /// provides Spaces (`cua host setup --no-desktop --provide-spaces` there),
+    /// provides Spaces (`cua host setup --share spaces` there),
     /// or in your own cloud account.
     #[command(after_help = "Examples:
   cua spaces create linux
@@ -1954,6 +1980,7 @@ pub async fn run_host_to(
             allow,
             driver_bin,
             runner,
+            share,
             profile,
             desktop,
             no_desktop,
@@ -2015,6 +2042,11 @@ pub async fn run_host_to(
             if no_provide_spaces {
                 opts.provide_spaces = Some(false);
             }
+            if let Some(share) = share {
+                let (desktop, spaces) = share.settings();
+                opts.share_desktop = desktop;
+                opts.provide_spaces = Some(spaces);
+            }
             opts.max_spaces = max_spaces;
             opts.allow_any_address = allow_any_address;
             opts.dedicated = dedicated;
@@ -2027,12 +2059,15 @@ pub async fn run_host_to(
                 && opts.driver_bin.is_none()
                 && opts.allow.is_empty()
                 && opts.max_spaces.is_none()
+                // `--share none` is always refused, even by a computer that
+                // `host config` set to share nothing.
+                && share != Some(HostShare::None)
             {
                 // Only what this command line says: a re-run that leaves out
                 // the profile keeps what the machine shares.
                 let want = crate::onboard::Want {
                     relay: url.clone(),
-                    share_desktop: (profile.is_some() || desktop || no_desktop)
+                    share_desktop: (share.is_some() || profile.is_some() || desktop || no_desktop)
                         .then_some(opts.share_desktop),
                     // Providing Spaces: what the flags or a spare profile
                     // say; the desktop profile keeps the machine's own.
@@ -3398,16 +3433,10 @@ mod tests {
             } => assert_eq!((profile.as_deref(), max_spaces), (Some("spare"), Some(6))),
             other => panic!("{other:?}"),
         }
-        match parse(&["setup", "--no-desktop", "--provide-spaces"]) {
-            HostCmd::Setup {
-                profile,
-                no_desktop,
-                provide_spaces,
-                ..
-            } => assert_eq!(
-                (profile.as_deref(), no_desktop, provide_spaces),
-                (None, true, true)
-            ),
+        match parse(&["setup", "--share", "spaces"]) {
+            HostCmd::Setup { share, profile, .. } => {
+                assert_eq!((share, profile), (Some(HostShare::Spaces), None))
+            }
             other => panic!("{other:?}"),
         }
         match parse(&["config", "--desktop", "off", "--provide-spaces", "on"]) {
@@ -3453,8 +3482,8 @@ mod tests {
             "setup",
             "--direct",
             "0.0.0.0:3211",
-            "--profile",
-            "spare",
+            "--share",
+            "spaces",
             "--allow-any-address",
         ]) {
             HostCmd::Setup {
@@ -4308,7 +4337,7 @@ mod tests {
                 args.extend(["--direct", "127.0.0.1:3211"]);
             }
             if stage == "preflight" {
-                args.extend(["--no-desktop", "--no-provide-spaces"]);
+                args.extend(["--share", "none"]);
             }
             if stage == "download" {
                 args[2] = missing.to_str().unwrap();
@@ -4756,5 +4785,345 @@ mod tests {
         assert!(text.contains("lab-box"), "{text}");
         // Already attached: left alone.
         assert!(!attach_relay_account(&cua, || unreachable!()));
+    }
+
+    fn try_parse(args: &[&str]) -> Result<HostCmd, clap::Error> {
+        #[derive(clap::Parser)]
+        struct W {
+            #[command(subcommand)]
+            c: HostCmd,
+        }
+        <W as clap::Parser>::try_parse_from(std::iter::once("host").chain(args.iter().copied()))
+            .map(|w| w.c)
+    }
+
+    /// What a setup left on the machine: config and policy settings, and
+    /// whether the service runs without the desktop services.
+    type Seen = ((bool, bool), (bool, bool), bool);
+
+    fn seen(home: &Path, manager: &FakeServiceManager) -> Seen {
+        let host = Host::new(home);
+        let c = host.config().unwrap().unwrap();
+        let p = host.policy().unwrap().unwrap();
+        let spec = manager.spec.lock().unwrap().clone().unwrap();
+        (
+            (c.share_desktop, c.provide_spaces),
+            (p.share_desktop, p.provide_spaces),
+            spec.args.iter().any(|a| a == "--no-desktop"),
+        )
+    }
+
+    async fn setup_run(
+        home: &Path,
+        manager: &Arc<FakeServiceManager>,
+        args: &[&str],
+        json: bool,
+    ) -> Result<String, CuaError> {
+        let mut out = Vec::new();
+        run_host(
+            parse(args),
+            home,
+            &StaticToken("acct".into()),
+            None,
+            Some(manager.clone()),
+            json,
+            &mut out,
+        )
+        .await?;
+        Ok(String::from_utf8(out).unwrap())
+    }
+
+    fn fixture_driver(dir: &Path) -> PathBuf {
+        let driver = dir.join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        driver
+    }
+
+    /// Each `--share` value and each old flag spelling of it set up the
+    /// same host: config, driver policy and service arguments.
+    #[tokio::test]
+    async fn share_values_and_their_old_aliases_set_up_the_same_host() {
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", Some("ada@example.com"));
+        let rows: [(&[&[&str]], Seen); 3] = [
+            (
+                &[
+                    &["--share", "desktop"],
+                    &["--no-provide-spaces"],
+                    &["--desktop", "--no-provide-spaces"],
+                ],
+                ((true, false), (true, false), false),
+            ),
+            (
+                &[
+                    &["--share", "spaces"],
+                    &["--profile", "spare"],
+                    &["--no-desktop", "--provide-spaces"],
+                ],
+                ((false, true), (false, true), true),
+            ),
+            (
+                &[
+                    &["--share", "both"],
+                    &["--provide-spaces"],
+                    &["--desktop", "--provide-spaces"],
+                    &["--profile", "desktop", "--provide-spaces"],
+                ],
+                ((true, true), (true, true), false),
+            ),
+        ];
+        for (spellings, want) in rows {
+            for extra in spellings {
+                let dir = tempfile::tempdir().unwrap();
+                let home = dir.path().join(".cua");
+                let driver = fixture_driver(dir.path());
+                let manager = Arc::new(FakeServiceManager::default());
+                let mut args = vec![
+                    "setup",
+                    "--relay",
+                    &relay.url,
+                    "--driver-bin",
+                    driver.to_str().unwrap(),
+                ];
+                args.extend_from_slice(extra);
+                setup_run(&home, &manager, &args, true).await.unwrap();
+                assert_eq!(seen(&home, &manager), want, "relay {extra:?}");
+            }
+        }
+        // Direct mode needs no account.
+        let direct = |extra: &'static [&'static str]| async move {
+            let dir = tempfile::tempdir().unwrap();
+            let home = dir.path().join(".cua");
+            let driver = fixture_driver(dir.path());
+            let manager = Arc::new(FakeServiceManager::default());
+            let mut args = vec![
+                "setup",
+                "--direct",
+                "127.0.0.1:3211",
+                "--driver-bin",
+                driver.to_str().unwrap(),
+            ];
+            args.extend_from_slice(extra);
+            setup_run(&home, &manager, &args, true).await.unwrap();
+            seen(&home, &manager)
+        };
+        let share = direct(&["--share", "spaces"]).await;
+        assert_eq!(share, ((false, true), (false, true), true));
+        assert_eq!(share, direct(&["--profile", "spare"]).await);
+    }
+
+    /// `none` (and its old spelling) is refused before anything happens.
+    #[tokio::test]
+    async fn share_none_and_its_old_alias_refuse_before_registering() {
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", None);
+        for extra in [
+            &["--share", "none"][..],
+            &["--no-desktop", "--no-provide-spaces"][..],
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let home = dir.path().join(".cua");
+            let driver = fixture_driver(dir.path());
+            let manager = Arc::new(FakeServiceManager::default());
+            let mut args = vec![
+                "setup",
+                "--relay",
+                &relay.url,
+                "--driver-bin",
+                driver.to_str().unwrap(),
+            ];
+            args.extend_from_slice(extra);
+            let e = setup_run(&home, &manager, &args, true).await.unwrap_err();
+            assert!(matches!(e, CuaError::InvalidArgument(_)), "{e:?}");
+            assert_eq!(crate::exit_code(&e), 2);
+            let text = e.to_string();
+            assert!(text.contains("host setup failed at preflight:"), "{text}");
+            assert!(
+                text.contains("use --share desktop, spaces or both"),
+                "{text}"
+            );
+            assert!(!home.join("host").join("config.json").exists());
+            assert!(manager.calls.lock().unwrap().is_empty());
+        }
+        assert_eq!(relay.register_calls(), 0);
+    }
+
+    #[test]
+    fn share_conflicts_with_the_old_flags_and_rejects_other_values() {
+        for old in [
+            &["--profile", "spare"][..],
+            &["--desktop"][..],
+            &["--no-desktop"][..],
+            &["--provide-spaces"][..],
+            &["--no-provide-spaces"][..],
+        ] {
+            let mut args = vec!["setup", "--share", "both"];
+            args.extend_from_slice(old);
+            let e = try_parse(&args).unwrap_err();
+            assert_eq!(
+                e.kind(),
+                clap::error::ErrorKind::ArgumentConflict,
+                "{old:?}"
+            );
+        }
+        let e = try_parse(&["setup", "--share", "some"]).unwrap_err();
+        assert_eq!(e.kind(), clap::error::ErrorKind::InvalidValue);
+        assert!(
+            e.to_string()
+                .contains("[possible values: desktop, spaces, both, none]")
+        );
+        match try_parse(&["setup", "--pair", "K7QM-4XPB-2RHD", "--share", "spaces"]).unwrap() {
+            HostCmd::Setup { pair, share, .. } => assert_eq!(
+                (pair.as_deref(), share),
+                (Some("K7QM-4XPB-2RHD"), Some(HostShare::Spaces))
+            ),
+            other => panic!("{other:?}"),
+        }
+        // Help shows only --share.
+        let help = <HostCmd as clap::Subcommand>::augment_subcommands(clap::Command::new("host"))
+            .find_subcommand_mut("setup")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(help.contains("--share"), "{help}");
+        for old in [
+            "--profile",
+            "--no-desktop",
+            "--provide-spaces",
+            "--no-provide-spaces",
+        ] {
+            assert!(!help.contains(old), "{old} is hidden: {help}");
+        }
+    }
+
+    /// A computer configured to share nothing (`host config`) still refuses
+    /// `--share none`; the unchanged shortcut must not answer for it.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn share_none_is_refused_even_by_a_host_configured_to_share_nothing() {
+        let _env = crate::util::test_env::isolated();
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", None);
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = fixture_driver(dir.path());
+        // SAFETY: test_env::isolated holds the environment lock.
+        unsafe { std::env::set_var("CUA_SPACESD_BIN", &driver) };
+        let manager = Arc::new(FakeServiceManager::default());
+        setup_run(&home, &manager, &["setup", "--relay", &relay.url], true)
+            .await
+            .unwrap();
+        Host::new(&home)
+            .with_service_manager(manager.clone())
+            .configure(cua_host::HostSettingsChange {
+                share_desktop: Some(false),
+                provide_spaces: Some(false),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let e = setup_run(
+            &home,
+            &manager,
+            &["setup", "--relay", &relay.url, "--share", "none"],
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(crate::exit_code(&e), 2, "{e}");
+        assert!(
+            e.to_string()
+                .contains("use --share desktop, spaces or both"),
+            "{e}"
+        );
+    }
+
+    /// Setup again with `--share` applies both settings, and changes
+    /// nothing when they already match.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn setup_again_with_share_applies_only_a_change() {
+        let _env = crate::util::test_env::isolated();
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", None);
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = fixture_driver(dir.path());
+        // SAFETY: test_env::isolated holds the environment lock.
+        unsafe { std::env::set_var("CUA_SPACESD_BIN", &driver) };
+        let manager = Arc::new(FakeServiceManager::default());
+        let run = |share: &'static str| {
+            let (home, manager, url) = (home.clone(), manager.clone(), relay.url.clone());
+            async move {
+                setup_run(
+                    &home,
+                    &manager,
+                    &["setup", "--relay", &url, "--share", share],
+                    true,
+                )
+                .await
+                .unwrap()
+            }
+        };
+        let both = ((true, true), (true, true), false);
+        run("both").await;
+        assert_eq!(seen(&home, &manager), both);
+        assert_eq!(relay.register_calls(), 1);
+        let out = run("both").await;
+        assert!(out.contains("\"changed\":false"), "{out}");
+        assert_eq!((seen(&home, &manager), relay.register_calls()), (both, 1));
+        run("spaces").await;
+        assert_eq!(seen(&home, &manager), ((false, true), (false, true), true));
+        assert_eq!(relay.register_calls(), 2);
+        run("both").await;
+        assert_eq!(seen(&home, &manager), both);
+        assert_eq!(relay.register_calls(), 3);
+        run("desktop").await;
+        assert_eq!(seen(&home, &manager), ((true, false), (true, false), false));
+    }
+
+    /// The old flags re-run exactly as before `--share`: a flag that does
+    /// not name the desktop is not checked against it.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn old_flags_on_a_rerun_keep_mains_behaviour() {
+        let _env = crate::util::test_env::isolated();
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", None);
+        let dir = tempfile::tempdir().unwrap();
+        let driver = fixture_driver(dir.path());
+        // SAFETY: test_env::isolated holds the environment lock.
+        unsafe { std::env::set_var("CUA_SPACESD_BIN", &driver) };
+        let url = relay.url.clone();
+        let run =
+            |home: PathBuf, manager: Arc<FakeServiceManager>, flags: &'static [&'static str]| {
+                let url = url.clone();
+                async move {
+                    let mut args = vec!["setup", "--relay", &url];
+                    args.extend_from_slice(flags);
+                    setup_run(&home, &manager, &args, true).await.unwrap()
+                }
+            };
+        let spare = ((false, true), (false, true), true);
+        let home = dir.path().join("a");
+        let manager = Arc::new(FakeServiceManager::default());
+        run(home.clone(), manager.clone(), &["--profile", "spare"]).await;
+        assert_eq!(seen(&home, &manager), spare);
+        let calls = relay.register_calls();
+        let out = run(home.clone(), manager.clone(), &["--provide-spaces"]).await;
+        assert!(out.contains("\"changed\":false"), "{out}");
+        assert_eq!(
+            (seen(&home, &manager), relay.register_calls()),
+            (spare, calls)
+        );
+        run(home.clone(), manager.clone(), &["--no-provide-spaces"]).await;
+        assert_eq!(seen(&home, &manager), ((true, false), (true, false), false));
+        assert_eq!(relay.register_calls(), calls + 1);
+
+        let home = dir.path().join("b");
+        let manager = Arc::new(FakeServiceManager::default());
+        run(home.clone(), manager.clone(), &["--no-provide-spaces"]).await;
+        run(home.clone(), manager.clone(), &["--provide-spaces"]).await;
+        assert_eq!(seen(&home, &manager), ((true, true), (true, true), false));
     }
 }

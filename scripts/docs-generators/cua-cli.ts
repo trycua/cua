@@ -140,7 +140,7 @@ export const CLI_GROUPS: CliGroup[] = [
     slug: 'pool',
     title: 'Your pool',
     summary:
-      'Run Python functions on your pool, each member in a Space (`cua run`, `cua jobs`). Computers join with `cua host setup --no-desktop --provide-spaces` (or `--pair CODE` from `cua host pair`) and `cua cloud add aws`; `cua computers` lists them',
+      'Run Python functions on your pool, each member in a Space (`cua run`, `cua jobs`). Computers join with `cua host setup --share spaces` (or `--pair CODE` from `cua host pair`) and `cua cloud add aws`; `cua computers` lists them',
     commands: ['computers', 'run', 'jobs', 'compat'],
   },
   {

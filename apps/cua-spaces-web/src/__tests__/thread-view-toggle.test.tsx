@@ -14,7 +14,10 @@ import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
 stubBrowserApis();
-beforeEach(() => localStorage.removeItem(`cua-spaces:layout:${DEMO_THREAD_SPACE}`));
+beforeEach(() => {
+  localStorage.removeItem(`cua-spaces:layout:${DEMO_THREAD_SPACE}`);
+  localStorage.removeItem(`cua-spaces:stream-hidden:${DEMO_THREAD_SPACE}`);
+});
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
@@ -69,5 +72,74 @@ describe("call view and thread view", () => {
     cleanup();
     await mountApp(path, { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(q("[data-thread-layout]")).not.toBeNull());
+  });
+});
+
+describe("hiding the stream", () => {
+  const hiddenKey = `cua-spaces:stream-hidden:${DEMO_THREAD_SPACE}`;
+  const desktopRow = () => q("[data-stream-desktop]")!;
+
+  it("clicking the selected stream hides it and the thread takes the room; clicking again shows it; remembered per Space", async () => {
+    await mountApp(path, { failsCreates: false, listsGhost: false });
+    await waitFor(() => expect(q("[data-stream-desktop]")).not.toBeNull());
+    // Shown: the stream is drawn, the Desktop row is selected, and says it hides.
+    expect(q("[data-stream-surface]")).not.toBeNull();
+    expect(q("[data-call-divider]")).not.toBeNull();
+    expect(desktopRow().getAttribute("aria-current")).toBe("true");
+    expect(desktopRow().getAttribute("title")).toBe("Hide stream");
+
+    act(() => desktopRow().click());
+    // Hidden: only the thread (and composer); the stream is not drawn at all, so nothing stays connected.
+    await waitFor(() => expect(q("[data-thread-only]")).not.toBeNull());
+    expect(q("[data-stream-surface]")).toBeNull();
+    expect(q("[data-call-divider]")).toBeNull();
+    expect(q("[data-thread]")).not.toBeNull();
+    expect(q("[data-composer]")).not.toBeNull();
+    // It looks unselected, so the next click obviously shows it.
+    expect(desktopRow().getAttribute("aria-current")).toBeNull();
+    expect(desktopRow().getAttribute("title")).toBe("Show stream");
+    expect(localStorage.getItem(hiddenKey)).toBe("1");
+
+    // Remembered: the page opens again with the stream hidden.
+    cleanup();
+    await mountApp(path, { failsCreates: false, listsGhost: false });
+    await waitFor(() => expect(q("[data-thread-only]")).not.toBeNull());
+    expect(q("[data-stream-surface]")).toBeNull();
+
+    // Again: shown, and selected.
+    act(() => desktopRow().click());
+    await waitFor(() => expect(q("[data-stream-surface]")).not.toBeNull());
+    expect(q("[data-thread-only]")).toBeNull();
+    expect(desktopRow().getAttribute("aria-current")).toBe("true");
+    expect(localStorage.getItem(hiddenKey)).toBe("0");
+  });
+
+  it("picking another stream shows the stream again, and the row is the toggle from the keyboard too", async () => {
+    await mountApp(path, { failsCreates: false, listsGhost: false });
+    await waitFor(() => expect(q("[data-stream-window='w-firefox']")).not.toBeNull());
+    // A window that is not selected selects it (it does not hide anything).
+    act(() => q("[data-stream-window='w-firefox']")!.click());
+    await waitFor(() => expect(q("[data-stream-window='w-firefox']")!.getAttribute("aria-current")).toBe("true"));
+    expect(q("[data-stream-surface]")).not.toBeNull();
+    // Selected again: hides. Enter on a button is a click, so the row is keyboard accessible as it is.
+    act(() => q("[data-stream-window='w-firefox']")!.click());
+    await waitFor(() => expect(q("[data-thread-only]")).not.toBeNull());
+    expect(q("[data-stream-window='w-firefox']")!.tagName).toBe("BUTTON");
+    // Another stream: shown again and selected.
+    act(() => q("[data-stream-window='w-terminal']")!.click());
+    await waitFor(() => expect(q("[data-stream-surface]")).not.toBeNull());
+    expect(q("[data-stream-window='w-terminal']")!.getAttribute("aria-current")).toBe("true");
+    expect(localStorage.getItem(hiddenKey)).toBe("0");
+  });
+
+  it("hidden in thread view: no mini-player either", async () => {
+    localStorage.setItem(`cua-spaces:layout:${DEMO_THREAD_SPACE}`, "thread");
+    await mountApp(path, { failsCreates: false, listsGhost: false });
+    await waitFor(() => expect(q("[data-mini-player]")).not.toBeNull());
+    act(() => desktopRow().click());
+    await waitFor(() => expect(q("[data-mini-player]")).toBeNull());
+    expect(q("[data-thread-layout]")).not.toBeNull();
+    act(() => desktopRow().click());
+    await waitFor(() => expect(q("[data-mini-player]")).not.toBeNull());
   });
 });

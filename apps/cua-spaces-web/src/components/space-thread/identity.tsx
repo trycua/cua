@@ -5,7 +5,7 @@
  * Who an agent in the thread is (CUA-2262): the quiet AI tag after its
  * name, its owner after the tag when another agent uses the same name, and
  * the card that hovering or clicking the name opens. The agent sets its
- * name, icon and the harness it reports; the owner, the computer it posts
+ * name, icon and the harness it reports; the owner, the machine it posts
  * from and how it joined come from its member record, so the card marks
  * those two as checked by Cua.
  */
@@ -106,7 +106,7 @@ function Fact({ label, children, title }: { label: string; children: ReactNode; 
 }
 
 /**
- * The agent's card: the owner and the computer (checked by Cua), how and
+ * The agent's card: the owner and the machine (checked by Cua), how and
  * when it joined, its harness as it reported it, who can task, stop and
  * approve it, and Remove from Space for whoever may.
  */
@@ -184,7 +184,7 @@ export function ProvenanceCard({
         </div>
       ) : null}
       <p className="mt-2.5 text-[11.5px] leading-snug text-muted-foreground">
-        {harness && i.origin === "external" ? "Name, icon and harness are set by the agent." : "The name and icon are set by the agent."} Owner and computer are checked by Cua.
+        {harness && i.origin === "external" ? "Name, icon and harness are set by the agent." : "The name and icon are set by the agent."} Owner and machine are checked by Cua.
       </p>
       {onRemove || onActivity ? (
         <div className="mt-3 flex items-center">

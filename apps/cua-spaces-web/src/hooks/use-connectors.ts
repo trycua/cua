@@ -82,6 +82,8 @@ export interface Connectors {
   detail(agent: string): AppDetailView | null;
   /** The provider sheet open now. */
   sheet: ProviderSheetView | null;
+  /** The app it was opened for (its other providers are offered in it). */
+  sheetApp: string | null;
   /** One Connect for an app: Cua's tools, then its sign-in (its token command, or the provider's sheet). */
   connectApp(agent: string): Promise<ConnectOutcome>;
   openProvider(provider: string, forApp?: string | null): void;
@@ -104,7 +106,7 @@ export function useConnectors(): Connectors {
   const st = useConnectState();
   const input = connectorsInputOf(apps.rows, keys.input, { auto: app.auto === true, off: app.off, busy: st.busy, failures: st.failures, shellKeys: st.shellKeys });
   const view = connectorsView(core, input);
-  const sheet = st.sheet ? providerSheet(core, input, st.sheet.provider) : null;
+  const sheet = st.sheet ? providerSheet(core, input, st.sheet.provider, undefined, st.sheet.forApp) : null;
 
   const reload = useCallback(async () => {
     await Promise.all([apps.reload(), keys.refresh()]);
@@ -293,6 +295,7 @@ export function useConnectors(): Connectors {
     view,
     detail: (agent) => appDetail(core, input, agent),
     sheet,
+    sheetApp: st.sheet?.forApp ?? null,
     connectApp,
     openProvider: (provider, forApp = null) => {
       set({ sheet: { provider, forApp } });

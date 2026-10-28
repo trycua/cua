@@ -169,6 +169,7 @@ export {
   type JoinCodeState,
   type JoinRequest,
   type JoinMethod,
+  type LiveAgent,
   type MemberEvent,
   type MemberIdentity,
   type MemberRef,

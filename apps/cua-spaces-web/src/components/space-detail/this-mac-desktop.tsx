@@ -72,6 +72,7 @@ export function ThisMacCall({
       entries: [],
       members: [],
       shares: [],
+      live: [],
       me: "me",
       role: null,
       error: null,

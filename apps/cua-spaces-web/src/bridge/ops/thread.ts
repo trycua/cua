@@ -173,8 +173,24 @@ export interface ThreadView {
 /** Your role in the Space, as the owner daemon sees you: a guest reads only. */
 export type ThreadRole = "owner" | "admin" | "member" | "guest" | "agent";
 
+/** What one agent is doing now, for the thread's live row (`thread_read`'s `live`). */
+export interface LiveAgent {
+  /** The agent's handle (`@hermes-test`). */
+  agent: string;
+  /** In a few plain words: `starting`, `installing`, `thinking`, `replying` or `using Bash`. */
+  stage: string;
+}
+
+/** Every agent with a turn on its way, and a key that changes when any stage does. */
+export interface ThreadLive {
+  key: string;
+  agents: LiveAgent[];
+}
+
 export interface ThreadPage {
   entries: ThreadEntry[];
+  /** Who is at work now. Absent from a daemon that does not say: nobody. */
+  live: ThreadLive;
   /** The last seq this page covers: the next read's `after`. */
   cursor: number;
   caughtUp: boolean;
@@ -259,6 +275,8 @@ export interface ThreadReadArgs {
   markRead?: boolean;
   /** Long-poll up to this long (0..25000 ms) for entries after `after`. */
   followMs?: number;
+  /** With `followMs`: the `live.key` last seen; the wait also ends when it changes. */
+  liveAfter?: string | null;
   /** Only your DM with this agent member (its handle, CUA-2266): paging, `unread` and `markRead` apply to the DM. */
   with?: string | null;
 }
@@ -427,6 +445,7 @@ export function threadReadArgs(a: ThreadReadArgs): Json {
   if (a.markRead) out.mark_read = true;
   if (a.followMs) out.follow_ms = Math.max(0, Math.min(THREAD_FOLLOW_MAX_MS, Math.round(a.followMs)));
   if (a.with) out.with = a.with;
+  if (a.liveAfter != null && a.followMs) out.live_after = a.liveAfter;
   return out;
 }
 
@@ -749,7 +768,20 @@ export function threadPageFromTool(v: unknown): ThreadPage {
     me: (me ? str(me.id) : str(p.me)) || null,
     hasMoreBefore: p.has_more_before === true,
     role: ROLES.includes(p.role as ThreadRole) ? (p.role as ThreadRole) : null,
+    live: threadLiveFromTool(p.live),
   };
+}
+
+/** `live` of a `thread_read` answer: who is at work and at what stage. */
+export function threadLiveFromTool(v: unknown): ThreadLive {
+  const o = obj(v) ?? {};
+  const agents = (Array.isArray(o.agents) ? o.agents : []).flatMap((a): LiveAgent[] => {
+    const r = obj(a);
+    const agent = str(r?.agent);
+    const stage = str(r?.stage);
+    return agent && stage ? [{ agent, stage }] : [];
+  });
+  return { key: str(o.key), agents };
 }
 
 /** `thread_post`'s answer: the entry it wrote (bare, or under `entry`). */

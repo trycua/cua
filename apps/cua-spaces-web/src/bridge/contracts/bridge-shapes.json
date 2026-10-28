@@ -9018,6 +9018,36 @@
             "$ref": "#/$defs/ThreadEntry"
           }
         },
+        "live": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "stage": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent",
+                  "stage"
+                ]
+              }
+            }
+          },
+          "required": [
+            "key",
+            "agents"
+          ]
+        },
         "cursor": {
           "type": "number"
         },
@@ -9055,6 +9085,7 @@
       },
       "required": [
         "entries",
+        "live",
         "cursor",
         "caughtUp",
         "unread",

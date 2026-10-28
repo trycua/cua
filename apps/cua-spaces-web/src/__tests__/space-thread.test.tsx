@@ -43,7 +43,9 @@ describe("a Space's thread", () => {
     await mountApp(path, { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(qa("[data-task]").length).toBeGreaterThan(2), { timeout: 4000 });
     expect(q("[data-call-layout]")).not.toBeNull();
-    expect(qa("[data-task-chip]").map((c) => c.dataset.taskChip)).toEqual(expect.arrayContaining(["done", "working", "queued"]));
+    // The state is kept for logic only: no Working or Failed chip on anyone's message.
+    expect(qa("[data-task]").map((t) => t.dataset.taskState)).toEqual(expect.arrayContaining(["done", "working", "queued"]));
+    expect(qa("[data-task-chip]")).toHaveLength(0);
     // Claude Code's reply sits inside the task it answers, with its files.
     const done = q('[data-task-state="done"]')!;
     expect(done.querySelector("[data-task-replies] [data-attachment='report.html']")).not.toBeNull();
@@ -86,6 +88,51 @@ describe("a Space's thread", () => {
     // The demo's Hermes picks it up and answers under it.
     await waitFor(() => expect(mine.dataset.taskState).toBe("done"), { timeout: 4000 });
     expect(mine.querySelector("[data-task-replies]")?.textContent).toContain("Done.");
+  });
+
+  it("shows a live row for an agent at work: within a second, each stage in order, gone when it replies", async () => {
+    await mountApp(path, { failsCreates: false, listsGhost: false, demo: { stepMs: 250 } });
+    const box = await waitFor(() => {
+      const el = q("[data-composer]") as HTMLTextAreaElement | null;
+      expect(el?.disabled).toBe(false);
+      return el!;
+    });
+    // The stages the row passes through, as they change.
+    const seen: string[] = [];
+    const watch = () => {
+      const stage = q("[data-live-row='hermes']")?.getAttribute("data-live-stage");
+      if (stage && seen[seen.length - 1] !== stage) seen.push(stage);
+    };
+    const observer = new MutationObserver(watch);
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-live-stage"] });
+    fireEvent.change(box, { target: { value: "@hermes draft the release note", selectionStart: 30 } });
+    const sent = Date.now();
+    await act(async () => {
+      fireEvent.keyDown(box, { key: "Enter" });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    // Cold start: the row is there at once, "is starting" with its dots, in the agent's name.
+    const row = await waitFor(() => {
+      const r = q("[data-live-row='hermes']");
+      expect(r).not.toBeNull();
+      return r!;
+    });
+    expect(Date.now() - sent).toBeLessThan(1000);
+    expect(row.textContent).toContain("Hermes is starting");
+    expect(row.querySelector("[data-live-dots]")).not.toBeNull();
+    // The member list says the same word, never the task's text.
+    expect(q("[data-member='agent:hermes']")?.textContent).not.toContain("draft the release note");
+    // It clears when the reply arrives.
+    const mine = qa("[data-task]").find((el) => el.textContent?.includes("draft the release note"))!;
+    await waitFor(() => expect(mine.dataset.taskState).toBe("done"), { timeout: 6000 });
+    await waitFor(() => expect(q("[data-live-row]")).toBeNull());
+    observer.disconnect();
+    expect(seen).toEqual(["starting", "installing", "starting", "thinking", "using Bash"]);
+    // "woke up and joined" came after the agent was up, not before.
+    expect(qa("[data-thread-note]").map((n) => n.textContent)).toContain("Hermes woke up and joined");
+    // No middle dot in the thread or the member list.
+    expect(q("[data-thread]")!.textContent).not.toContain("\u00b7");
+    expect(q("[data-members]")!.textContent).not.toContain("\u00b7");
   });
 
   it("approves what an agent asked", async () => {

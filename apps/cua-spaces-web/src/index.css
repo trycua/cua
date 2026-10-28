@@ -273,3 +273,30 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* The thread's live row: three dots that pulse in turn. */
+@keyframes live-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.live-dot {
+  animation: live-dot 1.2s infinite both;
+}
+.live-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.live-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+}

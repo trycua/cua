@@ -411,7 +411,11 @@ extension WebUIBridge {
             if let before = args["before"] as? NSNumber { out["before"] = before }
             if let limit = args["limit"] as? NSNumber { out["limit"] = limit }
             if args["markRead"] as? Bool == true { out["mark_read"] = true }
-            if let follow = (args["followMs"] as? NSNumber)?.intValue, follow > 0 { out["follow_ms"] = min(follow, 25_000) }
+            if let follow = (args["followMs"] as? NSNumber)?.intValue, follow > 0 {
+                out["follow_ms"] = min(follow, 25_000)
+                // The stage key last seen: the wait also ends when an agent's stage changes.
+                if let live = args["liveAfter"] as? String { out["live_after"] = live }
+            }
             // The Agents tab's DM with one agent member (CUA-2266).
             if let with = args["with"] as? String, !with.isEmpty { out["with"] = with }
             return ("thread_read", out)

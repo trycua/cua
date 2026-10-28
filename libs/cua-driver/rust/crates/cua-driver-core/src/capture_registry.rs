@@ -663,6 +663,13 @@ struct RegistryInner {
     next_sequence: u64,
 }
 
+/// What a successful bound lookup does with the capture.
+#[derive(Clone, Copy)]
+enum OnSuccess {
+    Keep,
+    Consume,
+}
+
 pub struct CaptureRegistry {
     config: CaptureRegistryConfig,
     clock: Arc<dyn MonotonicClock>,
@@ -787,94 +794,53 @@ impl CaptureRegistry {
         id: CaptureId,
         binding: &CaptureBinding,
     ) -> Result<PerceptionCapture, CaptureLookupError> {
-        let now = self.clock.now();
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner
-            .captures
-            .get(&id)
-            .is_some_and(|capture| capture.expires_at <= now)
-        {
-            self.remove_capture(&mut inner, id);
-            self.remember_expired(&mut inner, id);
-            return Err(CaptureLookupError::Expired);
-        }
-        let capture = inner.captures.get(&id).ok_or_else(|| {
-            if inner.expired_ids.contains(&id) {
-                CaptureLookupError::Expired
-            } else {
-                CaptureLookupError::Unknown
-            }
-        })?;
-        if capture.binding != *binding {
-            return Err(CaptureLookupError::GenerationMismatch);
-        }
-        Ok(PerceptionCapture(capture.clone()))
+        self.lookup_bound(id, binding, OnSuccess::Keep, |capture| {
+            Ok(PerceptionCapture(capture.clone()))
+        })
     }
 
     fn admit_action(
         &self,
         request: CaptureActionRequest,
     ) -> Result<CaptureActionAdmission, CaptureActionError> {
-        let now = self.clock.now();
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner
-            .captures
-            .get(&request.capture_id)
-            .is_some_and(|capture| capture.expires_at <= now)
-        {
-            self.remove_capture(&mut inner, request.capture_id);
-            self.remember_expired(&mut inner, request.capture_id);
-            return Err(CaptureLookupError::Expired.into());
-        }
-        let capture = inner.captures.get(&request.capture_id).ok_or_else(|| {
-            if inner.expired_ids.contains(&request.capture_id) {
-                CaptureLookupError::Expired
-            } else {
-                CaptureLookupError::Unknown
-            }
-        })?;
-        if capture.binding != request.binding {
-            return Err(CaptureLookupError::GenerationMismatch.into());
-        }
-        if capture.target != request.target {
-            return Err(CaptureLookupError::TargetMismatch.into());
-        }
-        if capture.native_action_dimensions != request.current_native_action_dimensions {
-            return Err(CaptureActionError::NativeActionFrameMismatch);
-        }
-        let max_x = f64::from(capture.encoded_dimensions.width);
-        let max_y = f64::from(capture.encoded_dimensions.height);
-        if !request.screenshot_x.is_finite()
-            || !request.screenshot_y.is_finite()
-            || request.screenshot_x < 0.0
-            || request.screenshot_y < 0.0
-            || request.screenshot_x >= max_x
-            || request.screenshot_y >= max_y
-        {
-            return Err(CaptureActionError::InvalidScreenshotPoint);
-        }
-        let (action_x, action_y) = capture
-            .screenshot_to_action
-            .apply(request.screenshot_x, request.screenshot_y);
-        if !action_x.is_finite() || !action_y.is_finite() {
-            return Err(CaptureActionError::InvalidMappedPoint);
-        }
-        let admission = CaptureActionAdmission {
-            capture_id: capture.id,
-            target: capture.target.clone(),
-            action_x,
-            action_y,
-            native_action_dimensions: capture.native_action_dimensions,
-            digest: capture.digest,
-        };
-        self.remove_capture(&mut inner, request.capture_id);
-        Ok(admission)
+        self.lookup_bound(
+            request.capture_id,
+            &request.binding,
+            OnSuccess::Consume,
+            |capture| {
+                if capture.target != request.target {
+                    return Err(CaptureLookupError::TargetMismatch.into());
+                }
+                if capture.native_action_dimensions != request.current_native_action_dimensions {
+                    return Err(CaptureActionError::NativeActionFrameMismatch);
+                }
+                let max_x = f64::from(capture.encoded_dimensions.width);
+                let max_y = f64::from(capture.encoded_dimensions.height);
+                if !request.screenshot_x.is_finite()
+                    || !request.screenshot_y.is_finite()
+                    || request.screenshot_x < 0.0
+                    || request.screenshot_y < 0.0
+                    || request.screenshot_x >= max_x
+                    || request.screenshot_y >= max_y
+                {
+                    return Err(CaptureActionError::InvalidScreenshotPoint);
+                }
+                let (action_x, action_y) = capture
+                    .screenshot_to_action
+                    .apply(request.screenshot_x, request.screenshot_y);
+                if !action_x.is_finite() || !action_y.is_finite() {
+                    return Err(CaptureActionError::InvalidMappedPoint);
+                }
+                Ok(CaptureActionAdmission {
+                    capture_id: capture.id,
+                    target: capture.target.clone(),
+                    action_x,
+                    action_y,
+                    native_action_dimensions: capture.native_action_dimensions,
+                    digest: capture.digest,
+                })
+            },
+        )
     }
 
     /// Atomically remove and return the capture for exactly one action attempt.
@@ -895,38 +861,17 @@ impl CaptureRegistry {
         target: &CaptureTarget,
         consume: bool,
     ) -> Result<StoredCapture, CaptureLookupError> {
-        let now = self.clock.now();
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner
-            .captures
-            .get(&id)
-            .is_some_and(|capture| capture.expires_at <= now)
-        {
-            self.remove_capture(&mut inner, id);
-            self.remember_expired(&mut inner, id);
-            return Err(CaptureLookupError::Expired);
-        }
-        let capture = inner.captures.get(&id).ok_or_else(|| {
-            if inner.expired_ids.contains(&id) {
-                CaptureLookupError::Expired
-            } else {
-                CaptureLookupError::Unknown
+        let on_success = if consume {
+            OnSuccess::Consume
+        } else {
+            OnSuccess::Keep
+        };
+        self.lookup_bound(id, binding, on_success, |capture| {
+            if capture.target != *target {
+                return Err(CaptureLookupError::TargetMismatch);
             }
-        })?;
-        if capture.binding != *binding {
-            return Err(CaptureLookupError::GenerationMismatch);
-        }
-        if capture.target != *target {
-            return Err(CaptureLookupError::TargetMismatch);
-        }
-        let capture = capture.clone();
-        if consume {
-            self.remove_capture(&mut inner, id);
-        }
-        Ok(capture)
+            Ok(capture.clone())
+        })
     }
 
     pub fn retire(
@@ -934,6 +879,21 @@ impl CaptureRegistry {
         id: CaptureId,
         binding: &CaptureBinding,
     ) -> Result<(), CaptureLookupError> {
+        self.lookup_bound(id, binding, OnSuccess::Consume, |_| Ok(()))
+    }
+
+    /// The one lookup path for a bound capture. Refuses in a fixed order:
+    /// `Expired` (TTL elapsed now, which removes the capture and records a
+    /// tombstone, or tombstoned earlier), then `Unknown`, then
+    /// `GenerationMismatch`, then whatever `check` refuses. Only when `check`
+    /// succeeds does `OnSuccess::Consume` remove the capture.
+    fn lookup_bound<T, E: From<CaptureLookupError>>(
+        &self,
+        id: CaptureId,
+        binding: &CaptureBinding,
+        on_success: OnSuccess,
+        check: impl FnOnce(&StoredCapture) -> Result<T, E>,
+    ) -> Result<T, E> {
         let now = self.clock.now();
         let mut inner = self
             .inner
@@ -946,7 +906,7 @@ impl CaptureRegistry {
         {
             self.remove_capture(&mut inner, id);
             self.remember_expired(&mut inner, id);
-            return Err(CaptureLookupError::Expired);
+            return Err(CaptureLookupError::Expired.into());
         }
         let capture = inner.captures.get(&id).ok_or_else(|| {
             if inner.expired_ids.contains(&id) {
@@ -956,10 +916,13 @@ impl CaptureRegistry {
             }
         })?;
         if capture.binding != *binding {
-            return Err(CaptureLookupError::GenerationMismatch);
+            return Err(CaptureLookupError::GenerationMismatch.into());
         }
-        self.remove_capture(&mut inner, id);
-        Ok(())
+        let value = check(capture)?;
+        if matches!(on_success, OnSuccess::Consume) {
+            self.remove_capture(&mut inner, id);
+        }
+        Ok(value)
     }
 
     pub fn retire_session(&self, binding: &CaptureBinding) -> usize {
@@ -1350,6 +1313,190 @@ mod tests {
             screenshot_x: 0.5,
             screenshot_y: 0.5,
         }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum LookupEntry {
+        PerceptionBound,
+        Perception,
+        Consume,
+        Admit,
+        Retire,
+    }
+
+    const ALL_LOOKUP_ENTRIES: [LookupEntry; 5] = [
+        LookupEntry::PerceptionBound,
+        LookupEntry::Perception,
+        LookupEntry::Consume,
+        LookupEntry::Admit,
+        LookupEntry::Retire,
+    ];
+
+    /// Calls one lookup entry point. Arguments an entry point does not accept
+    /// (target, native frame, screenshot point) are ignored for it.
+    fn call_entry(
+        registry: &CaptureRegistry,
+        entry: LookupEntry,
+        id: CaptureId,
+        binding: &CaptureBinding,
+        target: &CaptureTarget,
+        native: (u32, u32),
+        point: (f64, f64),
+    ) -> Result<(), CaptureActionError> {
+        match entry {
+            LookupEntry::PerceptionBound => registry
+                .read_for_perception_bound(id, binding)
+                .map(drop)
+                .map_err(Into::into),
+            LookupEntry::Perception => registry
+                .read_for_perception(id, binding, target)
+                .map(drop)
+                .map_err(Into::into),
+            LookupEntry::Consume => registry
+                .consume_for_action(id, binding, target)
+                .map(drop)
+                .map_err(Into::into),
+            LookupEntry::Admit => {
+                let mut request = action_request(id, binding.clone(), target.clone(), native);
+                request.screenshot_x = point.0;
+                request.screenshot_y = point.1;
+                registry.admit_action(request).map(drop)
+            }
+            LookupEntry::Retire => registry.retire(id, binding).map_err(Into::into),
+        }
+    }
+
+    #[test]
+    fn lookup_refusal_precedence_is_shared_by_every_entry_point() {
+        let clock = Arc::new(ManualClock::default());
+        let registry = CaptureRegistry::with_clock(config(64, 1_000_000), clock.clone()).unwrap();
+        let owner = binding(5, "session-a", 1);
+        let stale = binding(5, "session-a", 2);
+        let target = CaptureTarget::Window {
+            pid: 42,
+            window_id: 7,
+        };
+        let other_target = CaptureTarget::PrimaryDesktop;
+        let good = (2, 2);
+        let resized = (3, 2);
+        let inside = (0.5, 0.5);
+        let outside = (5.0, 5.0);
+        let store = || {
+            registry
+                .store(registration(png(2, 2, 1), target.clone(), owner.clone()))
+                .unwrap()
+        };
+        let lookup = |code: CaptureLookupError| Err(CaptureActionError::Lookup(code));
+
+        for entry in ALL_LOOKUP_ENTRIES {
+            // Expired beats every other mismatch, and leaves a tombstone.
+            let id = store();
+            clock.advance(Duration::from_secs(10));
+            assert_eq!(
+                call_entry(
+                    &registry,
+                    entry,
+                    id,
+                    &stale,
+                    &other_target,
+                    resized,
+                    outside
+                ),
+                lookup(CaptureLookupError::Expired),
+                "{entry:?} expired"
+            );
+            assert_eq!(
+                call_entry(&registry, entry, id, &owner, &target, good, inside),
+                lookup(CaptureLookupError::Expired),
+                "{entry:?} tombstone"
+            );
+
+            // Unknown beats a binding mismatch.
+            let unknown = CaptureId {
+                namespace: [0; 16],
+                sequence: 999,
+            };
+            assert_eq!(
+                call_entry(&registry, entry, unknown, &stale, &target, good, inside),
+                lookup(CaptureLookupError::Unknown),
+                "{entry:?} unknown"
+            );
+
+            // Binding mismatch beats target and frame, and keeps the capture.
+            let id = store();
+            assert_eq!(
+                call_entry(
+                    &registry,
+                    entry,
+                    id,
+                    &stale,
+                    &other_target,
+                    resized,
+                    outside
+                ),
+                lookup(CaptureLookupError::GenerationMismatch),
+                "{entry:?} generation"
+            );
+            assert_eq!(
+                call_entry(&registry, entry, id, &owner, &target, good, inside),
+                Ok(()),
+                "{entry:?} after generation mismatch"
+            );
+        }
+
+        // Target mismatch beats frame, and keeps the capture.
+        for entry in [
+            LookupEntry::Perception,
+            LookupEntry::Consume,
+            LookupEntry::Admit,
+        ] {
+            let id = store();
+            assert_eq!(
+                call_entry(
+                    &registry,
+                    entry,
+                    id,
+                    &owner,
+                    &other_target,
+                    resized,
+                    outside
+                ),
+                lookup(CaptureLookupError::TargetMismatch),
+                "{entry:?} target"
+            );
+            assert_eq!(
+                call_entry(&registry, entry, id, &owner, &target, good, inside),
+                Ok(()),
+                "{entry:?} after target mismatch"
+            );
+        }
+
+        // Frame mismatch beats the coordinate checks, and keeps the capture.
+        let id = store();
+        assert_eq!(
+            call_entry(
+                &registry,
+                LookupEntry::Admit,
+                id,
+                &owner,
+                &target,
+                resized,
+                outside
+            ),
+            Err(CaptureActionError::NativeActionFrameMismatch)
+        );
+        assert_eq!(
+            call_entry(
+                &registry,
+                LookupEntry::Admit,
+                id,
+                &owner,
+                &target,
+                good,
+                inside
+            ),
+            Ok(())
+        );
     }
 
     #[test]

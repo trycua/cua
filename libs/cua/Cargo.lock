@@ -2740,6 +2740,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "windows 0.58.0",
  "windows-sys 0.61.2",
 ]
 

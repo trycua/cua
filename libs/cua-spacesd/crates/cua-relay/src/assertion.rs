@@ -64,7 +64,21 @@ pub struct AssertionClaims {
     /// predate it ignore the field, and an assertion without it parses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub teams: Vec<String>,
+    /// A thread grant ([`THREAD_ROLE`]): the one Space (relay machine id)
+    /// the machine provides whose thread the account may reach, because
+    /// that Space is shared with it. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    /// A thread grant's role on that Space: `viewer` or `shared`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_role: Option<String>,
 }
+
+/// The `role` of a thread grant: an account the machine is not shared with
+/// reaching the thread of one Space it provides ([`AssertionClaims::space`]).
+/// A machine that predates it refuses the call (the role is neither
+/// `viewer` nor `shared`).
+pub const THREAD_ROLE: &str = "thread";
 
 /// Seconds since the Unix epoch.
 pub fn now_secs() -> u64 {
@@ -248,6 +262,32 @@ fn temp_parts(path: &std::path::Path) -> (&std::path::Path, String) {
     (dir, name)
 }
 
+/// Removes `path`; `Ok(false)` when someone else removed it first.
+///
+/// On Windows a file another thread or process is deleting stays "delete
+/// pending" until that deleter closes its handle, and opening it meanwhile
+/// (which `remove_file` does) fails with ERROR_ACCESS_DENIED rather than
+/// not-found. That state lasts only until the other delete completes, so
+/// wait for it briefly and then see the file gone.
+pub(crate) fn remove_if_present(path: &std::path::Path) -> std::io::Result<bool> {
+    let mut attempt = 0;
+    loop {
+        match std::fs::remove_file(path) {
+            Ok(()) => return Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e)
+                if cfg!(windows)
+                    && e.kind() == std::io::ErrorKind::PermissionDenied
+                    && attempt < 100 =>
+            {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 /// Deletes the temp files [`write_private`] leaves next to `path` when the
 /// process dies mid-write (an OOM kill): `.<name>.<uuid>.tmp`, which also
 /// covers sibling files named `<name>.<suffix>`. Each can be as large as
@@ -272,19 +312,15 @@ pub fn remove_stale_temps(path: &std::path::Path) -> std::io::Result<(usize, u64
         // Gone between the listing and here (its writer renamed it): fine.
         let meta = match entry.metadata() {
             Ok(m) => m,
-            Err(e) if crate::storage::temp_vanished(&e, &entry.path()) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => return Err(e),
         };
         if !meta.is_file() {
             continue;
         }
-        match std::fs::remove_file(entry.path()) {
-            Ok(()) => {
-                files += 1;
-                bytes += meta.len();
-            }
-            Err(e) if crate::storage::temp_vanished(&e, &entry.path()) => {}
-            Err(e) => return Err(e),
+        if remove_if_present(&entry.path())? {
+            files += 1;
+            bytes += meta.len();
         }
     }
     if files > 0 {
@@ -566,6 +602,8 @@ mod tests {
             exp: now + ttl,
             jti: "j".into(),
             teams: Vec::new(),
+            space: None,
+            space_role: None,
         }
     }
 

@@ -28,6 +28,12 @@ struct Args {
     /// Host-mode domain: `<computer-id>.<domain>` routes to that computer.
     #[arg(long, env = "CUA_RELAY_HOST_DOMAIN")]
     host_domain: Option<String>,
+    /// With a host domain, keep serving `/m/<computer-id>/…` on the main
+    /// origin too (`on` / `off`): for clients that build path-mode URLs
+    /// themselves. Browsers that open a path-mode share link are sent to
+    /// the share's own origin.
+    #[arg(long, env = "CUA_RELAY_KEEP_PATH_MODE", default_value = "off")]
+    keep_path_mode: String,
     /// Maximum computers per registration token.
     #[arg(long, env = "CUA_RELAY_MAX_MACHINES_PER_TOKEN", default_value_t = 16)]
     max_machines_per_token: usize,
@@ -88,6 +94,14 @@ struct Args {
     /// Public base URL (assertion issuer and computer URLs).
     #[arg(long, env = "CUA_RELAY_PUBLIC_URL")]
     public_url: Option<String>,
+    /// Computer joins admitted per second once the burst is used (a restart
+    /// brings every computer back at once; the rest are told to retry
+    /// shortly). 0: no limit.
+    #[arg(long, env = "CUA_RELAY_JOIN_RATE_PER_SEC", default_value_t = cua_relay::join_limit::DEFAULT_JOIN_RATE_PER_SEC)]
+    join_rate_per_sec: f64,
+    /// Computer joins admitted at once.
+    #[arg(long, env = "CUA_RELAY_JOIN_BURST", default_value_t = cua_relay::join_limit::DEFAULT_JOIN_BURST)]
+    join_burst: u32,
     /// Maximum computers per account.
     #[arg(long, env = "CUA_RELAY_MAX_MACHINES_PER_ACCOUNT", default_value_t = 32)]
     max_machines_per_account: usize,
@@ -406,11 +420,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let relay = Relay::try_new(RelayConfig {
         tokens,
         max_machines_per_token: args.max_machines_per_token,
+        join_rate_per_sec: args.join_rate_per_sec,
+        join_burst: args.join_burst,
         max_streams_per_machine: args.max_streams_per_machine,
         max_global_streams: args.max_global_streams,
         machine_max_streams: args.machine_max_streams,
         machine_window_bytes: args.machine_window_bytes,
         machine_idle_timeout: Duration::from_secs(args.idle_secs.max(5)),
+        keep_path_mode: on_off("CUA_RELAY_KEEP_PATH_MODE", &args.keep_path_mode)?,
         host_domain: args.host_domain,
         admin_token: args.admin_token.filter(|t| !t.is_empty()),
         require_client_credentials: !args.allow_anonymous_clients,

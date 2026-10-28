@@ -260,40 +260,53 @@ sent none.
 
 The stronger fix, also shipped in code: set `CUA_RELAY_HOST_DOMAIN` to a
 **separate registrable domain** from the one the account API and viewer
-live on (for example `m.relay.cua.ai` under `relay.cua.ai`'s parent zone,
-or better, an entirely different domain such as `cua-relay.net`, the way
-GitHub serves `github.dev`/`app.github.dev` off `github.com`). Once set:
+live on, the way GitHub serves `github.dev` off `github.com`. The hosted
+relay uses `m.cua.sh` (`relay.cua.ai` keeps the account API; staging uses
+`m.staging.cua.sh`). A domain of its own matters twice: a page on it can
+never set cookies for the account domain, and if someone shares something
+malicious, reputation systems flag the share's domain, not the account
+domain. Listing the host domain on the Public Suffix List (as `m.cua.sh` is
+requested to be) also stops one share's origin from setting cookies for
+every other share. Once set:
 
 - every machine gets `https://<id>.<host_domain>` (`Relay::machine_url`,
-  what `GET /v1/machines` reports as each machine's `url`);
+  what `GET /v1/machines` reports as each machine's `url`), and each share
+  its own origin under it (below);
 - path mode (`/m/<id>/…`) stops forwarding on the main origin entirely
   (`route()` refuses it with 404), so a machine's response is never reached
-  by a request to `relay.cua.ai` itself, and cookies, storage and a Service
+  by a request to the relay's own origin, and cookies, storage and a Service
   Worker a rogue machine sets can only ever apply to *its own* subdomain,
   never to the relay's own pages or to a different machine's subdomain
   (browsers isolate by origin, and a subdomain is a different origin).
 
-This needs a **DNS and TLS change outside this repo** (cloud, not code):
+**Keeping path mode (`CUA_RELAY_KEEP_PATH_MODE=on`).** Clients that build
+`<relay>/m/<id>` URLs themselves (older `cua` builds, and anything that
+saved such a URL) keep working when this is on: `/m/<id>/…` is still
+forwarded on the main origin, with every response hardened as above (no
+cookies, no rendered HTML outside the viewer). The one exception is an old
+path-mode share link opened by a browser: a request for
+`/m/<id>/share/<key>/…` or `/m/<id>/share/pub/<token>/…` that carries no
+account credential header gets a `308` to the same path on the share's own
+origin (`<s|p><key>-<id prefix>.<host_domain>/…`). A tool that sends a
+bearer token keeps getting path mode. The hosted relay runs with this on
+while older clients are in use; turning it off is the full S6 setting.
 
-1. **DNS.** Add a wildcard record for the machine domain, for example
-   `*.m.relay.cua.ai` (or the whole separate domain), pointing at the same
-   Traefik/load balancer `relay.cua.ai` already uses. Keep it DNS-only /
-   no-proxy, the way `relay.cua.ai` itself is set up, so the TLS handshake
-   reaches Traefik directly.
-2. **TLS.** Issue a wildcard certificate for `*.m.relay.cua.ai` (cert-manager
-   `Certificate` with DNS-01, since HTTP-01 cannot prove a wildcard; the
-   existing `relay.cua.ai` cert uses HTTP-01 and does not cover this). Add
-   the wildcard host to the `IngressRoute`/`IngressRouteTCP` that fronts the
-   relay pod, routed to the same Service.
-3. **Deploy.** Set `CUA_RELAY_HOST_DOMAIN=m.relay.cua.ai` (or the chosen
-   domain) on the relay Deployment and keep `CUA_RELAY_PUBLIC_URL` pointing
-   at the account-API origin (`https://relay.cua.ai`) unchanged.
-4. **Clients.** Nothing to change: clients already follow the `url` the
-   directory API reports per machine (`Relay::machine_url`); they do not
-   hardcode `/m/<id>`.
+Deploying a host domain needs DNS and TLS outside this repo:
 
-See the PR report for exact copy-pasteable manifest and DNS steps for this
-deployment.
+1. **DNS.** A wildcard record for the machine domain (for example
+   `*.m.cua.sh`) pointing at the same Traefik/load balancer the relay's own
+   origin uses. Keep it DNS-only / no proxy, the way `relay.cua.ai` is set
+   up, so the TLS handshake and long-lived WebSockets reach Traefik
+   directly.
+2. **TLS.** A wildcard certificate for it (cert-manager `Certificate` with
+   DNS-01, since HTTP-01 cannot prove a wildcard). Add the wildcard host to
+   an `IngressRoute` that fronts the relay pod (gRPC to the h2c scheme like
+   the main origin), routed to the same Service.
+3. **Deploy.** Set `CUA_RELAY_HOST_DOMAIN` (and `CUA_RELAY_KEEP_PATH_MODE=on`
+   while clients still use path mode) on the relay Deployment and keep
+   `CUA_RELAY_PUBLIC_URL` pointing at the account-API origin unchanged.
+4. **Clients.** Share links follow the `url` the directory API reports per
+   machine; nothing to change.
 
 ## Share links (`cua share`)
 
@@ -415,6 +428,8 @@ register machines: `CUA_RELAY_TOKENS`/`CUA_RELAY_TOKEN_FILE` or
 | `CUA_RELAY_TOKENS` | unset | Static mode: comma-separated registration tokens. |
 | `CUA_RELAY_TOKEN_FILE` | unset | Static mode: one token per line (`#` comments). |
 | `CUA_RELAY_MAX_MACHINES_PER_TOKEN` | `16` | Static mode: machines per registration token. |
+| `CUA_RELAY_JOIN_RATE_PER_SEC` | `250` | Computer joins admitted per second once the burst is used. A restart brings every computer back at once: the rest get `503` with a jittered `Retry-After`, which the join client honours. `0` turns the limit off. |
+| `CUA_RELAY_JOIN_BURST` | `500` | Computer joins admitted at once. |
 | `CUA_RELAY_ALLOW_ANONYMOUS_CLIENTS` | off | Static mode: also forward requests without a spacesd credential. |
 | `CUA_RELAY_HOST_DOMAIN` | unset | Host mode: `<machine-id>.<domain>` routes to that machine, and path mode (`/m/<id>/…`) refuses on the main origin (S6; see "Machine origin" below). |
 | `CUA_RELAY_ADMIN_TOKEN` | unset | Enables `GET /relay/v1/machines`. |

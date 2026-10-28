@@ -19,6 +19,7 @@ import type {
   HostStatus,
   MachinePageRow,
   MachineRow,
+  CloudsInput,
   MachinesView,
   SettingsInput,
   SettingsPage,
@@ -363,12 +364,23 @@ export interface Machine {
   accessNotice?: MachineAccessNotice;
 }
 
+/** The words for a machine's Spaces, as the core says them
+ * (`machines::spaces_label`, and `machines::desktop_spaces_label` when the
+ * machine shares its own desktop). */
+export function machineSpacesLabel(desktop: boolean, n: number): string {
+  const count = n === 0 ? "No Spaces" : `${n} Space${n === 1 ? "" : "s"}`;
+  if (!desktop) return count;
+  return n === 0 ? "Desktop shared" : `Desktop and ${count}`;
+}
+
 /** One Machines row as the core lists it, from the page's own machine
  * (an older host's rows, merged here): the core draws the page from it. */
-function pageRowOf(m: Machine, spaces: readonly Space[]): MachinePageRow {
+function pageRowOf(m: Machine, spaces: readonly Space[], core?: CoreClient): MachinePageRow {
   const own = m.current ? spaces.find((s) => s.id === "this-mac") : spaces.find((s) => s.id === `relay:${m.id}`);
   // The Spaces on it, never its own desktop (`machines::page_rows`).
   const n = spaces.filter((s) => (m.current ? s.provider === "local" && s.id !== "this-mac" : s.host === m.id)).length;
+  // Its own desktop is shared (`machines::page_rows`).
+  const desktop = Boolean(own && m.online && !m.notSharing && (m.current ? own.status === "local" : sharesDesktop(core, own) !== false));
   return {
     id: m.id,
     name: m.name,
@@ -383,7 +395,7 @@ function pageRowOf(m: Machine, spaces: readonly Space[]): MachinePageRow {
     lastSeen: m.lastSeen ?? null,
     status: m.status ?? (!m.online ? "Offline" : m.notSharing ? "Not sharing" : "Online"),
     spaces: n,
-    spacesLabel: m.spacesLabel ?? (m.device ? "" : n === 0 ? "No Spaces" : `${n} Space${n === 1 ? "" : "s"}`),
+    spacesLabel: m.spacesLabel ?? (m.device ? "" : machineSpacesLabel(desktop, n)),
   };
 }
 
@@ -394,7 +406,15 @@ function pageRowOf(m: Machine, spaces: readonly Space[]): MachinePageRow {
  */
 export function machinesView(
   core: CoreClient | undefined,
-  input: { hostView: MachinesView | null; machines: readonly Machine[]; spaces: readonly Space[]; host: object | null; nowSecs?: number },
+  input: {
+    hostView: MachinesView | null;
+    machines: readonly Machine[];
+    spaces: readonly Space[];
+    host: object | null;
+    nowSecs?: number;
+    /** The clouds (`cloud_status`, read by `cloudsInput`): the Clouds group. */
+    clouds?: CloudsInput | null;
+  },
 ): MachinesView | null {
   if (input.hostView) return input.hostView;
   const current = input.machines.find((m) => m.current);
@@ -403,8 +423,9 @@ export function machinesView(
     core?.tryCall<MachinesView>("machines.view", {
       input: {
         page: { hostOs, spaces: input.spaces, now: input.nowSecs ?? Math.floor(Date.now() / 1000) },
-        rows: input.machines.map((m) => pageRowOf(m, input.spaces)),
+        rows: input.machines.map((m) => pageRowOf(m, input.spaces, core)),
         host: input.host,
+        clouds: input.clouds ?? null,
       },
     }) ?? null
   );
@@ -599,20 +620,20 @@ export function hostPanelFromState(core: CoreClient, state: object | null, statu
 }
 
 function fallbackPanel(s: HostStatus | null): HostPanelView {
-  const base: HostPanelView = { title: "This computer", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
+  const base: HostPanelView = { title: "This machine", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
   if (!s) return base;
   if (!s.configured) {
-    return { ...base, summary: "Your other devices can’t reach this computer yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
+    return { ...base, summary: "Your other machines can’t reach this machine yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
   }
   const via = s.mode === "direct" ? "Direct" : "Relay";
   const summary = !s.service.running ? "Host service stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
-  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this computer’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
+  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this machine’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
   return {
     ...base,
     summary,
     configured: true,
     facts: [
-      { label: "Name", value: s.name || "This computer" },
+      { label: "Name", value: s.name || "This machine" },
       { label: "Access", value: access },
       { label: "Service", value: `${s.service.kind} · ${s.service.running ? "running" : s.service.installed ? "stopped" : "not installed"}` },
     ],
@@ -623,10 +644,10 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
 }
 
 const FALLBACK_INTRO =
-  "This is the computer you’re using now. Set it up so you, your teammates and your AI agents can use it from other devices. Cua connects them for you, with no network setup.";
+  "This is the machine you’re using now. Set it up so you, your teammates and your AI agents can use it from other machines. Cua connects them for you, with no network setup.";
 const FALLBACK_CHOICES: HostSetupChoice[] = [
-  { id: "desktop", label: "Let my other devices use this computer", buttonLabel: "Set Up…" },
-  { id: "spare", label: "Run Spaces here and keep its screen private", buttonLabel: "Set Up…" },
+  { id: "desktop", label: "Let other machines create Spaces and control this desktop", buttonLabel: "Set Up…" },
+  { id: "spare", label: "Let other machines create Spaces here", buttonLabel: "Set Up…" },
 ];
 
 /** What "Add a machine" explains: the core's words for host setup, as the
@@ -680,11 +701,14 @@ export function settingsPage(
     keyvaultSiteIcons: settings.hostSettings?.keyvaultSiteIcons ?? true,
     keyvaultProtection: settings.hostSettings?.keyvaultProtection ?? [],
     autoConnect: settings.hostSettings?.autoConnect ?? null,
-    lumeSource: settings.hostSettings?.lumeSource ?? null,
-    linuxSource: settings.hostSettings?.linuxSource ?? null,
+    overflow: settings.hostSettings?.overflow ?? null,
+    // Every host's runtimes section; what the host read fills it in.
+    runtimes: settings.hostSettings?.runtimes ?? null,
     agents: agents?.agents ?? null,
     agentsBusy: agents?.agentsBusy ?? false,
     agentsPending: agents?.agentsPending ?? [],
+    // General's Show tips (`AppSettings.tips.off`; on by default).
+    showTips: !(settings.values.tips?.off ?? false),
   };
   return core.tryCall<SettingsPage>("settings.page", { input }) ?? null;
 }
@@ -855,7 +879,7 @@ function fallbackListView(i: { loaded: boolean; incomplete: boolean; reaching: n
     : !i.incomplete
       ? null
       : i.reaching === 0
-        ? "Reaching your computers…"
-        : `Reaching ${i.reaching} computer${i.reaching === 1 ? "" : "s"}…`;
+        ? "Reaching your machines…"
+        : `Reaching ${i.reaching} machine${i.reaching === 1 ? "" : "s"}…`;
   return { empty: i.loaded && !i.incomplete && i.count === 0, reachingLine };
 }

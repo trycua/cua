@@ -1,0 +1,55 @@
+Agents in a Space: add, send, ls, rm, schedule; run, logs, stop
+
+Usage: cua agent [OPTIONS] <COMMAND>
+
+Commands:
+  add              Add an agent: a name, a harness and a Space
+  run              Start a coding agent in a sandbox (returns at once unless --follow)
+  ls               List your agents, or with SANDBOX the runs in it [alias: list]
+  logs             Print a run's normalized events (--follow to stream)
+  send             Message a named agent (`send NAME TEXT`), or send a follow-up to a run (`send SANDBOX RUN_ID TEXT`, queued while a turn runs)
+  interrupt        Cancel the turn in flight (the session stays open)
+  stop             Stop a run and verify it is gone
+  status           A run's status and last result
+  rm               Remove a named agent (its home stays in the Cua Volume), or stop a run and delete its record (secrets included)
+  ensure           Install harnesses or apps now (`claude-code`, `blender`, ...)
+  schedule         A named agent's schedules: turns the daemon starts with or without the app open
+  sessions         Durable sessions: agents your machines keep alive (`run --durable`)
+  harnesses        The harnesses: readiness, installs, key variables, limits
+  keys             The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connectors). Values are read from stdin and never printed
+  create           Deprecated alias of `add`. Creates a named agent whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space
+  persistent       Deprecated alias of `ls` (without a sandbox). Lists named agents
+  tell             Deprecated alias of `send NAME TEXT`. Gives a named agent a turn (starts a run with its home restored, or follows up on its idle run)
+  save             Save a persistent agent's home into the drive now
+  pause            Pause a persistent agent: its run, its routines, and its Space (suspended when local; a cloud Space is released after the home is saved)
+  resume           Resume a paused persistent agent
+  forget           Deprecated alias of `rm NAME`. Forgets a named agent (its home stays in the Cua Volume)
+  routine          Deprecated alias of `schedule`. A named agent's schedules
+  allow-computer   Let a persistent agent use one of your computers (asks for presence)
+  revoke-computer  Take a persistent agent's computer access back
+  computer-access  Which agents may use which computers, and the audit log
+  notifications    The notifications the Cua app shows (turn ends, notify_user, requests)
+  help             Print this message or the help of the given subcommand(s)
+
+Options:
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --json
+          Print JSON
+
+  -h, --help
+          Print help

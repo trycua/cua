@@ -4,25 +4,26 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 
-import { Loader2Icon, LogOutIcon, TriangleAlertIcon } from "lucide-react";
+import { Loader2Icon, TriangleAlertIcon } from "lucide-react";
 
 import type { SignInFooter, Space } from "@/bridge";
 import { spokenName } from "@/bridge/space-names";
 
-import { signInFooter, useBridge, useFeatureRecorded, useMachines, useNotifications, useRelayUsageView, useSession, useSpaces, useTrackPlanClick } from "@/bridge";
+import { signInFooter, useBridge, useFeatureRecorded, useMachines, useNotifications, useSession, useSpaces } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
-import { Tooltip } from "@/components/ui/tooltip";
 import { bindingFor } from "@/lib/keybindings";
-import { realSpaces, spaceState } from "@/lib/spaces";
+import { useListedSpaces } from "@/components/spaces/listed";
+import { spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
 import { Shortcut } from "@/components/ui/kbd";
 import { SignInLink } from "@/components/sign-in-link";
 import { useNavItems } from "./nav";
 import { SidebarUpdateButton } from "./update-indicator";
-import { SidebarGetStarted } from "@/components/getting-started";
+import { SidebarTip } from "@/components/tips";
+import { AccountLine, ProBanner } from "./account-area";
 
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
@@ -31,7 +32,8 @@ export function Sidebar() {
   const notifications = useNotifications();
   // No count before the list was read (not "0" while the daemon starts); while computers still answer, the
   // Spaces known so far.
-  const spacesCount = spaces && listStatus.loaded ? realSpaces(spaces).length : undefined;
+  const { counted } = useListedSpaces(spaces);
+  const spacesCount = spaces && listStatus.loaded ? counted.length : undefined;
   const counts: Partial<Record<string, number>> = { "/spaces": spacesCount, "/machines": machines?.length };
   const navItems = useNavItems();
   const unread = notifications.data?.unread ?? 0;
@@ -53,7 +55,7 @@ export function Sidebar() {
             <Link
               key={item.to}
               to={item.to}
-              className="group flex h-7 items-center gap-2.5 rounded-md px-2 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-[status=active]:bg-foreground/[0.07] data-[status=active]:font-medium data-[status=active]:text-foreground dark:data-[status=active]:bg-white/[0.08]"
+              className="group flex h-7 items-center gap-2.5 rounded-lg px-2 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-[status=active]:bg-foreground/[0.07] data-[status=active]:font-medium data-[status=active]:text-foreground dark:data-[status=active]:bg-white/[0.08]"
             >
               {({ isActive }) => (
                 <>
@@ -76,11 +78,15 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <div className="mt-auto">
-        <SidebarCreating spaces={spaces ?? []} />
-        <SidebarGetStarted />
-        <AccountFooter trailing={<SidebarUpdateButton />} />
-      </div>
+      {/* A spacer, not a wrapper pushed down: what appears at the foot (a tip, the account) grows
+          upward without moving anything already drawn (CUA-1951). */}
+      <div className="flex-1" />
+      <SidebarCreating spaces={spaces ?? []} />
+      <SidebarTip />
+      {/* Free only: "Run more Spaces at once with Pro", right above the account line. */}
+      <ProBanner />
+      {/* A ready update is a compact button at the end of the account line. */}
+      <AccountFooter trailing={<SidebarUpdateButton />} />
       <ResizeHandle />
     </aside>
   );
@@ -118,15 +124,13 @@ function SidebarCreating({ spaces }: { spaces: Space[] }) {
 }
 
 /** The account and its sign-in, every state in one place (the core's
- * `signIn.footer`): signed in as, waiting for the browser with the code,
+ * `signIn.footer`): the account line (`AccountLine`), waiting for the browser with the code,
  * Open again and Cancel, or why it failed with Try again and a toast. And a
  * way back into a first run left halfway. `trailing` (the update button)
  * sits at the far right of its first row. */
 export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
   const { core } = useBridge();
-  const { data: session, signIn, signOut, cancelSignIn, openExternal } = useSession();
-  const plan = useRelayUsageView()?.planCard;
-  const trackPlanClick = useTrackPlanClick();
+  const { data: session, signIn, cancelSignIn, openExternal } = useSession();
   const [details, setDetails] = useState(false);
   const footer = session
     ? signInFooter(core, {
@@ -148,8 +152,6 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
   if (!session || !footer) return <div className="mt-auto flex h-12 items-center justify-end border-t px-3">{trailing}</div>;
 
   const unfinished = !session.onboarding.completed;
-  const run = (f: () => Promise<unknown>, what: string) =>
-    f().catch((e: unknown) => toast(what, { description: e instanceof Error ? e.message : String(e) }));
   // A failure is shown here with its reason (and the toast): nothing to add.
   const startSignIn = () => {
     setDetails(false);
@@ -165,45 +167,18 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
   const identity = footer.identity || (session.signedIn ? "Signed in" : null);
 
   return (
-    <div className="mt-auto border-t px-3 py-2.5" data-signin={footer.state}>
+    <div className={cn("mt-auto", footer.state === "signedIn" ? "px-2.5 pt-1 pb-2.5" : "border-t px-3 py-2.5")} data-signin={footer.state}>
       {unfinished ? (
         <Link to="/onboarding" className="mb-2 block text-xs text-muted-foreground hover:text-foreground">
           Finish setting up
         </Link>
       ) : null}
       {footer.state === "signedIn" && identity ? (
-        <div className="flex items-center gap-2.5">
-          <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-2xs font-semibold text-muted-foreground uppercase">
-            {identity.slice(0, 1)}
+        // One line: the initial and the name (or email); its menu has Settings, Plan and Sign out.
+        <div className="flex items-center gap-1">
+          <div className="min-w-0 flex-1">
+            <AccountLine identity={identity} />
           </div>
-          <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-xs" title={footer.text} data-signin-identity="">
-              <span className="block text-2xs text-muted-foreground">Signed in as </span>
-              <span className="block truncate font-medium">{identity}</span>
-            </div>
-            {plan?.primary ? (
-              // The current plan, always visible; on Free it opens Pro's checkout.
-              <button
-                type="button"
-                data-account-plan={plan.plan}
-                className="block max-w-full truncate text-left text-2xs text-muted-foreground hover:text-foreground"
-                onClick={() => {
-                  trackPlanClick("account_menu");
-                  void openExternal(plan.primary!.url.replace("from=app_plan_card", "from=app_account_menu")).catch(() => {});
-                }}
-              >
-                {plan.label}
-                {plan.plan === "free" ? " · Upgrade" : ""}
-              </button>
-            ) : null}
-          </div>
-          {session.account.authMode === "user" ? (
-            <Tooltip content="Sign out" side="top">
-              <Button variant="ghost" size="icon-sm" aria-label="Sign out" onClick={() => void run(signOut, "Couldn't sign out")}>
-                <LogOutIcon className="size-3.5 text-muted-foreground" />
-              </Button>
-            </Tooltip>
-          ) : null}
           {trailing}
         </div>
       ) : footer.state === "starting" || footer.state === "waiting" ? (

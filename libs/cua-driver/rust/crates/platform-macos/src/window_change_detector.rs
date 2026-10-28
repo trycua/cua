@@ -91,6 +91,11 @@ pub struct Changes {
     /// skipped it or the poll task was lost: an empty `new_windows` then means
     /// nothing was watched, not that nothing opened.
     pub polled: bool,
+    /// The caller passed `post_action_wait: "none"`: the result did not wait
+    /// for a change, and the watch runs detached (see
+    /// [`cua_driver_core::post_action_wait`]). The result says so instead of
+    /// reporting "no change".
+    pub deferred: bool,
 }
 
 impl Changes {
@@ -101,6 +106,7 @@ impl Changes {
             earlier_new_windows: Vec::new(),
             earlier_foreground_changed: false,
             polled: true,
+            deferred: false,
         }
     }
 
@@ -116,6 +122,15 @@ impl Changes {
         Self {
             polled: false,
             ..Self::no_change()
+        }
+    }
+
+    /// The result returned without waiting for a change; the watch went on
+    /// detached.
+    pub fn deferred() -> Self {
+        Self {
+            deferred: true,
+            ..Self::not_polled()
         }
     }
 
@@ -144,6 +159,10 @@ impl Changes {
                 "\n\n🔀 After the previous action returned, a different app became frontmost.",
             );
         }
+        if self.deferred {
+            suffix.push_str(DEFERRED_NOTE);
+            return suffix;
+        }
         if !self.needs_restore() {
             return suffix;
         }
@@ -159,6 +178,12 @@ impl Changes {
         suffix
     }
 }
+
+/// Result suffix for an action whose caller skipped the window-change wait.
+pub(crate) const DEFERRED_NOTE: &str =
+    "\n\n⏭️ Window changes not observed: post_action_wait \"none\" \
+     returned without waiting. A new window or foreground change seen afterwards is reported \
+     on the next action's result.";
 
 /// `App ("Title", …); Other` for a result suffix, grouped by app name.
 fn window_summaries(windows: &[WindowEvent]) -> String {
@@ -445,6 +470,12 @@ impl Snapshot {
             return Changes::not_polled().with_earlier(earlier);
         }
         let started = Instant::now();
+        if report_window.is_zero() {
+            // The caller skipped the wait: the whole deadline runs detached,
+            // lease held, exactly as the remainder of a quiet poll does.
+            self.continue_detached(started + bounds.timeout, bounds.poll, observe);
+            return Changes::deferred().with_earlier(earlier);
+        }
         let report = report_window.min(bounds.timeout);
         let mut observe = observe;
         let changes = match self.poll_until(started + report, bounds.poll, &mut observe) {
@@ -465,7 +496,13 @@ impl Snapshot {
         // A step of a batch returns after a shorter report window, because
         // the next step follows at once. The pacing is read here: a blocking
         // thread does not inherit the task's batch marker.
-        let report_window = cua_driver_core::step_pacing::report_window(REPORT_WINDOW);
+        // `post_action_wait: "none"` skips the wait altogether.
+        let report_window = match cua_driver_core::post_action_wait::current() {
+            cua_driver_core::post_action_wait::PostActionWait::None => Duration::ZERO,
+            cua_driver_core::post_action_wait::PostActionWait::Default => {
+                cua_driver_core::step_pacing::report_window(REPORT_WINDOW)
+            }
+        };
         // Move the Snapshot (and its embedded lease) onto the blocking
         // thread; the lease's Drop runs there when detect_with returns.
         tokio::task::spawn_blocking(move || {
@@ -979,6 +1016,53 @@ mod tests {
             },
         );
         assert_eq!(changes.new_windows.len(), 1);
+    }
+
+    /// `post_action_wait: "none"` (a zero report window) returns at once
+    /// without observing, says so, and hands the whole deadline to the
+    /// detached watch, which still records a late window.
+    #[test]
+    fn a_skipped_wait_returns_at_once_and_watches_detached() {
+        let _serial = lock(&TAIL_TEST_LOCK);
+        end_tail();
+        lock(&LATE).take();
+        let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed_opened = opened.clone();
+        let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), false, None);
+        let started = Instant::now();
+        let changes = snap.detect_bounded_reporting(
+            observation_bounds_from(Some("2000"), Some("10")),
+            Duration::ZERO,
+            move || {
+                if observed_opened.load(Ordering::SeqCst) {
+                    (
+                        vec![win(1, 7, "App", "Main"), win(2, 7, "App", "Save")],
+                        Some(7),
+                    )
+                } else {
+                    (vec![win(1, 7, "App", "Main")], Some(7))
+                }
+            },
+        );
+        let elapsed = started.elapsed();
+        assert!(changes.deferred && !changes.polled);
+        assert!(!changes.needs_restore());
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "returned after {elapsed:?}"
+        );
+        assert_eq!(changes.result_suffix(), DEFERRED_NOTE);
+        assert!(lock(&TAIL).is_some(), "the deadline runs detached");
+        opened.store(true, Ordering::SeqCst);
+        let wait_until = Instant::now() + Duration::from_secs(2);
+        while lock(&LATE).is_none() && Instant::now() < wait_until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            take_late().is_some_and(|late| late.new_windows.len() == 1),
+            "the detached watch records the late window"
+        );
+        end_tail();
     }
 
     /// A deadline inside the report window behaves as before: no tail.

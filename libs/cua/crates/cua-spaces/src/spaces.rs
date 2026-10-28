@@ -239,6 +239,10 @@ pub struct PendingSpace {
     pub phase: &'static str,
 }
 
+/// How long a connection made without the cua-spacesd its image publishes
+/// is kept before the next use dials again.
+const SPACESD_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Builder for [`Spaces`].
 #[derive(Default)]
 pub struct SpacesBuilder {
@@ -366,6 +370,7 @@ impl SpacesBuilder {
                 relay: std::sync::RwLock::new(self.relay),
                 resources: crate::resources::Hub::new(),
                 relay_cache: std::sync::Mutex::new(Vec::new()),
+                team_facts: std::sync::Mutex::new(Default::default()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
                 relay_read: tokio::sync::Mutex::new(None),
                 relay_confirmed: std::sync::atomic::AtomicBool::new(false),
@@ -393,6 +398,7 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         } else {
             m.name.clone()
         },
+        display_name: String::new(),
         provider: Provider::Relay,
         spacesd_version: m.version.clone(),
         features: vec![],
@@ -449,6 +455,7 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         created_at_unix: 0,
         egress: Default::default(),
         egress_enforced: None,
+        sharing: None,
     }
 }
 
@@ -580,6 +587,8 @@ pub(crate) struct Inner {
     pub(crate) resources: Arc<crate::resources::Hub>,
     /// The last directory listing (so `list` and `resolve` stay sync).
     pub(crate) relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,
+    /// Team names and roles from the Spaces API ([`crate::sharing`]).
+    pub(crate) team_facts: std::sync::Mutex<crate::sharing::TeamFacts>,
     /// What each relay machine's cua-spacesd said about itself when this
     /// process last connected to it (by `relay:<id>`): the directory
     /// listing carries no OS, so without it a Mac lists as Linux.
@@ -680,19 +689,34 @@ impl Spaces {
         // A Space this machine provides is in the registry as a local Space,
         // and its relay machine lists it again under the host: once, as the
         // local one (CUA-1527).
-        let provided_here: std::collections::HashSet<String> =
+        let provided: Vec<cua_host::provided::ProvidedSpace> =
             cua_host::provided::load_provided(&cua_host::Host::new(self.home_dir()).paths().dir)
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|p| out.iter().any(|i| i.id == p.local_space))
-                .map(|p| p.relay_machine)
                 .collect();
+        let facts = self.team_facts();
+        let provided_here: std::collections::HashSet<String> =
+            provided.iter().map(|p| p.relay_machine.clone()).collect();
         let cache = self.inner.relay_cache.lock().expect("relay cache");
+        // Its name on the relay is the one your other devices see: a rename
+        // there (from another device) shows here too. The name it was
+        // registered with (or its machine id, when it had none) is no
+        // rename.
+        let relay_names: Vec<(String, String)> = provided
+            .iter()
+            .filter_map(|p| {
+                let m = cache.iter().find(|m| m.id == p.relay_machine)?;
+                (!m.name.is_empty() && m.name != p.name && m.name != p.relay_machine)
+                    .then(|| (p.local_space.clone(), m.name.clone()))
+            })
+            .collect();
         for m in cache.iter() {
             if provided_here.contains(&m.id) {
                 continue;
             }
             let mut info = relay_info(m);
+            info.sharing = Some(crate::sharing::sharing_of(m, &facts));
             self.apply_reported(&mut info, m.online);
             self.apply_volumes(&mut info);
             if !info.host.is_empty() {
@@ -734,8 +758,17 @@ impl Spaces {
             }
         }
         drop(cache);
+        #[cfg(feature = "spaces-agents")]
+        self.apply_attached_sharing(&mut out);
         self.mark_durable(&mut out);
         self.apply_meta(&mut out);
+        for (local, relay_name) in relay_names {
+            if let Some(info) = out.iter_mut().find(|i| i.id == local)
+                && relay_name != info.name
+            {
+                info.display_name = relay_name;
+            }
+        }
         Ok(out)
     }
 
@@ -760,6 +793,7 @@ impl Spaces {
             tracing::debug!("relay directory skipped: not signed in");
             self.forget_account_computers();
         }
+        self.refresh_team_facts().await;
         self.list()
     }
 
@@ -1040,6 +1074,15 @@ impl Spaces {
             .filter(|(r, id)| r.name == space || id.short_name() == space)
             .map(|(_, id)| id)
             .collect();
+        // The name it was renamed to.
+        for (key, m) in self.inner.registry.all_meta() {
+            if m.display_name == space
+                && let Ok(id) = SpaceId::parse(&key)
+                && !matches.contains(&id)
+            {
+                matches.push(id);
+            }
+        }
         for m in self.inner.relay_cache.lock().expect("relay cache").iter() {
             let id = SpaceId::Relay {
                 machine_id: m.id.clone(),
@@ -1211,6 +1254,7 @@ impl Spaces {
         Ok(info.unwrap_or_else(|| SpaceInfo {
             id: id.to_string(),
             name: id.short_name().into(),
+            display_name: String::new(),
             provider: id.provider(),
             spacesd_version: String::new(),
             features: vec![],
@@ -1240,6 +1284,7 @@ impl Spaces {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            sharing: None,
         }))
     }
 
@@ -1275,6 +1320,9 @@ impl Spaces {
         let lifetimes = crate::lifetimes::all(self.home_dir());
         for info in infos {
             if let Some(m) = meta.get(&info.id) {
+                if !m.display_name.is_empty() {
+                    info.display_name = m.display_name.clone();
+                }
                 info.labels = m.labels.clone();
                 if m.created_at_unix > 0 {
                     info.created_at_unix = m.created_at_unix;
@@ -1311,6 +1359,9 @@ impl Spaces {
         for r in records {
             r.created_at_unix = r.added_at.as_ref().map_or(0, |t| t.seconds.max(0));
             if let Some(m) = meta.get(&r.id) {
+                if !m.display_name.is_empty() {
+                    r.display_name = m.display_name.clone();
+                }
                 r.labels = m
                     .labels
                     .iter()
@@ -1348,6 +1399,7 @@ impl Spaces {
             && self.inner.registry.get(&id.to_string())?.is_none()
         {
             let mut info = relay_info(m);
+            info.sharing = Some(crate::sharing::sharing_of(m, &self.team_facts()));
             self.apply_reported(&mut info, m.online);
             self.apply_volumes(&mut info);
             return Ok(info);
@@ -1559,6 +1611,16 @@ impl Spaces {
         // Bound first: the cache's guard must be gone before the lock is
         // taken again below.
         let cached = self.inner.connections.lock().await.get(&key).cloned();
+        // Connected while its cua-spacesd didn't answer (the Space was still
+        // waking, as after a daemon restart): dial again, or the Space stays
+        // without spacesd until it is restarted and agents can't start there.
+        if let Some(s) = &cached
+            && s.spacesd_retry_due(SPACESD_RETRY_AFTER)
+        {
+            tracing::info!(space = %key, "no cua-spacesd answered when this connected; reconnecting");
+            self.inner.connections.lock().await.remove(&key);
+            return None;
+        }
         if let Some(s) = cached {
             let policy = |provided| {
                 if provided {
@@ -2368,9 +2430,38 @@ impl Spaces {
             spaces: self.clone(),
             journal: Some(journal.clone()),
         };
-        cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
-            cua_sandbox_core::progress::Phase::Preparing,
-        ));
+        // A Space made on this computer shows on your other computers while
+        // it is created ([`crate::resources::creates`]): it leaves the list
+        // when this returns, fails, is cancelled or is dropped.
+        let on_board = (kind == "local").then(|| {
+            let hub = self.inner.resources.clone();
+            let os = opts
+                .image
+                .as_deref()
+                .map(crate::elastic::guest_os)
+                .unwrap_or_default();
+            hub.creates.start(&key.id, &key.name, &os);
+            crate::resources::creates::OnBoard {
+                board: hub,
+                id: key.id.clone(),
+            }
+        });
+        let outer = cua_sandbox_core::progress::current();
+        let sink: Option<cua_sandbox_core::progress::Sink> = on_board.as_ref().map(|b| {
+            let (hub, id) = (b.board.clone(), b.id.clone());
+            Arc::new(move |p: &CreateProgress| {
+                hub.creates.report(&id, p);
+                if let Some(outer) = &outer {
+                    outer(p);
+                }
+            }) as cua_sandbox_core::progress::Sink
+        });
+        cua_sandbox_core::progress::carry(sink.clone(), async {
+            cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
+                cua_sandbox_core::progress::Phase::Preparing,
+            ));
+        })
+        .await;
         let wants_volumes = !opts.volumes.is_empty();
         let volumes = opts.volumes.clone();
         let run = Box::pin(crate::creating::scope(
@@ -2414,6 +2505,7 @@ impl Spaces {
                 })
             }),
         ));
+        let run = cua_sandbox_core::progress::carry(sink, run);
         let result = tokio::select! {
             r = run => r,
             _ = flight.cancelled() => {

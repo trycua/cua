@@ -148,6 +148,8 @@ pub(crate) struct SpaceInner {
     /// Why no cua-spacesd answered when this connected (`endpoint`,
     /// `reason`), for a Space connected without one.
     pub(crate) spacesd_unavailable: std::sync::OnceLock<(String, String)>,
+    /// When that was noted ([`Space::spacesd_retry_due`]).
+    pub(crate) spacesd_unavailable_at: std::sync::OnceLock<std::time::Instant>,
 }
 
 /// A connected Space. Cheap to clone; every clone shares one spacesd
@@ -204,6 +206,7 @@ impl Space {
                 keepalive: Default::default(),
                 image_config: Default::default(),
                 spacesd_unavailable: Default::default(),
+                spacesd_unavailable_at: Default::default(),
             }),
         }
     }
@@ -432,6 +435,24 @@ impl Space {
 
     pub(crate) fn set_spacesd_unavailable(&self, endpoint: String, reason: String) {
         let _ = self.inner.spacesd_unavailable.set((endpoint, reason));
+        let _ = self
+            .inner
+            .spacesd_unavailable_at
+            .set(std::time::Instant::now());
+    }
+
+    /// Whether this connection was made without the cua-spacesd its image
+    /// publishes (it didn't answer then: the Space or its runtime was still
+    /// waking, as after a daemon restart) at least `after` ago, so a new
+    /// connection may find it. A Space whose image runs no cua-spacesd is
+    /// never due.
+    pub(crate) fn spacesd_retry_due(&self, after: std::time::Duration) -> bool {
+        self.inner.env.is_none()
+            && self
+                .inner
+                .spacesd_unavailable_at
+                .get()
+                .is_some_and(|at| at.elapsed() >= after)
     }
 
     /// When no cua-spacesd answered because this host has no route to a
@@ -570,6 +591,12 @@ pub struct SpaceInfo {
     pub id: String,
     /// Display name.
     pub name: String,
+    /// The name it was given with [`crate::Spaces::rename`], which apps
+    /// show in place of [`Self::name`]; empty when it keeps the one it was
+    /// created with. A relay machine is renamed on the relay, so its
+    /// `name` changes instead.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
     /// `local`, `direct` or `relay`.
     pub provider: Provider,
     /// spacesd version at the last handshake.
@@ -681,6 +708,11 @@ pub struct SpaceInfo {
     /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress_enforced: Option<crate::egress::Enforcement>,
+    /// A Space that is a machine on the relay: who owns it and who else
+    /// has it, as this account sees it ([`crate::sharing`]). `None` for
+    /// other Spaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<crate::sharing::SpaceSharing>,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -688,11 +720,22 @@ fn is_zero(n: &u64) -> bool {
 }
 
 impl SpaceInfo {
+    /// The name people see: [`Self::display_name`] when it was renamed,
+    /// else [`Self::name`].
+    pub fn shown_name(&self) -> &str {
+        if self.display_name.is_empty() {
+            &self.name
+        } else {
+            &self.display_name
+        }
+    }
+
     pub(crate) fn from_record(record: &cua_proto::daemon::v1::Space) -> Result<Self> {
         let id = SpaceId::parse(&record.id)?;
         Ok(Self {
             id: record.id.clone(),
             name: record.name.clone(),
+            display_name: record.display_name.clone(),
             provider: id.provider(),
             spacesd_version: record.spacesd_version.clone(),
             features: record.features.clone(),
@@ -734,6 +777,7 @@ impl SpaceInfo {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            sharing: record.sharing.clone().map(Into::into),
         })
     }
 }
@@ -800,6 +844,32 @@ fn humantime_rfc3339(at: std::time::SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn no_spacesd() -> Space {
+        Space::new(
+            SpaceId::Local {
+                name: "pipbox".into(),
+            },
+            "pipbox".into(),
+            None,
+            Default::default(),
+            None,
+            None,
+            BTreeMap::new(),
+        )
+    }
+
+    #[test]
+    fn a_space_connected_while_its_spacesd_was_waking_is_dialed_again() {
+        // Its image publishes cua-spacesd, which didn't answer then (the
+        // daemon restarted while the Space was still waking).
+        let s = no_spacesd();
+        s.set_spacesd_unavailable("127.0.0.1:7000".into(), "connection refused".into());
+        assert!(s.spacesd_retry_due(std::time::Duration::ZERO));
+        assert!(!s.spacesd_retry_due(std::time::Duration::from_secs(3600)));
+        // An image that runs no cua-spacesd is never dialed again for it.
+        assert!(!no_spacesd().spacesd_retry_due(std::time::Duration::ZERO));
+    }
 
     #[test]
     fn versions_compare_against_a_floor() {

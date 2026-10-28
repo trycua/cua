@@ -162,7 +162,7 @@ describe.skipIf(!built)("agents", () => {
     await p.send(new A.Select({ name: "ada" }));
     expect(p.view(now).detail?.memory.map((l) => l.text)).toEqual(["hermes/MEMORY.md"]);
     await p.send(new A.AllowComputer({ machine: "relay:0123" }));
-    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This computer"]);
+    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This machine"]);
     await p.send(new A.Resume({ name: "ada" }));
     expect(daemon.calls).toContain("agent_resume");
     expect(p.view(now).rows[0]!.state).toBe("Running");
@@ -274,6 +274,23 @@ describe.skipIf(!built)("agents", () => {
     expect(configured.find((r) => r.agent === "claude-code")?.configured).toBe(true);
     expect(shapeProblems("agents.configure", configured)).toEqual([]);
     expect(await code(bridge, "agents.configure", { agents: "codex" })).toBe("bad_args");
+  });
+
+  it("answers the connection status, connects and disconnects (CUA-2268)", async () => {
+    const { bridge } = makeBridge();
+    type Status = { agents: { id: string; state: string }[] };
+    const before = (await call(bridge, "agents.status", { refresh: true })) as Status;
+    expect(shapeProblems("agents.status", before)).toEqual([]);
+    const id = before.agents.find((a) => a.state === "not_connected")!.id;
+    const connected = await call(bridge, "agents.connect", { agents: [id] });
+    expect(shapeProblems("agents.connect", connected)).toEqual([]);
+    expect(setup.calls).toContain(`connect:${id}:false`);
+    const after = (await call(bridge, "agents.status", {})) as Status;
+    expect(after.agents.find((a) => a.id === id)?.state).not.toBe("not_connected");
+    const gone = await call(bridge, "agents.disconnect", { agents: [id] });
+    expect(shapeProblems("agents.disconnect", gone)).toEqual([]);
+    const last = (await call(bridge, "agents.status", {})) as Status;
+    expect(last.agents.find((a) => a.id === id)?.state).toBe("not_connected");
   });
 
   it("starts an agent's own sign-in on this computer, and the rows say when it is done", async () => {

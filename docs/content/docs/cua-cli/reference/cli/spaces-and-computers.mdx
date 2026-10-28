@@ -15,7 +15,7 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua spaces`](#cua-spaces) | Spaces: registered ones and your computers on the relay. |
 | [`cua spaces ls`](#cua-spaces-ls) | Registered Spaces and your computers on the relay. |
 | [`cua spaces add`](#cua-spaces-add) | Register a Space after a capabilities handshake with its cua-spacesd (or, for another URL, an MCP initialize). |
-| [`cua spaces create`](#cua-spaces-create) | Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --no-desktop --provide-spaces` there), or in your own cloud account. |
+| [`cua spaces create`](#cua-spaces-create) | Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --share spaces` there), or in your own cloud account. |
 | [`cua spaces prewarm`](#cua-spaces-prewarm) | Keep Spaces of one image ready where the elastic pool puts them, so the next creates of that shape start in a fraction of a second (`--list` shows the prewarms, `--remove ID` ends one). |
 | [`cua spaces egress`](#cua-spaces-egress) | Choose which destinations a Space may reach: block some, or block everything except a few. |
 | [`cua spaces cancel`](#cua-spaces-cancel) | Cancel a create that is still running (here, in the daemon, or in another terminal): it stops and what it made is removed. |
@@ -26,11 +26,14 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua spaces resize`](#cua-spaces-resize) | Give a local VM Space more or fewer vCPUs, more or less memory, or a bigger disk. |
 | [`cua spaces start`](#cua-spaces-start) | Turn a Space back on: resume a suspended one or boot a stopped one. |
 | [`cua spaces rm`](#cua-spaces-rm) | Forget a registered Space and its stored token. |
+| [`cua spaces rename`](#cua-spaces-rename) | Give a Space a new name; its id stays the same. |
 | [`cua spaces share`](#cua-spaces-share) | Let someone in your team watch (viewer) or use (editor) a Space, through the relay. |
 | [`cua spaces unshare`](#cua-spaces-unshare) | Stop sharing a Space with one account at once, or with everyone. |
 | [`cua spaces shares`](#cua-spaces-shares) | Who a Space is shared with, and who of them is connected now. |
 | [`cua spaces relay-register`](#cua-spaces-relay-register) | Publish a Space on the relay for your other devices (a phone off this network): its own driver dials out, as `cua host setup` does for this computer. |
 | [`cua spaces relay-unregister`](#cua-spaces-relay-unregister) | Take a Space off the relay (every share with it ends). |
+| [`cua machines`](#cua-machines) | Your computers on the relay: remove one that is gone. |
+| [`cua machines rm`](#cua-machines-rm) | Remove a computer that is gone: its row leaves your relay directory, then the signed-in device with exactly its name is revoked (never this device; nothing when several match). |
 | [`cua host`](#cua-host) | Unattended access to this computer (setup, status, stop, start, remove). |
 | [`cua host setup`](#cua-host-setup) | Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. |
 | [`cua host pair`](#cua-host-pair) | Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. |
@@ -146,13 +149,13 @@ cua spaces add 10.0.0.5:3211 --token "$TOKEN" --name studio
 cua spaces add local:my-sandbox
 cua spaces add http://127.0.0.1:8765/mcp --service tools
 
-# A computer that provides Spaces over Tailscale, without the relay (`cua host setup --direct ... --provide-spaces` on it prints this)
+# A computer that provides Spaces over Tailscale, without the relay (`cua host setup --direct ... --share both` on it prints this)
 cua spaces add 100.101.102.103:3211 --host --name "Mac mini (spare)" --token "$TOKEN"
 ```
 
 ### `cua spaces create`
 
-Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --no-desktop --provide-spaces` there), or in your own cloud account.
+Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --share spaces` there), or in your own cloud account.
 
 ```text output
 cua spaces create [OPTIONS] [IMAGE]
@@ -167,7 +170,7 @@ cua spaces create [OPTIONS] [IMAGE]
 | <span id="cua-spaces-create--on"></span>`--on` | string |  | Where: `local`, `auto` (the least-loaded of your computers), `aws`, `gcp`, `modal`, `host:<computer>`, or a computer name (`mac-mini`, "spare mac mini"). Default: your default location (`local` unless set). |
 | <span id="cua-spaces-create--count"></span>`--count` | integer | `1` | How many (1 to 8). |
 | <span id="cua-spaces-create--name"></span>`--name` | string |  | Name (with --count, `-2`, `-3`, ... are appended). |
-| <span id="cua-spaces-create--kind"></span>`--kind` | string |  | auto \| container \| vm. |
+| <span id="cua-spaces-create--kind"></span>`--kind` | string |  | auto \| container \| vm \| microvm. |
 | <span id="cua-spaces-create--runtime"></span>`--runtime` | string |  | auto, or an engine the location offers (lume, runc, gvisor, qemu). |
 | <span id="cua-spaces-create--cpus"></span>`--cpus` | integer |  | vCPUs. |
 | <span id="cua-spaces-create--memory-mb"></span>`--memory-mb` | integer |  | Memory in MiB. |
@@ -436,6 +439,26 @@ cua spaces rm direct:10.0.0.5:3211
 cua spaces rm studio
 ```
 
+### `cua spaces rename`
+
+Give a Space a new name; its id stays the same. Lowercase letters, digits and dashes, as at create. A Space you shared, or one of your computers provides, is renamed on the relay too, so your other devices and the people it is shared with see the new name. Only its owner can rename a Space.
+
+```text output
+cua spaces rename [OPTIONS] <SPACE> <NAME>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name (as `cua spaces ls` shows). |
+| `<NAME>` | string | required | The new name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-rename"
+cua spaces rename local:studio design-review
+cua spaces rename relay:space-0123456789abcdef ci-runner
+```
+
 ### `cua spaces share`
 
 Let someone in your team watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`. Sharing is for teams: you need a team, and they must be in it (or share with the whole team as `team:<id>`).
@@ -548,6 +571,37 @@ cua spaces relay-unregister local:studio
 cua spaces relay-unregister relay:space-0123abcd4567ef89
 ```
 
+## `cua machines`
+
+Your computers on the relay: remove one that is gone.
+
+```text output
+cua machines [OPTIONS] <COMMAND>
+```
+
+### `cua machines rm`
+
+Remove a computer that is gone: its row leaves your relay directory, then the signed-in device with exactly its name is revoked (never this device; nothing when several match). A computer that is connected now is refused: run `cua host remove` on it.
+
+```text output
+cua machines rm [OPTIONS] <NAME>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<NAME>` | string | required | The computer's name, machine id or `relay:<id>` (`cua spaces ls`). |
+
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="cua-machines-rm--yes"></span>`--yes` | `-y` | boolean | `false` | Remove without asking. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-machines-rm"
+cua machines rm old-laptop
+cua machines rm relay:0123abcd4567ef89 --yes --json
+```
+
 ## `cua host`
 
 Unattended access to this computer (setup, status, stop, start, remove).
@@ -558,7 +612,7 @@ cua host [OPTIONS] <COMMAND>
 
 ### `cua host setup`
 
-Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. By default (the `desktop` profile) it shares this computer's desktop, also with `--provide-spaces`; `--profile spare` or `--no-desktop --provide-spaces` provides Spaces only, so it is a host in your pool (`cua run` jobs run in Spaces there) whose own desktop stays private. Running it again with the same options changes nothing (a stopped service starts again).
+Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. By default it shares this computer's desktop and, on a computer set up for the first time through the relay, provides Spaces to your devices (a host in your pool: `cua run` jobs and `--on auto` Spaces can run here, within its limits). `--share` picks what it shares: `desktop`, `spaces` (its own desktop stays private), `both` or `none`; `cua host config` changes it later. A computer set up before keeps what it provides. Running it again with the same options changes nothing (a stopped service starts again).
 
 ```text output
 cua host setup [OPTIONS]
@@ -571,24 +625,22 @@ cua host setup [OPTIONS]
 | <span id="cua-host-setup--allow"></span>`--allow` | string |  | Also allow this account (id or email). Repeatable. |
 | <span id="cua-host-setup--driver-bin"></span>`--driver-bin` | path |  | cua-spacesd binary (default $CUA_SPACESD_BIN, a bundled one, or the release download). |
 | <span id="cua-host-setup--runner"></span>`--runner` | string | `auto` | auto \| systemd \| launchd \| app-helper \| windows-task \| process. On a Mac with the Cua Spaces app, auto is app-helper: the service runs as the app's own login item ("Cua Spaces"). |
-| <span id="cua-host-setup--profile"></span>`--profile` | `desktop` \| `spare` |  | What this computer is for: `desktop` (share this desktop; the default, also with `--provide-spaces`) or `spare` (do not share the desktop; provide Spaces). |
+| <span id="cua-host-setup--share"></span>`--share` | `desktop` \| `spaces` \| `both` \| `none` |  | What this computer shares: its own desktop (screen, input, shell, files), the Spaces it creates for your enrolled devices (Lume macOS VMs, Docker Linux containers), both, or neither (refused). Default: the desktop, plus Spaces on a new relay setup; a computer set up before keeps what it provides. |
 | <span id="cua-host-setup--max-spaces"></span>`--max-spaces` | integer |  | Provided Spaces at once (default 4; 0: no limit). |
 | <span id="cua-host-setup--remote"></span>`--remote` | boolean | `false` | When sign-in is needed, use a device code to approve it in a browser on another computer. The account session is not saved. |
-| <span id="cua-host-setup--desktop"></span>`--desktop` | boolean | `false` | Share this computer's own desktop as a Space. |
-| <span id="cua-host-setup--no-desktop"></span>`--no-desktop` | boolean | `false` | Do not share this computer's own desktop (screen, input, shell, files): relayed callers reach only the Spaces it provides. |
-| <span id="cua-host-setup--provide-spaces"></span>`--provide-spaces` | boolean | `false` | Create Spaces for your enrolled devices on this computer's runtimes (Lume macOS VMs, Docker Linux containers). On its own it keeps the default `desktop` profile, so this computer's desktop is shared too; add `--no-desktop` (or use `--profile spare`) to provide Spaces only. |
-| <span id="cua-host-setup--no-provide-spaces"></span>`--no-provide-spaces` | boolean | `false` | Do not create Spaces for other devices. |
 | <span id="cua-host-setup--dedicated"></span>`--dedicated` | boolean | `false` | This computer exists only for Cua work (a cloud instance made for it; `cua cloud add aws` sets its hosts up this way): jobs may run in its own Space (`kind = "machine"`), with its GPU and drivers as they are. Never on a computer you also use: there jobs run in macOS VMs or containers. |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-host-setup"
-# Join the cua.ai relay as your account (shares this desktop)
+# Join the cua.ai relay as your account (shares this desktop and provides Spaces to your devices)
 cua host setup
 
+# Share this desktop only
+cua host setup --share desktop
+
 # A spare computer: do not share its desktop, run Spaces for your devices
-cua host setup --profile spare --name "Mac mini (spare)"
-cua host setup --no-desktop --provide-spaces
+cua host setup --share spaces --name "Mac mini (spare)"
 
 # Add this computer with a one-time code from the Cua Spaces app (Add a computer) or `cua host pair`: no sign-in needed here
 cua host setup --pair K7QM-4XPB-2RHD

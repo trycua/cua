@@ -75,7 +75,33 @@ use serde::Serialize;
 ///
 /// Added later in 0.7.0 (additive): prewarm (`prewarm`, `prewarm_list`,
 /// `prewarm_remove`).
-pub const CONTRACT_VERSION: &str = "0.7.0";
+///
+/// Added later in 0.7.0 (compatible): agents in a Space. The persistent-agent
+/// tools take the agent names: `agent_add`, `agent_send`, `agent_remove` and
+/// `agent_schedule_add`, `agent_schedule_list`, `agent_schedule_remove`,
+/// `agent_schedule_set_enabled`. The former names (`persistent_agent_create`,
+/// `persistent_agent_send`, `persistent_agent_remove`, `routine_*`) still
+/// work as hidden aliases ([`TOOL_ALIASES`]), and the manifest lists every
+/// former name under `deprecated_tools` with the tool that replaced it.
+///
+/// 0.8.0 (additive): agents in a Space. Each Space has a thread
+/// (`thread_read`, `thread_post`, `thread_inbox`, `thread_claim`,
+/// `thread_reply`, `thread_import`) and agent members (`agent_members`, in
+/// the `thread` category; `agent_add` and `agent_remove` take member
+/// options, `agent_send` is recorded in the thread); `agent_message`,
+/// `agent_status`, `agent_events`, `agent_interrupt` and `agent_stop` take an
+/// agent member's `name` as well as a `run_id`. Each agent member has
+/// rights (`task`, `control`, `approve`; `agent_set_rights`, `agent_add`
+/// `rights`, `agent_members` `rights` and `you_can`); guests read only.
+///
+/// 0.9.0 (additive): agents connected from a computer. Member rows and
+/// agent authors carry `identity` (origin, handle, display name, icon,
+/// harness, owner, device, how it joined); join codes
+/// (`thread_join_code_create`, `thread_join_code_list`,
+/// `thread_join_code_cancel`, `thread_join_redeem`), `thread_join` (an
+/// agent sets its name and icon), `thread_settings`, `thread_device_revoke`,
+/// `thread_inbox` `wait_ms`, and `join_request` entries.
+pub const CONTRACT_VERSION: &str = "0.9.0";
 /// Bumped when the meaning of a capability string changes.
 pub const CAPABILITY_VERSION: &str = "1";
 /// The MCP revision the Spaces server speaks.
@@ -179,6 +205,7 @@ pub enum Category {
     Services,
     Agents,
     PersistentAgents,
+    Thread,
     Teleport,
     Keyvault,
     Hotspot,
@@ -229,6 +256,11 @@ pub fn categories() -> Vec<CategoryInfo> {
             PersistentAgents,
             "Persistent agents",
             "Named agents whose memory outlives their Space: homes in Cua Volume, routines, notifications, pause and resume, access to the user's computers.",
+        ),
+        c(
+            Thread,
+            "Space thread and members",
+            "Each Space's conversation: people and agent members post, an @mention wakes an agent, and anyone can check in from any device.",
         ),
         c(
             Teleport,
@@ -431,6 +463,26 @@ pub const ERROR_KINDS: &[ErrorKind] = &[
         fix: "Wait for that run to stop, or stop it; the lease expires on its own.",
     },
     ErrorKind {
+        kind: "not_signed_in",
+        meaning: "Redeeming a join code needs the redeemer's Cua sign-in, and this computer is not signed in.",
+        fix: "Sign in (cua auth login), then redeem the code again.",
+    },
+    ErrorKind {
+        kind: "join_code_refused",
+        meaning: "The join code was used, cancelled or has expired, or it is for a Space on another computer. The daemon never says which.",
+        fix: "Ask for a new link in Add an agent.",
+    },
+    ErrorKind {
+        kind: "rate_limited",
+        meaning: "Too many wrong join codes from this account, or too many posts from this agent (30 a minute, 600 an hour).",
+        fix: "Wait the time the message gives, then try again.",
+    },
+    ErrorKind {
+        kind: "task_claimed",
+        meaning: "Another session of the agent (or a newer drive of the same session) holds the task's claim; the message names the holder (`<member>/<session>@<epoch>`).",
+        fix: "Leave the task to its holder; it is queued again on its own if the holder's lease runs out.",
+    },
+    ErrorKind {
         kind: "not_confirmed",
         meaning: "The user did not confirm with presence (Touch ID, the login password or the vault passphrase), so no access was widened.",
         fix: "Ask the user to approve it in Cua.",
@@ -523,6 +575,30 @@ pub struct Manifest {
     pub categories: Vec<CategoryInfo>,
     pub error_kinds: &'static [ErrorKind],
     pub tools: Vec<Tool>,
+    /// Former tool names ([`TOOL_ALIASES`]): still accepted by `tools/call`,
+    /// never in `tools/list`.
+    pub deprecated_tools: Vec<DeprecatedTool>,
+}
+
+/// A former tool name and the tool that replaced it.
+#[derive(Clone, Debug, Serialize)]
+pub struct DeprecatedTool {
+    pub name: &'static str,
+    /// Always true: the name still works but is not advertised.
+    pub deprecated: bool,
+    pub replaced_by: &'static str,
+}
+
+/// [`TOOL_ALIASES`] as manifest entries.
+pub fn deprecated_tools() -> Vec<DeprecatedTool> {
+    TOOL_ALIASES
+        .iter()
+        .map(|(name, replaced_by)| DeprecatedTool {
+            name,
+            deprecated: true,
+            replaced_by,
+        })
+        .collect()
 }
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -607,11 +683,41 @@ const SEND_FILE_INSTRUCTIONS: &str = "The same transfer the Cua Spaces pop-out's
 
 const LIST_TOOLS_INSTRUCTIONS: &str = "Lists the tools of an MCP service INSIDE the Space. `service` is any service the Space declares (an MCP server the image runs, reached over streamable HTTP; no spacesd needed) or `driver`, the spacesd's own cua-driver registry (screenshot, click, type, launch apps, accessibility, ...). The default is `driver`, or the only declared service of a Space without spacesd. With no `name`, returns a scannable overview; pass name=<substring> for full input schemas. Then invoke them with call_tool. The reply names every service the Space exposes.";
 
-const AGENT_START_INSTRUCTIONS: &str = "Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: provider keys saved in Cua Spaces (Settings → Agents) reach the runs whose harness reads them; env_from_host names provider key variables from this server's environment; host credential files are never copied.";
+const AGENT_START_INSTRUCTIONS: &str = "Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: provider keys saved in Cua Spaces (Settings → Connectors) reach the runs whose harness reads them; env_from_host names provider key variables from this server's environment; host credential files are never copied.";
 
 const AGENT_EVENTS_INSTRUCTIONS: &str = "Normalized events (install, session, turn_started, message, thought, tool_call, tool_update, plan, usage, permission, turn_ended, error, exited, ...) after `cursor`. Pass the returned cursor back to continue; caught_up=true means nothing more is written yet. The same kinds for every harness.";
 
-const PERSISTENT_INSTRUCTIONS: &str = "A persistent agent is a harness with a name, a Space and a home in the Cua Volume (agents/<name>/). Its harness keeps its memory in the home (Claude Code auto memory, Codex memories, Hermes MEMORY.md, the OpenClaw workspace), which is restored into the Space before each run and saved after each turn, so the agent remembers across runs, Space releases and computers. One run writes a home at a time. Start it with persistent_agent_send (or agent_start with home=<name>); the daemon notifies the user when a turn ends. Inside the Space the agent gets the `cua` bridge: notify_user, the drive, and the user's computers it was granted.";
+/// What an agent that joined a Space does next, in plain words. One text for
+/// the redeem result, the tool descriptions, the pasted line and the link's
+/// page, so every way in teaches the same steps.
+macro_rules! join_next_steps {
+    () => {
+        "Next steps, in this order: 1. Set your display name and icon now with thread_join. 2. Keep watching the thread with thread_inbox (wait_ms 25000) in a loop, so you receive what people in the Space send you; answer each task with thread_post and reply_to its seq. 3. Reply with thread_post as yourself (pass the member credential from thread_join_redeem as `_member` on each call, so it posts as the agent and not as the person who signed in) and never @mention yourself, because a message that @mentions you gives you a task. 4. If you cannot loop (a CLI session that only runs when someone prompts it), say so in your first post and stay reachable the supported way: a scheduled poll that runs thread_inbox, or a wake hook."
+    };
+}
+
+/// [`join_next_steps!`] as a constant.
+pub const JOIN_NEXT_STEPS: &str = join_next_steps!();
+
+const THREAD_READ_INSTRUCTIONS: &str = "Every Space has one thread: what people and its agent members said, the tasks @mentions created and how they went. Without `after` it returns the newest entries (`before` pages back, `has_more_before` says whether there are older ones); pass the returned `cursor` as `after` to read on; `follow_ms` waits for the next entry (a check-in from any device). `mark_read` moves your read cursor, which `unread` counts from. Entries are never edited: a task's state is the last `task_update` entry for it, folded into `tasks`.";
+
+const THREAD_POST_INSTRUCTIONS: &str = "Posts as you (the daemon stamps the author; it is never an argument). `@name` of an agent member of this Space makes the message a task for it: the daemon wakes the agent (restoring its home if it was asleep), delivers the message as its next turn, and posts its answer as a reply when the turn ends. An agent with several sessions gives it to its lowest free session (`to_session` picks one); a busy agent gets it after its current turn; a paused one keeps it queued. Text and attachment names that look like a secret are refused: secrets belong in the Keyvault. `view` says what the person is looking at in the Space as they post (its desktop, or a window by app, title and window_id); it is stored with the entry, so an agent reads which window \"this\" means.";
+
+const AGENT_ADD_INSTRUCTIONS: &str = "A persistent agent is an agent member of the Space it works in, with its memory in its home in the Cua Volume (agents/<name>/), restored before each run and saved after each turn. People @mention it in the Space's thread (thread_post) and it answers there; it sleeps until a message or a schedule wakes it. Its harness keeps its memory in the home (Claude Code auto memory, Codex memories, Hermes MEMORY.md, the OpenClaw workspace). With every_minutes, daily_at or weekly_on and a prompt it also gets a schedule. With sessions (1-8) it works on up to that many tasks at once, each in its own run; session 1 alone writes its home, the others start from the home as last saved. durable, on other than local and once are not available yet and are refused. Inside the Space the agent gets the `cua` bridge: the thread, notify_user, the drive, and the user's computers it was granted.";
+
+const THREAD_JOIN_INSTRUCTIONS: &str = concat!(
+    "For an agent member: sets the name people see (1-32 characters; not a person's name in the Space, another member's handle or \"Cua\"; names may repeat, and the app then shows your owner after it), your icon (`harness` or an https:// image) and the harness and version you run (shown as you reported them). Your owner, the computer you post from and how you joined come from your membership and can't be set. An agent connected with `cua join` gets its @handle from its first name (`codex`, `codex-2`). A refused name is noted in the thread. ",
+    join_next_steps!()
+);
+
+const JOIN_CODE_INSTRUCTIONS: &str = "Connect your own agent: returns one line with a link (https://cua.ai/join/<code>) to paste into an agent on a computer you are signed in on. The link serves a static doc for agents that tells them to run `cua join <code>`. The code works once, only for this Space, expires (1 hour by default, 15 minutes to 1 day) and is stored only as a hash; redeeming it needs the redeemer's Cua sign-in. `can_task` says who can give the agent tasks; `ask_before_join` makes the owner or an admin let it in from the thread first.";
+
+const JOIN_REDEEM_INSTRUCTIONS: &str = concat!(
+    "What `cua join <code>` calls: redeems a join code made on this machine for the signed-in account, and makes the agent a member of the code's Space, bound to `device`. The member key in the result goes to the keychain (an agent that calls this tool itself holds it for this session only: never show or store it elsewhere); each later call presents it (signed by the device key when there is one, or as `_member` through the MCP tools) and the daemon stamps the agent's posts from it. Codes for another account's Space, or for a Space on another machine, can't be redeemed yet. Wrong codes are limited per account and per machine. The result repeats the next steps and carries `member_credential`. ",
+    join_next_steps!()
+);
+
+const AGENT_SET_RIGHTS_INSTRUCTIONS: &str = "Each agent member has three rights: `task` (whose @mention or agent_send gives it a task; default `members`), `control` (interrupt, stop, pause, resume or take control; default `admins`, and whoever asked for its current task can stop it) and `approve` (answer its approval requests; default `admins`). Each is `owner`, `admins`, `members` or a list of account ids. The owner always holds every right; guests (people a Space is shared with to watch) only read the thread. Only the owner and admins change them; the thread gets a note saying who did.";
 
 const POWER_INSTRUCTIONS: &str = "Turns a Space off the way its provider can. By default it stops: a local VM (QEMU or Lume) shuts down with its disk kept and gives its memory back to the machine, a local container stops or is suspended as its runtime can, a Space one of your computers provides is stopped by that computer, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed); a Hetzner server (on=\"hetzner\") is stopped too, but Hetzner keeps billing a stopped server, so delete it to stop the charge. suspend=true suspends a local container or QEMU VM instead: its memory is kept (so it still uses it) and it resumes where it was. Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.";
 
@@ -674,7 +780,7 @@ pub fn tools() -> Vec<Tool> {
                 "ambiguous_host",
                 "limit_exceeded",
             ],
-            instructions: "Creates a new sandbox where `on` says (local: this computer, free; aws, gcp, hetzner or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local; with no location and none configured, when a linked cloud has a budget set with cloud_budget, this computer first and the linked clouds when it is full, never past the budget, unless placement.overflow is off; a Space that landed in the user's cloud carries `cloud` and `cloud_place`, the pool host and its price, so say so), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name>. Cua Cloud (on=\"cloud\") has ended and fails with an error that says so. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own computers: on=\"auto\" creates it on the least-loaded one that can take it (this computer or one signed in to the user's account that provides Spaces; the host refuses when full and the next is asked); on=\"host:<computer>\" creates the Space on a computer set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The computer is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<computer> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the computer's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on. durable=true (with on=\"auto\") keeps the Space on the user's computers: when its computer goes away it is created again on another one with the same name (its disk starts fresh), list_spaces shows it with `durable`, and delete_space deletes it for good.",
+            instructions: "Creates a new sandbox where `on` says (local: this computer, free; aws, azure, gcp, hetzner or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local; with no location and none configured, when a linked cloud has a budget set with cloud_budget, this computer first and the linked clouds when it is full, never past the budget, unless placement.overflow is off; a Space that landed in the user's cloud carries `cloud` and `cloud_place`, the pool host and its price, so say so), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name>. Cua Cloud (on=\"cloud\") has ended and fails with an error that says so. `kind` (auto, container, vm, microvm: the container image with its own kernel, never picked by auto) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own computers: on=\"auto\" creates it on the least-loaded one that can take it (this computer or one signed in to the user's account that provides Spaces; the host refuses when full and the next is asked); on=\"host:<computer>\" creates the Space on a computer set up with `cua host setup --share both` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The computer is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<computer> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the computer's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on. durable=true (with on=\"auto\") keeps the Space on the user's computers: when its computer goes away it is created again on another one with the same name (its disk starts fresh), list_spaces shows it with `durable`, and delete_space deletes it for good.",
             providers: &CREATE_PROVIDERS,
             metering: Metering::Cloud,
             capabilities: &["space.create"],
@@ -1000,7 +1106,7 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::SpaceOnly>(),
         Spec {
             category: Category::Agents,
-            result: "JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready` (supported and not `auth: missing`), `supported`, `auth` (`ok`: a key saved in Cua Spaces (Settings → Agents) or one this server can forward with env_from_host; `missing`: none, so a run needs a sign-in inside its Space; `unknown`: the harness may be set up through its own config), `auth_hint`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.",
+            result: "JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready` (supported and not `auth: missing`), `supported`, `auth` (`ok`: a key saved in Cua Spaces (Settings → Connectors) or one this server can forward with env_from_host; `missing`: none, so a run needs a sign-in inside its Space; `unknown`: the harness may be set up through its own config), `auth_hint`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.",
             instructions: "Every harness: readiness (including whether a credential is available, with a hint when not), what it installs, which key variables it reads, which endpoint wire formats it takes, and its known limits; plus the event kinds and statuses.",
             capabilities: &["agent.capabilities"],
             sdk_symbol: "space.agents.harnessCapabilities()",
@@ -1011,14 +1117,14 @@ pub fn tools() -> Vec<Tool> {
         // --- Persistent agents ----------------------------------------------------
         Spec {
             category: Category::PersistentAgents,
-            result: "JSON: the agent record: `name`, `harness`, `space`, `model`, `base_url`, `env_from_host`, `paused`, `space_state` and `created_ms`.",
+            result: "JSON: the agent record: `name`, `harness`, `space`, `model`, `base_url`, `env_from_host`, `paused`, `space_state` and `created_ms`; as a member of its Space also `sessions`, `policy` {`durable`, `on`, `once`, `guard`}, `added_by`, `member_since_ms`, `status` and, with a schedule, `schedule` (the routine).",
             errors: &["agent"],
-            instructions: PERSISTENT_INSTRUCTIONS,
+            instructions: AGENT_ADD_INSTRUCTIONS,
             capabilities: &["agent.persistent.manage"],
             annotations: Annotations::mutating(),
             sdk_symbol: "spaces.persistentAgents.create(...)",
             rust_symbol: "Persistent::create",
-            ..Spec::new("persistent_agent_create", "Create a named agent whose memory outlives its Space.")
+            ..Spec::new("agent_add", "Create a named agent whose memory outlives its Space.")
         }
         .with::<i::PersistentAgentCreate>(),
         Spec {
@@ -1033,16 +1139,16 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::PersistentAgentList>(),
         Spec {
             category: Category::PersistentAgents,
-            result: "JSON: `removed` (the record). The home stays in the Cua Volume.",
+            result: "JSON: `removed` (the record) and `home_deleted`. By default the home stays in the Cua Volume.",
             errors: &["agent"],
-            instructions: "Stops its run, removes its routines and forgets it. Its home (agents/<name>/) stays in the Cua Volume; delete it there.",
+            instructions: "Stops its run, removes its routines, closes its open thread tasks and takes it out of its Space. Its home (agents/<name>/) stays in the Cua Volume unless keep_home is false. The thread keeps what it wrote.",
             capabilities: &["agent.persistent.manage"],
             annotations: Annotations::mutating(),
             sdk_symbol: "spaces.persistentAgents.remove(_:)",
             rust_symbol: "Persistent::remove",
-            ..Spec::new("persistent_agent_remove", "Forget a persistent agent.")
+            ..Spec::new("agent_remove", "Forget a persistent agent.")
         }
-        .with::<i::PersistentAgentName>(),
+        .with::<i::AgentRemove>(),
         Spec {
             category: Category::PersistentAgents,
             result: "JSON: `run_id`, `started` (a new run, with the home restored) and `restored` (`files`, `bytes`, `millis`).",
@@ -1052,7 +1158,7 @@ pub fn tools() -> Vec<Tool> {
             annotations: Annotations::mutating(),
             sdk_symbol: "spaces.persistentAgents.send(_:_:)",
             rust_symbol: "Persistent::send",
-            ..Spec::new("persistent_agent_send", "Give a persistent agent a turn.")
+            ..Spec::new("agent_send", "Give a persistent agent a turn.")
         }
         .with::<i::PersistentAgentSend>(),
         Spec {
@@ -1100,7 +1206,7 @@ pub fn tools() -> Vec<Tool> {
             annotations: Annotations::mutating(),
             sdk_symbol: "spaces.persistentAgents.addRoutine(...)",
             rust_symbol: "Persistent::routine_add",
-            ..Spec::new("routine_add", "Schedule a recurring turn for a persistent agent.")
+            ..Spec::new("agent_schedule_add", "Schedule a recurring turn for a persistent agent.")
         }
         .with::<i::RoutineAdd>(),
         Spec {
@@ -1110,7 +1216,7 @@ pub fn tools() -> Vec<Tool> {
             capabilities: &["agent.persistent.routines"],
             sdk_symbol: "spaces.persistentAgents.routines(agent:)",
             rust_symbol: "Persistent::routines",
-            ..Spec::new("routine_list", "List routines.")
+            ..Spec::new("agent_schedule_list", "List routines.")
         }
         .with::<i::RoutineList>(),
         Spec {
@@ -1120,7 +1226,7 @@ pub fn tools() -> Vec<Tool> {
             annotations: Annotations::mutating_idempotent(),
             sdk_symbol: "spaces.persistentAgents.removeRoutine(_:)",
             rust_symbol: "Persistent::routine_remove",
-            ..Spec::new("routine_remove", "Delete a routine.")
+            ..Spec::new("agent_schedule_remove", "Delete a routine.")
         }
         .with::<i::RoutineId>(),
         Spec {
@@ -1130,7 +1236,7 @@ pub fn tools() -> Vec<Tool> {
             annotations: Annotations::mutating_idempotent(),
             sdk_symbol: "spaces.persistentAgents.setRoutineEnabled(_:_:)",
             rust_symbol: "Persistent::routine_set_enabled",
-            ..Spec::new("routine_set_enabled", "Turn a routine on or off.")
+            ..Spec::new("agent_schedule_set_enabled", "Turn a routine on or off.")
         }
         .with::<i::RoutineSetEnabled>(),
         Spec {
@@ -1197,6 +1303,179 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("computer_access_list", "List per-agent computer access.")
         }
         .with::<i::ComputerAccessList>(),
+        // --- Space thread and members ------------------------------------------
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `space`, `me` (your author object), `role` (yours here: `owner`, `admin`, `member`, `guest` (reads only) or `agent`), `entries` (oldest first; each `v`, `seq`, `id`, `ts_ms`, `author` {`kind`, `id`, `name`}, `kind`, `text`, `mentions`, `reply_to`, `task`, `attachments`, `approval`, `answer`, `update`, and when set `imported`, `import`, `task_seq` (the task a system note is about), `view` (what the person was looking at as they posted: {`kind` `desktop` or `window`, `app`, `title`, `window_id`})), `cursor` (pass it as `after`), `caught_up`, `has_more_before`, `read_seq` (your read position), `unread` (entries after it, not yours) and `tasks` (open tasks: `seq`, `to`, `state`, `session`, `lease_until_ms`, `author`, `ts_ms`, `text`, `view`). `live`: {`key`, `agents`: [{`agent`, `stage`}]}, what each agent member with a task on its way is doing now (`starting`, `installing`, `thinking`, `replying`, `using <tool>`); pass `key` back as `live_after` with `follow_ms` to be woken when it changes. With `with`: `with` and only your DM's entries, its own `read_seq` and `unread`, and no `tasks`.",
+            instructions: THREAD_READ_INSTRUCTIONS,
+            capabilities: &["thread.read"],
+            sdk_symbol: "space.thread().read(after:limit:)",
+            rust_symbol: "thread::Thread::read",
+            ..Spec::new("thread_read", "Read a Space's thread.")
+        }
+        .with::<i::ThreadRead>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `entry` (the new entry, as in `thread_read`).",
+            errors: &["forbidden"],
+            instructions: THREAD_POST_INSTRUCTIONS,
+            capabilities: &["thread.post"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "space.thread().post(_:attachments:)",
+            rust_symbol: "thread::Thread::post",
+            ..Spec::new("thread_post", "Post to a Space's thread.")
+        }
+        .with::<i::ThreadPost>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `tasks`, oldest first (each `seq`, `to`, `state`, `text`, `author`, `ts_ms`, `session`, and `view` when the person said what they were looking at: {`kind`, `app`, `title`, `window_id`}).",
+            instructions: concat!("Open tasks (queued, claimed or working) addressed to an agent member: the messages that @mentioned it. An agent's own call lists its own. With `wait_ms` (at most 25000) an empty inbox waits for a task before answering, so an agent on its own machine can loop on it: call it again each time it returns, for as long as its user wants it in the Space. ", join_next_steps!()),
+            capabilities: &["thread.read"],
+            sdk_symbol: "space.thread().inbox()",
+            rust_symbol: "thread::Thread::inbox",
+            ..Spec::new("thread_inbox", "List an agent member's open tasks.")
+        }
+        .with::<i::ThreadInbox>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: the `task_update` entry (state `claimed`) and `claim` (`holder` `<member>/<session>@<epoch>`, `session`, `sessions`, `lease_until_ms`).",
+            errors: &["task_claimed"],
+            instructions: "Claims a task for one session of the agent, with a lease the daemon renews while that session works on it. A task another session holds is refused with `task_claimed`, naming the holder; when the lease runs out the task is queued again with a note. The daemon claims tasks itself when it gives one to a session; an agent calls this to take a task from its inbox while it works (for its own session).",
+            capabilities: &["thread.post"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "space.thread().claim(_:)",
+            rust_symbol: "thread::Thread::claim",
+            ..Spec::new("thread_claim", "Claim a task.")
+        }
+        .with::<i::ThreadClaim>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `reply` (the reply entry) and `update` (the `task_update` entry).",
+            errors: &["forbidden"],
+            instructions: "Replies under a task and sets its state (`done` by default). When an agent ends a turn without replying, the daemon posts the turn's answer as its reply.",
+            capabilities: &["thread.post"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "space.thread().reply(_:text:)",
+            rust_symbol: "thread::Thread::reply",
+            ..Spec::new("thread_reply", "Reply to a task and update it.")
+        }
+        .with::<i::ThreadReply>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `imported` (entries added), `skipped` (import ids already imported) and `note` (the system entry).",
+            errors: &["permission_denied"],
+            instructions: "For apps moving their own earlier conversation into the Space's thread once (Cua Bots, OpenKoalaBots). Only this machine's own user may import; each entry keeps its original time, is marked `imported`, and is checked for secrets like a post. An entry whose `import_id` was imported before is skipped, so a repeated import adds nothing.",
+            capabilities: &["thread.import"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "space.thread().import(_:source:)",
+            rust_symbol: "thread::Thread::import",
+            ..Spec::new("thread_import", "Import an app's earlier conversation into a Space's thread.")
+        }
+        .with::<i::ThreadImport>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `members`, each with `name`, `identity` {`origin` (`space` or `external`), `handle`, `display_name`, `collides`, `icon`, `harness` {`id`, `version`, `reported`}, `owner` {`id`, `name`}, `device` (`id`, `name`; external only), `joined` {`method`, `at_ms`, `by`}, `state` (`active` or `pending`), `last_seen_ms`}, `harness`, `model`, `sessions`, `policy`, `added_by`, `member_since_ms`, `paused`, `run_id`, `status` {`state`: `working`, `idle`, `waiting` (for an answer to an approval it asked), `paused`, `pending` (waiting to be let in), `asleep` (no run) or `failed`, the busiest of its sessions; `activity`: a short line, when there is one}, `open_tasks`, `session_states` (one per session: `k`, `state`, `activity`, `task_seq`, `run_id`), `rights` and `you_can`; with `overview`, also `dm` {`unread`, `last` {`seq`, `ts_ms`, `text`, `author`} or null} and `needs_you` (each `seq`, `kind`: `approval` or `question`, `text`, `ts_ms`).",
+            instructions: "The agent members of the Space with what each is doing. People members are the owner, the accounts the Space is shared with (space_shares) and anyone who posted.",
+            capabilities: &["thread.read"],
+            sdk_symbol: "space.agents().list()",
+            rust_symbol: "Persistent::members",
+            ..Spec::new("agent_members", "List a Space's agent members.")
+        }
+        .with::<i::AgentMembers>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: the member as in `agent_members` (with `rights`) and `you_can`.",
+            errors: &["permission_denied"],
+            instructions: AGENT_SET_RIGHTS_INSTRUCTIONS,
+            capabilities: &["agent.persistent.manage"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "space.agents().get(_:).setRights(_:)",
+            rust_symbol: "Persistent::set_rights",
+            ..Spec::new("agent_set_rights", "Choose who can task, stop and approve an agent.")
+        }
+        .with::<i::AgentSetRights>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `member` (your row, as in `agent_members`), `handle`, `space`, `space_name` and `line` (one sentence saying who you are now).",
+            errors: &["permission_denied", "invalid_argument"],
+            instructions: THREAD_JOIN_INSTRUCTIONS,
+            capabilities: &["thread.post"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "space.thread().join(name:harness:version:icon:)",
+            rust_symbol: "Persistent::thread_join",
+            ..Spec::new("thread_join", "Set your name and icon in a Space's thread.")
+        }
+        .with::<i::ThreadJoin>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `id`, `code` (`XXXX-XXXX`; shown only here), `url`, `line` (the one line to paste into an agent) and `expires_at_ms`.",
+            errors: &["permission_denied", "invalid_argument"],
+            instructions: JOIN_CODE_INSTRUCTIONS,
+            capabilities: &["thread.post"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "space.thread().createJoinCode(ttl:canTask:askBeforeJoin:)",
+            rust_symbol: "Persistent::join_code_create",
+            ..Spec::new("thread_join_code_create", "Make a one-time code an agent joins the Space with.")
+        }
+        .with::<i::ThreadJoinCodeCreate>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `codes`, newest first, each `id`, `created_at_ms`, `expires_at_ms`, `state` (`open`, `pending_approval`, `redeemed`, `denied`, `expired` or `cancelled`), `can_task`, `ask_before_join`, `created_by` and, once used, `member_handle`.",
+            instructions: "The Space's join codes (never the codes themselves). The owner and admins see every code; others see their own.",
+            capabilities: &["thread.read"],
+            sdk_symbol: "space.thread().joinCodes()",
+            rust_symbol: "Persistent::join_code_list",
+            ..Spec::new("thread_join_code_list", "List a Space's join codes.")
+        }
+        .with::<i::ThreadJoinCodeList>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `id` and `state` (`cancelled`).",
+            errors: &["permission_denied", "not_found", "invalid_argument"],
+            instructions: "An open code stops working; a code whose agent is waiting to be let in is closed and the agent dropped. Whoever made the code, the owner or an admin.",
+            capabilities: &["thread.post"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "space.thread().cancelJoinCode(_:)",
+            rust_symbol: "Persistent::join_code_cancel",
+            ..Spec::new("thread_join_code_cancel", "Cancel an unused join code.")
+        }
+        .with::<i::ThreadJoinCodeCancel>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `space`, `space_name`, `space_owner`, `handle`, `member_id`, `state` (`active`, or `pending` until the owner or an admin lets it in), `owner`, `device` and `key` (the member key: returned once, for the keychain; never show or store it elsewhere).",
+            errors: &["not_signed_in", "join_code_refused", "rate_limited", "permission_denied"],
+            instructions: JOIN_REDEEM_INSTRUCTIONS,
+            capabilities: &["thread.post"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "Spaces.call_tool_json(\"thread_join_redeem\")",
+            rust_symbol: "Persistent::redeem",
+            ..Spec::new("thread_join_redeem", "Redeem a join code on this computer.")
+        }
+        .with::<i::ThreadJoinRedeem>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `space` and `ask_before_join`.",
+            errors: &["permission_denied"],
+            instructions: "Reads a Space's thread settings, or (the owner and admins) sets them. `ask_before_join` (\"Ask before members' agents join\", on by default): an agent redeemed by anyone other than this computer's own user waits until the owner or an admin answers its join request.",
+            capabilities: &["thread.read"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "space.thread().settings(askBeforeJoin:)",
+            rust_symbol: "Persistent::thread_settings",
+            ..Spec::new("thread_settings", "Read or change a Space's thread settings.")
+        }
+        .with::<i::ThreadSettings>(),
+        Spec {
+            category: Category::Thread,
+            result: "JSON: `removed` (the handles of the agents removed).",
+            errors: &["permission_denied"],
+            instructions: "Removes every agent connected from that computer (its member keys stop at once), with a note in each thread. `cua logout` and removing this computer from the account call it for this computer.",
+            capabilities: &["agent.persistent.manage"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "Spaces.call_tool_json(\"thread_device_revoke\")",
+            rust_symbol: "Persistent::revoke_device",
+            ..Spec::new("thread_device_revoke", "Remove the agents connected from a computer.")
+        }
+        .with::<i::ThreadDeviceRevoke>(),
         // --- Session teleport ---------------------------------------------------
         Spec {
             category: Category::Teleport,
@@ -1648,9 +1927,9 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::CloudStatus>(),
         Spec {
             category: Category::Cloud,
-            result: "JSON: the connected cloud as `cloud_status` lists it, plus `checks` (each `name`, `ok`, `detail`) from the test it ran first.",
-            errors: &["cloud"],
-            instructions: "Runs cloud_test first and connects only when every check passes. Stores the profile, region, project or environment names under the cua home (never a key: the cloud's own CLI sign-in stays where it is). With make_default, create_space without `on` creates there (`default.on`).",
+            result: "JSON: the cloud as `cloud_status` lists it, whose `status` is the outcome (`connected`, `needs-trust`, `checking`, `waiting-for-approval` or `failed`), plus `checks` (each `name`, `ok`, `detail`), `next` (absent when connected; `run`: the exact command for the agent, or `open`: a page for a person, with `paste` when there is a command to paste there, and `why`) and `verify` (the command that confirms it).",
+            errors: &["cloud", "invalid_argument"],
+            instructions: "Without auth it keeps how the cloud is linked already (an OIDC or sealed link stays so, so a run that only changes budget_usd_month or max_size never falls back to a CLI sign-in); a cloud not linked yet, or auth=\"cli\", runs cloud_test first and connects only when every check passes, storing the profile, region, project or environment names under the cua home (never a key: the cloud's own CLI sign-in stays where it is). auth=\"oidc\" links AWS, Google Cloud or Azure with no stored key (Azure is always oidc; a Google Cloud project_number implies it): it never prompts and is idempotent, so call it again with the same arguments until `status` is `connected`, following `next` each time. It needs budget_usd_month first. Until the account is named it returns needs-trust and the trust step: a page for the person (AWS: the trust stack, then ask for the 12-digit account_id; Google Cloud: Cloud Shell and the trust script, then ask for the project_number it prints; Azure: Deploy to Azure, then ask for the outputs subscription_id, tenant_id and client_id), or, when an agent asks on a machine signed in to gcloud or az, the exact command to run. Once named, the link is recorded on Cua's issuer and check=true proves it (a check token, the exchange with the cloud, a dry run, permission check or validate; nothing is created) and saves it. Hetzner and Modal with a token and budget_usd_month seal the token to the account's devices (auth=\"sealed\", the default on a device with the account's pool keys): it is checked first (nothing is created), Cua's servers keep only ciphertext, any device of the account opens it in memory when it calls the cloud, and no tool ever returns it; on another device, auth=\"sealed\" without a token links the account's sealed token. A link, token or limit raise made by an agent returns waiting-for-approval until a person approves it in Cua Spaces. budget_usd_month and max_size (`4x16`) also apply to CLI links: machines past them are refused before any cloud call. With make_default, create_space without `on` creates there (`default.on`).",
             capabilities: &["cloud.manage"],
             annotations: Annotations::mutating_idempotent(),
             sdk_symbol: "spaces.cloud.connect(_:makeDefault:ttlHours:)",
@@ -1662,7 +1941,7 @@ pub fn tools() -> Vec<Tool> {
             category: Category::Cloud,
             result: "JSON: `provider`, `ok`, `account` (the account, project or workspace the credentials reach) and `checks` (each `name`, `ok`, `detail`: credentials, permissions by dry run, quota, the region and machine types).",
             errors: &["cloud"],
-            instructions: "Creates nothing: it signs in with the cloud's own CLI credentials, asks the cloud to validate a create without doing it (AWS DryRun, Google Cloud permission checks), and reads quotas. A failed check says what to fix.",
+            instructions: "Creates nothing: it signs in with the cloud's own CLI credentials (or, for a link without a stored key, a token from Cua's issuer exchanged with the cloud), asks the cloud to validate a create without doing it (AWS DryRun, Google Cloud permission checks, an Azure deployment validate), and reads quotas. A failed check says what to fix.",
             capabilities: &["cloud.read"],
             sdk_symbol: "spaces.cloud.test(_:)",
             rust_symbol: "cua_cloud::Clouds::test",
@@ -1681,6 +1960,18 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("cloud_disconnect", "Forget a connected cloud account (deleting what Cua created there first, with delete=true).")
         }
         .with::<i::CloudDisconnect>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON: the cloud as `cloud_status` lists it once approved or denied (`status`, `approval` empty, the limits in force).",
+            errors: &["cloud", "invalid_argument"],
+            instructions: "Only for a person, never for an agent: no MCP server lists or runs it, the daemon refuses it when it runs for an agent, and Cua's issuer refuses an agent's proof. It approves what an agent asked for on that cloud (its link, or a raise of its budget or largest machine; see `approval`, `approval_agent`, `pending_budget_usd_month` and `pending_max_size` in cloud_status), or with deny=true declines it: a raise is dropped and the limits in force stay; a link never approved is disconnected.",
+            capabilities: &["cloud.approve"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "spaces.cloud.approve(_:deny:)",
+            rust_symbol: "cua_cloud::Clouds::approve",
+            ..Spec::new("cloud_approve", "Approve (or deny) what an agent asked for on a cloud: its link or its raised limits. For a person only.")
+        }
+        .with::<i::CloudApprove>(),
         Spec {
             category: Category::Cloud,
             result: "JSON: `dry_run` and `resources`, each `provider`, `id`, `type`, `space`, `expires`, `action` (`delete`, `deleted`, `keep` or `failed`) and `reason`.",
@@ -1803,13 +2094,23 @@ pub fn tools() -> Vec<Tool> {
         Spec {
             category: Category::Cloud,
             result: "JSON array, oldest first, newest last: each `ts` (RFC 3339), `action` (`connect`, `disconnect`, `resource_recorded`, `resource_created`, `resource_confirmed`, `resource_deleted`), `provider`, `kind`, `id`, `space`, `actor` (`user`, `sweep`, `auto-sweep`, `disconnect`, `rollback`), `outcome` (`ok`, `failed`, `refused`) and `detail`.",
-            instructions: "Reads the append-only audit log under the cua home (cloud/audit.jsonl, rotated at 5 MB): every connect, disconnect, resource recorded before its create, created, confirmed and deleted (by you, by a sweep, by the automatic sweep, by disconnect with delete). It never holds a secret or a token. Default limit 50.",
+            instructions: "Reads the append-only audit log under the cua home (cloud/audit.jsonl, rotated at 5 MB): every connect, disconnect, resource recorded before its create, created, confirmed and deleted (by you, by a sweep, by the automatic sweep, by disconnect with delete), and each budget alert (`budget_alert`). These entries have `source` `device`. For clouds linked to the account (OIDC or a sealed token) it adds what Cua's issuer recorded, with `source` `account`: tokens issued or refused, links made, approved, changed and revoked. It never holds a secret or a token. provider narrows it to one cloud. Default limit 50.",
             capabilities: &["cloud.read"],
             sdk_symbol: "spaces.cloud.audit(limit:)",
             rust_symbol: "cua_cloud::Clouds::audit",
             ..Spec::new("cloud_audit", "Read the log of what Cua did in your clouds.")
         }
         .with::<i::CloudAudit>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON: `by`, `since` (`YYYY-MM-DD`), `until` (RFC 3339), `rows` (each `key`: the Space, agent, day or cloud; `usd`: estimated US dollars; `hours`: machine hours; `machines`: how many ran), by day oldest first, otherwise costliest first, and `total_usd`.",
+            instructions: "Estimates what the machines Cua created cost: each one's list price times how long it ran inside the window, from the machines still recorded and the usage log of the ones gone (cloud/usage.jsonl under the cua home). by=`space`, `agent` (who started it: an agent's name, `user`, or `unknown` for machines recorded before that was kept), `day` (UTC) or `cloud`. since defaults to the first of this month. It is an estimate: the cloud's own bill is the final word. Pool hosts count under `pool hosts`.",
+            capabilities: &["cloud.read"],
+            sdk_symbol: "spaces.cloud.cost(by:since:provider:)",
+            rust_symbol: "cua_cloud::Clouds::cost",
+            ..Spec::new("cloud_cost", "Estimate what Cua's machines in your clouds cost, by Space, agent, day or cloud.")
+        }
+        .with::<i::CloudCost>(),
     ]
 }
 
@@ -1817,12 +2118,13 @@ const PREWARM_INSTRUCTIONS: &str = "A prewarm keeps count Spaces of one shape (i
 
 const ELASTIC_INSTRUCTIONS: &str = "The elastic pool places Spaces with on=\"auto\" (or on a linked cloud) by one solve: the user's devices first (free), then cloud hosts already running, then new cloud hosts (provider x type x region) at the least cost that fits the image's needs (kind, KVM, arch, size learned from earlier Spaces), the start-time goal, the relay's machine limit and the budget (cloud_budget). Idle cloud hosts go at the end of their paid time. cloud_plan shows the decision without doing it; pins (provider, region, instance_type, hosts, no_scale, devices_only, max_usd_per_hour) are constraints of the same solve, so an agent can inspect, adjust and apply.";
 
-const CLOUD_STATUS_RESULT: &str = "JSON: `default_on`, `providers` (each `name`, `title`, `tier` (`vm`: a VM that provides Spaces, `sandbox`: one sandbox per Space), `connected`, `default`, `credentials` (`found`, `source`), `account`, `profile`, `region`, `zone`, `project`, `environment`, `label` (\"AWS · us-west-2\"), `ttl_hours` and `kinds` (each `image`, `kind`, `supported`, `reason`, `machine_type`, `usd_per_hour`)) and `resources` (what Cua created: `provider`, `id`, `type`, `space`, `region`, `state`, `created`, `expires`, `expired`).";
+const CLOUD_STATUS_RESULT: &str = "JSON: `default_on`, `providers` (each `name`, `title`, `tier` (`vm`: a VM that provides Spaces, `sandbox`: one sandbox per Space), `connected`, `default`, `credentials` (`found`, `source`), `account`, `profile`, `region`, `zone`, `project`, `environment`, `label` (\"AWS · us-west-2\"), `ttl_hours`, `kinds` (each `image`, `kind`, `supported`, `reason`, `machine_type`, `usd_per_hour`), `auth` (`cli`, `oidc` or `sealed` once connected), `status` (`connected`, `waiting-for-approval`, `not-connected`, or `failed` when the link was revoked), `budget_usd_month` and `max_size` when set, `spent_month` (estimated US dollars this calendar month), `running` (machines Cua runs there now), `approval` (`connection` or `limits` while a person's approval is pending, else absent) and, for `sealed`, `holders` (the devices that can open the API token now; at least one must be online for machines to be made there unattended)) and `resources` (what Cua created: `provider`, `id`, `type`, `space`, `region`, `state`, `created`, `expires`, `expired`).";
 
-const CLOUD_INSTRUCTIONS: &str = "Sandboxes and Spaces can run in the user's own cloud account: on=\"aws\" (EC2), \"gcp\" (Compute Engine), \"hetzner\" (Hetzner Cloud) or \"modal\" (Modal Sandboxes). EC2, Compute Engine and Hetzner Cloud start one small VM or server per sandbox that runs the image with Docker; Modal runs one Modal sandbox. Hetzner Cloud servers have no /dev/kvm, so Hetzner runs container images only (Windows and other VM images are refused). Either way the guest's cua-spacesd dials out to the cua.ai relay as a computer of the signed-in account (no inbound port), and the Space is that computer, relay:<computer>. AWS, Google Cloud and Modal use their own CLI sign-in; Hetzner uses a project API token (Read & Write) that cloud_connect saves in the Cua credential store. Connect it first with cloud_connect (the user decides; it costs money in their account). Everything Cua creates is tagged cua-managed=true with this cua home's cua-owner and an expiry, recorded under the cua home, deleted with its sandbox, and ends itself at its expiry (a Hetzner server, which cannot delete itself, shuts down and is billed until cloud_sweep or delete_space removes it); cloud_sweep removes leftovers, and the daemon runs that sweep by itself every 15 minutes (CUA_CLOUD_SWEEP_SECS; 0 turns it off). cloud_disconnect refuses while Cua resources still run there unless delete=true; cloud_audit lists what Cua did.";
+const CLOUD_INSTRUCTIONS: &str = "Sandboxes and Spaces can run in the user's own cloud account: on=\"aws\" (EC2), \"azure\" (Azure Virtual Machines), \"gcp\" (Compute Engine), \"hetzner\" (Hetzner Cloud) or \"modal\" (Modal Sandboxes). EC2, Azure, Compute Engine and Hetzner Cloud start one small VM or server per sandbox that runs the image with Docker; Modal runs one Modal sandbox. Hetzner Cloud servers have no /dev/kvm, so Hetzner runs container images only (Windows and other VM images are refused). Either way the guest's cua-spacesd dials out to the cua.ai relay as a computer of the signed-in account (no inbound port), and the Space is that computer, relay:<computer>. AWS and Google Cloud use their own CLI sign-in or, with auth=\"oidc\", no stored key at all (Cua's issuer signs short-lived tokens the account trusts); Azure always links that way; Modal uses its CLI sign-in; Hetzner uses a project API token (Read & Write), and Modal can take its token too: cloud_connect seals it to the account's devices (Cua's servers keep only ciphertext; no tool returns it), or keeps Hetzner's in this device's Cua credential store (auth=\"cli\"). Connect it first with cloud_connect (the user decides; it costs money in their account). Everything Cua creates is tagged cua-managed=true with this cua home's cua-owner and an expiry, recorded under the cua home, deleted with its sandbox, and ends itself at its expiry (a Hetzner server, which cannot delete itself, shuts down and is billed until cloud_sweep or delete_space removes it); cloud_sweep removes leftovers, and the daemon runs that sweep by itself every 15 minutes (CUA_CLOUD_SWEEP_SECS; 0 turns it off). cloud_disconnect refuses while Cua resources still run there unless delete=true; cloud_audit lists what Cua did.";
 
 /// Former tool names still accepted (for one release) and the tool each is
-/// now: `(old, new)`. Hidden: never in `tools/list` or the manifest.
+/// now: `(old, new)`. Hidden: never in `tools/list` or the manifest's
+/// `tools`; the manifest lists them under `deprecated_tools`.
 pub const TOOL_ALIASES: &[(&str, &str)] = &[
     ("drive_ls", "volume_ls"),
     ("drive_read", "volume_read"),
@@ -1849,6 +2151,13 @@ pub const TOOL_ALIASES: &[(&str, &str)] = &[
     ("drive_cache_stats", "volume_cache_stats"),
     ("drive_cache_set", "volume_cache_set"),
     ("drive_cache_clear", "volume_cache_clear"),
+    ("persistent_agent_create", "agent_add"),
+    ("persistent_agent_send", "agent_send"),
+    ("persistent_agent_remove", "agent_remove"),
+    ("routine_add", "agent_schedule_add"),
+    ("routine_list", "agent_schedule_list"),
+    ("routine_remove", "agent_schedule_remove"),
+    ("routine_set_enabled", "agent_schedule_set_enabled"),
 ];
 
 /// The current name of `name`: itself, or the tool a former name
@@ -1859,6 +2168,16 @@ pub fn canonical(name: &str) -> &str {
         .find(|(old, _)| *old == name)
         .map(|(_, new)| *new)
         .unwrap_or(name)
+}
+
+/// Tools only a person may call: no MCP server lists or runs them for an
+/// agent (the apps, the CLI and the SDK call them through the daemon).
+/// Their capabilities are never granted to an agent.
+pub const PERSON_ONLY_TOOLS: &[&str] = &["cloud_approve"];
+
+/// Whether `name` is a tool only a person may call ([`PERSON_ONLY_TOOLS`]).
+pub fn person_only(name: &str) -> bool {
+    PERSON_ONLY_TOOLS.contains(&canonical(name))
 }
 
 /// The tool named `name` (a former name resolves to its tool).
@@ -1881,6 +2200,7 @@ pub fn manifest() -> Manifest {
         categories: categories(),
         error_kinds: ERROR_KINDS,
         tools,
+        deprecated_tools: deprecated_tools(),
     }
 }
 
@@ -1904,12 +2224,58 @@ mod tests {
         }
         assert_eq!(canonical("volume_ls"), "volume_ls");
         assert_eq!(canonical("space_list"), "space_list");
-        assert!(!manifest_json().contains("\"drive_"));
+        let m = manifest();
+        assert!(m.tools.iter().all(|t| !t.name.starts_with("drive_")));
+        // Every former name is in the manifest as deprecated, pointing at a
+        // tool the manifest advertises.
+        assert_eq!(m.deprecated_tools.len(), TOOL_ALIASES.len());
+        for d in &m.deprecated_tools {
+            assert!(d.deprecated);
+            assert!(
+                m.tools.iter().any(|t| t.name == d.replaced_by),
+                "{}",
+                d.name
+            );
+        }
+    }
+
+    /// The agent names (agents in a Space) are the persistent-agent tools
+    /// under new names: the former name resolves to the very same tool
+    /// (schema, annotations, implementation).
+    #[test]
+    fn agent_names_alias_the_persistent_agent_tools() {
+        for (old, new) in [
+            ("persistent_agent_create", "agent_add"),
+            ("persistent_agent_send", "agent_send"),
+            ("persistent_agent_remove", "agent_remove"),
+            ("routine_add", "agent_schedule_add"),
+            ("routine_list", "agent_schedule_list"),
+            ("routine_remove", "agent_schedule_remove"),
+            ("routine_set_enabled", "agent_schedule_set_enabled"),
+        ] {
+            assert_eq!(canonical(old), new);
+            let (a, b) = (tool(old).unwrap(), tool(new).unwrap());
+            assert_eq!(a.name, new);
+            assert_eq!(a.rust_symbol, b.rust_symbol);
+            assert_eq!(a.input_schema, b.input_schema);
+            assert!(tools().iter().all(|t| t.name != old), "{old} is listed");
+        }
     }
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 97);
+        assert_eq!(tools().len(), 114);
+    }
+
+    #[test]
+    fn person_only_tools_exist_and_are_never_for_agents() {
+        for name in PERSON_ONLY_TOOLS {
+            let t = tool(name).unwrap_or_else(|| panic!("{name} is not a contract tool"));
+            assert!(person_only(name));
+            assert!(t.instructions.contains("Only for a person"), "{name}");
+            assert!(!t.annotations.read_only, "{name}");
+        }
+        assert!(!person_only("cloud_connect"));
     }
 
     #[test]
@@ -1983,10 +2349,14 @@ mod tests {
     }
 
     /// One verb set: create/delete make and destroy, add/remove register
-    /// and forget; no claim, provision or release in tool names.
+    /// and forget; no claim, provision or release in tool names. (A thread
+    /// task is claimed, not a Space: `thread_claim` is not a lifecycle verb.)
     #[test]
     fn lifecycle_verbs_are_orthogonal() {
-        for tool in tools() {
+        for tool in tools()
+            .into_iter()
+            .filter(|t| t.category != Category::Thread)
+        {
             for word in ["claim", "provision", "release", "acquire", "get_or_create"] {
                 assert!(!tool.name.contains(word), "{} uses {word}", tool.name);
             }
@@ -2027,6 +2397,9 @@ mod tests {
                 && !matches!(
                     tool.name,
                     "hotspot_stop" | "hotspot_status" | "teleport_manifest"
+                    // Optional: an agent is found by its name; `space` names
+                    // a Space another machine provides.
+                    | "agent_send"
                 )
             {
                 assert!(
@@ -2069,7 +2442,7 @@ mod tests {
             .iter()
             .map(|v| v["const"].as_str().unwrap())
             .collect();
-        assert_eq!(kinds, vec!["auto", "container", "vm"]);
+        assert_eq!(kinds, vec!["auto", "container", "vm", "microvm"]);
         for axis in ["on", "runtime", "reuse"] {
             assert!(
                 create.input_schema["properties"][axis]["description"]

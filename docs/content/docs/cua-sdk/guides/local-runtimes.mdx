@@ -29,13 +29,14 @@ and runtime from the image and starts it itself.
 | Linux or Windows VM (`-disk` containerDisk, `kind="vm"`, qcow2, ISO) | `qemu`: KVM on Linux, HVF on macOS, WHPX on Windows, TCG otherwise |
 | macOS VM (`Image.macos()`) | `lume`, Apple silicon only (the SDK starts `lume serve`) |
 | Linux arm64 VM on Apple silicon without QEMU | `lume` |
+| Any OCI image as a microVM (`kind="microvm"`, never picked by `auto`) | `firecracker` on Linux with KVM; on a Mac `vz` (Apple silicon, macOS 14 or later) when installed, else `containerization` (macOS 26) |
 
 ### Check and set up the host
 
 ```bash test="cli-shape" id="cua-runtime-doctor"
 cua runtime doctor              # what this host can run (read-only)
 cua runtime setup --dry-run     # the install plan
-cua runtime setup               # install what is missing; or name qemu, lume, container
+cua runtime setup               # install what is missing; or name qemu, lume, container, firecracker
 ```
 
 `cua doctor` checks the host, an image and a sandbox's guest in one report.
@@ -61,8 +62,10 @@ cua sb create macos:tahoe --name mac                 # a Lume VM
 cua sb rm dev
 ```
 
-`--runtime` takes `auto`, `gvisor` or `runc` for containers and `qemu` or
-`lume` for VMs; a runtime implies its kind. A combination that does not exist
+`--runtime` takes `auto`, `gvisor` or `runc` for containers, `qemu` or
+`lume` for VMs, and `firecracker`, `vz` or `containerization` for microVMs
+(`--kind microvm`); a runtime implies its kind. See
+[Space kinds](/spaces/concepts/space-kinds). A combination that does not exist
 fails with `InvalidPlacement` and lists the valid values:
 
 ```text output
@@ -285,3 +288,23 @@ The first match wins:
 `default.kind` and `default.runtime` (`CUA_DEFAULT_KIND`,
 `CUA_DEFAULT_RUNTIME`) work the same way, and `cua doctor` shows each default
 with its source. Switch back with `cua config unset default.on`.
+
+## Choose what runs each kind
+
+Each kind of Space has its own setting: `runtime.container`, `runtime.vm` and
+`runtime.microvm`. Each is `auto` (the default), `builtin` (Cua's own, set up
+the first time it is needed) or `system` (only what is already installed on
+this machine; nothing is downloaded). With `system`, `runtime.<kind>_path`
+names the program to use instead of the one found on `PATH`, for example
+another Docker:
+
+```bash test="cli-shape" id="cua-config-set-runtime-container"
+cua config set runtime.container system
+cua config set runtime.container_path /opt/homebrew/bin/podman
+cua config unset runtime.container_path   # back to the one found
+```
+
+The Cua app's Settings, Advanced shows the same settings, one row per kind,
+with the programs it found and a check of the path. `cua` and the daemon read
+the same values, so they use the same program. The older `runtime.linux` and
+`runtime.lume` still work: they are `runtime.container` and `runtime.vm`.

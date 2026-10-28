@@ -9,7 +9,7 @@
  * adapter starts, so the timeline streams. All synthetic.
  */
 
-import type { AgentEvent, AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
+import type { AgentEvent, AgentRunStatus, AgentSetupRow, ConnectionReport, ConnectionRow, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
 
 const MIN = 60_000;
 
@@ -78,6 +78,58 @@ export function demoAgentSetup(fresh = false, only: string[] | null = null): Age
     return { ...r, installed, configured, skillsInstalled: configured ? r.skillsTotal : 0, detail: !installed ? "Not installed" : configured ? r.detail : "Not set up" };
   });
 }
+
+/**
+ * The connection status (`agents.status`) the demo's agents give: the same
+ * rules as `cua_agent_setup::connection`, from the demo rows and the
+ * sign-ins it "copied" (`imported`).
+ */
+export function demoConnections(rows: AgentSetupRow[], imported: readonly string[], at: number): ConnectionReport {
+  const order = ["hermes", "claude-code", "codex", "cursor", "openclaw", "t3code"];
+  const copyable: Record<string, string> = { codex: "ChatGPT sign-in", "claude-code": "Claude sign-in", hermes: "OpenRouter key" };
+  const sorted = [...rows].sort((a, b) => (order.indexOf(a.agent) + 1 || 99) - (order.indexOf(b.agent) + 1 || 99));
+  const agents = sorted.map((r): ConnectionRow => {
+    const name = r.agent === "codex" ? "Codex" : r.name;
+    // Codex's demo sign-in waits for `codex login`; the others are signed in.
+    const signedIn: ConnectionRow["signed_in"] = r.agent === "codex" ? (r.signedIn ? "yes" : "no") : r.agent in copyable || r.agent === "cursor" ? "yes" : "unknown";
+    const copied = imported.includes(r.agent);
+    let state: ConnectionRow["state"];
+    let problem: ConnectionRow["problem"] = null;
+    if (!r.installed) state = r.configured ? "attention" : "not_installed";
+    else if (!r.configured) state = "not_connected";
+    else if (signedIn === "no") {
+      state = "attention";
+      problem = { line: `Connected. No ${copyable[r.agent] ?? "sign-in"} on This Mac yet.`, action: r.agent === "codex" ? "sign_in" : "none" };
+    } else state = "connected";
+    if (!r.installed && r.configured) problem = { line: `${name} isn't on This Mac anymore. Disconnect takes Cua out of its settings.`, action: "disconnect" };
+    return {
+      id: r.agent,
+      name,
+      installed: r.installed,
+      version: r.installed ? (DEMO_VERSIONS[r.agent] ?? null) : null,
+      previous_version: r.configured ? (DEMO_VERSIONS[r.agent] ?? null) : null,
+      signed_in: signedIn,
+      sign_in: copyable[r.agent] ?? null,
+      mcp: r.configured ? "ok" : r.mcpConfig ? "missing" : "unsupported",
+      mcp_config: r.mcpConfig,
+      signin_imported: copied,
+      signin_import: r.agent in copyable ? (copied ? "ok" : "missing") : "unsupported",
+      state,
+      problem,
+      checked_at_ms: at,
+    };
+  });
+  return { agents, checked_at_ms: at };
+}
+
+/** The harness versions the demo's agents report (the thread demo's). */
+const DEMO_VERSIONS: Record<string, string> = {
+  hermes: "0.9.2",
+  "claude-code": "2.4.1",
+  codex: "0.61.0",
+  cursor: "2026.10.21",
+  openclaw: "2026.10.7",
+};
 
 /* ---- Event scripts ---------------------------------------------------------- */
 
@@ -189,7 +241,7 @@ I kept the structure and only changed the words. Three screens change:
 + <h1>Welcome to Cua Spaces</h1>
 + <p>Set up takes about a minute.</p>
 
-- <p>Sign in to sync your Spaces across all your devices!</p>
+- <p>Sign in to sync your Spaces across all your machines!</p>
 + <p>Sign in to see your Spaces on every computer you use.</p>
 \`\`\`
 

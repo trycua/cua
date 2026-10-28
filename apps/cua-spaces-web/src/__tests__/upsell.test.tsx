@@ -68,7 +68,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
       return el as HTMLElement;
     });
     expect(card.getAttribute("data-plan-card")).toBe("free");
-    expect(card.textContent).toBe("Free: 2 computers at once and 20 hours a month away from the computer you're using.");
+    expect(card.textContent).toBe("Free: 2 machines at once and 20 hours a month away from the machine you're using.");
     // "Free plan" shows once, in the plan row.
     const tab = document.querySelector<HTMLElement>('[data-settings-tab="account"]')!;
     expect(tab.textContent).not.toContain("Free plan");
@@ -92,7 +92,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
     expect(sessions.getAttribute("aria-valuemax")).toBe("5");
     expect(sessions.hasAttribute("data-full")).toBe(true);
     const hours = document.querySelector('[data-usage-meter="Remote hours"]')!;
-    expect(document.body.textContent).toContain("Computers in use right now");
+    expect(document.body.textContent).toContain("Machines in use right now");
     expect(document.body.textContent).toContain("Time away from this computer");
     expect(hours.getAttribute("aria-valuenow")).toBe("12");
     expect(hours.hasAttribute("data-full")).toBe(false);
@@ -114,22 +114,28 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(card.textContent).toBe("Pro: 5 computers at once and 200 hours a month away from the computer you're using.");
+    expect(card.textContent).toBe("Pro: 5 machines at once and 200 hours a month away from the machine you're using.");
     expect(document.querySelector("[data-plan-primary]")).toBeNull();
     expect(document.querySelector("[data-manage-account]")?.textContent).toBe("Manage account on the web");
   });
 
-  it("the account name carries the plan; on Free it opens Pro's checkout", async () => {
+  it("the account menu's Plan names the plan; on Free it opens Pro's checkout", async () => {
     const opened: string[] = [];
     const tracked: unknown[] = [];
     const { router } = await mountApp("/spaces", host(idle(), opened, tracked));
     await router.load();
-    const plan = await waitFor(() => {
-      const el = document.querySelector("[data-account-plan]");
+    const line = await waitFor(() => {
+      const el = document.querySelector("[data-account-line]");
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(plan.textContent).toBe("Free plan · Upgrade");
+    fireEvent.click(line);
+    const plan = await waitFor(() => {
+      const el = document.querySelector("[data-account-item=plan]");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(plan.textContent).toBe("PlanFree");
     fireEvent.click(plan);
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_account_menu"]));
     await waitFor(() => expect(features(tracked)).toContain("upsell_account_menu_click"));
@@ -163,7 +169,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
   it("never during a live session", async () => {
     const { router } = await mountApp("/machines", host(idle({ liveSessions: 1 })));
     await router.load();
-    await waitFor(() => expect(document.querySelector("[data-machine-row], [aria-label=Computers]")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector("[data-machine-row], [aria-label=Machines]")).toBeTruthy());
     await act(() => new Promise((r) => setTimeout(r, 50)));
     expect(document.querySelector("[data-upsell]")).toBeNull();
   });
@@ -171,7 +177,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
   it("never during an agent run", async () => {
     const { router } = await mountApp("/machines", host(idle(), [], [], true));
     await router.load();
-    await waitFor(() => expect(document.querySelector("[aria-label=Computers]")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector("[aria-label=Machines]")).toBeTruthy());
     await act(() => new Promise((r) => setTimeout(r, 80)));
     expect(document.querySelector("[data-upsell]")).toBeNull();
   });

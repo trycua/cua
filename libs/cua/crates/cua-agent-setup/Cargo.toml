@@ -20,6 +20,8 @@ hex.workspace = true
 jsonc-parser = { version = "0.33", features = ["cst", "serde_json"] }
 # Comment- and format-preserving edits of TOML configs (Codex).
 toml_edit = "0.25"
+# Reading a JWT `exp` (only to tell an expired sign-in copy).
+base64.workspace = true
 # Goose's YAML config (edited only when it has no comments to lose).
 serde_yaml_ng = "0.10"
 # The default skills, bundled into the binary.

@@ -326,7 +326,7 @@ export interface MachinesViewMachine {
 
 /** A group of the list (`machines_view::MachinesViewGroup`). */
 export interface MachinesViewGroup {
-  /** `yours`, `old` or `team`. */
+  /** `yours`, `devices`, `old` or `team`. */
   id: string;
   title: string;
   collapsed: boolean;
@@ -334,11 +334,86 @@ export interface MachinesViewGroup {
   removeAll?: { label: string; confirm: HostConfirm; removes: MachinesViewRemove[] } | null;
 }
 
+/** The clouds, as the page reads `cloud_status` (`cloud_page::CloudsInput`). */
+export interface CloudsInput {
+  providers: Record<string, unknown>[];
+  machines: Record<string, unknown>[];
+  canApprove: boolean;
+  now: number;
+}
+
+/** A button on a cloud's page (`cloud_page::CloudAction`). */
+export interface CloudAction {
+  /** `raise-budget`, `set-up-again`, `new-token`, `review`, `open`, `reconnect`, `switch-oidc` or `change-limits`. */
+  id: string;
+  label: string;
+  url: string | null;
+}
+
+export interface CloudIssue {
+  id: string;
+  level: "fail" | "warn";
+  text: string;
+  action: CloudAction | null;
+}
+
+/** One cloud's page (`cloud_page::CloudPage`). */
+export interface CloudPage {
+  id: string;
+  name: string;
+  logo: string;
+  status: string;
+  health: "ok" | "warn" | "fail";
+  issuesTitle: string;
+  issues: CloudIssue[];
+  spend: { amount: string; ofBudget: string; resets: string; percent: number; tone: "ok" | "warn"; note: string } | null;
+  running: { title: string; machines: { id: string; name: string; by: string; cost: string }[] } | null;
+  token: {
+    title: string;
+    lock: string;
+    note: string;
+    holdersLabel: string;
+    holders: string;
+    revokeLabel: string;
+    revokeHelp: string;
+    replace: CloudAction;
+  } | null;
+  settingsTitle: string;
+  settings: { id: string; label: string; help: string; value: string }[];
+  /** "Change limits…". */
+  limits: CloudAction | null;
+  /** "Switch to OIDC" on a CLI sign-in link that could link without a stored key. */
+  switchAuth: CloudAction | null;
+  approval: {
+    title: string;
+    intro: string;
+    rows: { label: string; value: string }[];
+    note: string;
+    approveLabel: string;
+    denyLabel: string;
+  } | null;
+  disconnect: { label: string; confirm: HostConfirm; delete: boolean } | null;
+}
+
+/** The Clouds group and each cloud's page (`cloud_page::CloudsView`). */
+export interface CloudsView {
+  group: {
+    title: string;
+    rows: { id: string; name: string; logo: string; line: string; health: "ok" | "warn" | "fail" }[];
+    connectLabel: string;
+  };
+  pages: CloudPage[];
+}
+
 /** The Machines page as every UI draws it (`machines_view::MachinesView`). */
 export interface MachinesView {
   summary: string;
   groups: MachinesViewGroup[];
   machines: MachinesViewMachine[];
+  /** The Clouds group under the machines; a host that predates it sends none. */
+  clouds?: CloudsView;
+  /** The list's sections, top to bottom (`clouds`, then each group's id); a host that predates it sends none. */
+  order?: string[];
 }
 
 export interface ServiceState {
@@ -665,16 +740,20 @@ export interface SettingsInput {
   keyvaultProtection?: { label: string; value: string }[];
   /** "Connect to the desktop automatically" (none: no row). */
   autoConnect?: boolean | null;
-  /** Which Lume macOS Spaces run on (none: no Runtimes section). */
-  lumeSource?: string | null;
-  /** Which engine local Linux Spaces run on (none: no Linux row). */
-  linuxSource?: string | null;
+  /** Overflow into your clouds when this machine is full (`placement.overflow`; none: no row). */
+  overflow?: boolean | null;
+  /** Settings, Advanced's runtimes: each kind's setting, what is installed
+   * for it and whether it runs here (`runtimes::RuntimesInput`). None: not
+   * read yet (the rows still show, "Checking…"). */
+  runtimes?: RuntimesInput | null;
   /** The coding agents (Settings, AI agents; none while detecting). */
   agents?: AgentSetupRow[] | null;
   /** "Configure all detected agents" is running. */
   agentsBusy?: boolean;
   /** The agents with a change running ("working…"). */
   agentsPending?: string[];
+  /** Settings, General's Show tips (`!AppSettings.tips.off`; the core's default: on). */
+  showTips?: boolean;
 }
 
 export type SettingsRowKind =
@@ -720,4 +799,62 @@ export interface SettingsSection {
 export interface SettingsPage {
   title: string;
   sections: SettingsSection[];
+}
+
+/** A runtime the host found for one kind (`runtimes::DetectedRuntime`). */
+export interface DetectedRuntime {
+  /** `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`. */
+  tool: string;
+  /** As people know it (`Docker`, `Apple container`). */
+  name: string;
+  path: string;
+  version?: string | null;
+  /** The one guest system it runs, when only one (`macOS`, `Linux`). */
+  guests?: string | null;
+}
+
+/** What a binary is for one kind (`runtimes::RuntimePathCheck`; the host's `runtimes.check`). */
+export interface RuntimePathCheck {
+  path: string;
+  exists: boolean;
+  executable: boolean;
+  tool?: string | null;
+  name?: string | null;
+  version?: string | null;
+  minVersion?: string | null;
+  /** The tools the kind takes here (`Docker`, `Podman`). */
+  expected: string[];
+  guests?: string | null;
+}
+
+/** One kind as the host read it (`runtimes::RuntimeKindInput`). */
+export interface RuntimeKindInput {
+  /** `container`, `vm`, `microvm`. */
+  kind: string;
+  /** `runtime.<kind>`: `auto`, `builtin`, `system`. */
+  source?: string | null;
+  /** `runtime.<kind>_path`, when set. */
+  path?: string | null;
+  /** What is installed for the kind, the one used first (null: not looked for yet). */
+  detected?: DetectedRuntime[] | null;
+  /** The path in use, probed. */
+  check?: RuntimePathCheck | null;
+  /** The tools the kind takes here. */
+  expected?: string[];
+}
+
+/** What Settings knows about this machine's runtimes (`runtimes::RuntimesInput`). */
+export interface RuntimesInput {
+  os?: "macos" | "windows" | "linux" | "unknown" | null;
+  hostArch?: string | null;
+  /** The runtime doctor's ready backends (null: not read yet). */
+  localBackends?: string[] | null;
+  localDetails?: Record<string, string> | null;
+  kinds?: RuntimeKindInput[] | null;
+}
+
+/** A path's one line (`settings.runtimePathVerdict`). */
+export interface RuntimePathVerdict {
+  ok: boolean;
+  line: string;
 }

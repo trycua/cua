@@ -23,7 +23,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -41,14 +41,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This computer: Opens your other computers"
+            "This machine: Opens your other machines"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] Account ~Reach your machines from any machine. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
           ],
           "usage": null
         },
@@ -74,6 +74,12 @@
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]",
+        "# Runtimes (runtimes)",
+        "- runtime:container choice: Containers {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:vm choice: Virtual machines {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:microvm choice: MicroVMs {*Automatic|Cua’s own|Already installed} ?Checking…",
         "# Privacy (privacy)",
         "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
         "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
@@ -136,7 +142,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -154,14 +160,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This computer: Opens your other computers"
+            "This machine: Opens your other machines"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] Account ~Reach your machines from any machine. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+            "[x] Cua Volume ~Shared folder: files your agents can share across your machines. In Finder. (optional)"
           ],
           "usage": null
         },
@@ -188,11 +194,17 @@
         "- launch-at-login-note note: Keeps your Spaces, agents and Cua Volume available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]",
         "# Storage (storage)",
         "- backend choice: Store files on {*This Mac|S3-compatible}",
         "- fs-path text: Stored in = ~/.cua/volume/data ?/Users/maya/.cua/volume/data",
         "- mount choice: Add Cua Volume to Finder {*On|Off}",
         "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
+        "# Runtimes (runtimes)",
+        "- runtime:container choice: Containers {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:vm choice: Virtual machines {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:microvm choice: MicroVMs {*Automatic|Cua’s own|Already installed} ?Checking…",
         "# Privacy (privacy)",
         "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
         "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
@@ -269,7 +281,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -287,14 +299,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This computer: Opens your other computers"
+            "This machine: Opens your other machines"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] Account ~Reach your machines from any machine. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+            "[x] Cua Volume ~Shared folder: files your agents can share across your machines. In Finder. (optional)"
           ],
           "usage": null
         },
@@ -321,11 +333,17 @@
         "- launch-at-login-note note: Keeps your Spaces, agents and Cua Volume available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]",
         "# Storage (storage)",
         "- backend choice: Store files on {*This Mac|S3-compatible}",
         "- fs-path text: Stored in = ~/.cua/volume/data ?/Users/maya/.cua/volume/data",
         "- mount choice: Add Cua Volume to Finder {*On|Off}",
         "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
+        "# Runtimes (runtimes)",
+        "- runtime:container choice: Containers {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:vm choice: Virtual machines {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:microvm choice: MicroVMs {*Automatic|Cua’s own|Already installed} ?Checking…",
         "# Privacy (privacy)",
         "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
         "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
@@ -398,7 +416,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -416,14 +434,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This computer: Opens your other computers"
+            "This machine: Opens your other machines"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] Account ~Reach your machines from any machine. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+            "[x] Cua Volume ~Shared folder: files your agents can share across your machines. In Finder. (optional)"
           ],
           "usage": null
         },
@@ -450,11 +468,17 @@
         "- launch-at-login-note note: Keeps your Spaces, agents and Cua Volume available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]",
         "# Storage (storage)",
         "- backend choice: Store files on {*This Mac|S3-compatible}",
         "- fs-path text: Stored in = ~/.cua/volume/data ?/Users/maya/.cua/volume/data",
         "- mount choice: Add Cua Volume to Finder {*On|Off}",
         "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
+        "# Runtimes (runtimes)",
+        "- runtime:container choice: Containers {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:vm choice: Virtual machines {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:microvm choice: MicroVMs {*Automatic|Cua’s own|Already installed} ?Checking…",
         "# Privacy (privacy)",
         "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
         "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
@@ -514,7 +538,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -532,14 +556,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This computer: Opens your other computers"
+            "This machine: Opens your other machines"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] Account ~Reach your machines from any machine. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+            "[x] Cua Volume ~Shared folder: files your agents can share across your machines. In Finder. (optional)"
           ],
           "usage": null
         },
@@ -566,11 +590,17 @@
         "- launch-at-login-note note: Keeps your Spaces, agents and Cua Volume available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]",
         "# Storage (storage)",
         "- backend choice: Store files on {*This Mac|S3-compatible}",
         "- fs-path text: Stored in = ~/.cua/volume/data ?/Users/maya/.cua/volume/data",
         "- mount choice: Add Cua Volume to Finder {*On|Off}",
         "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
+        "# Runtimes (runtimes)",
+        "- runtime:container choice: Containers {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:vm choice: Virtual machines {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:microvm choice: MicroVMs {*Automatic|Cua’s own|Already installed} ?Checking…",
         "# Privacy (privacy)",
         "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
         "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
@@ -630,7 +660,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -648,14 +678,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This computer: Opens your other computers"
+            "This machine: Opens your other machines"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] Account ~Reach your machines from any machine. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+            "[x] Cua Volume ~Shared folder: files your agents can share across your machines. In Finder. (optional)"
           ],
           "usage": null
         },
@@ -682,11 +712,17 @@
         "- launch-at-login-note note: Keeps your Spaces, agents and Cua Volume available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]",
         "# Storage (storage)",
         "- backend choice: Store files on {*This Mac|S3-compatible}",
         "- fs-path text: Stored in = ~/.cua/volume/data ?/Users/maya/.cua/volume/data",
         "- mount choice: Add Cua Volume to Finder {*On|Off}",
         "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
+        "# Runtimes (runtimes)",
+        "- runtime:container choice: Containers {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:vm choice: Virtual machines {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:microvm choice: MicroVMs {*Automatic|Cua’s own|Already installed} ?Checking…",
         "# Privacy (privacy)",
         "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
         "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
@@ -745,7 +781,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -763,14 +799,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This computer: Opens your other computers"
+            "This machine: Opens your other machines"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] Account ~Reach your machines from any machine. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
           ],
           "usage": null
         },
@@ -796,6 +832,12 @@
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]",
+        "# Runtimes (runtimes)",
+        "- runtime:container choice: Containers {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:vm choice: Virtual machines {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:microvm choice: MicroVMs {*Automatic|Cua’s own|Already installed} ?Checking…",
         "# Privacy (privacy)",
         "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
         "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
@@ -866,7 +908,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -884,14 +926,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This computer: Opens your other computers"
+            "This machine: Opens your other machines"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] Account ~Reach your machines from any machine. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
           ],
           "usage": null
         },
@@ -917,6 +959,12 @@
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]",
+        "# Runtimes (runtimes)",
+        "- runtime:container choice: Containers {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:vm choice: Virtual machines {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:microvm choice: MicroVMs {*Automatic|Cua’s own|Already installed} ?Checking…",
         "# Privacy (privacy)",
         "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
         "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
@@ -990,7 +1038,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -1008,14 +1056,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This computer: Opens your other computers"
+            "This machine: Opens your other machines"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] Account ~Reach your machines from any machine. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
           ],
           "usage": null
         },
@@ -1041,6 +1089,12 @@
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]",
+        "# Runtimes (runtimes)",
+        "- runtime:container choice: Containers {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:vm choice: Virtual machines {*Automatic|Cua’s own|Already installed} ?Checking…",
+        "- runtime:microvm choice: MicroVMs {*Automatic|Cua’s own|Already installed} ?Checking…",
         "# Privacy (privacy)",
         "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
         "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",

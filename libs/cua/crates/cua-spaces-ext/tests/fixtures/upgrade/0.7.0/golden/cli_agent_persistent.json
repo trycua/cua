@@ -1,0 +1,34 @@
+{
+  "agents": [
+    {
+      "harness": "hermes",
+      "last_error": null,
+      "name": "ada",
+      "paused": false,
+      "run_id": null,
+      "saved_ms": 0,
+      "space": "local:dev",
+      "space_state": "running"
+    },
+    {
+      "harness": "claude-code",
+      "last_error": "Space local:scout is not registered (add it with add_space) not found",
+      "name": "scout",
+      "paused": true,
+      "run_id": null,
+      "saved_ms": 0,
+      "space": "local:scout",
+      "space_state": "running"
+    },
+    {
+      "harness": "openai-codex",
+      "last_error": null,
+      "name": "rev",
+      "paused": false,
+      "run_id": null,
+      "saved_ms": 0,
+      "space": "direct:127.0.0.1:9",
+      "space_state": "running"
+    }
+  ]
+}

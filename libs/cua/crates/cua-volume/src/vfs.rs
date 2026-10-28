@@ -463,6 +463,23 @@ impl Vfs {
         ino
     }
 
+    /// Numbers inodes from here on above `floor` (never lower than they
+    /// already are). The macOS mount's server keeps its file handle
+    /// generation across daemon restarts, so a restarted daemon can serve
+    /// the mount it left behind: its inodes must then never reuse a number
+    /// the previous daemon handed out for another file, or the kernel's
+    /// cached handles would reach the wrong file. See
+    /// [`crate::nfs::ino_floor`].
+    pub fn start_inos_above(&self, floor: u64) {
+        let mut ix = self.inodes.lock().unwrap();
+        ix.next = ix.next.max(floor);
+    }
+
+    /// Whether `ino` is an inode this view handed out.
+    pub fn knows(&self, ino: u64) -> bool {
+        self.inodes.lock().unwrap().by_ino.contains_key(&ino)
+    }
+
     fn node(&self, ino: u64) -> Result<Node> {
         self.inodes
             .lock()

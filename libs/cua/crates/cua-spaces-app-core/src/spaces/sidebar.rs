@@ -572,7 +572,7 @@ pub fn desktop_note(space: &Space) -> Option<String> {
 pub fn host_desktop_note(os: crate::model::SpaceOs) -> String {
     format!(
         "This is {}\u{2019}s own screen, so it isn\u{2019}t shown here. \
-         Your other devices see and control it while you let them use it.",
+         Your other machines see and control it while you let them use it.",
         os.this_machine_lower()
     )
 }
@@ -745,7 +745,7 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
         let elsewhere = space.cloud_delete.as_deref() == Some("elsewhere");
         let message = if elsewhere {
             format!(
-                "It runs in {place} and was created on another device. Remove from List keeps it running there."
+                "It runs in {place} and was created on another machine. Remove from List keeps it running there."
             )
         } else {
             format!(
@@ -758,7 +758,7 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
             confirm_label: "Delete Permanently".into(),
             confirm_enabled: !elsewhere,
             disabled_reason: elsewhere.then(|| {
-                "Created on another device: delete it there, or remove it from this list.".into()
+                "Created on another machine: delete it there, or remove it from this list.".into()
             }),
             remove_label: Some("Remove from List".into()),
             cancel_label: "Cancel".into(),
@@ -953,7 +953,8 @@ fn detail_facts(
         if u.memory_limited && u.memory_total > 0 {
             facts.push(fact("Memory", usage_text(u.memory_used, u.memory_total)));
         }
-        if u.disk_limited && u.disk_total > 0 {
+        // Never a sentinel ("unlimited" as 2^63): only a real size.
+        if u.disk_limited && crate::resources::known_size(u.disk_total).is_some() {
             facts.push(fact("Storage", usage_text(u.disk_used, u.disk_total)));
         }
     }
@@ -1635,7 +1636,7 @@ mod tests {
                 .sections
                 .iter()
                 .find(|s| s.title.code == "spaces.sidebar.section.my_computers")
-                .unwrap_or_else(|| panic!("no My computers for {features:?} {error:?}: {view:?}"));
+                .unwrap_or_else(|| panic!("no My machines for {features:?} {error:?}: {view:?}"));
             assert_eq!(
                 mine.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
                 [other.as_str()],
@@ -1737,6 +1738,36 @@ mod tests {
     }
 
     #[test]
+    fn a_storage_fact_never_shows_a_sentinel() {
+        let space = super::super::row_to_space(
+            &local_row("local:o", Some("ghcr.io/trycua/linux:24.04"), None, None),
+            0,
+        );
+        for total in [i64::MAX as u64, u64::MAX, 0] {
+            let usage = SpaceUsage {
+                disk_used: 1 << 20,
+                disk_total: total,
+                disk_limited: true,
+                ..Default::default()
+            };
+            let d = detail_live(&space, Some(&usage), None);
+            assert_eq!(fact_of(&d, "Storage"), None, "{total}");
+        }
+        let real = SpaceUsage {
+            disk_used: 2 << 30,
+            disk_total: 4 << 30,
+            disk_limited: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            fact_of(&detail_live(&space, Some(&real), None), "Storage")
+                .unwrap()
+                .value,
+            "2 GB / 4 GB"
+        );
+    }
+
+    #[test]
     fn kind_and_architecture_facts_warn_about_emulation_on_this_mac_only() {
         let omarchy = super::super::row_to_space(
             &local_row("local:o", Some("ghcr.io/trycua/omarchy:edge"), None, None),
@@ -1810,6 +1841,7 @@ mod tests {
         let row = SpaceRow {
             id: "direct:127.0.0.1:34752".into(),
             name: "studio".into(),
+            display_name: None,
             provider: "direct".into(),
             spacesd_version: "0.4.0".into(),
             features: vec![],
@@ -1831,6 +1863,7 @@ mod tests {
             cloud_place: None,
             cloud_delete: None,
             stop_reason: None,
+            sharing: None,
         };
         let d = detail(&super::super::row_to_space(&row, 0));
         // Added by address: no image row, so only the identifier copies.
@@ -1859,6 +1892,7 @@ mod tests {
         let row = SpaceRow {
             id: "local:demo".into(),
             name: "demo".into(),
+            display_name: None,
             provider: "local".into(),
             spacesd_version: "0.4.0".into(),
             features: vec!["desktop_stream".into()],
@@ -1880,6 +1914,7 @@ mod tests {
             cloud_place: None,
             cloud_delete: None,
             stop_reason: None,
+            sharing: None,
         };
         let space = super::super::creating::deleting_space(&super::super::row_to_space(&row, 0));
         let d = detail(&space);

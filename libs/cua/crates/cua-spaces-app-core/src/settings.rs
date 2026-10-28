@@ -92,6 +92,9 @@ pub struct AppSettings {
     /// when it is in several ([`crate::teams::current`]); `None` or an id
     /// the account left: its first owned team.
     pub current_team_id: Option<String>,
+    /// Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
+    /// older settings file without it reads as tips on, none done.
+    pub tips: crate::tips::TipsState,
 }
 
 impl Default for AppSettings {
@@ -113,11 +116,15 @@ impl Default for AppSettings {
             teleport_choices: vec![],
             auto_connect: true,
             current_team_id: None,
+            tips: crate::tips::TipsState::default(),
         }
     }
 }
 
-/// Reads settings; a missing or damaged file gives the defaults.
+/// Reads settings; a missing or damaged file gives the defaults. A damaged
+/// file (not valid settings JSON) is kept beside it as
+/// `<name>.damaged` before the shell saves the defaults over it, so a
+/// person's settings are never lost without a copy.
 ///
 /// The New UI: a file with no choice yet ([`AppSettings::new_ui`]) takes an
 /// older build's `experiments.webUi: true` as the choice and its `false`
@@ -125,16 +132,36 @@ impl Default for AppSettings {
 /// it). Until [`resolve_new_ui`] runs with the app's version, the New UI
 /// is on only by choice.
 pub fn load(path: &Path) -> AppSettings {
-    let mut s: AppSettings = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    let text = std::fs::read_to_string(path).ok();
+    let parsed = text.as_deref().map(serde_json::from_str::<AppSettings>);
+    if let Some(Err(e)) = &parsed {
+        let kept = damaged_path(path);
+        match std::fs::copy(path, &kept) {
+            Ok(_) => eprintln!(
+                "{} is damaged ({e}); using the defaults, the damaged file is kept as {}",
+                path.display(),
+                kept.display()
+            ),
+            Err(c) => eprintln!(
+                "{} is damaged ({e}); using the defaults (could not keep a copy: {c})",
+                path.display()
+            ),
+        }
+    }
+    let mut s: AppSettings = parsed.and_then(Result::ok).unwrap_or_default();
     migrate_defaults(path, &mut s);
     if s.new_ui.is_none() && s.experiments.web_ui {
         s.new_ui = Some(true);
     }
     s.experiments.web_ui = s.new_ui == Some(true);
     s
+}
+
+/// Where a damaged settings file is kept (`settings.json.damaged`).
+pub fn damaged_path(path: &Path) -> std::path::PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".damaged");
+    path.with_file_name(name)
 }
 
 /// The migration marker next to the settings file. The shells round-trip
@@ -415,18 +442,19 @@ pub struct SettingsInput {
     /// "Connect to the desktop automatically" (none: no row; a shell
     /// without the preview cover leaves it out).
     pub auto_connect: Option<bool>,
-    /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
-    /// `system`); none: no Runtimes section.
-    #[serde(default)]
-    pub lume_source: Option<String>,
-    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
-    /// `builtin`, `system`); none: no Linux row.
-    #[serde(default)]
-    pub linux_source: Option<String>,
     /// Overflow into your clouds when this machine is full
     /// (`placement.overflow`); none: no row.
     #[serde(default)]
     pub overflow: Option<bool>,
+    /// Settings, Advanced's runtimes: each kind's setting, what is
+    /// installed for it and whether it runs here. None: nothing read yet
+    /// (the rows still show, "Checking…").
+    #[serde(default)]
+    pub runtimes: Option<crate::runtimes::RuntimesInput>,
+    /// Settings, General's Show tips switch: tips are on
+    /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
+    #[serde(default = "default_true")]
+    pub show_tips: bool,
 }
 
 impl Default for SettingsInput {
@@ -449,9 +477,9 @@ impl Default for SettingsInput {
             keyvault_site_icons: true,
             keyvault_protection: vec![],
             auto_connect: None,
-            lume_source: None,
-            linux_source: None,
             overflow: None,
+            runtimes: None,
+            show_tips: true,
         }
     }
 }
@@ -480,6 +508,34 @@ pub fn auto_connect_row(on: bool) -> SettingsRow {
         "Opening a running Space shows a preview and a Connect button".into()
     });
     r
+}
+
+/// Settings, General, after Welcome: the Show tips switch (row `tips`,
+/// options `on` and `off`) and Reset tips (row `reset-tips`, button
+/// "Reset"). [`choose`] applies both.
+pub fn tips_rows(on: bool) -> Vec<SettingsRow> {
+    let mut show = row("tips", SettingsRowKind::Toggle, "Show tips");
+    show.options = vec![opt("on", "On", on), opt("off", "Off", !on)];
+    let mut reset = row("reset-tips", SettingsRowKind::Text, "Reset tips");
+    reset.button = Some("Reset".into());
+    vec![show, reset]
+}
+
+/// The settings after a Settings row's choice or button that the core
+/// owns: `tips` (`on`/`off`: Show tips; on brings back the tips not done)
+/// and `reset-tips` (any option: every tip starts over, and tips are on).
+/// Any other row leaves the settings as they are.
+pub fn choose(settings: &AppSettings, row: &str, option: &str) -> AppSettings {
+    use crate::tips::{TipsEvent, reduce};
+    let mut s = settings.clone();
+    match (row, option) {
+        ("tips", "on" | "off") => {
+            s.tips = reduce(&s.tips, &TipsEvent::ShowTips { on: option == "on" });
+        }
+        ("reset-tips", _) => s.tips = reduce(&s.tips, &TipsEvent::Reset),
+        _ => {}
+    }
+    s
 }
 
 /// The overflow switch's label.
@@ -776,6 +832,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     let mut welcome = row("welcome", Text, "Welcome");
     welcome.button = Some("Show again".into());
     general.push(welcome);
+    general.extend(tips_rows(input.show_tips));
 
     let mut sections = vec![
         SettingsSection {
@@ -816,12 +873,8 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         },
     ];
 
-    if input.lume_source.is_some() || input.linux_source.is_some() {
-        sections.push(runtimes_section(
-            input.lume_source.as_deref(),
-            input.linux_source.as_deref(),
-        ));
-    }
+    // Every kind's runtime row, on every host, whatever is known yet.
+    sections.push(crate::runtimes::section(input.runtimes.as_ref()));
 
     if let Some(t) = &input.telemetry {
         let mut share = row("telemetry", Choice, "Share usage data to help improve Cua");
@@ -901,55 +954,6 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
 }
 
-/// The help under Settings, Runtimes, macOS VMs.
-pub const MACOS_RUNTIME_HELP: &str =
-    "Built-in is Cua\u{2019}s signed Lume, downloaded the first time you need it (6 MB).";
-
-/// The help under Settings, Runtimes, Linux.
-pub const LINUX_RUNTIME_HELP: &str =
-    "Built-in is a gVisor Linux VM, downloaded the first time you need it (480 MB).";
-
-/// Settings, Runtimes: one row per local runtime Cua can provide itself,
-/// each Automatic, Built-in or System.
-/// * macOS VMs (`macos-runtime`, `runtime.lume`'s values): Built-in is
-///   Cua's signed Lume, set up on first use; System this Mac's own Lume.
-/// * Linux (`linux-runtime`, `runtime.linux`'s values): Built-in is Cua's
-///   own VM with Docker and gVisor, set up on first use; System this Mac's
-///   own container engine; Automatic Docker when it runs, else built-in.
-pub fn runtimes_section(lume_source: Option<&str>, linux_source: Option<&str>) -> SettingsSection {
-    use SettingsRowKind::*;
-    let choice = |id: &str, label: &str, source: &str| {
-        let source = match source {
-            "builtin" | "system" => source,
-            _ => "auto",
-        };
-        let mut r = row(id, Choice, label);
-        r.options = vec![
-            opt("auto", "Automatic", source == "auto"),
-            opt("builtin", "Built-in", source == "builtin"),
-            opt("system", "System", source == "system"),
-        ];
-        r
-    };
-    let mut rows = vec![];
-    if let Some(source) = lume_source {
-        rows.push(choice("macos-runtime", "macOS VMs", source));
-        rows.push(row("macos-runtime-note", Note, MACOS_RUNTIME_HELP));
-    }
-    if let Some(source) = linux_source {
-        rows.push(choice("linux-runtime", "Linux", source));
-        rows.push(row("linux-runtime-note", Note, LINUX_RUNTIME_HELP));
-    }
-    SettingsSection {
-        id: "runtimes".into(),
-        title: "Runtimes".into(),
-        button: None,
-        button_enabled: false,
-        button_help: None,
-        rows,
-    }
-}
-
 /// The Settings page with Settings, Storage (the Cua Volume's store,
 /// Finder volume and cache, [`crate::drive_settings::storage_section`])
 /// after General, while the Cua Volume experiment is on. Off, Storage is
@@ -981,66 +985,36 @@ pub fn with_storage(
 mod tests {
     use super::*;
 
+    /// Every host's page has the Runtimes section with the three kinds,
+    /// even before anything was read.
     #[test]
-    fn the_runtimes_section_shows_the_lume_choice() {
+    fn the_runtimes_section_is_always_there() {
         let p = page(&SettingsInput::default());
-        assert!(
-            !p.sections.iter().any(|s| s.id == "runtimes"),
-            "not until read"
-        );
-        let page = page(&SettingsInput {
-            lume_source: Some("system".into()),
-            ..Default::default()
-        });
-        let r = &page
-            .sections
-            .iter()
-            .find(|s| s.id == "runtimes")
-            .unwrap()
-            .rows[0];
-        assert_eq!(r.id, "macos-runtime");
-        let active: Vec<_> = r
-            .options
-            .iter()
-            .filter(|o| o.active)
-            .map(|o| o.id.as_str())
-            .collect();
-        assert_eq!(active, ["system"]);
-        let ids: Vec<_> = r.options.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(ids, ["Automatic", "Built-in", "System"]);
+        let s = p.sections.iter().find(|s| s.id == "runtimes").unwrap();
+        let ids: Vec<_> = s.rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["runtime:container", "runtime:vm", "runtime:microvm"]);
+        // After General.
+        let order: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
+        let at = |id: &str| order.iter().position(|s| *s == id).unwrap();
+        assert!(at("general") < at("runtimes"));
     }
 
     #[test]
-    fn the_runtimes_section_shows_the_linux_choice() {
-        let page = page(&SettingsInput {
-            lume_source: Some("auto".into()),
-            linux_source: Some("builtin".into()),
-            ..Default::default()
-        });
-        let s = page.sections.iter().find(|s| s.id == "runtimes").unwrap();
-        let ids: Vec<_> = s.rows.iter().map(|r| r.id.as_str()).collect();
+    fn a_damaged_settings_file_gives_the_defaults_and_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{\"updateChannel\": \"beta\", \"theme\": ").unwrap();
+        let s = load(&path);
+        assert_eq!(s, load(&dir.path().join("missing.json")), "the defaults");
         assert_eq!(
-            ids,
-            [
-                "macos-runtime",
-                "macos-runtime-note",
-                "linux-runtime",
-                "linux-runtime-note"
-            ]
+            std::fs::read_to_string(damaged_path(&path)).unwrap(),
+            "{\"updateChannel\": \"beta\", \"theme\": "
         );
-        let linux = &s.rows[2];
-        assert_eq!(linux.label, "Linux");
-        let active: Vec<_> = linux
-            .options
-            .iter()
-            .filter(|o| o.active)
-            .map(|o| o.id.as_str())
-            .collect();
-        assert_eq!(active, ["builtin"]);
-        // An unknown word reads as Automatic.
-        let r = runtimes_section(None, Some("docker"));
-        assert_eq!(r.rows[0].id, "linux-runtime");
-        assert!(r.rows[0].options[0].active);
+        // A valid file is read as is and leaves no copy.
+        let ok = dir.path().join("ok.json");
+        std::fs::write(&ok, "{}").unwrap();
+        load(&ok);
+        assert!(!damaged_path(&ok).exists());
     }
 
     #[test]
@@ -1094,10 +1068,99 @@ mod tests {
     }
 
     #[test]
+    fn tips_persist_and_older_files_load() {
+        let dir =
+            std::env::temp_dir().join(format!("cua-app-core-settings-tips-{}", std::process::id()));
+        let path = dir.join("settings.json");
+        let s = AppSettings {
+            tips: crate::tips::TipsState {
+                off: true,
+                done: vec!["try-agent".into()],
+            },
+            ..Default::default()
+        };
+        save(&path, &s).unwrap();
+        assert_eq!(load(&path), s);
+        // A file from before tips: on, none done.
+        std::fs::write(&path, r#"{"menuBar":true,"autoConnect":false}"#).unwrap();
+        let old = load(&path);
+        assert!(old.menu_bar);
+        assert_eq!(old.tips, crate::tips::TipsState::default());
+        // A file saved while the Pro banner could still be closed carries a
+        // key the app no longer knows; it loads, and the key is dropped.
+        std::fs::write(&path, r#"{"menuBar":true,"proBannerDismissedUntilMs":42}"#).unwrap();
+        assert!(load(&path).menu_bar);
+        save(&path, &load(&path)).unwrap();
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("proBanner")
+        );
+        // A partial tips object reads too.
+        std::fs::write(&path, r#"{"tips":{"done":["power"]}}"#).unwrap();
+        assert_eq!(load(&path).tips.done, ["power"]);
+        assert!(!load(&path).tips.off);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn show_tips_and_reset_tips_follow_welcome() {
+        let general = |input: &SettingsInput| {
+            page(input)
+                .sections
+                .into_iter()
+                .find(|s| s.id == "general")
+                .unwrap()
+                .rows
+        };
+        let rows = general(&SettingsInput::default());
+        let ids: Vec<_> = rows.iter().map(|r| r.id.as_str()).collect();
+        let at = ids.iter().position(|i| *i == "welcome").unwrap();
+        assert_eq!(&ids[at..], ["welcome", "tips", "reset-tips"]);
+        let show = &rows[at + 1];
+        assert_eq!(show.kind, SettingsRowKind::Toggle);
+        assert_eq!(show.label, "Show tips");
+        assert!(show.options[0].active, "on by default");
+        let reset = &rows[at + 2];
+        assert_eq!(reset.label, "Reset tips");
+        assert_eq!(reset.button.as_deref(), Some("Reset"));
+        let off = general(&SettingsInput {
+            show_tips: false,
+            ..Default::default()
+        });
+        assert!(off[at + 1].options[1].active);
+        // A shell that does not say: on.
+        let input: SettingsInput = serde_json::from_str("{}").unwrap();
+        assert!(input.show_tips);
+    }
+
+    #[test]
+    fn choosing_tips_rows_applies_them() {
+        let s = AppSettings {
+            tips: crate::tips::TipsState {
+                off: false,
+                done: vec!["try-agent".into(), "power".into()],
+            },
+            ..Default::default()
+        };
+        let off = choose(&s, "tips", "off");
+        assert!(off.tips.off);
+        assert_eq!(off.tips.done, s.tips.done, "turning off forgets nothing");
+        let on = choose(&off, "tips", "on");
+        assert!(!on.tips.off);
+        assert_eq!(on.tips.done, s.tips.done, "the ones not done come back");
+        let reset = choose(&off, "reset-tips", "press");
+        assert_eq!(reset.tips, crate::tips::TipsState::default());
+        // Anything else: unchanged.
+        assert_eq!(choose(&s, "tips", "maybe"), s);
+        assert_eq!(choose(&s, "notch", "hide"), s);
+    }
+
+    #[test]
     fn the_page_lists_account_general_privacy_agents() {
         let p = page(&SettingsInput::default());
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["account", "teams", "general", "agents"]);
+        assert_eq!(ids, ["account", "teams", "general", "runtimes", "agents"]);
         let p = page(&SettingsInput {
             identity: Some("ada@example.com".into()),
             can_sign_out: true,
@@ -1105,7 +1168,12 @@ mod tests {
             ..Default::default()
         });
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["account", "teams", "general", "privacy", "agents"]);
+        assert_eq!(
+            ids,
+            [
+                "account", "teams", "general", "runtimes", "privacy", "agents"
+            ]
+        );
         assert_eq!(p.sections[0].rows[0].button.as_deref(), Some("Sign out"));
         let sign_in: SignInPhase =
             serde_json::from_str(r#"{"kind":"waiting","userCode":"AB-CD"}"#).unwrap();
@@ -1132,10 +1200,10 @@ mod tests {
         assert_eq!(
             ids(&p),
             [
-                "account", "teams", "general", "privacy", "keyvault", "agents"
+                "account", "teams", "general", "runtimes", "privacy", "keyvault", "agents"
             ]
         );
-        let kv = &p.sections[4];
+        let kv = &p.sections[5];
         assert_eq!(kv.title, "Keyvault");
         let toggle = &kv.rows[0];
         assert_eq!(
@@ -1310,7 +1378,10 @@ mod tests {
                 .map(|r| r.label.clone())
         };
         let off = with_storage(&page(&input), &storage, &input.experiments);
-        assert_eq!(ids(&off), ["account", "teams", "general", "agents"]);
+        assert_eq!(
+            ids(&off),
+            ["account", "teams", "general", "runtimes", "agents"]
+        );
         assert_eq!(note(&off).as_deref(), Some(NOTE_WITHOUT_VOLUME));
         let on = SettingsInput {
             experiments: Experiments {
@@ -1322,7 +1393,9 @@ mod tests {
         let p = with_storage(&page(&on), &storage, &on.experiments);
         assert_eq!(
             ids(&p),
-            ["account", "teams", "general", "storage", "agents"]
+            [
+                "account", "teams", "general", "storage", "runtimes", "agents"
+            ]
         );
         assert_eq!(note(&p).as_deref(), Some(NOTE));
         // A settings file from before experiments: all off.

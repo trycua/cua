@@ -9,11 +9,12 @@
 
 import type { RiskyRequest } from "../ops/nudges";
 import { Emitter, HostError, UnsupportedOperationError, type DataAdapter } from "../adapter";
-import type { AgentSetupRow, PersistentAgent } from "../contracts/agents";
+import type { AgentSetupRow, ConnectionReport, PersistentAgent } from "../contracts/agents";
 import type { MachineRow, OnboardingState } from "../contracts/host";
 import type { KvItem } from "../contracts/keyvault";
 import type { UpdateState } from "../contracts/settings";
-import type { SpaceOs, SpaceRow } from "../contracts/spaces";
+import type { BulkResult } from "../contracts/spaces-page";
+import type { CreatingElsewhere, SpaceOs, SpaceRow } from "../contracts/spaces";
 import {
   DEFAULT_SETTINGS,
   type HostEvent,
@@ -34,10 +35,11 @@ import {
   demoSpaceRows,
   demoTelemetry,
 } from "./demo-data";
-import { demoNewSpaceState, newSpaceDemoHandlers, type DemoNewSpaceState } from "./demo/new-space";
+import { demoNewSpaceState, newSpaceDemoHandlers, type DemoClouds, type DemoNewSpaceState } from "./demo/new-space";
 import { demoShareHandlers } from "./demo/share";
+import { demoThreadHandlers } from "./demo/thread";
 import { demoAgentDetailHandlers } from "./demo/agent-detail";
-import { demoAgentKeysHandlers } from "./demo/agent-keys";
+import { demoAgentKeysHandlers, demoKeyStore, type DemoKeyStore } from "./demo/agent-keys";
 import { demoKeyvaultManageHandlers, demoKeyvaultManageState, withDemoCopies, type DemoKeyvaultManageState } from "./demo/keyvault-manage";
 import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview, type DemoKeyvaultSetupState } from "./demo/keyvault-setup";
 import { unsupportedStreamOps } from "../ops/stream";
@@ -47,7 +49,8 @@ import type { CliInstallPlan } from "../contracts/first-run";
 import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
-import { demoAgentSetup, demoPersistentAgents, demoReply, demoRunRecords, demoStartedRun, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
+import { demoChooseRuntime, demoRuntimesInput, demoRuntimesState, type DemoRuntimes } from "./demo/runtimes";
+import { demoAgentSetup, demoConnections, demoPersistentAgents, demoReply, demoRunRecords, demoStartedRun, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
@@ -72,6 +75,9 @@ export interface DemoOptions {
   noVault?: boolean;
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
+  /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
+   * scripts/scale-bench.mjs). */
+  extraSpaces?: number;
   /** An account in no team (`?demo=no-team`): Share explains that sharing is for teams. */
   noTeam?: boolean;
   /** A team with no free computers (`?demo=team-full`): adding a machine to it is refused, as the control plane does at one computer per seat. Simulated: the demo has no control plane. */
@@ -80,11 +86,21 @@ export interface DemoOptions {
   keychain?: boolean;
   /** Answer New Space's options as the SwiftUI host does (`demo/new-space.ts`). */
   macHost?: boolean;
+  /** Start with AWS and Hetzner connected: `connected` (`?demo=clouds`), or with one thing wrong:
+   * `budget` (AWS's budget is used), `untrusted` (AWS lost its trust), `token` (Hetzner's token was
+   * refused) or `approval` (an agent's AWS link waits for approval). */
+  clouds?: DemoClouds;
+  /** 14 more computers on the account, for a long list (`?demo=clouds-many`). */
+  manyMachines?: boolean;
   /** This device is not enrolled on the relay yet (the enroll bar above every page). */
   unenrolled?: boolean;
   /** The relay allowance: `idle` (free, no live session, so prompts can show),
    * `warn` (80% of the hours), `limit` (used up), `pro` or `teams`. */
   usage?: "idle" | "warn" | "limit" | "pro" | "teams";
+  /** A connection status to answer `agents.status` with as is (a real
+   * `cua connect status --json`, for screenshots of real states); none: the
+   * demo's own agents decide it. */
+  connections?: ConnectionReport;
   /** Which agents are on this computer (`?demo=agents-none`, `?demo=agents-codex`); all of them by default. `unset`: all found, none set up for Cua yet, without the first-run onboarding. */
   agents?: "none" | "codex" | "unset";
   /** Coding agents whose config file Cua can't write (setup fails with a permission error), by id. */
@@ -107,7 +123,31 @@ export interface DemoOptions {
    * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
    * not installed (`?demo=cli-missing`). */
   cli?: "local" | "missing";
+  /** A daemon without the Space thread (`?demo=nothread`): the Space page keeps its old layout. */
+  noThread?: boolean;
+  /** You in the demo's thread as someone the Space is shared with: `guest` (`?demo=thread-guest`, view only) or `member` (`?demo=thread-member`); the owner by default. */
+  threadRole?: "member" | "guest";
+  /** Extra scenes in the demo's thread: `?demo=thread-lookalike` (CUA-2262). */
+  threadLookalike?: boolean;
+  /** `?demo=thread-auth-failed`: Claude and Hermes answer "hi" with "not connected" (CUA-2638). */
+  threadAuthFailed?: boolean;
+  /** `?demo=thread-stranger`: an agent whose owner is not in the Space (its card opens their profile in place). */
+  threadStranger?: boolean;
+  /** Join codes: redeemed this long after they are made (null: never, `?demo=thread-join-slow`). */
+  joinRedeemMs?: number | null;
+  /** Join codes expire this long after they are made (`?demo=thread-join-expire`). */
+  joinExpireMs?: number;
+  /** Linus's OpenClaw asks to join (`?demo=thread-request`). */
+  threadRequest?: boolean;
+  /** Another of your computers is creating a Space (`?demo=creating-elsewhere`):
+   * the Mac mini, a macOS Space 40% of the way (CUA-2349). */
+  creatingElsewhere?: boolean;
 }
+
+/** What the Mac mini is creating (`?demo=creating-elsewhere`). */
+export const DEMO_CREATING_ELSEWHERE: CreatingElsewhere[] = [
+  { machineId: "mac-mini", machineName: "Mac mini", name: "browser-qa", os: "macos", phase: "pulling", percent: 40 },
+];
 
 /** The SDK's words for the failures `failCreates` plays. */
 export const DEMO_CREATE_FAILURES = {
@@ -118,12 +158,45 @@ export const DEMO_CREATE_FAILURES = {
 const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
 
 /** `?demo=fresh` (signed out, first run), `?demo=no-team`, `?demo=team-full`, `?demo=slow` (slow answers), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
- * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
+ * `?demo=empty` (no Spaces yet), `?demo=nothread` (a daemon without the Space thread), `?demo=thread-lookalike` (a look-alike agent in the thread), `?demo=thread-request` (an agent asks to join), `?demo=thread-join-slow` / `?demo=thread-join-expire` (join codes never redeemed / expiring), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
  * `?demo=agents-readonly` (Cua can't write Hermes's config),
  * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`, `?demo=update-error`,
- * and `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space). */
+ * `?demo=clouds` (AWS and Hetzner connected; `clouds-budget`, `clouds-untrusted`,
+ * `clouds-token`, `clouds-approval`: one thing wrong with one of them;
+ * `clouds-cli`: AWS linked through the AWS CLI's sign-in, offering OIDC;
+ * `clouds-limits`: an agent asked to raise AWS's limits; `clouds-revoked`:
+ * AWS was disconnected on another device while machines still run),
+ * `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space: New
+ * Space and the first Space offers see it too), and `?demo=intel-mac` /
+ * `?demo=linux-pc` (an Intel Mac, an x64 Linux PC with QEMU), and
+ * `?demo=creating-elsewhere` (the Mac mini is creating a Space). */
+/** `count` plain Spaces for scale: alternating systems, places and states,
+ * each with its own id, name and time (`?demo=scale-N`). */
+export function demoScaleRows(now: number, count: number): SpaceRow[] {
+  const oses = ["linux", "macos", "windows"] as const;
+  return Array.from({ length: count }, (_, i) => {
+    const os = oses[i % 3]!;
+    const on = i % 4 !== 0;
+    return {
+      id: `local:scale-${i}`,
+      name: `scale-${String(i).padStart(4, "0")}`,
+      provider: "local",
+      spacesdVersion: "0.6.0",
+      features: [],
+      addedAt: new Date(now - i * 60_000).toISOString(),
+      os,
+      osName: os === "linux" ? "Ubuntu" : os === "macos" ? "macOS" : "Windows",
+      kind: os === "macos" ? "vm" : "container",
+      arch: "arm64",
+      reachable: true,
+      power: "suspend",
+      powerState: on ? "running" : "stopped",
+    } as SpaceRow;
+  });
+}
+
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
   return {
@@ -134,19 +207,54 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
     noSpaces: flags.has("empty"),
+    ...(() => {
+      const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
+      return scale ? { extraSpaces: Math.min(5000, Number(scale.slice(6))) } : {};
+    })(),
     noTeam: flags.has("no-team"),
     teamFull: flags.has("team-full"),
+    noThread: flags.has("nothread"),
+    ...(flags.has("thread-guest") ? { threadRole: "guest" as const } : flags.has("thread-member") ? { threadRole: "member" as const } : {}),
+    threadLookalike: flags.has("thread-lookalike"),
+    threadAuthFailed: flags.has("thread-auth-failed"),
+    threadStranger: flags.has("thread-stranger"),
+    threadRequest: flags.has("thread-request"),
+    ...(flags.has("thread-join-slow") || flags.has("thread-join-expire") ? { joinRedeemMs: null } : {}),
+    ...(flags.has("thread-join-expire") ? { joinExpireMs: 6_000 } : {}),
     keychain: flags.has("keychain"),
     macHost: flags.has("mac-host"),
+    clouds: flags.has("clouds-budget")
+      ? "budget"
+      : flags.has("clouds-untrusted")
+        ? "untrusted"
+        : flags.has("clouds-token")
+          ? "token"
+          : flags.has("clouds-cli")
+            ? "cli"
+            : flags.has("clouds-limits")
+              ? "limits"
+              : flags.has("clouds-revoked")
+                ? "revoked"
+                : flags.has("clouds-approval")
+            ? "approval"
+            : flags.has("clouds") || flags.has("clouds-many")
+              ? "connected"
+              : undefined,
+    manyMachines: flags.has("clouds-many"),
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
     agents: (["none", "codex"] as const).find((a) => flags.has(`agents-${a}`)),
+    // A captured `cua connect status --json` (screenshots of real states).
+    connections: (globalThis as { __CUA_DEMO_CONNECTIONS?: ConnectionReport }).__CUA_DEMO_CONNECTIONS,
     // `?demo=agents-readonly`: Hermes's config file can't be written, so setting it up fails.
     ...(flags.has("agents-readonly") ? { agentsReadOnly: ["hermes"] } : {}),
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
+    creatingElsewhere: flags.has("creating-elsewhere"),
     failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
+    ...(flags.has("intel-mac") ? { platform: { os: "macos" as const, arch: "amd64" as const } } : {}),
+    ...(flags.has("linux-pc") ? { platform: { os: "linux" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("update-ready")
       ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
       : flags.has("update-downloading")
@@ -175,6 +283,13 @@ const DEMO_KEYVAULT_ROWS: Partial<Record<string, "keyvaultAutoWipe" | "keyvaultU
   "keyvault-site-icons": "keyvaultSiteIcons",
 };
 
+/** Simulated: one more of the account's computers (`?demo=clouds-many`). */
+function demoExtraMachine(i: number): MachineRow {
+  const n = String(i + 1).padStart(2, "0");
+  const os = (["macos", "linux", "windows"] as const)[i % 3]!;
+  return { id: `build-${n}`, name: `build-${os === "macos" ? "mini" : os === "linux" ? "box" : "pc"}-${n}`, via: "relay", online: i % 5 !== 4, os, limits: [] };
+}
+
 const CREATE_PHASES = ["preparing", "pulling", "creating", "booting", "waiting_for_services", "connecting"];
 
 type Handler<K extends OpName> = (args: OpArgs<K>) => Promise<OpResult<K>> | OpResult<K>;
@@ -187,19 +302,22 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
   const state: DemoState = {
-    rows: options.noSpaces ? [] : demoSpaceRows(now()),
+    rows: options.noSpaces ? [] : [...demoSpaceRows(now()), ...demoScaleRows(now(), options.extraSpaces ?? 0)],
     items: demoKeyvaultItems(now()),
     keyvaultLocked: Boolean(options.keyvaultLocked),
     keyvaultDisabled: false,
     pendingRequests: true,
     revokedGrants: new Set(),
-    settings: { ...DEFAULT_SETTINGS, launchAtLogin: true, updateChannel: "stable" },
+    // Kept as the Mac and Electron apps keep the core's settings: tips and the Pro banner's close.
+    settings: { ...DEFAULT_SETTINGS, launchAtLogin: true, updateChannel: "stable", tips: { off: false, done: [] } },
     identity: options.signedIn === false ? undefined : DEMO_IDENTITY,
     onboarding: { completed: options.onboarded !== false, mode: options.onboarded === false ? null : "client" },
     creates: new Map(),
     agents: demoPersistentAgents(now()),
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
+    imported: [],
+    keyStore: demoKeyStore(now),
     readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
@@ -207,6 +325,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     renamed: {},
     removed: [],
     hostSettings: options.macHost ? DEMO_MAC_HOST_SETTINGS : undefined,
+    runtimes: demoRuntimesState(),
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
@@ -216,7 +335,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoSpaceDetailState(),
     ...demoHostSetupState(now(), options.onboarded === false),
     ...demoStartupState(Boolean(options.keychain)),
-    ...demoNewSpaceState(Boolean(options.macHost)),
+    ...demoNewSpaceState(Boolean(options.macHost), options.clouds ?? null),
     ...demoKeyvaultSetupState(!options.noVault),
     ...demoKeyvaultManageState(),
   };
@@ -279,7 +398,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     values: { ...state.settings },
     defaultLocation: { value: state.settings.defaultLocation, source: "config", path: "~/.cua/config.toml" },
     telemetry: demoTelemetry(state.settings.telemetry),
-    ...(state.hostSettings ? { hostSettings: { ...state.hostSettings } } : {}),
+    hostSettings: { ...state.hostSettings, runtimes: demoRuntimesInput(state.runtimes) },
     // The macOS hosts register ⌘⇧Space; the Windows and Linux shells have none.
     globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
     // What a host's CLI install plan names (`CuaChannel::cli_name`): Local's is `cua-local`.
@@ -410,6 +529,54 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return spaceId;
     },
 
+    "spaces.deleteMany": async ({ ids }) => {
+      const results: BulkResult[] = [];
+      for (const id of ids) {
+        const row = state.rows.find((r) => r.id === id);
+        const theirs = row?.sharing && row.sharing.role !== "owner";
+        if (!row) results.push({ id, ok: false, error: `No Space ${id}.` });
+        else if (theirs) results.push({ id, ok: false, error: `Couldn't delete ${row.name}: it isn't yours.` });
+        else {
+          await wait(step);
+          state.rows = state.rows.filter((r) => r.id !== id);
+          results.push({ id, ok: true });
+          emit({ type: "spaces.changed" });
+        }
+      }
+      return { results };
+    },
+
+    "spaces.leave": async ({ ids }) => {
+      const results: BulkResult[] = [];
+      for (const id of ids) {
+        const row = state.rows.find((r) => r.id === id);
+        if (!row) results.push({ id, ok: false, error: `Couldn't leave ${id}: it isn't listed.` });
+        else if (!row.sharing || row.sharing.role === "owner") results.push({ id, ok: false, error: `Couldn't leave ${row.name}: it's yours; delete it instead.` });
+        else {
+          await wait(step);
+          state.rows = state.rows.filter((r) => r.id !== id);
+          results.push({ id, ok: true });
+          emit({ type: "spaces.changed" });
+        }
+      }
+      return { results };
+    },
+
+    "spaces.rename": async ({ spaceId, name }) => {
+      findRow(spaceId);
+      const next = name.trim();
+      if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(next)) {
+        throw new HostError("Use lowercase letters, digits and dashes in a Space's name, starting and ending with a letter or digit.", "invalid_argument");
+      }
+      if (state.rows.some((r) => r.id !== spaceId && r.name === next)) {
+        throw new HostError(`Another Space is already called ${next}. Pick another name.`, "invalid_argument");
+      }
+      await wait(step);
+      replaceRow(spaceId, { name: next });
+      emit({ type: "spaces.changed" });
+      return null;
+    },
+
     // There is no window to open in the browser; the Space only has to exist.
     "spaces.open": ({ spaceId }) => {
       findRow(spaceId);
@@ -417,7 +584,11 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     },
 
     "machines.list": () =>
-      [...demoMachineRows(now(), state.host, state.platform), ...state.paired.map((m) => ({ ...m, limits: [...m.limits] }))]
+      [
+        ...demoMachineRows(now(), state.host, state.platform),
+        ...(options.manyMachines ? Array.from({ length: 14 }, (_, i) => demoExtraMachine(i)) : []),
+        ...state.paired.map((m) => ({ ...m, limits: [...m.limits] })),
+      ]
         .filter((m) => !state.removed.includes(m.id))
         .map((m) => (state.renamed[m.id] ? { ...m, name: state.renamed[m.id]! } : m)),
     "machines.rename": async ({ id, name }) => {
@@ -447,6 +618,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "settings.choose": async ({ row, option }) => {
       const key = DEMO_KEYVAULT_ROWS[row];
       if (key && state.hostSettings) state.hostSettings = { ...state.hostSettings, [key]: option === "on" };
+      // Settings, Advanced's runtime rows: the kind's source or its path.
+      if (demoChooseRuntime(state.runtimes, row, option)) await wait(step);
       // An AI agents row's button (the SwiftUI host's `press`): set it up, or remove what cua added.
       const agent = row.startsWith("agent:") ? state.agentSetup.find((r) => `agent:${r.agent}` === row && r.installed) : undefined;
       if (agent) {
@@ -558,8 +731,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       };
     },
     "agents.start": async ({ spaceId, agent, prompt, repo }) => {
-      const row = findRow(spaceId);
-      if (row.powerState !== "running" || !row.reachable) throw new HostError(`${row.name} is not running`, "space_off");
+      // This Mac's own Space id (its host service shares it on the relay) runs too, like the core's.
+      const own = state.host.configured && state.host.sharing && state.host.machineId ? `relay:${state.host.machineId}` : null;
+      if (spaceId !== own) {
+        const row = findRow(spaceId);
+        if (row.powerState !== "running" || !row.reachable) throw new HostError(`${row.name} is not running`, "space_off");
+      }
       await wait(step);
       const runId = `run-${Math.random().toString(16).slice(2, 8)}`;
       state.runs.push(demoStartedRun(spaceId, runId, agent, prompt, now(), repo));
@@ -603,6 +780,77 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return null;
     },
     "agents.setup": () => state.agentSetup.map((r) => ({ ...r })),
+    "agents.status": () => options.connections ?? demoConnections(state.agentSetup, state.imported, now()),
+    "agents.connect": async ({ agents, signIn, skills, mcp }) => {
+      await wait(step);
+      // Only Cua's skills or only its MCP server (an app's page's switches).
+      const part = skills === false || mcp === false;
+      // `?demo=agents-readonly`: an app whose config Cua can't write fails, as with `agents.configure`.
+      state.agentSetup = state.agentSetup.map((r) =>
+        r.installed && agents.includes(r.agent)
+          ? state.readOnlyAgents.includes(r.agent)
+            ? { ...r, configured: false, skillsInstalled: 0, detail: "Permission denied (os error 13)" }
+            : part
+              ? { ...r, configured: false, skillsInstalled: skills === false ? 0 : r.skillsTotal, detail: skills === false ? "MCP server set up" : "Skills set up" }
+              : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
+          : r,
+      );
+      // Claude Code's own token command: one browser approval, then its token is saved with the keys.
+      if (signIn && agents.includes("claude-code")) {
+        await wait(step * 14);
+        state.keyStore.keys = [
+          ...state.keyStore.keys.filter((k) => k.env !== "CLAUDE_CODE_OAUTH_TOKEN"),
+          { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now() },
+        ];
+        emit({ type: "agents.changed" });
+      }
+      return agents.map((agent) => {
+        const row = state.agentSetup.find((r) => r.agent === agent);
+        if (row && state.readOnlyAgents.includes(agent)) {
+          return { agent, tools_ok: false, tools_line: `Couldn't add Cua to ${row.mcpConfig ?? agent}: Permission denied (os error 13)`, sign_in: null };
+        }
+        const copyable = agent === "hermes" || agent === "claude-code" || (agent === "codex" && Boolean(row?.signedIn));
+        if (signIn && copyable && !state.imported.includes(agent)) state.imported = [...state.imported, agent];
+        return {
+          agent,
+          tools_ok: Boolean(row?.installed),
+          tools_line: row?.installed ? null : `Couldn't add Cua to ${row?.mcpConfig ?? agent}`,
+          sign_in: !signIn || !["hermes", "claude-code", "codex"].includes(agent)
+            ? null
+            : copyable
+              ? { imported: { source: agent, env: "", label: "", expires_ms: null, added_ms: now() }, refused: null, line: null }
+              : { imported: null, refused: "not_signed_in", line: "No ChatGPT sign-in on This Mac yet." },
+        };
+      });
+    },
+    // Codex's device-code sign-in made for Cua: a code to show, then approved a moment later.
+    "agents.signInStart": async ({ agent }) => {
+      await wait(step);
+      if (agent !== "codex") throw new HostError(`${agent} has no device sign-in`);
+      return { id: `codex-${now()}`, url: "https://auth.openai.com/codex/device", code: "QX7P-4M2KD" };
+    },
+    "agents.signInWait": async () => {
+      await wait(step * 20);
+      state.keyStore.keys = [...state.keyStore.keys.filter((k) => k.env !== "CODEX_AUTH_JSON"), { provider: "other", env: "CODEX_AUTH_JSON", last4: "", addedMs: now() }];
+      emit({ type: "agents.changed" });
+      return { imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Codex · ChatGPT sign-in", expires_ms: null, added_ms: now() }, refused: null, line: null };
+    },
+    "agents.disconnect": async ({ agents, signIn, skills, mcp }) => {
+      await wait(step);
+      // Some parts only (an app's page's switches): what stays keeps its state.
+      const part = skills !== undefined || mcp !== undefined;
+      state.agentSetup = state.agentSetup.map((r) => {
+        if (!agents.includes(r.agent)) return r;
+        if (!part) return { ...r, configured: false, skillsInstalled: 0, detail: "Not set up" };
+        const hasSkills = skills ? false : r.skillsInstalled > 0;
+        const hasMcp = mcp ? false : r.configured || /MCP/.test(r.detail);
+        return { ...r, configured: false, skillsInstalled: hasSkills ? r.skillsTotal : 0, detail: hasSkills && hasMcp ? "Skills and MCP server set up" : hasSkills ? "Skills set up" : hasMcp ? "MCP server set up" : "Not set up" };
+      });
+      const removed = signIn ? state.imported.filter((a) => agents.includes(a)) : [];
+      if (signIn && agents.includes("claude-code")) state.keyStore.keys = state.keyStore.keys.filter((k) => k.env !== "CLAUDE_CODE_OAUTH_TOKEN");
+      state.imported = state.imported.filter((a) => !removed.includes(a));
+      return { removed_sign_ins: removed };
+    },
     // The demo's browser sign-in finishes a moment later.
     "agents.signIn": async ({ agent }) => {
       const row = state.agentSetup.find((r) => r.agent === agent);
@@ -637,13 +885,18 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoTeleportHandlers({ wait, emit, now, stepMs: step }),
     ...demoShareHandlers({ wait, stepMs: step, teamFull: options.teamFull }),
     ...demoAgentDetailHandlers({ wait, stepMs: step, now }),
-    ...demoAgentKeysHandlers({ wait, stepMs: step, now }),
+    ...demoAgentKeysHandlers({ wait, stepMs: step, now, store: state.keyStore }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
     ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
     ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
     ...demoLinksHandlers(ctx),
+    ...demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false,
+      joinRedeemMs: options.joinRedeemMs,
+      joinExpireMs: options.joinExpireMs,
+      request: options.threadRequest ?? false,
+    }),
     "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),
     "nudges.answer": ({ id }) => {
       risky = risky.filter((r) => r.id !== id);
@@ -677,6 +930,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return handler(args);
     },
     subscribe: (l) => events.subscribe(l),
+    ...(options.creatingElsewhere ? { creatingElsewhere: () => DEMO_CREATING_ELSEWHERE } : {}),
     dispose() {
       for (const t of timers) clearTimeout(t);
       timers.clear();
@@ -703,10 +957,14 @@ export interface DemoState extends DemoLinksStateField, DemoTelemetryState, Demo
   agents: PersistentAgent[];
   runs: DemoRunRecord[];
   agentSetup: AgentSetupRow[];
+  /** Agents whose sign-in the demo "copied" to Keyvault. */
+  imported: string[];
+  /** Saved keys and sign-ins (Settings, Connectors; Claude Code's Connect adds its token here). */
+  keyStore: DemoKeyStore;
   readOnlyAgents: string[];
   volume: DemoVolumeState;
   platform: DemoPlatform;
-  /** Machines added with a pairing code ("Add a machine"). */
+  /** Machines added with a pairing code ("Add a computer"). */
   paired: MachineRow[];
   /** Machines renamed on the Machines page (`machines.rename`), by id. */
   renamed: Record<string, string>;
@@ -714,4 +972,6 @@ export interface DemoState extends DemoLinksStateField, DemoTelemetryState, Demo
   removed: string[];
   /** `?demo=mac-host`: the Keyvault's switches the SwiftUI host lays out in Settings. */
   hostSettings?: HostSettings;
+  /** Settings, Advanced's runtimes (every demo host has them). */
+  runtimes: DemoRuntimes;
 }

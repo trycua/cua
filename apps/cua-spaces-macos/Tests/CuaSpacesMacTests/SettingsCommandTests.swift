@@ -30,8 +30,8 @@ struct SettingsCommandTests {
             var web: [MainUIRoute] = [], settings: [MainUIRoute] = []
             let router = MainUIRouter(model: m, web: { web.append($0) }, settings: { settings.append($0) })
             router.openSettings()
-            router.openSettings(.path("/settings/connected-apps"))
-            #expect(settings == [.settings, .path("/settings/connected-apps")], "webUi \(webUi)")
+            router.openSettings(.path("/settings/connectors"))
+            #expect(settings == [.settings, .path("/settings/connectors")], "webUi \(webUi)")
             #expect(web.isEmpty)
         }
     }

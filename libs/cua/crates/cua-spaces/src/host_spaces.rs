@@ -95,6 +95,12 @@ pub struct HostCaller {
     /// `relay` or `token`.
     #[serde(default)]
     pub via: String,
+    /// A Space thread grant: the one Space this machine provides (its
+    /// relay machine id) whose thread the caller may reach, because that
+    /// Space is shared with them (`role` is their role on it). Nothing
+    /// else of this machine answers such a caller.
+    #[serde(default)]
+    pub space: Option<String>,
 }
 
 impl HostCaller {
@@ -352,8 +358,13 @@ fn to_pb(s: &ProvidedSpace) -> pb::HostSpace {
         egress_enforced: String::new(),
         // Only the create response says which network it applied.
         network: String::new(),
+        // Only when asked ([`HostSpacesServer::with_disks`]).
+        disk: None,
     }
 }
+
+/// How long a host measures its Spaces' disks for one `GetHostSpaces`.
+const DISK_ANSWER_WITHIN: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 struct Reserved {
@@ -529,7 +540,7 @@ async fn following_host<T>(
         let r = tokio::time::timeout(
             HOST_PROGRESS_ASK,
             host.host_spaces()
-                .get_host_spaces(pb::GetHostSpacesRequest {}),
+                .get_host_spaces(pb::GetHostSpacesRequest::default()),
         )
         .await
         .ok()?
@@ -1362,6 +1373,23 @@ impl HostSpacesServer {
             images,
             creating: self.creating.listed(caller),
         })
+    }
+
+    /// `spaces` (a [`HostSpacesServer::get`] answer's) with what each
+    /// takes on this computer's disk (`GetHostSpacesRequest.disk`): measured
+    /// when due, else the sampler's last measurement. Bounded: a
+    /// measurement that takes longer leaves them unset this time.
+    pub async fn with_disks(&self, spaces: &mut [pb::HostSpace]) {
+        let disks = tokio::time::timeout(DISK_ANSWER_WITHIN, self.spaces.local_space_disks())
+            .await
+            .unwrap_or_default();
+        for s in spaces {
+            s.disk = disks.get(&s.local_space).map(|d| pb::HostSpaceDisk {
+                bytes: d.bytes,
+                allocated: d.allocated,
+                shares_space: d.shares_space,
+            });
+        }
     }
 
     /// `CreateHostSpace`: creates one Space here and attaches it to the
@@ -2413,8 +2441,8 @@ fn stopped_sharing_reason(e: &Error) -> Option<String> {
 /// local Space (2 vCPUs, 4 GiB).
 /// How this machine's daemon reaches the machine's own cua-spacesd (the
 /// host service): where it listens (the direct listener, `CUA_ENV_LISTEN`,
-/// else loopback on `CUA_ENV_PORT` or the channel's port, 3211 or 3221 for
-/// Cua Spaces Local) and its local env token.
+/// else loopback on `CUA_ENV_PORT`, the port setup chose, or the channel's
+/// port, 3211 or 3221 for Cua Spaces Local) and its local env token.
 fn host_spacesd(host: &Host) -> std::result::Result<cua_cluster::machine::HostSpacesd, String> {
     host_spacesd_on(host, cua_home::channel::CuaChannel::current())
 }
@@ -2423,11 +2451,10 @@ fn host_spacesd_on(
     host: &Host,
     channel: cua_home::channel::CuaChannel,
 ) -> std::result::Result<cua_cluster::machine::HostSpacesd, String> {
-    let listen = host
-        .config()
-        .ok()
-        .flatten()
-        .and_then(|c| c.listen)
+    let config = host.config().ok().flatten();
+    let listen = config
+        .as_ref()
+        .and_then(|c| c.listen.clone())
         .filter(|l| !l.is_empty())
         .or_else(|| {
             std::env::var("CUA_ENV_LISTEN")
@@ -2438,7 +2465,14 @@ fn host_spacesd_on(
             let port = std::env::var("CUA_ENV_PORT")
                 .ok()
                 .and_then(|p| p.trim().parse::<u16>().ok())
-                .unwrap_or(channel.ports().tcp);
+                // The port setup chose (another macOS user's host held
+                // the channel's), else the channel's.
+                .unwrap_or_else(|| {
+                    config
+                        .as_ref()
+                        .map_or(channel.ports(), |c| c.service_ports(channel))
+                        .tcp
+                });
             format!("127.0.0.1:{port}")
         });
     // A listener on every interface is reached on loopback.
@@ -2993,7 +3027,7 @@ async fn host_answer(space: &crate::Space) -> Result<pb::GetHostSpacesResponse> 
     space
         .spacesd()?
         .host_spaces()
-        .get_host_spaces(pb::GetHostSpacesRequest {})
+        .get_host_spaces(pb::GetHostSpacesRequest::default())
         .await
         .map(tonic::Response::into_inner)
         .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
@@ -3288,7 +3322,7 @@ impl Spaces {
             None => match space
                 .spacesd()?
                 .host_spaces()
-                .get_host_spaces(pb::GetHostSpacesRequest {})
+                .get_host_spaces(pb::GetHostSpacesRequest::default())
                 .await
             {
                 Ok(r) if !r.get_ref().name.is_empty() => r.into_inner().name,
@@ -3332,9 +3366,46 @@ impl Spaces {
         space
             .spacesd()?
             .host_spaces()
-            .get_host_spaces(pb::GetHostSpacesRequest {})
+            .get_host_spaces(pb::GetHostSpacesRequest::default())
             .await
             .map(tonic::Response::into_inner)
+            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
+    }
+
+    /// Your Spaces on computer `host` (a [`SpaceInfo::host`]: a relay
+    /// machine id, or the Space of a host added by its address), each with
+    /// what it takes on that computer's disk when the computer measured it
+    /// (`GetHostSpacesRequest.disk`). Reached the way a delete reaches it,
+    /// from the machine list already read (no relay listing of its own).
+    /// Fails when the computer is offline, not reachable as a host, or not
+    /// one this device knows.
+    pub(crate) async fn host_space_disks(&self, host: &str) -> Result<Vec<pb::HostSpace>> {
+        let space = if host.contains(':') {
+            let h = self
+                .registry()
+                .direct_hosts()?
+                .into_iter()
+                .find(|h| h.space == host)
+                .ok_or_else(|| Error::NotFound(format!("host {host}")))?;
+            self.direct_host_space(&h).await?
+        } else {
+            let m = self
+                .inner
+                .relay_cache
+                .lock()
+                .expect("relay cache")
+                .iter()
+                .find(|m| m.id == host)
+                .cloned()
+                .ok_or_else(|| Error::NotFound(format!("host {host}")))?;
+            self.host_space(&m).await?
+        };
+        space
+            .spacesd()?
+            .host_spaces()
+            .get_host_spaces(pb::GetHostSpacesRequest { disk: true })
+            .await
+            .map(|r| r.into_inner().spaces)
             .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
     }
 
@@ -4523,6 +4594,14 @@ mod tests {
         assert_eq!(on(CuaChannel::Stable).url, "http://127.0.0.1:3211");
         assert_eq!(on(CuaChannel::Local).url, "http://127.0.0.1:3221");
         assert_eq!(on(CuaChannel::Local).token, "secret");
+        // A host set up beside another macOS user's: the port setup chose.
+        let config = cua_host::HostConfig {
+            mode: "relay".into(),
+            port: Some(3231),
+            ..Default::default()
+        };
+        std::fs::write(host.paths().config(), serde_json::to_vec(&config).unwrap()).unwrap();
+        assert_eq!(on(CuaChannel::Stable).url, "http://127.0.0.1:3231");
         // The mesh media port is every channel's, by design: guest Spaces
         // and older cua-spacesd serve it there, and it is not an OS port.
         for channel in CuaChannel::ALL {

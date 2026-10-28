@@ -26,7 +26,7 @@ pub const ROW_LABEL: &str = "Remote use";
 /// Free plan card, `cua usage`). The relay meters the time an account has
 /// at least one live session through it; a computer used from itself never
 /// goes through the relay.
-pub const REMOTE_HOURS_MEANING: &str = "Remote hours: time spent using your computers from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free.";
+pub const REMOTE_HOURS_MEANING: &str = "Remote hours: time spent using your machines from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free.";
 
 /// The notice's button.
 pub const UPGRADE: &str = "Upgrade";
@@ -114,6 +114,37 @@ pub struct RelayAllowanceNotice {
     /// or an agent run is going ([`crate::upsell`]). A `limit` is only the
     /// status, so it always shows.
     pub level: String,
+    /// The cap, for usage data: `sessions` or `hours` past a limit; `none`
+    /// for the 80% heads-up.
+    #[serde(default)]
+    pub kind: String,
+    /// The plan, for usage data: `free`, `pro`, `teams` or `unknown`.
+    #[serde(default)]
+    pub plan: String,
+}
+
+/// A plan as the usage data names it: `free`, `pro`, `teams` or `unknown`.
+pub fn plan_word(plan: &str) -> &'static str {
+    match plan_kind(&plan.trim().to_ascii_lowercase()) {
+        "free" => "free",
+        "pro" => "pro",
+        "teams" => "teams",
+        _ => "unknown",
+    }
+}
+
+/// The cap a `limit` notice is about: the month's remote hours when they
+/// are past the allowance (the one that lasts), else live sessions.
+fn limit_kind(u: &RelayUsage) -> &'static str {
+    if !u.soft_limit_reached {
+        "none"
+    } else if u.reasons.iter().any(|r| r == "hours") {
+        "hours"
+    } else if u.reasons.iter().any(|r| r == "sessions") {
+        "sessions"
+    } else {
+        "other"
+    }
 }
 
 /// A button that opens a page on the account app.
@@ -475,6 +506,8 @@ pub fn plan_limit_notice(error: &str, account_app: &str) -> Option<RelayAllowanc
         dismiss: DISMISS.into(),
         dismiss_key: format!("refused:{:?}", limit.kind),
         level: "limit".into(),
+        kind: limit.kind.word().into(),
+        plan: plan_word(&limit.plan).into(),
     })
 }
 
@@ -518,6 +551,8 @@ pub fn view_for(u: &RelayUsage, account_app: &str) -> Option<RelayUsageView> {
                 "warn"
             }
             .into(),
+            kind: limit_kind(u).into(),
+            plan: plan_word(&u.plan).into(),
         }),
         plan_card: plan_card(u, account_app),
     })
@@ -585,6 +620,7 @@ mod tests {
             Some("https://app.cua.ai/buy/pro?from=app_meter")
         );
         assert_eq!(n.dismiss_key, "2026-10:hours,sessions");
+        assert_eq!((n.kind.as_str(), n.plan.as_str()), ("hours", "free"));
 
         // Pro past the allowance: Teams pools hours across seats.
         let pro = RelayUsage {
@@ -673,6 +709,7 @@ mod tests {
         u.hours_used = 16.0;
         let n = view_for(&u, "https://app.cua.ai").unwrap().notice.unwrap();
         assert_eq!(n.level, "warn");
+        assert_eq!(n.kind, "none", "a heads-up is not a limit");
         assert_eq!(
             n.text,
             "You've used 16 of 20 remote hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 live sessions."
@@ -722,7 +759,7 @@ mod tests {
         assert_eq!((f.plan.as_str(), f.label.as_str()), ("free", "Free plan"));
         assert_eq!(
             f.detail,
-            "2 live sessions and 20 remote hours a month. Remote hours: time spent using your computers from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free."
+            "2 live sessions and 20 remote hours a month. Remote hours: time spent using your machines from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free."
         );
         let p = f.primary.unwrap();
         assert_eq!(
@@ -856,7 +893,11 @@ mod tests {
             n.upgrade_url.as_deref(),
             Some("https://app.cua.ai/buy/teams?from=plan_limit")
         );
+        // For usage data: which cap, on which plan.
+        assert_eq!((n.kind.as_str(), n.plan.as_str()), ("sessions", "pro"));
         let hours = "You've used 20 of 20 remote hours this month on the free plan. Upgrade to Pro for more.";
+        let h = plan_limit_notice(hours, "https://app.cua.ai").unwrap();
+        assert_eq!((h.kind.as_str(), h.plan.as_str()), ("hours", "free"));
         assert_eq!(
             plan_limit_notice(hours, "https://app.cua.ai")
                 .unwrap()

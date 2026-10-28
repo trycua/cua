@@ -310,6 +310,11 @@ impl DriveService {
             Some(feed.clone()),
             &state.join("mount"),
         )?;
+        // The macOS mount outlives a daemon that crashed, and the next one
+        // serves it with the same file handles (see `platform::mount`):
+        // its inodes never reuse an earlier daemon's numbers.
+        #[cfg(all(feature = "nfs", target_os = "macos"))]
+        vfs.start_inos_above(crate::nfs::ino_floor());
         Ok(Arc::new(DriveService {
             drive,
             home: home.to_path_buf(),
@@ -356,6 +361,13 @@ impl DriveService {
     /// kept, so the next start mounts again.
     pub async fn shutdown(&self) {
         self.feed.stop();
+        let _ = self.unmount_now().await;
+    }
+
+    /// Unmounts this machine's mount now (uploads land first), keeping the
+    /// setting: the first step of a daemon's shutdown, before anything
+    /// slower, so the volume never outlives the server behind it.
+    pub async fn release_mount(&self) {
         let _ = self.unmount_now().await;
     }
 
@@ -603,7 +615,7 @@ impl DriveService {
         }
         m.error = None;
         let path = self.mount_path();
-        let active = platform::mount(self.vfs.clone(), &path).await?;
+        let active = platform::mount(self.vfs.clone(), &path, &state_dir(&self.home)).await?;
         m.active = Some((active, path));
         Ok(())
     }
@@ -613,7 +625,7 @@ impl DriveService {
         let Some((active, path)) = m.active.take() else {
             return Ok(());
         };
-        let r = platform::unmount(active, &path).await;
+        let r = platform::unmount(active, &path, &state_dir(&self.home)).await;
         if let Err(e) = &r {
             m.error = Some(e.to_string());
         }
@@ -709,21 +721,97 @@ async fn s3_backend(_: &S3Settings, _: &str, _: &str) -> Result<(Arc<dyn Backend
 mod platform {
     use super::*;
 
-    /// Whether `path` is an NFS mount from this machine (ours, possibly
-    /// left by a daemon that stopped without unmounting).
-    fn our_nfs_mount(path: &Path) -> bool {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-        let Ok(c) = CString::new(path.as_os_str().as_bytes()) else {
-            return false;
-        };
-        // SAFETY: a zeroed statfs is a valid out-parameter.
-        let mut st: libc::statfs = unsafe { std::mem::zeroed() };
-        // SAFETY: c is NUL-terminated; st is writable.
-        if unsafe { libc::statfs(c.as_ptr(), &mut st) } != 0 {
-            return false;
+    /// What a running mount's server and the mount itself were last time
+    /// (`<cua home>/volume/nfs.json`): a restarted daemon asks for the same
+    /// port and file handle generation, and serves the mount it finds when
+    /// it is the one recorded here.
+    #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    pub(super) struct NfsState {
+        #[serde(default)]
+        pub port: u16,
+        #[serde(default)]
+        pub generation: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub mount: Option<MountRecord>,
+    }
+
+    /// The mount this home's daemon made: where, the kernel's id for it,
+    /// and the port it reaches its server on.
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub(super) struct MountRecord {
+        pub path: PathBuf,
+        pub fsid: [i32; 2],
+        pub port: u16,
+    }
+
+    pub(super) fn nfs_state_path(state: &Path) -> PathBuf {
+        state.join("nfs.json")
+    }
+
+    impl NfsState {
+        pub fn load(state: &Path) -> NfsState {
+            std::fs::read(nfs_state_path(state))
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or_default()
         }
-        let s = |b: &[libc::c_char]| {
+
+        pub fn save(&self, state: &Path) {
+            let p = nfs_state_path(state);
+            let r = cua_home::guard_write(&p)
+                .map_err(Error::from)
+                .and_then(|_| Ok(serde_json::to_vec_pretty(self)?))
+                .and_then(|b| Ok(std::fs::write(&p, b)?));
+            if let Err(e) = r {
+                tracing::warn!(error = %e, "drive: could not save {}", p.display());
+            }
+        }
+    }
+
+    /// Where this home's server listens when the recorded port is not
+    /// free (or there is none yet): a few ports picked from the home's
+    /// path, below the ephemeral range (49152 and up on macOS) so an
+    /// outgoing connection never holds one while the daemon restarts.
+    pub(super) fn candidate_ports(state: &Path) -> Vec<u16> {
+        use sha2::Digest;
+        let h = sha2::Sha256::digest(state.as_os_str().as_encoded_bytes());
+        (0..4)
+            .map(|i| 20000 + (u16::from_le_bytes([h[2 * i], h[2 * i + 1]]) % 12000))
+            .collect()
+    }
+
+    /// The file system mounted at `path`, if any: type, source and the
+    /// kernel's id for it. From the kernel's mount table without asking any
+    /// server (MNT_NOWAIT), so a mount whose server is gone answers at once.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(super) struct Mounted {
+        pub fstype: String,
+        pub from: String,
+        pub fsid: [i32; 2],
+    }
+
+    impl Mounted {
+        /// An NFS mount from this machine: a Cua Volume mount, possibly
+        /// left by a daemon that stopped without unmounting.
+        pub fn ours(&self) -> bool {
+            self.fstype == "nfs" && self.from.starts_with("127.0.0.1:")
+        }
+    }
+
+    /// `path` as the mount table spells it: its parent resolved (the mount
+    /// point itself is never touched, so a dead mount cannot block this).
+    fn table_path(path: &Path) -> PathBuf {
+        match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => std::fs::canonicalize(parent)
+                .map(|p| p.join(name))
+                .unwrap_or_else(|_| path.to_path_buf()),
+            _ => path.to_path_buf(),
+        }
+    }
+
+    pub(super) fn mounted_at(path: &Path) -> Option<Mounted> {
+        let want = table_path(path);
+        let c = |b: &[libc::c_char]| {
             let bytes: Vec<u8> = b
                 .iter()
                 .take_while(|c| **c != 0)
@@ -731,8 +819,46 @@ mod platform {
                 .collect();
             String::from_utf8_lossy(&bytes).into_owned()
         };
-        s(&st.f_fstypename) == "nfs" && s(&st.f_mntfromname).starts_with("127.0.0.1:")
+        // SAFETY: a null buffer asks only for the count.
+        let n = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+        if n <= 0 {
+            return None;
+        }
+        let cap = n as usize + 8;
+        // SAFETY: a zeroed statfs is a valid value.
+        let mut buf: Vec<libc::statfs> = vec![unsafe { std::mem::zeroed() }; cap];
+        let bytes = (cap * std::mem::size_of::<libc::statfs>()) as libc::c_int;
+        // SAFETY: buf holds `cap` statfs entries, `bytes` long.
+        let got = unsafe { libc::getfsstat(buf.as_mut_ptr(), bytes, libc::MNT_NOWAIT) };
+        if got <= 0 {
+            return None;
+        }
+        buf.truncate(got as usize);
+        // The last entry wins: a mount over another hides it.
+        buf.iter().rev().find_map(|st| {
+            (Path::new(&c(&st.f_mntonname)) == want).then(|| Mounted {
+                fstype: c(&st.f_fstypename),
+                from: c(&st.f_mntfromname),
+                // SAFETY: fsid_t is two i32s (its field is private in libc).
+                fsid: unsafe { std::mem::transmute::<libc::fsid_t, [i32; 2]>(st.f_fsid) },
+            })
+        })
     }
+
+    /// Whether the mount at `path` answers within `wait` (its server is
+    /// this process's now).
+    async fn responds(path: &Path, wait: Duration) -> bool {
+        let p = path.to_path_buf();
+        let probe = tokio::task::spawn_blocking(move || {
+            std::fs::metadata(&p).is_ok_and(|m| m.is_dir()) && std::fs::read_dir(&p).is_ok()
+        });
+        matches!(tokio::time::timeout(wait, probe).await, Ok(Ok(true)))
+    }
+
+    /// How long a mount left by the previous daemon gets to answer this
+    /// one's server before it is unmounted and mounted again: the kernel
+    /// reconnects with a backoff of a few seconds.
+    const ADOPT_WAIT: Duration = Duration::from_secs(15);
 
     async fn run(cmd: &str, args: &[&str]) -> Result<()> {
         let out = tokio::time::timeout(
@@ -752,31 +878,91 @@ mod platform {
         }
     }
 
-    pub async fn mount(vfs: Arc<Vfs>, path: &Path) -> Result<Active> {
-        if our_nfs_mount(path) {
-            // A previous daemon's mount whose server is gone.
+    pub async fn mount(vfs: Arc<Vfs>, path: &Path, state: &Path) -> Result<Active> {
+        let mut rec = NfsState::load(state);
+        let generation = if rec.generation != 0 {
+            rec.generation
+        } else {
+            crate::nfs::new_generation()
+        };
+        let mut ports: Vec<u16> = Vec::new();
+        if rec.port != 0 {
+            ports.push(rec.port);
+        }
+        ports.extend(candidate_ports(state));
+        // Serve first: a mount the previous daemon left reconnects to this
+        // server as soon as it listens.
+        let server = crate::nfs::NfsServer::start_host(vfs, &ports, generation).await?;
+        if rec.port != 0 && server.port() != rec.port {
+            tracing::info!(
+                was = rec.port,
+                now = server.port(),
+                "drive: the volume's port was taken; mounting on a new one"
+            );
+        }
+        rec.port = server.port();
+        rec.generation = generation;
+        let table = table_path(path);
+        if let Some(m) = mounted_at(path) {
+            if !m.ours() {
+                let _ = server.stop().await;
+                return Err(Error::Invalid(format!(
+                    "{} already has another file system mounted ({} from {})",
+                    path.display(),
+                    m.fstype,
+                    m.from
+                )));
+            }
+            // The previous daemon's mount, reaching this server's port with
+            // this server's handles: serve it as it is.
+            let recorded = rec.mount.as_ref().is_some_and(|r| {
+                r.fsid == m.fsid && r.port == server.port() && table_path(&r.path) == table
+            });
+            if recorded && responds(path, ADOPT_WAIT).await {
+                tracing::info!(path = %path.display(), port = server.port(), "drive: serving the mount the previous daemon left");
+                rec.save(state);
+                return Ok(Active::Nfs(server));
+            }
+            // A mount whose server is gone for good (another port, an older
+            // daemon's, or it does not answer): unmount and mount again.
+            tracing::info!(path = %path.display(), "drive: unmounting a stale Cua Volume mount");
             let p = path.to_string_lossy().to_string();
             let _ = run("/sbin/umount", &["-f", &p]).await;
+            if mounted_at(path).is_some() {
+                let _ = server.stop().await;
+                return Err(Error::Backend(format!(
+                    "a stale Cua Volume mount at {} could not be unmounted",
+                    path.display()
+                )));
+            }
         }
+        rec.mount = None;
         std::fs::create_dir_all(path)?;
         if std::fs::read_dir(path)?.next().is_some() {
+            let _ = server.stop().await;
             return Err(Error::Invalid(format!(
                 "{} is not empty; the drive mounts on an empty folder",
                 path.display()
             )));
         }
-        let server = crate::nfs::NfsServer::start(vfs).await?;
         let p = path.to_string_lossy().to_string();
         let opts = server.mount_options();
         if let Err(e) = run("/sbin/mount_nfs", &["-o", &opts, "127.0.0.1:/", &p]).await {
             let _ = server.stop().await;
             let _ = std::fs::remove_dir(path);
+            rec.save(state);
             return Err(e);
         }
+        rec.mount = mounted_at(path).map(|m| MountRecord {
+            path: path.to_path_buf(),
+            fsid: m.fsid,
+            port: server.port(),
+        });
+        rec.save(state);
         Ok(Active::Nfs(server))
     }
 
-    pub async fn unmount(active: Active, path: &Path) -> Result<()> {
+    pub async fn unmount(active: Active, path: &Path, state: &Path) -> Result<()> {
         #[allow(irrefutable_let_patterns)]
         let Active::Nfs(server) = active else {
             return Ok(());
@@ -788,6 +974,9 @@ mod platform {
             // Something still has a file open: uploads are done, force it.
             run("/sbin/umount", &["-f", &p]).await?;
         }
+        let mut rec = NfsState::load(state);
+        rec.mount = None;
+        rec.save(state);
         let stopped = server.stop().await;
         let _ = std::fs::remove_dir(path);
         flushed.and(stopped)
@@ -798,12 +987,12 @@ mod platform {
 mod platform {
     use super::*;
 
-    pub async fn mount(vfs: Arc<Vfs>, path: &Path) -> Result<Active> {
+    pub async fn mount(vfs: Arc<Vfs>, path: &Path, _state: &Path) -> Result<Active> {
         std::fs::create_dir_all(path)?;
         Ok(Active::Fuse(crate::fuse::FuseMount::mount(vfs, path)?))
     }
 
-    pub async fn unmount(active: Active, path: &Path) -> Result<()> {
+    pub async fn unmount(active: Active, path: &Path, _state: &Path) -> Result<()> {
         #[allow(irrefutable_let_patterns)]
         let Active::Fuse(m) = active else {
             return Ok(());
@@ -821,13 +1010,13 @@ mod platform {
 mod platform {
     use super::*;
 
-    pub async fn mount(_vfs: Arc<Vfs>, _path: &Path) -> Result<Active> {
+    pub async fn mount(_vfs: Arc<Vfs>, _path: &Path, _state: &Path) -> Result<Active> {
         Err(Error::Invalid(
             "this build cannot mount the drive on this system".into(),
         ))
     }
 
-    pub async fn unmount(_active: Active, _path: &Path) -> Result<()> {
+    pub async fn unmount(_active: Active, _path: &Path, _state: &Path) -> Result<()> {
         Ok(())
     }
 }
@@ -924,6 +1113,49 @@ mod tests {
         let m = svc.mount_status().await;
         assert!(!m.enabled);
         assert_eq!(m.volume_name, "Cua Volume");
+    }
+
+    /// The port a home asks for is stable: the recorded one, else a few
+    /// picked from the home's path, all below macOS's ephemeral range.
+    #[cfg(all(feature = "nfs", target_os = "macos"))]
+    #[test]
+    fn the_mount_port_is_stable_per_home() {
+        use platform::{MountRecord, NfsState, candidate_ports, mounted_at};
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let ports = candidate_ports(a.path());
+        assert_eq!(ports, candidate_ports(a.path()), "the same every start");
+        assert_ne!(
+            ports,
+            candidate_ports(b.path()),
+            "another home, other ports"
+        );
+        assert!(
+            ports.iter().all(|p| (20000..32000).contains(p)),
+            "{ports:?}"
+        );
+        assert_eq!(NfsState::load(a.path()), NfsState::default());
+        let st = NfsState {
+            port: 21234,
+            generation: 42,
+            mount: Some(MountRecord {
+                path: PathBuf::from("/x/Cua Volume"),
+                fsid: [1, 2],
+                port: 21234,
+            }),
+        };
+        st.save(a.path());
+        assert_eq!(NfsState::load(a.path()), st);
+        // An older nfs.json (or a newer one with more fields) still loads.
+        std::fs::write(
+            platform::nfs_state_path(a.path()),
+            br#"{"port": 20001, "later": true}"#,
+        )
+        .unwrap();
+        assert_eq!(NfsState::load(a.path()).port, 20001);
+        // The mount table answers without touching any server.
+        assert!(mounted_at(Path::new("/")).is_some());
+        assert_eq!(mounted_at(&a.path().join("nothing-mounted")), None);
     }
 
     #[test]

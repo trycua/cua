@@ -50,7 +50,6 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
     "agents.runs": async (args) => {
       const runs = model.agents.runs(string(args, "spaceId"));
       await runs.refresh();
-      if (runs.load.kind === "ready") model.sawAgentRuns(runs.load.rows.length);
       switch (runs.load.kind) {
         case "ready":
           return encode(runs.load.rows);
@@ -111,6 +110,39 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
       const coding = model.agents.coding;
       await coding.signIn(string(args, "agent"));
       return encode(coding.rows ?? []);
+    },
+    // The one connection status the CLI and MCP also answer (CONTRACT §4), as the SDK serializes it.
+    "agents.status": async (args) => {
+      needSetup();
+      return JSON.parse(await model.agents.coding.setup!.connectionStatusJson(args.refresh === true));
+    },
+    "agents.connect": async (args) => {
+      needSetup();
+      const out = await model.agents.coding.setup!.connectJson(strings(args, "agents"), args.signIn === true, args.skills !== false, args.mcp !== false);
+      await model.agents.coding.reload();
+      return JSON.parse(out);
+    },
+    "agents.disconnect": async (args) => {
+      needSetup();
+      const setup = model.agents.coding.setup!;
+      // Some parts only (an app's page's switches), when the page says which.
+      const out =
+        typeof args.skills === "boolean" || typeof args.mcp === "boolean"
+          ? await setup.disconnectPartsJson(strings(args, "agents"), args.skills === true, args.mcp === true, args.signIn === true)
+          : await setup.disconnectJson(strings(args, "agents"), args.signIn === true);
+      await model.agents.coding.reload();
+      return JSON.parse(out);
+    },
+    // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
+    "agents.signInStart": async (args) => {
+      needSetup();
+      return JSON.parse(await model.agents.coding.setup!.deviceSignInStartJson(string(args, "agent")));
+    },
+    "agents.signInWait": async (args) => {
+      needSetup();
+      const out = await model.agents.coding.setup!.deviceSignInWaitJson(string(args, "id"));
+      await model.agents.coding.reload();
+      return JSON.parse(out);
     },
     // A persistent agent's Memory, Routines and Access: what the native
     // Agents page reads and the changes it runs, one method each.

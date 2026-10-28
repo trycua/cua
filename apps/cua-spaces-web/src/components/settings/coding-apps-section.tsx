@@ -2,13 +2,14 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import type { AgentSetupRow } from "@/bridge";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { Snippet } from "@/components/settings/snippet";
 import { Button } from "@/components/ui/button";
+import { GroupedAction, GroupedRow } from "@/components/ui/grouped";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { useBridge } from "@/bridge";
@@ -20,29 +21,42 @@ import { cn } from "@/lib/utils";
 const DriverSettingsCard = lazy(() => import("@/components/volume/driver-card").then((m) => ({ default: m.DriverSettingsCard })));
 
 /**
- * Settings, Connected apps, "Coding apps": the coding apps on this computer,
+ * Settings, Connectors, "Coding apps": the coding apps on this computer,
  * one switch each for Cua being set up in it (with Background computer use),
  * and "Set up new apps automatically". Rows show only the app and its switch.
  * "Show all" opens the apps that aren't installed, Background computer use,
  * and a collapsed "Advanced" with each app's settings file and adding Cua by hand.
  */
-export function CodingAppsSection({ apps }: { apps: ConnectedApps }) {
+export function CodingAppsSection({ apps, focusApp }: { apps: ConnectedApps; focusApp?: string }) {
   const { openExternal } = useExternal();
-  const [all, setAll] = useState(false);
   const shown = shownApps(apps.rows ?? []);
   const missing = missingApps(apps.rows ?? []);
+  const [all, setAll] = useState(() => Boolean(focusApp) && !shown.some((r) => r.agent === focusApp) && missing.some((r) => r.agent === focusApp));
+  const [lit, setLit] = useState<string | null>(null);
+  const ready = apps.rows !== null;
 
-  if (apps.rows === null) return <div className="mb-8 h-48" aria-busy="true" />;
+  // Coming from the Agents page's Connect: bring that app's row into view and mark it for a moment.
+  useEffect(() => {
+    if (!ready || !focusApp) return;
+    const row = document.querySelector<HTMLElement>(`[data-connected-app="${focusApp}"], [data-connected-missing="${focusApp}"]`);
+    if (!row) return;
+    row.scrollIntoView?.({ block: "center" });
+    setLit(focusApp);
+    const t = setTimeout(() => setLit(null), 2000);
+    return () => clearTimeout(t);
+  }, [ready, focusApp, all]);
+
+  if (!ready) return <div className="mb-8 h-48" aria-busy="true" />;
 
   return (
     <div data-connected-apps="">
       <SettingsGroup title="Coding apps">
         {shown.length === 0 ? (
-          <div className="px-4 py-3 text-[13px] text-muted-foreground" data-connected-none="">
+          <GroupedRow className="text-muted-foreground" data-connected-none="">
             We didn't find a coding app yet. Install one and Cua will notice.
-          </div>
+          </GroupedRow>
         ) : (
-          shown.map((row) => <AppRow key={row.agent} row={row} apps={apps} />)
+          shown.map((row) => <AppRow key={row.agent} row={row} apps={apps} lit={lit === row.agent} />)
         )}
         <SettingsRow
           label="Set up new apps automatically"
@@ -52,11 +66,11 @@ export function CodingAppsSection({ apps }: { apps: ConnectedApps }) {
         />
         {all && missing.length > 0 ? (
           <>
-            <div className="bg-muted/40 px-4 py-3 text-xs text-muted-foreground">Not installed</div>
+            <GroupedRow className="min-h-9 bg-muted/40 py-2 text-xs text-muted-foreground">Not installed</GroupedRow>
             {missing.map((row) => {
               const url = getItUrl(row.agent);
               return (
-                <div key={row.agent} data-connected-missing={row.agent} className="flex min-h-12 items-center gap-3 px-4 py-2.5 text-muted-foreground">
+                <GroupedRow key={row.agent} data-connected-missing={row.agent} className={cn("text-muted-foreground transition-colors", lit === row.agent && "bg-accent")}>
                   <HarnessMark agent={row.agent} name={row.name} />
                   <span className="min-w-0 flex-1 text-[13px]">{row.name}</span>
                   {url ? (
@@ -64,21 +78,15 @@ export function CodingAppsSection({ apps }: { apps: ConnectedApps }) {
                       Get it
                     </button>
                   ) : null}
-                </div>
+                </GroupedRow>
               );
             })}
           </>
         ) : null}
+        <GroupedAction data-connected-show-all="" aria-expanded={all} onClick={() => setAll(!all)}>
+          {all ? "Show fewer" : "Show all"} {all ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
+        </GroupedAction>
       </SettingsGroup>
-      <button
-        type="button"
-        data-connected-show-all=""
-        aria-expanded={all}
-        onClick={() => setAll(!all)}
-        className="-mt-4 mb-8 flex items-center gap-1 px-1 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
-      >
-        {all ? "Show fewer" : "Show all"} {all ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
-      </button>
       {all ? (
         <>
           <SettingsGroup title="Background computer use">
@@ -98,15 +106,15 @@ function useExternal() {
   return { openExternal: async (url: string) => void (await data?.call("session.openExternal", { url }).catch(() => {})) };
 }
 
-function AppRow({ row, apps }: { row: AgentSetupRow; apps: ConnectedApps }) {
+function AppRow({ row, apps, lit }: { row: AgentSetupRow; apps: ConnectedApps; lit?: boolean }) {
   const busy = apps.pending.includes(row.agent);
   const failure = apps.failures[row.agent];
   const on = row.configured && !failure;
   const justOff = !row.configured && apps.state.off.includes(row.agent);
   const note = failure ? null : justOff ? "Off." : null;
   return (
-    <div data-connected-app={row.agent} data-on={String(on)} data-failed={failure ? "" : undefined} className={cn(failure && "bg-destructive/5")}>
-      <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+    <div data-connected-app={row.agent} data-on={String(on)} data-failed={failure ? "" : undefined} className={cn("transition-colors", failure && "bg-destructive/5", lit && "bg-accent")}>
+      <GroupedRow>
         <HarnessMark agent={row.agent} name={row.name} />
         <div className="min-w-0 flex-1">
           <label htmlFor={`app-${row.agent}`} className="block truncate text-[13px]">
@@ -115,7 +123,7 @@ function AppRow({ row, apps }: { row: AgentSetupRow; apps: ConnectedApps }) {
           {note ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{note}</p> : null}
         </div>
         <Switch id={`app-${row.agent}`} checked={on} disabled={busy} onCheckedChange={(next) => void apps.toggle(row, next)} />
-      </div>
+      </GroupedRow>
       {failure ? <Failure row={row} text={failure} busy={busy} onRetry={() => void apps.toggle(row, true)} /> : null}
     </div>
   );
@@ -156,19 +164,19 @@ function Advanced({ rows }: { rows: AgentSetupRow[] }) {
   const files = rows.filter((r) => r.mcpConfig);
   return (
     <details className="group mb-8" data-connected-advanced="">
-      <summary className="flex cursor-default list-none items-center gap-1 px-1 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground [&::-webkit-details-marker]:hidden">
-        <ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" aria-hidden /> Advanced
+      <summary className="-ml-1 flex w-fit cursor-default list-none items-center gap-1 rounded-lg px-1 py-0.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon className="size-3 transition-transform group-open:rotate-90" aria-hidden /> Advanced
       </summary>
-      <div className="mt-4">
+      <div className="mt-8">
         {files.length > 0 ? (
           <SettingsGroup title="Settings files">
             {files.map((r) => (
-              <div key={r.agent} data-connected-file={r.agent} className="flex min-h-11 items-center gap-3 px-4 py-2">
+              <GroupedRow key={r.agent} data-connected-file={r.agent}>
                 <span className="w-40 shrink-0 truncate text-[13px]">{r.name}</span>
                 <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground select-text" title={r.mcpConfig ?? undefined}>
                   {r.mcpConfig}
                 </code>
-              </div>
+              </GroupedRow>
             ))}
           </SettingsGroup>
         ) : null}
@@ -185,15 +193,14 @@ function ByHand() {
   const entry = BY_HAND[id]!;
   const label: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", hermes: "Hermes", openclaw: "OpenClaw", cursor: "Cursor" };
   return (
-    <section data-connected-by-hand="">
-      <h2 className="mb-2 px-1 text-xs font-semibold text-muted-foreground">Add it by hand</h2>
-      <div className="rounded-xl border bg-card p-4 shadow-xs">
+    <SettingsGroup title="Add it by hand" className="mb-0" data-connected-by-hand="">
+      <div className="px-4 py-4">
         <Segmented aria-label="App" value={id} options={ids.map((value) => ({ value, label: label[value] ?? value }))} onValueChange={setId} />
         <Snippet file={entry.file} text={entry.snippet} />
         <p className="mt-2 text-xs text-muted-foreground">
           Use the full path to <code className="font-mono">cua</code> if the app runs without your shell's PATH, as apps opened from the Dock do.
         </p>
       </div>
-    </section>
+    </SettingsGroup>
   );
 }

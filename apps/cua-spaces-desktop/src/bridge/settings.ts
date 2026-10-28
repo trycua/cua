@@ -62,9 +62,10 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     keyvaultSiteIcons: model.settings.keyvaultSiteIcons,
     keyvaultProtection: model.keyvault.page.protection,
     autoConnect: model.settings.autoConnect,
-    lumeSource: model.lumeSource ?? undefined,
-    // The built-in Linux runtime is a gVisor VM on a Mac; Docker is the runtime elsewhere, so no row.
-    linuxSource: process.platform === "darwin" ? (model.linuxSource ?? undefined) : undefined,
+    // Settings, Advanced: every kind of Space's runtime row ("Checking…" until read).
+    runtimes: model.runtimesInput(),
+    // Settings, General's Show tips (the tips themselves live in `AppSettings.tips`).
+    showTips: !model.settings.tips.off,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
@@ -91,7 +92,25 @@ export function settingsState(model: AppModel, parts: HostParts) {
     accountUrl: model.native.appAccountAppUrl(),
     // The CLI this app installs and whether it is here (`cli.ts`).
     cli: cliSetting(model),
+    // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`): the page's core lays out every kind's row.
+    runtimes: encode(model.runtimesInput()),
+    // The app core's own settings the page changes (`settings.update`).
+    tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
   };
+}
+
+/** `settings.update`'s fields, as the page sends them (each optional). */
+export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel["settings"]> {
+  const patch: Partial<AppModel["settings"]> = {};
+  if ("tips" in args) {
+    const t = args.tips;
+    if (!t || typeof t !== "object" || Array.isArray(t)) throw Failure.badArgs("tips: {off, done}");
+    const { off, done } = t as { off?: unknown; done?: unknown };
+    if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string")) throw Failure.badArgs("tips: {off: boolean, done: string[]}");
+    patch.tips = { off, done: done as string[] };
+  }
+  if (!Object.keys(patch).length) throw Failure.badArgs("tips");
+  return patch;
 }
 
 /** A switch in Settings, Experiments: saved and recorded. Off hides; nothing is undone. */
@@ -123,10 +142,41 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
     const [lume, linux] = await Promise.all([bounded(5, () => model.backend.lumeSource()), bounded(5, () => model.backend.linuxSource())]);
     if (lume !== null) model.lumeSource = lume;
     if (linux !== null) model.linuxSource = linux;
+    // What is installed for each kind and the doctor: in the background, the page hears `settings.changed`.
+    refreshRuntimes();
+  };
+
+  /** Reads the runtimes again unless a read is recent or running. */
+  let runtimesReadAt = 0;
+  let runtimesReading = false;
+  const refreshRuntimes = (force = false) => {
+    if (!model.servicesIn || runtimesReading || (!force && Date.now() - runtimesReadAt < 15_000)) return;
+    runtimesReading = true;
+    void model
+      .readRuntimes()
+      .then(() => {
+        runtimesReadAt = Date.now();
+        model.changed("settings");
+      })
+      .catch(() => {})
+      .finally(() => {
+        runtimesReading = false;
+      });
   };
 
   /** A choice row changed (`AppModel.choose`). */
   const choose = async (row: string, option: string): Promise<void> => {
+    // Settings, Advanced's runtime rows: the setting the core names, written; the runtimes read again.
+    const change = row.startsWith("runtime") ? model.native.appRuntimesChoose(model.runtimesInput(), row, option) : undefined;
+    if (change) {
+      await model.backend.setRuntimeSetting(change.key, change.value ?? null);
+      await bounded(15, () => model.readRuntimes());
+      const [lume, linux] = await Promise.all([model.backend.lumeSource(), model.backend.linuxSource()]);
+      model.lumeSource = lume;
+      model.linuxSource = linux;
+      model.changed("settings");
+      return;
+    }
     switch (row) {
       case "team-current":
         // Settings, Teams: the team to work in (saved; the option is its id).
@@ -135,16 +185,6 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       case "notch":
         // "Spaces tab in the notch" (shown) or the menu bar only (hide); the notch follows `settings.changed`.
         save({ menuBar: option === "hide" });
-        return;
-      case "macos-runtime":
-        await model.backend.setLumeSource(option);
-        model.lumeSource = (await model.backend.lumeSource()) ?? option;
-        model.changed("settings");
-        return;
-      case "linux-runtime":
-        await model.backend.setLinuxSource(option);
-        model.linuxSource = (await model.backend.linuxSource()) ?? option;
-        model.changed("settings");
         return;
       case "auto-connect":
         save({ autoConnect: option === "on" });
@@ -181,6 +221,12 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       case "keyvault-site-icons":
         save({ keyvaultSiteIcons: option === "on" });
         return;
+      // General's Show tips and Reset tips: the core's (`settings::choose`).
+      case "tips":
+      case "reset-tips":
+        model.settings = model.native.appSettingsChoose(model.settings, row, option);
+        model.saveSettings();
+        return;
       case "telemetry":
         model.telemetry?.setEnabled(option === "on");
         // Off also stops crash reports (crash-reporting.ts).
@@ -213,7 +259,8 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
     },
     "settings.choose": async (args) => {
       const row = string(args, "row");
-      const option = string(args, "option");
+      // An empty option only for a runtime path ("Reset to detected").
+      const option = row.startsWith("runtime-path:") && args.option === "" ? "" : string(args, "option");
       if (row === "update-channel") {
         // Settings → About's channel (saved in `AppSettings`).
         const updates = parts().updates;
@@ -236,6 +283,25 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
           throw Failure.failed(words(error));
         }
       }
+      return settingsState(model, parts());
+    },
+    // Settings, Advanced: what a typed path is, before it is saved.
+    "runtimes.check": async (args) => {
+      try {
+        return encode(await model.backend.runtimeCheckPath(string(args, "kind"), string(args, "path")));
+      } catch (error) {
+        throw Failure.failed(words(error));
+      }
+    },
+    // Settings, Advanced's "Browse…".
+    "runtimes.browse": async (args, caller) => {
+      string(args, "kind");
+      if (!ctx.ui.chooseProgram) throw Failure.unsupported("This build has no file picker");
+      return { path: (await ctx.ui.chooseProgram(caller.window)) ?? null };
+    },
+    // The page's tips (`AppSettings.tips`), saved as given.
+    "settings.update": (args) => {
+      save(settingsUpdate(args));
       return settingsState(model, parts());
     },
   };

@@ -96,6 +96,27 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
     bridge.registry.dispatch({ id: "x", method, args }).then((r) => (r.ok ? null : r.error.code));
   const aurora = "local:aurora";
 
+  describe("renaming a Space", () => {
+    it("renames it through the SDK, keeps its id and lists the new name", async () => {
+      expect(await call("spaces.rename", { spaceId: aurora, name: "design-review" })).toEqual({});
+      expect(backend.renamed).toEqual([{ id: aurora, name: "design-review" }]);
+      const listed = (await call("spaces.list")) as { spaces: { space: { id: string; name: string } }[] };
+      expect(listed.spaces.find((s) => s.space.id === aurora)?.space.name).toBe("design-review");
+    });
+
+    it("answers a refusal in plain words, and an unknown Space as not found", async () => {
+      // The relay's refusal, as the SDK raises it (a flat error: its kind in front).
+      backend.renameError = Object.assign(new Error("CuaError.PermissionDenied: permission denied: studio is shared with you. Only its owner can rename it."), {
+        [Symbol.for("typeName")]: "CuaError",
+        tag: "PermissionDenied",
+      });
+      const r = await bridge.registry.dispatch({ id: "x", method: "spaces.rename", args: { spaceId: aurora, name: "mine" } });
+      expect(r.ok ? null : r.error.message).toBe("studio is shared with you. Only its owner can rename it.");
+      expect(await code("spaces.rename", { spaceId: "local:nope", name: "x" })).toBe("not_found");
+      expect(await code("spaces.rename", { spaceId: aurora })).toBe("bad_args");
+    });
+  });
+
   describe("the Stream section", () => {
     it("lists the windows as the core's remote windows, with the display", async () => {
       expect(await call("spaces.windows", { spaceId: aurora })).toEqual({
@@ -202,6 +223,64 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
         ok: false,
         error: { code: "unsupported" },
       });
+    });
+  });
+
+  describe("bulk delete and leave", () => {
+    it("deletes several, one result per id in order, a failure restoring only its row", async () => {
+      backend.bulkErrors.set("direct:builder", "timed out");
+      const answer = (await call("spaces.deleteMany", { ids: [aurora, "direct:builder", "local:nowhere"] })) as { results: { id: string; ok: boolean; error?: string }[] };
+      expect(answer.results).toEqual([
+        { id: aurora, ok: true },
+        { id: "direct:builder", ok: false, error: "timed out" },
+        { id: "local:nowhere", ok: false, error: "No Space local:nowhere." },
+      ]);
+      expect(backend.removed).toEqual([{ id: aurora, removeOnly: false }]);
+      expect(model.spaces.some((s) => s.id === aurora)).toBe(false);
+      expect(model.isDeleting("direct:builder")).toBe(false);
+      expect(model.spaces.some((s) => s.id === "direct:builder")).toBe(true);
+      expect(await code("spaces.deleteMany", { ids: "x" })).toBe("bad_args");
+    });
+
+    it("marks every row deleting until its own result comes back", async () => {
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      const deleteMany = backend.deleteMany.bind(backend);
+      backend.deleteMany = async (ids) => {
+        await held;
+        return deleteMany(ids);
+      };
+      const running = call("spaces.deleteMany", { ids: [aurora, "direct:10.0.0.5:3211"] });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(model.isDeleting(aurora) && model.isDeleting("direct:10.0.0.5:3211")).toBe(true);
+      release();
+      await running;
+      expect(model.isDeleting(aurora)).toBe(false);
+    });
+
+    it("leaves a Space shared with you, carrying its sharing facts to the core", async () => {
+      backend.rowsNow = [
+        ...backend.rowsNow,
+        {
+          ...backend.rowsNow[2]!,
+          id: "relay:space-sam-qa",
+          name: "qa-shared",
+          provider: "relay",
+          hostName: "Mac mini",
+          sharing: { ownerId: "sam", ownerEmail: "sam@example.com", ownerName: "Sam Rivera", role: "editor", team: undefined, teamName: undefined, editors: [], viewers: [], teams: [] },
+        },
+      ];
+      await model.refresh();
+      const listed = (await call("spaces.list")) as { spaces: { space: { id: string; access?: { kind: string; place: string; canLeave: boolean } } }[] };
+      const shared = listed.spaces.find((s) => s.space.id === "relay:space-sam-qa")!.space;
+      expect(shared.access).toMatchObject({ kind: "withMe", place: "Sam's Mac mini", canLeave: true });
+      const answer = (await call("spaces.leave", { ids: ["relay:space-sam-qa", aurora] })) as { results: { id: string; ok: boolean; error?: string }[] };
+      expect(answer.results).toEqual([
+        { id: "relay:space-sam-qa", ok: true },
+        { id: aurora, ok: false, error: "Couldn't leave 0123456789ab: it's yours; delete it instead." },
+      ]);
+      expect(backend.left).toEqual(["relay:space-sam-qa"]);
+      expect(model.spaces.some((s) => s.id === "relay:space-sam-qa")).toBe(false);
     });
   });
 

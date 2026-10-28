@@ -9,10 +9,12 @@
  * `state/cloud.tsx` does. Hooks read it with `useSyncExternalStore`.
  */
 
+import { cloudsInput, cloudsView } from "./clouds";
 import { hostOs } from "./host-os";
 import { spokenName } from "./space-names";
 import { isUnsupported, type DataAdapter } from "./adapter";
 import type { AgentMessageSent, AgentRunStatus, AgentSetupRow, AgentStarted, AgentStartRequest, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
+import type { CloudStatusWire } from "./contracts/new-space";
 import type { CoreClient } from "./core";
 import { withCreateContext } from "./create-context";
 import { HOST_RUNS_CREATES, loadCreateStreaks, saveCreateStreaks } from "./create-retry";
@@ -23,7 +25,8 @@ import type { MachineRow, MachinesView, OnboardingMode, SettingsPage, SignInFail
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { KeyvaultOverview, KvGrant, KvListView, KvSelection, VaultAction, VaultState } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
-import { LIST_COMPLETE, type CreateAction, type CreatesState, type ListStatus, type Space, type SpaceOs, type SpaceRow } from "./contracts/spaces";
+import type { BulkResult } from "./contracts/spaces-page";
+import { LIST_COMPLETE, type CreateAction, type CreatingElsewhere, type CreatesState, type ListStatus, type Space, type SpaceOs, type SpaceRow } from "./contracts/spaces";
 import {
   INITIAL_VAULT_STATE,
   agentRows,
@@ -252,6 +255,8 @@ export class BridgeStore {
   /** How far the host's last registry read got (`DataAdapter.listStatus`):
    * not read yet until the first answer. */
   private listStatusValue: ListStatus = { loaded: false, incomplete: false, reaching: 0, stale: false };
+  /** What your other computers are creating (`DataAdapter.creatingElsewhere`). */
+  private creatingElsewhereValue: CreatingElsewhere[] = [];
   /** The host's standing notice (`DataAdapter.hostNotice`). */
   private hostNoticeText: string | null = null;
   private creates: CreatesState = { ...NO_CREATES, streaks: loadCreateStreaks() };
@@ -283,6 +288,8 @@ export class BridgeStore {
   private machinesPinned = false;
   /** The clock `showMachines` lists its rows at (parity); else now. */
   private machinesNow: number | undefined;
+  /** `cloud_status`, read with the machines (the Clouds group). */
+  private cloudsStatus: CloudStatusWire | null = null;
   /** The Machines page as drawn (`machinesView`). */
   private machinesViewSnap: MachinesView | null = null;
   private inflight = new Map<ResourceName, Promise<void>>();
@@ -410,6 +417,11 @@ export class BridgeStore {
     return this.listStatusValue;
   }
 
+  /** The Spaces your other computers are creating now. */
+  get creatingElsewhere(): CreatingElsewhere[] {
+    return this.creatingElsewhereValue;
+  }
+
   get listNotice(): string | null {
     return this.listNoticeText;
   }
@@ -458,6 +470,7 @@ export class BridgeStore {
           const rows = await this.adapter.call("spaces.list", {});
           this.listNoticeText = this.adapter.listNotice?.() ?? null;
           this.listStatusValue = this.adapter.listStatus?.() ?? LIST_COMPLETE;
+          this.creatingElsewhereValue = this.adapter.creatingElsewhere?.() ?? [];
           this.hostNoticeText = this.adapter.hostNotice?.() ?? null;
           this.applyRows(rows);
           break;
@@ -469,6 +482,15 @@ export class BridgeStore {
             if (!this.machinesPinned) this.machineRows = rows;
           }
           this.publishMachines();
+          // The Clouds group is read beside the machines, without holding them up; a host with no clouds, or one that fails, shows none.
+          void this.adapter
+            .call("clouds.status", {})
+            .catch(() => null)
+            .then((status) => {
+              if (JSON.stringify(status) === JSON.stringify(this.cloudsStatus)) return;
+              this.cloudsStatus = status;
+              if (this.resources.machines.data !== undefined) this.publishMachines();
+            });
           break;
         }
         case "settings": {
@@ -633,7 +655,7 @@ export class BridgeStore {
       provider,
       now: this.now(),
       image: config.image ?? null,
-      kind: config.kind === "container" || config.kind === "vm" ? config.kind : null,
+      kind: config.kind === "container" || config.kind === "vm" || config.kind === "microvm" ? config.kind : null,
       gpu: Boolean(config.gpu),
       host,
       hostName: machine?.name ?? null,
@@ -778,6 +800,53 @@ export class BridgeStore {
     }
   }
 
+  /** Deletes several Spaces at once (the host turns running ones off
+   * first). Each row says it is being deleted until its own result comes
+   * back; one failure never stops the rest. Answers one result per id. */
+  async deleteSpaces(ids: string[]): Promise<BulkResult[]> {
+    return this.bulk("spaces.deleteMany", ids);
+  }
+
+  /** Takes you off Spaces shared with you (a team's leaves your list), the
+   * rows marked as going meanwhile. Answers one result per id. */
+  async leaveSpaces(ids: string[]): Promise<BulkResult[]> {
+    return this.bulk("spaces.leave", ids);
+  }
+
+  private async bulk(op: "spaces.deleteMany" | "spaces.leave", ids: string[]): Promise<BulkResult[]> {
+    if (ids.length === 0) return [];
+    for (const id of ids) this.dispatch({ type: "delete-start", id, now: this.now() });
+    let results: BulkResult[];
+    try {
+      results = (await this.adapter.call(op, { ids })).results;
+    } catch (e) {
+      const error = toError(e).message;
+      results = ids.map((id) => ({ id, ok: false, error }));
+    }
+    for (const id of ids) {
+      const r = results.find((x) => x.id === id);
+      this.dispatch(r?.ok ? { type: "delete-done", id } : { type: "delete-fail", id });
+    }
+    await this.refresh("spaces");
+    // Every id answers, even one the host left out.
+    return ids.map((id) => results.find((r) => r.id === id) ?? { id, ok: false, error: "No answer from the app." });
+  }
+
+  /** Gives the Space a new name (its id stays the same), then reads the
+   * list again so every view shows it. A refusal (a Space shared with you,
+   * a name that is taken or breaks the rule) throws the host's plain words
+   * and changes nothing. */
+  async renameSpace(spaceId: string, name: string): Promise<void> {
+    try {
+      await this.adapter.call("spaces.rename", { spaceId, name });
+    } catch (e) {
+      throw toError(e);
+    }
+    // A read already in flight may predate the rename: wait it out, then read again.
+    await this.inflight.get("spaces");
+    await this.refresh("spaces");
+  }
+
   /* ---- machines ---- */
 
   private publishMachines(): void {
@@ -788,7 +857,10 @@ export class BridgeStore {
       machines = machines.map((m) => (m.current ? { ...m, panel: hostPanelFromState(this.core, override.state) } : m));
     }
     const here = this.machineRows.find((m) => m.current && !m.device)?.host;
-    this.machinesViewSnap = machinesView(this.core, {
+    const now = this.machinesNow ?? Math.floor(Date.now() / 1000);
+    const cloudsIn = this.cloudsStatus ? cloudsInput(this.core, this.cloudsStatus, now) : undefined;
+    const view = machinesView(this.core, {
+      clouds: cloudsIn,
       // The host's own drawing, unless a parity run drew This machine itself.
       hostView: this.viewOverride ?? (override ? null : (this.adapter.machinesView?.() ?? null)),
       machines,
@@ -796,6 +868,9 @@ export class BridgeStore {
       host: override ? override.state : here ? hostState(here) : null,
       nowSecs: this.machinesNow,
     });
+    // The Clouds group is the core's too: a host that draws its own page without one gets it here.
+    const clouds = view && !view.clouds?.group.title && cloudsIn ? cloudsView(this.core, cloudsIn) : undefined;
+    this.machinesViewSnap = view && clouds ? { ...view, clouds } : view;
     this.set("machines", { data: machines, isLoading: false, error: null });
   }
 
@@ -954,8 +1029,38 @@ export class BridgeStore {
 
   /* ---- session ---- */
 
+  /** Signed in with an account at the last reading (undefined before the first). */
+  private wasSignedIn: boolean | undefined;
+  private addingThisComputer: Promise<boolean> | null = null;
+
+  /**
+   * Signing in adds this computer to the account: right after a sign-in
+   * (signed out at the last reading, signed in now) a computer that isn't
+   * set up yet is set up to provide Spaces with its screen kept private
+   * (`quickSetUp` with the `spare` profile). Sharing its desktop is a
+   * choice on its page (Share this desktop), never a side effect of a
+   * sign-in. A computer already set up keeps its settings. Resolves to
+   * whether this computer is set up; never throws. Once at a time.
+   */
+  addThisComputer(identity: string | null): Promise<boolean> {
+    if (this.addingThisComputer) return this.addingThisComputer;
+    const run = (async () => {
+      const status = (await this.adapter.call("host.status", {}).catch(() => null)) as { configured?: boolean } | null;
+      if (!status) return false;
+      if (status.configured) return true;
+      return this.thisMachine.quickSetUp(identity, "spare").catch(() => false);
+    })();
+    this.addingThisComputer = run.finally(() => {
+      this.addingThisComputer = null;
+    });
+    return this.addingThisComputer;
+  }
+
   private publishSession(): void {
     if (!this.sessionSnap) return;
+    const signedInNow = this.sessionSnap.account.authMode === "user" && Boolean(this.sessionSnap.account.identity);
+    if (this.wasSignedIn === false && signedInNow) void this.addThisComputer(this.sessionSnap.account.identity ?? null);
+    this.wasSignedIn = signedInNow;
     const identity = this.sessionSnap.account.identity ?? null;
     const data: SessionData = {
       ...this.sessionSnap,

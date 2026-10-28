@@ -14,9 +14,11 @@
 
 import { useSyncExternalStore } from "react";
 
-import type { AgentRunStatus, Space, SpaceOs, TranscriptItem } from "@/bridge";
+import type { AgentRunStatus, HostStatus, Space, SpaceOs, TranscriptItem } from "@/bridge";
+import type { DataAdapter } from "@/bridge/adapter";
+import { threadOpAvailable } from "@/bridge/ops/thread";
 
-import { isMachineDesktop, spaceState } from "./spaces";
+import { isMachineDesktop, orderSpaces, spaceState } from "./spaces";
 
 export type TaskEnding = "kept" | "thrown";
 
@@ -42,6 +44,10 @@ export interface AskTask {
   transcript: TranscriptItem[] | null;
   /** The status the run last had, for a thrown-away task's line. */
   lastStatus: AgentRunStatus | null;
+  /** It runs on this Mac itself (its own Space id is in `spaceId`): nothing to throw away. */
+  onHost?: boolean;
+  /** Started in its Space's thread (the redesign): the job is the Space's first message, @mentioning the agent. */
+  inSpace?: boolean;
 }
 
 const KEY = "cua.askFirst.tasks";
@@ -76,6 +82,17 @@ function save(next: AskTask[]): void {
 }
 
 /** Every task, newest first. */
+/**
+ * Records a line of the task's conversation in its Space's thread, in core:
+ * the Space keeps it, on every device and for the CLI, SDK and MCP, while
+ * this device only remembers which Space and run a task is. Best effort: a
+ * host without the thread still runs the task.
+ */
+export async function postToSpaceThread(data: Pick<DataAdapter, "call" | "mode"> | null | undefined, spaceId: string | null | undefined, text: string): Promise<void> {
+  if (!data || !spaceId || !text.trim() || !threadOpAvailable(data.mode, "thread.post")) return;
+  await data.call("thread.post", { spaceId, text: text.trim() }).catch(() => {});
+}
+
 export function askTasks(): AskTask[] {
   return load();
 }
@@ -150,36 +167,56 @@ export function taskTitle(prompt: string, max = 80): string {
   return [...line].length <= max ? line : `${[...line].slice(0, max - 1).join("").trimEnd()}…`;
 }
 
-/** Where the job runs, as picked: a new computer of a kind on this Mac, or a Space you already have. */
-export type TaskWhere = { kind: "new"; os: SpaceOs } | { kind: "space"; space: Space };
+/** Where the job runs, as picked: a new computer of a kind on this Mac, a Space you already have, or this Mac itself. */
+export type TaskWhere = { kind: "new"; os: SpaceOs } | { kind: "space"; space: Space } | { kind: "this-mac" };
 
 /**
- * What `agents.start` is pointed at. The core's `agent_start` only runs in a
- * Space (a `local:`, `cloud:`, `direct:` or `relay:` id), auto-approved
- * because "the Space is the sandbox". A machine's own desktop (this Mac's
- * `this-mac` row, or another of your machines sharing its screen) is not a
- * Space: the core can't resolve it, and running an auto-approved agent on
- * a real computer would break the promise that yours stays untouched. So
- * that target is refused here, before anything is called.
+ * What `agents.start` is pointed at. The core's `agent_start` only takes a
+ * Space id (`local:`, `cloud:`, `direct:`, `relay:`), so this Mac (the
+ * `this-mac` row) is first turned into its own Space id: the one its host
+ * service shares it as (`hostSpaceId`), the same id `cua mcp` treats as
+ * This Mac. The person confirms once that the agent works on their own
+ * files and apps.
  */
 export type TaskTarget = { kind: "create"; os: SpaceOs } | { kind: "space"; spaceId: string } | { kind: "host" };
 
 /** The id of this Mac's own row in the Spaces list. */
 export const THIS_MAC_ID = "this-mac";
 
-/** The raw error kept on a task that was pointed at a machine's own desktop. */
-export const HOST_TARGET_ERROR = `${THIS_MAC_ID}: agents run in a Space, not on a computer's own desktop`;
+/** The raw error kept on a task for this Mac when its host service doesn't share it (no Space id to start in). */
+export const HOST_NOT_SHARED = `${THIS_MAC_ID}: this Mac isn't shared by its host service, so it has no Space id to start in`;
+
+/**
+ * This Mac's own Space id, from its host service (`host.status`): the relay
+ * machine (`relay:<machine>`) or the direct address (`direct:<host:port>`)
+ * it shares its desktop on. Null when it isn't set up or doesn't share its
+ * desktop.
+ */
+export function hostSpaceId(status: Pick<HostStatus, "configured" | "mode" | "machineId" | "directUrl" | "sharing" | "shareDesktop"> | null | undefined): string | null {
+  if (!status?.configured || !status.sharing || status.shareDesktop === false) return null;
+  if (status.mode === "relay" && status.machineId) return `relay:${status.machineId}`;
+  if (status.mode === "direct" && status.directUrl) {
+    try {
+      return `direct:${new URL(status.directUrl).host}`;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 export function taskTarget(where: TaskWhere): TaskTarget {
   if (where.kind === "new") return { kind: "create", os: where.os };
-  return isMachineDesktop(where.space) ? { kind: "host" } : { kind: "space", spaceId: where.space.id };
+  if (where.kind === "this-mac" || where.space.id === THIS_MAC_ID) return { kind: "host" };
+  return { kind: "space", spaceId: where.space.id };
 }
 
+export const whereOs = (where: TaskWhere): SpaceOs => (where.kind === "new" ? where.os : where.kind === "space" ? where.space.os : "macos");
+
 /** A kept task's target, for Try again: its computer if it has one (the row, when listed, decides), else a new one. */
-export function retryTarget(task: Pick<AskTask, "spaceId" | "os">, spaces: readonly Space[] | undefined): TaskTarget {
+export function retryTarget(task: Pick<AskTask, "spaceId" | "os" | "onHost">): TaskTarget {
+  if (task.onHost || task.spaceId === THIS_MAC_ID) return { kind: "host" };
   if (!task.spaceId) return { kind: "create", os: task.os };
-  const row = spaces?.find((s) => s.id === task.spaceId);
-  if (task.spaceId === THIS_MAC_ID || (row && isMachineDesktop(row))) return { kind: "host" };
   return { kind: "space", spaceId: task.spaceId };
 }
 
@@ -190,9 +227,9 @@ export interface NewKind {
   blocked: string | null;
 }
 
-/** The computers you already have that a job can use: running Spaces, never a machine's own desktop. */
+/** The Spaces you already have that a job can use: running ones, not a machine's own desktop (this Mac has its own row). */
 export function pickableSpaces(spaces: readonly Space[] | undefined): Space[] {
-  return (spaces ?? []).filter((s) => !isMachineDesktop(s) && spaceState(s) === "running");
+  return orderSpaces((spaces ?? []).filter((s) => !isMachineDesktop(s) && spaceState(s) === "running"));
 }
 
 /** Where a job runs unless you pick: a new Linux computer on this Mac (or the first kind this Mac can make). */
@@ -202,8 +239,9 @@ export function defaultWhere(kinds: readonly NewKind[]): TaskWhere {
   return { kind: "new", os };
 }
 
-/** The pick if it's still offered, else the default (a picked Space that went away, or this Mac's own desktop, falls back). */
+/** The pick if it's still offered, else the default (a picked Space that went away falls back). */
 export function currentWhere(picked: TaskWhere | null, kinds: readonly NewKind[], spaces: readonly Space[]): TaskWhere {
+  if (picked?.kind === "this-mac") return picked;
   if (picked?.kind === "new" && kinds.some((k) => k.os === picked.os && !k.blocked)) return picked;
   if (picked?.kind === "space") {
     const row = spaces.find((s) => s.id === picked.space.id);
@@ -212,8 +250,50 @@ export function currentWhere(picked: TaskWhere | null, kinds: readonly NewKind[]
   return defaultWhere(kinds);
 }
 
+const THIS_MAC_OK_KEY = "cua.askFirst.thisMacOk";
+const okListeners = new Set<() => void>();
+
+/** Whether the person said once, on this device, that tasks may work on this Mac itself. */
+export function thisMacConfirmed(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(THIS_MAC_OK_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Remembers (or forgets, from Settings) that tasks may work on this Mac itself. */
+export function setThisMacConfirmed(ok: boolean): void {
+  try {
+    if (ok) globalThis.localStorage?.setItem(THIS_MAC_OK_KEY, "1");
+    else globalThis.localStorage?.removeItem(THIS_MAC_OK_KEY);
+  } catch {
+    // Asked again next time.
+  }
+  for (const l of [...okListeners]) l();
+}
+
+export function useThisMacConfirmed(): boolean {
+  return useSyncExternalStore(
+    (l) => {
+      okListeners.add(l);
+      return () => okListeners.delete(l);
+    },
+    thisMacConfirmed,
+    thisMacConfirmed,
+  );
+}
+
+/** What the person is told, once, before a task works on this Mac itself. */
+export function thisMacConfirmText(agent: string): { title: string; description: string } {
+  return {
+    title: "Work on this Mac?",
+    description: `${agent} will work directly on this Mac, with your files and apps. It can't be undone by throwing the computer away. ${agent} doesn't ask before each step here, the same as on a new computer.`,
+  };
+}
+
 /** What a failed start offers in its card. */
-export type StartErrorAction = "change-computer" | "add-key" | "retry";
+export type StartErrorAction = "change-computer" | "add-key" | "retry" | "set-up-host";
 
 export interface StartErrorView {
   title: string;
@@ -231,13 +311,16 @@ export interface StartErrorView {
  */
 export function startErrorView(raw: string, agent: string): StartErrorView {
   const e = raw.toLowerCase();
-  if (e.includes(THIS_MAC_ID))
+  if (e.includes("isn't shared"))
     return {
-      title: "Agents can't work on this Mac itself",
-      body: `${agent} gets its own computer, so yours stays untouched. Pick a new computer or one you already have.`,
-      action: "change-computer",
-      retry: false,
+      title: "This Mac isn't set up for tasks yet",
+      body: "Turn on sharing for this Mac on the Machines page, then try again. Or pick another machine.",
+      action: "set-up-host",
+      retry: true,
     };
+  // A task from before this Mac was turned into its own Space id: trying again now works.
+  if (e.includes(`"${THIS_MAC_ID}"`))
+    return { title: "Couldn't start on this Mac", body: "Try again to start it on this Mac, or pick another computer.", action: "retry", retry: true };
   if (/cloud has ended/.test(e))
     return { title: "That computer is no longer available", body: "Cua Cloud has ended. Pick a computer on this Mac instead.", action: "change-computer", retry: false };
   if (/more than one|ambiguous/.test(e))

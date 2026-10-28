@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings → Agents: `useAgentKeys()` over `ops/agent-keys.ts`, with every
+ * Settings → Connectors: `useAgentKeys()` over `ops/agent-keys.ts`, with every
  * word and rule from the app core's `agentKeys.*` (`agent_keys.rs`): the
  * rows, the add or replace sheet, which variable names can hold a key and
  * the question before removing one.
@@ -23,7 +23,7 @@ import type { AgentKeyProvider, AgentKeysReport } from "./ops/agent-keys";
 
 /** What the section shows (`agent_keys::AgentKeysInput`). */
 export interface AgentKeysInput {
-  keys: { provider: string; env: string; last4: string; addedMs: number }[];
+  keys: { provider: string; env: string; last4: string; addedMs: number; expired?: boolean }[];
   unavailable?: string | null;
   error?: string | null;
 }
@@ -83,8 +83,8 @@ export interface AgentKeyConfirm {
 }
 
 export const agentKeysInputOf = (report: AgentKeysReport | undefined, error: Error | null): AgentKeysInput => ({
-  keys: (report?.keys ?? []).map(({ provider, env, last4, addedMs }) => ({ provider, env, last4, addedMs })),
-  unavailable: report?.available === false ? (report.unavailable ?? "this computer can't keep keys") : null,
+  keys: (report?.keys ?? []).map(({ provider, env, last4, addedMs, expired }) => ({ provider, env, last4, addedMs, ...(expired ? { expired: true } : {}) })),
+  unavailable: report?.available === false ? (report.unavailable ?? "this machine can't keep keys") : null,
   error: error ? error.message : null,
 });
 
@@ -249,7 +249,7 @@ export class AgentKeysStore {
 
 const stores = new WeakMap<DataAdapter, AgentKeysStore>();
 
-/** The adapter's one Settings → Agents store. */
+/** The adapter's one Settings → Connectors store. */
 export function agentKeysStore(adapter: DataAdapter): AgentKeysStore {
   let s = stores.get(adapter);
   if (!s) stores.set(adapter, (s = new AgentKeysStore(adapter)));

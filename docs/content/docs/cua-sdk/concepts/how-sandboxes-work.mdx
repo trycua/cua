@@ -21,7 +21,7 @@ description: The SDK, the daemon, cua-spacesd and the backends, where a sandbox 
 | cua SDK and `cua` CLI | The client: a Rust core with generated bindings | Your process or machine |
 | `cua daemon` | The SDK as a local service, so several processes (the CLI, the Spaces app, MCP clients, your script) share sandboxes, connections and credentials. `cua.connect()` instead of `cua.embedded()` | Your machine |
 | cua-spacesd | The optional daemon inside a sandbox: one port (`3211`), gRPC and gRPC-Web. Input and accessibility go to Cua Driver in the guest | The sandbox |
-| Runtimes | Local: gVisor or runc (on Docker or Podman), QEMU, Lume. Your cloud: a VM in your AWS or Google Cloud account, or a Modal sandbox | This machine or your cloud |
+| Runtimes | Local: gVisor or runc (on Docker or Podman), QEMU, Lume, and microVMs on Firecracker, vz or Apple's Containerization. Your cloud: a VM in your AWS or Google Cloud account, or a Modal sandbox | This machine or your cloud |
 
 ## Where, what kind, which engine
 
@@ -30,19 +30,21 @@ Every create takes the same three choices, all optional:
 | Axis | SDK | CLI | Values | Default |
 | --- | --- | --- | --- | --- |
 | Where | `on=` (cua-sandbox also `local=True`) | `--on` | `local`, `aws`, `gcp`, `modal` ([your cloud](/cua-sdk/guides/your-cloud)), `direct:<addr>` (an existing machine running cua-spacesd), a registered provider | `default.on`, else `local` |
-| What kind | `kind=` | `--kind` | `auto`, `container`, `vm` | `auto` |
+| What kind | `kind=` | `--kind` | `auto`, `container`, `vm`, `microvm` | `auto` |
 | Which engine | `runtime=` | `--runtime` | `auto` or an engine below | `auto` |
 
-| Location | container | vm |
-| --- | --- | --- |
-| `local` | `gvisor` (auto when installed), `runc` | `qemu` (auto), `lume` (auto for macOS guests; Apple silicon only) |
-| `direct:<addr>` | the existing machine: `auto` only | |
+| Location | container | vm | microvm |
+| --- | --- | --- | --- |
+| `local` | `gvisor` (auto when installed), `runc` | `qemu` (auto), `lume` (auto for macOS guests; Apple silicon only) | `firecracker` (Linux with KVM), `vz` (auto on a Mac when installed), `containerization` (macOS 26) |
+| `direct:<addr>` | the existing machine: `auto` only | | |
 
 `auto` kind comes from the image: macOS and Windows images are VMs, an image
 with a container rootfs is a container, and a disk-only image is a VM. So
 `ghcr.io/trycua/linux:24.04` is a gVisor container locally, and `--kind vm` picks its `-disk` variant
 (QEMU locally). A runtime implies its kind. A combination that does not exist fails
-with `InvalidPlacement`, listing the valid values.
+with `InvalidPlacement`, listing the valid values. `auto` never picks a microVM;
+see [Space kinds](/spaces/concepts/space-kinds) for what each kind is and which
+hosts run it.
 
 Defaults resolve in this order, first match wins:
 

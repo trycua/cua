@@ -143,7 +143,7 @@ describe("a failed This machine button", () => {
     let failing = true;
     const { adapter, actions } = host(() =>
       failing
-        ? new HostError("macOS didn’t start the service your other devices connect to.", "failed", {
+        ? new HostError("macOS didn’t start the service your other machines connect to.", "failed", {
             title: "Couldn’t start the Cua host service",
             details: "launchctl bootstrap failed: 5",
             actionLabel: "Retry",
@@ -178,7 +178,7 @@ describe("a failed This machine button", () => {
 
 const form: HostSetupFormView = {
   title: "Set Up for Access",
-  lede: "Your other devices reach this Mac through the Cua relay.",
+  lede: "Your other machines reach this Mac through the Cua relay.",
   fields: [],
   advancedLabel: "Advanced",
   advancedOpen: false,

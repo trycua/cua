@@ -206,6 +206,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["host.openSettings", { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" }],
       ["settings.get", {}],
       ["settings.choose", { row: "telemetry", option: "off" }],
+      ["settings.update", { tips: { off: false, done: ["try-agent"] } }],
     ];
     const problems: string[] = [];
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
@@ -528,7 +529,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     };
     const rows = s.page.sections.flatMap((x) => x.rows.map((r) => r.id));
     expect(rows).toEqual(expect.arrayContaining(["account", "notch", "auto-connect", "welcome", "teams", "teams-manage", "teams-billing", "telemetry", "telemetry-note", "launch-at-login"]));
-    expect(rows).toEqual(expect.arrayContaining(["macos-runtime", "linux-runtime"]));
+    // One runtime row per kind, on every system.
+    expect(rows).toEqual(expect.arrayContaining(["runtime:container", "runtime:vm", "runtime:microvm"]));
     expect(s.updateChannel).toBe("stable");
     // Another app holds ⌘⇧Space: the page says so.
     expect(s.globalShortcut).toEqual({ label: "\u2318\u21e7Space", registered: false });
@@ -565,6 +567,27 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(settingsEvents).toBeGreaterThan(0);
   });
 
+  it("keeps the page's tips in the app settings (`settings.update`), and Show tips and Reset tips", async () => {
+    const before = (await call("settings.get")) as { tips: unknown };
+    expect(before.tips).toEqual({ off: false, done: [] });
+    const after = (await call("settings.update", { tips: { off: false, done: ["try-agent", "power"] } })) as typeof before;
+    expect(after.tips).toEqual({ off: false, done: ["try-agent", "power"] });
+    // Saved with the rest of the app's settings (a launch reads them back).
+    expect(native.appSettingsLoad(model.settingsPath).tips.done).toEqual(["try-agent", "power"]);
+    // Only what is sent changes.
+    expect(model.settings.tips.done).toEqual(["try-agent", "power"]);
+    expect(await code("settings.update", {})).toBe("bad_args");
+    expect(await code("settings.update", { tips: { off: "no", done: [] } })).toBe("bad_args");
+    // General's Show tips (the core lays it out) and Reset tips.
+    await call("settings.choose", { row: "tips", option: "off" });
+    expect(model.settings.tips).toEqual({ off: true, done: ["try-agent", "power"] });
+    const page = (await call("settings.get")) as { page: { sections: { rows: { id: string; options: { id: string; active: boolean }[] }[] }[] } };
+    const show = page.page.sections.flatMap((s) => s.rows).find((r) => r.id === "tips")!;
+    expect(show.options.find((o) => o.active)?.id).toBe("off");
+    await call("settings.choose", { row: "reset-tips", option: "press" });
+    expect(model.settings.tips).toEqual({ off: false, done: [] });
+  });
+
   it("offers every experiment but the New UI switch (Use classic UI), which this app is", async () => {
     const s = (await call("settings.get")) as { experiments: { sections: { rows: { id: string }[] }[] } };
     const rows = s.experiments.sections.flatMap((x) => x.rows.map((r) => r.id));
@@ -575,20 +598,25 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(await code("settings.choose", { row: "experiment:classic_ui", option: "on" })).toBe("unsupported");
   });
 
-  it("New Space's \u201cUse built-in Lume\u201d and \u201cUse built-in runtime\u201d change the Runtimes rows", async () => {
-    const set: string[] = [];
-    Object.assign(backend, { setLumeSource: async (v: string) => void set.push(`lume=${v}`) });
-    backend.lumeSource = async () => "builtin";
-    Object.assign(backend, { setLinuxSource: async (v: string) => void set.push(`linux=${v}`) });
-    backend.linuxSource = async () => "builtin";
-    // The wizard's switch (`RUNTIME_SWITCH_ROW`): the same choice as Settings, Runtimes.
-    const s = (await call("settings.choose", { row: "macos-runtime", option: "builtin" })) as { page: { sections: { rows: { id: string; options: { id: string; active: boolean }[] }[] }[] } };
-    await call("settings.choose", { row: "linux-runtime", option: "builtin" });
-    expect(set).toEqual(["lume=builtin", "linux=builtin"]);
-    expect(model.lumeSource).toBe("builtin");
-    expect(model.linuxSource).toBe("builtin");
-    const row = s.page.sections.flatMap((x) => x.rows).find((r) => r.id === "macos-runtime")!;
-    expect(row.options.find((o) => o.active)?.id).toBe("builtin");
+  it("New Space's \u201cUse built-in Lume\u201d and Settings' kind rows write the per-kind runtime settings", async () => {
+    const fixture = backend as unknown as { runtimeSettings: Map<string, string> };
+    // The wizard's switch (`RUNTIME_SWITCH_ROW`): the same choice as Settings, Advanced.
+    const s = (await call("settings.choose", { row: "runtime:vm", option: "builtin" })) as { page: { sections: { rows: { id: string; label: string; value?: string; options: { id: string; active: boolean }[] }[] }[] } };
+    expect(fixture.runtimeSettings.get("runtime.vm")).toBe("builtin");
+    const rows = () => s.page.sections.flatMap((x) => x.rows);
+    expect(rows().find((r) => r.id === "runtime:vm")!.options.find((o) => o.active)?.id).toBe("builtin");
+    // Already installed: what is installed and the path in use.
+    const t = (await call("settings.choose", { row: "runtime:container", option: "system" })) as typeof s;
+    const path = t.page.sections.flatMap((x) => x.rows).find((r) => r.id === "runtime-path:container")!;
+    expect([path.label, path.value]).toEqual(["Detected", "/usr/local/bin/docker"]);
+    await call("settings.choose", { row: "runtime-path:container", option: "/opt/homebrew/bin/podman" });
+    expect(fixture.runtimeSettings.get("runtime.container_path")).toBe("/opt/homebrew/bin/podman");
+    await call("settings.choose", { row: "runtime-path:container", option: "" });
+    expect(fixture.runtimeSettings.has("runtime.container_path")).toBe(false);
+    // A typed path, checked before it is saved.
+    expect(await call("runtimes.check", { kind: "container", path: "/usr/local/bin/docker" })).toMatchObject({ tool: "docker", version: "27.3.1" });
+    // "Browse…" is the app's file panel (none in this fixture UI).
+    expect(await code("runtimes.browse", { kind: "container" })).toBe("unsupported");
   });
 
   it("lists the coding agents under AI agents, and a row's button sets one up", async () => {

@@ -334,7 +334,7 @@ export interface AgentDetailView {
   addRoutineLabel: string;
   access: AgentLineView[];
   accessEmpty: string;
-  /** `Allow on this computer` when this machine is set up and not granted. */
+  /** `Allow on this machine` when this machine is set up and not granted. */
   allowThisMachineLabel?: string | null;
   audit: AgentLineView[];
   error?: string | null;
@@ -347,4 +347,58 @@ export interface AgentsPageView {
   busy: boolean;
   error?: string | null;
   requestText?: string | null;
+}
+
+/**
+ * Whether each agent on This Mac is really connected (`agents.status`;
+ * `cua_agent_setup::connection::ConnectionRow`, CONTRACT §4). snake_case, as
+ * the status serializes it; the same JSON `cua connect status --json` prints
+ * and the `connect_status` MCP tool answers.
+ */
+export interface ConnectionRow {
+  id: string;
+  name: string;
+  installed: boolean;
+  version: string | null;
+  previous_version: string | null;
+  signed_in: "yes" | "no" | "unknown" | "expired";
+  sign_in: string | null;
+  mcp: "ok" | "missing" | "broken" | "stale" | "unsupported";
+  mcp_config: string | null;
+  signin_imported: boolean;
+  signin_import: "ok" | "expired" | "missing" | "unsupported";
+  state: "connected" | "attention" | "not_connected" | "not_installed";
+  problem: { line: string; action: "reconnect" | "sign_in" | "install" | "disconnect" | "none" } | null;
+  checked_at_ms: number;
+}
+
+export interface ConnectionReport {
+  agents: ConnectionRow[];
+  checked_at_ms: number;
+}
+
+/** A row as drawn (`agents.connectionRows`, `cua-spaces-app-core/src/connection.rs`). */
+export interface ConnectionRowView {
+  id: string;
+  name: string;
+  state: "connected" | "attention" | "not_connected";
+  label: string;
+  problem: boolean;
+  detail: string | null;
+  signIn: string | null;
+  /** `connect`, `reconnect`, `sign-in`, `disconnect`, `install`. */
+  action: { id: string; label: string } | null;
+}
+
+/** What Connect did for one agent (`cua_agent_setup::connection::ConnectResult`). */
+export interface ConnectResult {
+  agent: string;
+  tools_ok: boolean;
+  tools_line: string | null;
+  sign_in: {
+    imported: { source: string; env: string; label: string; expires_ms: number | null; added_ms: number } | null;
+    /** `not_signed_in`, `cancelled`, `not_yet`, `failed`. */
+    refused: string | null;
+    line: string | null;
+  } | null;
 }

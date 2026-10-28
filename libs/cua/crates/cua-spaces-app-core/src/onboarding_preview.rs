@@ -235,6 +235,7 @@ fn sample_space(name: &str, os: SpaceOs, os_name: &str, scene: ThumbnailScene) -
         cloud: None,
         cloud_place: None,
         cloud_delete: None,
+        access: None,
     }
 }
 

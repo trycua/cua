@@ -15,7 +15,9 @@
 //!
 //! A host has two independent settings ([`HostSpacesSettings`]): share its
 //! own desktop, and provide Spaces to the owner's enrolled devices
-//! ([`HostProfile::Spare`] turns the first off and the second on).
+//! ([`HostProfile::Spare`] turns the first off and the second on). A new
+//! relay setup provides Spaces unless asked not to; a machine already set
+//! up keeps what it has ([`default_provide_spaces`]).
 //! [`provided`] keeps the Spaces a host provides, their hash-chained audit,
 //! and [`match_machine`], which resolves "spare mac mini" to a machine.
 //! A host in direct mode provides Spaces without the relay ([`direct`]).
@@ -41,6 +43,7 @@ mod helper_migration_tests;
 mod host;
 pub mod machine;
 pub mod pairing;
+pub mod ports;
 pub mod preflight;
 pub mod provided;
 pub mod relay;
@@ -62,8 +65,8 @@ pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
     HostStatus, META_ARCH, META_CLOUD, META_OS, META_PROVIDES_SPACES, PermissionHint,
-    RELAY_HICCUP_GRACE, SetupOptions, SpacesDaemon, StaticRelay, local_network_hint,
-    permission_hints,
+    RELAY_HICCUP_GRACE, SetupOptions, SpacesDaemon, StaticRelay, default_provide_spaces,
+    local_network_hint, permission_hints,
 };
 pub use machine::machine_id;
 pub use pairing::{

@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsOption, type SettingsRow as CoreRow } from "@/bridge";
+import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsRow as CoreRow } from "@/bridge";
 import { aboutView } from "@/bridge/settings-derive";
 import { SettingsGroup } from "@/components/settings-group";
+import { SettingRow } from "@/components/ui/grouped";
 import { CoreSettingsRow } from "@/components/settings/core-section";
+import { RuntimeKindRows } from "@/components/settings/runtime-rows";
 import { HostSetupForm } from "@/components/this-machine";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
+import { setThisMacConfirmed, useThisMacConfirmed } from "@/lib/ask-first";
 
 /** The host form's profile for your own connection server or Direct (`host::SELF_HOSTED_PROFILE`). */
 const SELF_HOSTED = "self-hosted";
@@ -17,23 +20,15 @@ const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this v
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
 const LABS = new Set(["experiment:cua_volume"]);
 
-/** The software choices in plain words (the core says Built-in and System). */
-const RUNTIME_LABEL: Record<string, string> = { "macos-runtime": "Mac computers", "linux-runtime": "Linux computers" };
-const RUNTIME_OPTION: Record<string, string> = { auto: "Automatic", builtin: "Cua’s own", system: "Already installed" };
-
-const runtimeRow = (row: CoreRow): CoreRow => ({
-  ...row,
-  label: RUNTIME_LABEL[row.id] ?? row.label,
-  options: row.options.map((o: SettingsOption) => ({ ...o, label: RUNTIME_OPTION[o.id] ?? o.label })),
-});
-
 /**
  * Settings, Advanced: early releases, Labs, which software runs Spaces on
  * this Mac, and your own connection server. For options most people never
  * touch; each says what it does in a line.
  */
 export function AdvancedTab() {
-  const { data: settings, chooseSetting } = useSettings();
+  const { data: settings, chooseSetting, isLoading: settingsLoading } = useSettings();
+  const { isLoading: aboutLoading } = useAbout();
+  const { isLoading: experimentsLoading } = useExperiments();
   const page = settings?.page;
   const general = page?.sections.find((s) => s.id === "general");
   const runtimes = page?.sections.find((s) => s.id === "runtimes");
@@ -41,13 +36,18 @@ export function AdvancedTab() {
   const overflow = general?.rows.find((r) => r.id === "placement-overflow");
   const choose = (row: CoreRow, option: string) => void chooseSetting(row.id, option).catch(toastError(`Couldn't change ${row.label}`));
 
+  // Nothing is drawn until the host has answered for every group, so none of them pushes
+  // another down as it arrives (a layout shift of the whole tab).
+  if (settingsLoading || aboutLoading || experimentsLoading) return <div data-settings-tab="advanced" aria-busy="true" />;
+
   return (
     <div data-settings-tab="advanced">
       <EarlyReleases />
       <Labs />
       {runtimes || autoConnect || overflow ? (
-        <SettingsGroup title="Which software runs Spaces on this Mac">
-          {runtimes?.rows.filter((r) => r.kind === "choice").map((r) => <CoreSettingsRow key={r.id} row={runtimeRow(r)} asSelect onChoose={choose} />)}
+        <SettingsGroup title="Which software runs Spaces on this computer">
+          {/* One row per kind of Space, as the core lays them out (always there, "Checking…" until the host read them). */}
+          {runtimes ? <RuntimeKindRows section={runtimes} onChoose={choose} /> : null}
           {autoConnect ? <CoreSettingsRow row={{ ...autoConnect, label: "Open a Space’s screen right away" }} onChoose={choose} /> : null}
           {overflow ? (
             <CoreSettingsRow
@@ -101,12 +101,12 @@ function EarlyReleases() {
   );
 }
 
-/** The "Ask first" Home (`spaces_ask_first_home`): a switch for this device only. */
-function askFirstRow(on: boolean): CoreRow {
+/** A Labs flag's switch, for this device only. */
+function flagRow(id: string, label: string, on: boolean): CoreRow {
   return {
-    id: "flag:spaces_ask_first_home",
+    id: `flag:${id}`,
     kind: "toggle",
-    label: "Try the new Home",
+    label,
     value: null,
     button: null,
     options: [
@@ -121,10 +121,20 @@ function askFirstRow(on: boolean): CoreRow {
   };
 }
 
+/** Whether a task asks before it works on this Mac itself (the answer to "Work on this Mac?" is kept per device). */
+function thisMacAskRow(asks: boolean): CoreRow {
+  return { ...flagRow("spaces_ask_first_home", "", asks), id: "ask-first:this-mac", label: "Ask before a task uses this Mac", options: [
+    { id: "on", label: "On", active: asks },
+    { id: "off", label: "Off", active: !asks },
+  ] };
+}
+
 /** Cua Volume and the new Home. Off hides; nothing set up is undone. */
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
   const askFirst = useFlag("spaces_ask_first_home");
+  const redesign = useFlag("spaces_redesign");
+  const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
@@ -132,10 +142,22 @@ function Labs() {
   return (
     <SettingsGroup title="Labs">
       <CoreSettingsRow
-        row={askFirstRow(askFirst)}
+        row={flagRow("spaces_redesign", "New design", redesign)}
+        description="The new Spaces page, Space page and Agents tab. Turn off to use the classic design. On this device only."
+        onChoose={(_, option) => setFlagOverride("spaces_redesign", option === "on")}
+      />
+      <CoreSettingsRow
+        row={flagRow("spaces_ask_first_home", "Try the new Home", askFirst)}
         description="Home asks what you want done, then does it on a fresh computer you can watch. On this device only."
         onChoose={(_, option) => setFlagOverride("spaces_ask_first_home", option === "on")}
       />
+      {askFirst ? (
+        <CoreSettingsRow
+          row={thisMacAskRow(!thisMacOk)}
+          description="Before a task works directly on this Mac, with your files and apps. Turn it on to be asked again."
+          onChoose={(_, option) => setThisMacConfirmed(option === "off")}
+        />
+      ) : null}
       {rows.map((r) => (
         <CoreSettingsRow
           key={r.id}
@@ -159,15 +181,16 @@ function OwnConnection() {
       {form ? (
         <HostSetupForm view={form} host={host} failure={host.setupError} progress={machines?.find((m) => m.current)?.hostProgress} onRetry={() => void host.retrySetUp()} />
       ) : (
-        <div className="flex min-h-12 items-center justify-between gap-6 px-4 py-2.5" data-self-hosting="">
-          <div className="min-w-0">
-            <div className="text-[13px]">Use your own connection server</div>
-            <p className="mt-0.5 text-xs text-muted-foreground">For teams that run their own.</p>
-          </div>
-          <Button size="sm" variant="outline" disabled={host.busy} onClick={() => host.openForm(SELF_HOSTED)}>
-            Set up…
-          </Button>
-        </div>
+        <SettingRow
+          data-self-hosting=""
+          label="Use your own connection server"
+          help="For teams that run their own."
+          control={
+            <Button size="sm" variant="outline" disabled={host.busy} onClick={() => host.openForm(SELF_HOSTED)}>
+              Set up…
+            </Button>
+          }
+        />
       )}
     </SettingsGroup>
   );

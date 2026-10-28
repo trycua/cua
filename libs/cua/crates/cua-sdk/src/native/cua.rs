@@ -164,6 +164,15 @@ impl Cua {
                 .unwrap_or_else(cua_daemon::cua_home);
             rt.spaces().set_relay(Some(session_relay_account(&home)));
         }
+        // With a session: at most every few hours per machine, in the
+        // background, ask the Spaces API for the signed-in account's
+        // usage-data id (CUA-1881); nothing while usage data is off.
+        #[cfg(feature = "host")]
+        if config.account_from_session {
+            runtime().spawn(async {
+                super::telemetry::sync_account_if_due(&cua_auth::Session::from_env()).await;
+            });
+        }
         Ok(Arc::new(Self {
             backend: Backend::Embedded(rt),
         }))

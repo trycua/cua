@@ -1793,6 +1793,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         cloud: None,
         cloud_place: None,
         cloud_delete: None,
+        access: None,
     }
 }
 
@@ -3375,6 +3376,7 @@ mod tests {
             &crate::model::SpaceRow {
                 id: id.into(),
                 name: name.into(),
+                display_name: None,
                 provider: "relay".into(),
                 spacesd_version: String::new(),
                 features: vec![],
@@ -3396,6 +3398,7 @@ mod tests {
                 cloud_place: None,
                 cloud_delete: None,
                 stop_reason: None,
+                sharing: None,
             },
             SKEW_BASE,
         );

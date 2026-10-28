@@ -173,7 +173,7 @@ page: `spaces.createOptions` is the env the native sheet opens with
 (`AppModel.newSpaceEnv`) and `spaces.create` runs its create
 (`AppModel.runCreate`). Every New Space item (⌘N, the menu bar, a machine's
 "New Space on…") opens the window's wizard (`spaces.newRequested`). Settings
-is only the page's (Account, General, Connected apps, Trusted devices,
+is only the page's (Account, General, Connectors, Trusted devices,
 Advanced, About): the app menu's "Settings…" (⌘,), the menu bar item, the
 notch and the command palette all open it in the web UI window
 (`MainUIRouter.openSettings`, `WebUIWindowController.openSettings`; an open

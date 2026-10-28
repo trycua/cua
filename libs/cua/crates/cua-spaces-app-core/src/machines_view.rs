@@ -2,9 +2,11 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! The Machines page as every UI draws it: the list in groups ("Your
-//! machines", a collapsed "Offline for 30+ days", "Team machines"), one
+//! machines", "Your devices" (signed-in devices that are none of the
+//! machines, whatever their age), a collapsed "Offline for 30+ days", "Team
+//! machines"), one
 //! muted line per row, and each machine's page (its name and rename, the
-//! one "Let my other devices use this computer" switch, the Spaces on it as
+//! "Let other machines control this desktop" switch, the Spaces on it as
 //! links, New Space here, Details, and Remove from account).
 //!
 //! The page is about the hardware. Opening, starting, stopping, teleporting
@@ -18,7 +20,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::host::{HostActionId, HostConfirm, HostState};
+use crate::host::{
+    DESKTOP_HELP, DESKTOP_SWITCH, HostActionId, HostConfirm, HostState, SPACES_HELP, SPACES_SWITCH,
+};
 use crate::machines::{self, MachinePageRow, MachinesPageInput};
 pub use crate::machines_health::{
     ISSUES_TITLE, MachinesViewCheck, MachinesViewHealth, MachinesViewIssue, MachinesViewIssueAction,
@@ -44,7 +48,7 @@ pub struct MachinesViewRelay {
     /// Its owner's email, when the relay says.
     #[serde(default)]
     pub owner_email: Option<String>,
-    /// It creates Spaces for your devices (`None`: it did not say).
+    /// It lets your other machines create Spaces (`None`: it did not say).
     #[serde(default)]
     pub provides_spaces: Option<bool>,
 }
@@ -96,6 +100,10 @@ pub struct MachinesViewInput {
     /// That update is downloaded and ready to restart into.
     #[serde(default)]
     pub app_update_ready: bool,
+    /// The user's clouds (`cloud_status`, [`crate::cloud_page::input_from_status`]);
+    /// `None`: not read (no Clouds group).
+    #[serde(default)]
+    pub clouds: Option<crate::cloud_page::CloudsInput>,
 }
 
 /// One of the two switches on a machine's page.
@@ -104,7 +112,8 @@ pub struct MachinesViewInput {
 pub struct MachinesViewToggle {
     /// `spaces` or `desktop`.
     pub id: String,
-    /// "Provide Spaces", "Share this desktop".
+    /// "Let other machines create Spaces here", "Let other machines control
+    /// this desktop".
     pub label: String,
     /// One line under it.
     pub help: String,
@@ -235,7 +244,7 @@ pub struct MachinesViewMachine {
     #[serde(default)]
     pub badge: Option<String>,
     /// The row's one muted line ("2 Spaces running", "Ready for Spaces",
-    /// "Offline · last seen 9 days ago").
+    /// "Offline").
     pub line: String,
     /// Usable now (the green dot): online and sharing.
     pub online: bool,
@@ -253,7 +262,7 @@ pub struct MachinesViewMachine {
     pub current: bool,
     /// Someone shares it with you (a team machine).
     pub team: bool,
-    /// The page's status line ("Online", "Offline · last seen 9 days ago").
+    /// The page's status line ("Online", "Offline").
     pub status: String,
     /// After the status: who shares it ("Shared by your team").
     #[serde(default)]
@@ -274,7 +283,8 @@ pub struct MachinesViewMachine {
     /// The notice's button (Sign In).
     #[serde(default)]
     pub notice_action: Option<crate::host::HostAction>,
-    /// Provide Spaces, then Share this desktop.
+    /// Create Spaces here, then control this desktop (This Mac: the
+    /// desktop switch only).
     pub toggles: Vec<MachinesViewToggle>,
     /// Under read-only switches: where they change.
     #[serde(default)]
@@ -339,12 +349,25 @@ pub struct MachinesView {
     pub groups: Vec<MachinesViewGroup>,
     /// Every machine, in list order.
     pub machines: Vec<MachinesViewMachine>,
+    /// The Clouds group and each cloud's page.
+    #[serde(default)]
+    pub clouds: crate::cloud_page::CloudsView,
+    /// The list's sections, top to bottom: `clouds` (always first, so it
+    /// stays in view above a long machine list), then each of `groups` by id.
+    #[serde(default)]
+    pub order: Vec<String>,
 }
 
 /// The quiet label on a machine's own desktop among its Spaces.
 pub const DESKTOP_LABEL: &str = "Desktop";
 /// "Your machines".
 pub const YOURS_TITLE: &str = "Your machines";
+/// "Your devices": the group of signed-in devices that are none of your
+/// machines, whatever their age.
+pub const DEVICES_TITLE: &str = "Your devices";
+/// The line of a row that is only a signed-in device: it can't run Spaces
+/// and nothing is shared from it.
+pub const DEVICE_LINE: &str = "Signed-in device, not shared";
 /// "Team machines".
 pub const TEAM_TITLE: &str = "Team machines";
 /// The button that removes a machine.
@@ -376,7 +399,7 @@ pub(crate) fn that_machine(os: &str) -> &'static str {
     match os {
         "macos" => "that Mac",
         "windows" => "that PC",
-        _ => "that computer",
+        _ => "that machine",
     }
 }
 
@@ -416,12 +439,25 @@ fn os_label(os: &str) -> String {
     SpaceOs::parse(os).map_or_else(String::new, |o| o.label().to_string())
 }
 
-/// The offline line: "Offline · last seen 9 days ago", or "Offline".
-fn offline_line(last_seen: Option<u64>, now: u64) -> String {
-    match last_seen {
-        Some(t) if t > 0 => format!("{} \u{b7} last seen {}", machines::OFFLINE, ago(t, now)),
-        _ => machines::OFFLINE.into(),
-    }
+/// When an offline machine was last seen ("9 days ago"), for its Details;
+/// the row and status line say only "Offline".
+fn last_seen_text(last_seen: Option<u64>, now: u64) -> Option<String> {
+    last_seen.filter(|t| *t > 0).map(|t| ago(t, now))
+}
+
+/// This Mac's status word while the service that shares it is down.
+pub const SERVICE_STOPPED: &str = "Service stopped";
+
+/// Whether the service that should be sharing This Mac is down: it is set
+/// up, something is on to share and sharing was not stopped, but the
+/// service does not run (the same test the issue uses).
+pub fn service_down(s: &HostState) -> bool {
+    s.configured
+        && !s.paused_signed_out
+        && s.sharing
+        && (s.share_desktop || s.provide_spaces)
+        && s.service_installed
+        && !s.service_running
 }
 
 /// What a machine's switches show and do.
@@ -430,33 +466,17 @@ struct Switches {
     share: bool,
 }
 
-/// "this Mac", "this PC", "this computer".
-pub(crate) fn this_machine(os: &str) -> &'static str {
-    match os {
-        "macos" => "this Mac",
-        "windows" => "this PC",
-        _ => "this computer",
-    }
-}
-
-/// The one remote-access switch on a machine's page, in plain words:
-/// "Let my other devices use this Mac".
-pub(crate) fn remote_label(os: &str) -> String {
-    format!("Let my other devices use {}", this_machine(os))
-}
-
-/// This machine's switch, from its host state: one choice that lets your
-/// other devices see and control its screen and create Spaces on it.
-/// Turning it on turns on everything that takes; turning it off stops
-/// sharing, so it reads as off (and the two settings underneath stay as
-/// they were).
-fn host_toggles(s: Option<&HostState>, os: &str) -> Vec<MachinesViewToggle> {
-    let help = "They can see and control this screen and create Spaces here.";
+/// This machine's switch on its page: "Let other machines control this
+/// desktop", off until the person turns it on. ("Let other machines create
+/// Spaces here" is a Settings row on this Mac.) Both switches off is fine:
+/// the machine just is not shared, with no error.
+fn host_toggles(s: Option<&HostState>) -> Vec<MachinesViewToggle> {
+    let help = DESKTOP_HELP;
     let Some(s) = s.filter(|s| s.configured) else {
-        // Before setup: the switch opens the setup form.
+        // Before setup: the switch opens the setup form with the screen on.
         return vec![MachinesViewToggle {
-            id: "remote".into(),
-            label: remote_label(os),
+            id: "desktop".into(),
+            label: DESKTOP_SWITCH.into(),
             help: help.into(),
             on: false,
             editable: true,
@@ -465,21 +485,15 @@ fn host_toggles(s: Option<&HostState>, os: &str) -> Vec<MachinesViewToggle> {
             setup: Some("desktop".into()),
         }];
     };
-    let relay = s.mode.as_deref() != Some("direct");
-    // Stopped sharing reads as the switch off: it is the one control, so
-    // there is no separate "Not sharing" card to reconcile.
+    // Stopped sharing reads as the switch off.
     let live = s.sharing || s.paused_signed_out;
-    let on = (s.share_desktop || s.provide_spaces) && live;
+    let on = s.share_desktop && live;
     let actions = if on {
-        vec![HostActionId::StopSharing]
+        vec![HostActionId::HideDesktop]
     } else {
         let mut a = vec![];
         if !s.share_desktop {
             a.push(HostActionId::ShareDesktop);
-        }
-        // Spaces need the relay; a direct host only shares its screen.
-        if relay && !s.provide_spaces {
-            a.push(HostActionId::ProvideSpaces);
         }
         if !live {
             a.push(HostActionId::ResumeSharing);
@@ -487,13 +501,9 @@ fn host_toggles(s: Option<&HostState>, os: &str) -> Vec<MachinesViewToggle> {
         a
     };
     vec![MachinesViewToggle {
-        id: "remote".into(),
-        label: remote_label(os),
-        help: if relay {
-            help.into()
-        } else {
-            "They can see and control this screen.".into()
-        },
+        id: "desktop".into(),
+        label: DESKTOP_SWITCH.into(),
+        help: help.into(),
         on,
         editable: true,
         enabled: !s.paused_signed_out,
@@ -514,19 +524,9 @@ fn remote_toggles(sw: &Switches, team: bool) -> Vec<MachinesViewToggle> {
         actions: vec![],
         setup: None,
     };
-    let mut out = vec![t(
-        "spaces",
-        "Provide Spaces",
-        "Your devices can create Spaces here.",
-        sw.provide,
-    )];
+    let mut out = vec![t("spaces", SPACES_SWITCH, SPACES_HELP, sw.provide)];
     if !team {
-        out.push(t(
-            "desktop",
-            "Share this desktop",
-            "Your devices can see and control this screen.",
-            sw.share,
-        ));
+        out.push(t("desktop", DESKTOP_SWITCH, DESKTOP_HELP, sw.share));
     }
     out
 }
@@ -564,6 +564,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
     let host = input.host.as_ref();
     let mut list = Vec::with_capacity(rows.len());
     let mut yours = vec![];
+    let mut devices = vec![];
     let mut old = vec![];
     let mut team_ids = vec![];
     let mut old_removes = vec![];
@@ -577,6 +578,13 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         let relay = input.relay.iter().find(|r| r.id == row.id);
         let team = !row.current && relay.is_some_and(|r| !r.role.is_empty() && r.role != "owner");
         let on = spaces_on(spaces, row);
+        // One status for This Mac, drawn the same in the header, the list
+        // and the issues: its host says whether it shares at all and
+        // whether the service that shares it runs.
+        let svc_down = row.current && host.is_some_and(service_down);
+        let stopped = row.stopped_sharing
+            || (row.current
+                && host.is_some_and(|s| s.configured && !s.paused_signed_out && !s.sharing));
         let n_running = on.iter().filter(|s| running(s)).count();
         let own_space = row
             .space_id
@@ -599,7 +607,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
                     .is_some_and(|s| crate::spaces::sidebar::shares_desktop(s) != Some(false)),
             }
         };
-        let live = row.online && !row.stopped_sharing;
+        let live = row.online && !stopped && !svc_down;
         let desktop = own_space
             .filter(|_| live && sw.share)
             .map(|s| MachinesViewDesktop {
@@ -621,12 +629,18 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         };
 
         // The row's one line.
-        let line = if !row.online {
-            offline_line(row.last_seen, now)
-        } else if row.stopped_sharing {
-            format!("{} \u{b7} {}", machines::NOT_SHARING, row.spaces_label)
-        } else if row.device_only {
-            machines::ONLINE.into()
+        // One short label: no "a · b" chains (the switches show the rest),
+        // except a shared desktop's "Desktop and N Spaces".
+        let line = if row.device_only {
+            DEVICE_LINE.into()
+        } else if !row.online {
+            machines::OFFLINE.into()
+        } else if svc_down {
+            SERVICE_STOPPED.into()
+        } else if stopped {
+            machines::NOT_SHARING.into()
+        } else if has_desktop {
+            machines::desktop_spaces_label(u32::try_from(on.len()).unwrap_or(u32::MAX))
         } else {
             let mut parts = vec![];
             if n_running > 0 {
@@ -634,22 +648,20 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             } else if !on.is_empty() {
                 parts.push(spaces_n(on.len()));
             }
-            if sw.provide {
-                if parts.is_empty() {
-                    parts.push("Ready for Spaces".into());
-                } else {
-                    parts.push("Provides Spaces".into());
-                }
+            if parts.is_empty() && sw.provide {
+                parts.push("Ready for Spaces".into());
             }
             if parts.is_empty() {
                 parts.push(machines::spaces_label(0));
             }
-            parts.join(" \u{b7} ")
+            parts.remove(0)
         };
 
         let status = if !row.online {
-            offline_line(row.last_seen, now)
-        } else if row.stopped_sharing {
+            machines::OFFLINE.into()
+        } else if svc_down {
+            SERVICE_STOPPED.into()
+        } else if stopped {
             machines::NOT_SHARING.into()
         } else {
             machines::ONLINE.into()
@@ -690,7 +702,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             (p.notice, p.notice_action)
         } else if !row.online {
             (Some(OFFLINE_NOTICE.into()), None)
-        } else if row.stopped_sharing {
+        } else if stopped {
             (
                 Some(format!(
                     "Sharing is off on {}. Turn it on there to use it.",
@@ -703,7 +715,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         };
 
         let toggles = if row.current {
-            host_toggles(host, &row.os)
+            host_toggles(host)
         } else {
             remote_toggles(&sw, team)
         };
@@ -732,12 +744,12 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
                 None
             } else if !row.online {
                 Some("It\u{2019}s offline.".into())
-            } else if row.stopped_sharing {
+            } else if stopped {
                 Some("It isn\u{2019}t sharing.".into())
             } else if !sw.provide {
                 Some(format!(
-                    "It doesn\u{2019}t provide Spaces. Turn on \u{201c}{}\u{201d} on {}.",
-                    remote_label(&row.os),
+                    "It doesn\u{2019}t let other machines create Spaces. Turn on \u{201c}{}\u{201d} in Settings on {}.",
+                    SPACES_SWITCH,
                     that_machine(&row.os)
                 ))
             } else {
@@ -754,6 +766,11 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
                 });
             }
         };
+        if !row.online
+            && let Some(seen) = last_seen_text(row.last_seen, now)
+        {
+            fact("Last seen", seen);
+        }
         if row.current {
             fact(
                 "OS",
@@ -810,7 +827,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
                     "Service",
                     if !row.online {
                         "Not reachable"
-                    } else if row.stopped_sharing {
+                    } else if stopped {
                         machines::NOT_SHARING
                     } else {
                         "Running"
@@ -867,7 +884,9 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             && row
                 .last_seen
                 .is_some_and(|t| t > 0 && now.saturating_sub(t) >= OLD_AFTER_SECS);
-        if team {
+        if row.device_only {
+            devices.push(row.id.clone());
+        } else if team {
             team_ids.push(row.id.clone());
         } else if is_old {
             old.push(row.id.clone());
@@ -906,7 +925,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             health_target: crate::machines_health::health_target(
                 row.current,
                 row.online,
-                row.stopped_sharing,
+                stopped,
                 row.device_only,
                 relay.is_some_and(|r| r.role == "owner" || r.role.is_empty()),
                 &row.id,
@@ -961,6 +980,15 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             remove_all: None,
         });
     }
+    if !devices.is_empty() {
+        groups.push(MachinesViewGroup {
+            id: "devices".into(),
+            title: DEVICES_TITLE.into(),
+            collapsed: false,
+            ids: devices,
+            remove_all: None,
+        });
+    }
     if !old.is_empty() {
         let n = old_removes.len();
         groups.push(MachinesViewGroup {
@@ -1010,8 +1038,16 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             "{total} machine{}, {online} online",
             if total == 1 { "" } else { "s" }
         ),
+        order: std::iter::once("clouds".to_string())
+            .chain(groups.iter().map(|g| g.id.clone()))
+            .collect(),
         groups,
         machines: list,
+        clouds: input
+            .clouds
+            .as_ref()
+            .map(crate::cloud_page::view)
+            .unwrap_or_default(),
     }
 }
 
@@ -1070,6 +1106,13 @@ mod tests {
         }
     }
 
+    fn device_never_seen(id: &str, name: &str) -> DeviceIn {
+        DeviceIn {
+            last_seen: None,
+            ..device(id, name, 0)
+        }
+    }
+
     fn relay(id: &str, role: &str, provides: Option<bool>) -> MachinesViewRelay {
         MachinesViewRelay {
             id: id.into(),
@@ -1087,6 +1130,7 @@ mod tests {
             health: vec![],
             app_update: String::new(),
             app_update_ready: false,
+            clouds: None,
             page: MachinesPageInput {
                 spaces: vec![
                     space(
@@ -1197,23 +1241,15 @@ mod tests {
         assert_eq!(
             lines,
             [
-                ("Ada's MacBook Pro", "2 Spaces running", Some("This Mac")),
                 (
-                    "cua's Mac Studio",
-                    "1 Space running \u{b7} Provides Spaces",
-                    None
+                    "Ada's MacBook Pro",
+                    "Desktop and 2 Spaces",
+                    Some("This Mac")
                 ),
-                (
-                    "Cua BYOC tests",
-                    "Offline \u{b7} last seen 9 days ago",
-                    None
-                ),
-                (
-                    "mac-mini-staging",
-                    "Offline \u{b7} last seen 41 days ago",
-                    None
-                ),
-                ("build-mini-01", "Ready for Spaces", None),
+                ("cua's Mac Studio", "Desktop and 1 Space", None),
+                ("Cua BYOC tests", "Offline", None),
+                ("mac-mini-staging", "Offline", None),
+                ("build-mini-01", "Desktop shared", None),
             ]
         );
         assert_eq!(v.summary, "5 machines, 3 online");
@@ -1221,6 +1257,99 @@ mod tests {
         assert_eq!(all.label, "Remove old machines");
         assert_eq!(all.removes[0].machine.as_deref(), Some("old1"));
         assert_eq!(all.removes[0].device.as_deref(), Some("dev_old1"));
+    }
+
+    fn with_devices() -> MachinesViewInput {
+        let mut input = mockup();
+        input.page.devices.extend([
+            device("dev_lap", "Ana's laptop", NOW - 120),
+            device("dev_away", "Away laptop", NOW - 3 * DAY),
+            device("dev_stale", "Stale laptop", NOW - 41 * DAY),
+        ]);
+        input
+    }
+
+    #[test]
+    fn a_device_that_is_only_signed_in_is_under_your_devices() {
+        let base = with_devices();
+        let shell = MachinesViewInput {
+            rows: Some(machines::page_rows(&base.page)),
+            ..base.clone()
+        };
+        for input in [base, shell] {
+            let v = view(&input);
+            let groups: Vec<(&str, &str, bool, Vec<&str>)> = v
+                .groups
+                .iter()
+                .map(|g| {
+                    (
+                        g.id.as_str(),
+                        g.title.as_str(),
+                        g.collapsed,
+                        g.ids.iter().map(String::as_str).collect(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                groups,
+                [
+                    (
+                        "yours",
+                        "Your machines",
+                        false,
+                        vec!["this-mac", "studio", "byoc"]
+                    ),
+                    (
+                        "devices",
+                        "Your devices",
+                        false,
+                        vec!["dev_lap", "dev_away", "dev_stale"]
+                    ),
+                    ("old", "Offline for 30+ days (1)", true, vec!["old1"]),
+                    ("team", "Team machines", false, vec!["team"]),
+                ]
+            );
+            assert!(v.groups[1].remove_all.is_none());
+            let flat: Vec<&str> = v
+                .groups
+                .iter()
+                .flat_map(|g| g.ids.iter().map(String::as_str))
+                .collect();
+            assert_eq!(
+                flat,
+                v.machines.iter().map(|m| m.id.as_str()).collect::<Vec<_>>()
+            );
+            let all = v.groups[2].remove_all.as_ref().unwrap();
+            assert_eq!(all.removes.len(), 1);
+            assert_eq!(all.removes[0].machine.as_deref(), Some("old1"));
+            assert_eq!(all.removes[0].device.as_deref(), Some("dev_old1"));
+        }
+    }
+
+    #[test]
+    fn a_device_of_its_own_reads_signed_in_device_not_shared() {
+        let mut input = with_devices();
+        input
+            .page
+            .devices
+            .push(device_never_seen("dev_never", "Never seen"));
+        let v = view(&input);
+        let devs = ["dev_lap", "dev_away", "dev_stale", "dev_never"];
+        for id in devs {
+            let m = by_id(&v, id);
+            assert_eq!(m.line, "Signed-in device, not shared", "{id}");
+            assert_eq!(m.online, id == "dev_lap", "{id}");
+            assert_eq!(
+                m.status,
+                if id == "dev_lap" { "Online" } else { "Offline" },
+                "{id}"
+            );
+            let rm = m.remove.as_ref().unwrap();
+            assert!(rm.enabled, "{id}");
+            assert!(rm.device.is_some() && rm.machine.is_none(), "{id}");
+        }
+        assert_eq!(by_id(&v, "byoc").line, "Offline");
+        assert!(v.machines.iter().all(|m| m.line != "Not set up for access"));
     }
 
     #[test]
@@ -1232,14 +1361,26 @@ mod tests {
             .iter()
             .map(|t| (t.label.as_str(), t.on, t.editable && t.enabled))
             .collect();
-        // One plain choice, on while anything is shared; off stops sharing.
-        assert_eq!(t, [("Let my other devices use this Mac", true, true)]);
-        assert_eq!(me.toggles[0].id, "remote");
-        assert_eq!(me.toggles[0].actions, [HostActionId::StopSharing]);
+        // This Mac's page has the desktop switch; the Spaces switch is a
+        // Settings row.
+        assert_eq!(t, [("Let other machines control this desktop", true, true)]);
+        assert_eq!(me.toggles[0].id, "desktop");
+        assert_eq!(me.toggles[0].actions, [HostActionId::HideDesktop]);
         assert_eq!(me.toggles_note, None);
 
         let studio = by_id(&v, "studio");
         assert!(studio.toggles.iter().all(|t| !t.editable && !t.enabled));
+        assert_eq!(
+            studio
+                .toggles
+                .iter()
+                .map(|t| t.label.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Let other machines create Spaces here",
+                "Let other machines control this desktop"
+            ]
+        );
         assert_eq!(
             studio.toggles.iter().map(|t| t.on).collect::<Vec<_>>(),
             [true, true]
@@ -1261,58 +1402,98 @@ mod tests {
         let byoc = by_id(&v, "byoc");
         assert_eq!(byoc.notice.as_deref(), Some(OFFLINE_NOTICE));
         assert_eq!(byoc.toggles_note, None);
-        assert_eq!(byoc.status, "Offline \u{b7} last seen 9 days ago");
+        assert_eq!(byoc.status, "Offline");
+        assert_eq!(
+            byoc.details
+                .first()
+                .map(|f| (f.label.as_str(), f.value.as_str())),
+            Some(("Last seen", "9 days ago"))
+        );
     }
 
     #[test]
-    fn stopped_sharing_reads_as_the_switch_off_and_turning_one_on_resumes() {
+    fn stopped_sharing_reads_as_the_switch_off_and_turning_it_on_resumes() {
         let mut input = mockup();
         input.host = Some(HostState {
             sharing: false,
-            ..host(true, true)
+            ..host(false, true)
         });
         let v = view(&input);
         let me = by_id(&v, "this-mac");
         assert!(me.toggles.iter().all(|t| !t.on && t.enabled));
-        // Turning it on resumes sharing (both settings are already on).
+        // The desktop setting is already on: turning it on resumes sharing.
         assert_eq!(me.toggles[0].actions, [HostActionId::ResumeSharing]);
-        // No "Not sharing" card: the switches are the one control.
+        // One status everywhere: Not sharing, never "Online".
+        assert_eq!(me.status, machines::NOT_SHARING);
+        assert_eq!(me.line, machines::NOT_SHARING);
+        assert!(!me.online);
         assert_eq!(me.notice, None);
     }
 
     #[test]
-    fn turning_the_one_switch_on_turns_on_everything_it_needs() {
+    fn the_desktop_switch_is_off_by_default_and_each_way_has_its_action() {
         let me = |h: HostState| {
             let mut input = mockup();
             input.host = Some(h);
             by_id(&view(&input), "this-mac").toggles[0].clone()
         };
-        // Nothing shared: the screen and Spaces both come on.
+        // Spaces on, desktop off (the default setup): off, no error, no hint.
         let t = me(HostState {
+            share_desktop: false,
+            provide_spaces: true,
+            ..host(false, true)
+        });
+        assert!(!t.on && t.enabled && t.editable);
+        assert_eq!(t.actions, [HostActionId::ShareDesktop]);
+        // Both off: still just a switch that turns the desktop on.
+        let t = me(HostState {
+            share_desktop: false,
+            provide_spaces: false,
+            sharing: false,
+            ..host(false, false)
+        });
+        assert!(!t.on && t.enabled);
+        assert_eq!(
+            t.actions,
+            [HostActionId::ShareDesktop, HostActionId::ResumeSharing]
+        );
+        // On: turning it off hides the desktop (Spaces keep running).
+        let t = me(host(true, true));
+        assert!(t.on);
+        assert_eq!(t.actions, [HostActionId::HideDesktop]);
+    }
+
+    #[test]
+    fn one_status_drives_the_header_the_list_and_the_issue() {
+        let mut input = mockup();
+        // Set up and sharing, but the service is down.
+        input.host = Some(HostState {
+            service_installed: true,
+            service_running: false,
+            ..host(true, true)
+        });
+        let v = view(&input);
+        let me = by_id(&v, "this-mac");
+        assert_eq!(me.status, SERVICE_STOPPED);
+        assert_eq!(me.line, SERVICE_STOPPED);
+        assert!(!me.online);
+        assert_eq!(me.health, "fail");
+        let issue = me.issues.iter().find(|i| i.id == "service").unwrap();
+        assert_eq!(issue.action.as_ref().unwrap().label, "Restart service");
+        assert!(issue.text.contains("other machines"));
+        // Nothing to share: the stopped service is expected, so no issue.
+        input.host = Some(HostState {
+            service_installed: true,
+            service_running: false,
+            sharing: false,
             share_desktop: false,
             provide_spaces: false,
             ..host(false, false)
         });
-        assert!(!t.on);
-        assert_eq!(
-            t.actions,
-            [HostActionId::ShareDesktop, HostActionId::ProvideSpaces]
-        );
-        // Stopped, and only the screen was on: Spaces come on, then it resumes.
-        let t = me(HostState {
-            sharing: false,
-            ..host(false, true)
-        });
-        assert_eq!(
-            t.actions,
-            [HostActionId::ProvideSpaces, HostActionId::ResumeSharing]
-        );
-        // A direct connection can only share the screen.
-        let t = me(HostState {
-            mode: Some("direct".into()),
-            ..host(false, false)
-        });
-        assert_eq!(t.actions, [HostActionId::ShareDesktop]);
+        let v = view(&input);
+        let me = by_id(&v, "this-mac");
+        assert_eq!(me.status, machines::NOT_SHARING);
+        assert!(me.issues.iter().all(|i| i.id != "service"));
     }
 
     #[test]
@@ -1328,7 +1509,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             [Some("desktop")]
         );
-        assert_eq!(me.toggles[0].label, "Let my other devices use this Mac");
+        assert_eq!(
+            me.toggles[0].label,
+            "Let other machines control this desktop"
+        );
         assert!(me.remove.is_none() && me.rename.is_none());
         assert_eq!(me.name, "Ada's MacBook Pro");
     }
@@ -1380,14 +1564,125 @@ mod tests {
         assert!(studio.line.contains("1 Space"), "{}", studio.line);
         // Offline machines show none.
         assert!(by_id(&v, "byoc").desktop.is_none());
-        // With no provided Spaces the empty line says "other".
-        if let Some(m) = v
-            .machines
-            .iter()
-            .find(|m| m.desktop.is_some() && m.spaces.is_empty() && m.online)
-        {
-            assert_eq!(m.spaces_empty.as_deref(), Some("No other Spaces yet."));
-        }
+    }
+
+    fn view_of(
+        spaces: Vec<serde_json::Value>,
+        relay_rows: Vec<MachinesViewRelay>,
+        host: Option<HostState>,
+    ) -> MachinesView {
+        view(&MachinesViewInput {
+            page: MachinesPageInput {
+                spaces: spaces.into_iter().map(space).collect(),
+                now: NOW,
+                ..Default::default()
+            },
+            relay: relay_rows,
+            host,
+            ..Default::default()
+        })
+    }
+
+    fn relay_desktop(id: &str, features: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "id": format!("relay:{id}"), "name": id, "os": "macos",
+            "status": "running", "provider": "relay",
+            "sdk": {"features": features, "spacesdVersion": "", "reachable": true}
+        })
+    }
+
+    fn relay_hosted(id: &str, n: u32, status: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": format!("relay:{id}/space-{n}"), "name": format!("s{n}"),
+            "status": status, "provider": "relay", "host": id
+        })
+    }
+
+    fn this_mac(status: &str) -> serde_json::Value {
+        serde_json::json!({"id": "this-mac", "name": "This Mac", "os": "macos", "status": status})
+    }
+
+    fn local(n: u32, status: &str) -> serde_json::Value {
+        serde_json::json!({"id": format!("local:s{n}"), "name": format!("s{n}"), "status": status, "provider": "local"})
+    }
+
+    #[test]
+    fn a_machine_sharing_only_its_desktop_lists_it_alone() {
+        let v = view_of(
+            vec![relay_desktop("m1", &["desktop_stream"])],
+            vec![relay("m1", "owner", Some(true))],
+            None,
+        );
+        let m = by_id(&v, "m1");
+        assert_eq!(m.line, "Desktop shared");
+        let d = m.desktop.as_ref().unwrap();
+        assert_eq!((d.label.as_str(), d.id.as_str()), ("Desktop", "relay:m1"));
+        assert!(m.spaces.is_empty());
+        assert_eq!(m.spaces_empty.as_deref(), Some("No other Spaces yet."));
+    }
+
+    #[test]
+    fn a_machine_sharing_its_desktop_and_spaces_counts_all_of_them() {
+        let v = view_of(
+            vec![
+                relay_desktop("m1", &["desktop_stream"]),
+                relay_hosted("m1", 1, "running"),
+            ],
+            vec![relay("m1", "owner", Some(true))],
+            None,
+        );
+        let m = by_id(&v, "m1");
+        assert_eq!(m.line, "Desktop and 1 Space");
+        assert!(m.desktop.is_some());
+        assert_eq!(m.spaces.len(), 1);
+        let v = view_of(
+            vec![
+                this_mac("local"),
+                local(1, "running"),
+                local(2, "suspended"),
+            ],
+            vec![],
+            Some(host(true, true)),
+        );
+        assert_eq!(by_id(&v, "this-mac").line, "Desktop and 2 Spaces");
+    }
+
+    #[test]
+    fn a_machine_providing_only_spaces_keeps_the_sandbox_line() {
+        let v = view_of(
+            vec![
+                relay_desktop("m1", &["host_spaces"]),
+                relay_hosted("m1", 1, "running"),
+            ],
+            vec![relay("m1", "owner", Some(true))],
+            None,
+        );
+        let m = by_id(&v, "m1");
+        assert_eq!(m.line, "1 Space running");
+        assert!(m.desktop.is_none() && m.spaces_empty.is_none());
+        let v = view_of(vec![this_mac("local")], vec![], Some(host(true, false)));
+        assert_eq!(by_id(&v, "this-mac").line, "Ready for Spaces");
+    }
+
+    /// The page rows get no host settings, so for this machine a host set
+    /// to provide Spaces only still reads "Desktop shared" in the row
+    /// label while the view's line follows the host.
+    #[test]
+    fn this_machines_row_label_is_weaker_than_the_view_line() {
+        let input = MachinesViewInput {
+            page: MachinesPageInput {
+                spaces: vec![space(this_mac("local"))],
+                now: NOW,
+                ..Default::default()
+            },
+            host: Some(host(true, false)),
+            ..Default::default()
+        };
+        assert_eq!(
+            machines::page_rows(&input.page)[0].spaces_label,
+            "Desktop shared"
+        );
+        assert_eq!(by_id(&view(&input), "this-mac").line, "Ready for Spaces");
     }
 
     #[test]
@@ -1413,6 +1708,7 @@ mod tests {
         assert_eq!(
             facts("byoc"),
             [
+                pair("Last seen", "9 days ago"),
                 pair("OS", "macOS"),
                 pair("Connection", "via Cua relay"),
                 pair("Service", "Not reachable"),
@@ -1472,7 +1768,7 @@ mod tests {
         };
         let v = view(&input);
         let m = by_id(&v, "b695");
-        assert_eq!(m.line, "Not sharing \u{b7} No Spaces");
+        assert_eq!(m.line, "Not sharing");
         assert_eq!(m.status, "Not sharing");
         assert!(!m.online);
         assert!(!m.new_space.enabled);
@@ -1484,5 +1780,13 @@ mod tests {
         assert_eq!(ago(NOW - 60, NOW), "1 minute ago");
         assert_eq!(ago(NOW - 2 * 3600, NOW), "2 hours ago");
         assert_eq!(ago(NOW - DAY, NOW), "1 day ago");
+    }
+
+    #[test]
+    fn the_clouds_come_first_in_the_list_so_a_long_machine_list_never_hides_them() {
+        let v = view(&mockup());
+        let groups: Vec<&str> = v.groups.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(v.order[0], "clouds");
+        assert_eq!(v.order[1..], groups);
     }
 }

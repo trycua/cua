@@ -38,8 +38,13 @@ extension FixtureSpacesBackend: CloudToolRunning {
             fixtureCloudCalls.append(tool)
             switch tool {
             case "cloud_status":
-                return ["default_on": fixtureCloudConnected ? "aws" : "local",
-                        "providers": [Self.fixtureAws(connected: fixtureCloudConnected)]]
+                var aws = Self.fixtureAws(connected: fixtureCloudConnected)
+                if fixtureCloudWaiting {
+                    aws.merge(["auth": "oidc", "status": "waiting-for-approval", "approval": "connection",
+                               "approval_agent": "eval-runner", "account": "210987654321",
+                               "budget_usd_month": 200.0, "can_approve": true]) { _, new in new }
+                }
+                return ["default_on": fixtureCloudConnected ? "aws" : "local", "providers": [aws]]
             case "cloud_test":
                 return ["provider": "aws", "ok": true, "account": "1",
                         "checks": [["name": "credentials", "ok": true, "detail": "account 1"]]]
@@ -48,6 +53,13 @@ extension FixtureSpacesBackend: CloudToolRunning {
                 var row = Self.fixtureAws(connected: true)
                 row["checks"] = [["name": "credentials", "ok": true, "detail": "account 1"]]
                 return row
+            case "cloud_approve":
+                fixtureCloudWaiting = false
+                if args["deny"] as? Bool == true { fixtureCloudConnected = false }
+                return Self.fixtureAws(connected: fixtureCloudConnected)
+            case "cloud_disconnect":
+                fixtureCloudConnected = false
+                return ["provider": args["provider"] as? String ?? "aws", "disconnected": true]
             case "cloud_hosts":
                 return fixtureElastic ? Self.fixtureElasticHosts : []
             case "cloud_budget":
@@ -120,6 +132,28 @@ public final class CloudModel {
 
     public var input: AppCloudConnectInput {
         (try? appCloudConnectInputFromStatusJson(json: statusJson)) ?? AppCloudConnectInput(providers: [])
+    }
+
+    /// The clouds the Computers page draws (`cloud_page`); nil until `cloud_status` has answered.
+    public var cloudsInput: AppCloudsInput? {
+        guard status != nil else { return nil }
+        return try? appCloudsInputFromStatus(json: statusJson, now: UInt64(Date().timeIntervalSince1970), canApprove: false)
+    }
+
+    /// Approves (or, with `approve` false, denies) what an agent set up in
+    /// `provider`: the daemon's person-only `cloud_approve`. Each cloud in
+    /// `cloud_status` says whether this person may (`can_approve`).
+    public func approve(_ provider: String, approve: Bool) async throws {
+        guard let tools else { throw CuaError.InvalidArgument(message: "Clouds need the cua daemon") }
+        _ = try await tools.cloudTool("cloud_approve", ["provider": provider, "deny": !approve])
+        await refresh()
+    }
+
+    /// Forgets a cloud; with `deleteResources`, deletes what Cua created there first.
+    public func disconnect(_ provider: String, deleteResources: Bool) async throws {
+        guard let tools else { throw CuaError.InvalidArgument(message: "Clouds need the cua daemon") }
+        _ = try await tools.cloudTool("cloud_disconnect", ["provider": provider, "delete": deleteResources])
+        await refresh()
     }
 
     /// The connected clouds, for the New Space wizard.

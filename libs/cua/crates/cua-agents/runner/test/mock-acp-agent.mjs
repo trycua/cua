@@ -81,7 +81,15 @@ async function runSteps(steps, sid, cx) {
             return false;
           }
         })();
-        log({ ev: "permission", id: t.id, outcome: res.outcome, intentSeenAtAnswer: intentSeen });
+        // The ship ack the host had written when the answer arrived (durable.ship).
+        const ackAtAnswer = (() => {
+          try {
+            return JSON.parse(fs.readFileSync(path.join(process.env.MOCK_STATE_DIR, "ship.ack"), "utf8"));
+          } catch {
+            return null;
+          }
+        })();
+        log({ ev: "permission", id: t.id, outcome: res.outcome, intentSeenAtAnswer: intentSeen, ackAtAnswer, at: Date.now() });
         if (res.outcome.outcome !== "selected" || res.outcome.optionId === "reject") {
           await note({ sessionUpdate: "tool_call_update", toolCallId: t.id, status: "failed", rawOutput: "rejected" });
           continue;

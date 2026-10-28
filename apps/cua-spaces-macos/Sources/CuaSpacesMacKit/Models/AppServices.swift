@@ -26,6 +26,21 @@ public protocol AgentSetupRunning: AnyObject, Sendable {
     /// Starts the agent's own sign-in on this Mac (`codex login` opens the
     /// browser); returns once it runs. The sign-in stays the agent's own.
     func signIn(agent: String) async throws
+    /// Whether each agent is really connected (CONTRACT §4), as the JSON
+    /// `cua connect status --json` prints. `refresh` skips the SDK's
+    /// few-second cache (window focus).
+    func connectionStatusJson(refresh: Bool) async -> String
+    /// Connect and Reconnect: Cua's tools and, with `signIn`, the agent's
+    /// sign-in copied to Keyvault on This Mac. JSON: one result per agent.
+    func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String
+    /// Disconnect: both undone. JSON `{outcomes, removed_sign_ins}`.
+    func disconnectJson(agents: [String], signIn: Bool) async throws -> String
+    /// Disconnect of some parts only (an app's page's switches).
+    func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String
+    /// An agent's device-code sign-in made for Cua (Codex): JSON `{id, url, code}`.
+    func deviceSignInStartJson(agent: String) async throws -> String
+    /// Waits for it to be approved and saves it in Keyvault: JSON as Connect's `sign_in`.
+    func deviceSignInWaitJson(id: String) async throws -> String
 }
 
 /// The SDK's `AgentSetup`, registering the app's own `cua` as the MCP
@@ -62,6 +77,31 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
     }
 
     public func signIn(agent: String) async throws { try inner.signIn(agent: agent) }
+
+    public func connectionStatusJson(refresh: Bool) async -> String {
+        let inner = inner, server = server
+        return await Task.detached { inner.connectionStatusJson(expected: server, refresh: refresh) }.value
+    }
+
+    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String {
+        try await inner.connectJson(agents: agents, server: server, skills: skills, mcp: mcp, signIn: signIn)
+    }
+
+    public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
+        try await inner.disconnectJson(agents: agents, signIn: signIn)
+    }
+
+    public func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String {
+        try await inner.disconnectPartsJson(agents: agents, skills: skills, mcp: mcp, signIn: signIn)
+    }
+
+    public func deviceSignInStartJson(agent: String) async throws -> String {
+        try await inner.deviceSignInStartJson(agent: agent)
+    }
+
+    public func deviceSignInWaitJson(id: String) async throws -> String {
+        try await inner.deviceSignInWaitJson(id: id)
+    }
 }
 
 /// In-memory agents for fixtures and tests: nothing on disk is read or written.
@@ -129,6 +169,57 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
                           userInfo: [NSLocalizedDescriptionKey: "\(agent) has no sign-in cua can start"])
         }
         current[i].signedIn = true
+    }
+
+    /// The connection rows the fixture's agents give (the same rules as
+    /// `cua_agent_setup::connection`).
+    public func connectionStatusJson(refresh: Bool) async -> String {
+        let rows: [[String: Any]] = current.map { a in
+            let state = !a.installed ? (a.cuaConfigured ? "attention" : "not_installed")
+                : !a.cuaConfigured ? "not_connected"
+                : (a.signIn != nil && !a.signedIn) ? "attention" : "connected"
+            var problem: Any = NSNull()
+            if state == "attention" {
+                problem = a.installed
+                    ? ["line": "Connected. No \(a.signIn ?? "") sign-in on This Mac yet.", "action": "sign_in"]
+                    : ["line": "\(a.name) isn't on This Mac anymore. Disconnect takes Cua out of its settings.", "action": "disconnect"]
+            }
+            return ["id": a.id, "name": a.name, "installed": a.installed, "version": NSNull(), "previous_version": NSNull(),
+                    "signed_in": a.signIn == nil ? "unknown" : (a.signedIn ? "yes" : "no"), "sign_in": a.signIn.map { "\($0) sign-in" } ?? NSNull(),
+                    "mcp": a.mcpConfig == nil ? "unsupported" : (a.cuaConfigured ? "ok" : "missing"), "mcp_config": a.mcpConfig ?? NSNull(),
+                    "signin_imported": false, "signin_import": a.signIn == nil ? "unsupported" : "missing",
+                    "state": state, "problem": problem, "checked_at_ms": 0]
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: ["agents": rows, "checked_at_ms": 0])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String {
+        _ = try await setUp(agents: agents, skills: skills, mcp: mcp)
+        calls.append("connect:\(agents.joined(separator: ",")):\(signIn)")
+        let rows = agents.map { ["agent": $0, "tools_ok": true, "tools_line": NSNull(), "sign_in": NSNull()] as [String: Any] }
+        return String(decoding: try JSONSerialization.data(withJSONObject: rows), as: UTF8.self)
+    }
+
+    public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
+        _ = try await remove(agents: agents)
+        return #"{"outcomes":[],"removed_sign_ins":[]}"#
+    }
+
+    public func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String {
+        calls.append("disconnect-parts:\(agents.joined(separator: ",")):\(skills):\(mcp)")
+        return #"{"outcomes":[],"removed_sign_ins":[]}"#
+    }
+
+    /// Codex's device code, approved at once (no browser in fixtures).
+    public func deviceSignInStartJson(agent: String) async throws -> String {
+        calls.append("device-start:\(agent)")
+        return #"{"id":"\#(agent)-1","url":"https://auth.openai.com/codex/device","code":"ABCD-12345"}"#
+    }
+
+    public func deviceSignInWaitJson(id: String) async throws -> String {
+        calls.append("device-wait:\(id)")
+        return #"{"imported":{"source":"codex","env":"CODEX_AUTH_JSON","label":"Codex · ChatGPT sign-in","expires_ms":null,"added_ms":1},"refused":null,"line":null}"#
     }
 
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {

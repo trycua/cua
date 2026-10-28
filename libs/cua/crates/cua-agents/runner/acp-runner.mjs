@@ -20,7 +20,7 @@
 //
 //   durable: { epoch, resume, stateDir, session, attempt, space,
 //              maxAgentRestarts = 3, policy = "ask-model" | "rerun-safe",
-//              guard = true }
+//              guard = true, ship = null | {ackFile, ackTimeoutMs} }
 //   env:     CUA_SESSION, CUA_SESSION_EPOCH, CUA_SESSION_ATTEMPT,
 //            CUA_SESSION_RESUME (0|1), CUA_SESSION_SPACE (the durable Space's
 //            name), CUA_SESSION_STATE_DIR (empty: $CUA_JOB_DATA/session),
@@ -44,6 +44,11 @@
 //   session/load; a harness with neither gets a new session and the run is
 //   flagged `degraded`) and sends a RECOVERY NOTE as the first prompt of the
 //   resumed turn. A turn that already has `turn_ended` is never replayed.
+// - With `ship`, the host mirrors the journal to the Cua Volume
+//   (cua_volume::journal) and acknowledges it in <stateDir>/<ackFile>
+//   ({epoch, end: {"tools.jsonl": bytes}}). An intent is answered only once
+//   the ack covers it, so a re-drive on any host sees it; no ack within
+//   ackTimeoutMs refuses the call (journaled as a denied outcome).
 // - Exit codes: 0 finished, 78 permanent (authentication, bad config, agent
 //   not found), 75 fenced, anything else crashed.
 //
@@ -102,6 +107,13 @@ function loadDurable() {
     // Keep the harness asking permission (so every tool call is guarded):
     // no switch to its full-access mode, and "allow once", never "always".
     guard: d.guard !== false,
+    // Journal shipping to the Cua Volume: the host that drives the run
+    // mirrors the journal and writes `ackFile` ({epoch, end: {file: bytes}})
+    // once bytes are on the Volume. An intent is answered only after its ack.
+    ship:
+      d.ship && typeof d.ship === "object"
+        ? { ackFile: String(d.ship.ackFile || "ship.ack"), ackTimeoutMs: Number(d.ship.ackTimeoutMs ?? 30_000) }
+        : null,
   };
   if (!Number.isSafeInteger(epoch) || epoch < 1) {
     console.error(`durable: CUA_SESSION_EPOCH must be a positive integer (got ${e.CUA_SESSION_EPOCH ?? d.epoch})`);
@@ -230,13 +242,15 @@ if (durable && heartbeatSecs > 0) {
   setInterval(beat, heartbeatSecs * 1000).unref();
 }
 
-// One fenced, optionally fsynced append.
+// One fenced, optionally fsynced append. Returns the file's size after it
+// (the byte offset a ship ack must reach).
 function appendJournal(file, line, sync) {
   checkFence();
   const fd = fs.openSync(J(file), "a", 0o600);
   try {
     fs.writeSync(fd, line + "\n");
     if (sync) fs.fsyncSync(fd);
+    return fs.fstatSync(fd).size;
   } finally {
     fs.closeSync(fd);
   }
@@ -374,9 +388,35 @@ for (const r of readLines("tools.jsonl")) {
 function ledger(kind, toolCallId, fields = {}) {
   lseq += 1;
   const rec = { seq: lseq, ts: Date.now(), epoch: durable.epoch, turn: state.turn, kind, toolCallId, ...fields };
-  appendJournal("tools.jsonl", redact(JSON.stringify(rec)), true);
+  const end = appendJournal("tools.jsonl", redact(JSON.stringify(rec)), true);
   applyRecord(rec);
-  return rec;
+  return { rec, end };
+}
+
+// ---- shipping (durable.ship) ------------------------------------------------------
+//
+// The journal is mirrored to the Cua Volume by the host (the runner has no
+// Volume access inside the Space). For an intent the runner waits until the
+// host acknowledges that tools.jsonl is on the Volume up to the intent's end:
+// then a re-drive on any host sees the intent, and at-most-once holds across
+// hosts. No ack in time: the call is refused and journaled as denied.
+function shipAck() {
+  try {
+    return JSON.parse(fs.readFileSync(J(durable.ship.ackFile), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function waitShipped(end) {
+  const deadline = Date.now() + durable.ship.ackTimeoutMs;
+  for (;;) {
+    checkFence();
+    const a = shipAck();
+    if (a && Number(a.epoch) === durable.epoch && Number(a.end?.["tools.jsonl"] ?? 0) >= end) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
 }
 
 // Some harnesses title a permission request with a generic label ("Run command") and put the command in the
@@ -714,7 +754,7 @@ function finish(code, why, message = null) {
   process.exitCode = code; // even if the loop is gone and the event loop drains first
   const failed = code !== 0;
   emit("run_exited", { code, reason: why, resumable: Boolean(state.sessionId && state.loadSession) });
-  save({ status: failed ? "failed" : "exited", error: failed ? redact(message ?? why) : null });
+  save({ status: failed ? "failed" : "exited", error: failed ? redact(message ?? why) : null, exitCode: code });
   try {
     child?.kill("SIGTERM");
   } catch {}
@@ -744,7 +784,7 @@ function rejectOption(options) {
 
 let replaying = false;
 
-function answerPermission(params) {
+async function answerPermission(params) {
   const opts = params.options ?? [];
   const tc = params.toolCall ?? {};
   const allow = allowOption(opts);
@@ -779,13 +819,19 @@ function answerPermission(params) {
   if (action === "approve" || action === "rerun") {
     if (action === "rerun") ledger("rerun", id, { name: info.name, policy: "rerun-safe" });
     else {
-      ledger("intent", id, {
+      const { end } = ledger("intent", id, {
         name: info.name,
         toolKind: info.toolKind,
         digest: info.digest,
         input: clip(JSON.stringify(info.input ?? null) ?? "null", 400),
         decision: "approve",
       });
+      if (durable.ship && !(await waitShipped(end))) {
+        why = "the journal did not reach the Cua Volume in time; the call was not run";
+        ledger("outcome", id, { name: info.name, status: "failed", summary: why, denied: true });
+        emit("permission", { toolCall: tc, chosen: reject?.optionId ?? null, kind: reject?.kind ?? null, action: "deny", reason: why });
+        return choose(reject);
+      }
     }
     emit("permission", { toolCall: tc, chosen: allow?.optionId ?? null, kind: allow?.kind ?? null, action });
     return choose(allow);
@@ -1061,7 +1107,9 @@ async function drive(a) {
         // retries: one error, the turn ends, the supervisor notifies once.
         emit("error", { message: rejected.message, data: { errorKind: "authentication_failed", status: rejected.status, source: "key_check" } });
         endTurn("error");
-        if (durable) finish(EXIT_PERMANENT, "authentication failed");
+        // A run whose credential is rejected is over: the next message starts
+        // a fresh run with whatever credential the person has connected by then.
+        finish(durable ? EXIT_PERMANENT : 1, withAuthHint(rejected.message, null));
         return;
       }
       let res;
@@ -1077,6 +1125,10 @@ async function drive(a) {
           throw new AgentFailure(`prompt failed: ${e?.message ?? e}`, isAuthError(e));
         }
         endTurn("error");
+        // Same for a credential the agent says it could not authenticate: the
+        // run ends as failed (its error kept) instead of idling for up to
+        // 30 minutes with a credential that does not work.
+        if (isAuthError(e)) finish(1, redact(withAuthHint(e?.message ?? String(e), e)));
         return;
       }
       if (stale()) return;

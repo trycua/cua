@@ -152,7 +152,9 @@ pub struct Machine {
     /// Unix seconds of the current session.
     #[serde(default)]
     pub connected_at: Option<u64>,
-    /// `<relay>/m/<id>`: the spacesd URL clients connect to.
+    /// The machine's spacesd URL as the relay lists it: `https://<id>.<host
+    /// domain>` on a relay with a host domain (cua.ai: `m.cua.sh`), else
+    /// `<relay>/m/<id>`. `<relay>/m/<id>` works on the hosted relay too.
     #[serde(default)]
     pub url: String,
     /// Allowlist (owner view only): accounts with full use (editors).
@@ -207,6 +209,30 @@ pub struct RegisterRequest {
     /// [`Machine::meta`] to record (older relays ignore it).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub meta: std::collections::BTreeMap<String, String>,
+}
+
+/// `POST /v1/machines/{id}/leave` response.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaveReply {
+    /// The machine left.
+    #[serde(default)]
+    pub id: String,
+    /// The caller's own entries taken off its allowlist and viewers.
+    #[serde(default)]
+    pub removed: Vec<String>,
+    /// The team the caller reaches it through, when it is now hidden from
+    /// their listing (the team keeps it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_team: Option<String>,
+}
+
+/// What a call the relay does not know yet fails with
+/// ([`RelayClient::leave`] on a relay that predates it).
+pub const RELAY_NEEDS_UPDATE: &str = "the Cua relay needs an update";
+
+/// Whether `e` says the relay is too old for the call.
+pub fn is_relay_outdated(e: &Error) -> bool {
+    matches!(e, Error::Relay(m) if m == RELAY_NEEDS_UPDATE)
 }
 
 /// `POST /v1/machines` response.
@@ -1054,6 +1080,32 @@ impl RelayClient {
         Ok(())
     }
 
+    /// Takes the caller off machine `id` shared with them
+    /// (`POST /v1/machines/{id}/leave`): their own allowlist or viewer
+    /// entry goes, a team machine is hidden from their listing. Not for
+    /// the owner. A relay that predates it answers
+    /// [`RELAY_NEEDS_UPDATE`] ([`is_relay_outdated`]).
+    pub async fn leave(&self, account_token: &str, id: &str) -> Result<LeaveReply> {
+        let url = self.url(&format!("/v1/machines/{id}/leave"));
+        match self
+            .send_once::<LeaveReply>(
+                self.http.post(url).json(&serde_json::json!({})),
+                account_token,
+            )
+            .await
+        {
+            Ok(r) => Ok(r),
+            // No such route: a 404 without the relay's JSON error, or 405.
+            Err((Error::NotFound(m), _)) if m.trim_end() == "relay:" => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((Error::Relay(m), _)) if m.starts_with("HTTP 405") => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((e, _)) => Err(e),
+        }
+    }
+
     /// Cuts every client and refuses new ones (owner or machine token).
     pub async fn stop_sharing(&self, credential: &str, id: &str) -> Result<Machine> {
         self.send(
@@ -1220,6 +1272,57 @@ mod tests {
         assert_eq!(u.reasons, ["hours"]);
         let bare: RelayUsage = serde_json::from_str("{}").unwrap();
         assert!(!bare.metered && bare.live_sessions_limit.is_none());
+    }
+
+    #[tokio::test]
+    async fn leaving_takes_only_your_own_entry_and_an_old_relay_says_it_needs_an_update() {
+        let relay = crate::testing::FakeRelay::start().await;
+        relay.add_account("ada-tok", "ada", Some("ada@example.com"));
+        relay.add_account("bob-tok", "bob", Some("bob@example.com"));
+        relay.add_account("eve-tok", "eve", Some("eve@example.com"));
+        let client = RelayClient::new(&relay.url).unwrap();
+        let id = "space-0000leave0001";
+        client
+            .register(
+                "ada-tok",
+                &RegisterRequest {
+                    id: id.into(),
+                    name: "qa-shared".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        client
+            .patch(
+                "ada-tok",
+                id,
+                &MachinePatch {
+                    allow: Some(vec!["Bob@example.com".into(), "cat@example.com".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let left = client.leave("bob-tok", id).await.unwrap();
+        assert_eq!(left.removed, vec!["Bob@example.com".to_string()]);
+        assert_eq!(
+            relay.machine(id).unwrap().allow,
+            vec!["cat@example.com".to_string()]
+        );
+        // The owner deletes instead; a stranger finds nothing to leave.
+        assert!(matches!(
+            client.leave("ada-tok", id).await.unwrap_err(),
+            Error::PermissionDenied(m) if m.contains("delete it instead")
+        ));
+        let e = client.leave("eve-tok", id).await.unwrap_err();
+        assert!(matches!(&e, Error::NotFound(_)), "{e:?}");
+        assert!(!is_relay_outdated(&e));
+        // A relay that predates the route.
+        relay.without_leave(true);
+        let e = client.leave("bob-tok", id).await.unwrap_err();
+        assert!(is_relay_outdated(&e), "{e:?}");
+        assert_eq!(e.to_string(), "relay: the Cua relay needs an update");
     }
 
     #[tokio::test]

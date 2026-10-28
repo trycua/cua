@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * "Join with a code": sets this computer up with a one-time pairing code
+ * "Enter a code" (Have a code? Enter it): sets this computer up with a one-time pairing code
  * (or the add-machine link) made on another device, the in-app way of
  * `cua host setup --pair <code>`. The host runs the bundled `cua`
  * (`host.joinWithCode`) and answers once the machine has joined.
@@ -28,7 +28,7 @@ export interface JoinHook {
 
 /** What the page says for a failure: the host's own words, or a plain line. */
 export function joinFailureText(e: unknown): string {
-  if (isUnsupported(e)) return "This version of Cua Spaces can't join with a code. Update the app, or run the install command on this computer.";
+  if (isUnsupported(e)) return "This version of Cua Spaces can't join with a code. Update the app, or run the install command on this machine.";
   return plainJoinError(e);
 }
 

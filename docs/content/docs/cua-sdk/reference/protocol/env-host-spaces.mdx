@@ -10,7 +10,7 @@ description: "cua.env.v1 HostSpacesService: Spaces a host creates for its owner'
   Version: 0.9.0
 */}
 
-Spaces a machine set up with `cua host setup --provide-spaces` creates for its owner's enrolled devices: settings, capacity, create and delete. The host's cua-spacesd forwards each call to its cua daemon. What a host reports for placement is on [Host capacity](/cua-sdk/reference/protocol/env-host-capacity).
+Spaces a machine set up with `cua host setup --share both` creates for its owner's enrolled devices: settings, capacity, create and delete. The host's cua-spacesd forwards each call to its cua daemon. What a host reports for placement is on [Host capacity](/cua-sdk/reference/protocol/env-host-capacity).
 
 Source: `libs/cua/proto/cua/env/v1/host.proto`.
 
@@ -19,7 +19,7 @@ Source: `libs/cua/proto/cua/env/v1/host.proto`.
 `cua.env.v1.HostSpacesService`
 
 Spaces a host provides: a machine set up with `cua host setup
---provide-spaces` creates Spaces (macOS VMs with Lume on a Mac, Linux
+--share both` creates Spaces (macOS VMs with Lume on a Mac, Linux
 containers with Docker, whatever else runs locally) for the owner's
 enrolled devices and the accounts it is shared with, through the relay.
 
@@ -34,7 +34,7 @@ host's hash-chained audit log (`~/.cua/host/spaces-audit.jsonl`).
 With `share_desktop` off, a relayed caller reaches only this service and
 `GetCapabilities` / `Health`, never the host's desktop or files.
 
-A host set up with `cua host setup --direct <ip:port> --provide-spaces`
+A host set up with `cua host setup --direct <ip:port> --share both`
 also serves it on its direct listener, to the holder of its env token,
 by default only from loopback, Tailscale and private LAN addresses. A
 Space created with `direct` is reached on a TCP port the host forwards
@@ -186,6 +186,40 @@ Stops a job (its Space is deleted) and fences the attempt: a delivery
 of that attempt arriving later is refused. Idempotent; a job this
 host never saw is recorded as canceled for that attempt.
 
+## HostThreadService
+
+`cua.env.v1.HostThreadService`
+
+A Space's thread and its agent members, for people on other devices. The
+thread of a Space a host provides lives in the host's cua daemon (its
+owner); a person the host is shared with reads it, posts to it and
+@mentions its agents through this service, from their own device.
+
+The host's cua-spacesd serves it while the host provides Spaces (feature
+`host_thread`), to relay-verified callers including view-only shares
+(they read only), and to the local token holder (the owner). It forwards
+each call to the host's cua daemon with the verified caller, which it
+sets itself (a caller a client sent is never forwarded). The daemon runs
+the tool as that caller: the thread records them as the author, and the
+Space's roles and each agent's rights decide what they may do. Only the
+thread and agent member tools are served, and only for the Spaces the
+host provides.
+
+| RPC | Request | Response | Kind |
+| --- | --- | --- | --- |
+| [`CallThreadTool`](#hostthreadservicecallthreadtool) | [`CallThreadToolRequest`](#callthreadtoolrequest) | [`CallThreadToolResponse`](#callthreadtoolresponse) | unary |
+
+### HostThreadService.CallThreadTool
+
+`/cua.env.v1.HostThreadService/CallThreadTool`, unary: [`CallThreadToolRequest`](#callthreadtoolrequest) to [`CallThreadToolResponse`](#callthreadtoolresponse).
+
+Runs one thread or agent member tool (`thread_read`, `thread_post`,
+`thread_inbox`, `thread_claim`, `thread_reply`, `agent_members`,
+`agent_send`, and `agent_message`, `agent_status`, `agent_events`,
+`agent_interrupt`, `agent_stop` by a member's name) on a Space this
+host provides, as the verified caller. A tool error (a refusal
+included) is a result with `is_error`, as the MCP server answers it.
+
 ## Types in `cua/env/v1/host.proto`
 
 ### DiagnoseHostRequest
@@ -247,12 +281,26 @@ A Space this host provides.
 | `direct_token` | 11 | `string` | The Space's cua-spacesd token, set only in the `CreateHostSpace` response of a direct Space (the caller stores it like any direct Space's token). Empty otherwise. |
 | `egress_enforced` | 20 | `string` | Where its egress policy is enforced: "host"; empty without one. |
 | `network` | 21 | `string` | The guest network the host applied, set only in the `CreateHostSpace` response: `none`, or empty for the default. A host older than `CreateHostSpaceRequest.network` leaves it empty. |
+| `disk` | 22 | [`HostSpaceDisk`](#hostspacedisk) | What the Space takes on the host's disk, set only when `GetHostSpacesRequest.disk` asked for it and the host could measure it. A host that predates it leaves it unset. |
+
+### HostSpaceDisk
+
+What a Space takes on its host's disk (numbers only), as the host's
+resource sampler measured it: at most a few minutes old.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `bytes` | 1 | optional `uint64` | Bytes only this Space holds: what deleting it frees. Unset when they could not be measured. |
+| `allocated` | 2 | `uint64` | Blocks its files occupy, clones counted in full: an upper bound. |
+| `shares_space` | 3 | `bool` | Part of it is shared with other copies. |
 
 ### GetHostSpacesRequest
 
 Request for `HostSpacesService.GetHostSpaces`.
 
-No fields.
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `disk` | 1 | `bool` | Also say what each listed Space takes on this host's disk (`HostSpace.disk`). The host measures each Space at most every few minutes and answers from that, so asking costs it little; another of your devices asks while a window shows the sizes. |
 
 ### GetHostSpacesResponse
 
@@ -557,3 +605,40 @@ fields are those of `cua.daemon.v1.CreateSpaceProgress`.
 | `bytes_done` | 5 | optional `uint64` | Bytes downloaded so far, when the step counts them (an image pull). |
 | `bytes_total` | 6 | optional `uint64` | Bytes the download has in all. |
 | `bytes_per_second` | 7 | optional `double` | Smoothed download rate, bytes per second. |
+
+### CallThreadToolRequest
+
+Request for `HostThreadService.CallThreadTool`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | The Space: `relay:<machine>` (or `<machine>`), as other devices know it, or its id on the host (`local:<name>`). |
+| `name` | 2 | `string` | The tool's name (a former name works too). |
+| `arguments_json` | 3 | `string` | The tool's arguments as a JSON object; its `space` is replaced by the host's id of `space`. |
+
+### CallThreadToolResponse
+
+Response for `HostThreadService.CallThreadTool`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `content_json` | 1 | `string` | MCP content parts, as a JSON array. |
+| `structured_json` | 2 | `string` | MCP structured content as JSON (empty: none). |
+| `is_error` | 3 | `bool` | The tool failed (a refusal, a bad argument): the content says why. |
+| `meta_json` | 4 | `string` | MCP `_meta` as JSON (empty: none). |
+
+### ThreadView
+
+What a person was looking at in a Space as they posted to its thread: the
+Space's desktop, or one of its windows. `thread_post` takes it as `view`,
+and every entry and task that has one returns it (`thread_read`,
+`thread_inbox`), as JSON with these field names (`CallThreadTool`'s
+`arguments_json` and `structured_json`). Typed clients read it as this
+message; the daemon's `thread::ViewContext` is held to it by a test.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `kind` | 1 | `string` | `desktop` or `window`. |
+| `app` | 2 | `string` | The window's app ("Firefox"); empty for the desktop. |
+| `title` | 3 | `string` | The window's title ("Pull requests"), at most 256 characters. |
+| `window_id` | 4 | `string` | The window's id in the Space, as `computer_window_list` gives it. |

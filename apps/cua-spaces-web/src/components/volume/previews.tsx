@@ -103,7 +103,7 @@ function Stage({ width, height, children, label, still }: { width: number; heigh
       role="img"
       aria-label={label}
       data-still={still ? "true" : undefined}
-      className="flex justify-center overflow-hidden rounded-md bg-linear-to-b from-sky-200/70 to-indigo-200/70 dark:from-slate-800 dark:to-slate-900"
+      className="flex justify-center overflow-hidden rounded-lg bg-linear-to-b from-sky-200/70 to-indigo-200/70 dark:from-slate-800 dark:to-slate-900"
       style={{ height }}
     >
       <div className="relative" style={{ width, height }} aria-hidden="true">
@@ -121,7 +121,7 @@ function MiniWindow({ window: w, role, children }: { window: PreviewWindow; role
       className="absolute overflow-hidden border border-black/10 bg-white shadow-[0_2px_4px_rgba(0,0,0,0.18)] dark:border-white/10 dark:bg-neutral-800"
       style={{ left: f.x, top: f.y, width: f.width, height: f.height, borderRadius: w.radius }}
     >
-      <span className="absolute inset-x-0 top-0 flex items-center gap-[2.5px] border-b border-black/10 pl-[5px] dark:border-white/10" style={{ height: w.titleBar }}>
+      <span /* design-ok: miniature window title bar edge, inside an illustration */ className="absolute inset-x-0 top-0 flex items-center gap-[2.5px] border-b border-black/10 pl-[5px] dark:border-white/10" style={{ height: w.titleBar }}>
         {[0, 1, 2].map((i) => (
           <i key={i} className="block size-[3.6px] rounded-full bg-black/20 dark:bg-white/25" />
         ))}
@@ -174,8 +174,8 @@ export function DriverPreview({ fixedMs, label }: { fixedMs?: number | "still"; 
           {scene.checkboxes.map((c, i) => {
             const on = frame.checked[i] ?? 0;
             return (
-              <span key={`box-${i}`} className="rounded-[2px] border-[0.75px] border-black/40 dark:border-white/50" style={at(c, scene.back.frame)}>
-                <span className="absolute inset-0 rounded-[1.5px] bg-brand" style={{ opacity: on }} />
+              <span /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ key={`box-${i}`} className="rounded-[2px] border-[0.75px] border-black/40 dark:border-white/50" style={at(c, scene.back.frame)}>
+                <span /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ className="absolute inset-0 rounded-[1.5px] bg-brand" style={{ opacity: on }} />
                 <svg viewBox="0 0 8 8" className="absolute inset-0 size-full">
                   <polyline
                     points="2,4.2 3.5,5.7 6.2,2.4"
@@ -219,7 +219,7 @@ export function DriverPreview({ fixedMs, label }: { fixedMs?: number | "still"; 
         <MiniWindow window={scene.front} role="front">
           {line && frame.selection > 0 ? (
             <span
-              className="absolute rounded-[1.5px] bg-brand/30"
+              /* design-ok: miniature illustration shape */ className="absolute rounded-[1.5px] bg-brand/30"
               style={{ left: line.x - scene.front.frame.x, top: line.y + line.height / 2 - 4 - scene.front.frame.y, width: line.width * frame.selection, height: 8 }}
             />
           ) : null}
@@ -270,8 +270,8 @@ export function DriveMountPreview({ fixedMs, label }: { fixedMs?: number | "stil
           {scene.places.map((p, i) => (
             <Bar key={`place-${i}`} rect={p} frame={finder} />
           ))}
-          <span className="rounded-[2px] bg-brand/25" style={{ ...at(scene.volume, finder), opacity: frame.volume }} />
-          <span className="rounded-[1px] bg-black/45 dark:bg-white/60" style={{ ...at(scene.volumeIcon, finder), opacity: frame.volume }} />
+          <span /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ className="rounded-[2px] bg-brand/25" style={{ ...at(scene.volume, finder), opacity: frame.volume }} />
+          <span /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ className="rounded-[1px] bg-black/45 dark:bg-white/60" style={{ ...at(scene.volumeIcon, finder), opacity: frame.volume }} />
           <span
             className="absolute font-medium whitespace-nowrap text-foreground"
             style={{

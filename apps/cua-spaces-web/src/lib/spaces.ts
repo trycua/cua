@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import type { CoreClient, Machine, Space } from "@/bridge";
+import type { CoreClient, CreatingElsewhere, Machine, Space, SpaceOs } from "@/bridge";
 import { OS_NAME } from "@/components/os-icon";
 import { thisComputerLabel } from "@/lib/host-labels";
 import { messageText } from "@/lib/messages";
@@ -50,9 +50,47 @@ export function realSpaces<T extends Pick<Space, "id" | "status" | "provider" | 
   return spaces.filter((s) => !isMachineDesktop(s));
 }
 
+/** This Mac's own desktop (`this-mac`): a row of the Spaces list that reads "Not sharing" while its switch is off. */
+export const isThisMacDesktop = (space: Pick<Space, "id">): boolean => space.id === "this-mac";
+
+/**
+ * This Mac's desktop while it is not shared: the host lists it `local` (the list rows read it as running)
+ * only while the desktop is shared, and suspended otherwise.
+ */
+export const isUnsharedDesktop = (space: Pick<Space, "id" | "status">): boolean => space.id === "this-mac" && space.status !== "local" && space.status !== "running";
+
+/**
+ * The rows of the Spaces list: your Spaces and the machines' desktops that are shared. This Mac's desktop
+ * shows even while it is not shared ("Not sharing"), but only once something else is listed, so a person
+ * with no Space still sees the empty state. `hidden` (Hide on a row) leaves a desktop out; another
+ * machine's desktop shows only while it shares it (`shares`).
+ */
+export function listedSpaces<T extends Pick<Space, "id" | "status" | "provider" | "host">>(
+  all: readonly T[],
+  hidden: ReadonlySet<string> = new Set(),
+  shares: (space: T) => boolean = () => true,
+): T[] {
+  const real = realSpaces(all);
+  const shared = all.filter((s) => isMachineDesktop(s) && !isUnsharedDesktop(s) && !hidden.has(s.id) && (isThisMacDesktop(s) || shares(s)));
+  const base = [...real, ...shared];
+  const own = all.find((s) => isUnsharedDesktop(s) && !hidden.has(s.id));
+  return own && base.length > 0 ? [...base, own] : base;
+}
+
+/** The listed rows that count as Spaces ("N Spaces", "N running", the sidebar): never this Mac's unshared desktop. */
+export const countedSpaces = <T extends Pick<Space, "id" | "status">>(listed: readonly T[]): T[] => listed.filter((s) => !isUnsharedDesktop(s));
+
+/** Running Spaces first, then the most recently used (Home, the Spaces page, the switcher and ⌘K). */
+export function orderSpaces<T extends Pick<Space, "id" | "status" | "power" | "lastUsedAt" | "provider" | "host"> & { progress?: Space["progress"] }>(spaces: readonly T[]): T[] {
+  // A machine's desktop follows the Spaces in its state (its "last used" is always now), and This Mac's unshared one is last.
+  const rank = (s: T) => (isUnsharedDesktop(s) ? 9 : ORDER[spaceState(s)] + (isMachineDesktop(s) ? 0.5 : 0));
+  return spaces.toSorted((a, b) => rank(a) - rank(b) || b.lastUsedAt - a.lastUsedAt);
+}
+
 export type SpaceFilter = "all" | "running" | "stopped" | "creating";
 
-const ORDER: Record<SpaceState, number> = { failed: 0, creating: 0, running: 1, stopped: 2, deleting: 3 };
+/** Running first, then the Space being created, then the rest (each by most recent use). */
+const ORDER: Record<SpaceState, number> = { running: 0, creating: 1, failed: 2, stopped: 3, deleting: 4 };
 
 /**
  * Whether the filter box's `query` keeps `space`: the core's rule
@@ -91,6 +129,26 @@ export function osLabel(space: Pick<Space, "os" | "osPrettyName">): string {
 export function spacePlace(space: Pick<Space, "os" | "osPrettyName">, machine: string): string {
   const os = osLabel(space);
   return os ? `${os} on ${machine}` : machine;
+}
+
+/** A Space another computer is creating: its OS as an icon takes (`unknown` when it did not say). */
+export function elsewhereOs(c: Pick<CreatingElsewhere, "os">): SpaceOs {
+  return c.os === "macos" || c.os === "linux" || c.os === "windows" ? c.os : "unknown";
+}
+
+/** "Creating macOS on Mac mini…" (CUA-2349): what another computer is making, from its own report. */
+export function creatingElsewherePlace(c: Pick<CreatingElsewhere, "os" | "machineName">): string {
+  const os = elsewhereOs(c);
+  const what = os === "unknown" ? "a Space" : OS_NAME[os];
+  return `Creating ${what} on ${c.machineName.trim() || "another computer"}…`;
+}
+
+/** How far it got: "40%". */
+export const creatingElsewherePercent = (c: Pick<CreatingElsewhere, "percent">): string => `${Math.min(100, Math.max(0, Math.round(c.percent)))}%`;
+
+/** "Creating macOS on Mac mini… 40%". */
+export function creatingElsewhereLine(c: Pick<CreatingElsewhere, "os" | "machineName" | "percent">): string {
+  return `${creatingElsewherePlace(c)} ${creatingElsewherePercent(c)}`;
 }
 
 /** The machine a Space runs on, by the machines' `spaceIds`. */
@@ -220,4 +278,4 @@ export function locationLabel(space: Pick<Space, "provider" | "cloudPlace">): st
   return provider === "local" ? thisComputerLabel() : PROVIDER[provider];
 }
 
-export const KIND_LABEL: Record<NonNullable<Space["kind"]>, string> = { vm: "Virtual machine", container: "Container" };
+export const KIND_LABEL: Record<NonNullable<Space["kind"]>, string> = { vm: "Virtual machine", container: "Container", microvm: "MicroVM" };

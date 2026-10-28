@@ -23,7 +23,7 @@ pub struct ToolCoverage {
 }
 
 /// tool name → the typed Rust path that reaches it.
-const SYMBOLS: [(&str, &str); 97] = [
+const SYMBOLS: [(&str, &str); 113] = [
     ("add_space", "Connection::add_space"),
     ("remove_space", "Connection::remove_space"),
     ("list_spaces", "Connection::spaces"),
@@ -65,32 +65,47 @@ const SYMBOLS: [(&str, &str); 97] = [
     ("agent_stop", "Space::stop_run"),
     ("agent_list", "Space::runs"),
     ("agent_capabilities", "Space::harness_capabilities"),
-    (
-        "persistent_agent_create",
-        "Connection::create_persistent_agent",
-    ),
+    ("agent_add", "Connection::create_persistent_agent"),
     ("persistent_agent_list", "Connection::persistent_agents"),
-    (
-        "persistent_agent_remove",
-        "Connection::remove_persistent_agent",
-    ),
-    (
-        "persistent_agent_send",
-        "Connection::send_to_persistent_agent",
-    ),
+    ("agent_remove", "Connection::remove_persistent_agent"),
+    ("agent_send", "Connection::send_to_persistent_agent"),
     ("persistent_agent_save", "Connection::save_agent_home"),
     ("agent_pause", "Connection::pause_agent"),
     ("agent_resume", "Connection::resume_agent"),
-    ("routine_add", "Connection::add_routine"),
-    ("routine_list", "Connection::routines"),
-    ("routine_remove", "Connection::remove_routine"),
-    ("routine_set_enabled", "Connection::set_routine_enabled"),
+    ("agent_schedule_add", "Connection::add_routine"),
+    ("agent_schedule_list", "Connection::routines"),
+    ("agent_schedule_remove", "Connection::remove_routine"),
+    (
+        "agent_schedule_set_enabled",
+        "Connection::set_routine_enabled",
+    ),
     ("notify_user", "Connection::notify_user"),
     ("notifications_list", "Connection::notifications"),
     ("notifications_ack", "Connection::mark_notifications_read"),
     ("computer_access_grant", "Connection::allow_computer"),
     ("computer_access_revoke", "Connection::revoke_computer"),
     ("computer_access_list", "Connection::computer_access"),
+    ("thread_read", "Connection::thread_read"),
+    ("thread_post", "Connection::thread_post"),
+    ("thread_inbox", "Connection::thread_inbox"),
+    ("thread_claim", "Connection::thread_claim"),
+    ("thread_reply", "Connection::thread_reply"),
+    ("thread_import", "Connection::thread_import"),
+    ("agent_members", "Connection::agent_members"),
+    ("agent_set_rights", "Connection::agent_set_rights"),
+    ("thread_join", "Connection::thread_join"),
+    (
+        "thread_join_code_create",
+        "Connection::thread_join_code_create",
+    ),
+    ("thread_join_code_list", "Connection::thread_join_code_list"),
+    (
+        "thread_join_code_cancel",
+        "Connection::thread_join_code_cancel",
+    ),
+    ("thread_join_redeem", "Connection::thread_join_redeem"),
+    ("thread_settings", "Connection::thread_settings"),
+    ("thread_device_revoke", "Connection::thread_device_revoke"),
     ("teleport_manifest", "Space::teleport_manifest"),
     ("teleport_app", "Space::teleport_send"),
     ("request_site_login", "Space::request_site_login"),
@@ -142,13 +157,18 @@ const SYMBOLS: [(&str, &str); 97] = [
     ("prewarm_list", "Connection::prewarm_list"),
     ("prewarm_remove", "Connection::prewarm_remove"),
     ("cloud_audit", "Connection::cloud_audit"),
+    ("cloud_cost", "Connection::cloud_cost"),
 ];
 
 /// The coverage table, in contract order, with the provider and metering
 /// facts read from the contract rather than restated here.
+///
+/// A person-only tool (`cloud_approve`) is left out: no MCP server serves it
+/// to this client; the apps call it through the cua SDK.
 pub fn coverage() -> Vec<ToolCoverage> {
     cua_spaces_contract::tools()
         .into_iter()
+        .filter(|tool| !cua_spaces_contract::person_only(tool.name))
         .map(|tool| {
             let symbol = SYMBOLS
                 .iter()
@@ -199,6 +219,7 @@ mod tests {
         let advertised: Vec<&str> = cua_spaces_contract::tools()
             .into_iter()
             .map(|tool| tool.name)
+            .filter(|name| !cua_spaces_contract::person_only(name))
             .collect();
         let invented: Vec<&str> = SYMBOLS
             .iter()

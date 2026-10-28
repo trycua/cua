@@ -1,0 +1,42 @@
+{
+  "name": "spaces-menu",
+  "about": "A Space's \"…\" and right-click menu on the Spaces page (storyboard 3 and 10): yours running, yours shared (Manage sharing…), yours stopped (Teleport greyed), yours while turning on, shared with you (only what the owner allows, then Leave), shared with you as a viewer, a team's Space while off, the same for its maker (Delete Space), and a team member without power.",
+  "steps": [
+    {
+      "step": "yours, running, not shared",
+      "input": { "kind": "mine", "role": "owner", "power": "running", "canPower": true, "canTeleport": true, "canShare": true, "canRename": true, "canDelete": true }
+    },
+    {
+      "step": "yours, shared with three people",
+      "input": { "kind": "mine", "role": "owner", "power": "running", "shared": true, "canPower": true, "canTeleport": true, "canShare": true, "canRename": true, "canDelete": true }
+    },
+    {
+      "step": "yours, stopped",
+      "input": { "kind": "mine", "role": "owner", "power": "off", "canPower": true, "canTeleport": true, "canShare": true, "canRename": true, "canDelete": true }
+    },
+    {
+      "step": "yours, turning on",
+      "input": { "kind": "mine", "role": "owner", "power": "busy", "canPower": true, "canTeleport": true, "canShare": true, "canRename": true, "canDelete": true }
+    },
+    {
+      "step": "Sam's Space, Turn on allowed",
+      "input": { "kind": "withMe", "role": "editor", "power": "off", "canPower": true, "canLeave": true }
+    },
+    {
+      "step": "Sam's Space as a viewer",
+      "input": { "kind": "withMe", "role": "viewer", "power": "running", "canPower": true, "canTeleport": true, "canLeave": true }
+    },
+    {
+      "step": "a team Space, off",
+      "input": { "kind": "team", "role": "editor", "power": "off", "canPower": true, "canTeleport": true, "canLeave": true }
+    },
+    {
+      "step": "a team Space you made, running",
+      "input": { "kind": "team", "role": "owner", "maker": true, "power": "running", "canPower": true, "canTeleport": true, "canDelete": true, "canLeave": true }
+    },
+    {
+      "step": "a team Space without power",
+      "input": { "kind": "team", "role": "editor", "power": "running", "canLeave": true }
+    }
+  ]
+}

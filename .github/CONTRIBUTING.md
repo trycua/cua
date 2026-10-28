@@ -85,11 +85,14 @@ GitHub issue form. Longer proposals and diagrams remain in this repository under
 
 ### Contributor License Agreement
 
-Before a pull request can be merged, its author must accept the
-[Contributor License Agreement](../legal/CLA.md) once. The **CI: CLA** check comments on
-your first pull request with instructions; reply with the sentence it gives you
-to sign. The agreement applies to your later contributions, and you keep
-ownership of your work. Maintainers and automation accounts are exempt.
+Contributors accept the [Contributor License Agreement](../legal/CLA.md) once. The
+**CI: CLA** check comments on your first pull request with instructions; reply with
+the sentence it gives you to sign. The agreement applies to your later contributions,
+and you keep ownership of your work. Maintainers and automation accounts are exempt.
+
+The required `contributor-attribution` check enforces the CLA. It fails when a pull
+request touching the Cua Spaces apps or `libs/cua-spacesd` has an unsigned or
+unverifiable contributor, and it only warns elsewhere.
 
 ### Agent-Assisted Contributions
 

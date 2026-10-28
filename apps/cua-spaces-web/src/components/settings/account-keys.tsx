@@ -6,13 +6,15 @@ import { TriangleAlertIcon } from "lucide-react";
 import { useAgentKeys, type AgentKeyRowView } from "@/bridge";
 import { KeySheet } from "@/components/agents/key-sheet";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
+import { SettingsGroup } from "@/components/settings-group";
 import { Button } from "@/components/ui/button";
+import { GroupedRow, SettingRow } from "@/components/ui/grouped";
 import { toastError } from "@/components/ui/toast";
 import { addedText } from "@/lib/agent-keys";
 import { KEYS_ADD_OTHER_BUTTON, KEYS_ADD_OTHER_LABEL, KEYS_OTHER_HELP, KEYS_TITLE, plainKeysIntro } from "@/lib/settings-copy";
 
 /**
- * Settings, Connected apps, Account keys: the provider keys agents in your Spaces get. Anthropic
+ * Settings, Connectors, Account keys: the provider keys agents in your Spaces get. Anthropic
  * and OpenAI always have a row, other keys follow by variable name; Add or
  * Replace opens a sheet with a secure field (the key is never shown again),
  * Remove asks first. Every word is the app core's `agent_keys` view.
@@ -30,7 +32,7 @@ export function AccountKeysSection() {
   return (
     <div data-agent-keys>
       {view.notice ? (
-        <div data-agent-keys-notice className="mb-4 flex items-start gap-2.5 rounded-xl border border-warning/30 bg-warning/5 px-4 py-2.5 text-[13px]">
+        <div data-agent-keys-notice className="mb-4 flex items-start gap-2.5 rounded-lg bg-warning/10 px-4 py-2.5 text-[13px]">
           <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-warning" />
           <span className="min-w-0 flex-1">{view.notice}</span>
           {keys.error ? (
@@ -41,30 +43,20 @@ export function AccountKeysSection() {
         </div>
       ) : null}
 
-      <section className="mb-8">
-        <h2 className="mb-2 px-1 text-xs font-semibold text-muted-foreground" data-agent-keys-title>
-          {KEYS_TITLE}
-        </h2>
-        <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
-          {view.rows.map((r) => (
-            <KeyRow key={`${r.provider}:${r.env}`} row={r} addedLabel={view.addedLabel} canEdit={view.canEdit} onEdit={() => keys.openSheet(r.provider, r.provider === "other" ? r.env : null)} onRemove={() => keys.askRemove(r.env)} />
-          ))}
-          <div className="flex min-h-12 items-center justify-between gap-6 px-4 py-2.5">
-            <div className="min-w-0">
-              <div className="text-[13px]">{KEYS_ADD_OTHER_LABEL}</div>
-              <p className="mt-0.5 text-xs text-muted-foreground" data-agent-key-other-help>
-                {KEYS_OTHER_HELP}
-              </p>
-            </div>
+      <SettingsGroup title={<span data-agent-keys-title>{KEYS_TITLE}</span>} footer={<span data-agent-keys-intro>{plainKeysIntro(view.intro)}</span>}>
+        {view.rows.map((r) => (
+          <KeyRow key={`${r.provider}:${r.env}`} row={r} addedLabel={view.addedLabel} canEdit={view.canEdit} onEdit={() => keys.openSheet(r.provider, r.provider === "other" ? r.env : null)} onRemove={() => keys.askRemove(r.env)} />
+        ))}
+        <SettingRow
+          label={KEYS_ADD_OTHER_LABEL}
+          help={<span data-agent-key-other-help>{KEYS_OTHER_HELP}</span>}
+          control={
             <Button size="sm" variant="outline" disabled={!view.canEdit} onClick={() => keys.openSheet("other")} data-agent-key-add-other>
               {KEYS_ADD_OTHER_BUTTON}
             </Button>
-          </div>
-        </div>
-        <p className="mt-3 px-1 text-xs text-muted-foreground" data-agent-keys-intro>
-          {plainKeysIntro(view.intro)}
-        </p>
-      </section>
+          }
+        />
+      </SettingsGroup>
 
       {keys.sheet ? <KeySheet key={`${keys.sheet.provider}:${keys.sheet.env ?? ""}`} keys={keys} provider={keys.sheet.provider} env={keys.sheet.env} /> : null}
       <ConfirmDialog
@@ -86,7 +78,7 @@ export function AccountKeysSection() {
 
 function KeyRow({ row: r, addedLabel, canEdit, onEdit, onRemove }: { row: AgentKeyRowView; addedLabel: string; canEdit: boolean; onEdit: () => void; onRemove: () => void }) {
   return (
-    <div data-agent-key-row={r.env} data-agent-key-provider={r.provider} data-set={String(r.set)} className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+    <GroupedRow data-agent-key-row={r.env} data-agent-key-provider={r.provider} data-set={String(r.set)}>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="truncate text-[13px]" data-agent-key-title>
@@ -122,6 +114,6 @@ function KeyRow({ row: r, addedLabel, canEdit, onEdit, onRemove }: { row: AgentK
           </Button>
         ) : null}
       </div>
-    </div>
+    </GroupedRow>
   );
 }

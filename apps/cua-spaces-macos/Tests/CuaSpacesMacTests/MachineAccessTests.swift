@@ -18,13 +18,13 @@ enum MachinesFixture {
     static func row(_ id: String, _ name: String, os: AppSpaceOs, features: [String], reachable: Bool,
                     error: String? = nil, host: String? = nil, hostName: String? = nil,
                     power: String? = nil, powerState: String? = nil) -> AppSpaceRow {
-        AppSpaceRow(id: id, name: name, provider: "relay", spacesdVersion: "0.5.0", features: features,
+        AppSpaceRow(id: id, name: name, displayName: nil, provider: "relay", spacesdVersion: "0.5.0", features: features,
                     addedAt: "2026-09-28T08:00:00Z", os: os,
                     osName: os == .macos ? "macOS" : "Ubuntu",
                     osPrettyName: os == .macos ? "macOS 26.0" : "Ubuntu 24.04.3 LTS",
                     image: nil, imageDigest: nil, kind: nil, arch: "arm64", reachable: reachable,
                     error: error, host: host, hostName: hostName, power: power, powerState: powerState,
-                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
+                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
     }
 
     /// This Mac's relay machine id (its host setup).
@@ -245,7 +245,7 @@ struct MachineAccessTests {
                                                 enrollment: .enrolled, hostSetUp: true, hostStatus: status)
             #expect(m.sidebar.thisMachine != nil)
             let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" },
-                                    "no My computers for \(features) \(String(describing: error))")
+                                    "no My machines for \(features) \(String(describing: error))")
             #expect(mine.rows.map(\.id) == [other])
         }
     }

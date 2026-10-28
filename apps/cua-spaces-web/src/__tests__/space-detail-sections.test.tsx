@@ -16,7 +16,8 @@ stubBrowserApis();
 const SPACE = "local:design-review";
 
 function host(answers: Record<string, (out: unknown, args?: unknown) => unknown> = {}): TestHost {
-  return { failsCreates: false, listsGhost: false, answer: (op, out) => (answers[op] ? answers[op]!(out) : out) };
+  // The classic page's sections: a daemon without the thread (with it they open from Details, More).
+  return { failsCreates: false, listsGhost: false, noThread: true, answer: (op, out) => (answers[op] ? answers[op]!(out) : out) };
 }
 
 /** A drop of files with these names on the well. */
@@ -33,7 +34,7 @@ describe.skipIf(!wasmBuilt)("a Space's Agents and Teleport sections (real routes
     await router.load();
     const section = await waitFor(() => {
       const s = document.querySelector('[data-section="agents"]');
-      expect(s?.querySelector("[data-agent-run]")).not.toBeNull();
+      expect(s?.querySelector("[data-agent-run]") ?? null).not.toBeNull();
       return s!;
     });
     expect(section.querySelector("h2")?.textContent).toBe("Agents");

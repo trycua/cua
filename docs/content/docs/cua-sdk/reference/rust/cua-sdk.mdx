@@ -195,6 +195,25 @@ pub struct PtySize {
 }
 ```
 
+### `RepoCacheStatus`
+
+What the repo cache holds and what it saved, in plain ...
+
+```rust
+pub struct RepoCacheStatus {
+  pub enabled: bool,
+  pub repos: u32,
+  pub bytes: u64,
+  pub cap_bytes: u64,
+  pub size_setting: String,
+  pub summary: String,
+  pub week: String,
+  pub hits: u32,
+  pub misses: u32,
+  pub seconds_saved: u64,
+}
+```
+
 ### `Screenshot`
 
 A captured screenshot.
@@ -351,6 +370,10 @@ pub fn pack_project(dir: &Path) -> Result<Vec<u8>>
 pub fn parse_dockerd_ready(stdout: &str) -> Option<f64>
 /// Raises this process's soft open-file ...
 pub fn raise_open_file_limit() -> Option<(u64, u64)>
+/// Deletes every repository the repo cache ...
+pub fn repo_cache_clear() -> Result<RepoCacheStatus>
+/// The repo cache now: on or off, how much ...
+pub fn repo_cache_status() -> Result<RepoCacheStatus>
 /// POSIX single-quoting.
 pub fn sh_quote(s: &str) -> String
 /// The vault this build uses, when it has ...

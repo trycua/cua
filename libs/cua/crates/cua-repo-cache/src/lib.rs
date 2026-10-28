@@ -286,6 +286,23 @@ impl RepoCache {
         (self.cfg.enabled && self.prepare().is_ok()).then(|| self.root.clone())
     }
 
+    /// Makes the git config Spaces include match the setting: with the cache
+    /// off it names no repository (running Spaces stop using their mirrors),
+    /// on it names every verified one. Cheap; run after the setting changed.
+    pub fn sync_config(&self) {
+        if !self.root.exists() {
+            return;
+        }
+        let _ = if self.cfg.enabled {
+            shim::write_config(&self.root)
+        } else {
+            store::write_atomic(
+                &self.root.join("gitconfig"),
+                shim::config_text(&[]).as_bytes(),
+            )
+        };
+    }
+
     /// What Settings shows.
     pub fn status(&self) -> Status {
         let entries = store::entries(&self.root);
@@ -413,6 +430,7 @@ impl RepoCache {
     /// for `older_than`, one at a time.
     pub async fn maintain(&self, older_than: Duration) {
         if !self.cfg.enabled {
+            self.sync_config();
             return;
         }
         let _ = self.prepare();

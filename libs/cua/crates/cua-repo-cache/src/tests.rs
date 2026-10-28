@@ -475,3 +475,37 @@ fn the_summary_is_plain_words() {
         );
     }
 }
+
+#[tokio::test]
+async fn turning_the_cache_off_stops_spaces_using_what_it_holds() {
+    let (_t, src, root) = dirs();
+    let repo = source(&src, "a", 2, 16);
+    let on = cache(&root, Some(1 << 30));
+    assert!(matches!(on.ensure(&repo).await, Outcome::Filled { .. }));
+    assert!(
+        std::fs::read_to_string(root.join("gitconfig"))
+            .unwrap()
+            .contains(&repo.key)
+    );
+    let off = RepoCache::new(
+        &root,
+        Config {
+            enabled: false,
+            cap_bytes: None,
+        },
+    );
+    off.sync_config();
+    assert!(
+        !std::fs::read_to_string(root.join("gitconfig"))
+            .unwrap()
+            .contains(&repo.key)
+    );
+    // The mirrors stay until they are cleared, and come back when it is on again.
+    assert_eq!(on.entries().len(), 1);
+    on.sync_config();
+    assert!(
+        std::fs::read_to_string(root.join("gitconfig"))
+            .unwrap()
+            .contains(&repo.key)
+    );
+}

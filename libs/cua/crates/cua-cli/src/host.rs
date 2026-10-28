@@ -2226,6 +2226,15 @@ pub enum HostCacheCmd {
     #[command(after_help = "Examples:
   cua host cache status")]
     Status,
+    /// Copy one public repository into the cache now, instead of when a Space
+    /// first clones it (or bring a copy up to date). A repository that needs
+    /// a sign-in is never cached.
+    #[command(after_help = "Examples:
+  cua host cache fill https://github.com/vitejs/vite")]
+    Fill {
+        /// The repository's `https` address.
+        url: String,
+    },
     /// Delete every repository the cache holds. They are copied again the
     /// next time a Space clones them.
     #[command(after_help = "Examples:
@@ -2599,6 +2608,9 @@ pub async fn run_host_to(
         HostCmd::Cache(cmd) => match cmd {
             HostCacheCmd::Status => crate::repo_cache_cmd::status(home, json, out),
             HostCacheCmd::Clear => crate::repo_cache_cmd::clear(home, json, out),
+            HostCacheCmd::Fill { url } => {
+                return crate::repo_cache_cmd::fill(home, &url, json, out).await;
+            }
         },
         HostCmd::Stop => emit(&host.stop_sharing().await.map_err(host_err)?, json, out)?,
         HostCmd::Start => emit(&host.start_sharing().await.map_err(host_err)?, json, out)?,

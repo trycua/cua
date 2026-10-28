@@ -818,6 +818,16 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_func_repo_cache_clear": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_func_repo_cache_status": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_sdk_fn_func_resolve_image": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -3309,6 +3319,16 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_func_qualify_sandbox_ref": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_func_repo_cache_clear": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_func_repo_cache_status": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5988,6 +6008,8 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_func_presence_now_ms(uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_sdk_fn_func_presence_text_color(background: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_qualify_sandbox_ref(name: Uint8Array, local: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_sdk_fn_func_repo_cache_clear(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_sdk_fn_func_repo_cache_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_resolve_image(reference: Uint8Array, backend: Uint8Array, arch: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_resolve_image_with_secret(reference: Uint8Array, backend: Uint8Array, arch: Uint8Array, secret: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_sandbox_locations(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -6487,6 +6509,8 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_func_presence_now_ms(): number;
     uniffi_cua_sdk_checksum_func_presence_text_color(): number;
     uniffi_cua_sdk_checksum_func_qualify_sandbox_ref(): number;
+    uniffi_cua_sdk_checksum_func_repo_cache_clear(): number;
+    uniffi_cua_sdk_checksum_func_repo_cache_status(): number;
     uniffi_cua_sdk_checksum_func_resolve_image(): number;
     uniffi_cua_sdk_checksum_func_resolve_image_with_secret(): number;
     uniffi_cua_sdk_checksum_func_sandbox_locations(): number;

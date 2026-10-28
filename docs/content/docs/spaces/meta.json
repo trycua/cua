@@ -22,6 +22,7 @@
     "guides/teleport-an-app",
     "guides/keyvault",
     "guides/cua-volume",
+    "guides/repo-cache",
     "guides/sandbox-sdks",
     "guides/create-a-space-with-the-sdk",
     "---Agents in a Space---",

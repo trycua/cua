@@ -227,6 +227,7 @@ fn repo_cache_status_of(s: &Settings) -> RepoCacheStatus {
         let (enabled, cap_bytes) = s.repo_cache();
         cua_sandbox_core::repo_cache::Config { enabled, cap_bytes }
     });
+    cache.sync_config();
     let st = cache.status();
     RepoCacheStatus {
         enabled: st.enabled,

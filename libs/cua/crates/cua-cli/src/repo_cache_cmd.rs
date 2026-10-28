@@ -70,6 +70,7 @@ pub fn json(c: &RepoCache) -> serde_json::Value {
 /// `cua host cache status`.
 pub fn status(home: &Path, as_json: bool, out: &mut dyn Write) {
     let c = cache_for(home);
+    c.sync_config();
     if as_json {
         line(out, json(&c).to_string());
     } else {
@@ -77,6 +78,83 @@ pub fn status(home: &Path, as_json: bool, out: &mut dyn Write) {
             line(out, l);
         }
     }
+}
+
+/// `cua host cache fill URL`: exit 0 when the repository is in the cache
+/// now, 1 when it is not (and why, in words).
+pub async fn fill(
+    home: &Path,
+    url: &str,
+    as_json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    use cua_repo_cache::{Outcome, Reason};
+    let repo = cua_repo_cache::url::parse(url).map_err(|_| {
+        CuaError::InvalidArgument(
+            "the repo cache holds public repositories by their plain https address \
+             (no user name or token in it, no port)"
+                .into(),
+        )
+    })?;
+    let c = cache_for(home);
+    if let Err(e) = c.prepare() {
+        return Err(CuaError::Internal(format!("the repo cache folder: {e}")));
+    }
+    let outcome = c.ensure(&repo).await;
+    let (held, said) = match outcome {
+        Outcome::Filled { bytes, secs } => (
+            true,
+            format!(
+                "Cached: {} in {secs:.1} seconds.",
+                cua_repo_cache::size_words(bytes)
+            ),
+        ),
+        Outcome::Refreshed { changed } => (
+            true,
+            if changed {
+                "Brought the cached copy up to date.".to_string()
+            } else {
+                "The cached copy is already up to date.".to_string()
+            },
+        ),
+        Outcome::Skipped(r) => (
+            false,
+            match r {
+                Reason::Disabled => "The repo cache is off (`cua host config --repo-cache on`).",
+                Reason::NoGit => "git is not installed on this machine.",
+                Reason::UnsupportedUrl | Reason::HostNotPublic => {
+                    "Only repositories on a public https host are cached."
+                }
+                Reason::Private => {
+                    "Not cached: the repository needs a sign-in, so it is not public."
+                }
+                Reason::Unreachable => "Not cached: the repository could not be reached.",
+                Reason::TooBig => {
+                    "Not cached: the repository is larger than the cache's size limit."
+                }
+                Reason::CacheFull => {
+                    "Not cached: no room, and everything in the cache was used a moment ago."
+                }
+                Reason::DiskFull => "Not cached: this machine's disk has no room for it.",
+                Reason::VerifyFailed => "Not cached: the copy did not pass its checks.",
+                Reason::FillFailed => "Not cached: the copy could not be made.",
+            }
+            .to_string(),
+        ),
+    };
+    if as_json {
+        let reason = match outcome {
+            Outcome::Skipped(r) => r.word(),
+            _ => "none",
+        };
+        line(
+            out,
+            serde_json::json!({"cached": held, "reason": reason, "message": said}).to_string(),
+        );
+    } else {
+        line(out, said);
+    }
+    Ok(if held { 0 } else { 1 })
 }
 
 /// `cua host cache clear`.
@@ -137,6 +215,33 @@ mod tests {
         // A bad value is refused with the setting's name, and nothing changes.
         let e = set(home.path(), None, Some("lots")).unwrap_err();
         assert!(e.to_string().contains("cache.repos_size_gb"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn fill_refuses_what_the_cache_never_holds_and_says_why_when_it_is_off() {
+        let home = tempfile::tempdir().unwrap();
+        let mut out = Vec::new();
+        for bad in [
+            "http://github.com/o/r",
+            "https://token@github.com/o/r",
+            "git@github.com:o/r.git",
+        ] {
+            let e = fill(home.path(), bad, false, &mut out).await.unwrap_err();
+            assert!(
+                e.to_string()
+                    .contains("public repositories by their plain https address"),
+                "{bad}: {e}"
+            );
+        }
+        set(home.path(), Some("off"), None).unwrap();
+        let rc = fill(home.path(), "https://github.com/o/r", false, &mut out)
+            .await
+            .unwrap();
+        assert_eq!(rc, 1);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "The repo cache is off (`cua host config --repo-cache on`).\n"
+        );
     }
 
     #[test]

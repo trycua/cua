@@ -277,6 +277,7 @@ struct BridgeContractTests {
             ("spaces.sendFiles", ["spaceId": space, "paths": ["/tmp/cua-contract-notes.txt"]]),
             ("settings.get", [:]), ("settings.choose", ["row": "telemetry", "option": "off"]),
             ("runtimes.check", ["kind": "container", "path": "/usr/local/bin/docker"]), ("runtimes.browse", ["kind": "container"]),
+            ("repoCache.get", [:]), ("repoCache.set", ["enabled": true, "sizeGb": 2]), ("repoCache.clear", [:]),
             ("settings.update", ["tips": ["off": false, "done": ["try-agent"]]]),
             ("keyvault.get", [:]),
             ("keyvault.lock", ["ids": ["kv-1"]]),

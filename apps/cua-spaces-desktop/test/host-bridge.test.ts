@@ -619,6 +619,21 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(await code("runtimes.browse", { kind: "container" })).toBe("unsupported");
   });
 
+  it("reads, changes and clears the repo cache, and refuses what is not a number of GB", async () => {
+    const view = (await call("repoCache.get")) as { enabled: boolean; repos: number; bytes: number; capBytes: number; sizeSetting: string; summary: string; week: string };
+    expect(view).toMatchObject({ enabled: true, repos: 3, sizeSetting: "auto", summary: "Repos: 3, 1.2 GB of 5 GB" });
+    // The SDK's 64-bit sizes reach the page as numbers.
+    expect(typeof view.bytes).toBe("number");
+    expect(view.capBytes).toBe(5 * 1024 ** 3);
+    expect(await call("repoCache.set", { enabled: false })).toMatchObject({ enabled: false, sizeSetting: "auto" });
+    expect(await call("repoCache.set", { enabled: true, sizeGb: 2 })).toMatchObject({ enabled: true, sizeSetting: "2", summary: "Repos: 3, 1.2 GB of 2 GB" });
+    expect(await call("repoCache.set", { sizeGb: null })).toMatchObject({ sizeSetting: "auto" });
+    expect(await code("repoCache.set", { sizeGb: -1 })).toBe("bad_args");
+    expect(await code("repoCache.set", { sizeGb: "lots" })).toBe("bad_args");
+    expect(await code("repoCache.set", { enabled: "yes" })).toBe("bad_args");
+    expect(await call("repoCache.clear")).toMatchObject({ repos: 0, bytes: 0 });
+  });
+
   it("lists the coding agents under AI agents, and a row's button sets one up", async () => {
     const s = (await call("settings.get")) as { page: { sections: { rows: { id: string }[] }[] } };
     expect(s.page.sections.flatMap((x) => x.rows.map((r) => r.id))).toEqual(expect.arrayContaining(["agent:claude-code", "agent:codex"]));

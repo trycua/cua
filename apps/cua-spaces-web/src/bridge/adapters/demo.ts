@@ -855,7 +855,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "agents.signIn": async ({ agent }) => {
       const row = state.agentSetup.find((r) => r.agent === agent);
       if (!row?.signIn) throw new Error(`${row?.name ?? agent} has no sign-in Cua can start`);
-      if (!row.installed) throw new Error(`${row.name} isn't installed on this computer`);
+      if (!row.installed) throw new Error(`${row.name} isn't installed on this machine`);
       setTimeout(() => {
         state.agentSetup = state.agentSetup.map((r) => (r.agent === agent ? { ...r, signedIn: true } : r));
       }, step * 40);

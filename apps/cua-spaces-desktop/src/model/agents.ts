@@ -384,7 +384,7 @@ export function agentKeysInput(report: Json | null, error: string | null): AppAg
       expired: k.expired === true,
     }))
     .filter((k) => k.env !== "");
-  const unavailable = report?.available === false ? (typeof report.unavailable === "string" ? report.unavailable : "this computer can't keep keys") : undefined;
+  const unavailable = report?.available === false ? (typeof report.unavailable === "string" ? report.unavailable : "this machine can't keep keys") : undefined;
   return { keys, unavailable, error: error ?? undefined };
 }
 

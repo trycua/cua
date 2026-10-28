@@ -126,7 +126,7 @@ export interface DevicesHook extends Hook<DevicesData> {
   confirmMachine(id: string): Promise<void>;
 }
 
-/** Settings, Devices: this device's enrollment, the account's devices, the access log and both sheets. */
+/** Machines: this machine's trust, the machines waiting to be added, the access log and the trust sheet. */
 export function useDevices(): DevicesHook {
   const r = useFeature<DevicesData>("devices");
   const run = useRun();

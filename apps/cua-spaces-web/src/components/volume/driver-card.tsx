@@ -101,7 +101,7 @@ export function DriverSettingsCard() {
     try {
       setSummaries(await setup.setUp(agents.map((a) => ({ id: a.agent, name: a.name }))));
     } catch (e) {
-      setError(isUnsupported(e) ? "Setting up cua-driver needs the Cua Spaces app on this computer." : e instanceof Error ? e.message : String(e));
+      setError(isUnsupported(e) ? "Setting up cua-driver needs the Cua Spaces app on this machine." : e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }

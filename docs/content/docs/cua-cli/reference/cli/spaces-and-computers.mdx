@@ -47,7 +47,7 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua devices status`](#cua-devices-status) | This device: enrolled, waiting for approval, or not enrolled. |
 | [`cua devices enroll`](#cua-devices-enroll) | Enroll this device. |
 | [`cua devices approve`](#cua-devices-approve) | Approve a new device (or re-verify an expired one) from this enrolled device, by the code it shows or by its id. |
-| [`cua devices ls`](#cua-devices-ls) | Your devices and their state. |
+| [`cua devices ls`](#cua-devices-ls) | Your signed-in machines and their state. |
 | [`cua devices rename`](#cua-devices-rename) | Rename a device. |
 | [`cua devices revoke`](#cua-devices-revoke) | Revoke a device: it can no longer list or reach your computers. |
 | [`cua devices audit`](#cua-devices-audit) | Who accessed what, and when: enrollments, device sessions, computer access (yours and by accounts you share with), sharing changes. |
@@ -880,7 +880,7 @@ cua devices approve dev_0123456789abcdef01234567
 
 ### `cua devices ls`
 
-Your devices and their state.
+Your signed-in machines and their state.
 
 ```text output
 cua devices ls [OPTIONS]

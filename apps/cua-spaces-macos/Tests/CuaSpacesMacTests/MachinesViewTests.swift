@@ -142,9 +142,11 @@ struct MachinesViewTests {
         // A device of its own leaves the account by revoking it.
         let work = view.machines.first { $0.name == "Work laptop" }
         #expect(work?.remove?.device == "dev_work")
-        #expect(work?.remove?.label == "Remove from account")
-        #expect(work?.line == "Signed-in device, not shared")
-        #expect(view.groups.first { $0.id == "devices" }?.ids.contains("dev_work") == true)
+        #expect(work?.remove?.label == "Revoke")
+        #expect(work?.line == "Signed in, not sharing")
+        // One list: no separate group for it.
+        #expect(view.groups.first { $0.id == "devices" } == nil)
+        #expect(view.groups.contains { $0.ids.contains("dev_work") })
         // No Space actions on a machine: its Spaces only lead to the Space.
         #expect(view.machines.allSatisfy { $0.newSpace.label == "New Space here" })
 

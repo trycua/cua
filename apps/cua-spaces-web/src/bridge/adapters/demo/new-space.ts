@@ -181,7 +181,7 @@ function applyDemoClouds(providers: CloudProviderWire[], variant: DemoClouds): v
   if (variant === "revoked") {
     Object.assign(aws, {
       status: "failed",
-      issue: "AWS was disconnected on another device, and 3 machines this computer made may still run there. Reconnect, then delete them, or delete them in the AWS console.",
+      issue: "AWS was disconnected on another device, and 3 machines this machine made may still run there. Reconnect, then delete them, or delete them in the AWS console.",
     });
   }
 }
@@ -337,7 +337,7 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
       const p = find(target);
       await wait(step * 2);
       if (!p.credentials?.found && !target.token) {
-        return { provider: p.name, ok: false, checks: [{ name: "credentials", ok: false, detail: p.name === "hetzner" ? "paste a Hetzner project API token" : `no ${p.title} sign-in on this computer` }] };
+        return { provider: p.name, ok: false, checks: [{ name: "credentials", ok: false, detail: p.name === "hetzner" ? "paste a Hetzner project API token" : `no ${p.title} sign-in on this machine` }] };
       }
       const where = placeOf(p, target);
       return {
@@ -374,7 +374,7 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
         Object.assign(p, limits, { connected: true, auth: "oidc", status: "connected", account: target.account_id, label: `AWS · ${region}`, suggest_auth: "", issue: "", profile: "" });
         return { ...p, checks: [{ name: "credentials", ok: true, detail: `account ${target.account_id}` }], verify: "cua cloud status aws" };
       }
-      if (!p.credentials?.found && !target.token) throw new HostError(`no ${p.title} sign-in on this computer`, "failed");
+      if (!p.credentials?.found && !target.token) throw new HostError(`no ${p.title} sign-in on this machine`, "failed");
       const where = placeOf(p, target);
       p.connected = true;
       p.status = "connected";

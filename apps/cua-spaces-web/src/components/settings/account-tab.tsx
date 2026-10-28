@@ -127,7 +127,7 @@ export function AccountTab() {
           <div data-relay-usage="">
             <UsageBar
               id="Remote hours"
-              label="Time away from this computer"
+              label="Time away from this machine"
               text={`${hours(usage.hoursUsed)} of ${usage.hoursLimit ?? 0} hours`}
               used={usage.hoursUsed}
               limit={usage.hoursLimit}

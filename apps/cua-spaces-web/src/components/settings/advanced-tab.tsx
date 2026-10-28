@@ -45,7 +45,7 @@ export function AdvancedTab() {
       <EarlyReleases />
       <Labs />
       {runtimes || autoConnect || overflow ? (
-        <SettingsGroup title="Which software runs Spaces on this computer">
+        <SettingsGroup title="Which software runs Spaces on this machine">
           {/* One row per kind of Space, as the core lays them out (always there, "Checking…" until the host read them). */}
           {runtimes ? <RuntimeKindRows section={runtimes} onChoose={choose} /> : null}
           {autoConnect ? <CoreSettingsRow row={{ ...autoConnect, label: "Open a Space’s screen right away" }} onChoose={choose} /> : null}

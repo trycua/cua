@@ -150,11 +150,10 @@ cua devices audit      # who opened which machine, from which device, and when
 cua devices revoke dev_0123456789abcdef01234567
 ```
 
-In the app, **Settings > Devices** shows this device's enrollment, your devices
-with Rename and Revoke, and Recent Access (which device opened which computer,
-and when). When another device asks to join, the app shows an approval sheet:
-Approve asks for Touch ID or your login password first, and Deny revokes that
-device.
+In the app, the **Machines** tab holds all of it. A machine that asks to join waits at the top
+with **Add machine** and **Not me** (Add machine asks for Touch ID or your login password first, and
+Not me refuses it), and the sidebar shows how many wait. Each machine's page has Rename, Revoke and
+its recent access (who opened it, and when), and this machine's page says how far it is trusted.
 
 ## Share it with your team
 
@@ -234,7 +233,7 @@ The computer has two settings, and each works on its own:
 | Setting | What it does | `desktop` profile (default) | `spare` profile |
 |---|---|---|---|
 | Let other machines control this desktop (`--desktop`) | The computer itself is a Space: its screen, input, shell and files. | on | off |
-| Let other machines create Spaces here (`--provide-spaces`) | Your enrolled devices can create, list and delete Spaces on it. | on for a new setup | on |
+| Let other machines create Spaces here (`--provide-spaces`) | Your trusted machines can create, list and delete Spaces on it. | on for a new setup | on |
 
 A computer set up before this default keeps what it had: setting it up again
 never turns **Provide Spaces** on unless you pass `--provide-spaces`. With
@@ -554,7 +553,7 @@ restarts, the Mac opens the same port again.
 | What you see | What to do |
 |---|---|
 | "That code didn't work" | A code works once and expires. Open **Add a machine** again for a new one. |
-| "This Mac can't make codes yet." | This device isn't enrolled. Enroll it in **Settings, Devices**, or use **Sign in there**. |
+| "This Mac can't make codes yet." | This machine isn't trusted yet. Choose **Trust this machine** on its page in **Machines**, or use **Sign in there**. |
 | The computer never appears | On that computer, run `cua host status`. It shows the service state and any missing permission. |
 | The computer shows **Offline** | It is off, asleep or disconnected. Wake it or reconnect it, then run `cua host status` on it. |
 

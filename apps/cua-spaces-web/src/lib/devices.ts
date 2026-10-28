@@ -72,7 +72,7 @@ export function devicesPageState(
  * (`DevicesModel.banner` in the SwiftUI app): signed in, and only once the
  * relay was read. A first read the relay refused leaves no list behind (the
  * hosts send an empty one with `readError`), and the SwiftUI app shows no
- * bar then either; Settings, Devices says why.
+ * bar then either; This machine's page in Machines says why.
  */
 export function shellDevicesBanner(
   data: { input: Pick<DevicesInput, "devices" | "readError">; view: Pick<DevicesView, "banner"> | null } | undefined,

@@ -98,7 +98,7 @@ describe.skipIf(!wasmBuilt)("Settings, Advanced: which software runs Spaces (rea
   it("has one row per kind, in plain words, and none of the old per-OS rows", async () => {
     await mountAdvanced();
     await waitFor(() => expect(kindRow("microvm")).toBeTruthy());
-    expect(document.body.textContent).toContain("Which software runs Spaces on this computer");
+    expect(document.body.textContent).toContain("Which software runs Spaces on this machine");
     for (const [kind, label] of KINDS) {
       const r = row(`runtime:${kind}`)!;
       expect(within(r).getByText(label)).toBeTruthy();

@@ -63,7 +63,7 @@
   "spaces.create.creating": "Space 만드는 중…",
   "spaces.sidebar.section.this_mac": "이 Mac",
   "spaces.sidebar.section.connected": "연결됨",
-  "spaces.sidebar.section.my_computers": "내 컴퓨터",
+  "spaces.sidebar.section.my_computers": "내 머신",
   "spaces.sidebar.empty": "아직 Spaces가 없어요",
   "spaces.sidebar.no_matches": "일치하는 항목이 없어요",
   "spaces.status.failed": "실패",

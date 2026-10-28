@@ -192,7 +192,7 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       case "global-shortcut": {
         // The keys that bring the app forward from any app (Mac). The option is the accelerator.
         const system = parts().system;
-        if (!system?.setGlobalShortcut) throw Failure.failed("This computer has no shortcut to change.");
+        if (!system?.setGlobalShortcut) throw Failure.failed("This machine has no shortcut to change.");
         try {
           system.setGlobalShortcut(option);
         } catch (e) {

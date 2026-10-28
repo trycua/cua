@@ -320,7 +320,7 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
     };
   // A task from before this Mac was turned into its own Space id: trying again now works.
   if (e.includes(`"${THIS_MAC_ID}"`))
-    return { title: "Couldn't start on this Mac", body: "Try again to start it on this Mac, or pick another computer.", action: "retry", retry: true };
+    return { title: "Couldn't start on this Mac", body: "Try again to start it on this Mac, or pick another machine.", action: "retry", retry: true };
   if (/cloud has ended/.test(e))
     return { title: "That computer is no longer available", body: "Cua Cloud has ended. Pick a computer on this Mac instead.", action: "change-computer", retry: false };
   if (/more than one|ambiguous/.test(e))
@@ -333,7 +333,7 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
     return { title: "Couldn't reach that computer", body: "Check it's on, then try again. Or pick another one.", action: "retry", retry: true };
   if (/disk|space left|no room|memory|quota|limit/.test(e))
     return { title: "This Mac doesn't have room for a new computer", body: "Free some disk space or turn off a computer you're not using, then try again.", action: "retry", retry: true };
-  return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another computer.", action: "retry", retry: true };
+  return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another machine.", action: "retry", retry: true };
 }
 
 /** Where a task stands, in the words Home and the thread use. */
@@ -380,7 +380,7 @@ export const SUGGESTIONS: { title: string; detail: string; os: SpaceOs; prompt: 
     title: "Run my project's tests on a clean Linux computer",
     detail: "Find out if it works on a computer that has never seen your code.",
     os: "linux",
-    prompt: "Copy my project onto this computer, install what it needs and run its tests. Tell me what passed and what failed: ",
+    prompt: "Copy my project onto this machine, install what it needs and run its tests. Tell me what passed and what failed: ",
   },
   {
     title: "Try a pull request before merging",

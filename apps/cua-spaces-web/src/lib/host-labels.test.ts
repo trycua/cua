@@ -32,7 +32,7 @@ describe("host labels", () => {
     expect(showsMacShellSettings("Linux x86_64")).toBe(false);
   });
 
-  it("names this computer in a Space being created here", () => {
+  it("names this machine in a Space being created here", () => {
     const line = "This Mac \u00b7 Downloading image\u2026";
     expect(creatingLine(line, "darwin")).toBe(line);
     expect(creatingLine(line, "linux")).toBe("This machine \u00b7 Downloading image\u2026");
@@ -42,7 +42,7 @@ describe("host labels", () => {
     expect(creatingLine("This Mac can't reach its new VM", "linux")).toBe("This Mac can't reach its new VM");
   });
 
-  it("names this computer in what leaves it on teleport", () => {
+  it("names this machine in what leaves it on teleport", () => {
     expect(leavesLine("191 KB leaves this Mac", "darwin")).toBe("191 KB leaves this Mac");
     expect(leavesLine("191 KB leaves this Mac", "win32")).toBe("191 KB leaves this PC");
     expect(leavesLine("191 KB leaves this Mac", "linux")).toBe("191 KB leaves this machine");

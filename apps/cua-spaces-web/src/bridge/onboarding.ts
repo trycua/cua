@@ -261,7 +261,7 @@ function fallbackTodos(s: OnboardingFlowState): OnboardingTodo[] {
 
 /** How the copy names the computer the app runs on (the core's `this_computer`). */
 function thisComputer(os: HostOs): string {
-  return os === "macos" ? "this Mac" : os === "windows" ? "this PC" : "this computer";
+  return os === "macos" ? "this Mac" : os === "windows" ? "this PC" : "this machine";
 }
 
 function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {

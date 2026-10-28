@@ -118,7 +118,7 @@ describe("space actions", () => {
 describe("isMachineDesktop / realSpaces", () => {
   it("leaves this Mac and relay machines' own desktops out of the Spaces", () => {
     const rows: Space[] = [
-      space("this-mac", "suspended", 1, { provider: "local", name: "This computer" }),
+      space("this-mac", "suspended", 1, { provider: "local", name: "This machine" }),
       space("local-desktop", "local", 1, { provider: "local" }),
       space("relay:96fedb7e1be65c3d31fa18587febde2c", "running", 1, { name: "gamma-4 Mac Studio" }),
       space("relay:space-ca12d6d23907f387", "running", 1, { host: "96fedb7e1be65c3d31fa18587febde2c" }),

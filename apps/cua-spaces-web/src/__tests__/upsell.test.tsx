@@ -93,7 +93,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
     expect(sessions.hasAttribute("data-full")).toBe(true);
     const hours = document.querySelector('[data-usage-meter="Remote hours"]')!;
     expect(document.body.textContent).toContain("Machines in use right now");
-    expect(document.body.textContent).toContain("Time away from this computer");
+    expect(document.body.textContent).toContain("Time away from this machine");
     expect(hours.getAttribute("aria-valuenow")).toBe("12");
     expect(hours.hasAttribute("data-full")).toBe(false);
     const notice = await waitFor(() => {

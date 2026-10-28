@@ -96,7 +96,7 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
 
           <section className="mt-5">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <h3 className="text-xs font-semibold">On this computer</h3>
+              <h3 className="text-xs font-semibold">On this machine</h3>
               {rows && rows.length > 0 ? (
                 <Button size="sm" variant={pending.length ? "default" : "outline"} disabled={busy || pending.length === 0} onClick={setUpAll}>
                   {busy ? "Setting up…" : pending.length ? `Set up ${pending.length === 1 ? "1 agent" : `${pending.length} agents`}` : "All set up"}

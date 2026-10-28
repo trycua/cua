@@ -16519,7 +16519,7 @@
      "usage": "cua devices approve [OPTIONS] [CODE]"
     },
     {
-     "abstract": "Your devices and their state",
+     "abstract": "Your signed-in machines and their state",
      "after_help": "Examples:\n  cua devices ls\n  cua devices ls --json",
      "aliases": [
       "list"

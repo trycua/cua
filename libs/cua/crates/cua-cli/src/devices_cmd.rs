@@ -61,7 +61,7 @@ pub enum DevicesCmd {
         #[arg(long, hide = true)]
         relay: Option<String>,
     },
-    /// Your devices and their state.
+    /// Your signed-in machines and their state.
     #[command(
         visible_alias = "list",
         after_help = "Examples:

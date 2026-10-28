@@ -19,7 +19,7 @@ struct TipsTests {
         #expect(AppModel.sidebarTip(machinesOnline: 1, tips: none) == nil)
         let tip = AppModel.sidebarTip(machinesOnline: 2, tips: none)
         #expect(tip?.id == "on-auto")
-        #expect(tip?.text == "New Spaces can go to whichever computer has room.")
+        #expect(tip?.text == "New Spaces can go to whichever machine has room.")
         #expect(tip?.code == "cua create --on auto")
         #expect(tip?.action.value == "cua create --on auto")
         #expect(tip?.action.doneLabel == "Copied")

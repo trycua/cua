@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 
 /**
- * Settings, Trusted machines, "Let others use this machine": the first run's "Share this Mac's screen" rows
+ * This Mac's page in Machines, "Let others use this machine": the first run's "Share this Mac's screen" rows
  * (Screen Recording, Accessibility), for whoever chose "Not now" there.
  * Only on a Mac that is set up and shares its screen. Allow opens the app's
  * guide to the System Settings pane; a check shows once it is granted.

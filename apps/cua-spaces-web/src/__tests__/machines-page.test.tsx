@@ -494,7 +494,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     const page = await detailOf("AWS");
     expect(page.querySelector("[data-cloud-status]")?.textContent).toBe("Connected");
     expect(page.querySelector("[data-cloud-issues]")).toBeNull();
-    expect(page.querySelector("[data-cloud-setting=access]")?.textContent).toContain("The AWS CLI's sign-in on this computer");
+    expect(page.querySelector("[data-cloud-setting=access]")?.textContent).toContain("The AWS CLI's sign-in on this machine");
     act(() => (page.querySelector("[data-cloud-switch=switch-oidc]") as HTMLElement).click());
     const sheet = await waitFor(() => document.querySelector("[data-connect-cloud]")!);
     await waitFor(() => expect(sheet.querySelector("[data-cloud-title]")?.textContent).toContain("AWS"));

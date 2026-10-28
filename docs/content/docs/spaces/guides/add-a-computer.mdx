@@ -148,6 +148,8 @@ cua devices audit      # who opened which machine, from which device, and when
 cua devices revoke dev_0123456789abcdef01234567
 ```
 
+A computer that is gone: `cua machines rm <name>` removes it from your relay directory and revokes its device.
+
 In the app, **Settings > Devices** shows this device's enrollment, your devices
 with Rename and Revoke, and Recent Access (which device opened which computer,
 and when). When another device asks to join, the app shows an approval sheet:

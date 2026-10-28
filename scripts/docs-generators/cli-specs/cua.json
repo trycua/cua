@@ -12938,6 +12938,57 @@
    "usage": "cua computers [OPTIONS]"
   },
   {
+   "abstract": "Your computers on the relay: remove one that is gone",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "machines",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "Remove a computer that is gone: its row leaves your relay directory, then the signed-in device with exactly its name is revoked (never this device; nothing when several match). A computer that is connected now is refused: run `cua host remove` on it",
+     "after_help": "Examples:\n  cua machines rm old-laptop\n  cua machines rm relay:0123abcd4567ef89 --yes --json",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The computer's name, machine id or `relay:<id>` (`cua spaces ls`)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "NAME",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Remove without asking",
+       "hidden": false,
+       "name": "yes",
+       "repeatable": false,
+       "short_name": "y",
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "rm",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua machines rm [OPTIONS] <NAME>"
+    }
+   ],
+   "usage": "cua machines [OPTIONS] <COMMAND>"
+  },
+  {
    "abstract": "Unattended access to this computer (setup, status, stop, start, remove)",
    "aliases": [],
    "arguments": [],

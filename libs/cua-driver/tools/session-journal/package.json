@@ -1,0 +1,12 @@
+{
+  "name": "cua-driver-session-journal",
+  "private": true,
+  "type": "module",
+  "description": "Turns a Cua Driver trajectory recording into a self-contained HTML journal.",
+  "bin": {
+    "session-journal": "./session-journal.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/session-journal.test.js"
+  }
+}

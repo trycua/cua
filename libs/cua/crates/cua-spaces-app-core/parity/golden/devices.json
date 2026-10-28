@@ -8,7 +8,7 @@
         "approvals": [],
         "banner": "warning: Enroll this device within 5 days to keep reaching your machines. [Enroll…]",
         "enrolled": false,
-        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Computers Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
         "recent": [],
         "rows": [
           "Studio | Linux · Enrolled · re-verify in 12 days | seen 1799990000 | "
@@ -24,7 +24,7 @@
         "approvals": [],
         "banner": "critical: Enroll this device to reach your machines. [Enroll…]",
         "enrolled": false,
-        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Computers Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
         "recent": [],
         "rows": [],
         "thisDevice": "needs-enrollment: Needs enrollment @null name=- [Enroll…]",
@@ -38,7 +38,7 @@
         "approvals": [],
         "banner": "warning: Sign in again to enroll this device, or approve it from an enrolled device with the code K7QX-M2RP. [Enroll…]",
         "enrolled": false,
-        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Computers Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
         "recent": [],
         "rows": [
           "MacBook Pro (this device) | macOS · Waiting for approval | seen null |  | current",
@@ -53,29 +53,29 @@
       "view": {
         "activity": [
           "1799990500 Lost phone was revoked from MacBook Pro",
-          "1799990400 An unenrolled device opened build-box (notable)",
+          "1799990400 An untrusted machine opened build-box (notable)",
           "1799990300 Work laptop asked to join",
           "1799990200 bob@example.com opened studio-mac (notable)",
           "1799990100 MacBook Pro opened studio-mac",
           "1799990000 MacBook Pro was approved from dev_a"
         ],
         "approvals": [
-          "dev_p: Let “Work laptop” list and open your machines? Only approve a device you just signed in on. | Approve “Work laptop”? / A device signed in to your Cua account and asks to reach your machines.",
-          "dev_o (expired): Re-verify “Old laptop” for another 30 days? | Re-verify “Old laptop”? / It needs one approval to keep reaching your machines."
+          "dev_p: Add “Work laptop” to your machines? Only add a machine you just signed in on. | Add “Work laptop”? / A machine signed in to your Cua account and asks to be added.",
+          "dev_o (expired): Keep “Old laptop” on your account for another 30 days? | Keep “Old laptop”? / It needs one approval to keep reaching your machines."
         ],
         "banner": null,
         "enrolled": true,
-        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Computers Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
         "recent": [
-          "1799990400 An unenrolled device opened build-box (notable)",
+          "1799990400 An untrusted machine opened build-box (notable)",
           "1799990200 bob@example.com opened studio-mac (notable)",
           "1799990100 MacBook Pro opened studio-mac"
         ],
         "rows": [
-          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 30 days | seen 1799999940 | rename,revoke | current | Revoke “MacBook Pro”? / This device will no longer list or reach your machines until you enroll it again.",
+          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 30 days | seen 1799999940 | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again.",
           "Lost phone | iOS · Revoked | seen null | ",
-          "Old laptop | Linux · Re-verification due | seen 1797300000 | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer list or reach your machines. To use it again, enroll it again.",
-          "Work laptop | Windows · Waiting for approval | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer list or reach your machines. To use it again, enroll it again."
+          "Old laptop | Linux · Re-verification due | seen 1797300000 | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer see or reach your machines. To use it again, add it again.",
+          "Work laptop | Windows · Waiting for approval | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer see or reach your machines. To use it again, add it again."
         ],
         "thisDevice": "enrolled: Enrolled until @1802592000 name=MacBook Pro [-]",
         "unconfirmedMachines": [
@@ -90,10 +90,10 @@
         "approvals": [],
         "banner": "warning: Re-verify this device within 2 days: sign in again, or approve it from another enrolled device. [-]",
         "enrolled": true,
-        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Computers Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
         "recent": [],
         "rows": [
-          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 2 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This device will no longer list or reach your machines until you enroll it again."
+          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 2 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again."
         ],
         "thisDevice": "enrolled: Enrolled until @1800172800 name=MacBook Pro [-]",
         "unconfirmedMachines": []
@@ -104,17 +104,17 @@
       "view": {
         "activity": [],
         "approvals": [
-          "dev_p: Let “Work laptop” list and open your machines? Only approve a device you just signed in on. | Approve “Work laptop”? / A device signed in to your Cua account and asks to reach your machines.",
-          "dev_o (expired): Re-verify “Old laptop” for another 30 days? | Re-verify “Old laptop”? / It needs one approval to keep reaching your machines."
+          "dev_p: Add “Work laptop” to your machines? Only add a machine you just signed in on. | Add “Work laptop”? / A machine signed in to your Cua account and asks to be added.",
+          "dev_o (expired): Keep “Old laptop” on your account for another 30 days? | Keep “Old laptop”? / It needs one approval to keep reaching your machines."
         ],
         "banner": null,
         "enrolled": true,
-        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Computers Confirm",
+        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Approve… Deny Rename… Revoke… / Rename Machine Rename Cancel / New machines Confirm",
         "recent": [],
         "rows": [
-          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 30 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This device will no longer list or reach your machines until you enroll it again.",
-          "Old laptop | Linux · Re-verification due | seen null | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer list or reach your machines. To use it again, enroll it again.",
-          "Work laptop | Windows · Waiting for approval | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer list or reach your machines. To use it again, enroll it again."
+          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 30 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again.",
+          "Old laptop | Linux · Re-verification due | seen null | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer see or reach your machines. To use it again, add it again.",
+          "Work laptop | Windows · Waiting for approval | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer see or reach your machines. To use it again, add it again."
         ],
         "thisDevice": "enrolled: Enrolled until @1802592000 name=MacBook Pro [-]",
         "unconfirmedMachines": []
@@ -400,7 +400,7 @@
         "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": null,
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -415,7 +415,7 @@
         "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": null,
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -430,7 +430,7 @@
         "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": null,
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -445,7 +445,7 @@
         "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": "code=K7QX-M2RP device=-",
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -460,7 +460,7 @@
         "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": "code=K7QX-M2RP device=-",
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -475,7 +475,7 @@
         "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": "code=K7QX-M2RP device=-",
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -490,7 +490,7 @@
         "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": "code=K7QX-M2RP device=-",
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -505,7 +505,7 @@
         "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": "code=Z9WY-4TPN device=-",
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -520,7 +520,7 @@
         "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": "code=Z9WY-4TPN device=-",
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -535,7 +535,7 @@
         "message": "The code expired. Approve “Work laptop” by ID instead? Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": "code=- device=dev_p",
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -550,7 +550,7 @@
         "message": "The code expired. Approve “Work laptop” by ID instead? Only approve a device you just signed in on.",
         "presence": "approve “Work laptop” for your Cua account",
         "request": "code=- device=dev_p",
-        "title": "Approve “Work laptop”?"
+        "title": "Add “Work laptop”?"
       }
     },
     {
@@ -565,7 +565,7 @@
         "message": "Old laptop needs one approval to keep reaching your machines for another 30 days.",
         "presence": "approve “Old laptop” for your Cua account",
         "request": "code=- device=dev_o",
-        "title": "Re-verify “Old laptop”?"
+        "title": "Keep “Old laptop”?"
       }
     },
     {
@@ -580,7 +580,7 @@
         "message": "Old laptop needs one approval to keep reaching your machines for another 30 days.",
         "presence": "approve “Old laptop” for your Cua account",
         "request": "code=- device=dev_o",
-        "title": "Re-verify “Old laptop”?"
+        "title": "Keep “Old laptop”?"
       }
     }
   ]

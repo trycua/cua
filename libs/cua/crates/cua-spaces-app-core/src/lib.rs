@@ -89,6 +89,7 @@ pub mod keyvault;
 pub mod local_network;
 pub mod login_item;
 pub mod machines;
+pub mod machines_account;
 pub mod machines_health;
 pub mod machines_view;
 pub mod message;

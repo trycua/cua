@@ -395,24 +395,24 @@ pub fn activity_text(
         .map(|m| machines.get(m).map(String::as_str).unwrap_or(m));
     let subject = e.subject.as_deref().unwrap_or("");
     let by = |who: Option<&str>| who.map(|d| format!(" from {d}")).unwrap_or_default();
-    let target = device.unwrap_or("A device");
+    let target = device.unwrap_or("A machine");
     match e.kind.as_str() {
         "machine_access" if subject == "unenrolled device" => format!(
-            "An unenrolled device opened {}",
-            machine.unwrap_or("a computer")
+            "An untrusted machine opened {}",
+            machine.unwrap_or("a machine")
         ),
-        "machine_access" => format!("{target} opened {}", machine.unwrap_or("a computer")),
-        "shared_access" => format!("{subject} opened {}", machine.unwrap_or("a computer")),
-        "unenrolled_access" => "An unenrolled device used your account".into(),
+        "machine_access" => format!("{target} opened {}", machine.unwrap_or("a machine")),
+        "shared_access" => format!("{subject} opened {}", machine.unwrap_or("a machine")),
+        "unenrolled_access" => "An untrusted machine used your account".into(),
         "device_registered" => format!("{target} asked to join"),
         "device_enrolled" if subject == "bootstrap:grace" => {
-            format!("{target} was enrolled during the grace period")
+            format!("{target} was added during the grace period")
         }
         "device_enrolled" if subject.starts_with("bootstrap:") => {
-            format!("{target} was enrolled by a fresh sign-in")
+            format!("{target} was added by a fresh sign-in")
         }
         "device_rekeyed" => format!(
-            "{target} replaced {} on the same computer",
+            "{target} replaced {} on the same machine",
             name_or_id(devices, subject)
         ),
         "device_enrolled" => format!(
@@ -424,21 +424,21 @@ pub fn activity_text(
         "device_revoked" => format!("{} was revoked{}", name_or_id(devices, subject), by(device)),
         "share_added" => format!(
             "{} was shared with {subject}{}",
-            machine.unwrap_or("A computer"),
+            machine.unwrap_or("A machine"),
             by(device)
         ),
         "share_removed" => format!(
             "{} is no longer shared with {subject}{}",
-            machine.unwrap_or("A computer"),
+            machine.unwrap_or("A machine"),
             by(device)
         ),
-        "share_left" => format!("{subject} left {}", machine.unwrap_or("a computer")),
-        "machine_left" => format!("You left {}", machine.unwrap_or("a computer")),
-        "sharing_stopped" => format!("{} stopped sharing", machine.unwrap_or("A computer")),
-        "sharing_started" => format!("{} started sharing", machine.unwrap_or("A computer")),
-        "machine_registered" => format!("{} was added", machine.unwrap_or("A computer")),
-        "machine_reregistered" => format!("{} was set up again", machine.unwrap_or("A computer")),
-        "machine_removed" => format!("{} was removed", machine.unwrap_or("A computer")),
+        "share_left" => format!("{subject} left {}", machine.unwrap_or("a machine")),
+        "machine_left" => format!("You left {}", machine.unwrap_or("a machine")),
+        "sharing_stopped" => format!("{} stopped sharing", machine.unwrap_or("A machine")),
+        "sharing_started" => format!("{} started sharing", machine.unwrap_or("A machine")),
+        "machine_registered" => format!("{} was added", machine.unwrap_or("A machine")),
+        "machine_reregistered" => format!("{} was set up again", machine.unwrap_or("A machine")),
+        "machine_removed" => format!("{} was removed", machine.unwrap_or("A machine")),
         other => other.replace('_', " "),
     }
 }
@@ -454,21 +454,21 @@ pub fn is_access(kind: &str) -> bool {
 /// The page's words.
 pub fn labels() -> DevicesLabels {
     DevicesLabels {
-        title: "Devices".into(),
-        this_device: "This Device".into(),
-        devices: "Your Devices".into(),
-        recent: "Recent Access".into(),
-        recent_empty: "No access yet".into(),
+        title: "Machines".into(),
+        this_device: "This Machine".into(),
+        devices: "Your Machines".into(),
+        recent: "Recent access".into(),
+        recent_empty: "No access yet.".into(),
         last_seen: "Last seen".into(),
         approve: "Approve\u{2026}".into(),
         deny: "Deny".into(),
         rename: "Rename\u{2026}".into(),
         revoke: "Revoke\u{2026}".into(),
-        rename_title: "Rename Device".into(),
+        rename_title: "Rename Machine".into(),
         rename_confirm: "Rename".into(),
         cancel: "Cancel".into(),
-        signed_out: "Sign in to Cua to see the devices that can reach your machines.".into(),
-        new_machines: "New Computers".into(),
+        signed_out: "Sign in to Cua to see your machines.".into(),
+        new_machines: "New machines".into(),
         confirm_machine: "Confirm".into(),
     }
 }
@@ -504,11 +504,11 @@ fn revoke_confirm(name: &str, this: bool) -> DeviceConfirm {
     DeviceConfirm {
         title: format!("Revoke \u{201c}{name}\u{201d}?"),
         message: if this {
-            "This device will no longer list or reach your machines until you enroll it again."
+            "This machine will no longer see or reach your machines until you trust it again."
                 .into()
         } else {
             format!(
-                "{name} will no longer list or reach your machines. To use it again, enroll it again."
+                "{name} will no longer see or reach your machines. To use it again, add it again."
             )
         },
         confirm_label: "Revoke".into(),
@@ -677,22 +677,22 @@ pub fn devices_view(input: &DevicesInput, now: u64) -> DevicesView {
                 ApprovalPrompt {
                     device_id: d.id.clone(),
                     text: if expired {
-                        format!("Re-verify \u{201c}{name}\u{201d} for another 30 days?")
+                        format!("Keep \u{201c}{name}\u{201d} on your account for another 30 days?")
                     } else {
                         format!(
-                            "Let \u{201c}{name}\u{201d} list and open your machines? Only approve a device you just signed in on."
+                            "Add \u{201c}{name}\u{201d} to your machines? Only add a machine you just signed in on."
                         )
                     },
                     requires_presence: true,
                     notify_title: if expired {
-                        format!("Re-verify \u{201c}{name}\u{201d}?")
+                        format!("Keep \u{201c}{name}\u{201d}?")
                     } else {
-                        format!("Approve \u{201c}{name}\u{201d}?")
+                        format!("Add \u{201c}{name}\u{201d}?")
                     },
                     notify_body: if expired {
                         "It needs one approval to keep reaching your machines.".into()
                     } else {
-                        "A device signed in to your Cua account and asks to reach your machines."
+                        "A machine signed in to your Cua account and asks to be added."
                             .into()
                     },
                     name,
@@ -1235,9 +1235,9 @@ pub fn approve_view(state: &ApproveSheetState, devices: &[DeviceInput]) -> Appro
     let ready = approve_ready(state, devices);
     ApproveSheetView {
         title: if state.expired {
-            format!("Re-verify \u{201c}{name}\u{201d}?")
+            format!("Keep \u{201c}{name}\u{201d}?")
         } else {
-            format!("Approve \u{201c}{name}\u{201d}?")
+            format!("Add \u{201c}{name}\u{201d}?")
         },
         message: if state.expired {
             format!("{name} needs one approval to keep reaching your machines for another 30 days.")
@@ -1417,16 +1417,16 @@ mod tests {
         };
         assert_eq!(
             text("device_enrolled", "bootstrap:fresh-sign-in"),
-            "MacBook was enrolled by a fresh sign-in"
+            "MacBook was added by a fresh sign-in"
         );
         assert_eq!(
             text("device_enrolled", "bootstrap:grace"),
-            "MacBook was enrolled during the grace period"
+            "MacBook was added during the grace period"
         );
         // The replaced key is no longer listed: it reads as its id.
         assert_eq!(
             text("device_rekeyed", "dev_old"),
-            "MacBook replaced dev_old on the same computer"
+            "MacBook replaced dev_old on the same machine"
         );
     }
 

@@ -266,6 +266,7 @@ pub const METHODS: &[&str] = &[
     "machines.merge",
     "machines.pageRows",
     "machines.view",
+    "machines.account",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -1167,6 +1168,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "machines.view" => out(crate::machines_view::view(
             &a.get::<Option<crate::machines_view::MachinesViewInput>>("input")?
                 .unwrap_or_default(),
+        )),
+        "machines.account" => out(crate::machines_account::view(
+            &a.get::<Option<devices::DevicesInput>>("input")?
+                .unwrap_or_default(),
+            a.get::<Option<u64>>("now")?.unwrap_or(0),
+            a.get::<Option<String>>("readError")?.as_deref(),
         )),
         "devices.view" => out(devices::devices_view(
             &a.get::<Option<devices::DevicesInput>>("input")?

@@ -12,7 +12,9 @@
 //!   status (Working on "…", Idle, Not connected with Connect), Configure,
 //!   Remove from Space; everything else (handle, harness and
 //!   version, how and when it joined, who may task, stop or approve it) folded
-//!   under Details, with ids copyable.
+//!   under Details, with ids copyable. The owner is a person (their name,
+//!   never their id); the three rights show as one "Default permissions" line
+//!   while they are all at their defaults.
 
 use serde::{Deserialize, Serialize};
 
@@ -149,17 +151,15 @@ pub fn person(i: &PersonCardInput) -> PersonCardView {
 
 // ------------------------------------------------------------------ agents
 
-/// The Space-startable kinds Cua knows the sign-in of (the Connectors app id).
+/// The Connectors row of the harness an agent runs as: every agent harness
+/// ([`connectors::HARNESS_APPS`]), and the apps a connected agent may report.
 fn app_of(harness: &str) -> Option<&'static str> {
-    match harness {
-        "claude-code" => Some("claude-code"),
-        "codex" | "openai-codex" => Some("codex"),
-        "hermes" => Some("hermes"),
+    connectors::app_for_harness(harness).or(match harness {
+        "codex" => Some("codex"),
         "cursor" => Some("cursor"),
-        "openclaw" => Some("openclaw"),
         "copilot-cli" => Some("copilot-cli"),
         _ => None,
-    }
+    })
 }
 
 /// One right, as the page words it ("Can give it tasks", "Ada").
@@ -195,6 +195,10 @@ pub struct AgentCardInput {
     pub joined_at_ms: Option<u64>,
     pub now_ms: u64,
     pub rights: Vec<CardRight>,
+    /// Every right is at its default (who can task, stop and approve).
+    pub rights_default: bool,
+    /// You may change its rights (the Space's owner and admins, and its owner).
+    pub can_edit_rights: bool,
     /// You may remove it.
     pub can_remove: bool,
     /// This device's sign-ins (for an agent of yours: Not connected).
@@ -219,6 +223,15 @@ pub struct AgentCardView {
     pub remove_label: Option<String>,
     pub details_label: String,
     pub details: Vec<CardDetail>,
+    /// "Owner": the label of the row that shows who runs it.
+    pub owner_label: String,
+    /// Who runs it, as a person: their account id (to find their card) and name.
+    pub owner_id: String,
+    pub owner_name: String,
+    /// "Default permissions", while every right is at its default.
+    pub default_permissions: Option<String>,
+    /// "Edit", beside it, for those who may change the rights.
+    pub edit_rights_label: Option<String>,
 }
 
 pub fn agent(i: &AgentCardInput) -> AgentCardView {
@@ -268,7 +281,8 @@ pub fn agent(i: &AgentCardInput) -> AgentCardView {
         (
             "working",
             match &i.activity {
-                Some(a) if !a.is_empty() => format!("Working on \u{201c}{a}\u{201d}"),
+                // The stage in a word ("Thinking", "Using Bash"), never the task's text.
+                Some(a) if !a.is_empty() => a.clone(),
                 _ => "Working".into(),
             },
         )
@@ -295,14 +309,15 @@ pub fn agent(i: &AgentCardInput) -> AgentCardView {
         None => i.joined_how.clone(),
     };
     details.push(detail("Joined", joined, false));
-    if !i.owner_id.is_empty() {
-        details.push(detail("Owner's id", i.owner_id.clone(), true));
+    // Each right is a row, until all three are at their defaults: then one line.
+    if !i.rights_default {
+        details.extend(
+            i.rights
+                .iter()
+                .map(|r| detail(&r.label, r.holders.clone(), false)),
+        );
     }
-    details.extend(
-        i.rights
-            .iter()
-            .map(|r| detail(&r.label, r.holders.clone(), false)),
-    );
+    let has_rights = !i.rights.is_empty();
     AgentCardView {
         name,
         badge: "Agent".into(),
@@ -315,18 +330,25 @@ pub fn agent(i: &AgentCardInput) -> AgentCardView {
         remove_label: i.can_remove.then(|| "Remove from Space".into()),
         details_label: "Details".into(),
         details,
+        owner_label: "Owner".into(),
+        owner_id: i.owner_id.clone(),
+        owner_name: i.owner_name.clone(),
+        default_permissions: (has_rights && i.rights_default).then(|| "Default permissions".into()),
+        edit_rights_label: (has_rights && i.rights_default && i.can_edit_rights)
+            .then(|| "Edit".into()),
     }
 }
 
 fn app_label(harness: &str) -> Option<&'static str> {
     match harness {
-        "claude-code" => Some("Claude Code"),
-        "codex" | "openai-codex" => Some("Codex"),
-        "hermes" => Some("Hermes"),
         "cursor" => Some("Cursor"),
-        "openclaw" => Some("OpenClaw"),
         "copilot-cli" => Some("GitHub Copilot CLI"),
-        _ => None,
+        "codex" => Some("Codex"),
+        "openai-codex" => Some("Codex"),
+        h => connectors::HARNESS_APPS
+            .iter()
+            .find(|x| x.harness == h)
+            .map(|x| x.name),
     }
 }
 
@@ -432,23 +454,50 @@ mod tests {
         let v = agent(&agent_input());
         assert_eq!(v.badge, "Agent");
         assert_eq!(v.line, "Run by you in this Space, uses Anthropic");
-        assert_eq!(v.status_text, "Working on \u{201c}fix the build\u{201d}");
+        // The stage, never the task.
+        assert_eq!(v.status_text, "fix the build");
         assert_eq!(v.settings_label.as_deref(), Some("Configure"));
         assert_eq!(v.remove_label.as_deref(), Some("Remove from Space"));
         assert!(v.connect_label.is_none());
         let labels: Vec<_> = v.details.iter().map(|d| d.label.as_str()).collect();
-        assert_eq!(
-            labels,
-            [
-                "Handle",
-                "Runs",
-                "Joined",
-                "Owner's id",
-                "Can give it tasks"
-            ]
-        );
-        assert!(v.details[0].copy && v.details[3].copy);
+        assert_eq!(labels, ["Handle", "Runs", "Joined", "Can give it tasks"]);
+        assert!(v.details[0].copy);
         assert_eq!(v.details[2].value, "Started in this Space, 2 minutes ago");
+    }
+
+    #[test]
+    fn the_owner_is_a_person_never_an_id() {
+        let v = agent(&agent_input());
+        assert_eq!(v.owner_label, "Owner");
+        assert_eq!(
+            (v.owner_name.as_str(), v.owner_id.as_str()),
+            ("Ada", "acct_ada")
+        );
+        // No row of the card shows the account id.
+        assert!(v.details.iter().all(|d| !d.value.contains("acct_")));
+    }
+
+    #[test]
+    fn default_rights_are_one_line_with_an_edit_link_for_those_who_may() {
+        let mut i = agent_input();
+        i.rights_default = true;
+        i.can_edit_rights = true;
+        let v = agent(&i);
+        assert_eq!(
+            v.default_permissions.as_deref(),
+            Some("Default permissions")
+        );
+        assert_eq!(v.edit_rights_label.as_deref(), Some("Edit"));
+        assert!(v.details.iter().all(|d| d.label != "Can give it tasks"));
+        // Someone who can't change them reads the line only.
+        i.can_edit_rights = false;
+        let v = agent(&i);
+        assert!(v.default_permissions.is_some() && v.edit_rights_label.is_none());
+        // Changed rights are the three rows again.
+        i.rights_default = false;
+        let v = agent(&i);
+        assert!(v.default_permissions.is_none() && v.edit_rights_label.is_none());
+        assert!(v.details.iter().any(|d| d.label == "Can give it tasks"));
     }
 
     #[test]

@@ -1002,6 +1002,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<String>("provider")?,
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
+            a.get::<Option<String>>("forApp")?.as_deref(),
         )),
         "connectors.appDetail" => out(connectors::app_detail(
             &a.get("input")?,

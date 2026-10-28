@@ -262,7 +262,7 @@ fn cant_wake(
             } else {
                 format!(
                     "It needs a sign-in to {} to work in your Spaces. Your message is saved: it goes again once {name} is connected.",
-                    providers.join(" or ")
+                    connectors::or_list(&providers)
                 )
             },
             true,
@@ -581,11 +581,11 @@ mod tests {
         // A member runs on its owner's keys: woken, never checked against this device's.
         let p = plan(&input(&[]), "@hermes go");
         assert_eq!(p.steps[0].action, "wake");
-        // A new Hermes needs Anthropic or OpenAI.
+        // A new Hermes needs a sign-in to Anthropic, OpenAI or OpenRouter.
         let mut i = input(&[]);
         i.members.clear();
         let c = plan(&i, "@hermes go").steps[0].cant_wake.clone().unwrap();
-        assert!(c.detail.contains("Anthropic or OpenAI"));
+        assert!(c.detail.contains("Anthropic, OpenAI or OpenRouter"));
 
         // Codex isn't on This Mac: no settings page to open; Connect still asks for a key.
         let c = plan(&input(&[]), "@codex go").steps[0]

@@ -28,7 +28,8 @@ use std::time::Duration;
 use indexmap::IndexMap;
 
 use crate::{
-    CursorConfig, CursorKey, KeyedOverlayCommand, OverlayCommand, OverlayMsg, RenderStateCore,
+    CursorConfig, CursorKey, CursorVisualState, KeyedOverlayCommand, MotionConfig, OverlayCommand,
+    OverlayMsg, RenderStateCore,
 };
 
 /// Key of the anonymous cursor seeded at startup. It backs one-shot calls
@@ -38,6 +39,10 @@ pub const DEFAULT_CURSOR_KEY: &str = "default";
 /// Distance between a seeded start point and its first target, per axis.
 /// 140 points reads as motion at the reference peak glide speed.
 pub const SEED_OFFSET: f64 = 140.0;
+
+/// A cursor's painted theme and semantic playback state: theme id, version,
+/// profile, non-fatal fallback reason, and visual state.
+pub type CursorThemeState = (String, String, String, Option<String>, CursorVisualState);
 
 /// Insertion-ordered cursor collection. Iteration order is the paint order.
 pub type CursorMap<S> = IndexMap<CursorKey, S>;
@@ -260,6 +265,38 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
         self.cursors
             .get(key)
             .or_else(|| self.cursors.get(DEFAULT_CURSOR_KEY))
+    }
+
+    /// Whether `key`'s cursor (or the `"default"` cursor it falls back to)
+    /// is user-visible.
+    pub fn is_enabled(&self, key: &str) -> bool {
+        self.cursor_or_default(key)
+            .is_some_and(|cursor| cursor.core().visible)
+    }
+
+    /// `key`'s own on-screen position. `None` for an absent or unplaced
+    /// cursor; never the `"default"` cursor's position.
+    pub fn placed_position(&self, key: &str) -> Option<(f64, f64)> {
+        self.cursors
+            .get(key)
+            .map(S::core)
+            .filter(|core| core.placed)
+            .map(|core| core.pos)
+    }
+
+    /// `key`'s motion config, falling back to the `"default"` cursor's.
+    pub fn motion(&self, key: &str) -> MotionConfig {
+        self.cursor_or_default(key)
+            .map(|cursor| cursor.core().motion.clone())
+            .unwrap_or_default()
+    }
+
+    /// The theme and visual state `key`'s cursor (or the `"default"`
+    /// cursor) is painting.
+    pub fn theme_state(&self, key: &str) -> Option<CursorThemeState> {
+        let core = self.cursor_or_default(key)?.core();
+        let (id, version, profile, fallback) = core.active_theme_metadata();
+        Some((id, version, profile, fallback, core.visual.clone()))
     }
 
     /// Apply one drained channel message.
@@ -805,5 +842,48 @@ mod tests {
             arrivals.extend(map.tick_all(1.0 / 60.0));
         }
         assert_eq!(arrivals, ["sessA"]);
+    }
+
+    #[test]
+    fn queries_fall_back_to_the_default_cursor_until_a_session_owns_one() {
+        let mut map = map();
+        let default_motion = map.cursors[DEFAULT_CURSOR_KEY].motion.clone();
+        assert_eq!(default_motion.idle_hide_ms, 500.0);
+        assert!(map.is_enabled("s"));
+        assert_eq!(map.motion("s"), default_motion);
+        let theme = map.theme_state("s").expect("default theme state");
+        assert_eq!(theme.4, map.cursors[DEFAULT_CURSOR_KEY].visual);
+
+        map.cursors[DEFAULT_CURSOR_KEY].visible = false;
+        assert!(
+            !map.is_enabled("s"),
+            "hiding the default hides an unowned session"
+        );
+
+        let own = map.cursor_mut("s").unwrap();
+        own.motion.idle_hide_ms = 900.0;
+        assert!(map.is_enabled("s"), "a session's own cursor answers for it");
+        assert_eq!(map.motion("s").idle_hide_ms, 900.0);
+        assert_eq!(map.motion(DEFAULT_CURSOR_KEY).idle_hide_ms, 500.0);
+    }
+
+    #[test]
+    fn placed_position_is_exact_key_and_requires_placement() {
+        let mut map = map();
+        placed(&mut map, DEFAULT_CURSOR_KEY);
+        assert_eq!(
+            map.placed_position(DEFAULT_CURSOR_KEY),
+            Some((100.0, 100.0))
+        );
+        assert_eq!(map.placed_position("s"), None, "never inherits the default");
+
+        map.cursor_mut("s").unwrap();
+        assert_eq!(map.placed_position("s"), None, "created but unplaced");
+
+        placed(&mut map, "s");
+        assert_eq!(map.placed_position("s"), Some((100.0, 100.0)));
+
+        map.remove("s".to_owned());
+        assert_eq!(map.placed_position("s"), None);
     }
 }

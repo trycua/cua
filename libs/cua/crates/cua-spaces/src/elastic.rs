@@ -2617,7 +2617,7 @@ mod tests {
             limit("memory_gb", 32, 32),
             limit("disk_gb", 100, 100),
         ] {
-            assert_eq!(place(&[full.clone()]), ["studio"], "{full:?}");
+            assert_eq!(place(std::slice::from_ref(&full)), ["studio"], "{full:?}");
         }
         // Over a limit (it was lowered below what runs) is full too.
         assert_eq!(place(&[limit("spaces", 3, 2)]), ["studio"]);

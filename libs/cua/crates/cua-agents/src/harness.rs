@@ -241,15 +241,10 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["hermes"],
         acp: &["hermes-acp"],
         cli: Some("hermes"),
-        // CLAUDE_CODE_OAUTH_TOKEN: the Claude sign-in Connect made; Hermes
-        // reads it as its Anthropic credential. It has no reader for the
-        // ChatGPT sign-in (CODEX_AUTH_JSON), so that one is not forwarded.
-        keys: &[
-            "OPENROUTER_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-            "OPENAI_API_KEY",
-        ],
+        // Provider API keys only. The Claude subscription sign-in
+        // (CLAUDE_CODE_OAUTH_TOKEN) and the ChatGPT one (CODEX_AUTH_JSON) are
+        // Claude Code's and Codex's: they are never given to Hermes.
+        keys: &["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
         // Its own `.env` (a key set inside the Space) or a provider sign-in.
         logins: Some(&[
             "[ -s \"$HOME/.hermes/.env\" ]",

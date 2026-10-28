@@ -511,6 +511,8 @@ mod tests {
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             enabled: None,
             selected: None,
+            checked: None,
+            expanded: None,
             element_ptr: 0,
             center_x: 0,
             center_y: 0,

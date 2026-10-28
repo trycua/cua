@@ -15,17 +15,19 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
-    IUIAutomationElementArray, IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
-    IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, ToggleState_Off, ToggleState_On,
-    TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
-    UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
-    UIA_ExpandCollapsePatternId, UIA_HelpTextPropertyId, UIA_InvokePatternId,
-    UIA_IsEnabledPropertyId, UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
-    UIA_ProcessIdPropertyId, UIA_RangeValuePatternId, UIA_ScrollPatternId,
-    UIA_SelectionItemIsSelectedPropertyId, UIA_SelectionItemPatternId, UIA_TextPatternId,
-    UIA_TogglePatternId, UIA_ToggleToggleStatePropertyId, UIA_ValuePatternId,
-    UIA_ValueValuePropertyId,
+    CUIAutomation, ExpandCollapseState_Collapsed, ExpandCollapseState_Expanded,
+    ExpandCollapseState_PartiallyExpanded, IUIAutomation, IUIAutomationCacheRequest,
+    IUIAutomationElement, IUIAutomationElementArray, IUIAutomationExpandCollapsePattern,
+    IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern,
+    ToggleState_Indeterminate, ToggleState_Off, ToggleState_On, TreeScope, TreeScope_Children,
+    TreeScope_Element, TreeScope_Subtree, UIA_AutomationIdPropertyId,
+    UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
+    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_ExpandCollapsePatternId,
+    UIA_HelpTextPropertyId, UIA_InvokePatternId, UIA_IsEnabledPropertyId,
+    UIA_IsOffscreenPropertyId, UIA_NamePropertyId, UIA_ProcessIdPropertyId,
+    UIA_RangeValuePatternId, UIA_ScrollPatternId, UIA_SelectionItemIsSelectedPropertyId,
+    UIA_SelectionItemPatternId, UIA_TextPatternId, UIA_TogglePatternId,
+    UIA_ToggleToggleStatePropertyId, UIA_ValuePatternId, UIA_ValueValuePropertyId,
 };
 
 pub mod fg_bypass;
@@ -40,6 +42,25 @@ pub use windows_enum::enumerate_top_level_windows;
 pub const DEFAULT_MAX_DEPTH: usize = 25;
 /// Default cap; callers can override via [`walk_tree_bounded`].
 pub const DEFAULT_MAX_TOTAL_ELEMENTS: usize = 5000;
+
+/// A TogglePattern state as UIA reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckedState {
+    On,
+    Off,
+    Mixed,
+}
+
+impl CheckedState {
+    /// The `toggle_state` value on the wire and the `toggle=` attribute in the tree.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Off => "off",
+            Self::Mixed => "mixed",
+        }
+    }
+}
 
 /// A single node in the accessibility tree.
 ///
@@ -60,6 +81,12 @@ pub struct UiaNode {
     pub enabled: Option<bool>,
     /// Toggle/selection state when the element exposes one of those patterns.
     pub selected: Option<bool>,
+    /// TogglePattern state, including indeterminate, which `selected` cannot express.
+    /// `None` when the element has no TogglePattern or UIA does not report it.
+    pub checked: Option<CheckedState>,
+    /// ExpandCollapsePattern state: `PartiallyExpanded` counts as expanded. `None` for a
+    /// leaf node, or when the element has no ExpandCollapsePattern.
+    pub expanded: Option<bool>,
     /// Raw COM pointer (IUIAutomationElement for UIA path, IAccessible for
     /// MSAA path) as usize. Retained — `Snapshots` Drop releases it via
     /// the `kind`-appropriate vtable.
@@ -689,6 +716,7 @@ unsafe fn node_cache_request(
         UIA_BoundingRectanglePropertyId,
         UIA_ToggleToggleStatePropertyId,
         UIA_SelectionItemIsSelectedPropertyId,
+        UIA_ExpandCollapseExpandCollapseStatePropertyId,
     ] {
         complete &= cache_req.AddProperty(*prop).is_ok();
     }
@@ -826,6 +854,8 @@ fn emit_cached_node(
     // surface. Action discovery keeps its historical best-effort assumption.
     let is_enabled = enabled.unwrap_or(true);
     let selected = read_cached_selected(element);
+    let checked = read_cached_checked(element);
+    let expanded = read_cached_expanded(element);
     let actions = detect_cached_actions(element, &control_type, is_enabled);
     let is_actionable = !actions.is_empty() && is_enabled;
     let has_content = name
@@ -858,6 +888,8 @@ fn emit_cached_node(
                 actions: actions.clone(),
                 enabled,
                 selected,
+                checked,
+                expanded,
                 element_ptr: ptr,
                 center_x,
                 center_y,
@@ -878,6 +910,8 @@ fn emit_cached_node(
                 actions: vec![],
                 enabled,
                 selected,
+                checked,
+                expanded,
                 element_ptr: ptr,
                 center_x: 0,
                 center_y: 0,
@@ -1026,6 +1060,37 @@ fn detect_cached_actions(
     actions
 }
 
+fn read_cached_checked(element: &IUIAutomationElement) -> Option<CheckedState> {
+    unsafe {
+        let pattern = element.GetCachedPattern(UIA_TogglePatternId).ok()?;
+        let toggle = pattern.cast::<IUIAutomationTogglePattern>().ok()?;
+        match toggle.CachedToggleState() {
+            Ok(state) if state == ToggleState_On => Some(CheckedState::On),
+            Ok(state) if state == ToggleState_Off => Some(CheckedState::Off),
+            Ok(state) if state == ToggleState_Indeterminate => Some(CheckedState::Mixed),
+            _ => None,
+        }
+    }
+}
+
+fn read_cached_expanded(element: &IUIAutomationElement) -> Option<bool> {
+    unsafe {
+        let pattern = element.GetCachedPattern(UIA_ExpandCollapsePatternId).ok()?;
+        let expand = pattern.cast::<IUIAutomationExpandCollapsePattern>().ok()?;
+        match expand.CachedExpandCollapseState() {
+            Ok(state) if state == ExpandCollapseState_Collapsed => Some(false),
+            Ok(state)
+                if state == ExpandCollapseState_Expanded
+                    || state == ExpandCollapseState_PartiallyExpanded =>
+            {
+                Some(true)
+            }
+            // LeafNode: nothing to expand, so no state.
+            _ => None,
+        }
+    }
+}
+
 fn read_cached_selected(element: &IUIAutomationElement) -> Option<bool> {
     unsafe {
         if let Ok(pattern) = element.GetCachedPattern(UIA_TogglePatternId) {
@@ -1113,6 +1178,14 @@ pub(crate) fn format_node_line(node: &UiaNode) -> String {
         }
         if let Some(h) = &node.help_text {
             attrs.push(format!("help=\"{}\"", h));
+        }
+        // States are part of the row so a state-only change shows up in incremental reads,
+        // which compare rows.
+        if let Some(checked) = node.checked {
+            attrs.push(format!("toggle={}", checked.as_str()));
+        }
+        if let Some(expanded) = node.expanded {
+            attrs.push(format!("expanded={}", expanded));
         }
         if !node.actions.is_empty() {
             attrs.push(format!("actions=[{}]", node.actions.join(",")));

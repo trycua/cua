@@ -24,6 +24,10 @@
   "components/agents/key-sheet.tsx": {
     "partial-line": 1
   },
+  "components/agents/other-machine-block.tsx": {
+    "outlined-box": 1,
+    "partial-line": 1
+  },
   "components/agents/run-agent-dialog.tsx": {
     "partial-line": 1,
     "outlined-box": 1

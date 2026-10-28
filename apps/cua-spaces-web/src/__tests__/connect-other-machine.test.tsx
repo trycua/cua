@@ -43,7 +43,7 @@ describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
     });
     const name = here.textContent!.replace(/^On /, "").replace(/this machine$/, "");
     const block = q("[data-connect-other-machine]")!;
-    expect(within(block).getByRole("heading", { name: "On another machine" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "On another machine" })).toBeTruthy();
     expect(block.textContent).toContain(`Host to name: ${name}`);
     // The exact commands for the chosen agent: the same account, then the agent's setup.
     expect(block.textContent).toContain("cua auth login");
@@ -64,6 +64,34 @@ describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
     expect(done.textContent).toMatch(/^Set up on \S/);
     // The demo account has other machines: they are named, and Connect says it left them alone.
     expect(q("[data-connect-others]")?.textContent).toMatch(/Not touched: .+/);
+  });
+
+  it("Settings, Connectors names the machine it edits, what it leaves alone, and shows how to use it from another machine", async () => {
+    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
+    const footer = await waitFor(() => {
+      const f = q("[data-connectors-machine]");
+      if (!f) throw new Error("no footer");
+      return f;
+    });
+    expect(footer.textContent).toMatch(/^On \S+/);
+    // The demo account has other machines: named, and left alone.
+    expect(footer.textContent).toMatch(/Not touched: .+/);
+    expect(q("[data-connect-other-machine]")).toBeNull();
+    fireEvent.click(q("[data-connectors-other-toggle]")!);
+    const block = await waitFor(() => {
+      const b = q("[data-connect-other-machine]");
+      if (!b) throw new Error("not open");
+      return b;
+    });
+    expect(block.textContent).toContain("cua auth login");
+    expect(block.textContent).toContain("cua agents setup --agents hermes --yes");
+    expect(q("[data-connect-other-permissions]")?.textContent).toMatch(/share its desktop/);
+    expect(q("[data-connect-other-reload]")?.textContent).toMatch(/Restart the agent/);
+    expect(block.textContent).not.toMatch(/·|\bdevices?\b/i);
+    // An app's own page says which machine it is on.
+    cleanup();
+    await mountApp("/settings/connectors/claude-code", { failsCreates: false, listsGhost: false });
+    await waitFor(() => expect(q("[data-connector-on]")?.textContent).toMatch(/^On \S+/));
   });
 
   it("the first run offers An agent on another machine, which opens the join sheet", async () => {

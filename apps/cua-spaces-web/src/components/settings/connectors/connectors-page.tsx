@@ -6,6 +6,7 @@ import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, Loader2Ico
 import { lazy, Suspense, useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import { useAgentKeys, useBridge, useKeysRecheck, type ConnectorAppRow, type ConnectorProviderRow } from "@/bridge";
+import { OtherMachineBlock, useThisAndOthers } from "@/components/agents/other-machine-block";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { KeySheet } from "@/components/agents/key-sheet";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
@@ -37,6 +38,8 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
   // Opening this page asks the providers whether the saved sign-ins and keys still work.
   useKeysRecheck();
   const [all, setAll] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(false);
+  const { hereName, others } = useThisAndOthers();
   const [lit, setLit] = useState<string | null>(null);
 
   useEffect(() => {
@@ -60,7 +63,16 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
         </div>
       ) : null}
 
-      <SettingsGroup title={view.appsTitle} data-connectors-apps="">
+      <SettingsGroup
+        title={view.appsTitle}
+        data-connectors-apps=""
+        footer={
+          // Connect edits the coding apps of this machine only: it says which, and what it leaves alone.
+          <span data-connectors-machine="">
+            On {hereName}.{others.length > 0 ? ` Not touched: ${others.join(", ")}. An agent on one of those machines needs its own setup (see On another machine).` : ""}
+          </span>
+        }
+      >
         {view.appsEmpty ? <GroupedRow className="text-muted-foreground">{view.appsEmpty}</GroupedRow> : null}
         {view.apps.map((row) => (
           <AppRow key={row.agent} row={row} lit={lit === row.agent} onOpen={() => open(row.agent)} onConnect={() => void c.connectApp(row.agent)} />
@@ -101,6 +113,19 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           </Suspense>
         </SettingsGroup>
       ) : null}
+
+      <SettingsGroup title="On another machine" data-connectors-other-machine-group="">
+        <GroupedRow>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px]">An agent on another machine</div>
+            <div className="text-xs text-muted-foreground">Use {hereName} from an agent that runs somewhere else.</div>
+          </div>
+          <Button size="sm" variant="outline" aria-expanded={otherOpen} onClick={() => setOtherOpen(!otherOpen)} data-connectors-other-toggle="">
+            {otherOpen ? "Hide" : "Show how"}
+          </Button>
+        </GroupedRow>
+        {otherOpen ? <OtherMachineBlock /> : null}
+      </SettingsGroup>
 
       <SettingsGroup title={view.providersTitle} footer={view.providersFooter} data-connectors-providers="">
         {view.providers.map((p) => (

@@ -4,13 +4,14 @@
 import { CheckIcon, ChevronRightIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { isUnsupported, useAgents, useMachines, type AgentSetupRow } from "@/bridge";
+import { isUnsupported, useAgents, type AgentSetupRow } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Segmented } from "@/components/ui/segmented";
 import { toast } from "@/components/ui/toast";
-import { otherMachineCommand, otherMachinePrompt, OTHER_MACHINE_PERMISSIONS, OTHER_MACHINE_RELOAD } from "@/lib/other-machine";
 import { cn } from "@/lib/utils";
+
+import { OtherMachineBlock, useThisAndOthers } from "./other-machine-block";
 
 /**
  * What the cua MCP server is and how an agent gets it: the agents on this
@@ -52,13 +53,9 @@ const MANUAL_OPTIONS = (Object.keys(MANUAL) as Manual[]).map((value) => ({ value
 
 export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { agentSetup, configureAgents } = useAgents();
-  const { data: machines } = useMachines();
-  const here = machines?.find((m) => m.current);
-  // Which machine this edits, and the others (not signed-in machines that share nothing): Connect never reaches them.
-  const hereName = here?.name ?? "this machine";
-  const others = (machines ?? []).filter((m) => !m.current && !m.device).map((m) => m.name);
+  // Which machine this edits, and the others: Connect never reaches them.
+  const { here, hereName, others } = useThisAndOthers();
   const [doneOn, setDoneOn] = useState<string | null>(null);
-  const [other, setOther] = useState<Manual>("hermes");
   const [rows, setRows] = useState<AgentSetupRow[] | null>(null);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -150,30 +147,11 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
             </p>
           </section>
 
-          <section className="mt-6" data-connect-other-machine="">
+          <section className="mt-6">
             <h3 className="mb-1 text-xs font-semibold">On another machine</h3>
-            <p className="text-xs text-muted-foreground">
-              An agent that runs on a different machine can use {hereName} too. Host to name: <span className="font-medium text-foreground select-text">{hereName}</span>
-              {here?.relayId ? (
-                <>
-                  , its Space <code className="font-mono select-text">relay:{here.relayId}</code>
-                </>
-              ) : (
-                <>. Set this machine up for access first (its page in Machines) so the agent can find it.</>
-              )}
-              .
-            </p>
-            <p className="mt-3 mb-2 text-xs font-semibold">Run this on the other machine</p>
-            <Segmented aria-label="Agent on the other machine" value={other} options={MANUAL_OPTIONS} onValueChange={setOther} />
-            <Snippet file="Terminal on the other machine" text={otherMachineCommand(other)} />
-            <p className="mt-3 mb-2 text-xs font-semibold">Then tell the agent</p>
-            <Snippet file="Message to the agent" text={otherMachinePrompt(hereName, here?.relayId)} />
-            <p className="mt-2 text-xs text-muted-foreground" data-connect-other-permissions="">
-              {OTHER_MACHINE_PERMISSIONS}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground" data-connect-other-reload="">
-              {OTHER_MACHINE_RELOAD}
-            </p>
+            <div className="-mx-4">
+              <OtherMachineBlock />
+            </div>
           </section>
 
           <details className="group mt-6" data-connect-advanced="">

@@ -119,7 +119,13 @@ class LinuxPreflightCaptureTest(unittest.TestCase):
         frames: list[str] = []
 
         def capture(ctx, name):
-            shot = desktop.capture_screenshot(os.environ["DISPLAY"], ctx.run_dir / "shot.png")
+            # cursor-free, like the driver's own capture: an empty desktop must come out uniform
+            shot = ctx.run_dir / "shot.png"
+            subprocess.run(
+                ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "x11grab", "-draw_mouse", "0",
+                 "-i", os.environ["DISPLAY"], "-frames:v", "1", str(shot)],
+                check=True, timeout=30,
+            )  # fmt: skip
             frames.append("running" if _benchlab_running() else "absent")
             try:  # the runner's own validity check: raises on a uniform frame
                 return f"{name} real capture", "pass", rb.rec.capture_detail(shot)

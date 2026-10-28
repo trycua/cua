@@ -848,9 +848,9 @@ impl AgentSetup {
         copy: &SignInCopy,
         vault: &dyn SignInVault,
     ) -> std::result::Result<ImportedSignIn, signin::CopyRefusal> {
-        let saved = vault.save(copy).map_err(|e| {
-            signin::CopyRefusal::Failed(format!("Connected. Sign-in not copied: {e}"))
-        })?;
+        let saved = vault
+            .save(copy)
+            .map_err(|e| signin::CopyRefusal::Failed(format!("Couldn't save the sign-in: {e}")))?;
         if let Ok(mut state) = State::load(&self.state_path) {
             let r = state.connections.entry(agent.to_string()).or_default();
             r.sign_in = Some(crate::state::SignInRecord {
@@ -976,9 +976,7 @@ impl AgentSetup {
                 None => SignInResult {
                     imported: None,
                     refused: Some("failed".into()),
-                    line: Some(
-                        "Connected. Sign-in not copied: Keyvault isn't available here.".into(),
-                    ),
+                    line: Some("Couldn't save the sign-in: Keyvault isn't available here.".into()),
                 },
                 Some(v) => match match show.as_deref_mut() {
                     Some(show) if signin::signs_in_with_a_code(a.id) => {

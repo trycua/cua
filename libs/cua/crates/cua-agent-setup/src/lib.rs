@@ -157,7 +157,6 @@ const VARS: &[&str] = &[
     "CUA_HOME",
     "CLAUDE_CONFIG_DIR",
     "CODEX_HOME",
-    "CUA_TOKEN_CHECK_URL",
     "GEMINI_CLI_HOME",
     "CLINE_DATA_DIR",
     "OPENCLAW_STATE_DIR",

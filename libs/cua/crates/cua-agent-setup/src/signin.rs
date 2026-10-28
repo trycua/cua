@@ -363,76 +363,6 @@ pub fn find_setup_token(out: &str) -> Option<String> {
     (tok.len() >= SETUP_TOKEN_MIN && tok.len() <= SETUP_TOKEN_MAX).then_some(tok)
 }
 
-/// What the provider said about a token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TokenCheck {
-    /// Accepted.
-    Valid,
-    /// Refused (401 or 403): saving it would only give every agent a 401.
-    Invalid,
-    /// No answer (offline, another status): it is saved and used.
-    Unknown,
-}
-
-/// What a status code of the provider's models list says about a token.
-fn token_check_for(status: u16) -> TokenCheck {
-    match status {
-        200..=299 => TokenCheck::Valid,
-        401 | 403 => TokenCheck::Invalid,
-        _ => TokenCheck::Unknown,
-    }
-}
-
-/// Asks Anthropic once whether `token` is accepted (a read-only GET of the
-/// models list, as the sign-in token the way Claude Code sends it). The token
-/// goes to `curl` on its standard input, never in its arguments. Without
-/// `run_agent_clis` nothing is asked.
-pub fn check_claude_token(env: &HostEnv, token: &str) -> TokenCheck {
-    use std::io::Write;
-    if !env.run_agent_clis {
-        return TokenCheck::Unknown;
-    }
-    let base = env
-        .var("CUA_TOKEN_CHECK_URL")
-        .map(|b| b.trim_end_matches('/').to_string())
-        .filter(|b| b.starts_with("http"))
-        .unwrap_or_else(|| "https://api.anthropic.com".into());
-    let Ok(mut child) = std::process::Command::new("curl")
-        .args([
-            "-sS",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "--max-time",
-            "15",
-            "-K",
-            "-",
-        ])
-        .arg(format!("{base}/v1/models?limit=1"))
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    else {
-        return TokenCheck::Unknown;
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        let cfg = format!(
-            "header = \"Authorization: Bearer {token}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\nheader = \"anthropic-version: 2023-06-01\"\n"
-        );
-        let _ = stdin.write_all(cfg.as_bytes());
-    }
-    let Ok(out) = child.wait_with_output() else {
-        return TokenCheck::Unknown;
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse::<u16>()
-        .map(token_check_for)
-        .unwrap_or(TokenCheck::Unknown)
-}
-
 fn claude_copy(env: &HostEnv, wait: Duration) -> Result<SignInCopy, CopyRefusal> {
     let bin = crate::connection::binary(env, registry::find("claude-code").unwrap())
         .ok_or_else(|| CopyRefusal::Failed("Claude Code isn't installed on This Mac.".into()))?;
@@ -465,16 +395,10 @@ fn claude_copy(env: &HostEnv, wait: Duration) -> Result<SignInCopy, CopyRefusal>
     };
     let Some((code, stdout)) = out else {
         return Err(CopyRefusal::Cancelled(
-            "Connected. Sign-in not copied: the browser approval didn't finish.".into(),
+            "The browser approval didn't finish. Try Connect again.".into(),
         ));
     };
     match find_setup_token(&stdout) {
-        Some(token) if check_claude_token(env, &token) == TokenCheck::Invalid => {
-            Err(CopyRefusal::Failed(
-                "Connected. Sign-in not copied: Claude didn't accept the token. Try Connect again."
-                    .into(),
-            ))
-        }
         Some(token) => Ok(SignInCopy {
             source: "claude-code".into(),
             env: "CLAUDE_CODE_OAUTH_TOKEN".into(),
@@ -484,10 +408,10 @@ fn claude_copy(env: &HostEnv, wait: Duration) -> Result<SignInCopy, CopyRefusal>
             expires_ms: Some(now_ms() + 365 * 24 * 3600 * 1000),
         }),
         None if code == Some(0) => Err(CopyRefusal::Failed(
-            "Connected. Sign-in not copied: claude setup-token printed no token.".into(),
+            "Couldn't read the sign-in from Claude. Try Connect again.".into(),
         )),
         None => Err(CopyRefusal::Cancelled(
-            "Connected. Sign-in not copied: the browser approval was cancelled.".into(),
+            "The browser approval was cancelled. Try Connect again.".into(),
         )),
     }
 }
@@ -1075,63 +999,6 @@ mod tests {
         assert_eq!(
             find_setup_token("sk-ant-oat01-AbC_d3f-xyz0123456789AAAA"),
             None
-        );
-    }
-
-    #[test]
-    fn a_token_check_reads_only_a_refusal_as_invalid() {
-        assert_eq!(token_check_for(200), TokenCheck::Valid);
-        assert_eq!(token_check_for(401), TokenCheck::Invalid);
-        assert_eq!(token_check_for(403), TokenCheck::Invalid);
-        assert_eq!(token_check_for(429), TokenCheck::Unknown);
-        assert_eq!(token_check_for(529), TokenCheck::Unknown);
-    }
-
-    /// A one-shot local provider answering `status`; the request it got.
-    fn stub_provider(status: &'static str) -> (String, std::thread::JoinHandle<String>) {
-        use std::io::{Read, Write};
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", l.local_addr().unwrap());
-        let h = std::thread::spawn(move || {
-            let (mut c, _) = l.accept().unwrap();
-            let mut buf = [0u8; 4096];
-            let n = c.read(&mut buf).unwrap();
-            let body = r#"{"type":"error","error":{"type":"authentication_error","message":"OAuth token invalid"}}"#;
-            let _ = write!(
-                c,
-                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            String::from_utf8_lossy(&buf[..n]).into_owned()
-        });
-        (url, h)
-    }
-
-    /// A corrupted token gets the provider's 401 and is refused before it is
-    /// saved; the token travels in a header, never in the command line.
-    #[test]
-    fn a_token_the_provider_refuses_is_not_saved() {
-        let d = tempfile::tempdir().unwrap();
-        for (status, want) in [
-            ("401 Unauthorized", TokenCheck::Invalid),
-            ("200 OK", TokenCheck::Valid),
-            ("529 Overloaded", TokenCheck::Unknown),
-        ] {
-            let (url, server) = stub_provider(status);
-            let mut env = HostEnv::isolated(d.path());
-            env.run_agent_clis = true;
-            env.vars.insert("CUA_TOKEN_CHECK_URL".into(), url);
-            let token = "sk-ant-oat01-corrupted-0123456789";
-            assert_eq!(check_claude_token(&env, token), want, "{status}");
-            let request = server.join().unwrap();
-            assert!(request.starts_with("GET /v1/models"), "{request}");
-            assert!(request.contains(&format!("Bearer {token}")), "{request}");
-        }
-        // Nothing is asked when agent commands are off.
-        let off = HostEnv::isolated(d.path());
-        assert_eq!(
-            check_claude_token(&off, "sk-ant-oat01-x"),
-            TokenCheck::Unknown
         );
     }
 

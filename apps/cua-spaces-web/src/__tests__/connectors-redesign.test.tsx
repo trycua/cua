@@ -70,7 +70,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connectors (redesign)", () => {
     const gemini = q("[data-connector-app=gemini-cli]")!;
     expect(gemini.dataset.state).toBe("not-connected");
     expect(gemini.querySelector("[data-connector-connect]")?.textContent).toBe("Connect");
-    expect(gemini.textContent).toContain("Needs a sign-in to Google.");
+    expect(gemini.textContent).toContain("Needs an API key for Google.");
     expect(gemini.textContent).not.toContain("Get it");
     // The demo has an OpenAI key saved: the apps that read it are connected, and say where they run.
     expect(q("[data-connector-app=goose]")!.dataset.state).toBe("connected");
@@ -114,7 +114,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connectors (redesign)", () => {
     await click(btn);
     await waitFor(() => expect(q("[data-connector-app=claude-code]")!.dataset.state).toBe("connected"));
     await waitFor(() => expect(q("[data-connector-provider=anthropic]")!.dataset.state).toBe("connected"));
-    expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Claude sign-in, for Claude Code");
+    expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Claude Code sign-in");
     const connects = calls.filter((c) => c.op === "agents.connect").map((c) => c.args as { agents: string[]; signIn: boolean });
     expect(connects).toEqual([{ agents: ["claude-code"], signIn: true }]);
   });

@@ -1612,10 +1612,13 @@ mod tests {
                 h.id
             );
         }
-        // Hermes reads the Claude sign-in too.
+        // The subscription sign-ins stay with Claude Code and Codex.
         let hermes = harness::harness("hermes").unwrap();
-        assert!(hermes.keys.contains(&"CLAUDE_CODE_OAUTH_TOKEN"));
+        assert!(!hermes.keys.contains(&"CLAUDE_CODE_OAUTH_TOKEN"));
         assert!(!hermes.keys.contains(&"CODEX_AUTH_JSON"));
+        for h in harness::HARNESSES.iter().filter(|h| h.id != "claude-code") {
+            assert!(!h.keys.contains(&"CLAUDE_CODE_OAUTH_TOKEN"), "{}", h.id);
+        }
         // A harness added without a list of its own files only gets a note.
         let open = Harness {
             logins: None,

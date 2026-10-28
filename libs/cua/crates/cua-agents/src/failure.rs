@@ -123,12 +123,17 @@ pub fn classify(harness: &str, text: &str) -> Failure {
 
 /// What a person reads instead of the raw error, in plain words from the
 /// agent's side (it is the agent's reply).
-pub fn plain(f: &Failure) -> String {
+pub fn plain(f: &Failure, harness: &str) -> String {
     match f.class {
-        FailureClass::NeedsConnect => match f.provider.as_deref() {
-            Some("anthropic") => "I can't reach Claude yet. Connect Claude, then try again.".into(),
-            Some("openai") => "I can't reach OpenAI yet. Connect OpenAI, then try again.".into(),
-            _ => "I'm not connected to an AI provider yet. Connect one, then try again.".into(),
+        FailureClass::NeedsConnect => match (harness, f.provider.as_deref()) {
+            ("claude-code", _) => "I can't reach Claude yet. Connect Claude, then try again.".into(),
+            ("openai-codex", _) => "I can't reach OpenAI yet. Connect OpenAI, then try again.".into(),
+            // The subscription sign-ins are Claude Code's and Codex's alone.
+            ("hermes", _) => "Hermes needs an Anthropic API key or another provider. Your Claude subscription sign-in only works in Claude Code.".into(),
+            (h, _) => {
+                let name = crate::harness::harness(h).map_or("This agent", |h| h.name);
+                format!("{name} needs an API key for a provider it can use. Your Claude subscription sign-in only works in Claude Code.")
+            }
         },
         FailureClass::Error => "I couldn't finish that.".into(),
     }
@@ -183,7 +188,13 @@ mod tests {
     #[test]
     fn plain_words_never_carry_the_raw_error() {
         let f = classify("claude-code", "API Error: 401 {\"error\":\"invalid\"}");
-        let p = plain(&f);
+        let p = plain(&f, "claude-code");
+        let h = plain(
+            &classify("hermes", "not connected to any AI provider"),
+            "hermes",
+        );
+        assert!(h.starts_with("Hermes needs an Anthropic API key"), "{h}");
+        assert!(h.contains("only works in Claude Code"));
         assert!(!p.contains("401") && !p.contains('{'), "{p}");
         assert!(!p.contains('\u{b7}'));
     }

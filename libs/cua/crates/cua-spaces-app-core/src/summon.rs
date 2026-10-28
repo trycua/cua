@@ -581,11 +581,11 @@ mod tests {
         // A member runs on its owner's keys: woken, never checked against this device's.
         let p = plan(&input(&[]), "@hermes go");
         assert_eq!(p.steps[0].action, "wake");
-        // A new Hermes needs a sign-in to Anthropic, OpenAI or OpenRouter.
+        // A new Hermes needs Anthropic or OpenAI.
         let mut i = input(&[]);
         i.members.clear();
         let c = plan(&i, "@hermes go").steps[0].cant_wake.clone().unwrap();
-        assert!(c.detail.contains("Anthropic, OpenAI or OpenRouter"));
+        assert!(c.detail.contains("Anthropic or OpenAI"));
 
         // Codex isn't on This Mac: no settings page to open; Connect still asks for a key.
         let c = plan(&input(&[]), "@codex go").steps[0]

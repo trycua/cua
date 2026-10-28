@@ -5,13 +5,13 @@
       "apps": [
         "claude-code | not-connected | - | Connect | -",
         "codex | not-connected | Needs a sign-in to OpenAI. | Connect | -",
-        "gemini-cli | not-connected | Needs a sign-in to Google. | Connect | -",
-        "antigravity | not-connected | Needs a sign-in to Google. | Connect | -",
-        "opencode | not-connected | Needs a sign-in to Anthropic, OpenAI, Google or OpenRouter. | Connect | -",
-        "goose | not-connected | Needs a sign-in to OpenAI, Anthropic or OpenRouter. | Connect | -",
-        "pi | not-connected | Needs a sign-in to Anthropic, OpenAI, Google or OpenRouter. | Connect | -",
-        "hermes | not-connected | Needs a sign-in to Anthropic, OpenAI or OpenRouter. | Connect | -",
-        "openclaw | not-connected | Needs a sign-in to Anthropic, OpenAI or OpenRouter. | Connect | -",
+        "gemini-cli | not-connected | Needs an API key for Google. | Connect | -",
+        "antigravity | not-connected | Needs an API key for Google. | Connect | -",
+        "opencode | not-connected | Needs an API key for Anthropic, OpenAI, Google or OpenRouter. | Connect | -",
+        "goose | not-connected | Needs an API key for OpenAI, Anthropic or OpenRouter. | Connect | -",
+        "pi | not-connected | Needs an API key for Anthropic, OpenAI, Google or OpenRouter. | Connect | -",
+        "hermes | not-connected | Needs an API key for Anthropic or OpenAI. | Connect | -",
+        "openclaw | not-connected | Needs an API key for Anthropic, OpenAI or OpenRouter. | Connect | -",
         "vscode | connected | - | - | Connected"
       ],
       "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
@@ -28,8 +28,8 @@
       "apps": [
         "claude-code | connected | - | - | Connected",
         "codex | connecting | Enter the code in your browser… | Connect | -",
-        "gemini-cli | not-connected | Needs a sign-in to Google. | Connect | -",
-        "antigravity | not-connected | Needs a sign-in to Google. | Connect | -",
+        "gemini-cli | not-connected | Needs an API key for Google. | Connect | -",
+        "antigravity | not-connected | Needs an API key for Google. | Connect | -",
         "opencode | connected | Runs in your Spaces | - | Connected",
         "goose | connected | Runs in your Spaces | - | Connected",
         "pi | connected | Runs in your Spaces | - | Connected",
@@ -38,7 +38,7 @@
       ],
       "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
       "providers": [
-        "anthropic | connected | Claude sign-in, for Claude Code | Sign out",
+        "anthropic | connected | Claude Code sign-in | Sign out",
         "openai | connected | API key •••• 3f9a | Sign out",
         "google | not-connected | Not connected | Connect",
         "openrouter | not-connected | Not connected | Connect",
@@ -92,7 +92,7 @@
     {
       "detail": "claude-code",
       "note": null,
-      "signIn": "Signs in with Anthropic | Claude sign-in, for Claude Code | Sign out",
+      "signIn": "Signs in with Anthropic | Claude Code sign-in | Sign out",
       "status": "Connected",
       "toggles": [
         "skills | Cua skills | true",

@@ -7,7 +7,7 @@
 //! - The daemon sees a `git clone <https url>` (a command it runs or relays,
 //!   or one reported by a Space's helper), asks the remote for its refs with
 //!   no credentials at all, and, when that works, keeps a bare **mirror** of
-//!   the repository under `$CUA_HOME/cache/repos`: filled by one normal clone,
+//!   the repository under `$CUA_HOME/job-cache/repos`: filled by one normal clone,
 //!   verified (`git fsck` connectivity and each pack's trailer), then
 //!   refreshed in the background. Repositories that need a credential, hosts
 //!   on a private network, and anything else that is not plainly public are
@@ -97,6 +97,70 @@ pub struct Status {
     pub bytes_saved: u64,
 }
 
+/// `bytes` in words: `0 MB`, `340 MB`, `1.2 GB` (powers of 1024).
+pub fn size_words(bytes: u64) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let b = bytes as f64;
+    if b >= GB {
+        let g = b / GB;
+        if g >= 10.0 || (g - g.round()).abs() < 0.05 {
+            format!("{} GB", g.round() as u64)
+        } else {
+            format!("{g:.1} GB")
+        }
+    } else {
+        format!("{} MB", (b / MB).round() as u64)
+    }
+}
+
+/// `seconds` in words: `20 seconds`, `about 2 minutes`, `about 3 hours`.
+pub fn time_words(seconds: u64) -> String {
+    match seconds {
+        0..=59 => format!("{seconds} second{}", if seconds == 1 { "" } else { "s" }),
+        60..=5399 => {
+            let m = (seconds as f64 / 60.0).round() as u64;
+            format!("about {m} minute{}", if m == 1 { "" } else { "s" })
+        }
+        _ => {
+            let h = (seconds as f64 / 3600.0).round() as u64;
+            format!("about {h} hour{}", if h == 1 { "" } else { "s" })
+        }
+    }
+}
+
+impl Status {
+    /// What is held, in plain words: `Repos: 3, 1.2 GB of 5 GB`.
+    pub fn size_line(&self) -> String {
+        format!(
+            "Repos: {}, {} of {}",
+            self.repos,
+            size_words(self.bytes),
+            size_words(self.cap_bytes)
+        )
+    }
+
+    /// What the last week saved, in plain words. Empty until a clone was
+    /// seen.
+    pub fn week_line(&self) -> String {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            return "No clones yet this week".to_string();
+        }
+        let pct = (f64::from(self.hits) * 100.0 / f64::from(total)).round() as u32;
+        if self.hits == 0 {
+            return format!(
+                "Last week: {total} clone{} downloaded, none from the cache yet",
+                if total == 1 { "" } else { "s" }
+            );
+        }
+        format!(
+            "Last week: {pct}% of clones came from the cache, {} saved",
+            time_words(self.seconds_saved)
+        )
+    }
+}
+
 /// The cache of one machine: a directory and its settings. Cheap to make;
 /// what is shared between calls (one fill at a time, which repositories
 /// were just found private) is process-wide.
@@ -158,9 +222,11 @@ impl RepoCache {
         self
     }
 
-    /// `$CUA_HOME/cache/repos`.
+    /// `$CUA_HOME/job-cache/repos`: under the one directory of the cua home
+    /// that the built-in Linux runtime of a Mac already shares into its VM
+    /// (a container there can only bind what the VM sees).
     pub fn default_root() -> PathBuf {
-        cua_home::cua_home().join("cache").join("repos")
+        cua_home::cua_home().join("job-cache").join("repos")
     }
 
     /// The cache in [`RepoCache::default_root`].

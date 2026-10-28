@@ -497,6 +497,33 @@ async fn resolve_placement_inner(
     })
 }
 
+/// Set once an engine refused a start because of the repo cache's mount:
+/// the daemon offers it no more (until it restarts).
+static REPO_CACHE_MOUNT_REFUSED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Whether `e` (a refused start of `s`) is about the repo cache's mount.
+fn is_repo_cache_mount_error(s: &StartSpec, e: &VmmError) -> bool {
+    if !s
+        .mounts
+        .iter()
+        .any(|m| m.guest == cua_sandbox_core::repo_cache::GUEST_ROOT)
+    {
+        return false;
+    }
+    let text = e.to_string().to_ascii_lowercase();
+    [
+        "mount",
+        "bind",
+        "not shared",
+        "file sharing",
+        "denied",
+        "no such file",
+    ]
+    .iter()
+    .any(|w| text.contains(w))
+}
+
 fn os_of(s: &str) -> GuestOs {
     match s.to_ascii_lowercase().as_str() {
         "macos" | "darwin" => GuestOs::Macos,
@@ -868,6 +895,31 @@ impl VmmLocal {
     /// The engine local Linux Spaces use ([`managed::choose`]): this Mac's
     /// own, or the built-in runtime. Chosen on first use, without booting
     /// anything.
+    /// The repo cache as a read-only mount of a Linux container Space (see
+    /// `cua-repo-cache`): only where the engine can bind this machine's
+    /// directory, and only while the cache is on.
+    async fn repo_cache_mount(&self, backend: BackendKind, os: &str) -> Option<cua_vmm::Mount> {
+        if backend != BackendKind::Container
+            || os_of(os) != GuestOs::Linux
+            || REPO_CACHE_MOUNT_REFUSED.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return None;
+        }
+        let root = cua_sandbox_core::repo_cache::current().mount_source()?;
+        // The built-in runtime's VM shares only cua's job directories (the
+        // cache lives in one), and not before it booted sharing them.
+        if let Ok(Engine::Builtin(_)) = self.engine().await
+            && !(managed::is_shared(&root) && (!managed::running() || managed::shares_job_dirs()))
+        {
+            return None;
+        }
+        Some(cua_vmm::Mount {
+            host: root,
+            guest: cua_sandbox_core::repo_cache::GUEST_ROOT.to_string(),
+            read_only: true,
+        })
+    }
+
     async fn engine(&self) -> std::result::Result<Engine, VmmError> {
         let source = LinuxSource::current();
         let mut slot = self.container.lock().await;
@@ -1659,6 +1711,11 @@ impl VmmLocal {
         s.egress = spec.egress.clone();
         s.disk_size_gb = spec.disk_size_gb;
         s.mounts = spec.mounts.clone();
+        if let Some(m) = self.repo_cache_mount(p.backend, &spec.os).await
+            && !s.mounts.iter().any(|x| x.guest == m.guest)
+        {
+            s.mounts.push(m);
+        }
         // The layers from the manifest: progress knows the total, and the
         // layers the engine already has, from the first byte.
         s.pull_layers = r
@@ -1889,7 +1946,7 @@ impl LocalRuntime for VmmLocal {
     ) -> RuntimeResult<(LocalInstance, Option<cua_sandbox_core::ImageInfo>)> {
         let started = std::time::Instant::now();
         let Prepared {
-            spec: s,
+            spec: mut s,
             backend,
             rt,
             image,
@@ -1931,7 +1988,20 @@ impl LocalRuntime for VmmLocal {
             ));
         }
         let start_at = std::time::Instant::now();
-        let inst = rt.start(&s).await.map_err(rt_err)?;
+        let inst = match rt.start(&s).await {
+            Ok(i) => i,
+            // The repo cache is an extra: a start that this engine refuses
+            // because of its mount (a directory it does not share) runs
+            // again without it, and the daemon stops offering it.
+            Err(e) if is_repo_cache_mount_error(&s, &e) => {
+                tracing::warn!(error = %e, "repo cache mount refused; starting without it");
+                REPO_CACHE_MOUNT_REFUSED.store(true, std::sync::atomic::Ordering::SeqCst);
+                s.mounts
+                    .retain(|m| m.guest != cua_sandbox_core::repo_cache::GUEST_ROOT);
+                rt.start(&s).await.map_err(rt_err)?
+            }
+            Err(e) => return Err(rt_err(e)),
+        };
         // Behind a port forward (the probe on cua-spacesd's port says so),
         // ready once it serves an authenticated call with the Space's
         // token: see `guest_identity::wait_accepts`.

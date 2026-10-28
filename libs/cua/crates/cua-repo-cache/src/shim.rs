@@ -13,6 +13,9 @@ pub const HELPER: &str = include_str!("../assets/git-remote-cuarepo");
 /// The helper's file name (`git remote-<name>` finds it).
 pub const HELPER_NAME: &str = "git-remote-cuarepo";
 
+/// What the install script prints when the Space uses the cache now.
+pub const INSTALLED_MARKER: &str = "cua-repo-cache-installed";
+
 /// Where the helper keeps its log in the Space.
 pub const GUEST_LOG: &str = "/tmp/.cua-repo-cache.log";
 
@@ -75,6 +78,7 @@ done
 [ "${{ok:-0}}" = 1 ] || exit 0
 git config --system --get-all include.path 2>/dev/null | grep -qx "$root/gitconfig" \
   || git config --system --add include.path "$root/gitconfig" 2>/dev/null
+git config --system --get-all include.path 2>/dev/null | grep -qx "$root/gitconfig" && echo {INSTALLED_MARKER}
 exit 0
 "#
     )

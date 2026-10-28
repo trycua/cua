@@ -439,3 +439,39 @@ fn the_helper_text_is_written_executable_and_is_valid_shell() {
     let out = Command::new("sh").arg("-n").arg(&p).output().unwrap();
     assert!(out.status.success(), "{out:?}");
 }
+
+#[test]
+fn the_summary_is_plain_words() {
+    use crate::{Status, size_words, time_words};
+    assert_eq!(size_words(0), "0 MB");
+    assert_eq!(size_words(340 * 1024 * 1024), "340 MB");
+    assert_eq!(size_words(1_288_490_189), "1.2 GB");
+    assert_eq!(size_words(5 << 30), "5 GB");
+    assert_eq!(size_words(12 << 30), "12 GB");
+    assert_eq!(time_words(20), "20 seconds");
+    assert_eq!(time_words(125), "about 2 minutes");
+    assert_eq!(time_words(3 * 3600), "about 3 hours");
+    let s = Status {
+        enabled: true,
+        repos: 3,
+        bytes: 1_288_490_189,
+        cap_bytes: 5 << 30,
+        hits: 8,
+        misses: 2,
+        seconds_saved: 125,
+        bytes_saved: 0,
+    };
+    assert_eq!(s.size_line(), "Repos: 3, 1.2 GB of 5 GB");
+    assert_eq!(
+        s.week_line(),
+        "Last week: 80% of clones came from the cache, about 2 minutes saved"
+    );
+    assert_eq!(Status::default().week_line(), "No clones yet this week");
+    // No dot separators and no word the product avoids.
+    for l in [s.size_line(), s.week_line()] {
+        assert!(
+            !l.contains('\u{b7}') && !l.to_lowercase().contains("device"),
+            "{l}"
+        );
+    }
+}

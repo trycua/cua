@@ -35,7 +35,7 @@ pub struct Key {
 }
 
 /// Every setting, in display order.
-pub const KEYS: [Key; 17] = [
+pub const KEYS: [Key; 19] = [
     Key {
         name: "default.on",
         env: "CUA_DEFAULT_ON",
@@ -119,6 +119,18 @@ pub const KEYS: [Key; 17] = [
         env: "CUA_PLACEMENT_OVERFLOW",
         default: "on",
         description: "when no location is given and a linked cloud has a budget (`cua cloud budget`), Spaces go to this machine first and overflow into your clouds when it is full, never past the budget (off: this machine only)",
+    },
+    Key {
+        name: "cache.repos",
+        env: "CUA_CACHE_REPOS",
+        default: "on",
+        description: "the repo cache: public git repositories this machine keeps a verified copy of, so a repeat `git clone` in a Space starts from it (on, off). Only public repositories, only on this machine's disk; `cua host cache clear` empties it",
+    },
+    Key {
+        name: "cache.repos_size_gb",
+        env: "CUA_CACHE_REPOS_SIZE_GB",
+        default: "auto",
+        description: "the most disk the repo cache may use, in GB (auto: the smaller of 5 GB and a tenth of the free disk); the least recently used repositories go first",
     },
     Key {
         name: "pool.memory_percent",
@@ -517,6 +529,27 @@ impl Settings {
             .unwrap_or(true)
     }
 
+    /// The repo cache's settings: whether it is on (`cache.repos`, default
+    /// on) and its size cap in bytes (`cache.repos_size_gb`; `None`: auto).
+    pub fn repo_cache(&self) -> (bool, Option<u64>) {
+        let on = key("cache.repos")
+            .map(|k| self.entry(k).value)
+            .map(|v| {
+                !matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "off" | "false" | "0" | "no"
+                )
+            })
+            .unwrap_or(true);
+        let cap = key("cache.repos_size_gb")
+            .map(|k| self.entry(k).value)
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|g| g.is_finite() && *g >= 0.0)
+            .map(|g| (g * f64::from(1u32 << 30)) as u64);
+        (on, cap)
+    }
+
     /// The default kind and where it came from.
     pub fn default_kind(&self) -> Result<(Kind, Source), SettingsError> {
         self.parsed(KEYS[1], Kind::parse)
@@ -565,6 +598,38 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
                 )));
             }
         },
+        "cache.repos" => match v.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => "on".into(),
+            "0" | "false" | "no" | "off" => "off".into(),
+            _ => {
+                return Err(SettingsError(format!(
+                    "cache.repos: expected on or off, got {v:?}"
+                )));
+            }
+        },
+        "cache.repos_size_gb" => {
+            if v.eq_ignore_ascii_case("auto") || v.is_empty() {
+                "auto".into()
+            } else {
+                let g: f64 = v.parse().map_err(|_| {
+                    SettingsError(format!(
+                        "cache.repos_size_gb: expected auto or a number of GB, got {v:?}"
+                    ))
+                })?;
+                if !g.is_finite() || !(0.0..=100_000.0).contains(&g) {
+                    return Err(SettingsError(
+                        "cache.repos_size_gb: expected auto or a number of GB between 0 and 100000"
+                            .into(),
+                    ));
+                }
+                // 0 means nothing is cached.
+                if g.fract() == 0.0 {
+                    format!("{}", g as u64)
+                } else {
+                    format!("{g}")
+                }
+            }
+        }
         "pool.auto" => match v.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => "on".into(),
             "0" | "false" | "no" | "off" => "off".into(),
@@ -770,6 +835,30 @@ mod tests {
         let list = s.list();
         assert_eq!(list.len(), KEYS.len());
         assert!(list.iter().all(|e| e.source == Source::Default));
+    }
+
+    /// The repo cache is on by default with an automatic size; the words and
+    /// numbers a person sets are checked.
+    #[test]
+    fn the_repo_cache_settings() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = settings(d.path(), &[]);
+        assert_eq!(s.repo_cache(), (true, None));
+        s.set(key("cache.repos").unwrap(), "off").unwrap();
+        s.set(key("cache.repos_size_gb").unwrap(), "2.5").unwrap();
+        assert_eq!(s.repo_cache(), (false, Some(2_684_354_560)));
+        s.set(key("cache.repos").unwrap(), "yes").unwrap();
+        s.set(key("cache.repos_size_gb").unwrap(), "auto").unwrap();
+        assert_eq!(s.repo_cache(), (true, None));
+        let e = s
+            .set(key("cache.repos_size_gb").unwrap(), "lots")
+            .unwrap_err();
+        assert!(e.0.contains("cache.repos_size_gb"), "{e}");
+        let e = s.set(key("cache.repos").unwrap(), "maybe").unwrap_err();
+        assert!(e.0.contains("expected on or off"), "{e}");
+        // The environment wins over the file.
+        let s = settings(d.path(), &[("CUA_CACHE_REPOS", "off")]);
+        assert_eq!(s.repo_cache().0, false);
     }
 
     /// explicit > env > config > default, for each axis.

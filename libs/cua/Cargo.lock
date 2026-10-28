@@ -3005,6 +3005,7 @@ dependencies = [
  "bytes",
  "cua-home",
  "cua-image",
+ "cua-repo-cache",
  "cua-sandbox-core",
  "cua-spacesd-client",
  "cua-vmm",

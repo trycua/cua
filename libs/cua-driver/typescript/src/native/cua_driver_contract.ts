@@ -6331,6 +6331,11 @@ export type WindowElement = {
     valueDescription?: string,
     enabled?: boolean,
     selected?: boolean,
+    /**
+     * Whether the element is a password field. Windows reports it from UIA
+     * `IsPassword` on text-entry elements; absent means unknown.
+     */
+    isPassword?: boolean,
     inWebContent?: boolean,
     actions?: Array<string>,
     parentIndex?: bigint,
@@ -6369,6 +6374,7 @@ const FfiConverterTypeWindowElement = (() => {
                 valueDescription: FfiConverterOptionalString.read(from),
                 enabled: FfiConverterOptionalBoolean.read(from),
                 selected: FfiConverterOptionalBoolean.read(from),
+                isPassword: FfiConverterOptionalBoolean.read(from),
                 inWebContent: FfiConverterOptionalBoolean.read(from),
                 actions: FfiConverterOptionalSequenceString.read(from),
                 parentIndex: FfiConverterOptionalUInt64.read(from),
@@ -6387,6 +6393,7 @@ const FfiConverterTypeWindowElement = (() => {
             FfiConverterOptionalString.write(value.valueDescription, into);
             FfiConverterOptionalBoolean.write(value.enabled, into);
             FfiConverterOptionalBoolean.write(value.selected, into);
+            FfiConverterOptionalBoolean.write(value.isPassword, into);
             FfiConverterOptionalBoolean.write(value.inWebContent, into);
             FfiConverterOptionalSequenceString.write(value.actions, into);
             FfiConverterOptionalUInt64.write(value.parentIndex, into);
@@ -6404,6 +6411,7 @@ const FfiConverterTypeWindowElement = (() => {
              FfiConverterOptionalString.allocationSize(value.valueDescription) +
              FfiConverterOptionalBoolean.allocationSize(value.enabled) +
              FfiConverterOptionalBoolean.allocationSize(value.selected) +
+             FfiConverterOptionalBoolean.allocationSize(value.isPassword) +
              FfiConverterOptionalBoolean.allocationSize(value.inWebContent) +
              FfiConverterOptionalSequenceString.allocationSize(value.actions) +
              FfiConverterOptionalUInt64.allocationSize(value.parentIndex) +

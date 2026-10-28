@@ -1798,6 +1798,12 @@
                     "null"
                   ]
                 },
+                "is_password": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "label": {
                   "type": [
                     "string",

@@ -30,7 +30,10 @@ pub enum WindowScope {
     /// AXWindow claims it. The screenshot is still the requested window; the
     /// AX surface is not, so callers report a degraded (empty-tree) snapshot
     /// rather than an error.
-    AxUnresolved { ax_window_count: usize },
+    AxUnresolved {
+        ax_window_count: usize,
+        ax_windows_error: Option<crate::ax::bindings::AXError>,
+    },
 }
 
 impl WindowScope {
@@ -125,6 +128,7 @@ pub fn scope_from_owner(owner: &WindowOwner) -> Option<WindowScope> {
 pub fn decide_window_scope<F>(
     candidates: &[TopLevelCandidate],
     requested: u32,
+    ax_windows_error: Option<crate::ax::bindings::AXError>,
     resolve_owner: F,
 ) -> ScopeDecision
 where
@@ -144,6 +148,7 @@ where
         // at all.
         let scope = scope_from_owner(&resolve_owner()).unwrap_or(WindowScope::AxUnresolved {
             ax_window_count: candidates.iter().filter(|c| c.role == "AXWindow").count(),
+            ax_windows_error,
         });
         return ScopeDecision {
             scope,
@@ -201,7 +206,7 @@ mod tests {
             TopLevelCandidate::new("AXWindow", Some(11)),
             TopLevelCandidate::new("AXWindow", Some(22)),
         ];
-        let d = decide_window_scope(&candidates, 22, never_called);
+        let d = decide_window_scope(&candidates, 22, None, never_called);
         assert_eq!(d.scope, WindowScope::Matched);
         assert_eq!(d.walk, vec![0, 2], "menu bar + requested window only");
     }
@@ -213,7 +218,7 @@ mod tests {
             TopLevelCandidate::new("AXWindow", Some(11)).with_subrole("AXStandardWindow"),
             TopLevelCandidate::new("AXWindow", Some(22)).with_subrole("AXDialog"),
         ];
-        let d = decide_window_scope(&candidates, 22, never_called);
+        let d = decide_window_scope(&candidates, 22, None, never_called);
         assert_eq!(d.scope, WindowScope::Matched);
         assert_eq!(d.walk, vec![2], "dialog snapshot must not carry AXMenuBar");
     }
@@ -227,7 +232,7 @@ mod tests {
                 .with_subrole("AXStandardWindow")
                 .with_identifier("open-panel"),
         ];
-        let d = decide_window_scope(&candidates, 22, never_called);
+        let d = decide_window_scope(&candidates, 22, None, never_called);
         assert_eq!(d.scope, WindowScope::Matched);
         assert_eq!(
             d.walk,
@@ -244,9 +249,34 @@ mod tests {
             TopLevelCandidate::new("AXMenuBar", None),
             TopLevelCandidate::new("AXWindow", Some(11)),
         ];
-        let d = decide_window_scope(&candidates, 67340, || WindowOwner::SamePid);
-        assert_eq!(d.scope, WindowScope::AxUnresolved { ax_window_count: 1 });
+        let d = decide_window_scope(&candidates, 67340, None, || WindowOwner::SamePid);
+        assert_eq!(
+            d.scope,
+            WindowScope::AxUnresolved {
+                ax_window_count: 1,
+                ax_windows_error: None
+            }
+        );
         assert!(d.walk.is_empty(), "must not walk the menu bar instead");
+    }
+
+    #[test]
+    fn an_ax_windows_read_error_survives_the_scope_decision() {
+        let candidates = [TopLevelCandidate::new("AXMenuBar", None)];
+        let d = decide_window_scope(
+            &candidates,
+            67340,
+            Some(crate::ax::bindings::kAXErrorCannotComplete),
+            || WindowOwner::SamePid,
+        );
+        assert_eq!(
+            d.scope,
+            WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: Some(crate::ax::bindings::kAXErrorCannotComplete)
+            }
+        );
+        assert!(d.walk.is_empty());
     }
 
     #[test]
@@ -255,7 +285,7 @@ mod tests {
             TopLevelCandidate::new("AXMenuBar", None),
             TopLevelCandidate::new("AXWindow", Some(11)),
         ];
-        let d = decide_window_scope(&candidates, 67340, panel_service_owner);
+        let d = decide_window_scope(&candidates, 67340, None, panel_service_owner);
         assert_eq!(
             d.scope,
             WindowScope::OwnerPidMismatch {
@@ -269,7 +299,7 @@ mod tests {
     #[test]
     fn stale_id_is_not_found() {
         let candidates = [TopLevelCandidate::new("AXWindow", Some(11))];
-        let d = decide_window_scope(&candidates, 67340, || WindowOwner::Unknown);
+        let d = decide_window_scope(&candidates, 67340, None, || WindowOwner::Unknown);
         assert_eq!(d.scope, WindowScope::NotFound);
         assert!(d.walk.is_empty());
     }
@@ -282,8 +312,14 @@ mod tests {
             TopLevelCandidate::new("AXSheet", None),
             TopLevelCandidate::new("AXMenuBar", None),
         ];
-        let d = decide_window_scope(&candidates, 67340, || WindowOwner::SamePid);
-        assert_eq!(d.scope, WindowScope::AxUnresolved { ax_window_count: 0 });
+        let d = decide_window_scope(&candidates, 67340, None, || WindowOwner::SamePid);
+        assert_eq!(
+            d.scope,
+            WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: None
+            }
+        );
         assert!(d.walk.is_empty());
     }
 
@@ -296,7 +332,7 @@ mod tests {
             TopLevelCandidate::new("AXSheet", None),
             TopLevelCandidate::new("AXWindow", Some(11)),
         ];
-        let d = decide_window_scope(&candidates, 11, never_called);
+        let d = decide_window_scope(&candidates, 11, None, never_called);
         assert_eq!(d.scope, WindowScope::Matched);
         assert_eq!(d.walk, vec![0, 1]);
     }
@@ -304,8 +340,14 @@ mod tests {
     #[test]
     fn menu_bar_only_app_has_no_ax_windows() {
         let candidates = [TopLevelCandidate::new("AXMenuBar", None)];
-        let d = decide_window_scope(&candidates, 11, || WindowOwner::SamePid);
-        assert_eq!(d.scope, WindowScope::AxUnresolved { ax_window_count: 0 });
+        let d = decide_window_scope(&candidates, 11, None, || WindowOwner::SamePid);
+        assert_eq!(
+            d.scope,
+            WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: None
+            }
+        );
         assert!(d.walk.is_empty());
     }
 
@@ -316,7 +358,7 @@ mod tests {
             WindowOwner::Unknown,
             panel_service_owner(),
         ] {
-            let d = decide_window_scope(&[], 11, || owner.clone());
+            let d = decide_window_scope(&[], 11, None, || owner.clone());
             assert!(d.walk.is_empty());
             assert!(!d.scope.is_matched());
         }
@@ -339,7 +381,7 @@ mod tests {
             WindowOwner::Unknown,
             panel_service_owner(),
         ] {
-            let d = decide_window_scope(&candidates, 67340, || owner.clone());
+            let d = decide_window_scope(&candidates, 67340, None, || owner.clone());
             assert!(
                 !d.scope.is_matched(),
                 "id 67340 is claimed by nothing; scope was {:?}",

@@ -362,6 +362,9 @@ export interface Machine {
   /** This machine only: signed in, but it cannot open the account's
    * machines (not enrolled): each machine's detail says why. */
   accessNotice?: MachineAccessNotice;
+  /** This machine only: its id on the relay once it is set up for access
+   * (`relay:<id>` is its desktop Space, which an agent on another machine names). */
+  relayId?: string;
 }
 
 /** The words for a machine's Spaces, as the core says them
@@ -562,6 +565,7 @@ export function toMachines(rows: MachineRow[], spaces: Space[], core?: CoreClien
       ...(m.spacesLabel != null ? { spacesLabel: m.spacesLabel } : {}),
       ...(m.device ? { device: true } : {}),
       ...(m.current && m.accessNotice ? { accessNotice: m.accessNotice } : {}),
+      ...(m.current && m.host?.machineId ? { relayId: m.host.machineId } : {}),
     };
   });
 }

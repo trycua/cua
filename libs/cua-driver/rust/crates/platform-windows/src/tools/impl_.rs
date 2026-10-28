@@ -7851,21 +7851,47 @@ impl Tool for DragTool {
             let duration_ms = input.duration_ms.unwrap_or(500);
             let steps = input.steps.unwrap_or(20) as usize;
             let button = input.button.unwrap_or(ClickButton::Left).as_str();
-            let hwnd = match crate::input::mouse::foreground_window() {
+            // Issue #5783: resolve the window that actually owns the drag
+            // start point instead of the foreground window. A desktop-scope
+            // drag is coordinate-routed, so the pointer lands on whatever is
+            // under (from_x, from_y). Using the foreground window made the
+            // drag target a different window than the one being dragged —
+            // for a `WS_EX_NOACTIVATE` overlay (Wails floating ball) the
+            // foreground window is never the ball at all, so the drag could
+            // never move it. Mirror the desktop click path, which resolves
+            // the root window under the point via WindowFromPoint.
+            let hwnd = match crate::input::mouse::window_root_at_point(from_x, from_y) {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
+            // Issue #5783: `delivery_mode` is not part of the typed DragInput
+            // projection, so read it straight off the raw args like the other
+            // input tools do.
+            let foreground = DeliveryMode::from_args(&args).is_foreground();
             let native_drag = tokio::task::spawn_blocking(move || {
-                crate::input::mouse::send_drag_synthesized(
-                    hwnd,
-                    from_x,
-                    from_y,
-                    to_x,
-                    to_y,
-                    duration_ms,
-                    steps,
-                    &button,
-                )
+                if foreground {
+                    crate::input::mouse::send_drag_synthesized_active(
+                        hwnd,
+                        from_x,
+                        from_y,
+                        to_x,
+                        to_y,
+                        duration_ms,
+                        steps,
+                        &button,
+                    )
+                } else {
+                    crate::input::mouse::send_drag_synthesized(
+                        hwnd,
+                        from_x,
+                        from_y,
+                        to_x,
+                        to_y,
+                        duration_ms,
+                        steps,
+                        &button,
+                    )
+                }
             });
             let visual_drag = track_overlay_drag(
                 cursor_key.clone(),

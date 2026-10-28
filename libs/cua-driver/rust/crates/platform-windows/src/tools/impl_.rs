@@ -3490,7 +3490,7 @@ impl Tool for ClickTool {
             // swap and UIPI checks needed for Chromium and retained-mode apps.
             let send_result = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
                 let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::send_click_synthesized_active_mods(
+                crate::input::send_click_synthesized_desktop_mods(
                     hwnd_u, sx, sy, count, &button, &mod_refs,
                 )?;
                 Ok(hwnd_u)

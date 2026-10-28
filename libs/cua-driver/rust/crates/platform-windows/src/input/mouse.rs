@@ -507,7 +507,15 @@ pub fn send_click_synthesized_mods(
     button: &str,
     modifiers: &[&str],
 ) -> Result<()> {
-    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, false)
+    send_click_synthesized_mods_impl(
+        target,
+        sx,
+        sy,
+        count,
+        button,
+        modifiers,
+        ClickMode::NonActivating,
+    )
 }
 
 /// SendInput click for an explicit foreground request. Unlike the historical
@@ -522,7 +530,26 @@ pub fn send_click_synthesized_active_mods(
     button: &str,
     modifiers: &[&str],
 ) -> Result<()> {
-    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, true)
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, ClickMode::Window)
+}
+
+/// Explicit desktop clicks leave the hardware cursor at the requested point.
+pub fn send_click_synthesized_desktop_mods(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+) -> Result<()> {
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, ClickMode::Desktop)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ClickMode {
+    NonActivating,
+    Window,
+    Desktop,
 }
 
 fn send_click_synthesized_mods_impl(
@@ -532,8 +559,9 @@ fn send_click_synthesized_mods_impl(
     count: usize,
     button: &str,
     modifiers: &[&str],
-    activate: bool,
+    mode: ClickMode,
 ) -> Result<()> {
+    let activate = mode != ClickMode::NonActivating;
     let target = HWND(target as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -620,7 +648,7 @@ fn send_click_synthesized_mods_impl(
         // Save previous foreground + cursor position so we can restore.
         let prev_fg = GetForegroundWindow();
         let mut prev_cursor = POINT::default();
-        let _ = GetCursorPos(&mut prev_cursor);
+        let prev_cursor_valid = GetCursorPos(&mut prev_cursor).is_ok();
 
         // Bring the target to the top of the VISIBLE z-order so the
         // coordinate-routed SendInput mouse click lands on it — WITHOUT stealing
@@ -744,7 +772,17 @@ fn send_click_synthesized_mods_impl(
                     SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
                 );
             }
-            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            if prev_cursor_valid {
+                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            }
+        } else if mode == ClickMode::Window && prev_cursor_valid {
+            // Restore our injected movement, but leave a later user/app move alone.
+            let mut current_cursor = POINT::default();
+            if GetCursorPos(&mut current_cursor).is_ok()
+                && cursor_still_at_injected_click(current_cursor.x, current_cursor.y, sx, sy)
+            {
+                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            }
         }
         drop(noactivate);
         if !sent_ok {
@@ -771,6 +809,10 @@ fn send_click_synthesized_mods_impl(
     }
 
     Ok(())
+}
+
+fn cursor_still_at_injected_click(x: i32, y: i32, click_x: i32, click_y: i32) -> bool {
+    x.abs_diff(click_x) <= 2 && y.abs_diff(click_y) <= 2
 }
 
 /// Press-hold-move-release drag via `SendInput`, used by the `drag` tool's
@@ -1241,6 +1283,20 @@ mod nc_hit_tests {
         assert_eq!(classify_nc_move_resize_hit(3), None); // HTSYSMENU (click, not drag-move)
         assert_eq!(classify_nc_move_resize_hit(-1), None); // HTERROR
         assert_eq!(classify_nc_move_resize_hit(18), None); // HTBORDER (non-resizable edge)
+    }
+}
+
+#[cfg(test)]
+mod cursor_restore_tests {
+    use super::cursor_still_at_injected_click;
+
+    #[test]
+    fn restore_only_while_the_cursor_remains_at_the_injected_point() {
+        assert!(cursor_still_at_injected_click(-100, 200, -100, 200));
+        assert!(cursor_still_at_injected_click(-98, 198, -100, 200));
+        assert!(!cursor_still_at_injected_click(-97, 200, -100, 200));
+        assert!(!cursor_still_at_injected_click(-100, 203, -100, 200));
+        assert!(!cursor_still_at_injected_click(i32::MIN, 0, i32::MAX, 0));
     }
 }
 

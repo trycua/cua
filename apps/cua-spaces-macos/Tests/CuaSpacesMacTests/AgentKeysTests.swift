@@ -18,7 +18,7 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
     func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
         calls.append((tool, args))
         switch tool {
-        case "agent_keys.list": break
+        case "agent_keys.list", "agent_keys.check": break
         case "agent_keys.set":
             let provider = args["provider"] as? String ?? ""
             let env = provider == "anthropic" ? "ANTHROPIC_API_KEY" : provider == "openai" ? "OPENAI_API_KEY" : args["env"] as? String ?? ""

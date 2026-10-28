@@ -148,7 +148,8 @@ struct MachinesViewTests {
         #expect(view.groups.first { $0.id == "devices" } == nil)
         #expect(view.groups.contains { $0.ids.contains("dev_work") })
         // No Space actions on a machine: its Spaces only lead to the Space.
-        #expect(view.machines.allSatisfy { $0.newSpace.label == "New Space here" })
+        #expect(view.machines.filter { $0.line != "Signed in, not sharing" }.allSatisfy { $0.newSpace.label == "New Space here" })
+        #expect(work?.newSpace.label == "")
 
         let bridge = WebUIBridge(model: m, allowedOrigins: [])
         let answer = bridge.machines()["view"] as? [String: Any]

@@ -305,6 +305,8 @@ export interface PendingMachine {
   /** `macOS`, `Windows`, `Linux`, or empty. */
   os: string;
   line: string;
+  /** When it last reached the relay (Unix seconds). */
+  since: number | null;
   /** The question the "Add this machine?" page asks. */
   text: string;
   machine: string | null;

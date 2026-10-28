@@ -57,6 +57,8 @@ pub struct PendingMachine {
     pub os: String,
     /// The row's one line.
     pub line: String,
+    /// When it last reached the relay (Unix seconds): "asked 2 minutes ago".
+    pub since: Option<u64>,
     /// The question the "Add this machine?" page asks.
     pub text: String,
     /// The relay machine (`kind` machine).
@@ -153,6 +155,7 @@ pub fn view(input: &DevicesInput, now: u64, read_error: Option<&str>) -> Machine
             name: m.title.clone(),
             os: String::new(),
             line: "Waiting to be added".into(),
+            since: None,
             text: format!(
                 "Add \u{201c}{}\u{201d} to your machines? It signed in without proof it was you. Only add a machine you recognize.",
                 m.title
@@ -167,25 +170,32 @@ pub fn view(input: &DevicesInput, now: u64, read_error: Option<&str>) -> Machine
             not_me_label: NOT_ME_LABEL.into(),
         })
         .collect();
-    pending.extend(v.approvals.iter().map(|a| PendingMachine {
-        id: a.device_id.clone(),
-        kind: PendingKind::SignIn,
-        name: a.name.clone(),
-        os: os_of(&a.device_id),
-        line: if a.expired {
-            "Needs a quick check".into()
-        } else {
-            "Waiting to be added".into()
-        },
-        text: a.text.clone(),
-        machine: None,
-        device: Some(a.device_id.clone()),
-        expired: a.expired,
-        requires_presence: a.requires_presence,
-        notify_title: a.notify_title.clone(),
-        notify_body: a.notify_body.clone(),
-        add_label: ADD_LABEL.into(),
-        not_me_label: NOT_ME_LABEL.into(),
+    pending.extend(v.approvals.iter().map(|a| {
+        PendingMachine {
+            id: a.device_id.clone(),
+            kind: PendingKind::SignIn,
+            name: a.name.clone(),
+            os: os_of(&a.device_id),
+            line: if a.expired {
+                "Needs a quick check".into()
+            } else {
+                "Waiting to be added".into()
+            },
+            since: input
+                .devices
+                .iter()
+                .find(|d| d.id == a.device_id)
+                .and_then(|d| d.last_seen),
+            text: a.text.clone(),
+            machine: None,
+            device: Some(a.device_id.clone()),
+            expired: a.expired,
+            requires_presence: a.requires_presence,
+            notify_title: a.notify_title.clone(),
+            notify_body: a.notify_body.clone(),
+            add_label: ADD_LABEL.into(),
+            not_me_label: NOT_ME_LABEL.into(),
+        }
     }));
 
     let this = &v.this_device;

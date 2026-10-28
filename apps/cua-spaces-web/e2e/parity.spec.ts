@@ -45,7 +45,6 @@ const PATHS: Record<ParityScreen, string> = {
   "settings/about": "/settings/about",
   "settings/advanced": "/settings/advanced",
   "settings/connected-apps": "/settings/connectors",
-  "settings/devices": "/settings/devices",
   notifications: "/notifications",
   machines: "/machines",
   agents: "/agents/all",

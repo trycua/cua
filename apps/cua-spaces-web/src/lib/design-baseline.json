@@ -58,6 +58,10 @@
   "components/keyvault/options-dialog.tsx": {
     "partial-line": 1
   },
+  "components/machines/account-parts.tsx": {
+    "partial-line": 8,
+    "outlined-box": 2
+  },
   "components/markdown.tsx": {
     "partial-line": 2,
     "outlined-box": 1,
@@ -90,6 +94,7 @@
   },
   "components/shell/sidebar.tsx": {
     "partial-line": 3,
+    "pill": 1,
     "outlined-box": 1,
     "radius": 1
   },
@@ -181,10 +186,6 @@
   },
   "routes/settings/about.tsx": {
     "partial-line": 1
-  },
-  "routes/settings/devices.tsx": {
-    "outlined-box": 3,
-    "partial-line": 3
   },
   "routes/settings/route.tsx": {
     "radius": 1

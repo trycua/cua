@@ -165,7 +165,7 @@ function SpaceDetailPage() {
   // Devices with the enroll sheet.
   const enroll = () => {
     devices.startEnroll();
-    void navigate({ to: "/settings/devices" });
+    void navigate({ to: "/machines" });
   };
   const teleportApp = () => run("open Teleport for", () => teleport.open(space));
   const share = () => run("share", () => sharing.open(space, session?.signedIn ?? false));

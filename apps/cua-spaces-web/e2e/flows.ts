@@ -24,7 +24,6 @@ export type ParityScreen =
   | "settings/about"
   | "settings/advanced"
   | "settings/connected-apps"
-  | "settings/devices"
   | "notifications"
   | "machines"
   | "agents"
@@ -64,7 +63,7 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "create-progress": { status: "run", screen: "spaces" },
   "create-stages": { status: "run", screen: "spaces" },
   "create-retry": { status: "run", screen: "spaces" },
-  devices: { status: "run", screen: "settings/devices" },
+  devices: { status: "run", screen: "machines" },
   "driver-card": { status: "run", screen: "settings/connected-apps" },
   "share-sheet": { status: "run", screen: "share" },
   "agents-page": { status: "run", screen: "agents" },

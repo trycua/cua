@@ -108,6 +108,8 @@ export interface DevicesData {
   enroll: { state: EnrollState; view: EnrollView | null } | null;
   /** The approval sheet, while open. */
   approve: { state: ApproveSheetState; view: ApproveSheetView | null } | null;
+  /** Sign-ins whose "Not now" was chosen this session: they wait quietly. */
+  dismissed: string[];
   /** A row action is running. */
   busy: boolean;
   /** The last row action's failure. */
@@ -372,6 +374,7 @@ export class SettingsFeature {
           account: machinesAccount(this.core, this.devices, now),
           enroll: this.enroll ? { state: this.enroll, view: enrollView(this.core, this.enroll) } : null,
           approve: this.approve ? { state: this.approve, view: approveView(this.core, this.approve, list) } : null,
+          dismissed: [...this.dismissed],
           busy: this.devicesBusy,
           actionError: this.devicesError,
           now,
@@ -596,6 +599,26 @@ export class SettingsFeature {
   closeApproval(): void {
     this.approve = null;
     this.publish("devices");
+  }
+
+  /**
+   * "Add machine" on a machine waiting in the list: the machine is approved by its id (the
+   * person is signed in and sees it by name and system), with no code to type. The host still asks
+   * for presence first. A failure is thrown for the caller to show.
+   */
+  async addMachine(deviceId: string): Promise<void> {
+    const prompt = this.currentDevicesView()?.approvals.find((p) => p.deviceId === deviceId);
+    if (!prompt) return;
+    // The by-id request is what the core makes of an approval that needs no code.
+    this.approve = approveOpen(this.core, { ...prompt, expired: true });
+    this.publish("devices");
+    await this.approveDevice();
+    const failed = this.approve ? approveView(this.core, this.approve, this.devicesList())?.error : null;
+    if (failed) {
+      this.approve = null;
+      this.publish("devices");
+      throw new Error(failed);
+    }
   }
 
   setApprovalCode(code: string): void {

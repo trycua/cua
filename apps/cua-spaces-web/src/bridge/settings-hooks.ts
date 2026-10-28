@@ -117,6 +117,8 @@ export interface DevicesHook extends Hook<DevicesData> {
   /** The sheet's Deny or Not Now. */
   deny(): Promise<void>;
   closeApproval(): void;
+  /** "Add machine" on a machine that waits: approves it by id (presence first); throws its failure. */
+  addMachine(deviceId: string): Promise<void>;
   /** The row's Deny. */
   denyDevice(deviceId: string): Promise<void>;
   rename(id: string, name: string): Promise<void>;
@@ -140,6 +142,7 @@ export function useDevices(): DevicesHook {
     approve: () => run((f) => f.approveDevice()),
     deny: () => run((f) => f.denyApproval()),
     closeApproval: () => now((f) => f.closeApproval()),
+    addMachine: (id) => run((f) => f.addMachine(id)),
     denyDevice: (id) => run((f) => f.denyDevice(id)),
     rename: (id, name) => run((f) => f.renameDevice(id, name)),
     revoke: (id) => run((f) => f.revokeDevice(id)),

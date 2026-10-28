@@ -129,6 +129,12 @@ struct BridgeContractTests {
         }
         func cloudTool(_ tool: String, _ args: [String: Any]) async throws -> Any { try await inner.cloudTool(tool, args) }
 
+        func repoCacheStatus() async -> RepoCacheState? { await inner.repoCacheStatus() }
+        func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? {
+            try await inner.setRepoCache(enabled: enabled, size: size)
+        }
+        func clearRepoCache() async throws -> RepoCacheState? { try await inner.clearRepoCache() }
+
         func rows() async throws -> [AppSpaceRow] { try await inner.rows() }
         func create(_ args: AppCreateSpaceArgs, createId: String,
                     progress: @escaping @Sendable (SpaceCreateProgress) -> Void) async throws -> String {

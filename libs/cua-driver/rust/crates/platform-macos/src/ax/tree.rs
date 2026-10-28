@@ -57,6 +57,9 @@ pub struct AXNode {
     pub title: Option<String>,
     /// AXValue — shown as `= "value"` in the tree line.
     pub value: Option<String>,
+    /// AXPlaceholderValue, the hint an empty field shows. Never the value;
+    /// shown as `placeholder="..."` in the bracketed metadata.
+    pub placeholder: Option<String>,
     /// AXDescription — shown as `(description)` in the tree line.
     /// Kept separate from `title` so `_find_calc_button("2")` can find
     /// Calculator buttons where AXTitle="" but AXDescription="2".
@@ -133,6 +136,23 @@ fn role_supports_value_addressing(role: &str) -> bool {
 
 fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<bool>) -> bool {
     (actions_present || value_settable) && enabled != Some(false)
+}
+
+/// Keep AXValue as the value and AXPlaceholderValue as a separate hint: an
+/// empty field reads as empty, not as its placeholder (#3786). The hint is
+/// read only when the value is empty or whitespace, the same nodes that read
+/// it before, so the walk makes no extra AX round trips.
+fn split_value_and_placeholder(
+    value: Option<String>,
+    read_placeholder: impl FnOnce() -> Option<String>,
+) -> (Option<String>, Option<String>) {
+    if value.as_deref().is_some_and(|v| !v.trim().is_empty()) {
+        return (value, None);
+    }
+    let placeholder = read_placeholder()
+        .map(|p| p.trim().to_owned())
+        .filter(|p| !p.is_empty());
+    (value, placeholder)
 }
 
 pub struct TreeWalkResult {
@@ -497,10 +517,8 @@ unsafe fn walk_element(
     let value = copied_value
         .as_ref()
         .and_then(|copied| copied.string_value.clone());
-    // AXPlaceholderValue as fallback for empty text fields.
-    let value = value
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| copy_string_attr(element, "AXPlaceholderValue"));
+    let (value, placeholder) =
+        split_value_and_placeholder(value, || copy_string_attr(element, "AXPlaceholderValue"));
     let description = copy_string_attr(element, "AXDescription");
     let identifier = copy_string_attr(element, "AXIdentifier");
     let help = copy_string_attr(element, "AXHelp").filter(|h| !h.trim().is_empty());
@@ -510,8 +528,10 @@ unsafe fn walk_element(
     let visible_description = description.as_deref().unwrap_or("").trim().to_owned();
     let visible_value = value.as_deref().unwrap_or("").trim().to_owned();
 
-    let has_content =
-        !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
+    let has_content = !visible_title.is_empty()
+        || !visible_description.is_empty()
+        || !visible_value.is_empty()
+        || placeholder.is_some();
     // Some native controls expose no AX action names but do expose a writable
     // AXValue. Finder's transient inline-rename field is the important case:
     // rendering it without an element_index leaves an agent able to see the
@@ -590,6 +610,7 @@ unsafe fn walk_element(
             } else {
                 Some(visible_value.clone())
             },
+            placeholder: placeholder.clone(),
             description: if visible_description.is_empty() {
                 None
             } else {
@@ -624,6 +645,7 @@ unsafe fn walk_element(
             } else {
                 Some(visible_value.clone())
             },
+            placeholder,
             description: if visible_description.is_empty() {
                 None
             } else {
@@ -752,6 +774,9 @@ fn format_node_line(node: &AXNode) -> String {
         }
         if let Some(h) = &node.help {
             attrs.push(format!("help=\"{}\"", h));
+        }
+        if let Some(p) = &node.placeholder {
+            attrs.push(format!("placeholder=\"{}\"", p));
         }
         let shown: Vec<String> = node
             .actions
@@ -939,6 +964,63 @@ mod tests {
         for role in ["AXStaticText", "AXImage", "AXWindow", "AXGroup"] {
             assert!(!role_supports_value_addressing(role), "{role}");
         }
+    }
+
+    #[test]
+    fn an_empty_field_reports_its_placeholder_apart_from_the_value() {
+        // #3786: the hint never stands in for the value, so an empty field
+        // reads as empty instead of as its placeholder.
+        for empty in ["", " ", "\n"] {
+            let (value, placeholder) =
+                split_value_and_placeholder(Some(empty.into()), || Some("Type here…".into()));
+            assert_eq!(value.as_deref().map(str::trim), Some(""), "{empty:?}");
+            assert_eq!(placeholder.as_deref(), Some("Type here…"), "{empty:?}");
+        }
+        let (value, placeholder) = split_value_and_placeholder(None, || Some("Search".into()));
+        assert_eq!((value, placeholder.as_deref()), (None, Some("Search")));
+        let (_, placeholder) = split_value_and_placeholder(None, || Some("  ".into()));
+        assert_eq!(placeholder, None, "a blank hint is no hint");
+    }
+
+    #[test]
+    fn a_filled_field_does_not_read_its_placeholder() {
+        let reads = Cell::new(0);
+        let (value, placeholder) = split_value_and_placeholder(Some("hello".into()), || {
+            reads.set(reads.get() + 1);
+            Some("Type here…".into())
+        });
+        assert_eq!((value.as_deref(), placeholder), (Some("hello"), None));
+        assert_eq!(reads.get(), 0, "no extra AX read for a field with a value");
+    }
+
+    #[test]
+    fn placeholder_renders_as_metadata_not_as_the_value() {
+        let field = AXNode {
+            element_index: Some(3),
+            role: "AXTextField".into(),
+            title: None,
+            value: None,
+            placeholder: Some("Type here…".into()),
+            description: None,
+            identifier: Some("txt-input".into()),
+            help: None,
+            actions: vec!["AXConfirm".into()],
+            element_ptr: 0,
+            depth: 1,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: Some(true),
+            selected: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&field),
+            "- [3] AXTextField [id=txt-input placeholder=\"Type here…\" actions=[confirm]]"
+        );
     }
 
     #[test]

@@ -408,7 +408,14 @@ impl cua_agent_setup::SignInVault for KeyvaultSignIns {
     ) -> std::result::Result<cua_agent_setup::ImportedSignIn, String> {
         let k = self
             .0
-            .import(&c.source, &c.env, &c.label, &c.value, c.expires_ms)
+            .import(
+                &c.source,
+                &c.env,
+                &c.label,
+                &c.value,
+                c.expires_ms,
+                c.origin.as_deref(),
+            )
             .map_err(|e| e.to_string())?;
         cua_telemetry::global().capture(cua_telemetry::events::agent_signin_imported(&c.source));
         Ok(cua_agent_setup::ImportedSignIn {

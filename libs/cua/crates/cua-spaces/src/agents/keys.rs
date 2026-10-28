@@ -17,6 +17,7 @@
 //! `env_from_host`, never into logs or telemetry.
 
 use crate::error::{Error, Result};
+use cua_agents::claude_login;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
@@ -254,7 +255,7 @@ pub struct KeyInfo {
     pub last4: String,
     /// When it was added (Unix ms).
     pub added_ms: u64,
-    /// A copied sign-in's name ("Codex · ChatGPT sign-in"); none for a key
+    /// A copied sign-in's name ("ChatGPT sign-in for Codex"); none for a key
     /// typed in Settings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -297,6 +298,11 @@ struct Stored {
     /// the credential again replaces the entry, so a reconnect clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rejected_ms: Option<u64>,
+    /// How a copied sign-in was made (`claude-login-keychain`, `claude-login-file`,
+    /// `device-code`, `token`). A `claude-login-*` copy is re-read from Claude
+    /// Code's own sign-in when it runs out ([`AgentKeys::sync_claude_login`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<String>,
 }
 
 impl std::fmt::Debug for Stored {
@@ -353,12 +359,72 @@ struct Blob {
 /// the next run must see them.
 const CACHE_FOR: Duration = Duration::from_secs(2);
 
+/// The variable Claude Code's sign-in is delivered as.
+const CLAUDE_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
+
+/// How long before its expiry a copied Claude sign-in is looked at again.
+const REFRESH_WITHIN_MS: u64 = 30 * 60 * 1000;
+
+/// The least time between two re-reads of Claude Code's own sign-in.
+const RESYNC_EVERY: Duration = Duration::from_secs(20);
+
+/// How long Claude Code may take to refresh its own sign-in when asked.
+const ASK_WAIT: Duration = Duration::from_secs(25);
+
+/// Where the freshness check reads Claude Code's own sign-in (a fake in tests).
+pub trait ClaudeLogin: Send + Sync {
+    /// Reads Claude Code's sign-in now.
+    fn lookup(&self) -> claude_login::Lookup;
+    /// Asks Claude Code to refresh its own sign-in; whether that ran well.
+    fn ask_to_refresh(&self) -> bool;
+}
+
+/// This computer's Claude Code. Reads nothing in a test process.
+pub struct HostClaudeLogin;
+
+impl ClaudeLogin for HostClaudeLogin {
+    fn lookup(&self) -> claude_login::Lookup {
+        if cua_home::is_test_process() {
+            return claude_login::Lookup::NotSignedIn;
+        }
+        let env = cua_agents::HostEnv::current();
+        claude_login::lookup(&env, &*claude_login::default_keychain(&env), now_ms())
+    }
+
+    fn ask_to_refresh(&self) -> bool {
+        let env = cua_agents::HostEnv::current();
+        // Called from async code: tell the runtime this thread blocks.
+        let ask = || claude_login::ask_claude_to_refresh(&env, ASK_WAIT);
+        match tokio::runtime::Handle::try_current() {
+            Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(ask)
+            }
+            _ => ask(),
+        }
+    }
+}
+
+/// What [`AgentKeys::sync_claude_login`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginSync {
+    /// There is no copy of Claude Code's sign-in.
+    NotApplicable,
+    /// The copy works and is not about to run out.
+    Fresh,
+    /// A newer sign-in was read from Claude Code and saved.
+    Updated,
+    /// The copy has run out and Claude Code has nothing newer: Reconnect.
+    Stale,
+}
+
 /// The stored agent keys of one credential store.
 pub struct AgentKeys {
     store: Option<cua_auth::Store>,
     unavailable: Option<String>,
     // Serializes read-modify-write; holds the last read.
     cache: Mutex<Option<(Instant, Vec<Stored>)>>,
+    // When Claude Code's own sign-in was last re-read ([`AgentKeys::sync_claude_login`]).
+    claude_sync: Mutex<Option<Instant>>,
 }
 
 impl std::fmt::Debug for AgentKeys {
@@ -391,6 +457,7 @@ impl AgentKeys {
                 store: Some(store),
                 unavailable: None,
                 cache: Mutex::new(None),
+                claude_sync: Mutex::new(None),
             }
         } else {
             Self::unavailable(file_store_reason())
@@ -403,6 +470,7 @@ impl AgentKeys {
             store: None,
             unavailable: Some(reason.into()),
             cache: Mutex::new(None),
+            claude_sync: Mutex::new(None),
         }
     }
 
@@ -512,6 +580,7 @@ impl AgentKeys {
             source: None,
             expires_ms: None,
             rejected_ms: None,
+            origin: None,
         };
         let info = stored.info();
         keys.push(stored);
@@ -547,6 +616,7 @@ impl AgentKeys {
         label: &str,
         value: &str,
         expires_ms: Option<u64>,
+        origin: Option<&str>,
     ) -> Result<KeyInfo> {
         validate_name(env)?;
         let value = validate_value(value)?;
@@ -573,6 +643,7 @@ impl AgentKeys {
             source: Some(source.into()),
             expires_ms,
             rejected_ms: None,
+            origin: origin.map(str::to_string),
         };
         let info = stored.info();
         keys.push(stored);
@@ -610,6 +681,100 @@ impl AgentKeys {
             .filter(|k| k.source.is_some())
             .map(Stored::info)
             .collect())
+    }
+
+    /// Keeps a copy of Claude Code's own sign-in usable, without ever
+    /// refreshing it ourselves.
+    ///
+    /// Claude Code's access token lasts hours, and its refresh token works
+    /// once: each refresh returns a new pair and spends the old one. If Cua
+    /// refreshed, Claude Code's next refresh would fail and sign the person
+    /// out of Claude Code. So Cua keeps the access token only, and when its
+    /// copy is within [`REFRESH_WITHIN_MS`] of running out (or a run said it
+    /// was refused) it reads Claude Code's own sign-in again: Claude Code
+    /// refreshes it as it is used and writes the new pair under its own lock.
+    /// With `ask` and nothing newer there, Claude Code is asked to refresh by
+    /// a one-line request ([`ClaudeLogin::ask_to_refresh`], at most every five
+    /// minutes), waiting a few seconds. Never a request of ours to Anthropic,
+    /// and nothing is checked live before saving.
+    ///
+    /// Re-read at most every 20 seconds. Only copies made by importing
+    /// Claude Code's sign-in are touched.
+    pub fn sync_claude_login(&self, src: &dyn ClaudeLogin, ask: bool) -> LoginSync {
+        let copy = {
+            let mut g = self.lock();
+            match self.read(&mut g, false) {
+                Ok(keys) => keys.into_iter().find(|k| {
+                    k.env == CLAUDE_ENV
+                        && k.origin
+                            .as_deref()
+                            .is_some_and(|o| o.starts_with("claude-login"))
+                }),
+                Err(_) => None,
+            }
+        };
+        let Some(copy) = copy else {
+            return LoginSync::NotApplicable;
+        };
+        let now = now_ms();
+        let rejected = copy.rejected_ms.is_some();
+        let running_out = rejected
+            || copy
+                .expires_ms
+                .is_some_and(|e| e <= now + REFRESH_WITHIN_MS);
+        if !running_out {
+            return LoginSync::Fresh;
+        }
+        let verdict = |copy: &Stored| {
+            if copy.usable() {
+                LoginSync::Fresh
+            } else {
+                LoginSync::Stale
+            }
+        };
+        {
+            let mut last = self.claude_sync.lock().unwrap_or_else(|p| p.into_inner());
+            if last.is_some_and(|t| t.elapsed() < RESYNC_EVERY) {
+                return verdict(&copy);
+            }
+            *last = Some(Instant::now());
+        }
+        let newer = |l: &claude_login::Lookup| -> Option<claude_login::Found> {
+            match l {
+                claude_login::Lookup::Found(f)
+                    if !f.oauth.expired(now_ms())
+                        && f.oauth.access_token != copy.value
+                        && (rejected
+                            || f.oauth.expires_ms.unwrap_or(u64::MAX)
+                                > copy.expires_ms.unwrap_or(0)) =>
+                {
+                    Some(f.clone())
+                }
+                _ => None,
+            }
+        };
+        let mut found = newer(&src.lookup());
+        if found.is_none() && ask && src.ask_to_refresh() {
+            found = newer(&src.lookup());
+        }
+        let Some(f) = found else {
+            return verdict(&copy);
+        };
+        let origin = match f.source {
+            claude_login::Source::Keychain { .. } => "claude-login-keychain",
+            claude_login::Source::File(_) => "claude-login-file",
+        };
+        match self.import(
+            "claude-code",
+            CLAUDE_ENV,
+            &f.label(),
+            &f.oauth.access_token,
+            f.oauth.expires_ms,
+            Some(origin),
+        ) {
+            Ok(_) => LoginSync::Updated,
+            Err(_) => verdict(&copy),
+        }
     }
 
     /// The names of the stored keys (readiness). A store that can't be read
@@ -921,7 +1086,12 @@ pub fn app_call(
     };
     Some(match name {
         // The check needs the network: `app_tool_async` does it; a synchronous caller gets the list.
-        "agent_keys.list" | "agent_keys.check" => report(keys.report()),
+        "agent_keys.list" | "agent_keys.check" => {
+            // A copy of Claude Code's sign-in that ran out is read again from
+            // Claude Code before Settings calls it "Needs reconnect".
+            keys.sync_claude_login(&HostClaudeLogin, false);
+            report(keys.report())
+        }
         "agent_keys.set" => report(
             serde_json::from_value::<SetArgs>(args)
                 .map_err(|e| {
@@ -1070,8 +1240,9 @@ mod tests {
         app.import(
             "codex",
             "CODEX_AUTH_JSON",
-            "Codex · ChatGPT sign-in",
+            "ChatGPT sign-in for Codex",
             "{\"tokens\":{}}",
+            None,
             None,
         )
         .unwrap();
@@ -1099,9 +1270,10 @@ mod tests {
         keys.import(
             "claude-code",
             "CLAUDE_CODE_OAUTH_TOKEN",
-            "Claude Code · Claude sign-in",
+            "Signed in as ada@example.com (Claude Max)",
             "sk-ant-oat01-test",
             Some(long_ago),
+            None,
         )
         .unwrap();
         let listed = keys.list().unwrap();
@@ -1112,9 +1284,10 @@ mod tests {
         keys.import(
             "claude-code",
             "CLAUDE_CODE_OAUTH_TOKEN",
-            "Claude Code · Claude sign-in",
+            "Signed in as ada@example.com (Claude Max)",
             "sk-ant-oat01-test",
             Some(now_ms() + 3_600_000),
+            None,
         )
         .unwrap();
         assert!(!keys.list().unwrap()[0].expired);
@@ -1177,6 +1350,7 @@ mod tests {
             "CLAUDE_CODE_OAUTH_TOKEN",
             "Claude sign-in",
             "sk-ant-oat01-whatever",
+            None,
             None,
         )
         .unwrap();
@@ -1243,6 +1417,7 @@ mod tests {
             "CLAUDE_CODE_OAUTH_TOKEN",
             "Claude sign-in",
             "sk-ant-oat01-whatever",
+            None,
             None,
         )
         .unwrap();
@@ -1449,5 +1624,260 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- the freshness check on a copy of Claude Code's own sign-in
+
+    const HOUR: u64 = 3_600_000;
+
+    fn login(access: &str, expires_ms: u64, email: &str) -> claude_login::Lookup {
+        claude_login::Lookup::Found(claude_login::Found {
+            source: claude_login::Source::File(std::path::PathBuf::from(
+                "/fixture/.credentials.json",
+            )),
+            oauth: claude_login::Oauth {
+                access_token: access.into(),
+                has_refresh_token: true,
+                expires_ms: Some(expires_ms),
+                scopes: vec![],
+                subscription_type: Some("max".into()),
+            },
+            account: claude_login::Account {
+                email: Some(email.into()),
+                organization: None,
+            },
+        })
+    }
+
+    /// A fake Claude Code: what its sign-in reads as now, what it reads as after it
+    /// is asked to refresh, and how often it was read and asked.
+    struct FakeClaude {
+        now: Mutex<claude_login::Lookup>,
+        after_ask: Option<claude_login::Lookup>,
+        reads: Mutex<u32>,
+        asks: Mutex<u32>,
+    }
+    impl FakeClaude {
+        fn new(now: claude_login::Lookup, after_ask: Option<claude_login::Lookup>) -> Self {
+            Self {
+                now: Mutex::new(now),
+                after_ask,
+                reads: Mutex::new(0),
+                asks: Mutex::new(0),
+            }
+        }
+    }
+    impl ClaudeLogin for FakeClaude {
+        fn lookup(&self) -> claude_login::Lookup {
+            *self.reads.lock().unwrap() += 1;
+            self.now.lock().unwrap().clone()
+        }
+        fn ask_to_refresh(&self) -> bool {
+            *self.asks.lock().unwrap() += 1;
+            match &self.after_ask {
+                Some(l) => {
+                    *self.now.lock().unwrap() = l.clone();
+                    true
+                }
+                None => false,
+            }
+        }
+    }
+
+    fn import_login(keys: &AgentKeys, token: &str, expires_ms: u64) {
+        keys.import(
+            "claude-code",
+            CLAUDE_ENV,
+            "Signed in as ada@example.com (Claude Max)",
+            token,
+            Some(expires_ms),
+            Some("claude-login-file"),
+        )
+        .unwrap();
+    }
+
+    fn token_of(keys: &AgentKeys) -> String {
+        keys.values(&[CLAUDE_ENV])
+            .remove(CLAUDE_ENV)
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_copy_far_from_expiry_is_delivered_without_reading_claude_code() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-one", now_ms() + 5 * HOUR);
+        let claude = FakeClaude::new(claude_login::Lookup::NotSignedIn, None);
+        assert_eq!(keys.sync_claude_login(&claude, true), LoginSync::Fresh);
+        assert_eq!(
+            *claude.reads.lock().unwrap(),
+            0,
+            "no Keychain read when nothing is needed"
+        );
+        assert_eq!(*claude.asks.lock().unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_copies_made_from_claude_codes_own_sign_in_are_synced() {
+        let (keys, dir) = temp_keys();
+        let claude = FakeClaude::new(
+            login("sk-ant-oat01-new", now_ms() + 8 * HOUR, "a@b.c"),
+            None,
+        );
+        assert_eq!(
+            keys.sync_claude_login(&claude, true),
+            LoginSync::NotApplicable
+        );
+        // A pasted token (a year, no refresh) and an API key are never replaced.
+        keys.import(
+            "claude-code",
+            CLAUDE_ENV,
+            "Claude token you pasted",
+            "sk-ant-oat01-pasted",
+            Some(now_ms() - 1),
+            Some("token"),
+        )
+        .unwrap();
+        assert_eq!(
+            keys.sync_claude_login(&claude, true),
+            LoginSync::NotApplicable
+        );
+        assert_eq!(*claude.reads.lock().unwrap(), 0);
+        assert_eq!(token_of(&keys), "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_copy_about_to_run_out_is_replaced_by_what_claude_code_has_refreshed() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-old", now_ms() + HOUR / 4);
+        let claude = FakeClaude::new(
+            login("sk-ant-oat01-new", now_ms() + 8 * HOUR, "ada@example.com"),
+            None,
+        );
+        assert_eq!(keys.sync_claude_login(&claude, true), LoginSync::Updated);
+        assert_eq!(token_of(&keys), "sk-ant-oat01-new");
+        let listed = keys.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(!listed[0].expired);
+        assert_eq!(
+            listed[0].label.as_deref(),
+            Some("Signed in as ada@example.com (Claude Max)")
+        );
+        assert_eq!(
+            *claude.asks.lock().unwrap(),
+            0,
+            "no need to ask Claude Code: it had refreshed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_run_out_copy_asks_claude_code_to_refresh_once_and_reads_again() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-old", now_ms() - 1000);
+        assert!(keys.list().unwrap()[0].expired);
+        // Claude Code has the same run-out token until asked; then it has a new one.
+        let claude = FakeClaude::new(
+            login("sk-ant-oat01-old", now_ms() - 1000, "ada@example.com"),
+            Some(login(
+                "sk-ant-oat01-fresh",
+                now_ms() + 8 * HOUR,
+                "ada@example.com",
+            )),
+        );
+        assert_eq!(keys.sync_claude_login(&claude, true), LoginSync::Updated);
+        assert_eq!(*claude.asks.lock().unwrap(), 1);
+        assert_eq!(token_of(&keys), "sk-ant-oat01-fresh");
+        assert!(!keys.list().unwrap()[0].expired);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_reads_again_but_never_asks_claude_code_to_refresh() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-old", now_ms() - 1000);
+        let claude = FakeClaude::new(
+            login("sk-ant-oat01-old", now_ms() - 1000, "a@b.c"),
+            Some(login("sk-ant-oat01-fresh", now_ms() + HOUR, "a@b.c")),
+        );
+        assert_eq!(keys.sync_claude_login(&claude, false), LoginSync::Stale);
+        assert_eq!(*claude.asks.lock().unwrap(), 0);
+        assert!(
+            keys.list().unwrap()[0].expired,
+            "honest: Needs reconnect until Claude Code has a new one"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nothing_newer_anywhere_is_needs_reconnect_and_signed_out_is_not_guessed_at() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-old", now_ms() - 1000);
+        for gone in [
+            claude_login::Lookup::NotSignedIn,
+            claude_login::Lookup::Denied,
+        ] {
+            let (k2, d2) = temp_keys();
+            import_login(&k2, "sk-ant-oat01-old", now_ms() - 1000);
+            let claude = FakeClaude::new(gone, None);
+            assert_eq!(k2.sync_claude_login(&claude, true), LoginSync::Stale);
+            assert_eq!(token_of(&k2), "", "an expired copy is never delivered");
+            let _ = std::fs::remove_dir_all(&d2);
+        }
+        // An older or equal token from Claude Code is not "newer".
+        let claude = FakeClaude::new(login("sk-ant-oat01-old", now_ms() - 1000, "a@b.c"), None);
+        assert_eq!(keys.sync_claude_login(&claude, true), LoginSync::Stale);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn claude_code_is_read_at_most_every_twenty_seconds() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-old", now_ms() - 1000);
+        let claude = FakeClaude::new(claude_login::Lookup::NotSignedIn, None);
+        for _ in 0..5 {
+            assert_eq!(keys.sync_claude_login(&claude, true), LoginSync::Stale);
+        }
+        assert_eq!(*claude.reads.lock().unwrap(), 1);
+        assert_eq!(*claude.asks.lock().unwrap(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_refused_copy_recovers_when_claude_code_has_a_different_sign_in() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-revoked", now_ms() + 5 * HOUR);
+        keys.mark_rejected(&[CLAUDE_ENV]).unwrap();
+        assert!(
+            keys.list().unwrap()[0].expired,
+            "refused reads as Needs reconnect"
+        );
+        // Claude Code still holds the same refused token: stays refused.
+        let same = FakeClaude::new(
+            login("sk-ant-oat01-revoked", now_ms() + 5 * HOUR, "a@b.c"),
+            None,
+        );
+        assert_eq!(keys.sync_claude_login(&same, false), LoginSync::Stale);
+        assert!(keys.list().unwrap()[0].expired);
+        // The person signed in again in Claude Code: the new sign-in replaces it.
+        let (keys2, dir2) = temp_keys();
+        import_login(&keys2, "sk-ant-oat01-revoked", now_ms() + 5 * HOUR);
+        keys2.mark_rejected(&[CLAUDE_ENV]).unwrap();
+        let again = FakeClaude::new(
+            login("sk-ant-oat01-again", now_ms() + 8 * HOUR, "a@b.c"),
+            None,
+        );
+        assert_eq!(keys2.sync_claude_login(&again, false), LoginSync::Updated);
+        assert!(!keys2.list().unwrap()[0].expired);
+        assert_eq!(token_of(&keys2), "sk-ant-oat01-again");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn the_host_login_reads_nothing_in_a_test_process() {
+        assert_eq!(HostClaudeLogin.lookup(), claude_login::Lookup::NotSignedIn);
+        assert!(!HostClaudeLogin.ask_to_refresh());
     }
 }

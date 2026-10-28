@@ -313,6 +313,11 @@ pub fn run_env_with(
     custom_endpoint: bool,
 ) -> Result<(BTreeMap<String, String>, Vec<String>)> {
     let (host_env, missing) = env_from_host_with(saved, env_from_host)?;
+    // A copy of Claude Code's own sign-in that is running out is read again
+    // from Claude Code first (never refreshed by Cua: [`keys::AgentKeys::sync_claude_login`]).
+    if harness == "claude-code" {
+        saved.sync_claude_login(&keys::HostClaudeLogin, true);
+    }
     let mut out = env.clone();
     out.extend(host_env);
     if !custom_endpoint && let Some(h) = harness::harness(harness) {

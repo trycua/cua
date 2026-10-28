@@ -199,6 +199,11 @@ pub struct SignInCopy {
     pub label: String,
     pub value: String,
     pub expires_ms: Option<u64>,
+    /// How it was made: `claude-login-keychain` or `claude-login-file` (read
+    /// from Claude Code's own sign-in), `device-code` (Codex), `token` (a
+    /// pasted `claude setup-token`). Fixed words; the telemetry and the
+    /// freshness check at run start read it.
+    pub origin: Option<String>,
 }
 
 impl std::fmt::Debug for SignInCopy {
@@ -209,6 +214,7 @@ impl std::fmt::Debug for SignInCopy {
             .field("label", &self.label)
             .field("value", &"<redacted>")
             .field("expires_ms", &self.expires_ms)
+            .field("origin", &self.origin)
             .finish()
     }
 }

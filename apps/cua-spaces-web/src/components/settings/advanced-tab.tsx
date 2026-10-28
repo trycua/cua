@@ -133,7 +133,6 @@ function thisMacAskRow(asks: boolean): CoreRow {
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
   const askFirst = useFlag("spaces_ask_first_home");
-  const redesign = useFlag("spaces_redesign");
   const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
@@ -141,11 +140,6 @@ function Labs() {
   };
   return (
     <SettingsGroup title="Labs">
-      <CoreSettingsRow
-        row={flagRow("spaces_redesign", "New design", redesign)}
-        description="The new Spaces page, Space page and Agents tab. Turn off to use the classic design. On this device only."
-        onChoose={(_, option) => setFlagOverride("spaces_redesign", option === "on")}
-      />
       <CoreSettingsRow
         row={flagRow("spaces_ask_first_home", "Try the new Home", askFirst)}
         description="Home asks what you want done, then does it on a fresh computer you can watch. On this device only."

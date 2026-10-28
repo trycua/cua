@@ -7,8 +7,6 @@ import { useEffect, useState } from "react";
 import { useAgentChats, useFeatureRecorded, useSession } from "@/bridge";
 import { AgentDmView, AgentList, AgentPage, AgentsEmpty, NewAgentSheet } from "@/components/agents/agent-chat";
 import type { AddAgentStage } from "@/components/add-agent/add-agent-sheet";
-import { useFlag } from "@/bridge/flags";
-import { LegacyAgentsPage } from "@/legacy/routes/agents/index";
 import { useAgentAttempts, useAttemptAction } from "@/hooks/use-agent-attempts";
 
 /** Which agent's DM is open, and in which of its Spaces (none: all of them). */
@@ -19,11 +17,11 @@ interface ChatSearch {
 }
 
 export const Route = createFileRoute("/agents/")({
-  component: AgentsChatPageSwitch,
+  component: AgentsChatPage,
   validateSearch: (s: Record<string, unknown>): ChatSearch => ({
     agent: typeof s.agent === "string" ? s.agent : undefined,
     space: typeof s.space === "string" ? s.space : undefined,
-    // The page before the redesign opens a run with `?run=`.
+    // The older Agents page opened a run with `?run=`.
     run: typeof s.run === "string" ? s.run : undefined,
   }),
 });
@@ -99,9 +97,4 @@ function AgentsChatPage() {
       />
     </div>
   );
-}
-
-/** The redesign behind `spaces_redesign` (Settings → Advanced → Labs); off, the page as it was. */
-function AgentsChatPageSwitch() {
-  return useFlag("spaces_redesign") ? <AgentsChatPage /> : <LegacyAgentsPage />;
 }

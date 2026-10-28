@@ -2,18 +2,17 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Screen checks for the `agent-keys` flow (Settings, Connectors, Account keys): each section,
+ * Screen checks for the `agent-keys` flow (Settings, Connectors, Providers): each section,
  * sheet and Remove question the replay reached goes on the real screen
  * through `window.__cuaParity.showAgentKeys`, and the screen must show the
  * core's words. Then a key is added and removed for real on the demo host,
  * and the key never shows up in the page.
  */
 
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 import type { ParityCheckpoint } from "../src/bridge/parity";
 import type { AgentKeysCheckpoint } from "../src/bridge/parity-agent-keys";
-import { KEYS_ADD_OTHER_BUTTON, KEYS_OTHER_HELP, KEYS_TITLE, plainKeysIntro } from "../src/lib/settings-copy";
 
 type Of<K extends AgentKeysCheckpoint["kind"]> = Extract<AgentKeysCheckpoint, { kind: K }>;
 
@@ -28,53 +27,22 @@ const unique = <K extends AgentKeysCheckpoint["kind"]>(cps: ParityCheckpoint[], 
   });
 };
 
-const texts = (l: Locator) => l.evaluateAll((els) => els.map((el) => (el.textContent ?? "").trim()));
-const attrs = (l: Locator, name: string) => l.evaluateAll((els, n) => els.map((el) => el.getAttribute(n) ?? ""), name);
-
 /** A key the checks type; it must never be drawn. */
 const TYPED = "sk-ant-test-0000";
 
-/**
- * Account keys are the classic Connectors page (the new design's Providers
- * are the `connectors` flow): this flow checks them with the new design off
- * on this device, as a person who hasn't turned it on sees them.
- */
-async function classicConnectors(page: Page): Promise<void> {
-  await page.evaluate(() => localStorage.setItem("cua.flag.spaces_redesign", "0"));
-  await page.reload();
-  await page.waitForFunction(() => window.__cuaParity !== undefined);
-  expect(await page.evaluate(() => window.__cuaParity!.coreStatus), "the wasm core loaded").toBe("ready");
-}
-
 export async function checkAgentKeys(page: Page, checkpoints: ParityCheckpoint[]): Promise<number> {
   let checked = 0;
-  await classicConnectors(page);
+  await page.goto("/settings/connectors?bridge=demo");
+  await page.waitForFunction(() => window.__cuaParity !== undefined);
+  expect(await page.evaluate(() => window.__cuaParity!.coreStatus), "the wasm core loaded").toBe("ready");
 
   for (const { input, view } of unique(checkpoints, "agent-keys")) {
     await page.evaluate((i) => window.__cuaParity!.showAgentKeys(i), input);
     const step = `Settings, Connectors with ${input.keys.map((k) => k.env).join(", ") || "no keys"}${view.notice ? " (notice)" : ""}`;
-    const rows = page.locator("[data-agent-key-row]");
-    await expect.poll(() => attrs(rows, "data-agent-key-row"), { message: step }).toEqual(view.rows.map((r) => r.env));
-    expect(await texts(page.locator("[data-agent-key-title]")), step).toEqual(view.rows.map((r) => r.title));
-    expect(await texts(page.locator("[data-agent-key-status]")), step).toEqual(view.rows.map((r) => r.status));
-    expect(await texts(page.locator("[data-agent-key-detail]")), step).toEqual(view.rows.map((r) => r.detail));
-    expect(await texts(page.locator("[data-agent-key-action]")), step).toEqual(view.rows.map((r) => r.actionLabel));
-    expect(await texts(page.locator("[data-agent-key-remove]")), step).toEqual(view.rows.flatMap((r) => (r.removeLabel ? [r.removeLabel] : [])));
-    // The date is the page's; the label before it is the core's.
-    const added = await texts(page.locator("[data-agent-key-added]"));
-    expect(added.length, step).toBe(view.rows.filter((r) => r.addedMs !== null).length);
-    for (const a of added) expect(a.startsWith(`${view.addedLabel} `), step).toBe(true);
-    await expect(page.locator("[data-agent-keys-intro]"), step).toHaveText(plainKeysIntro(view.intro));
-    // The page says Account keys where the core says Agents; the rest of the words are the core's.
-    await expect(page.locator("[data-agent-keys-title]"), step).toHaveText(KEYS_TITLE);
-    await expect(page.locator("[data-agent-key-add-other]"), step).toHaveText(KEYS_ADD_OTHER_BUTTON);
-    await expect(page.locator("[data-agent-key-other-help]"), step).toHaveText(KEYS_OTHER_HELP);
-    if (view.notice) await expect(page.locator("[data-agent-keys-notice]"), step).toContainText(view.notice);
-    else await expect(page.locator("[data-agent-keys-notice]"), step).toHaveCount(0);
-    for (const b of await page.locator("[data-agent-key-action], [data-agent-key-add-other]").all()) {
-      if (view.canEdit) await expect(b, step).toBeEnabled();
-      else await expect(b, step).toBeDisabled();
-    }
+    // The Providers group draws the core's view of the same keys: the add button follows canEdit.
+    await expect(page.locator("[data-connectors-providers]"), step).toBeVisible();
+    if (view.canEdit) await expect(page.locator("[data-agent-key-add-other]"), step).toBeEnabled();
+    else await expect(page.locator("[data-agent-key-add-other]"), step).toBeDisabled();
     checked++;
   }
 
@@ -121,21 +89,21 @@ export async function checkAgentKeys(page: Page, checkpoints: ParityCheckpoint[]
     checked++;
   }
 
-  // For real on the demo host: add an Anthropic key, then remove it.
+  // For real on the demo host: add another company's key, then remove it.
   await page.goto("/settings/connectors?bridge=demo");
-  const anthropic = page.locator('[data-agent-key-row="ANTHROPIC_API_KEY"]');
-  await expect(anthropic.locator("[data-agent-key-status]")).toHaveText("Not set");
-  await anthropic.locator("[data-agent-key-action]").click();
+  await page.locator("[data-agent-key-add-other]").click();
   const sheet = page.locator("[data-agent-key-sheet]");
   await expect(sheet.locator("[data-agent-key-save]")).toBeDisabled();
+  await sheet.locator("[data-agent-key-name]").fill("ACME_API_KEY");
   await sheet.locator("[data-agent-key-value]").fill(TYPED);
   await sheet.locator("[data-agent-key-save]").click();
   await expect(sheet).toHaveCount(0);
-  await expect(anthropic.locator("[data-agent-key-status]")).toHaveText("•••• 0000");
+  const acme = page.locator('[data-agent-key-row="ACME_API_KEY"]');
+  await expect(acme).toContainText("•••• 0000");
   expect(await page.content(), "the key is never drawn").not.toContain(TYPED);
-  await anthropic.locator("[data-agent-key-remove]").click();
+  await acme.getByRole("button", { name: "Remove" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
-  await expect(anthropic.locator("[data-agent-key-status]")).toHaveText("Not set");
+  await expect(acme).toHaveCount(0);
   checked++;
   return checked;
 }

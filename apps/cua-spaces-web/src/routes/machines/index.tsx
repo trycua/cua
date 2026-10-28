@@ -38,9 +38,6 @@ import { useNewSpace } from "@/hooks/use-new-space";
 import { showDesktop } from "@/lib/hidden-desktops";
 import { machineOs, selectedMachine } from "@/lib/machines";
 import { cn } from "@/lib/utils";
-import { useFlag } from "@/bridge/flags";
-import { AddMachineDialog } from "@/legacy/components/add-machine-dialog";
-import { JoinWithCodeDialog } from "@/legacy/components/join-with-code-dialog";
 
 export const Route = createFileRoute("/machines/")({
   component: MachinesPage,
@@ -68,8 +65,7 @@ const HEALTH_EVERY_MS = 60_000;
  * actions (open, start, stop, teleport, drop files) stay on the Space.
  */
 function MachinesPage() {
-  const { data: machines = [], isLoading, error, view, checkHealth, setupGuide } = useMachines();
-  const redesign = useFlag("spaces_redesign");
+  const { data: machines = [], isLoading, error, view, checkHealth } = useMachines();
   // Each machine's issues come from its own daemon: asked on opening the
   // page and every minute while it stays open.
   useEffect(() => {
@@ -140,15 +136,7 @@ function MachinesPage() {
           </div>
         </div>
       )}
-      {redesign ? (
-        <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={join !== undefined ? "enter" : "pick"} initialCode={join ?? ""} initialRelay={relay ?? null} />
-      ) : (
-        // `spaces_redesign` off: "Add a computer" and "Join with a code" as they were.
-        <>
-          <AddMachineDialog open={adding && join === undefined} onOpenChange={setAdding} guide={setupGuide} />
-          <JoinWithCodeDialog open={adding && join !== undefined} onOpenChange={setAdding} initialCode={join ?? ""} initialRelay={relay ?? null} />
-        </>
-      )}
+      <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={join !== undefined ? "enter" : "pick"} initialCode={join ?? ""} initialRelay={relay ?? null} />
     </Page>
   );
 }

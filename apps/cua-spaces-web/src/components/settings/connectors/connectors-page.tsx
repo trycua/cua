@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 const DriverSettingsCard = lazy(() => import("@/components/volume/driver-card").then((m) => ({ default: m.DriverSettingsCard })));
 
 /**
- * Settings, Connectors (redesign): Coding apps, each with Connect (Cua's
+ * Settings, Connectors: Coding apps, each with Connect (Cua's
  * tools and the app's sign-in, once) and a chevron to its own page; then
  * Providers, each with Connect (the provider's sign-in where there is one
  * for this, else a key) or Sign out. Every word and state is the core's

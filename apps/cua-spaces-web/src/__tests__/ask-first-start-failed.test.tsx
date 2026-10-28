@@ -31,8 +31,6 @@ beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
   setFlagOverride("spaces_ask_first_home", true);
-  // Ask first on its own: its task page (with the redesign too, see ask-first-in-space.test.tsx).
-  vi.stubEnv("VITE_CUA_FLAG_SPACES_REDESIGN", "0");
 });
 
 async function pickThisMac() {

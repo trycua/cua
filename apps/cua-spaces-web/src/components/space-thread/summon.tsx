@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * @mentioning agents in a Space (redesign): the composer's picker offers the
+ * @mentioning agents in a Space: the composer's picker offers the
  * agents in the Space and those that can start in it; sending posts the
  * message, adds an @mentioned agent that isn't in the Space yet (asleep, so
  * the message wakes it), and, when one can't be woken, shows why under the

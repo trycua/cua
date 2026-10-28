@@ -693,6 +693,7 @@ function startAgent() {
   });
   child = c;
   save({ agentPid: c.pid ?? null });
+  emit("agent_spawned", { pid: c.pid ?? null });
   const gone = new Promise((resolve) => {
     let done = false;
     const fin = (v) => {
@@ -1187,6 +1188,7 @@ async function drive(a) {
 }
 
 async function main() {
+  emit("runner_started", {});
   if (durable) {
     emit("driver_start", {
       session: durable.session,

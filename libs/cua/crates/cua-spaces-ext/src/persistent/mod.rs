@@ -34,6 +34,8 @@ pub mod identity;
 pub mod join;
 pub mod members;
 pub mod notify;
+pub mod phases;
+pub(crate) use phases::DISPATCH_BUDGET;
 pub mod rights;
 
 use crate::DriveResult as _;
@@ -479,6 +481,9 @@ pub struct Persistent {
     owner: Arc<std::sync::RwLock<crate::thread::Author>>,
     /// Account ids of the admins of the owner's teams.
     admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
+    /// The supervisor serves each member's queued tasks on a task of its
+    /// own instead of inside its pass (see [`Persistent::detached`]).
+    detach_dispatch: bool,
 }
 
 impl std::fmt::Debug for Persistent {
@@ -512,7 +517,16 @@ impl Persistent {
             live,
             owner,
             admins,
+            detach_dispatch: false,
         }
+    }
+
+    /// This handle with queued tasks served on tasks of their own: a pass
+    /// of [`Persistent::tick`] starts each member's delivery and goes on
+    /// (the daemon's supervisor), where the default pass waits for them.
+    pub fn detached(mut self) -> Persistent {
+        self.detach_dispatch = true;
+        self
     }
 
     pub fn dir(&self) -> &Path {
@@ -730,6 +744,17 @@ impl Persistent {
         self.agents_for(space).await
     }
 
+    /// What the Space runs on, as a telemetry word.
+    pub(crate) fn runtime_word(&self, space: &str) -> String {
+        self.spaces
+            .list()
+            .ok()
+            .and_then(|l| l.into_iter().find(|s| s.id == space))
+            .map(|s| phases::runtime_word(&s.os, &s.kind))
+            .unwrap_or("other")
+            .to_string()
+    }
+
     async fn forget_space(&self, space: &str) {
         self.live.lock().await.agents.remove(space);
         let _ = self.spaces.forget_connection(space).await;
@@ -865,7 +890,7 @@ impl Persistent {
         if restore.is_some() && !rec.policy.durable {
             return Err(Error::invalid(format!("{name} is not durable")));
         }
-        self.start_session(&rec, prompt, entry, restore).await
+        Box::pin(self.start_session(&rec, prompt, entry, restore)).await
     }
 
     /// Starts a run of the session `view` shows. Session 1 is the home's
@@ -901,6 +926,20 @@ impl Persistent {
             }
         };
         let t0 = Instant::now();
+        let woke = phases::take_woke(&self.dir, &format!("{}#{k}", view.name));
+        let posted_ms = woke
+            .as_ref()
+            .map(|w| w.posted_ms)
+            .unwrap_or_else(phases::now_ms);
+        let picked_ms = woke.as_ref().map(|w| w.picked_ms).unwrap_or(posted_ms);
+        // A prewarm of this agent's tools that is running now finishes first.
+        phases::wait_for_prewarm(
+            &self.dir,
+            &rec.space,
+            &rec.harness,
+            Duration::from_secs(300),
+        )
+        .await;
         let mounted = if k == 1 {
             self.mounted_home(&rec).await
         } else {
@@ -917,9 +956,21 @@ impl Persistent {
                 let dir = home_dir
                     .clone()
                     .unwrap_or_else(|| agents.agent_home_dir(&rec.name));
-                home::restore(agents.guest(), &self.session(&rec), &rec.name, &dir).await
+                // The home comes back while the files every start shares
+                // (bridge, runner, skills) go in: they do not depend on it.
+                let (restored, _) = futures_util::future::join(
+                    home::restore(agents.guest(), &self.session(&rec), &rec.name, &dir),
+                    async {
+                        if let Some(h) = cua_agents::harness::harness(&rec.harness) {
+                            let _ = agents.prewarm(h, true).await;
+                        }
+                    },
+                )
+                .await;
+                restored
             }
         };
+        let prepared_ms = phases::now_ms();
         let restored = match restored {
             Ok(t) => t,
             Err(e) => {
@@ -977,6 +1028,26 @@ impl Persistent {
         let started = match started {
             Ok(s) => {
                 cua_spaces::agents::telemetry::started(&agents, &rec.space, entry, &s);
+                let spawned_ms = phases::now_ms();
+                let since = |t: u64| t.saturating_sub(posted_ms);
+                phases::follow(
+                    agents.clone(),
+                    phases::Join {
+                        run_id: s.run_id.clone(),
+                        harness: rec.harness.clone(),
+                        runtime: self.runtime_word(&rec.space),
+                        cold: true,
+                        posted_ms,
+                    },
+                    vec![
+                        ("posted", 0),
+                        ("dispatch_picked", since(picked_ms)),
+                        ("host_prepared", since(prepared_ms)),
+                        ("guest_spawned", since(spawned_ms)),
+                    ],
+                    since(spawned_ms),
+                    woke,
+                );
                 s
             }
             Err(e) => {
@@ -1074,7 +1145,7 @@ impl Persistent {
                 _ => {}
             }
         }
-        self.start_session(&rec, text, entry, None).await
+        Box::pin(self.start_session(&rec, text, entry, None)).await
     }
 
     /// Whether the idle run `run` of `rec` must not take another message:
@@ -1985,13 +2056,21 @@ pub trait SpacesPersistent {
     /// aborted (the daemon runs one for its lifetime).
     fn spawn_supervisor(&self, every: Duration) -> tokio::task::JoinHandle<()> {
         let p = self.persistent();
+        // Members are served on their own tasks (a cold start never holds
+        // up the pass), and a posted task wakes the pass at once; `every`
+        // is the longest the supervisor sleeps.
+        let p = p.detached();
+        let wake = crate::thread::supervisor_wake();
         tokio::spawn(async move {
             loop {
                 let r = p.tick().await;
                 for e in &r.errors {
                     tracing::warn!("persistent agents: {e}");
                 }
-                tokio::time::sleep(every).await;
+                tokio::select! {
+                    () = tokio::time::sleep(every) => {}
+                    () = wake.notified() => {}
+                }
             }
         })
     }

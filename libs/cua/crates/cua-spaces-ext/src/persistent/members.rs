@@ -39,6 +39,13 @@ use cua_spaces::{Error, Result};
 /// How long a task claim lasts without renewal. The supervisor renews the
 /// claims of a session whose run is alive and working on them, so a claim
 /// runs out only when its session is gone.
+/// The id of the desktop row of this machine ("This Mac"). It is not a Space,
+/// but its page has the thread of any Space: people write there, and nothing
+/// runs there (no agent is a member of it). Its thread lives on this machine
+/// only: it is not mirrored to the Volume, so it never mixes with another
+/// machine's.
+pub const HOST_DESKTOP: &str = "this-mac";
+
 pub const CLAIM_TTL: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// The largest local file attached to a post.
@@ -218,20 +225,33 @@ impl Persistent {
         ThreadStore::open(self.spaces.home_dir(), space)
     }
 
+    /// The thread key of `space`: its Space id, or [`HOST_DESKTOP`] for the
+    /// desktop row of this machine (no Space, but a page with a thread).
+    fn thread_key(&self, space: &str) -> Result<String> {
+        if space == HOST_DESKTOP {
+            return Ok(HOST_DESKTOP.to_string());
+        }
+        Ok(self.spaces.resolve(space)?.to_string())
+    }
+
     /// The thread of `space` (id or name) for `caller`: an agent reaches
     /// only its own Space's. A thread with no local log is rebuilt from the
     /// Volume first (once per process).
     pub async fn thread(&self, caller: &Caller, space: &str) -> Result<Thread> {
         // Everyone the transport let in reads (guests too); writing is
         // checked where each entry is written ([`policy`]).
-        let id = self.spaces.resolve(space)?.to_string();
+        let id = self.thread_key(space)?;
         if let Some((_, own)) = caller.agent_member()
             && *own != id
         {
             return Err(denied("an agent posts only in its own Space's thread"));
         }
         let store = self.thread_store(&id);
-        self.rebuild_once(&store).await;
+        // This machine's desktop thread stays on this machine: another
+        // machine's "this-mac" is not the same place.
+        if id != HOST_DESKTOP {
+            self.rebuild_once(&store).await;
+        }
         Ok(Thread {
             p: self.clone(),
             store,
@@ -389,14 +409,48 @@ impl Persistent {
             r.setup = super::durable::setup::PENDING.into();
             r.setup_note.clear();
         })?;
-        self.get(&rec.name)
+        let rec = self.get(&rec.name)?;
+        self.prewarm_in_background(&rec);
+        Ok(rec)
+    }
+
+    /// Puts the member's agent stack in its Space now, in the background,
+    /// so its first message does not wait for the install. A start that
+    /// begins meanwhile waits for this instead of installing twice; a
+    /// Space that cannot be reached yet is left for the start.
+    fn prewarm_in_background(&self, rec: &AgentRecord) {
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        if super::identity::is_external(rec) {
+            return;
+        }
+        let me = self.clone();
+        let rec = rec.clone();
+        rt.spawn(async move {
+            let Some(h) = cua_agents::harness::harness(&rec.harness).filter(|h| h.ready) else {
+                return;
+            };
+            let lock = super::phases::prewarm_lock(&me.dir, &rec.space, &rec.harness);
+            let _held = lock.lock().await;
+            let Ok(agents) = me.agents_for(&rec.space).await else {
+                return;
+            };
+            let _ = agents.prewarm(h, true).await;
+            let install = agents.ensure(h.installs, |_| {});
+            match tokio::time::timeout(std::time::Duration::from_secs(600), install).await {
+                Ok(Ok(_)) => tracing::debug!(agent = %rec.name, "agent stack ready ahead of its first message"),
+                Ok(Err(e)) => tracing::debug!(agent = %rec.name, "prewarm install: {e}"),
+                Err(_) => tracing::debug!(agent = %rec.name, "prewarm install timed out"),
+            }
+        });
     }
 
     /// The agent members of `space` with what each is doing: the member's
     /// `status` (`working | waiting | failed | idle | asleep | paused`, the
     /// busiest of its sessions) and each session's in `session_states`.
     pub async fn members(&self, space: &str) -> Result<Vec<Value>> {
-        let id = self.spaces.resolve(space)?.to_string();
+        let id = self.thread_key(space)?;
         let recs = self.members_of(&id)?;
         let store = self.thread_store(&id);
         let fold = store.fold()?;
@@ -509,31 +563,59 @@ impl Persistent {
         // given back. A connected agent takes its tasks from its inbox
         // itself. A member waiting for (or failed by) its .cua/setup, or
         // whose durable run is being started again elsewhere, keeps its tasks.
-        for rec in records.into_iter().filter(|r| {
-            !r.paused
-                && r.held_by.is_none()
-                && !super::identity::is_external(r)
-                && !r.relaunch
-                && r.setup != super::durable::setup::PENDING
-                && r.setup != super::durable::setup::FAILED
-        }) {
-            let store = self.thread_store(&rec.space);
-            if !store.exists() {
-                continue;
+        let members: Vec<AgentRecord> = records
+            .into_iter()
+            .filter(|r| {
+                !r.paused
+                    && r.held_by.is_none()
+                    && !super::identity::is_external(r)
+                    && !r.relaunch
+                    && r.setup != super::durable::setup::PENDING
+                    && r.setup != super::durable::setup::FAILED
+            })
+            .filter(|r| self.thread_store(&r.space).exists())
+            .collect();
+        // Each member is served on its own, so one member's cold start
+        // (minutes, on first use) never holds up another member's reply.
+        if self.detach_dispatch {
+            for rec in members {
+                let Some(guard) = super::phases::ServingGuard::take(&self.dir, &rec.name) else {
+                    continue; // still being served by an earlier pass
+                };
+                let me = self.clone();
+                tokio::spawn(async move {
+                    let _guard = guard;
+                    let store = me.thread_store(&rec.space);
+                    match tokio::time::timeout(
+                        super::DISPATCH_BUDGET,
+                        me.dispatch_member(&rec, &store),
+                    )
+                    .await
+                    {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => tracing::warn!("{} dispatch: {e}", rec.name),
+                        Err(_) => tracing::warn!("{} dispatch: timed out", rec.name),
+                    }
+                });
             }
-            let r =
-                tokio::time::timeout(super::AGENT_TICK_BUDGET, self.dispatch_member(&rec, &store))
-                    .await;
+            return;
+        }
+        let results = futures_util::future::join_all(members.iter().map(|rec| async move {
+            let store = self.thread_store(&rec.space);
+            let r = tokio::time::timeout(super::DISPATCH_BUDGET, self.dispatch_member(rec, &store))
+                .await;
+            (rec.name.as_str(), r)
+        }))
+        .await;
+        for (name, r) in results {
             match r {
                 Ok(Ok(seqs)) => {
                     for seq in seqs {
-                        report.fired.push(format!("{}: task #{seq}", rec.name));
+                        report.fired.push(format!("{name}: task #{seq}"));
                     }
                 }
-                Ok(Err(e)) => report.errors.push(format!("{} dispatch: {e}", rec.name)),
-                Err(_) => report
-                    .errors
-                    .push(format!("{} dispatch: timed out", rec.name)),
+                Ok(Err(e)) => report.errors.push(format!("{name} dispatch: {e}")),
+                Err(_) => report.errors.push(format!("{name} dispatch: timed out")),
             }
         }
     }
@@ -596,10 +678,11 @@ impl Persistent {
         task: &TaskInfo,
         entry: &str,
     ) -> Result<Delivered> {
-        let base = match self.current_turn(rec).await {
-            Some(Some(turn)) => turn,
+        let picked_ms = super::phases::now_ms();
+        let (base, cold) = match self.current_turn(rec).await {
+            Some(Some(turn)) => (turn, false),
             Some(None) => return Ok(Delivered::Busy),
-            None => 0,
+            None => (0, true),
         };
         let holder = Holder::new(&rec.name, rec.k(), rec.drive_epoch());
         let dispatch = || ClaimEntries {
@@ -615,7 +698,10 @@ impl Persistent {
             Err(e) => return Err(e),
         }
         let posted = store.get(task.seq)?;
-        let text = posted.map(|e| e.text).unwrap_or_else(|| task.text.clone());
+        let text = posted
+            .as_ref()
+            .map(|e| e.text.clone())
+            .unwrap_or_else(|| task.text.clone());
         let framed = format!(
             "[thread #{} from {}] {text}\n\n(Your answer is posted as your reply in the Space's thread when this turn ends; the `cua` tools thread_reply, thread_post and thread_read reach the thread yourself.)",
             task.seq, task.author.name
@@ -632,10 +718,38 @@ impl Persistent {
                 },
             )
         };
-        match self.send_session(rec, &framed, entry).await {
+        // How long the join takes is measured from the message.
+        let posted_ms = posted.as_ref().map(|e| e.ts_ms).unwrap_or(picked_ms);
+        let woke = super::phases::Woke {
+            posted_ms,
+            picked_ms,
+            store: store.clone(),
+            task: task.seq,
+            label: session_name(rec),
+        };
+        if cold {
+            // Said at once; "woke up and joined" follows when the agent has
+            // a session (the start itself is quick, the install is not).
+            store.append(Draft::note(
+                "dispatch",
+                Some(task.seq),
+                format!("{} is joining...", session_name(rec)),
+            ))?;
+            super::phases::set_woke(
+                &self.dir,
+                &format!("{}#{}", rec.name, rec.k()),
+                woke.clone(),
+            );
+        }
+        match Box::pin(self.send_session(rec, &framed, entry)).await {
             Ok(d) => {
                 let base = if d.started { 0 } else { base };
-                if d.started {
+                if !d.started {
+                    // A follow-up to a running agent: its steps are timed too.
+                    Box::pin(self.follow_warm(rec, &d.run_id, posted_ms, picked_ms)).await;
+                } else if !cold {
+                    // The run was ended and started again (new credentials):
+                    // nothing said it was joining, so say it has.
                     store.append(Draft::note(
                         "dispatch",
                         Some(task.seq),
@@ -664,6 +778,16 @@ impl Persistent {
                 Ok(Delivered::Busy)
             }
             Err(e) => {
+                super::phases::take_woke(&self.dir, &format!("{}#{}", rec.name, rec.k()));
+                if cold {
+                    super::phases::start_failed(
+                        &format!("{}/{}", rec.name, task.seq),
+                        &rec.harness,
+                        &self.runtime_word(&rec.space),
+                        posted_ms,
+                        &e.to_string(),
+                    );
+                }
                 // The agent answers in the thread: plain words, with the
                 // complete error (and a Connect button when it needs a
                 // sign-in) in `failure`.
@@ -687,6 +811,28 @@ impl Persistent {
                 )?;
                 Err(e)
             }
+        }
+    }
+
+    /// Starts timing a follow-up to a running agent (`cua_agent_join_phase`).
+    async fn follow_warm(&self, rec: &AgentRecord, run_id: &str, posted_ms: u64, picked_ms: u64) {
+        if let Ok(agents) = self.cached_agents(&rec.space).await {
+            super::phases::follow(
+                agents,
+                super::phases::Join {
+                    run_id: run_id.to_string(),
+                    harness: rec.harness.clone(),
+                    runtime: self.runtime_word(&rec.space),
+                    cold: false,
+                    posted_ms,
+                },
+                vec![
+                    ("posted", 0),
+                    ("dispatch_picked", picked_ms.saturating_sub(posted_ms)),
+                ],
+                0,
+                None,
+            );
         }
     }
 
@@ -1029,6 +1175,10 @@ impl Persistent {
         let owner = self.owner();
         for store in ThreadStore::list(self.spaces.home_dir()) {
             let key = store.space().to_string();
+            // Not shipped to the Volume: see [`HOST_DESKTOP`].
+            if key == HOST_DESKTOP {
+                continue;
+            }
             let now = cua_volume::now_ms();
             if self
                 .live

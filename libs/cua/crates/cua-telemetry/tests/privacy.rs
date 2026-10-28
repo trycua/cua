@@ -254,6 +254,58 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::plan_limit_shown("app_create", "sessions", "team"));
     v.push(events::upgrade_link_opened(s, s, s));
     v.push(events::upgrade_link_opened("cli_limit", "", "pro"));
+    v.push(
+        events::agent_join_phase(
+            "session_ready",
+            "claude-code",
+            "linux_container",
+            true,
+            4200,
+            "0123456789abcdef",
+            "none",
+            "none",
+        )
+        .unwrap(),
+    );
+    v.push(
+        events::agent_join_phase(
+            "install_done",
+            s,
+            s,
+            false,
+            99_999_999,
+            "0123456789abcdef",
+            s,
+            s,
+        )
+        .unwrap(),
+    );
+    v.push(
+        events::agent_join_phase(
+            "failed",
+            "hermes",
+            "macos_vm",
+            true,
+            10,
+            "0123456789abcdef",
+            "none",
+            "auth",
+        )
+        .unwrap(),
+    );
+    assert!(
+        events::agent_join_phase(
+            s,
+            "hermes",
+            "macos_vm",
+            true,
+            10,
+            "0123456789abcdef",
+            "none",
+            "none"
+        )
+        .is_none()
+    );
     v.push(events::agent_signin_imported("codex"));
     v.push(events::agent_signin_imported(s));
     v.push(events::agent_used_space("space_bash").unwrap());

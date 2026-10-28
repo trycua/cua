@@ -3264,6 +3264,7 @@ fn element_uia_unavailable_result(error: crate::uia::windows_enum::UiaDeadlineEr
     .with_structured(json!({
         "code": "background_unavailable", "uia_status": status,
         "path": "ax", "verified": false, "effect": effect,
+        "hint": "A UIA provider call may still be running. Do not replay this click through another input route. Inspect the target state before another action.",
     }))
 }
 
@@ -4084,7 +4085,10 @@ impl Tool for ClickTool {
                             failed_calls,
                         });
                     }
-                    if admitted.as_ref().is_some_and(|element| element.read_while_minimized) {
+                    if admitted
+                        .as_ref()
+                        .is_some_and(|element| element.read_while_minimized)
+                    {
                         let (x, y) = resolve_onscreen_point_with_scroll(
                             &admitted, hwnd, idx, cx, cy, "clicking",
                         )

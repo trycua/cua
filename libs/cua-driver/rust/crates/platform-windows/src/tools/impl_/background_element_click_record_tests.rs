@@ -18,13 +18,27 @@ fn semantic_deadline_stops_the_route_and_preserves_unknown_effect() {
             ActionEffect::Unverifiable,
         ),
     ] {
-        let result = element_uia_unavailable_result(error);
+        let mut result = element_uia_unavailable_result(error);
+        cua_driver_core::recovery_hint::annotate(
+            "click",
+            &cua_driver_core::recovery_hint::Seed::from_args(&serde_json::json!({
+                "pid": 42, "window_id": 7, "delivery_mode": "background"
+            })),
+            &mut result,
+        );
         assert_eq!(result.is_error, Some(true));
         let data = result.structured_content.as_ref().unwrap();
         assert_eq!(data["code"], "background_unavailable");
         assert_eq!(data["uia_status"], status);
         assert_eq!(data["path"], "ax");
         assert_eq!(data["verified"], false);
+        let hint = data["hint"].as_str().expect("public recovery hint");
+        assert!(
+            hint.contains("Do not replay this click"),
+            "{status}: {hint}"
+        );
+        assert!(!hint.contains("foreground"), "{status}: {hint}");
+        assert_eq!(data["next_call"]["tool"], "get_window_state");
         let record = ActionExecutionRecord::from_legacy(
             "click",
             &serde_json::json!({"delivery_mode": "background"}),

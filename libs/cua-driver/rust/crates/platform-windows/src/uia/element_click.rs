@@ -82,11 +82,13 @@ fn click_patterns(
     // fallthroughs, cua-driver couldn't drive WinUI3
     // CheckBox / RadioButton / ComboBox because PostMessage
     // doesn't reach their handlers (CoreInput dispatcher).
+    // Pattern casts issue QueryInterface too; after a timed-out lookup returns,
+    // do not enter another COM call just to discover its activation interface.
     let invoke_result = while_active(cancelled, || unsafe {
         elem.GetCurrentPattern(UIA_InvokePatternId)
     })?;
     if let Ok(pattern) = invoke_result {
-        if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
+        if let Ok(inv) = while_active(cancelled, || pattern.cast::<IUIAutomationInvokePattern>())? {
             let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
                 while_active(cancelled, || unsafe { inv.Invoke() })
             })?;
@@ -110,7 +112,7 @@ fn click_patterns(
         elem.GetCurrentPattern(UIA_TogglePatternId)
     })?;
     if let Ok(pattern) = toggle_result {
-        if let Ok(tg) = pattern.cast::<IUIAutomationTogglePattern>() {
+        if let Ok(tg) = while_active(cancelled, || pattern.cast::<IUIAutomationTogglePattern>())? {
             let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
                 while_active(cancelled, || unsafe { tg.Toggle() })
             })?;
@@ -128,7 +130,9 @@ fn click_patterns(
         elem.GetCurrentPattern(UIA_SelectionItemPatternId)
     })?;
     if let Ok(pattern) = sel_result {
-        if let Ok(si) = pattern.cast::<IUIAutomationSelectionItemPattern>() {
+        if let Ok(si) = while_active(cancelled, || {
+            pattern.cast::<IUIAutomationSelectionItemPattern>()
+        })? {
             let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
                 while_active(cancelled, || unsafe { si.Select() })
             })?;
@@ -148,7 +152,9 @@ fn click_patterns(
         elem.GetCurrentPattern(UIA_ExpandCollapsePatternId)
     })?;
     if let Ok(pattern) = exp_result {
-        if let Ok(ec) = pattern.cast::<IUIAutomationExpandCollapsePattern>() {
+        if let Ok(ec) = while_active(cancelled, || {
+            pattern.cast::<IUIAutomationExpandCollapsePattern>()
+        })? {
             let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
                 while_active(cancelled, || unsafe { ec.Expand() })
             })?;

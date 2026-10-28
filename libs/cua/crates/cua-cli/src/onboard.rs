@@ -378,7 +378,7 @@ pub fn machines_table(v: &Value) -> Vec<String> {
     }
     if machines.is_empty() {
         rows.push(crate::util::hint(
-            "No hosts yet: `cua host setup --no-desktop --provide-spaces` here, `cua host pair` for another computer.",
+            "No hosts yet: `cua host setup --share spaces` here, `cua host pair` for another computer.",
         ));
     }
     rows

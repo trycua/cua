@@ -49,7 +49,7 @@ desktop and files stay private.
 On the mini, in Terminal:
 
 ```bash test="cli-shape" id="byoc-mac-mini"
-cua host setup --profile spare --name "Mac mini"
+cua host setup --share spaces --name "Mac mini"
 ```
 
 If you only reach the mini over ssh, install without a screen and sign in with
@@ -61,7 +61,7 @@ curl -fsSL https://cua.ai/install.sh | sh -s -- -y --select spaces,host --no-onb
 ```
 
 ```bash test="cli-shape" id="byoc-mac-mini-remote"
-cua host setup --remote --profile spare --name "Mac mini"
+cua host setup --remote --share spaces --name "Mac mini"
 ```
 
 <Callout type="warn">
@@ -123,7 +123,7 @@ The server now appears in **Machines**. Setup installs it as a background
 service, so it comes back after a restart.
 
 If the server only runs Spaces and you don't want to share its own desktop,
-add `--profile spare` to the setup command.
+add `--share spaces` to the setup command.
 
 Already on the Cua Spaces app? You can skip the code. Open **Machines**, press
 **Add a machine**, and run the install command it shows on the server. See

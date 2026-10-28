@@ -33,7 +33,7 @@ mod git;
 pub mod shim;
 mod stats;
 mod store;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
 pub mod url;
 
@@ -213,7 +213,7 @@ impl RepoCache {
     }
 
     /// Unit tests mirror local repositories.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn allowing_local_repos(mut self) -> Self {
         self.policy = Policy {
             allow: "file,https",

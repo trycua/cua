@@ -21,7 +21,6 @@ pub const GUEST_LOG: &str = "/tmp/.cua-repo-cache.log";
 
 /// Writes the helper into `<root>/bin`.
 pub fn write_helper(root: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
     let dir = root.join("bin");
     std::fs::create_dir_all(&dir)?;
     let p = dir.join(HELPER_NAME);
@@ -29,7 +28,12 @@ pub fn write_helper(root: &Path) -> std::io::Result<()> {
         return Ok(());
     }
     store::write_atomic(&p, HELPER.as_bytes())?;
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755))
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(())
 }
 
 /// The system git config a Space includes: one rewrite per verified mirror.
@@ -187,6 +191,7 @@ mod tests {
         assert!(t.contains("insteadOf = https://github.com/o/r\n"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_install_script_does_nothing_without_the_mount() {
         // Syntax check with the shell, in a place with no mount.

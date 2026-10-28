@@ -5,7 +5,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 
-import { useAgentKeys, useBridge, type ConnectorAppRow, type ConnectorProviderRow } from "@/bridge";
+import { useAgentKeys, useBridge, useKeysRecheck, type ConnectorAppRow, type ConnectorProviderRow } from "@/bridge";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { KeySheet } from "@/components/agents/key-sheet";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
@@ -34,6 +34,8 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
   const navigate = useNavigate();
   const { data } = useBridge();
   const keys = useAgentKeys();
+  // Opening this page asks the providers whether the saved sign-ins and keys still work.
+  useKeysRecheck();
   const [all, setAll] = useState(false);
   const [lit, setLit] = useState<string | null>(null);
 

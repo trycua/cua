@@ -81,6 +81,8 @@ extension WebUIBridge {
         // Settings, Connectors: the daemon's agent_keys methods (the key travels
         // once, in agentKeys.set's arguments; answers never carry one).
         case "agentKeys.list": return try await model.agentKeys.call("agent_keys.list")
+        // The providers are asked whether the saved API keys still work (answers cached for minutes).
+        case "agentKeys.check": return try await model.agentKeys.call("agent_keys.check")
         case "agentKeys.set":
             var keyArgs: [String: Any] = ["provider": try string(args, "provider"), "value": try string(args, "value")]
             if let env = args["env"] as? String, !env.isEmpty { keyArgs["env"] = env }

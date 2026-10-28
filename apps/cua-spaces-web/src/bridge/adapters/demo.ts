@@ -73,6 +73,8 @@ export interface DemoOptions {
   keyvaultLocked?: boolean;
   /** Start with no Keyvault (`?demo=novault`). */
   noVault?: boolean;
+  /** Saved credentials the provider refuses (`?demo=rejected-key`: the OpenAI key): a check marks them as needing a reconnect. */
+  rejectedKeys?: string[];
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
@@ -206,6 +208,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     onboarded: !flags.has("fresh"),
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
+    ...(flags.has("rejected-key") ? { rejectedKeys: ["OPENAI_API_KEY"] } : {}),
     noSpaces: flags.has("empty"),
     ...(() => {
       const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
@@ -317,7 +320,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
     imported: [],
-    keyStore: demoKeyStore(now),
+    keyStore: demoKeyStore(now, options.rejectedKeys ?? []),
     readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,

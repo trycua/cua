@@ -2,10 +2,10 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, ChevronRightIcon, CopyIcon, Loader2Icon, PlugIcon, RotateCcwIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
-import type { ThreadFailure } from "@/bridge";
+import { useAgentKeys, type ThreadFailure } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { useConnectors } from "@/hooks/use-connectors";
 import { cn } from "@/lib/utils";
@@ -51,6 +51,12 @@ export function FailureNote({
 
 function ConnectActions({ harness, provider, taskText, onRetry }: { harness: string; provider: string | null; taskText: string | null; onRetry?: (text: string) => Promise<void> }) {
   const c = useConnectors();
+  // The agent was refused its credential: Settings reads the saved list again, which says it needs a reconnect.
+  const keys = useAgentKeys();
+  useEffect(() => {
+    void keys.refresh();
+    // Once, when the failure appears.
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const app = failureApp(harness, provider);
   const connected = app ? c.view?.apps.find((a) => a.agent === app)?.state === "connected" : false;
   return (

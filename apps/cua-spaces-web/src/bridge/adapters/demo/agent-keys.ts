@@ -20,10 +20,13 @@ const providerOf = (env: string): AgentKeyProvider => PROVIDERS.find((p) => p.en
 /** The demo's saved keys, shared with Connect (a sign-in Connect copies lands here, as in the daemon's store). */
 export interface DemoKeyStore {
   keys: AgentKeyInfo[];
+  /** Variables the provider refuses: a check marks them `expired` (needs a reconnect). `?demo=rejected-key`. */
+  rejected: string[];
 }
 
-export const demoKeyStore = (now: () => number): DemoKeyStore => ({
+export const demoKeyStore = (now: () => number, rejected: string[] = []): DemoKeyStore => ({
   keys: [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: now() - 6 * 24 * 3600_000 }],
+  rejected,
 });
 
 export function demoAgentKeysHandlers({
@@ -36,11 +39,17 @@ export function demoAgentKeysHandlers({
   stepMs: number;
   now: () => number;
   store?: DemoKeyStore;
-}): DemoHandlers<"agentKeys.list" | "agentKeys.set" | "agentKeys.remove" | "agentKeys.shell" | "agentKeys.fromShell"> {
+}): DemoHandlers<"agentKeys.list" | "agentKeys.check" | "agentKeys.set" | "agentKeys.remove" | "agentKeys.shell" | "agentKeys.fromShell"> {
   const keys = () => store.keys;
   const report = (): AgentKeysReport => ({ keys: keys().map((k) => ({ ...k })), providers: PROVIDERS, available: true, unavailable: null });
   return {
     "agentKeys.list": () => report(),
+    // The providers answer: the keys they refuse need a reconnect, and a key saved again is not refused.
+    "agentKeys.check": async () => {
+      await wait(stepMs / 2);
+      const r = report();
+      return { ...r, keys: r.keys.map((k) => (store.rejected.includes(k.env) ? { ...k, expired: true } : k)) };
+    },
     "agentKeys.set": async ({ provider, env, value }) => {
       const name = provider === "other" ? (env ?? "").trim() : PROVIDERS.find((p) => p.id === provider)?.env;
       if (!name) throw new HostError(`unknown provider ${provider}`);
@@ -50,6 +59,7 @@ export function demoAgentKeysHandlers({
       if (!v) throw new HostError("the key is empty");
       // The Keychain write.
       await wait(stepMs / 2);
+      store.rejected = store.rejected.filter((e) => e !== name);
       store.keys = [...keys().filter((k) => k.env !== name), { provider: providerOf(name), env: name, last4: v.length >= 12 ? v.slice(-4) : "", addedMs: now() }].sort(
         (a, b) => a.env.localeCompare(b.env),
       );

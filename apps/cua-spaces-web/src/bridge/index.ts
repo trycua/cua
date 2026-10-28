@@ -61,6 +61,7 @@ export {
   agentKeyForm,
   agentKeysView,
   useAgentKeys,
+  useKeysRecheck,
   type AgentKeyFormView,
   type AgentKeyRowView,
   type AgentKeysHook,

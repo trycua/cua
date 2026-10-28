@@ -43,7 +43,7 @@ describe("machines", () => {
 
   it("labels a signed-in machine apart from a machine's connection", () => {
     expect(connectionLabel(machine({ connection: null, device: true }))).toBe("Signed in, not sharing");
-    expect(machineSubtitle(machine({ os: "windows", connection: null, device: true }))).toBe("Windows · Signed-in device, not shared");
+    expect(machineSubtitle(machine({ os: "windows", connection: null, device: true }))).toBe("Windows, Signed in, not sharing");
     expect(connectionLabel(machine({ connection: "relay", device: true }))).toBe("Cua relay");
     expect(connectionLabel(machine({ connection: null, current: true }))).toBe("Not set up for access");
     expect(connectionLabel(machine({ connection: null, current: false }))).toBe("Unknown");

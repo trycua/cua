@@ -170,7 +170,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connectors", () => {
     expect(way.textContent).toContain("Use ANTHROPIC_API_KEY from your shell");
     await click(way);
     await waitFor(() => expect(q("[data-connector-provider=anthropic]")!.dataset.state).toBe("connected"));
-    expect(calls.filter((c) => c.op.startsWith("agentKeys.") && c.op !== "agentKeys.list").map((c) => c.op)).toEqual(["agentKeys.shell", "agentKeys.fromShell"]);
+    expect(calls.filter((c) => c.op.startsWith("agentKeys.") && c.op !== "agentKeys.list" && c.op !== "agentKeys.check").map((c) => c.op)).toEqual(["agentKeys.shell", "agentKeys.fromShell"]);
   });
 
   it("an app's page switches one part off and on, leaving the other", async () => {

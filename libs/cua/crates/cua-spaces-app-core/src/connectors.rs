@@ -685,14 +685,19 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
         )
     } else if a.configured || !a.installed {
         // Cua's tools are in it (or it is not on this machine): what it still needs.
+        let reconnect = app_expired(input, &a.agent);
         (
             "not-connected",
-            if app_expired(input, &a.agent) {
-                Some("The sign-in expired. Reconnect.".to_string())
+            if reconnect {
+                Some("Needs reconnect.".to_string())
             } else {
                 needs
             },
-            Some(button("connect", "Connect", true)),
+            Some(button(
+                "connect",
+                if reconnect { "Reconnect" } else { "Connect" },
+                true,
+            )),
         )
     } else {
         (
@@ -745,7 +750,7 @@ fn provider_row(input: &ConnectorsInput, p: &Provider, can_edit: bool) -> Connec
     } else if provider_expired(input, p) {
         (
             "not-connected",
-            "Expired, reconnect".into(),
+            "Needs reconnect".into(),
             button("connect", "Reconnect", can_edit),
         )
     } else {
@@ -1534,7 +1539,7 @@ mod tests {
     }
 
     #[test]
-    fn an_expired_sign_in_is_not_connected_and_says_reconnect() {
+    fn a_sign_in_that_no_longer_works_is_not_connected_and_says_reconnect() {
         let mut i = input();
         i.apps[0].configured = true;
         let mut k = key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA");
@@ -1544,10 +1549,15 @@ mod tests {
         let v = view(&i);
         let p = v.providers.iter().find(|p| p.id == "anthropic").unwrap();
         assert_eq!(p.state, "not-connected");
-        assert_eq!(p.status, "Expired, reconnect");
+        assert_eq!(p.status, "Needs reconnect");
         assert_eq!(p.button.label, "Reconnect");
         let a = v.apps.iter().find(|a| a.agent == "claude-code").unwrap();
-        assert_eq!(a.line.as_deref(), Some("The sign-in expired. Reconnect."));
+        assert_eq!(a.line.as_deref(), Some("Needs reconnect."));
+        // The app's row offers Reconnect, not a first Connect.
+        assert_eq!(
+            a.button.as_ref().map(|b| b.label.as_str()),
+            Some("Reconnect")
+        );
     }
 
     #[test]

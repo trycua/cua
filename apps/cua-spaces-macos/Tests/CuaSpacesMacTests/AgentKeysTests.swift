@@ -102,7 +102,7 @@ struct AgentKeysTests {
     }
 
     @Test func theWebBridgeRoutesAgentKeysToTheDaemon() {
-        for m in ["agentKeys.list", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell"] {
+        for m in ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell"] {
             #expect(WebUIBridge.methods.contains(m))
         }
     }

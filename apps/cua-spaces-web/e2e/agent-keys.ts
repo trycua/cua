@@ -32,7 +32,7 @@ const TYPED = "sk-ant-test-0000";
 
 export async function checkAgentKeys(page: Page, checkpoints: ParityCheckpoint[]): Promise<number> {
   let checked = 0;
-  await page.goto("/settings/connectors?bridge=demo");
+  await page.goto("/settings/connectors?bridge=demo&parity");
   await page.waitForFunction(() => window.__cuaParity !== undefined);
   expect(await page.evaluate(() => window.__cuaParity!.coreStatus), "the wasm core loaded").toBe("ready");
 

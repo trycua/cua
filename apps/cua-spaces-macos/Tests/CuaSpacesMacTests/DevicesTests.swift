@@ -66,9 +66,9 @@ struct DevicesTests {
         await m.refresh()
         #expect(announced.count == 2, "a device asks once per launch")
         #expect(m.view.thisDevice.kind == .enrolled)
-        #expect(m.thisDeviceText(m.view.thisDevice) == "Enrolled until Feb 8, 2027")
+        #expect(m.thisDeviceText(m.view.thisDevice) == "Trusted until Feb 8, 2027")
         let studio = m.view.rows.first { $0.id == "dev_studio" }!
-        #expect(m.rowDetail(studio) == "Linux \u{b7} Enrolled \u{b7} re-verify in 12 days \u{b7} Last seen 3 hours ago")
+        #expect(m.rowDetail(studio) == "Linux, Trusted, check again in 12 days, last seen 3 hours ago")
         #expect(m.view.recent.first?.text == "MacBook Pro opened build-box")
     }
 
@@ -139,7 +139,7 @@ struct DevicesTests {
             "(ids in `cua devices ls`)"
         await m.approve()
         #expect(m.approvalView?.error == "The code expired.")
-        #expect(m.approvalView?.approveLabel == "Approve by ID")
+        #expect(m.approvalView?.approveLabel == "Add machine")
         #expect(m.approvalView?.canApprove == true)
         fixture.failApprove = nil
         await m.approve()

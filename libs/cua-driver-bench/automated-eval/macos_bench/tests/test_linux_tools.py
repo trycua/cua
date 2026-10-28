@@ -97,31 +97,67 @@ class LinuxSingleBuildTest(unittest.TestCase):
                 ca.PINS_FILE, ca.CUA_BIN, ca.CUA_SKILLS = saved_globals
 
 
-class LinuxCaptureSubjectTest(unittest.TestCase):
-    def test_preflight_capture_shows_a_window_and_removes_it(self) -> None:
-        seen: list[str] = []
-        proc = mock.Mock(pid=4242)
+def _x11_ready() -> bool:
+    if sys.platform != "linux" or not os.environ.get("DISPLAY"):
+        return False
+    try:
+        return subprocess.run(["xdpyinfo"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
-        def capture(ctx, arm):
-            seen.append("window" if started else "empty")
-            return arm, "pass", ""
 
-        started: list[object] = []
-        with (
-            mock.patch.object(rb.desktop, "detect_platform", return_value="linux"),
-            mock.patch.object(rb.desktop, "start_app", side_effect=lambda *a, **k: started.append(a) or proc),
-            mock.patch.object(rb.desktop, "stop_group") as stop,
-            mock.patch.object(rb, "real_capture_check", side_effect=capture),
-        ):
-            with tempfile.TemporaryDirectory() as tmp:
-                with rb.capture_subject(Path(tmp)):
-                    capture(None, "x")
-            self.assertEqual(seen, ["window"])
-            argv = started[0][0]
-            self.assertTrue(argv[-1].endswith("benchlab.py") or "benchlab.py" in " ".join(argv))
-            stop.assert_called_once_with(4242)
-            proc.wait.assert_called_once()
+def _benchlab_running() -> bool:
+    return subprocess.run(["pgrep", "-f", r"^/usr/bin/python3 \S*linux/benchlab\.py"], capture_output=True).returncode == 0
 
+
+@unittest.skipUnless(_x11_ready(), "headless X11 session required")
+class LinuxPreflightCaptureTest(unittest.TestCase):
+    """Preflight on a real desktop: the capture must be a valid, non-uniform frame, and nothing is left running."""
+
+    def test_preflight_captures_a_window_and_cleans_up(self) -> None:
+        arm = rb.cxn.MCP_ARMS[0]
+        frames: list[str] = []
+
+        def capture(ctx, name):
+            shot = desktop.capture_screenshot(os.environ["DISPLAY"], ctx.run_dir / "shot.png")
+            frames.append("running" if _benchlab_running() else "absent")
+            try:  # the runner's own validity check: raises on a uniform frame
+                return f"{name} real capture", "pass", rb.rec.capture_detail(shot)
+            except RuntimeError as error:
+                return f"{name} real capture", "fail", str(error)
+
+        self.assertFalse(_benchlab_running())
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp, offline=True, allow_non_terminal=True)
+            ctx.task_ids = []
+            ctx.arm_names = [arm]
+            ctx.mcp[arm] = (Path(tmp) / "mcp.json", rb.cxn.SERVER_OF[arm])
+            cli = Path(tmp) / "codex"
+            cli.touch()
+            with (
+                mock.patch.object(rb, "terminal_ancestor", return_value=True),
+                mock.patch.object(rb.rec, "free_gb", return_value=1000),
+                mock.patch.object(rb, "check_pins", return_value=[]),
+                mock.patch.object(rb, "registered_bench_copies", return_value=[]),
+                mock.patch.object(rb.cxn, "CODEX_CLI", cli),
+                mock.patch.object(
+                    rb.cxn, "server_entry", return_value={"command": "mcp", "args": [], "env": {}}
+                ),
+                mock.patch.object(rb.ca, "cu_helper_observed", return_value={}),
+                mock.patch.object(rb.ca, "check_cu_helper_pins", return_value=[]),
+                mock.patch.object(rb, "cu_helper_live_checks", return_value=[]),
+                mock.patch.object(rb, "native_codex_checks", return_value=[]),
+                mock.patch.object(rb, "real_capture_check", side_effect=capture),
+            ):
+                rows = rb.preflight(ctx)
+        by_name = {name: (status, detail) for name, status, detail in rows}
+        status, detail = by_name[f"{arm} real capture"]
+        self.assertEqual(status, "pass", detail)
+        self.assertEqual(frames, ["running"])
+        self.assertFalse(_benchlab_running())
+
+
+class LinuxCaptureSubjectOffLinuxTest(unittest.TestCase):
     def test_not_used_on_macos(self) -> None:
         with (
             mock.patch.object(rb.desktop, "detect_platform", return_value="macos"),

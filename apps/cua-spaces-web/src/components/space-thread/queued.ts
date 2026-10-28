@@ -96,6 +96,7 @@ export function creatingThread(pendingId: string): SpaceThread {
     entries: [],
     members: [],
     shares: [],
+    live: [],
     me: "me",
     role: null,
     error: null,

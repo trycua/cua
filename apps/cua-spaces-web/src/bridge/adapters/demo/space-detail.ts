@@ -58,7 +58,7 @@ const SPACE_WINDOWS: Record<string, SpaceWindows> = {
   "relay:linux-box/ubuntu-build": {
     windows: [
       win("w-terminal", "Terminal", "ada@ubuntu-build: ~/cua", "xfce4-terminal", 701),
-      win("w-firefox", "Firefox", "Pull requests · trycua/cua — Mozilla Firefox", "firefox", 812),
+      win("w-firefox", "Firefox", "Pull requests - trycua/cua — Mozilla Firefox", "firefox", 812),
       win("w-files", "Files", "Downloads", "thunar", 845),
       win("w-buildlog", "Build log", "cargo build --release", "mousepad", 966),
       win("w-code", "Code", "build.rs - cua - Visual Studio Code", "code", 1120),
@@ -70,7 +70,7 @@ const SPACE_WINDOWS: Record<string, SpaceWindows> = {
 const WINDOWS: Record<string, SpaceWindows> = {
   macos: {
     windows: [
-      win("w-safari", "Safari", "Pull requests · trycua/cua", "com.apple.Safari", 511),
+      win("w-safari", "Safari", "Pull requests - trycua/cua", "com.apple.Safari", 511),
       win("w-terminal", "Terminal", "", "com.apple.Terminal", 602),
       win("w-finder", "Finder", "Downloads", "com.apple.finder", 388),
     ],

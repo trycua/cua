@@ -16,7 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
 import { useConnectors, type Connectors } from "@/hooks/use-connectors";
 import { addedText } from "@/lib/agent-keys";
-import { getItUrl, missingApps } from "@/lib/connected-apps";
+import { getItUrl } from "@/lib/connected-apps";
 import { cn } from "@/lib/utils";
 
 const DriverSettingsCard = lazy(() => import("@/components/volume/driver-card").then((m) => ({ default: m.DriverSettingsCard })));
@@ -36,7 +36,6 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
   const keys = useAgentKeys();
   const [all, setAll] = useState(false);
   const [lit, setLit] = useState<string | null>(null);
-  const missing = missingApps(c.apps.rows ?? []);
 
   useEffect(() => {
     if (!view || !focusApp) return;
@@ -70,10 +69,10 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           htmlFor="connectors-auto"
           control={<Switch id="connectors-auto" data-connected-auto="" checked={view.auto} onCheckedChange={c.apps.setAuto} />}
         />
-        {all && missing.length > 0 ? (
+        {all && (view?.more.length ?? 0) > 0 ? (
           <>
             <GroupedRow className="min-h-9 bg-muted/40 py-2 text-xs text-muted-foreground">Not installed</GroupedRow>
-            {missing.map((row) => {
+            {view!.more.map((row) => {
               const url = getItUrl(row.agent);
               return (
                 <GroupedRow key={row.agent} data-connected-missing={row.agent} className="text-muted-foreground">

@@ -7,7 +7,7 @@
  * decides, this only says it.
  */
 
-import type { AgentRight, RightHolders } from "@/bridge";
+import { DEFAULT_AGENT_RIGHTS, type AgentRight, type AgentRights, type RightHolders, type ThreadRole } from "@/bridge";
 
 export const RIGHT_ROWS: readonly { right: AgentRight; label: string }[] = [
   { right: "task", label: "Can task" },
@@ -34,3 +34,23 @@ export function waitingFor(h: RightHolders): string {
 
 /** What a guest's composer says. */
 export const GUEST_COMPOSER = "View only. You can read this thread but not post.";
+
+/** Two holders of a right are the same: one group, or the same accounts. */
+export function sameHolders(a: RightHolders, b: RightHolders): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x) => b.includes(x));
+  return a === b;
+}
+
+/** Every right is at its default (task, stop, approve): the card shows one "Default permissions" line. */
+export const rightsAreDefault = (rights: AgentRights): boolean => RIGHT_ROWS.every(({ right }) => sameHolders(rights[right], DEFAULT_AGENT_RIGHTS[right]));
+
+/**
+ * Who may change an agent's rights: the Space's owner and admins (a daemon
+ * that does not say your role: its owner), and the agent's own owner when
+ * they are a member. A guest or an agent never. The daemon decides; this
+ * only keeps the card from offering what it would refuse.
+ */
+export function canEditRights(role: ThreadRole | null, ownsAgent: boolean): boolean {
+  if (role === null || role === "owner" || role === "admin") return true;
+  return role === "member" && ownsAgent;
+}

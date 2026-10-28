@@ -11,7 +11,7 @@
 
 import { Popover } from "@base-ui/react/popover";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { CheckIcon, ChevronRightIcon, CopyIcon, Loader2Icon, PlugIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckIcon, ChevronRightIcon, CopyIcon, Loader2Icon, PlugIcon } from "lucide-react";
 import { createContext, useContext, useState, type ReactNode } from "react";
 
 import { agentCard, personCard, useBridge, type AgentMember, type AgentRights, type MemberIdentity, type ShareEntry, type ThreadRole } from "@/bridge";
@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { AgentTile, PersonDot } from "./avatar";
 import { holdersName, identityKey, joinedHow, reportedHarness } from "./identity";
 import { RightsEditor } from "./members-panel";
-import { RIGHT_ROWS } from "./rights";
+import { canEditRights, RIGHT_ROWS, rightsAreDefault } from "./rights";
 import { personLabel, type Roster, type RosterAgent, type RosterPerson } from "./roster";
 
 /** What a Space's cards read: who it's shared with, your role, its agents, and what you may change. */
@@ -37,8 +37,12 @@ export interface ProfileScope {
   /** Your sign-in (`ada@example.com`), for your own card's email. */
   identity: string | null;
   onRemoveAgent?: (name: string) => Promise<void>;
-  /** Changes who may task, stop and approve an agent (owners and admins). */
+  /** Changes who may task, stop and approve an agent (the daemon refuses anyone but the Space's owner and admins and the agent's owner). */
   onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>;
+  /** The person whose row in "In this Space" is selected (their card is open there). */
+  selected?: string | null;
+  /** Selects a person's row (their owner link in an agent's card); null clears it. */
+  select?: (id: string | null) => void;
 }
 
 const Scope = createContext<ProfileScope | null>(null);
@@ -184,7 +188,14 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Their profile card in place of this one (an owner who is not in this Space).
+  const [ownerCard, setOwnerCard] = useState<RosterPerson | null>(null);
+  const [editing, setEditing] = useState(false);
   const member = scope?.members.find((m) => m.name === i.handle);
+  // The agent's owner changes its rights too, with the Space's owner and admins (the daemon decides).
+  const mine = roster.me !== null && i.owner.id === roster.me;
+  const canEdit = Boolean(agent && scope?.onSetRights && canEditRights(scope.role, mine));
+  const rightsDefault = agent ? rightsAreDefault(agent.rights) : false;
   const harness = reportedHarness(i);
   const v = agentCard(core, {
     displayName: i.displayName,
@@ -207,6 +218,8 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
           holders: holdersName(agent.rights[right], i, roster),
         }))
       : [],
+    rightsDefault,
+    canEditRights: canEdit,
     canRemove: Boolean(onRemove),
     connectors: c.input,
   });
@@ -226,6 +239,27 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
       ),
     );
   };
+  // The owner: in this Space, their row is selected and their card opens there; if not, their card opens in place.
+  const openOwner = () => {
+    const person = roster.people.find((p) => p.id === i.owner.id) ?? roster.people.find((p) => p.label.toLowerCase() === v.ownerName.toLowerCase());
+    if (person && scope?.select) {
+      scope.select(person.id);
+      onDone?.();
+      return;
+    }
+    setOwnerCard(person ?? { kind: "person", id: i.owner.id, label: v.ownerName, me: mine });
+  };
+  if (ownerCard) {
+    return (
+      <div data-profile-card-owner="">
+        <Button size="sm" variant="ghost" className="mt-2 ml-2" data-card-back="" onClick={() => setOwnerCard(null)}>
+          <ArrowLeftIcon />
+          {v.name}
+        </Button>
+        <PersonCard person={ownerCard} onDone={onDone} />
+      </div>
+    );
+  }
   return (
     <CardShell
       data={{ "data-profile-card": "agent", "data-profile": i.handle, "data-provenance": i.handle }}
@@ -275,8 +309,24 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
         </button>
         {open ? (
           <dl className="mt-1.5 space-y-1" data-card-details-open="">
+            {v.ownerName ? (
+              <div data-card-owner="" className="flex min-h-6 items-center justify-between gap-3 text-xs">
+                <dt className="shrink-0 text-muted-foreground">{v.ownerLabel}</dt>
+                <dd className="flex min-w-0 items-center">
+                  <button
+                    type="button"
+                    data-card-owner-open={v.ownerName}
+                    onClick={openOwner}
+                    className="-mr-1 flex min-w-0 cursor-default items-center gap-1.5 rounded-lg px-1 py-0.5 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60"
+                  >
+                    <PersonDot name={v.ownerName} px={16} />
+                    <span className="truncate">{v.ownerName}</span>
+                  </button>
+                </dd>
+              </div>
+            ) : null}
             {v.details
-              .filter((d) => !(scope?.onSetRights && agent && canManage(scope.role) && RIGHT_LABELS.has(d.label)))
+              .filter((d) => !(canEdit && RIGHT_LABELS.has(d.label)))
               .map((d) => (
                 <div key={d.label} className="flex min-h-6 items-center justify-between gap-3 text-xs">
                   <dt className="shrink-0 text-muted-foreground">{d.label}</dt>
@@ -288,7 +338,26 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
                   </dd>
                 </div>
               ))}
-            {scope?.onSetRights && agent && canManage(scope.role) ? <RightsEditor agent={agent} onSetRights={scope.onSetRights} /> : null}
+            {v.defaultPermissions && !editing ? (
+              <div data-card-default-permissions="" className="flex min-h-6 items-center justify-between gap-3 text-xs">
+                <dt className="shrink-0 text-muted-foreground">{v.defaultPermissions}</dt>
+                {v.editRightsLabel ? (
+                  <dd>
+                    <button
+                      type="button"
+                      data-card-edit-rights=""
+                      onClick={() => setEditing(true)}
+                      className="-mr-1 cursor-default rounded-lg px-1 py-0.5 text-brand-strong outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60"
+                    >
+                      {v.editRightsLabel}
+                    </button>
+                  </dd>
+                ) : null}
+              </div>
+            ) : null}
+            {canEdit && agent && scope?.onSetRights && (editing || !v.defaultPermissions) ? (
+              <RightsEditor agent={agent} onSetRights={scope.onSetRights} labels={RIGHT_WORDS} people={roster.people.filter((p) => !p.id.startsWith("share:"))} />
+            ) : null}
             {/* Its tasks and posts with you, in the Agents tab. */}
             <Button
               size="sm"
@@ -353,7 +422,10 @@ export function ProfileTrigger({
   data,
   roster: ownRoster,
   onRemove,
+  rowKey,
 }: {
+  /** A row in "In this Space": its card opens when `scope.select` names this key (an agent's Owner link). */
+  rowKey?: string;
   /** Where the page has no Space scope (the Agents tab): its roster and Remove. */
   roster?: Roster;
   onRemove?: (handle: string) => Promise<void>;
@@ -371,10 +443,18 @@ export function ProfileTrigger({
   if ((person && !scope) || (!person && !who)) return <>{children}</>;
   const roster = scope?.roster ?? ownRoster;
   const removeFn = scope?.onRemoveAgent ?? onRemove;
+  const chosen = rowKey !== undefined && scope?.selected === rowKey;
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root
+      open={open || chosen}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next && chosen) scope?.select?.(null);
+      }}
+    >
       <Popover.Trigger
         data-profile-trigger={person ? person.label : who!.handle}
+        data-selected={chosen ? "" : undefined}
         className={cn("cursor-default rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60", className)}
         {...data}
       >
@@ -384,7 +464,7 @@ export function ProfileTrigger({
         <Popover.Positioner side={side} align="start" sideOffset={6} className="z-[70]">
           <Popover.Popup data-video-occluder="" className="rounded-lg bg-popover text-popover-foreground shadow-float outline-none">
             {person ? (
-              <PersonCard person={person} onDone={() => setOpen(false)} />
+              <PersonCard person={person} onDone={() => (setOpen(false), chosen && scope?.select?.(null))} />
             ) : roster ? (
               <AgentCard
                 identity={who!}

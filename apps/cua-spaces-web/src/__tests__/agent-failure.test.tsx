@@ -32,12 +32,12 @@ describe("an agent that is not connected", () => {
       { timeout: 5000 },
     );
     const claude = failed.find((t) => t.textContent?.includes("@claude hi"))!;
-    // The person's own message carries no Failed chip; only the agent's reply is marked.
-    expect(claude.querySelector("[data-entry] [data-task-chip='failed']")?.closest("[data-task-replies]")).not.toBeNull();
+    // No Working or Failed chip anywhere: the failure is the agent's own message.
+    expect(claude.querySelector("[data-task-chip]")).toBeNull();
     const own = claude.querySelector(":scope > [data-entry]")!;
     expect(own.querySelector("[data-task-chip]")).toBeNull();
     const reply = claude.querySelector("[data-task-replies] [data-entry]")!;
-    expect(reply.querySelector("[data-task-chip='failed']")).not.toBeNull();
+    expect(reply.querySelector("[data-failure-connect]")).not.toBeNull();
     expect(reply.textContent).toContain("I can't reach Claude yet. Connect Claude, then try again.");
     expect(reply.textContent).not.toMatch(/401|authentication_error|OAuth/);
     // Connect opens Settings, Connectors on the app; Retry is there too.

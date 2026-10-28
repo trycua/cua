@@ -101,6 +101,15 @@ export function postsFrom(identity: MemberIdentity): string {
   return identity.origin === "space" ? "Runs in this Space" : "Connected";
 }
 
+/** How long since a connected agent last asked its inbox before it reads as one that only runs when someone messages it. */
+const LOOP_QUIET_MS = 2 * 60_000;
+
+/** The line under an idle agent's name: a connected one that is not watching the thread (a CLI session that runs only when prompted) says it waits for you; others say where they post from. */
+export function idleCaption(identity: MemberIdentity, nowMs = Date.now()): string {
+  if (identity.origin === "external" && identity.state === "active" && (identity.lastSeenMs == null || nowMs - identity.lastSeenMs > LOOP_QUIET_MS)) return "Waits for you to message it";
+  return postsFrom(identity);
+}
+
 /** The agents whose name another agent here also uses (by handle). The daemon's `collides` counts too. */
 export function collidingNames(agents: readonly { name: string; label: string; identity: MemberIdentity | null }[]): Set<string> {
   const count = new Map<string, number>();
@@ -130,7 +139,7 @@ export function buildRoster(input: {
     harness: m.identity?.harness.id || m.harness,
     status: m.status,
     // What it says it is doing (`task #12: …`, `2 open tasks`), else the state in a word, else where it posts from.
-    caption: m.activity ?? AGENT_CAPTION[m.status] ?? (m.identity ? postsFrom(m.identity) : null),
+    caption: m.activity ?? AGENT_CAPTION[m.status] ?? (m.identity ? idleCaption(m.identity) : null),
     dim: m.status === "asleep" || m.status === "paused",
     sessions: m.sessions,
     rights: m.rights ?? DEFAULT_AGENT_RIGHTS,

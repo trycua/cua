@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings → Connectors (redesign) and summoning agents in a Space: the
+ * Settings → Connectors and summoning agents in a Space: the
  * app core's `connectors.*` and `summon.*` (`connectors.rs`, `summon.rs`)
  * over what the host already answers (`agents.setup`, `agentKeys.list`).
  * Every word, state and rule is the core's; this file only shapes inputs

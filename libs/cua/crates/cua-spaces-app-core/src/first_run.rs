@@ -63,13 +63,13 @@ const AGENT_KEYS: [(&str, &str); 2] = [("claude-code", "anthropic"), ("codex", "
 
 /// Home's to-do request: it works on this computer with nothing else set up.
 pub const FIRST_PROMPT: &str = "List my machines and tell me what's on this Mac";
-const FIRST_PROMPT_OTHER: &str = "List my machines and tell me what's on this computer";
+const FIRST_PROMPT_OTHER: &str = "List my machines and tell me what's on this machine";
 const FIRST_PROMPT_PC: &str = "List my machines and tell me what's on this PC";
 
 /// The try screen's request: the agent makes a Space on this computer.
 pub const TRY_PROMPT: &str = "Make a Linux Space on this Mac and show its desktop in a new window.";
 const TRY_PROMPT_OTHER: &str =
-    "Make a Linux Space on this computer and show its desktop in a new window.";
+    "Make a Linux Space on this machine and show its desktop in a new window.";
 const TRY_PROMPT_PC: &str = "Make a Linux Space on this PC and show its desktop in a new window.";
 
 /// The CLI's name when the host did not say (the released app's,
@@ -746,7 +746,7 @@ fn this_computer(os: &str) -> &'static str {
     match os {
         "macos" => "this Mac",
         "windows" => "this PC",
-        _ => "this computer",
+        _ => "this machine",
     }
 }
 
@@ -763,7 +763,7 @@ fn os_name(os: &str) -> &'static str {
         "linux" => "Linux",
         "omarchy" => "Omarchy",
         "windows" => "Windows",
-        _ => "a computer",
+        _ => "a machine",
     }
 }
 

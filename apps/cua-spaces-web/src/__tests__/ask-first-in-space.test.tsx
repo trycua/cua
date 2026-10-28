@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Ask first with the redesign: Start goes straight to the Space being made,
+// Ask first: Start goes straight to the Space being made,
 // and the job is its thread's first message, @mentioning the agent. When the
 // agent can't be woken (Claude Code with no Anthropic sign-in) the message
 // is still posted, with "Claude Code isn't connected yet" and Connect under
@@ -141,7 +141,7 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
   });
 });
 
-describe.skipIf(!wasmBuilt)("@ any agent in a Space (redesign)", () => {
+describe.skipIf(!wasmBuilt)("@ any agent in a Space ", () => {
   it("offers the agents that can start here and adds one on send", async () => {
     setFlagOverride("spaces_ask_first_home", null);
     const calls: { op: string; args: Record<string, unknown> }[] = [];

@@ -584,14 +584,14 @@ describe("webkit adapter", () => {
   });
 
   it("maps this Mac's own desktop (status local) to a local, running row", async () => {
-    const here = { id: "local", name: "This computer", os: "macos", status: "local", detail: "", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const here = { id: "local", name: "This machine", os: "macos", status: "local", detail: "", lastUsedAt: 1, provider: null, sdk: null, power: null };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: here, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: true, powerState: "running" });
   });
 
   it("keeps this Mac local while it is not set up for access", async () => {
-    const mac = { id: "this-mac", name: "This computer", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const mac = { id: "this-mac", name: "This machine", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: mac, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: false, powerState: "suspended" });

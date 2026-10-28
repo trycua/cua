@@ -819,10 +819,12 @@ async fn a_live_row_follows_the_stage_and_clears_on_the_reply() {
     .unwrap();
     let task = posted["entry"]["seq"].as_u64().unwrap();
     // Right away, before the dispatcher's next pass.
-    assert_eq!(
-        live(&fx).await["agents"],
-        json!([{"agent": "ada", "stage": "thinking"}])
-    );
+    let first = live(&fx).await;
+    assert_eq!(first["agents"][0]["agent"], "ada");
+    assert_eq!(first["agents"][0]["stage"], "thinking");
+    // When the task was given, for the working row's clock; nothing said yet.
+    assert!(first["agents"][0]["since_ms"].as_u64().unwrap() > 0);
+    assert!(first["agents"][0]["text"].is_null());
     Box::pin(p.tick()).await;
     run_state(&fx, json!({"status": "running", "turn": 2}));
     let mut seen = vec![];
@@ -852,12 +854,10 @@ async fn a_live_row_follows_the_stage_and_clears_on_the_reply() {
         raw_events(&fx, &evs);
         Box::pin(p.tick()).await;
         let l = live(&fx).await;
-        assert_eq!(
-            l["agents"],
-            json!([{"agent": "ada", "stage": want}]),
-            "{want}"
-        );
-        assert_eq!(l["key"], format!("ada={want}"));
+        assert_eq!(l["agents"].as_array().unwrap().len(), 1, "{want}");
+        assert_eq!(l["agents"][0]["agent"], "ada", "{want}");
+        assert_eq!(l["agents"][0]["stage"], want, "{want}");
+        assert_eq!(l["key"], format!("ada={want}#0"));
         seen.push(want);
     }
     assert_eq!(
@@ -902,11 +902,17 @@ async fn a_live_row_follows_the_stage_and_clears_on_the_reply() {
         t0.elapsed()
     );
     let followed = followed.unwrap();
-    assert_eq!(
-        followed["live"]["agents"],
-        json!([{"agent": "ada", "stage": "replying"}])
-    );
+    // What it has said so far streams as one live entry, replaced whole by the next snapshot.
+    assert_eq!(followed["live"]["agents"][0]["text"], "2 failures");
     assert_eq!(followed["entries"], json!([]));
+    events(&fx, &[("message", 2, Some(": a, b"))]);
+    Box::pin(p.tick()).await;
+    let l = live(&fx).await;
+    assert_eq!(
+        l["agents"][0]["text"], "2 failures: a, b",
+        "the whole text so far, not a chunk"
+    );
+    assert_eq!(l["agents"][0]["stage"], "replying");
     // The turn ends: the reply is the answer and nobody is at work.
     events(&fx, &[("turn_ended", 2, None)]);
     run_state(&fx, json!({"status": "idle", "turn": 2}));
@@ -948,10 +954,9 @@ async fn a_cold_start_shows_starting_and_a_failure_clears_the_row() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        live(&fx).await["agents"],
-        json!([{"agent": "ada", "stage": "starting"}])
-    );
+    let cold = live(&fx).await;
+    assert_eq!(cold["agents"][0]["agent"], "ada");
+    assert_eq!(cold["agents"][0]["stage"], "starting");
     // The mock guest can't start a run: the delivery fails.
     Box::pin(p.tick()).await;
     let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
@@ -1533,6 +1538,105 @@ async fn a_failed_turn_fails_its_task_and_the_notification_points_at_it() {
         .expect("an error notification");
     assert_eq!(n.entry_seq, reply["seq"].as_u64());
     assert!(p.get("ada").unwrap().task.is_none());
+}
+
+/// Hermes answers a refused key as an ordinary turn, with its own advice. The thread reads it as the
+/// failed turn it is: the person's message fails (never "Done"), the reply is the standard Connect
+/// card in plain words without Hermes' advice, and the complete text stays under Show details.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_key_answered_as_text_is_a_failed_turn() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| r["harness"] = json!("hermes"));
+    let posted = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@ada hello"}),
+    )
+    .await
+    .unwrap();
+    let task = posted["entry"]["seq"].as_u64().unwrap();
+    Box::pin(p.tick()).await;
+    let said = "Anthropic rejected your API key, so the model can't be reached. Update it in Settings -> Providers, or run `hermes setup` in a terminal. Provider said: HTTP 401: OAuth access token is invalid.";
+    events(
+        &fx,
+        &[
+            ("turn_started", 2, None),
+            ("message", 2, Some(said)),
+            ("turn_ended", 2, None),
+        ],
+    );
+    run_state(&fx, json!({"status": "idle", "turn": 2}));
+    Box::pin(p.tick()).await;
+    let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    let e = entries(&t);
+    let reply = e
+        .iter()
+        .find(|x| x["reply_to"] == task && x["kind"] == "message")
+        .expect("a reply");
+    assert_eq!(
+        reply["text"],
+        "Anthropic rejected the key Hermes used. Update it, then try again."
+    );
+    assert!(!reply["text"].as_str().unwrap().contains("hermes setup"));
+    assert_eq!(reply["failure"]["class"], "needs_connect");
+    assert_eq!(reply["failure"]["provider"], "anthropic");
+    assert_eq!(reply["failure"]["message"], said);
+    let update = e.iter().rev().find(|x| x["kind"] == "task_update").unwrap();
+    assert_eq!(update["update"]["state"], "failed");
+    // One notification, the failure's (not "Finished").
+    let notes = p.feed().list(false, None).unwrap();
+    assert!(notes.iter().any(|n| n.kind == "error" && n.body == said));
+    assert!(!notes.iter().any(|n| n.kind == "turn_ended"));
+}
+
+/// An ordinary answer that merely talks about authentication stays an answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_answer_that_mentions_a_401_is_still_an_answer() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| r["harness"] = json!("hermes"));
+    let posted = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@ada why does login fail"}),
+    )
+    .await
+    .unwrap();
+    let task = posted["entry"]["seq"].as_u64().unwrap();
+    Box::pin(p.tick()).await;
+    events(
+        &fx,
+        &[
+            ("turn_started", 2, None),
+            (
+                "message",
+                2,
+                Some(
+                    "The endpoint answers 401 Unauthorized when the token is missing, so I added the header.",
+                ),
+            ),
+            ("turn_ended", 2, None),
+        ],
+    );
+    run_state(&fx, json!({"status": "idle", "turn": 2}));
+    Box::pin(p.tick()).await;
+    let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    let reply = entries(&t)
+        .into_iter()
+        .find(|x| x["reply_to"] == task && x["kind"] == "message")
+        .expect("a reply");
+    assert!(reply["failure"].is_null());
+    assert!(
+        reply["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("The endpoint answers 401")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

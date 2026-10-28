@@ -33,10 +33,9 @@ import { volumeUnavailableNote } from "@/lib/volume-notes";
 import { canDelete, canPower, createError, isUnsharedDesktop, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
 import { useFlag } from "@/bridge/flags";
 import { useSpaceLayout } from "@/components/space-thread/layout-mode";
-import { LegacySpacePage } from "@/legacy/routes/spaces/$spaceId";
 
 export const Route = createFileRoute("/spaces/$spaceId")({
-  component: SpaceDetailPageSwitch,
+  component: SpaceDetailPage,
   // Apps and files dropped on this Space's tile in the notch, by name (the host holds their paths).
   validateSearch: (s: Record<string, unknown>): { dropped?: string[] } => {
     const dropped = parseDropped(s.dropped);
@@ -166,7 +165,7 @@ function SpaceDetailPage() {
   // Devices with the enroll sheet.
   const enroll = () => {
     devices.startEnroll();
-    void navigate({ to: "/settings/devices" });
+    void navigate({ to: "/machines" });
   };
   const teleportApp = () => run("open Teleport for", () => teleport.open(space));
   const share = () => run("share", () => sharing.open(space, session?.signedIn ?? false));
@@ -731,9 +730,4 @@ interface StreamViewContext {
 function threadViewOf(v: StreamViewContext | null): ThreadView | null {
   if (!v || v.kind !== "window") return null;
   return { kind: "window", app: v.app ?? null, title: v.title ?? null, windowId: v.windowId ?? null };
-}
-
-/** The redesign behind `spaces_redesign` (Settings → Advanced → Labs); off, the page as it was. */
-function SpaceDetailPageSwitch() {
-  return useFlag("spaces_redesign") ? <SpaceDetailPage /> : <LegacySpacePage />;
 }

@@ -105,7 +105,7 @@ describe.skipIf(!wasmBuilt)("tips", () => {
     await act(() => app.router.navigate({ to: "/machines" }));
     await waitFor(() => expect(sidebarTip()?.getAttribute("data-tip")).toBe("on-auto"));
     const s = sidebarTip()!;
-    expect(s.textContent).toContain("New Spaces can go to whichever computer has room.");
+    expect(s.textContent).toContain("New Spaces can go to whichever machine has room.");
     expect(s.querySelector("[data-tip-code]")!.textContent).toBe("cua create --on auto");
     // Only × in the sidebar: no Next tip, no Don't show tips.
     expect(within(s).queryByRole("button", { name: "Next tip" })).toBeNull();

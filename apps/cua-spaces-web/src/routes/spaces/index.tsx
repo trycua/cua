@@ -32,11 +32,9 @@ import { accessOf, isMine } from "@/lib/space-access";
 import { creatingElsewhereLine, machineName, matchesQuery, spaceState } from "@/lib/spaces";
 import { hideDesktop, showHiddenDesktops } from "@/lib/hidden-desktops";
 import { computerChoices, gridArea, nextSearch, shownSpaces, spaceMachineId, validateSpacesSearch, type SpacesSearch } from "@/lib/spaces-page";
-import { useFlag } from "@/bridge/flags";
-import { LegacySpacesPage } from "@/legacy/routes/spaces/index";
 
 export const Route = createFileRoute("/spaces/")({
-  component: SpacesPageSwitch,
+  component: SpacesPage,
   // `view`, `sort`, `on`, `state`, `owner`, `select` (lib/spaces-page). The low-disk warning's "See what's using
   // space" opens `?view=list&on=<this computer>&sort=size`; `?sort=size` alone sorts the grid biggest first.
   validateSearch: (s: Record<string, unknown>): SpacesSearch => validateSpacesSearch(s),
@@ -298,11 +296,6 @@ function SpacesPage() {
       {bulk.view ? <BulkConfirmDialog view={bulk.view} items={bulk.asked} onCancel={bulk.cancel} onConfirm={() => void bulk.confirm()} /> : null}
     </Page>
   );
-}
-
-/** The redesign behind `spaces_redesign` (Settings → Advanced → Labs); off, the page as it was. */
-function SpacesPageSwitch() {
-  return useFlag("spaces_redesign") ? <SpacesPage /> : <LegacySpacesPage />;
 }
 
 interface GridLive {

@@ -179,6 +179,10 @@ export interface LiveAgent {
   agent: string;
   /** In a few plain words: `starting`, `installing`, `thinking`, `replying` or `using Bash`. */
   stage: string;
+  /** When its oldest open task was given (Unix ms): the working row's clock. */
+  sinceMs?: number;
+  /** What it has said so far this turn, the whole text each time, while it streams; the reply replaces it. */
+  text?: string;
 }
 
 /** Every agent with a turn on its way, and a key that changes when any stage does. */
@@ -779,7 +783,9 @@ export function threadLiveFromTool(v: unknown): ThreadLive {
     const r = obj(a);
     const agent = str(r?.agent);
     const stage = str(r?.stage);
-    return agent && stage ? [{ agent, stage }] : [];
+    const sinceMs = typeof r?.since_ms === "number" ? r.since_ms : undefined;
+    const text = str(r?.text);
+    return agent && stage ? [{ agent, stage, ...(sinceMs ? { sinceMs } : {}), ...(text ? { text } : {}) }] : [];
   });
   return { key: str(o.key), agents };
 }

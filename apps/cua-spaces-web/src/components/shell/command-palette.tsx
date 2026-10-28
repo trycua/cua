@@ -134,7 +134,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       icon: icon(n.icon),
       run: () => void navigate({ to: n.to }),
     })),
-    // Each Settings tab, so Cmd+K finds "Connectors" or "Trusted machines" by name.
+    // Each Settings tab, so Cmd+K finds "Connectors" or "Advanced" by name.
     ...SETTINGS_TABS.filter((t) => t.to !== "/settings").map((t) => ({
       id: `settings:${t.to}`,
       group: "Go to",

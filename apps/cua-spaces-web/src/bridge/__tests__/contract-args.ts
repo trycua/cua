@@ -95,6 +95,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "sharing.removals": {},
   "sharing.ackRemovals": {},
   "agentKeys.list": {},
+  "agentKeys.check": {},
   "agentKeys.set": { provider: "anthropic", value: "sk-ant-test-0000" },
   "agentKeys.remove": { env: "ANTHROPIC_API_KEY" },
   "agentKeys.shell": {},

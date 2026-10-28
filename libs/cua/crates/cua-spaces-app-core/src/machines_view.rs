@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! The Machines page as every UI draws it: the list in groups ("Your
-//! machines", "Your devices" (signed-in devices that are none of the
-//! machines, whatever their age), a collapsed "Offline for 30+ days", "Team
+//! machines" (a signed-in machine that shares nothing is a row there, in the
+//! state "Signed in, not sharing"), a collapsed "Offline for 30+ days", "Team
 //! machines"), one
 //! muted line per row, and each machine's page (its name and rename, the
 //! "Let other machines control this desktop" switch, the Spaces on it as
@@ -362,16 +362,15 @@ pub struct MachinesView {
 pub const DESKTOP_LABEL: &str = "Desktop";
 /// "Your machines".
 pub const YOURS_TITLE: &str = "Your machines";
-/// "Your devices": the group of signed-in devices that are none of your
-/// machines, whatever their age.
-pub const DEVICES_TITLE: &str = "Your devices";
-/// The line of a row that is only a signed-in device: it can't run Spaces
+/// The state of a row that is only a signed-in machine: it can't run Spaces
 /// and nothing is shared from it.
-pub const DEVICE_LINE: &str = "Signed-in device, not shared";
+pub const DEVICE_LINE: &str = "Signed in, not sharing";
 /// "Team machines".
 pub const TEAM_TITLE: &str = "Team machines";
 /// The button that removes a machine.
 pub const REMOVE_LABEL: &str = "Remove from account";
+/// The button that revokes a signed-in machine that shares nothing.
+pub const REVOKE_LABEL: &str = "Revoke";
 /// The button that opens New Space with the machine chosen.
 pub const NEW_SPACE_LABEL: &str = "New Space here";
 /// Under another machine's switches.
@@ -538,7 +537,9 @@ fn remove_confirm(name: &str, current: bool, device_only: bool) -> HostConfirm {
          this machine leaves your machines. Turning a switch on again sets it up again."
             .to_string()
     } else if device_only {
-        format!("{name} will no longer list or reach your machines. Sign in on it again to use it.")
+        format!(
+            "{name} will no longer see or reach your machines. Signing in on it again adds it back."
+        )
     } else {
         format!(
             "{name} leaves your machines, and its Spaces are no longer listed here. \
@@ -546,9 +547,13 @@ fn remove_confirm(name: &str, current: bool, device_only: bool) -> HostConfirm {
         )
     };
     HostConfirm {
-        title: format!("Remove \u{201c}{name}\u{201d} from your account?"),
+        title: if device_only {
+            format!("Revoke \u{201c}{name}\u{201d}?")
+        } else {
+            format!("Remove \u{201c}{name}\u{201d} from your account?")
+        },
         message,
-        confirm_label: "Remove".into(),
+        confirm_label: if device_only { "Revoke" } else { "Remove" }.into(),
         cancel_label: "Cancel".into(),
     }
 }
@@ -564,7 +569,6 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
     let host = input.host.as_ref();
     let mut list = Vec::with_capacity(rows.len());
     let mut yours = vec![];
-    let mut devices = vec![];
     let mut old = vec![];
     let mut team_ids = vec![];
     let mut old_removes = vec![];
@@ -657,7 +661,9 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             parts.remove(0)
         };
 
-        let status = if !row.online {
+        let status = if row.device_only {
+            DEVICE_LINE.into()
+        } else if !row.online {
             machines::OFFLINE.into()
         } else if svc_down {
             SERVICE_STOPPED.into()
@@ -700,6 +706,9 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         let (notice, notice_action) = if row.current {
             let p = crate::host::panel(host);
             (p.notice, p.notice_action)
+        } else if row.device_only {
+            // Nothing is shared from it: its state says so; there is no notice to add.
+            (None, None)
         } else if !row.online {
             (Some(OFFLINE_NOTICE.into()), None)
         } else if stopped {
@@ -714,12 +723,15 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             (None, None)
         };
 
+        // A signed-in machine that shares nothing has no Spaces switches.
         let toggles = if row.current {
             host_toggles(host)
+        } else if row.device_only {
+            vec![]
         } else {
             remote_toggles(&sw, team)
         };
-        let toggles_note = if row.current {
+        let toggles_note = if row.current || row.device_only {
             None
         } else if team {
             Some(format!(
@@ -733,15 +745,21 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         };
 
         let new_space = MachinesViewNewSpace {
-            label: NEW_SPACE_LABEL.into(),
+            label: if row.device_only {
+                String::new()
+            } else {
+                NEW_SPACE_LABEL.into()
+            },
             on: if row.current {
                 "local".into()
             } else {
                 format!("host:{}", row.id)
             },
-            enabled: row.current || (live && sw.provide),
+            enabled: row.current || (!row.device_only && live && sw.provide),
             help: if row.current {
                 None
+            } else if row.device_only {
+                Some("It is signed in, but it does not share this machine.".into())
             } else if !row.online {
                 Some("It\u{2019}s offline.".into())
             } else if stopped {
@@ -851,7 +869,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             })
         } else if row.device_only {
             Some(MachinesViewRemove {
-                label: REMOVE_LABEL.into(),
+                label: REVOKE_LABEL.into(),
                 enabled: true,
                 help: None,
                 host: false,
@@ -884,9 +902,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             && row
                 .last_seen
                 .is_some_and(|t| t > 0 && now.saturating_sub(t) >= OLD_AFTER_SECS);
-        if row.device_only {
-            devices.push(row.id.clone());
-        } else if team {
+        if team {
             team_ids.push(row.id.clone());
         } else if is_old {
             old.push(row.id.clone());
@@ -942,9 +958,14 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             notice_action,
             toggles,
             toggles_note,
-            spaces_title: "Spaces on this machine".into(),
+            // A signed-in machine that shares nothing has no Spaces to list.
+            spaces_title: if row.device_only {
+                String::new()
+            } else {
+                "Spaces on this machine".into()
+            },
             desktop,
-            spaces_empty: on.is_empty().then(|| {
+            spaces_empty: (on.is_empty() && !row.device_only).then(|| {
                 if row.online && has_desktop {
                     "No other Spaces yet.".into()
                 } else if row.online {
@@ -977,15 +998,6 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             title: YOURS_TITLE.into(),
             collapsed: false,
             ids: yours,
-            remove_all: None,
-        });
-    }
-    if !devices.is_empty() {
-        groups.push(MachinesViewGroup {
-            id: "devices".into(),
-            title: DEVICES_TITLE.into(),
-            collapsed: false,
-            ids: devices,
             remove_all: None,
         });
     }
@@ -1270,7 +1282,7 @@ mod tests {
     }
 
     #[test]
-    fn a_device_that_is_only_signed_in_is_under_your_devices() {
+    fn a_machine_that_is_only_signed_in_is_in_the_one_list() {
         let base = with_devices();
         let shell = MachinesViewInput {
             rows: Some(machines::page_rows(&base.page)),
@@ -1290,6 +1302,8 @@ mod tests {
                     )
                 })
                 .collect();
+            // No separate group: the signed-in machines sit with the others, and the
+            // one that has been away for 30+ days is with the old ones.
             assert_eq!(
                 groups,
                 [
@@ -1297,19 +1311,17 @@ mod tests {
                         "yours",
                         "Your machines",
                         false,
-                        vec!["this-mac", "studio", "byoc"]
+                        vec!["this-mac", "studio", "byoc", "dev_lap", "dev_away"]
                     ),
                     (
-                        "devices",
-                        "Your devices",
-                        false,
-                        vec!["dev_lap", "dev_away", "dev_stale"]
+                        "old",
+                        "Offline for 30+ days (2)",
+                        true,
+                        vec!["old1", "dev_stale"]
                     ),
-                    ("old", "Offline for 30+ days (1)", true, vec!["old1"]),
                     ("team", "Team machines", false, vec!["team"]),
                 ]
             );
-            assert!(v.groups[1].remove_all.is_none());
             let flat: Vec<&str> = v
                 .groups
                 .iter()
@@ -1319,15 +1331,18 @@ mod tests {
                 flat,
                 v.machines.iter().map(|m| m.id.as_str()).collect::<Vec<_>>()
             );
-            let all = v.groups[2].remove_all.as_ref().unwrap();
-            assert_eq!(all.removes.len(), 1);
+            let all = v.groups[1].remove_all.as_ref().unwrap();
+            assert_eq!(all.removes.len(), 2);
             assert_eq!(all.removes[0].machine.as_deref(), Some("old1"));
             assert_eq!(all.removes[0].device.as_deref(), Some("dev_old1"));
+            // The signed-in one is revoked through its sign-in.
+            assert_eq!(all.removes[1].machine, None);
+            assert_eq!(all.removes[1].device.as_deref(), Some("dev_stale"));
         }
     }
 
     #[test]
-    fn a_device_of_its_own_reads_signed_in_device_not_shared() {
+    fn a_signed_in_machine_that_shares_nothing_says_so_on_its_row() {
         let mut input = with_devices();
         input
             .page
@@ -1337,14 +1352,14 @@ mod tests {
         let devs = ["dev_lap", "dev_away", "dev_stale", "dev_never"];
         for id in devs {
             let m = by_id(&v, id);
-            assert_eq!(m.line, "Signed-in device, not shared", "{id}");
+            assert_eq!(m.line, "Signed in, not sharing", "{id}");
+            assert_eq!(m.status, "Signed in, not sharing", "{id}");
+            // No Spaces switches on a machine that shares nothing.
+            assert!(m.toggles.is_empty(), "{id}");
+            assert!(!m.new_space.enabled, "{id}");
             assert_eq!(m.online, id == "dev_lap", "{id}");
-            assert_eq!(
-                m.status,
-                if id == "dev_lap" { "Online" } else { "Offline" },
-                "{id}"
-            );
             let rm = m.remove.as_ref().unwrap();
+            assert_eq!(rm.label, "Revoke", "{id}");
             assert!(rm.enabled, "{id}");
             assert!(rm.device.is_some() && rm.machine.is_none(), "{id}");
         }

@@ -69,12 +69,12 @@ describe("New Space's create", () => {
 });
 
 describe("opening the Space", () => {
-  it("is `sb view NAME` for a named Space on this computer", () => {
+  it("is `sb view NAME` for a named Space on this machine", () => {
     expect(openCommand(STABLE, { ...linux, name: "dev" })).toBe("cua sb view dev");
     expect(openCommand(LOCAL, { ...linux, name: "my space" })).toBe("cua-local sb view 'my space'");
   });
 
-  it("is not offered without a name, or for another computer's Space", () => {
+  it("is not offered without a name, or for another machine's Space", () => {
     expect(openCommand(STABLE, linux)).toBeNull();
     expect(openCommand(STABLE, { ...linux, name: "dev", on: "host:abc" })).toBeNull();
   });

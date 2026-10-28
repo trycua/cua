@@ -975,7 +975,7 @@ const JoinCodeRowShape = obj<JoinCodeRow>()({
 });
 const ThreadPageShape = obj<ThreadPage>()({
   entries: list(ThreadEntryShape),
-  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str })) }),
+  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str, sinceMs: opt(num), text: opt(str) })) }),
   cursor: num,
   caughtUp: bool,
   unread: num,
@@ -1318,6 +1318,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "sharing.ackRemovals": nul,
 
   "agentKeys.list": AgentKeysShape,
+  "agentKeys.check": AgentKeysShape,
   "agentKeys.set": AgentKeysShape,
   "agentKeys.remove": AgentKeysShape,
   "agentKeys.shell": object({ names: list(str) }),
@@ -1742,6 +1743,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.allowComputer": nul,
   "agents.revokeComputer": nul,
   "agentKeys.list": AgentKeysWire,
+  "agentKeys.check": AgentKeysWire,
   "agentKeys.set": AgentKeysWire,
   "agentKeys.remove": AgentKeysWire,
   "agentKeys.shell": object({ names: list(str) }),

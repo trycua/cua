@@ -108,7 +108,7 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     hooks.devices.setApprovalCode("k7qx m2rp");
     await waitFor(() => expect(hooks.devices.data?.approve?.view?.code).toBe("K7QX-M2RP"));
     await hooks.devices.approve();
-    await waitFor(() => expect(hooks.devices.data?.view?.rows.find((r) => r.id === "dev_work")?.subtitle).toMatch(/^Enrolled/));
+    await waitFor(() => expect(hooks.devices.data?.view?.rows.find((r) => r.id === "dev_work")?.subtitle).toMatch(/^Trusted/));
     expect(hooks.devices.data?.approve).toBeNull();
     await hooks.devices.revoke("dev_studio");
     await waitFor(() => expect(hooks.devices.data?.view?.rows.find((r) => r.id === "dev_studio")?.subtitle).toBe("Revoked"));

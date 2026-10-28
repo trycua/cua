@@ -27,10 +27,10 @@ export const CONNECTION_LABEL: Record<"relay" | "direct", string> = {
   direct: "Direct",
 };
 
-/** A row that is only a signed-in device (`machines_view::DEVICE_LINE`). */
-export const DEVICE_LINE = "Signed-in device, not shared";
+/** A row that is only a signed-in machine (`machines_view::DEVICE_LINE`). */
+export const DEVICE_LINE = "Signed in, not sharing";
 
-/** How other devices reach it, in words. */
+/** How other machines reach it, in words. */
 export function connectionLabel(m: Pick<Machine, "connection" | "current"> & Pick<Partial<Machine>, "device">): string {
   if (m.connection) return CONNECTION_LABEL[m.connection];
   if (m.device) return DEVICE_LINE;
@@ -39,7 +39,7 @@ export function connectionLabel(m: Pick<Machine, "connection" | "current"> & Pic
 
 /** The list row's second line: OS, then how it is reached. */
 export function machineSubtitle(m: Pick<Machine, "os" | "connection" | "current" | "model"> & Pick<Partial<Machine>, "device">): string {
-  return [m.model ?? osName(m), connectionLabel(m)].join(" · ");
+  return [m.model ?? osName(m), connectionLabel(m)].join(", ");
 }
 
 /** The core's word for a machine its owner stopped sharing

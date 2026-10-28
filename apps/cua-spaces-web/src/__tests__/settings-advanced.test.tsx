@@ -26,7 +26,7 @@ const host: TestHost = {
 };
 
 describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real routes, wasm core)", () => {
-  it("says what the time away from this computer is, in plain words", async () => {
+  it("says what the time away from this machine is, in plain words", async () => {
     const { router } = await mountApp("/settings", host);
     await router.load();
     const usage = await waitFor(() => {
@@ -34,7 +34,7 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(usage.textContent).toContain("Time away from this computer");
+    expect(usage.textContent).toContain("Time away from this machine");
     expect(usage.textContent).toContain("away from the machine you're using");
     expect(document.body.textContent).not.toMatch(/relay hours|remote hours/i);
   });

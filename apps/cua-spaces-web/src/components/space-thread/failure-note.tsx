@@ -2,10 +2,10 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, ChevronRightIcon, CopyIcon, Loader2Icon, PlugIcon, RotateCcwIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
-import type { ThreadFailure } from "@/bridge";
+import { useAgentKeys, type ThreadFailure } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { useConnectors } from "@/hooks/use-connectors";
 import { cn } from "@/lib/utils";
@@ -43,7 +43,7 @@ export function FailureNote({
     <div data-failure={failure.class} className="mt-1.5">
       <div className="flex flex-wrap items-center gap-2">
         {needsConnect ? <ConnectActions harness={harness} provider={failure.provider} taskText={taskText} onRetry={onRetry} /> : <RetryButton taskText={taskText} onRetry={failure.retryable ? onRetry : undefined} enabled />}
-        <Details message={failure.message} />
+        <FailureDetails message={failure.message} />
       </div>
     </div>
   );
@@ -51,6 +51,12 @@ export function FailureNote({
 
 function ConnectActions({ harness, provider, taskText, onRetry }: { harness: string; provider: string | null; taskText: string | null; onRetry?: (text: string) => Promise<void> }) {
   const c = useConnectors();
+  // The agent was refused its credential: Settings reads the saved list again, which says it needs a reconnect.
+  const keys = useAgentKeys();
+  useEffect(() => {
+    void keys.refresh();
+    // Once, when the failure appears.
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const app = failureApp(harness, provider);
   const connected = app ? c.view?.apps.find((a) => a.agent === app)?.state === "connected" : false;
   return (
@@ -101,7 +107,7 @@ function RetryButton({ taskText, onRetry, enabled }: { taskText: string | null; 
 }
 
 /** "Show details": the complete error, selectable, with Copy. */
-function Details({ message }: { message: string }) {
+export function FailureDetails({ message }: { message: string }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   if (!message) return null;

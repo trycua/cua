@@ -17,9 +17,9 @@ stubBrowserApis();
 
 const NOTICE = {
   kind: "needs-enrollment",
-  status: "Not enrolled",
-  text: "Enroll this Mac to connect to your other machines.",
-  actionLabel: "Enroll This Mac…",
+  status: "Not trusted yet",
+  text: "Trust this Mac to connect to your other machines.",
+  actionLabel: "Trust this Mac",
 };
 
 /** One of your machines on the relay, answering with `features`. */
@@ -89,7 +89,7 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (real route
     expect((screen.getByRole("button", { name: /Share/ }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: NOTICE.actionLabel }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/devices"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
     await waitFor(() => expect(document.querySelector("[data-enroll]")).not.toBeNull());
   });
 

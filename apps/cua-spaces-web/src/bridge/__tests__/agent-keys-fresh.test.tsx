@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { Suspense } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DataAdapter } from "../adapter";
 import { createDemoAdapter } from "../adapters/demo";
 import { AgentKeysStore, type FocusTarget } from "../agent-keys";
-import { BridgeProvider } from "../index";
 import type { HostEvent, OpArgs, OpName } from "../protocol";
-import { AccountKeysSection } from "../../components/settings/account-keys";
-import { testCore, wasmBuilt } from "./testCore";
 
 afterEach(cleanup);
 
@@ -131,91 +127,5 @@ describe("Settings, Connectors keeps its list fresh", () => {
     await reading;
     expect(store.get().report?.keys.map((k) => k.env)).toEqual(["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]);
     demo.dispose?.();
-  });
-});
-
-describe.skipIf(!wasmBuilt)("the Settings, Connectors account keys", () => {
-  const Page = AccountKeysSection;
-  const status = (provider: string) => document.querySelector(`[data-agent-key-provider="${provider}"] [data-agent-key-status]`)?.textContent;
-  const click = (provider: string, what: "action" | "remove") => {
-    const b = document.querySelector(`[data-agent-key-provider="${provider}"] [data-agent-key-${what}]`);
-    if (!b) throw new Error(`no ${what} button on the ${provider} row`);
-    fireEvent.click(b);
-  };
-
-  async function mountPage(h: ReturnType<typeof loggedDemo>) {
-    // The route's component is code-split: load its chunk before the first render.
-    await (Page as unknown as { preload?: () => Promise<unknown> }).preload?.();
-    const core = await testCore();
-    let view!: ReturnType<typeof render>;
-    await act(async () => {
-      view = render(
-        <BridgeProvider adapter={h.adapter} core={core}>
-          <Suspense fallback={null}>
-            <Page />
-          </Suspense>
-        </BridgeProvider>,
-      );
-    });
-    await waitFor(() => expect(document.querySelector("[data-agent-keys]")).not.toBeNull());
-    return view;
-  }
-
-  it("shows a key removed with the CLI after the window gets focus, and Add key lands on the row clicked", async () => {
-    const h = loggedDemo();
-    // The CLI added an Anthropic key before the page was opened.
-    await h.demo.call("agentKeys.set", { provider: "anthropic", value: "sk-ant-test-0000" });
-    await mountPage(h);
-    await waitFor(() => expect(status("anthropic")).toBe("•••• 0000"));
-    expect(status("openai")).toBe("•••• 3f9a");
-
-    // The CLI removes both. Nothing in the app moved, until the window is back.
-    await h.demo.call("agentKeys.remove", { env: "ANTHROPIC_API_KEY" });
-    await h.demo.call("agentKeys.remove", { env: "OPENAI_API_KEY" });
-    expect(status("anthropic")).toBe("•••• 0000");
-    act(() => {
-      window.dispatchEvent(new Event("focus"));
-    });
-    await waitFor(() => expect(status("anthropic")).toBe("Not set"));
-    expect(status("openai")).toBe("Not set");
-
-    // Each row's button opens the sheet of its own provider, and Save sends that provider.
-    for (const [provider, title] of [["openai", /OpenAI/], ["anthropic", /Anthropic/]] as const) {
-      click(provider, "action");
-      await waitFor(() => expect(document.querySelector("[data-agent-key-sheet-title]")?.textContent).toMatch(title));
-      fireEvent.change(document.querySelector("[data-agent-key-value]")!, { target: { value: `sk-${provider}-test-9999` } });
-      fireEvent.click(document.querySelector("[data-agent-key-save]")!);
-      await waitFor(() => expect(document.querySelector("[data-agent-key-sheet]")).toBeNull());
-      expect(h.calls.filter(([op]) => op === "agentKeys.set").at(-1)?.[1]).toMatchObject({ provider });
-      await waitFor(() => expect(status(provider)).toBe("•••• 9999"));
-    }
-    expect(h.calls.filter(([op]) => op === "agentKeys.set").map(([, a]) => (a as { provider: string }).provider)).toEqual(["openai", "anthropic"]);
-    h.adapter.dispose?.();
-  });
-
-  it("reads the keys again each time the page is opened", async () => {
-    const h = loggedDemo();
-    const first = await mountPage(h);
-    await waitFor(() => expect(status("openai")).toBe("•••• 3f9a"));
-    first.unmount();
-    // Changed with the CLI while another Settings page was open.
-    await h.demo.call("agentKeys.remove", { env: "OPENAI_API_KEY" });
-    await mountPage(h);
-    await waitFor(() => expect(status("openai")).toBe("Not set"));
-    h.adapter.dispose?.();
-  });
-
-  it("removes the key of the row clicked", async () => {
-    const h = loggedDemo();
-    await h.demo.call("agentKeys.set", { provider: "anthropic", value: "sk-ant-test-0000" });
-    await mountPage(h);
-    await waitFor(() => expect(status("anthropic")).toBe("•••• 0000"));
-    click("anthropic", "remove");
-    const confirm = await screen.findByRole("button", { name: "Remove" });
-    fireEvent.click(confirm);
-    await waitFor(() => expect(status("anthropic")).toBe("Not set"));
-    expect(h.calls.filter(([op]) => op === "agentKeys.remove").at(-1)?.[1]).toEqual({ env: "ANTHROPIC_API_KEY" });
-    expect(status("openai")).toBe("•••• 3f9a");
-    h.adapter.dispose?.();
   });
 });

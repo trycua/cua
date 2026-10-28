@@ -670,7 +670,7 @@ export class BridgeStore {
       const space = (this.resources.spaces.data as Space[] | undefined)?.find((s) => s.id === row.id) ?? rowsToSpaces(this.core, [row], this.now())[0]!;
       // Plain words: a fresh computer inside this one (never "VM" or "container").
       const system = space.os === "macos" ? "macOS" : space.os === "windows" ? "Windows" : space.os === "linux" ? "Linux" : null;
-      const body = system ? `A fresh ${system} computer inside ${({ macos: "this Mac", windows: "this PC", linux: "this computer" } as const)[hostOs()]}. Your agent can use it now.` : undefined;
+      const body = system ? `A fresh ${system} computer inside ${({ macos: "this Mac", windows: "this PC", linux: "this machine" } as const)[hostOs()]}. Your agent can use it now.` : undefined;
       this.extras.record({ kind: "message", title: `${spokenName(space.name)} is ready`, ...(body && !machine ? { body } : {}), space: space.id });
       return space;
     } catch (e) {

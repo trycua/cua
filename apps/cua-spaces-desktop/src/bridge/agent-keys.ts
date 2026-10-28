@@ -11,6 +11,7 @@ import type { Handlers } from "./host";
 export function agentKeysMethods({ model }: BridgeContext): Handlers {
   return {
     "agentKeys.list": () => model.agents.keys.call("agent_keys.list"),
+    "agentKeys.check": () => model.agents.keys.call("agent_keys.check"),
     "agentKeys.set": (args) => {
       const call: Record<string, unknown> = { provider: string(args, "provider"), value: string(args, "value") };
       const env = optionalString(args, "env");

@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Feature flags for the web UI. A flag takes its default (off, except
- * `spaces_redesign`, which is on) unless something sets it, in this order:
+ * Feature flags for the web UI. A flag takes its default (off) unless
+ * something sets it, in this order:
  *
  * 1. this device's override (`localStorage` `cua.flag.<name>` = `1` or `0`),
  *    which is how a dev build or a tester forces one;
@@ -24,19 +24,26 @@ import { useSyncExternalStore } from "react";
  *   Home page that asks what you want done, starts it on a fresh computer and
  *   follows it as a conversation. Settings → Advanced → Labs turns it on for
  *   this device.
- * - `spaces_redesign`: the redesigned Spaces page, Space page (thread, stream
- *   switching), Agents tab (chat), Add a computer, sidebar and page
- *   language. On (the default), the redesign is drawn. Off, each of those
- *   routes draws the classic page (`src/legacy/`); the core, daemon, CLI,
- *   SDK, MCP, Settings and Connect a cloud are the same either way.
- *   Settings → Advanced → Labs → "New design" switches back to the classic
- *   design for this device.
  */
-export type FlagName = "upsell_cards" | "spaces_ask_first_home" | "spaces_redesign";
+export type FlagName = "upsell_cards" | "spaces_ask_first_home";
 
-const DEFAULTS: Record<FlagName, boolean> = { upsell_cards: false, spaces_ask_first_home: false, spaces_redesign: true };
+const DEFAULTS: Record<FlagName, boolean> = { upsell_cards: false, spaces_ask_first_home: false };
 
-const key = (name: FlagName) => `cua.flag.${name}`;
+const key = (name: string) => `cua.flag.${name}`;
+
+/** Flags that no longer exist: a leftover override of one is cleared on start (a stale "0" kept a build on a design that is gone). */
+const RETIRED_FLAGS = ["spaces_redesign"] as const;
+
+/** Clears the stored override of every retired flag. Runs once when this module loads. */
+export function clearRetiredFlagOverrides(): void {
+  try {
+    for (const name of RETIRED_FLAGS) globalThis.localStorage?.removeItem(key(name));
+  } catch {
+    // No storage: nothing to clear.
+  }
+}
+
+clearRetiredFlagOverrides();
 let remote: Partial<Record<FlagName, boolean>> = {};
 const listeners = new Set<() => void>();
 const notify = () => {

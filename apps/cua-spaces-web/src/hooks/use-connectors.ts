@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Connect, as Settings → Connectors (redesign), an app's page, a Space's
+ * Connect, as Settings → Connectors, an app's page, a Space's
  * "isn't connected yet" note and Ask first share it: one place that knows
  * which connects are running, what failed, and which provider sheet is
  * open. The steps and words are the core's (`connectors.*`); the host

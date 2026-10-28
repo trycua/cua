@@ -34,6 +34,7 @@ description: "Agents in a Space, connecting your AI agents, the stdio MCP server
 | [`cua agent keys`](#cua-agent-keys) | The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connectors). |
 | [`cua agent keys ls`](#cua-agent-keys-ls) | List the saved keys (never their values). |
 | [`cua agent keys set`](#cua-agent-keys-set) | Add or replace a key, read from stdin. |
+| [`cua agent keys check`](#cua-agent-keys-check) | Ask each provider whether the saved API keys still work (a cheap read-only request; nothing is sent that is not a key's own request). |
 | [`cua agent keys rm`](#cua-agent-keys-rm) | Remove the key a run gets as ENV. |
 | [`cua agent create`](#cua-agent-create) | Deprecated alias of `add`. |
 | [`cua agent persistent`](#cua-agent-persistent) | Deprecated alias of `ls` (without a sandbox). |
@@ -563,6 +564,20 @@ cua agent keys set [OPTIONS] <PROVIDER>
 ```bash test="cli-shape" id="ref-cua-agent-keys-set"
 cua agent keys set anthropic
 cua agent keys set other --env GEMINI_API_KEY
+```
+
+#### `cua agent keys check`
+
+Ask each provider whether the saved API keys still work (a cheap read-only request; nothing is sent that is not a key's own request). A key the provider refuses is listed as needing a reconnect, and runs are not given it until it is saved again.
+
+```text output
+cua agent keys check [OPTIONS]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-keys-check"
+cua agent keys check
 ```
 
 #### `cua agent keys rm`

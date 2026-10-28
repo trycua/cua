@@ -508,7 +508,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await model.devices.refresh();
     const notes = system.notes.filter((n) => n.id.startsWith("device-"));
     expect(notes.map((n) => n.id)).toEqual(["device-dev_work", "device-dev_old"]);
-    expect(notes[0]).toMatchObject({ route: "/settings/devices" });
+    expect(notes[0]).toMatchObject({ route: "/machines" });
     expect(notes[0]!.title.length).toBeGreaterThan(0);
     started.stop();
   });

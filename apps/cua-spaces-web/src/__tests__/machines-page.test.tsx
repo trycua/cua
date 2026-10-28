@@ -91,7 +91,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     const { router, hooks } = await mountApp("/machines", stopped(calls));
     await router.load();
     await waitFor(() => expect(hooks.machines.view?.machines.some((m) => m.id === "studio")).toBe(true));
-    await screen.findByText(hooks.machines.view!.summary);
+    await screen.findByText(new RegExp(`^${hooks.machines.view!.summary}`));
 
     const row = document.querySelector('[data-machine-id="studio"]') as HTMLElement;
     expect(row.querySelector("[data-machine-line]")?.textContent).toBe("Not sharing");
@@ -112,16 +112,17 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     const calls: [string, unknown][] = [];
     const { router } = await mountApp("/machines", hostDrawn(view, calls));
     await router.load();
-    await screen.findByText(view.summary);
+    await screen.findByText(new RegExp(`^${view.summary}`));
 
-    // Groups, with the old machines collapsed.
+    // Groups, with the old machines collapsed. The machines waiting to be added come first; a
+    // machine that is only signed in sits in the one list.
     const groups = [...document.querySelectorAll("[data-machine-group]")].map((g) => g.getAttribute("data-machine-group"));
-    expect(groups).toEqual(["yours", "devices", "old", "team"]);
-    const devices = document.querySelector<HTMLElement>('[data-machine-group="devices"]')!;
-    expect(devices.textContent).toContain("Your devices");
-    const lap = devices.querySelector<HTMLElement>('[data-machine-id="dev_lap"]')!;
+    expect(groups).toEqual(["pending", "yours", "old", "team"]);
+    expect(document.body.textContent).not.toMatch(/Your devices|Signed-in device/);
+    const yours = document.querySelector<HTMLElement>('[data-machine-group="yours"]')!;
+    const lap = yours.querySelector<HTMLElement>('[data-machine-id="dev_lap"]')!;
     expect(lap.hidden).toBe(false);
-    expect(lap.querySelector("[data-machine-line]")?.textContent).toBe("Signed-in device, not shared");
+    expect(lap.querySelector("[data-machine-line]")?.textContent).toBe("Signed in, not sharing");
     const old = document.querySelector<HTMLElement>('[data-machine-id="old1"]')!;
     expect(old.hidden).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Offline for 30\+ days/ }));
@@ -424,6 +425,8 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     act(() => (sheet.querySelector("[data-cloud-approve]") as HTMLElement).click());
     await waitFor(() => expect(calls).toEqual([["clouds.approve", { provider: "aws", approve: true }]]));
     await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.status).toBe("Connected"));
+    // Let the dialog finish closing so nothing settles after the test ends.
+    await waitFor(() => expect(document.querySelector("[data-cloud-approve]")).toBeNull());
   });
 
   it("lists the clouds above your machines, in the order the core gives", async () => {
@@ -432,14 +435,15 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     await waitFor(() => expect(hooks.machines.view?.clouds?.group.rows.length).toBe(2));
     expect(hooks.machines.view!.order).toEqual(["clouds", "yours"]);
     const sections = [...document.querySelectorAll("[data-cloud-group], [data-machine-group]")].map((s) => s.getAttribute("data-cloud-group") ?? s.getAttribute("data-machine-group"));
-    expect(sections).toEqual(["clouds", "yours"]);
-    // Even with no cloud connected, "Connect a cloud" is the first row.
+    // What waits for you is first; the clouds come before the machines.
+    expect(sections).toEqual(["pending", "clouds", "yours"]);
+    // Even with no cloud connected, "Connect a cloud" comes before the machines (after what waits for you).
     cleanup();
     resetNewSpaceSession();
     await mountApp("/machines", { failsCreates: false, listsGhost: false }).then(async ({ router: r }) => r.load());
     await waitFor(() => expect(document.querySelector("[data-connect-a-cloud]")).not.toBeNull());
-    const first = document.querySelector("[data-cloud-group], [data-machine-group]");
-    expect(first?.getAttribute("data-cloud-group")).toBe("clouds");
+    const groups = [...document.querySelectorAll("[data-cloud-group], [data-machine-group]")].filter((g) => g.getAttribute("data-machine-group") !== "pending");
+    expect(groups[0]?.getAttribute("data-cloud-group")).toBe("clouds");
   });
 
   it("scrolls the list and the detail pane on their own, under a header that stays put", async () => {
@@ -492,7 +496,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     const page = await detailOf("AWS");
     expect(page.querySelector("[data-cloud-status]")?.textContent).toBe("Connected");
     expect(page.querySelector("[data-cloud-issues]")).toBeNull();
-    expect(page.querySelector("[data-cloud-setting=access]")?.textContent).toContain("The AWS CLI's sign-in on this computer");
+    expect(page.querySelector("[data-cloud-setting=access]")?.textContent).toContain("The AWS CLI's sign-in on this machine");
     act(() => (page.querySelector("[data-cloud-switch=switch-oidc]") as HTMLElement).click());
     const sheet = await waitFor(() => document.querySelector("[data-connect-cloud]")!);
     await waitFor(() => expect(sheet.querySelector("[data-cloud-title]")?.textContent).toContain("AWS"));
@@ -545,5 +549,6 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     await waitFor(() => expect(calls).toEqual([["clouds.approve", { provider: "aws", approve: false }]]));
     await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.status).toBe("Connected"));
     expect(hooks.machines.view?.clouds?.pages[0]?.settings.find((s) => s.id === "budget")?.value).toBe("$200");
+    await waitFor(() => expect(document.querySelector("[data-cloud-deny]")).toBeNull());
   });
 });

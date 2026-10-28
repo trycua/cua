@@ -4,7 +4,7 @@
 import { CheckIcon, FileTextIcon, ImageIcon, XIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
-import { useBridge, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadView } from "@/bridge";
+import { useBridge, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadQuote, type ThreadView } from "@/bridge";
 import { Inlines } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { parseInline } from "@/lib/markdown";
@@ -144,9 +144,9 @@ export function ThreadView({
         <div className="flex h-full items-end px-8 pb-4">{empty}</div>
       ) : (
         <div ref={body} className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
-          {items.map((item) => (
+          {items.map((item, i) => (
             <Fragment key={item.key}>
-              <ThreadItemView item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} onRetry={onRetry} />
+              <ThreadItemView item={item} above={aboveSeq(items, i)} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} onRetry={onRetry} />
               {after && "entry" in item ? after(item.entry.seq) : null}
             </Fragment>
           ))}
@@ -155,6 +155,16 @@ export function ThreadView({
       )}
     </div>
   );
+}
+
+/** The seq of the message drawn right above `items[i]` (notes and the unread divider are not messages). */
+export function aboveSeq(items: readonly ThreadItem[], i: number): number | null {
+  for (let j = i - 1; j >= 0; j--) {
+    const it = items[j]!;
+    if (it.type === "system" || it.type === "unread") continue;
+    return it.entry.seq;
+  }
+  return null;
 }
 
 /** One folded thread item as the thread draws it; the Agents tab's DM draws the same, labelled with its Space. */
@@ -166,9 +176,12 @@ export const ThreadItemView = memo(function Item({
   onRemoveAgent,
   onRetry,
   label,
+  above = null,
 }: {
   item: ThreadItem;
   roster: Roster;
+  /** The seq of the entry drawn right above this one. */
+  above?: number | null;
   onAnswer: (approval: number, approve: boolean) => Promise<void>;
   onOpenAttachment: (a: ThreadAttachment) => void;
   onRemoveAgent?: (handle: string) => Promise<void>;
@@ -189,32 +202,18 @@ export const ThreadItemView = memo(function Item({
       // A join or a removal with who it was: drawn with its mark; anything else is its line of text.
       if (item.entry.event?.member) return <MemberEventNote event={item.entry.event} text={item.text} tsMs={item.entry.tsMs} />;
       return (
-        <p data-thread-note={item.entry.seq} className="my-1 truncate text-center text-xs text-muted-foreground">
+        <p data-thread-note={item.entry.seq} className="my-1 text-center text-xs break-words text-muted-foreground">
           {item.text}
         </p>
       );
     case "message":
-      return <Message entry={item.entry} {...m} />;
+      // One row, in order. A reply quotes the message it answers only when that is not the one right above it.
+      return <Message entry={item.entry} {...m} quote={item.quote && item.quote.seq !== above ? item.quote : null} task={item.taskText !== null ? { text: item.taskText, onRetry } : undefined} />;
     case "task":
+      // How the task is going is told by the chat: the live row, the agent's reply or its failure message. No chip here.
       return (
         <div data-task={item.entry.seq} data-task-state={item.state}>
-          {/* How the task is going is told by the chat: the live row, the agent's reply or its failure message. No chip here. */}
           <Message entry={item.entry} {...m} footnote={keysLine(item.entry, roster)} />
-          {item.replies.length || item.notes.length ? (
-            <div data-task-replies="" className="pl-10">
-              {[...item.notes.map((n) => ({ seq: n.entry.seq, note: n.text, entry: n.entry })), ...item.replies.map((r) => ({ seq: r.seq, note: null, entry: r }))]
-                .sort((a, b) => a.seq - b.seq)
-                .map((x) =>
-                  x.note !== null ? (
-                    <p key={x.seq} data-thread-note={x.seq} className="py-1 pl-10 text-xs text-muted-foreground">
-                      {x.note}
-                    </p>
-                  ) : (
-                    <Message key={x.seq} entry={x.entry} {...m} nested task={{ text: item.entry.text, onRetry }} />
-                  ),
-                )}
-            </div>
-          ) : null}
         </div>
       );
     case "join_request":
@@ -239,7 +238,7 @@ function Message({
   label,
   status,
   footnote,
-  nested,
+  quote,
   task,
   surface = "background",
 }: {
@@ -254,7 +253,8 @@ function Message({
   status?: ReactNode;
   /** A muted line under the text ("Runs on Ada's keys"). */
   footnote?: string | null;
-  nested?: boolean;
+  /** The message this one replies to, when it is not the one right above. */
+  quote?: ThreadQuote | null;
   /** The task this message replies to (its text, for a failed reply's Retry). */
   task?: { text: string; onRetry?: (text: string) => Promise<void> };
 }) {
@@ -268,12 +268,12 @@ function Message({
       harness={who.harness}
       identity={who.identity}
       surface={surface}
-      size={nested ? 24 : 28}
+      size={28}
       className="mt-0.5"
     />
   );
   return (
-    <div data-entry={entry.seq} className={cn("flex gap-3", nested ? "py-1.5" : "py-2")}>
+    <div data-entry={entry.seq} className="flex gap-3 py-2">
       {who.kind === "agent" && who.identity ? (
         <ProfileTrigger identity={who.identity} agent={who.agent} roster={roster} onRemove={onRemoveAgent} className="self-start rounded-full">
           {avatar}
@@ -300,6 +300,7 @@ function Message({
           {label ? <span className="shrink-0">{label}</span> : null}
           {status ? <span className="shrink-0">{status}</span> : null}
         </div>
+        {quote ? <ReplyQuote quote={quote} roster={roster} /> : null}
         {entry.text ? <ThreadText text={entry.text} handles={roster.handles} /> : null}
         {entry.failure ? <FailureNote failure={entry.failure} harness={who.harness ?? ""} taskText={task?.text ?? null} onRetry={task?.onRetry} /> : null}
         {entry.view ? <ViewLine view={entry.view} /> : null}
@@ -317,6 +318,17 @@ function Message({
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** "Replying to Ada: ...": the message a reply answers, one quiet line (a preview of another message, not an error). */
+function ReplyQuote({ quote, roster }: { quote: ThreadQuote; roster: Roster }) {
+  const who = roster.author(quote.author);
+  const text = quote.text.replace(/\s+/g, " ").trim();
+  return (
+    <p data-reply-quote={quote.seq} className="mb-0.5 truncate border-l-2 pl-2 text-[11.5px] text-muted-foreground">
+      <span className="font-medium">{who.label}</span> {text}
+    </p>
   );
 }
 

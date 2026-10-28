@@ -82,7 +82,7 @@ export function useQueued(spaceId: string): Queued[] {
 
 /** Queued messages as thread items. */
 export const queuedItems = (qs: readonly Queued[], me: string, name: string): ThreadItem[] =>
-  qs.map((q, i) => ({ type: "message" as const, key: `queued:${q.id}`, entry: entryOf(q, i, me, name) }));
+  qs.map((q, i) => ({ type: "message" as const, key: `queued:${q.id}`, entry: entryOf(q, i, me, name), quote: null, taskText: null }));
 
 /**
  * The thread of a Space still being made: empty (its queued messages are

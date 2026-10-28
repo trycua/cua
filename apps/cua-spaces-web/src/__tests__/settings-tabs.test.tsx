@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Settings' six tabs on the real routes and the wasm core: Account, General,
-// Connectors, Trusted machines, Advanced, About. The old addresses
-// (Agents, Experiments) still land on the right tab, and what moved is where
-// the audit put it.
+// Settings' five tabs on the real routes and the wasm core: Account, General,
+// Connectors, Advanced, About. The old addresses (Agents, Experiments) still
+// land on the right tab, the old Trusted machines tab lands on Machines, and
+// what moved is where the audit put it.
 
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,24 +25,23 @@ const tab = (id: string) => document.querySelector<HTMLElement>(`[data-settings-
 const labels = () => [...document.querySelectorAll<HTMLElement>('nav[aria-label="Settings"] a')].map((a) => a.textContent);
 
 describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
-  it("has Account, General, Connectors, Trusted machines, Advanced and About, in that order", async () => {
+  it("has Account, General, Connectors, Advanced and About, in that order", async () => {
     await mountApp("/settings", host);
     await waitFor(() => expect(tab("account")).not.toBeNull());
-    expect(labels()).toEqual(["Account", "General", "Connectors", "Trusted machines", "Advanced", "About"]);
+    expect(labels()).toEqual(["Account", "General", "Connectors", "Advanced", "About"]);
   });
 
   it.each([
     ["/settings", "Account"],
     ["/settings/general", "General"],
     ["/settings/connectors", "Connectors"],
-    ["/settings/devices", "Trusted machines"],
     ["/settings/advanced", "Advanced"],
     ["/settings/about", "About"],
   ])("marks only the tab for %s as selected (%s)", async (path, label) => {
     await mountApp(path, host);
     const tabs = () => [...document.querySelectorAll<HTMLElement>('[role="tablist"][aria-label="Settings"] [role="tab"]')];
     await waitFor(() => expect(tabs().filter((t) => t.getAttribute("aria-selected") === "true").map((t) => t.textContent)).toEqual([label]));
-    expect(tabs().filter((t) => t.getAttribute("aria-selected") === "false")).toHaveLength(5);
+    expect(tabs().filter((t) => t.getAttribute("aria-selected") === "false")).toHaveLength(4);
   });
 
   it.each([
@@ -53,6 +52,12 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     const { router } = await mountApp(from, host);
     await waitFor(() => expect(router.state.location.pathname).toBe(to));
     await waitFor(() => expect(tab(id)).not.toBeNull());
+  });
+
+  it("sends the old Trusted machines address to the Machines tab", async () => {
+    const { router } = await mountApp("/settings/devices", host);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
+    expect(document.querySelector('[data-settings-tab]')).toBeNull();
   });
 
   it("keeps General to the everyday settings: no Keyboard shortcuts, Shared links, Storage or Runtimes", async () => {
@@ -66,13 +71,11 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
   });
 
   it("puts Connectors where Agents was, with the account keys and Terminal", async () => {
-    // The page as it was (the redesign's Providers: connectors-redesign.test.tsx).
-    vi.stubEnv("VITE_CUA_FLAG_SPACES_REDESIGN", "0");
     await mountApp("/settings/connectors", host);
-    await waitFor(() => expect(document.querySelector("[data-agent-keys]")).not.toBeNull(), { timeout: 8000 });
+    await waitFor(() => expect(document.querySelector("[data-connectors-providers]")).not.toBeNull(), { timeout: 8000 });
     const text = tab("connectors")!.textContent!;
-    expect(text).toContain("Account keys");
-    expect(text).toContain("Add a key for another AI company");
+    expect(text).toContain("Providers");
+    expect(document.querySelector("[data-agent-key-add-other]")).not.toBeNull();
     expect(text).not.toMatch(/provider key/i);
   });
 

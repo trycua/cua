@@ -26,7 +26,7 @@ pub const ROW_LABEL: &str = "Remote use";
 /// Free plan card, `cua usage`). The relay meters the time an account has
 /// at least one live session through it; a computer used from itself never
 /// goes through the relay.
-pub const REMOTE_HOURS_MEANING: &str = "Remote hours: time spent using your machines from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free.";
+pub const REMOTE_HOURS_MEANING: &str = "Remote hours: time spent using your machines from somewhere else (your laptop, phone or an agent on another machine). Using a machine from itself is free.";
 
 /// The notice's button.
 pub const UPGRADE: &str = "Upgrade";
@@ -759,7 +759,7 @@ mod tests {
         assert_eq!((f.plan.as_str(), f.label.as_str()), ("free", "Free plan"));
         assert_eq!(
             f.detail,
-            "2 live sessions and 20 remote hours a month. Remote hours: time spent using your machines from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free."
+            "2 live sessions and 20 remote hours a month. Remote hours: time spent using your machines from somewhere else (your laptop, phone or an agent on another machine). Using a machine from itself is free."
         );
         let p = f.primary.unwrap();
         assert_eq!(

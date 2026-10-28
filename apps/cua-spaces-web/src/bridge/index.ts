@@ -61,6 +61,7 @@ export {
   agentKeyForm,
   agentKeysView,
   useAgentKeys,
+  useKeysRecheck,
   type AgentKeyFormView,
   type AgentKeyRowView,
   type AgentKeysHook,
@@ -158,7 +159,7 @@ export {
 
 export { linkEnds, needsRelaySetup, useLinks, type LinksHook } from "./links";
 export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatAttempt, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
-export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem } from "./thread";
+export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem, type ThreadQuote } from "./thread";
 export {
   DEFAULT_AGENT_RIGHTS,
   isMissingThreadTool,

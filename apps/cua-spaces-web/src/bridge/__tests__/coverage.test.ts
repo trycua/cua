@@ -15,8 +15,15 @@ import { KEYVAULT_MANAGE_ARGS } from "../ops/keyvault-manage";
 import { KEYVAULT_SETUP_ARGS } from "../ops/keyvault-setup";
 import { STREAM_ARGS } from "../ops/stream";
 import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
+import { NUDGES_ARGS } from "../ops/nudges";
+import { RESOURCES_ARGS } from "../ops/resources";
+import { MACHINES_ARGS } from "../ops/machines";
 import { CHECKLIST_ARGS } from "../ops/checklist";
+import { LINKS_ARGS } from "../ops/links";
+import { CLI_ARGS } from "../ops/cli";
+import { THREAD_ARGS } from "../ops/thread";
 import { PRESENCE_ARGS } from "../ops/presence";
+import { CLOUD_APPROVE_ARGS } from "../ops/cloud-approve";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import type { HostWindow } from "../detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "../electron-channels";
@@ -31,6 +38,9 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "spaces.open": { spaceId: "s1" },
   "spaces.setPower": { spaceId: "s1", on: true },
   "spaces.delete": { spaceId: "s1" },
+  "spaces.deleteMany": { ids: ["s1"] },
+  "spaces.leave": { ids: ["s1"] },
+  "spaces.rename": { spaceId: "s1", name: "studio-2" },
   "machines.list": {},
   "host.status": {},
   "settings.get": {},
@@ -51,10 +61,18 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.list": {},
   "agents.runs": { spaceId: "s1" },
   "agents.events": { spaceId: "s1", runId: "r1", cursor: 0 },
+  "agents.start": { spaceId: "s1", agent: "claude-code", prompt: "Run the tests" },
+  "agents.message": { spaceId: "s1", runId: "r1", text: "Use Python 3.13" },
   "agents.pause": { name: "ada" },
   "agents.resume": { name: "ada" },
   "agents.setup": {},
   "agents.configure": { agents: null },
+  "agents.signIn": { agent: "codex" },
+  "agents.status": { refresh: true },
+  "agents.connect": { agents: ["codex"], signIn: true },
+  "agents.disconnect": { agents: ["codex"], signIn: true },
+  "agents.signInStart": { agent: "codex" },
+  "agents.signInWait": { id: "codex-1" },
   ...AGENT_DETAIL_ARGS,
   ...NEW_SPACE_ARGS,
   ...AGENT_KEYS_ARGS,
@@ -74,6 +92,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "sharing.list": { spaceId: "s1" },
   "sharing.share": { spaceId: "s1", who: "bob@example.com", role: "viewer" },
   "sharing.unshare": { spaceId: "s1", who: "bob@example.com" },
+  "sharing.removals": {},
+  "sharing.ackRemovals": {},
   "volume.overview": {},
   "volume.storage": {},
   "volume.storageSet": { update: { backend: "fs", s3: null, access_key_id: null, secret_access_key: null, dry_run: true } },
@@ -95,6 +115,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "loginItem.get": {},
   "loginItem.set": { on: true },
   "loginItem.openSettings": {},
+  "runtimes.check": { kind: "container", path: "/usr/local/bin/docker" },
+  "runtimes.browse": { kind: "container" },
   "devices.get": {},
   "devices.enroll": {},
   "devices.checkEnrolled": {},
@@ -112,6 +134,9 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "notifications.markAllRead": {},
   "notifications.markRead": { ids: ["n1"] },
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
+  "telemetry.linkNotice": {},
+  "telemetry.acknowledgeLinkNotice": {},
+  "crashReporting.config": {},
   "spaces.usage": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },
   "stream.pip": { spaceId: "s1", command: { type: "open", row: "desktop" } },
@@ -127,8 +152,15 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "startup.act": { action: "allowAccess" },
   ...STREAM_ARGS,
   ...RELAY_USAGE_ARGS,
+  ...NUDGES_ARGS,
+  ...RESOURCES_ARGS,
+  ...MACHINES_ARGS,
   ...CHECKLIST_ARGS,
+  ...LINKS_ARGS,
+  ...CLI_ARGS,
+  ...THREAD_ARGS,
   ...PRESENCE_ARGS,
+  ...CLOUD_APPROVE_ARGS,
   ...RUNTIME_FIX_ARGS,
 };
 
@@ -159,6 +191,11 @@ function webkitResult(method: string): unknown {
       return { app: { id: "app", name: "App" }, spaceId: "s1", moves: "appOnly", steps: [], consent: [], json: "{}" };
     case "spaces.cancelCreate":
       return { id: "pending:1", state: "cancelled", message: "" };
+    case "spaces.deleteMany":
+    case "spaces.leave":
+      return { results: [{ id: "s1", ok: true }] };
+    case "spaces.rename":
+      return {};
     case "onboarding.get":
     case "onboarding.complete":
       return { completed: true, mode: "client" };

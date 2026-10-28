@@ -9,7 +9,7 @@ export function Switch({ className, ...props }: SwitchPrimitive.Root.Props) {
   return (
     <SwitchPrimitive.Root
       className={cn(
-        "inline-flex h-[18px] w-[30px] shrink-0 items-center rounded-full p-[2px] outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring/60 data-checked:bg-brand data-unchecked:bg-input data-disabled:opacity-50",
+        "inline-flex h-[18px] w-[30px] shrink-0 items-center rounded-full p-[2px] outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring/60 data-checked:bg-brand data-unchecked:bg-input data-disabled:opacity-50", // design-ok: the switch track is round by definition
         className,
       )}
       data-slot="switch"

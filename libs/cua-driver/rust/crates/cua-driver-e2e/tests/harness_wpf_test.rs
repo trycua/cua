@@ -49,7 +49,10 @@ use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
 use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{IsIconic, ShowWindow, SW_MINIMIZE};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowLongPtrW, IsIconic, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_MINIMIZE, WS_EX_TOPMOST,
+};
 
 #[path = "support/foreground_text_oracle.rs"]
 mod foreground_text_oracle;
@@ -339,7 +342,81 @@ fn harness_wpf_query_projects_structured_elements() {
                 returned < total,
                 "query did not compact {returned}/{total} elements"
             );
+            assert_eq!(
+                response.structured()["elements_complete"].as_bool(),
+                Some(true),
+                "query projection must preserve the complete underlying UIA snapshot"
+            );
             let _ = element_token_by_id(&response, "btn-increment");
+
+            let bounded = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "max_elements": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !bounded.is_error(),
+                "bounded snapshot failed: {}",
+                bounded.text()
+            );
+            assert_eq!(
+                bounded.structured()["elements_complete"].as_bool(),
+                Some(false),
+                "a bound that skips the WPF root's descendants must report an incomplete snapshot"
+            );
+
+            let shallow = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "max_depth": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !shallow.is_error(),
+                "depth-bounded snapshot failed: {}",
+                shallow.text()
+            );
+            assert_eq!(
+                shallow.structured()["elements_complete"].as_bool(),
+                Some(false),
+                "a depth bound that skips WPF descendants must report an incomplete snapshot"
+            );
+
+            let verified = driver.call(
+                "verify_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "expect": [{"element": {
+                        "selector": {"label_contains": "__cua_missing_completeness_probe__"},
+                        "exists": true
+                    }}],
+                    "timeout_ms": 0,
+                    "stable_samples": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !verified.is_error(),
+                "verification failed: {}",
+                verified.text()
+            );
+            assert_eq!(
+                verified.structured()["status"],
+                "unknown",
+                "a structured projection that omits display-only nodes cannot prove absence"
+            );
+            assert_eq!(
+                verified.structured()["predicates"][0]["unknown_reason"],
+                "observation_unavailable"
+            );
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );
@@ -1706,6 +1783,121 @@ fn harness_wpf_slider_drag_background_refusal() {
         passed.push(OracleKind::FixtureState);
         Observation::refused(
             RefusalCode::BackgroundUnavailable,
+            passed,
+            response.text(),
+            Evidence::default(),
+        )
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_slider_drag_foreground_under_topmost_cover_refuses_without_leak() {
+    // A foreground drag is coordinate-routed SendInput, so Windows delivers it
+    // to whatever window owns the start point. Cover the harness with an
+    // always-on-top sentinel: activating the harness cannot bring it above
+    // that cover, so the drag must refuse with foreground_unavailable before
+    // the button goes down. Previously the z-order-only raise could fail and
+    // the whole stroke landed in the cover while the tool reported "Sent drag".
+    let mut case = native_foreground_case(
+        "wpf",
+        "slider_drag_topmost_cover",
+        Targeting::Px,
+        DriverRoute::WindowsSendInput,
+    )
+    .expecting_refusal(vec![RefusalCode::ForegroundUnavailable]);
+    case.oracles.push(OracleKind::NoLeakedInput);
+    case.oracles.sort();
+    case.oracles.dedup();
+    run_case(case, |pid, wid, driver| {
+        let before = snapshot(driver, pid, wid);
+        let before_value = fixture_state_line(before.text(), "slider_value=").to_owned();
+        let (x, y, width, height) =
+            pixel_frame(&before, "sld-value", window_bounds(driver, pid, wid));
+
+        let sentinel = ForegroundSentinel::launch(driver);
+        // The sentinel's setup goes through bring_to_front, which leaves it
+        // non-topmost. Pin it above every normal window so activation of the
+        // harness cannot uncover the slider, and prove the pin took effect.
+        let cover = HWND(sentinel.target().native_id as usize as *mut _);
+        unsafe {
+            SetWindowPos(
+                cover,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )
+            .expect("pin the sentinel above normal windows");
+            assert_ne!(
+                GetWindowLongPtrW(cover, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0,
+                0,
+                "the sentinel did not become topmost"
+            );
+        }
+        sentinel
+            .assert_background_posture(TargetWindow {
+                pid,
+                native_id: wid,
+            })
+            .expect("the sentinel must cover the harness before the drag");
+        driver.start_behavior_recording();
+        let response = driver.call(
+            "drag",
+            serde_json::json!({
+                "pid": pid as i64, "window_id": wid,
+                "from_x": x + width * 0.05, "from_y": y + height / 2.0,
+                "to_x": x + width * 0.90, "to_y": y + height / 2.0,
+                "duration_ms": 700, "steps": 40,
+                "delivery_mode": "foreground"
+            }),
+        );
+        // Activating the harness may take focus from the sentinel; that is part
+        // of a foreground attempt, so only the leaked-input oracle applies. A
+        // silent journal proves nothing unless the sentinel was still alive.
+        let (sentinel_passed, violations) = sentinel.observe();
+        assert!(
+            !violations
+                .iter()
+                .any(|violation| violation.contains("heartbeat stopped")),
+            "the sentinel stopped journaling, so its leak oracle is void: {violations:?}"
+        );
+        let leaked = violations
+            .iter()
+            .filter(|violation| violation.contains("received input events"))
+            .collect::<Vec<_>>();
+        assert!(
+            leaked.is_empty(),
+            "foreground drag leaked into the covering window: {leaked:?}; tool said: {}",
+            response.text()
+        );
+        assert!(
+            response.is_error(),
+            "foreground drag under a topmost cover reported delivery: {}",
+            response.text()
+        );
+        assert_eq!(
+            response.structured()["code"].as_str(),
+            Some("foreground_unavailable"),
+            "foreground drag under a topmost cover returned the wrong refusal: {}",
+            response.text()
+        );
+
+        std::thread::sleep(Duration::from_millis(200));
+        let after = snapshot(driver, pid, wid);
+        assert_eq!(
+            fixture_state_line(after.text(), "slider_value="),
+            before_value,
+            "refused foreground drag changed the slider value"
+        );
+        let mut passed = vec![OracleKind::FixtureState];
+        if sentinel_passed.contains(&OracleKind::NoLeakedInput) {
+            passed.push(OracleKind::NoLeakedInput);
+        }
+        Observation::refused(
+            RefusalCode::ForegroundUnavailable,
             passed,
             response.text(),
             Evidence::default(),

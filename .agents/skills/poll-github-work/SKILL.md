@@ -6,7 +6,7 @@ description: Poll and rank open GitHub issues, RFCs, and pull requests for maint
 # Poll GitHub Work
 
 Use GitHub as the durable record and
-[`MAINTAINERS.md`](../../../MAINTAINERS.md) as the ranking policy. Operate in
+[`MAINTAINERS.md`](../../../docs/contributing/MAINTAINERS.md) as the ranking policy. Operate in
 **recommend** mode until the maintainer explicitly selects an item; only then
 enter **execute** mode.
 

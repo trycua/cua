@@ -23,17 +23,38 @@ public protocol AgentSetupRunning: AnyObject, Sendable {
     func setUpCuaDriver(agents: [String]) async throws -> [AppAgentSetupOutcomeInput]
     /// Removes what cua added.
     func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput]
+    /// Starts the agent's own sign-in on this Mac (`codex login` opens the
+    /// browser); returns once it runs. The sign-in stays the agent's own.
+    func signIn(agent: String) async throws
+    /// Whether each agent is really connected (CONTRACT §4), as the JSON
+    /// `cua connect status --json` prints. `refresh` skips the SDK's
+    /// few-second cache (window focus).
+    func connectionStatusJson(refresh: Bool) async -> String
+    /// Connect and Reconnect: Cua's tools and, with `signIn`, the agent's
+    /// sign-in copied to Keyvault on This Mac. JSON: one result per agent.
+    func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String
+    /// Disconnect: both undone. JSON `{outcomes, removed_sign_ins}`.
+    func disconnectJson(agents: [String], signIn: Bool) async throws -> String
+    /// Disconnect of some parts only (an app's page's switches).
+    func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String
+    /// An agent's device-code sign-in made for Cua (Codex): JSON `{id, url, code}`.
+    func deviceSignInStartJson(agent: String) async throws -> String
+    /// Waits for it to be approved and saves it in Keyvault: JSON as Connect's `sign_in`.
+    func deviceSignInWaitJson(id: String) async throws -> String
 }
 
 /// The SDK's `AgentSetup`, registering the app's own `cua` as the MCP
-/// server when the bundle carries one.
+/// server when the bundle carries one. The server has no name here: the
+/// SDK names it for the app's channel (`cua`, `cua-local` for Cua Spaces
+/// Local), so the Local app never writes over the released app's entry, and
+/// it installs the channel's skill copies (`cua-spaces-local`).
 public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
     let inner: CuaSDK.AgentSetup
     let server: AgentMcpServer?
 
     public init(inner: CuaSDK.AgentSetup, cuaBinary: String?) {
         self.inner = inner
-        self.server = cuaBinary.map { AgentMcpServer(name: "cua", command: $0, args: ["mcp"], env: [:]) }
+        self.server = cuaBinary.map { AgentMcpServer(name: "", command: $0, args: ["mcp"], env: [:]) }
     }
 
     public func statuses() async -> [AppAgentSetupStatus] { inner.detect().map { appAgentSetupStatus(info: $0) } }
@@ -54,6 +75,33 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
         try await inner.remove(agents: agents, skills: true, mcp: true).map { appAgentSetupOutcome(outcome: $0) }
     }
+
+    public func signIn(agent: String) async throws { try inner.signIn(agent: agent) }
+
+    public func connectionStatusJson(refresh: Bool) async -> String {
+        let inner = inner, server = server
+        return await Task.detached { inner.connectionStatusJson(expected: server, refresh: refresh) }.value
+    }
+
+    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String {
+        try await inner.connectJson(agents: agents, server: server, skills: skills, mcp: mcp, signIn: signIn)
+    }
+
+    public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
+        try await inner.disconnectJson(agents: agents, signIn: signIn)
+    }
+
+    public func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String {
+        try await inner.disconnectPartsJson(agents: agents, skills: skills, mcp: mcp, signIn: signIn)
+    }
+
+    public func deviceSignInStartJson(agent: String) async throws -> String {
+        try await inner.deviceSignInStartJson(agent: agent)
+    }
+
+    public func deviceSignInWaitJson(id: String) async throws -> String {
+        try await inner.deviceSignInWaitJson(id: id)
+    }
 }
 
 /// In-memory agents for fixtures and tests: nothing on disk is read or written.
@@ -65,12 +113,14 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
         current = statuses ?? [
             AppAgentSetupStatus(id: "claude-code", name: "Claude Code", installed: true, skillsDir: "~/.claude/skills",
                                 mcpConfig: "~/.claude.json", cuaConfigured: false, skillsInstalled: [],
-                                skillsOutdated: [], error: nil),
+                                skillsOutdated: [], error: nil, signIn: nil, signedIn: false),
             AppAgentSetupStatus(id: "codex", name: "Codex", installed: true, skillsDir: "~/.agents/skills",
                                 mcpConfig: "~/.codex/config.toml", cuaConfigured: true,
-                                skillsInstalled: ["cua-spaces", "cua-sandbox"], skillsOutdated: [], error: nil),
+                                skillsInstalled: ["cua-spaces", "cua-sandbox"], skillsOutdated: [], error: nil,
+                                signIn: "ChatGPT", signedIn: false),
             AppAgentSetupStatus(id: "cursor", name: "Cursor", installed: false, skillsDir: nil, mcpConfig: nil,
-                                cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: nil),
+                                cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: nil,
+                                signIn: nil, signedIn: false),
         ]
     }
 
@@ -111,6 +161,67 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
         return out
     }
 
+    /// The sign-in finishes at once (no browser in a fixture).
+    public func signIn(agent: String) async throws {
+        calls.append("sign-in:\(agent)")
+        guard let i = current.firstIndex(where: { $0.id == agent }), current[i].signIn != nil else {
+            throw NSError(domain: "FixtureAgentSetup", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "\(agent) has no sign-in cua can start"])
+        }
+        current[i].signedIn = true
+    }
+
+    /// The connection rows the fixture's agents give (the same rules as
+    /// `cua_agent_setup::connection`).
+    public func connectionStatusJson(refresh: Bool) async -> String {
+        let rows: [[String: Any]] = current.map { a in
+            let state = !a.installed ? (a.cuaConfigured ? "attention" : "not_installed")
+                : !a.cuaConfigured ? "not_connected"
+                : (a.signIn != nil && !a.signedIn) ? "attention" : "connected"
+            var problem: Any = NSNull()
+            if state == "attention" {
+                problem = a.installed
+                    ? ["line": "Connected. No \(a.signIn ?? "") sign-in on This Mac yet.", "action": "sign_in"]
+                    : ["line": "\(a.name) isn't on This Mac anymore. Disconnect takes Cua out of its settings.", "action": "disconnect"]
+            }
+            return ["id": a.id, "name": a.name, "installed": a.installed, "version": NSNull(), "previous_version": NSNull(),
+                    "signed_in": a.signIn == nil ? "unknown" : (a.signedIn ? "yes" : "no"), "sign_in": a.signIn.map { "\($0) sign-in" } ?? NSNull(),
+                    "mcp": a.mcpConfig == nil ? "unsupported" : (a.cuaConfigured ? "ok" : "missing"), "mcp_config": a.mcpConfig ?? NSNull(),
+                    "signin_imported": false, "signin_import": a.signIn == nil ? "unsupported" : "missing",
+                    "state": state, "problem": problem, "checked_at_ms": 0]
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: ["agents": rows, "checked_at_ms": 0])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String {
+        _ = try await setUp(agents: agents, skills: skills, mcp: mcp)
+        calls.append("connect:\(agents.joined(separator: ",")):\(signIn)")
+        let rows = agents.map { ["agent": $0, "tools_ok": true, "tools_line": NSNull(), "sign_in": NSNull()] as [String: Any] }
+        return String(decoding: try JSONSerialization.data(withJSONObject: rows), as: UTF8.self)
+    }
+
+    public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
+        _ = try await remove(agents: agents)
+        return #"{"outcomes":[],"removed_sign_ins":[]}"#
+    }
+
+    public func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String {
+        calls.append("disconnect-parts:\(agents.joined(separator: ",")):\(skills):\(mcp)")
+        return #"{"outcomes":[],"removed_sign_ins":[]}"#
+    }
+
+    /// Codex's device code, approved at once (no browser in fixtures).
+    public func deviceSignInStartJson(agent: String) async throws -> String {
+        calls.append("device-start:\(agent)")
+        return #"{"id":"\#(agent)-1","url":"https://auth.openai.com/codex/device","code":"ABCD-12345"}"#
+    }
+
+    public func deviceSignInWaitJson(id: String) async throws -> String {
+        calls.append("device-wait:\(id)")
+        return #"{"imported":{"source":"codex","env":"CODEX_AUTH_JSON","label":"Codex · ChatGPT sign-in","expires_ms":null,"added_ms":1},"refused":null,"line":null}"#
+    }
+
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
         calls.append("remove:\(agents.joined(separator: ","))")
         for i in current.indices where agents.contains(current[i].id) {
@@ -121,6 +232,33 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
     }
 }
 
+/// The one-time notice that usage data is now linked to the signed-in
+/// account (CUA-1881), for machines that saw the older "anonymous" wording:
+/// the SDK's words (`telemetryLinkNotice`) and whether it is due now.
+public struct LinkNoticeCopy: Sendable, Equatable {
+    public var due: Bool
+    public var title: String
+    public var body: String
+    /// "Got it": keeps usage data on.
+    public var okLabel: String
+    /// "Turn off usage data".
+    public var turnOffLabel: String
+    /// The link to what is collected.
+    public var detailsLabel: String
+    public var docsUrl: String
+
+    public init(due: Bool, title: String, body: String, okLabel: String, turnOffLabel: String,
+                detailsLabel: String, docsUrl: String) {
+        self.due = due
+        self.title = title
+        self.body = body
+        self.okLabel = okLabel
+        self.turnOffLabel = turnOffLabel
+        self.detailsLabel = detailsLabel
+        self.docsUrl = docsUrl
+    }
+}
+
 /// The usage-telemetry switch, and where the app's usage events go.
 public protocol TelemetryRunning: AnyObject, Sendable {
     func status() -> AppTelemetryInput
@@ -128,6 +266,16 @@ public protocol TelemetryRunning: AnyObject, Sendable {
     /// Records signals the app core derived (`appTelemetry*`): the same ones
     /// the Tauri app sends for the same step.
     func record(_ signals: [AppTelemetrySignal])
+    /// The first run's usage notice was on screen and the person moved on
+    /// (left Welcome, finished the first run, or used the switch beside the
+    /// note): from here usage events may be sent. Keeps the switch as it is.
+    func acknowledgeNotice()
+
+    /// The one-time linking notice: its words and whether it is due now.
+    func linkNotice() -> LinkNoticeCopy
+    /// The person closed it (either button): linking starts at the next
+    /// launch, never in this process.
+    func acknowledgeLinkNotice()
 }
 
 /// The SDK's telemetry setting (`$CUA_HOME/config.toml`, the same switch as
@@ -148,6 +296,24 @@ public final class LiveTelemetry: TelemetryRunning, @unchecked Sendable {
         guard !signals.isEmpty else { return }
         _ = appTelemetryRecord(signals: signals)
     }
+    /// Writes the notice marker (and records the `app_launched` that waited
+    /// for it) once; the switch stays as it is.
+    public func acknowledgeNotice() {
+        let s = telemetryStatus()
+        guard !s.noticeShown else { return }
+        do { try appTelemetryWelcomeLeft(on: s.enabled) } catch {
+            NSLog("Cua Spaces: the usage notice was not recorded: %@", LiveSpacesBackend.words(error))
+        }
+    }
+
+
+    public func linkNotice() -> LinkNoticeCopy {
+        let n = telemetryLinkNotice()
+        return LinkNoticeCopy(due: telemetryLinkNoticeDue(), title: n.title, body: n.body, okLabel: n.okLabel,
+                              turnOffLabel: n.turnOffLabel, detailsLabel: n.detailsLabel, docsUrl: n.docsUrl)
+    }
+
+    public func acknowledgeLinkNotice() { telemetryAcknowledgeLinkNotice() }
 }
 
 /// An in-memory switch (fixtures, tests).
@@ -164,6 +330,27 @@ public final class FixtureTelemetry: TelemetryRunning, @unchecked Sendable {
     public func record(_ signals: [AppTelemetrySignal]) {
         if current.enabled { recorded += signals }
     }
+    /// How many times the notice was acknowledged.
+    public private(set) var acknowledgements = 0
+    public func acknowledgeNotice() {
+        acknowledgements += 1
+        current.noticeShown = true
+    }
+
+    /// Whether the one-time linking notice is due (a machine that saw the older wording).
+    public var linkNoticeDue = false
+    /// How many times the notice was closed.
+    public private(set) var linkNoticeAcknowledged = 0
+    public func linkNotice() -> LinkNoticeCopy {
+        LinkNoticeCopy(due: linkNoticeDue, title: "We've updated how usage data works",
+                       body: "Cua collects usage data, like which features you use and when something goes wrong.",
+                       okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected",
+                       docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry")
+    }
+    public func acknowledgeLinkNotice() {
+        linkNoticeAcknowledged += 1
+        linkNoticeDue = false
+    }
 }
 
 /// A started sign-in: the code to confirm (device flow), then the identity.
@@ -171,11 +358,16 @@ public struct SignInAttempt: Sendable {
     public var userCode: String?
     /// The page the sign-in finishes on (to open it again).
     public var url: URL?
+    /// A browser opened on this Mac (false: the page is to be opened by
+    /// hand, here or on another device).
+    public var opened: Bool
     public var wait: @Sendable () async throws -> String?
 
-    public init(userCode: String?, url: URL? = nil, wait: @escaping @Sendable () async throws -> String?) {
+    public init(userCode: String?, url: URL? = nil, opened: Bool = true,
+                wait: @escaping @Sendable () async throws -> String?) {
         self.userCode = userCode
         self.url = url
+        self.opened = opened
         self.wait = wait
     }
 }
@@ -202,11 +394,17 @@ public protocol AccountRunning: AnyObject, Sendable {
     func profile() -> AccountProfile?
     /// Starts a sign-in (opens the browser).
     func beginSignIn() async throws -> SignInAttempt
+    /// Starts a sign-in with a code to enter on any device (`code`), for when
+    /// the browser cannot get back to the app. Accounts without a code flow
+    /// start the usual sign-in.
+    func beginSignIn(code: Bool) async throws -> SignInAttempt
     /// Signs out.
     func signOut() async throws
 }
 
 extension AccountRunning {
+    public func beginSignIn(code: Bool) async throws -> SignInAttempt { try await beginSignIn() }
+
     /// Accounts that only know a display identity: an email or a username.
     public func profile() -> AccountProfile? {
         identity().map { $0.contains("@") ? AccountProfile(email: $0) : AccountProfile(username: $0) }
@@ -233,15 +431,29 @@ public final class LiveAccount: AccountRunning, @unchecked Sendable {
         return AccountProfile(name: i.name, email: i.email, username: i.username, subject: i.subject)
     }
 
-    public func beginSignIn() async throws -> SignInAttempt {
-        let attempt = try await auth.beginLogin(flow: nil)
-        let url = URL(string: attempt.url())
-        if let url {
-            await MainActor.run { _ = NSWorkspace.shared.open(url) }
+    public func beginSignIn() async throws -> SignInAttempt { try await beginSignIn(code: false) }
+
+    public func beginSignIn(code: Bool) async throws -> SignInAttempt {
+        // The browser's sign-in page says where to go back to (the SDK reads it).
+        setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
+        var attempt = try await auth.beginLogin(flow: code ? "device" : nil)
+        var opened = await Self.open(attempt.url())
+        // No browser opened: the loopback redirect would never come back,
+        // so use a code that can be confirmed on any device instead.
+        if !opened, attempt.method() == .browser {
+            attempt = try await auth.beginLogin(flow: "device")
+            opened = await Self.open(attempt.url())
         }
-        return SignInAttempt(userCode: attempt.userCode(), url: url) {
-            Self.display(try await attempt.wait())
+        let started = attempt
+        return SignInAttempt(userCode: started.userCode(), url: URL(string: started.url()), opened: opened) {
+            Self.display(try await started.wait())
         }
+    }
+
+    /// Opens `link` in the default browser; false when nothing opened it.
+    static func open(_ link: String) async -> Bool {
+        guard let url = URL(string: link), !link.isEmpty else { return false }
+        return await MainActor.run { NSWorkspace.shared.open(url) }
     }
 
     public func signOut() async throws { _ = try await auth.logout() }
@@ -262,41 +474,6 @@ public final class FixtureAccount: AccountRunning, @unchecked Sendable {
     public func signOut() async throws { current = nil }
 }
 
-// MARK: - Cua Cloud billing
-
-/// The account's Cua Cloud billing: the credit left and the account app's
-/// billing page. The app takes no payment details; the account app does.
-public protocol BillingRunning: AnyObject, Sendable {
-    /// The status as the app core takes it.
-    func status() async throws -> AppBillingStatus
-}
-
-/// Billing no longer calls the retired Fleets API (`GET /api/billing/status`
-/// on run.cua.ai). It reports "billing not enabled" with no network call, so
-/// Settings hides the row and a refused cloud Space offers no Add credit.
-public final class LiveBilling: BillingRunning, @unchecked Sendable {
-    let cua: Cua
-    public init(cua: Cua) { self.cua = cua }
-
-    public func status() async throws -> AppBillingStatus {
-        AppBillingStatus(billingEnabled: false, card: nil, credit: nil, billingUrl: nil)
-    }
-}
-
-/// A fixture account's billing (captures, tests): $10 of credit.
-public final class FixtureBilling: BillingRunning, @unchecked Sendable {
-    public var current: AppBillingStatus
-
-    public init(balanceCents: Int64 = 1000, enabled: Bool = true) {
-        current = AppBillingStatus(
-            billingEnabled: enabled, card: nil,
-            credit: AppBillingCredit(balanceUsdCents: balanceCents),
-            billingUrl: "https://app.cua.ai/billing")
-    }
-
-    public func status() async throws -> AppBillingStatus { current }
-}
-
 // MARK: - Teams
 
 /// The account's Teams from the Spaces API (api.cua.ai, api.staging.cua.ai
@@ -305,6 +482,16 @@ public final class FixtureBilling: BillingRunning, @unchecked Sendable {
 /// roles and billing are the account app's (app.cua.ai).
 public protocol TeamsReading: AnyObject, Sendable {
     func teams() async throws -> AppTeamsInput
+    /// People removed from the account's shared computers because sharing is
+    /// for teams now, until acknowledged (none from a server that predates it).
+    func shareRemovals() async throws -> [AppShareRemovalInput]
+    /// The owner has seen the removal note.
+    func ackShareRemovals() async throws
+}
+
+public extension TeamsReading {
+    func shareRemovals() async throws -> [AppShareRemovalInput] { [] }
+    func ackShareRemovals() async throws {}
 }
 
 /// Reads Teams with the account's access token (`force`: refresh it).
@@ -318,27 +505,47 @@ public final class LiveTeams: TeamsReading, @unchecked Sendable {
         }
         return try await appTeams(accountToken: token)
     }
+
+    public func shareRemovals() async throws -> [AppShareRemovalInput] {
+        guard let token = try await token(false) else { return [] }
+        return try await appShareRemovals(accountToken: token)
+    }
+
+    public func ackShareRemovals() async throws {
+        guard let token = try await token(false) else { return }
+        try await appAckShareRemovals(accountToken: token)
+    }
 }
 
 /// A fixture account's team (captures, tests).
 public final class FixtureTeams: TeamsReading, @unchecked Sendable {
     public var current: AppTeamsInput
+    private let lock = NSLock()
+    private var pending: [AppShareRemovalInput]
+    /// Who the fixture's owner has not been told was removed yet. Read by a
+    /// test while the acknowledgement clears it on another task.
+    public var removals: [AppShareRemovalInput] {
+        get { lock.withLock { pending } }
+        set { lock.withLock { pending = newValue } }
+    }
 
-    public init(_ teams: [AppTeamInput]? = nil) {
+    public init(_ teams: [AppTeamInput]? = nil, removals: [AppShareRemovalInput] = []) {
+        pending = removals
         current = AppTeamsInput(accountAppUrl: "https://app.cua.ai", state: .ready(teams: teams ?? [
             AppTeamInput(
                 id: "o1", alias: "acme", name: "Acme Inc", role: "owner", plan: "teams", seats: 3,
                 members: [AppTeamPersonInput(email: "ada@example.com", role: "owner"),
                           AppTeamPersonInput(email: "grace@example.com", role: "member")],
-                invites: ["linus@example.com"]),
+                invites: ["linus@example.com"], paymentFailed: false, paymentFailedUntil: nil),
         ]), currentTeamId: nil)
     }
 
     public func teams() async throws -> AppTeamsInput { current }
+    public func shareRemovals() async throws -> [AppShareRemovalInput] { removals }
+    public func ackShareRemovals() async throws { removals = [] }
 }
 
-/// Opens the website billing page (Settings' Manage billing, a refused
-/// cloud Space's Add credit). In debug builds `CUA_SPACES_BROWSER` names
+/// Opens an account-app page (Teams, Teams billing). In debug builds `CUA_SPACES_BROWSER` names
 /// another app to open it with (captures use their own window, never the
 /// person's browser).
 @MainActor

@@ -166,9 +166,15 @@ impl ToolDef {
         let input_schema = advertised_runtime_input_schema(&self.name, &self.input_schema);
         let caps = advertised_capabilities_for(&self.name, &input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
+        // Tools that most often need a guide point at `get_guide`, so an agent
+        // that never reads the skill still learns where the guidance lives.
+        let description = match crate::guide::description_hint(&self.name) {
+            Some(hint) => format!("{} {hint}", self.description),
+            None => self.description.clone(),
+        };
         let mut entry = serde_json::json!({
             "name": self.name,
-            "description": self.description,
+            "description": description,
             "inputSchema": input_schema,
             "annotations": {
                 "readOnlyHint": self.read_only,
@@ -613,6 +619,13 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
             .entry("session")
             .or_insert_with(crate::tool_schema::session_schema);
     }
+    // Dispatch reads `post_action_wait` for every action that waits for the
+    // post-action window-change report (see `crate::post_action_wait`).
+    if crate::post_action_wait::accepts(tool_name) {
+        properties
+            .entry(crate::post_action_wait::POST_ACTION_WAIT_ARG)
+            .or_insert_with(crate::post_action_wait::schema);
+    }
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
@@ -700,7 +713,7 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 /// - `browser.state`, `browser.prepare`, `browser.navigate`,
 ///   `browser.input.click`, `browser.input.type`, `browser.input.files`,
 ///   `browser.dialog`
-/// - `driver.update_check`, `driver.probe`
+/// - `driver.update_check`, `driver.guide`, `driver.probe`
 /// - `history.status`, `history.query`
 ///
 /// Tools with no entry get `[]` — that's fine, it just means
@@ -845,6 +858,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
+        "get_guide" => &["driver.guide"],
         "probe" => &["driver.probe"],
 
         // ── encrypted local Computer History ─────────────────────────
@@ -1293,6 +1307,10 @@ impl ToolRegistry {
         self.tools.insert(name, tool);
     }
 
+    pub fn is_known_tool(&self, name: &str) -> bool {
+        name == "type_text_chars" || self.tools.contains_key(renamed_tool(name).unwrap_or(name))
+    }
+
     pub fn retain_session_end_hook(
         &mut self,
         registration: crate::session::SessionEndHookRegistration,
@@ -1361,6 +1379,7 @@ impl ToolRegistry {
         self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
+        self.register(Box::new(crate::guide::GetGuideTool));
         self.register_batch_tools();
     }
 
@@ -1669,7 +1688,47 @@ impl ToolRegistry {
             .await
     }
 
+    /// The canonical native dispatch boundary. Every refusal and every
+    /// unconfirmed action leaves it with a `hint` (and a `next_call` when one
+    /// exists); see [`crate::recovery_hint`].
     async fn invoke_authorized(
+        &self,
+        name: &str,
+        args: Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        evidence: &TrustedInvocationEvidence,
+    ) -> ToolResult {
+        let seed = crate::recovery_hint::Seed::from_args(&args);
+        let session = args
+            .get("session")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let in_batch = crate::step_pacing::in_batch();
+        let tool = match name {
+            "type_text_chars" => "type_text",
+            other => renamed_tool(other).unwrap_or(other),
+        };
+        let wait = if crate::post_action_wait::accepts(tool) {
+            crate::post_action_wait::from_args(tool, &args)
+        } else {
+            Ok(crate::post_action_wait::PostActionWait::Default)
+        };
+        let mut result = match wait {
+            Ok(wait) => {
+                crate::post_action_wait::scope(
+                    wait,
+                    self.invoke_authorized_unannotated(name, args, context, evidence),
+                )
+                .await
+            }
+            Err((message, structured)) => ToolResult::error(message).with_structured(structured),
+        };
+        crate::recovery_hint::annotate(tool, &seed, &mut result);
+        crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
+        result
+    }
+
+    async fn invoke_authorized_unannotated(
         &self,
         name: &str,
         mut args: Value,
@@ -2276,6 +2335,7 @@ impl ToolRegistry {
         // Desktop pixels read off a capped get_desktop_state image are mapped
         // back to the uncapped capture before any platform interprets them.
         crate::desktop_capture_scale::map_desktop_args(&mut args);
+        crate::tool_activity::note_tool_activity();
         let mut result = crate::recording::scope_dispatch_click_capture(
             pending_turn.as_ref(),
             tool.invoke(args.clone()),
@@ -3454,6 +3514,7 @@ fn session_requiring_tool(tool_name: &str) -> bool {
         tool_name,
         "check_permissions"
             | "health_report"
+            | "get_guide"
             | "get_session"
             | "list_sessions"
             | "get_session_state"
@@ -3635,6 +3696,27 @@ mod runtime_isolation_tests {
         hits: Arc<AtomicUsize>,
         last_args: Arc<Mutex<Option<serde_json::Value>>>,
         def: super::ToolDef,
+    }
+
+    /// Records the post-action wait each invocation runs under.
+    struct WaitProbe {
+        seen: Arc<Mutex<Vec<crate::post_action_wait::PostActionWait>>>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for WaitProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(crate::post_action_wait::current());
+            crate::protocol::ToolResult::text("input delivered")
+        }
     }
 
     struct AttestedProbe {
@@ -4922,6 +5004,150 @@ resources:
     }
 
     #[tokio::test]
+    async fn dispatch_resolves_type_text_chars_before_reading_the_wait() {
+        use crate::post_action_wait::{PostActionWait, SKIP_SUPPORTED};
+        use serde_json::json;
+        if !SKIP_SUPPORTED {
+            return;
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "type_text".into(),
+                description: "test input".into(),
+                input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let ok = registry
+            .invoke_with_context(
+                "type_text_chars",
+                json!({"post_action_wait": "none"}),
+                standard_context(),
+            )
+            .await;
+        assert_ne!(ok.is_error, Some(true), "{ok:?}");
+        assert_eq!(seen.lock().unwrap().as_slice(), &[PostActionWait::None]);
+        for value in [json!(null), json!("off")] {
+            let r = registry
+                .invoke_with_context(
+                    "type_text_chars",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            assert_eq!(r.structured_content.unwrap()["code"], "invalid_arguments");
+        }
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_runs_the_action_under_its_post_action_wait() {
+        use crate::post_action_wait::{
+            current, PostActionWait, POST_ACTION_WAIT_ARG, POST_ACTION_WAIT_TOOLS, SKIP_SUPPORTED,
+        };
+        use serde_json::json;
+        let schema = json!({"type": "object", "properties": {}, "additionalProperties": false});
+        for tool in POST_ACTION_WAIT_TOOLS {
+            let advertised = super::advertised_runtime_input_schema(tool, &schema);
+            assert_eq!(
+                advertised["properties"].get(POST_ACTION_WAIT_ARG).is_some(),
+                SKIP_SUPPORTED,
+                "{tool}"
+            );
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: schema,
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let refusal_code = |result: crate::protocol::ToolResult| {
+            assert_eq!(result.is_error, Some(true), "{result:?}");
+            let structured = result.structured_content.expect("structured refusal");
+            if SKIP_SUPPORTED {
+                structured["code"].clone()
+            } else {
+                structured["refusal"]["code"].clone()
+            }
+        };
+
+        // Omitted keeps the wait.
+        let result = registry
+            .invoke_with_context("click", json!({}), standard_context())
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+
+        // "default" and "none" reach the adapter through the task-local scope
+        // on macOS; elsewhere the closed schema refuses the argument.
+        for value in ["default", "none"] {
+            let result = registry
+                .invoke_with_context(
+                    "click",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            if SKIP_SUPPORTED {
+                assert_ne!(result.is_error, Some(true), "{result:?}");
+            } else {
+                assert_eq!(refusal_code(result), "invalid_arguments", "{value}");
+            }
+        }
+        let expected: &[PostActionWait] = if SKIP_SUPPORTED {
+            &[
+                PostActionWait::Default,
+                PostActionWait::Default,
+                PostActionWait::None,
+            ]
+        } else {
+            &[PostActionWait::Default]
+        };
+        assert_eq!(seen.lock().unwrap().as_slice(), expected);
+        assert_eq!(
+            current(),
+            PostActionWait::Default,
+            "the choice must not leak"
+        );
+
+        // Values outside the enum, null included, never reach the tool.
+        for value in [json!(null), json!("off"), json!(0)] {
+            let result = registry
+                .invoke_with_context(
+                    "click",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            if SKIP_SUPPORTED {
+                assert!(result.structured_content.as_ref().unwrap()["hint"].is_string());
+            }
+            assert_eq!(refusal_code(result), "invalid_arguments", "{value}");
+        }
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            expected,
+            "must refuse before invocation"
+        );
+    }
+
+    #[tokio::test]
     async fn desktop_background_click_refuses_before_platform_invocation() {
         let hits = Arc::new(AtomicUsize::new(0));
         let last_args = Arc::new(Mutex::new(None));
@@ -4963,9 +5189,18 @@ resources:
                 .invoke_with_context("click", args, standard_context())
                 .await;
             assert_eq!(result.is_error, Some(true));
+            let mut structured = result.structured_content.expect("structured refusal");
+            // The refusal also carries a recovery hint (see `recovery_hint`).
+            let hint = structured
+                .as_object_mut()
+                .and_then(|object| object.remove("hint"))
+                .expect("a desktop background refusal carries a hint");
+            assert!(hint
+                .as_str()
+                .is_some_and(|hint| hint.contains("target {kind:\"window\"")));
             assert_eq!(
-                result.structured_content,
-                Some(serde_json::json!({
+                structured,
+                serde_json::json!({
                     "code": "background_unavailable",
                     "effect": "refused",
                     "suggestion": "Retry this action with delivery_mode:\"foreground\".",
@@ -4973,7 +5208,7 @@ resources:
                         "recommended": "foreground",
                         "reason": cua_driver_contract::ClickInput::DESKTOP_BACKGROUND_MESSAGE,
                     },
-                }))
+                })
             );
             assert_eq!(
                 hits.load(Ordering::SeqCst),
@@ -5762,9 +5997,29 @@ resources:
         let object = structured.as_object().expect("ActionResult is an object");
         assert_eq!(
             object.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "route", "summary"]
+            [
+                "delivery",
+                "effect",
+                "hint",
+                "next_call",
+                "route",
+                "summary"
+            ]
         );
         assert_eq!(structured["effect"], "unverifiable");
+        // An unconfirmed click says what to read next, built from the request.
+        assert_eq!(
+            structured["next_call"],
+            serde_json::json!({
+                "tool": "get_window_state",
+                "arguments": {
+                    "pid": 42,
+                    "window_id": 7,
+                    "session": "projection",
+                    "since": "latest",
+                },
+            })
+        );
         assert_eq!(structured["delivery"]["mode"], "unknown");
         // The producer's text travels inside the closed contract for clients
         // that surface only structuredContent.
@@ -6386,6 +6641,7 @@ mod capability_tests {
         // misc
         "page",
         "check_for_update",
+        "get_guide",
         "probe",
         // browser-tool v1
         "get_browser_state",
@@ -6492,6 +6748,7 @@ mod capability_tests {
         "browser.input.pointer",
         // driver self
         "driver.update_check",
+        "driver.guide",
         "driver.probe",
         // encrypted local history
         "history.status",

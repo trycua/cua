@@ -1,6 +1,5 @@
 """``image_facts``: what ran, recorded per result (kind, runtime, image ref,
-variant, digest, arch). Hermetic: fake sandboxes and a cua-sandbox Sandbox
-with a faked SDK answer; no network, container, VM or Fleet.
+variant, digest, arch). Hermetic: fake sandboxes; no network, container or VM.
 """
 
 from __future__ import annotations
@@ -28,13 +27,13 @@ def _info(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**fields)
 
 
-def _pool_spec() -> EnvSpec:
-    # `--image pool:<name>`: no image on the spec; the pool's template has it.
-    return EnvSpec(provider="native", pool="cua-e2e-named")
+def _bare_spec() -> EnvSpec:
+    # No image on the spec (the built-in image): the SDK reports what ran.
+    return EnvSpec(provider="native")
 
 
-def test_a_named_pool_claim_records_the_template_digest():
-    facts = image_facts(SimpleNamespace(image_info=_info()), _pool_spec())
+def test_the_sdk_reported_image_is_recorded_with_its_digest():
+    facts = image_facts(SimpleNamespace(image_info=_info()), _bare_spec())
     assert facts == {
         "kind": "container",
         "runtime": None,
@@ -45,9 +44,9 @@ def test_a_named_pool_claim_records_the_template_digest():
     }
 
 
-def test_an_unresolved_template_records_the_reference_without_a_digest():
+def test_an_unresolved_image_records_the_reference_without_a_digest():
     info = _info(reference="registry.example.com/team/private:1", pinned_ref="", digest="")
-    facts = image_facts(SimpleNamespace(image_info=info), _pool_spec())
+    facts = image_facts(SimpleNamespace(image_info=info), _bare_spec())
     assert facts["image_ref"] == "registry.example.com/team/private:1"
     assert facts["image_digest"] is None
 
@@ -63,21 +62,3 @@ def test_no_image_info_keeps_the_spec():
         facts = image_facts(sandbox, spec)
         assert facts["image_ref"] == "ghcr.io/trycua/linux:24.04"
         assert facts["image_digest"] is None and facts["arch"] is None
-
-
-async def test_a_cua_sandbox_named_pool_claim_feeds_image_facts(monkeypatch):
-    """End to end through cua-sandbox's claim hook with a faked SDK answer."""
-    from cua_sandbox import Sandbox, _sdk
-    from cua_sandbox import pool as pool_module
-    from cua_sandbox.transport.env import EnvTransport
-
-    async def pool_image_info(pool):
-        assert pool == "cua-e2e-named"
-        return _info()
-
-    monkeypatch.setattr(_sdk, "pool_image_info", pool_image_info)
-    sandbox = Sandbox(EnvTransport(url="http://127.0.0.1:1"), name="sb")
-    await pool_module._record_pool_image(sandbox, "cua-e2e-named")
-    facts = image_facts(sandbox, _pool_spec())
-    assert facts["image_digest"] == PINNED
-    assert facts["arch"] == "amd64"

@@ -240,8 +240,8 @@ public actor SpacesConnection {
 
     /// Turn a Space off the way its provider can: a local container or QEMU
     /// VM is suspended (its memory is kept), a Lume VM or a Space one of
-    /// your machines provides or one in your own cloud (AWS, Google Cloud)
-    /// is stopped (its disk is kept). Fleet cloud Spaces, Modal sandboxes
+    /// your machines provides or one in your own cloud (AWS, Google Cloud, Hetzner)
+    /// is stopped (its disk is kept). Modal sandboxes
     /// and Spaces added by address cannot. Returns `space`, `state`,
     /// `power` and `message`.
     @discardableResult

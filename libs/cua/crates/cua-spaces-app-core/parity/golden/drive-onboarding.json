@@ -38,6 +38,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -67,6 +68,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -96,6 +98,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -125,6 +128,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": "mount",
@@ -154,6 +158,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -166,13 +171,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other machines (preselected)",
+          "host: Let my other machines reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other machines, or let your other machines reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -181,7 +186,8 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -198,7 +204,7 @@
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-        "lede": "Cua Spaces is in your menu bar.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -211,14 +217,16 @@
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: not installed",
-          "Account: not signed in",
-          "AI agents: none",
           "Shows in: Notch and menu bar",
-          "Cua Volume: Waiting for approval",
-          "This machine: Access other machines"
+          "This machine: Opens your other machines"
         ],
-        "title": "You're all set",
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. Waiting for approval. -> Turn on (optional)"
+        ],
         "usage": null
       },
       "request": null,
@@ -244,6 +252,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -269,6 +278,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -294,6 +304,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": "mount",
@@ -306,13 +317,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other machines (preselected)",
+          "host: Let my other machines reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other machines, or let your other machines reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -321,7 +332,8 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -338,7 +350,7 @@
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-        "lede": "Cua Spaces is in your menu bar.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -351,14 +363,16 @@
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: not installed",
-          "Account: not signed in",
-          "AI agents: none",
           "Shows in: Notch and menu bar",
-          "Cua Volume: /home/maya/Cua Volume",
-          "This machine: Access other machines"
+          "This machine: Opens your other machines"
         ],
-        "title": "You're all set",
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+          "[x] Cua Volume ~Shared folder: files your agents can share across your machines. /home/maya/Cua Volume. (optional)"
+        ],
         "usage": null
       },
       "request": null,
@@ -384,6 +398,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -409,6 +424,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -421,13 +437,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other machines (preselected)",
+          "host: Let my other machines reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other machines, or let your other machines reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -436,7 +452,8 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -465,6 +482,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -477,13 +495,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other machines (preselected)",
+          "host: Let my other machines reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other machines, or let your other machines reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -492,7 +510,8 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -521,6 +540,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -537,7 +557,7 @@
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-        "lede": "Cua Spaces is in your menu bar.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -550,13 +570,15 @@
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: not installed",
-          "Account: not signed in",
-          "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Access other machines"
+          "This machine: Opens your other machines"
         ],
-        "title": "You're all set",
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent"
+        ],
         "usage": null
       },
       "request": null,
@@ -587,6 +609,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -599,13 +622,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other machines (preselected)",
+          "host: Let my other machines reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other machines, or let your other machines reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -614,7 +637,8 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -631,7 +655,7 @@
         "drive": "Add Cua Volume to Finder [ ] | Files from a Space arriving in Cua Volume in Finder",
         "driveStorage": [
           "Where your files live {This Mac|*Your S3 bucket|Set up later}",
-          "- s3-prompt prompt: Ask your agent to set it up: = Using the AWS CLI, create a private S3 bucket for Cua Volume with versioning on, and an IAM user whose access is limited to that bucket. Then connect it with `cua volume config set --backend s3 --bucket <bucket> --region <region>`, pipe the new keys into `cua volume config set-keys`, and run `cua volume status`. Don't print the secret key. [Copy]",
+          "- s3-prompt prompt: Ask your agent to set it up: = Set up S3 storage for my Cua Volume: https://cua.ai/docs/agents/volume-s3 [Copy]",
           "- s3-manual link: Enter details manually",
           "continue false"
         ],
@@ -645,6 +669,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -681,6 +706,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -717,6 +743,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -753,6 +780,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -790,6 +818,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -826,6 +855,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -862,6 +892,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -898,6 +929,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -933,6 +965,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": "mount",
@@ -945,13 +978,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other machines (preselected)",
+          "host: Let my other machines reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other machines, or let your other machines reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -960,7 +993,8 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -977,7 +1011,7 @@
         "drive": "Add Cua Volume to Finder [ ] | Files from a Space arriving in Cua Volume in Finder",
         "driveStorage": [
           "Where your files live {This Mac|*Your S3 bucket|Set up later}",
-          "- s3-prompt prompt: Ask your agent to set it up: = Using the AWS CLI, create a private S3 bucket for Cua Volume with versioning on, and an IAM user whose access is limited to that bucket. Then connect it with `cua volume config set --backend s3 --bucket <bucket> --region <region>`, pipe the new keys into `cua volume config set-keys`, and run `cua volume status`. Don't print the secret key. [Copy]",
+          "- s3-prompt prompt: Ask your agent to set it up: = Set up S3 storage for my Cua Volume: https://cua.ai/docs/agents/volume-s3 [Copy]",
           "- s3-manual link: Enter details manually",
           "continue false"
         ],
@@ -991,6 +1025,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1007,7 +1042,7 @@
         "drive": "Add Cua Volume to Finder [ ] | Files from a Space arriving in Cua Volume in Finder",
         "driveStorage": [
           "Where your files live {This Mac|*Your S3 bucket|Set up later}",
-          "- s3-prompt prompt: Ask your agent to set it up: = Using the AWS CLI, create a private S3 bucket for Cua Volume with versioning on, and an IAM user whose access is limited to that bucket. Then connect it with `cua volume config set --backend s3 --bucket <bucket> --region <region>`, pipe the new keys into `cua volume config set-keys`, and run `cua volume status`. Don't print the secret key. [Copy]",
+          "- s3-prompt prompt: Ask your agent to set it up: = Set up S3 storage for my Cua Volume: https://cua.ai/docs/agents/volume-s3 [Copy]",
           "- s3-manual link: Enter details manually",
           "continue false"
         ],
@@ -1021,6 +1056,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1037,7 +1073,7 @@
         "drive": "Add Cua Volume to Finder [ ] (disabled) (busy) | Files from a Space arriving in Cua Volume in Finder",
         "driveStorage": [
           "Where your files live {This Mac|*Your S3 bucket|Set up later}",
-          "- s3-prompt prompt: Ask your agent to set it up: = Using the AWS CLI, create a private S3 bucket for Cua Volume with versioning on, and an IAM user whose access is limited to that bucket. Then connect it with `cua volume config set --backend s3 --bucket <bucket> --region <region>`, pipe the new keys into `cua volume config set-keys`, and run `cua volume status`. Don't print the secret key. [Copy]",
+          "- s3-prompt prompt: Ask your agent to set it up: = Set up S3 storage for my Cua Volume: https://cua.ai/docs/agents/volume-s3 [Copy]",
           "- s3-manual link: Enter details manually (disabled)",
           "- s3-test text: Connection = Connecting…",
           "continue false"
@@ -1052,6 +1088,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1087,6 +1124,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1099,13 +1137,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other machines (preselected)",
+          "host: Let my other machines reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other machines, or let your other machines reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -1114,7 +1152,8 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1144,6 +1183,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1156,13 +1196,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other machines (preselected)",
+          "host: Let my other machines reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other machines, or let your other machines reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -1171,7 +1211,8 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,

@@ -127,6 +127,8 @@ describe.skipIf(!wasmBuilt)("the first run's Cua Volume page", () => {
     await waitFor(() => expect(readSavedOnboarding().state?.step).toBe("mode"));
     expect(adapter.state.volume.mounted).toBe(true);
     act(() => probe.flow.send({ type: "mode-chosen", mode: "client" }));
-    expect(probe.flow.view?.summary.find((f) => f.label === "Cua Volume")?.value).toBe("In Finder");
+    const volume = probe.flow.view?.todos?.find((t) => t.id === "volume");
+    expect(volume?.done).toBe(true);
+    expect(volume?.note).toBe("Shared folder: files your agents can share across your machines. In Finder.");
   });
 });

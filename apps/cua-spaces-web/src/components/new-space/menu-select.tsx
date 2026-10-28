@@ -49,7 +49,7 @@ export function MenuSelect({ value, items, onValueChange, disabled, className, d
         title={chosen?.detail || undefined}
         {...data()}
         className={cn(
-          "inline-flex h-7 min-w-44 items-center justify-between gap-2 rounded-md border border-input bg-card px-2.5 text-[13px] shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-disabled:opacity-50 dark:bg-input/30",
+          "inline-flex h-7 min-w-44 items-center justify-between gap-2 rounded-lg border border-input bg-card px-2.5 text-[13px] shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-disabled:opacity-50 dark:bg-input/30", // design-ok: form field outline, matches Input
           className,
         )}
       >
@@ -60,7 +60,7 @@ export function MenuSelect({ value, items, onValueChange, disabled, className, d
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
         <SelectPrimitive.Positioner sideOffset={4} alignItemWithTrigger={false} className="z-[60] outline-none">
-          <SelectPrimitive.Popup className="glass max-h-(--available-height) min-w-(--anchor-width) origin-(--transform-origin) overflow-y-auto rounded-lg border p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
+          <SelectPrimitive.Popup className="glass max-h-(--available-height) min-w-(--anchor-width) origin-(--transform-origin) overflow-y-auto rounded-lg p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
             <SelectPrimitive.List>
               {items.map((item, i) => (
                 <Fragment key={item.value}>
@@ -71,7 +71,7 @@ export function MenuSelect({ value, items, onValueChange, disabled, className, d
                     title={item.detail || undefined}
                     {...data("-option")}
                     data-value={item.value}
-                    className="grid cursor-default grid-cols-[1rem_1fr] items-center gap-x-1.5 rounded-md py-1 pr-3 pl-1.5 text-[13px] outline-none data-disabled:text-muted-foreground data-highlighted:bg-brand data-highlighted:text-white"
+                    className="grid cursor-default grid-cols-[1rem_1fr] items-center gap-x-1.5 rounded-lg py-1 pr-3 pl-1.5 text-[13px] outline-none data-disabled:text-muted-foreground data-highlighted:bg-brand data-highlighted:text-white"
                   >
                     <SelectPrimitive.ItemIndicator className="col-start-1">
                       <CheckIcon className="size-3.5" />

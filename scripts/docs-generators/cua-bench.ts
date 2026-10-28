@@ -9,9 +9,8 @@
  * (`#:` field comments). Writes, through the shared renderers in lib/:
  *
  * - docs/content/docs/cua-bench/reference/index.mdx (the Reference index)
- * - docs/content/docs/cua-bench/reference/cli/ (one page per command group)
- * - docs/content/docs/cua-bench/reference/task-definition.mdx
- * - docs/content/docs/cua-bench/reference/results.mdx
+ * - docs/content/docs/cua-bench/reference/cli.mdx (every command on one page)
+ * - docs/content/docs/cua-bench/reference/task-definition.mdx (with the result files)
  * - scripts/docs-generators/cli-specs/cb.json (the CLI-shape lane's oracle)
  *
  * Usage:
@@ -111,8 +110,8 @@ export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'env',
     title: 'Sandboxes and account',
-    summary: 'Cloud pools and local sandboxes, sign-in, status and cleanup',
-    commands: ['env', 'login', 'status', 'prune'],
+    summary: 'Local sandboxes, status and cleanup',
+    commands: ['env', 'status', 'prune'],
   },
   { slug: 'agent', title: 'cb agent', summary: 'Scaffold custom agents', commands: ['agent'] },
   {
@@ -128,6 +127,7 @@ export function cliReference(cli: CLIDocumentation): CliReference {
     product: 'cua-bench',
     cli,
     groups: CLI_GROUPS,
+    singlePage: true,
     generator: REGENERATE,
     source: SOURCE,
     intro: readHeader('cua-bench', 'cli'),
@@ -214,9 +214,12 @@ export function taskDefinitionPage(docs: CbDocs, example: string, version: strin
   body.push(`{/* Source: ${EXAMPLE_TASK} (run by libs/cua-bench/cua_bench/tests/test_cli_golden.py) */}`, '');
   body.push(codeFence('python', example.trim()), '');
 
+  // What a run writes back: the same page, so a task's contract and its results read together.
+  body.push('## Result files', '', ...resultsBody(docs, 3));
+
   return renderPage({
-    title: 'Task definition',
-    description: 'The task module contract: cb.Task, setup_config, the lifecycle decorators, the session API and actions.',
+    title: 'Tasks and results',
+    description: 'The task module contract (cb.Task, setup_config, the lifecycle decorators, the session API and actions) and the result.json and summary.json a run writes.',
     generator: REGENERATE,
     source: SOURCE,
     version,
@@ -226,7 +229,9 @@ export function taskDefinitionPage(docs: CbDocs, example: string, version: strin
 
 // ---------------------------------------------------------------- results
 
-export function resultsPage(docs: CbDocs, version: string): string {
+/** The result files, `level` being the heading level of `result.json` and `summary.json`. */
+export function resultsBody(docs: CbDocs, level = 2): string[] {
+  const h = (n: number) => '#'.repeat(level + n);
   const r = docs.results;
   const jobDocs = new Map(r.job_result.fields.map((f) => [f.name, f.description]));
   const summaryDocs = new Map(r.summary.fields.map((f) => [f.name, f.description]));
@@ -250,27 +255,32 @@ export function resultsPage(docs: CbDocs, version: string): string {
   const body: string[] = [];
   const header = readHeader('cua-bench', 'results');
   if (header) body.push(header, '');
-  body.push('## `result.json`', '', escapeMdxText(sentence(rst(r.job_result.doc))), '');
+  body.push(`${h(0)} \`result.json\``, '', escapeMdxText(sentence(rst(r.job_result.doc))), '');
   body.push(...fieldsTable(resultFields, { fallback: jobDocs }));
   body.push(
     `Phase spans (\`environment_setup\`, \`agent_execution\`, \`verifier\`) are ${r.span.fields.map((f) => codeCell(f.name)).join(' and ')} timestamps (ISO 8601, UTC).`,
     ''
   );
-  body.push('## `summary.json`', '', escapeMdxText(sentence(rst(r.summary.doc))), '');
+  body.push(`${h(0)} \`summary.json\``, '', escapeMdxText(sentence(rst(r.summary.doc))), '');
   body.push(...fieldsTable(r.summary.fields));
-  body.push('### `results[]`', '', escapeMdxText(sentence(rst(r.summary_result.doc))), '');
+  body.push(`${h(1)} \`results[]\``, '', escapeMdxText(sentence(rst(r.summary_result.doc))), '');
   body.push(...fieldsTable(r.summary_result.fields, { prefix: 'results[].', fallback: jobDocs }));
-  body.push('### `stats`', '');
+  body.push(`${h(1)} \`stats\``, '');
   body.push(...fieldsTable(r.summary_stats.fields, { prefix: 'stats.' }));
-  body.push('### `targets[]`', '', escapeMdxText(sentence(rst(r.summary_target.doc))), '');
+  body.push(`${h(1)} \`targets[]\``, '', escapeMdxText(sentence(rst(r.summary_target.doc))), '');
   body.push(...fieldsTable(r.summary_target.fields, { prefix: 'targets[].', fallback: jobDocs }));
+  return body;
+}
+
+/** The result files on a page of their own. */
+export function resultsPage(docs: CbDocs, version: string): string {
   return renderPage({
     title: 'Results',
     description: 'The result.json and summary.json a run writes: every key, its type and meaning.',
     generator: REGENERATE,
     source: SOURCE,
     version,
-    body: body.join('\n'),
+    body: resultsBody(docs).join('\n'),
   });
 }
 
@@ -281,7 +291,6 @@ export function renderAll(docs: CbDocs, example: string): Map<string, string> {
   const version = docs.cli.version;
   const rel = new Map<string, string>(renderCliReference(cli));
   rel.set('task-definition.mdx', taskDefinitionPage(docs, example, version));
-  rel.set('results.mdx', resultsPage(docs, version));
   rel.set(
     'index.mdx',
     renderReferenceIndex({
@@ -297,13 +306,13 @@ export function renderAll(docs: CbDocs, example: string): Map<string, string> {
           column: 'Schema',
           rows: [
             { name: 'Task definition', href: '/cua-bench/reference/task-definition', description: 'cb.Task, setup_config, the lifecycle decorators, the session API and actions.' },
-            { name: 'Results', href: '/cua-bench/reference/results', description: 'Every key of result.json and summary.json.' },
+            { name: 'Results', href: '/cua-bench/reference/task-definition#result-files', description: 'Every key of result.json and summary.json.' },
           ],
         },
       ],
     })
   );
-  rel.set('meta.json', metaJson('Reference', ['index', 'cli', 'task-definition', 'results']));
+  rel.set('meta.json', metaJson('Reference', ['index', 'cli', 'task-definition']));
   const files = new Map<string, string>();
   for (const [p, content] of rel) files.set(path.join(OUT_DIR, p), content);
   files.set(CB_CLI_SPEC, stableJson(docs.cli));

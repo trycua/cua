@@ -109,7 +109,7 @@ pub struct ImportPasswordsArgs {
 pub struct ImportSessionArgs {
     /// The app to import from (a teleport provider id: `chrome`, `firefox`,
     /// `slack`, ...; `cua teleport providers` lists every one on this
-    /// machine).
+    /// computer).
     #[arg(long)]
     pub app: String,
     /// The browser profile (name or path); default: the default profile.

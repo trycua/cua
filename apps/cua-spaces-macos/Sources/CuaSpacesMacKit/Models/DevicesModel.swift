@@ -21,6 +21,9 @@ public protocol DevicesRunning: AnyObject, Sendable {
     /// Vouches for a machine that registered without an enrolled device's
     /// proof (S5), from this enrolled device.
     func confirmMachine(id: String) async throws
+    /// Renames a relay machine the account owns, from this enrolled device;
+    /// this Mac's host setup takes the name when it is this Mac.
+    func renameMachine(id: String, name: String) async throws
     /// A one-time link, QR code and install commands that add another
     /// computer to the account (or to `team`), from this enrolled device.
     func createPairingCode(team: String?) async throws -> PairingCode
@@ -72,6 +75,9 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     public func rename(id: String, name: String) async throws { _ = try await inner.rename(id: id, name: name) }
     public func revoke(id: String) async throws { _ = try await inner.revoke(id: id) }
     public func confirmMachine(id: String) async throws { _ = try await inner.confirmMachine(machineId: id) }
+    public func renameMachine(id: String, name: String) async throws {
+        _ = try await inner.renameMachine(machineId: id, name: name)
+    }
     public func createPairingCode(team: String?) async throws -> PairingCode {
         try await inner.createPairingCode(team: team, ttlSecs: nil)
     }
@@ -136,10 +142,10 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
             machines: [
                 RelayMachine(id: "m1", spaceId: "relay:m1", name: "studio-mac", ownerId: "me",
                              ownerEmail: nil, role: "owner", online: true, sharing: true, version: "0.5.0",
-                             url: "", allow: [], clients: [], confirmed: true),
+                             url: "", allow: [], clients: [], confirmed: true, team: nil, providesSpaces: true),
                 RelayMachine(id: "m2", spaceId: "relay:m2", name: "build-box", ownerId: "me",
                              ownerEmail: nil, role: "owner", online: false, sharing: true, version: "0.5.0",
-                             url: "", allow: [], clients: [], confirmed: false),
+                             url: "", allow: [], clients: [], confirmed: false, team: nil, providesSpaces: nil),
             ])
     }
 
@@ -179,6 +185,11 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
     public func revoke(id: String) async throws {
         calls.append("revoke:\(id)")
         for i in current.devices.indices where current.devices[i].id == id { current.devices[i].state = "revoked" }
+    }
+
+    public func renameMachine(id: String, name: String) async throws {
+        calls.append("rename-machine:\(id):\(name)")
+        for i in current.machines.indices where current.machines[i].id == id { current.machines[i].name = name }
     }
 
     public func confirmMachine(id: String) async throws {
@@ -364,6 +375,13 @@ public final class DevicesModel {
     let defaults: UserDefaults
     static let relayNoticeDismissedKey = "cua.relayAllowance.dismissed"
     public private(set) var relayNoticeDismissed: String?
+    /// The relay just refused a new session over the plan's cap: the sentence
+    /// with Upgrade, shown until dismissed or a session starts.
+    public private(set) var refusal: AppRelayAllowanceNotice?
+    /// Where the refusal came from, for usage data and the upgrade link's
+    /// `?from=`: `app_create` (a Space create) or `app_connect` (opening or
+    /// starting one).
+    public private(set) var refusalSurface = "app_connect"
 
     public init(devices: DevicesRunning?, presence: PresenceChecking = LivePresence(),
                 defaults: UserDefaults = .standard) {
@@ -431,7 +449,7 @@ public final class DevicesModel {
     /// A row's second line: platform and state, then when it was last seen.
     public func rowDetail(_ r: AppDeviceRow) -> String {
         guard let seen = r.lastSeen else { return r.detail }
-        return "\(r.detail) \u{b7} \(view.labels.lastSeen) \(relativeText(seen))"
+        return "\(r.detail), \(view.labels.lastSeen.lowercased()) \(relativeText(seen))"
     }
 
     // MARK: - Refresh
@@ -494,6 +512,7 @@ public final class DevicesModel {
     /// At 80% of the relay hours (`warn`) it is a prompt, so it waits while a
     /// live session is going; past the allowance (`limit`) it always shows.
     public var relayNotice: AppRelayAllowanceNotice? {
+        if let refusal { return refusal }
         guard let notice = relayUsageView?.notice, notice.dismissKey != relayNoticeDismissed else { return nil }
         if notice.level == "warn", (relayUsage?.liveSessions ?? 0) > 0 { return nil }
         return notice
@@ -505,7 +524,55 @@ public final class DevicesModel {
         telemetry?.record(appTelemetryFeature(feature: feature))
     }
 
+    /// Keeps an error's text when it is the relay refusing a session over
+    /// the plan's cap (the core's `appPlanLimitNotice`); any other error is
+    /// not a refusal and leaves the notice alone. `surface`: `app_create`
+    /// for a Space create, `app_connect` for opening or starting one.
+    public func noteRefusal(_ error: String, surface: String = "app_connect") {
+        guard let notice = appPlanLimitNotice(error: error, accountApp: appAccountAppUrl()) else { return }
+        refusal = notice
+        refusalSurface = surface
+    }
+
+    /// The notice is on screen: a refusal is `cua_plan_limit_shown` at its
+    /// surface; the meter is `upsell_meter_shown`, and past a limit also
+    /// `cua_plan_limit_shown` at `app_meter` (CUA-1881).
+    public func recordNoticeShown(_ notice: AppRelayAllowanceNotice) {
+        if notice == refusal {
+            telemetry?.record(appTelemetryPlanLimit(action: "shown", surface: refusalSurface, kind: notice.kind, plan: notice.plan))
+        } else {
+            telemetry?.record(appTelemetryUpsell(surface: "meter", action: "shown", kind: notice.kind, plan: notice.plan))
+        }
+    }
+
+    /// Upgrade on the notice: records `cua_upgrade_link_opened` (and the
+    /// meter's `upsell_meter_click`) and answers the link to open, saying
+    /// where it was opened from (`?from=`).
+    public func openUpgrade(_ notice: AppRelayAllowanceNotice) -> URL? {
+        guard let link = notice.upgradeUrl else { return nil }
+        let surface: String
+        if notice == refusal {
+            surface = refusalSurface
+            telemetry?.record(appTelemetryPlanLimit(action: "opened", surface: surface, kind: notice.kind, plan: notice.plan))
+        } else {
+            surface = "app_meter"
+            telemetry?.record(appTelemetryUpsell(surface: "meter", action: "click", kind: notice.kind, plan: notice.plan))
+        }
+        return URL(string: appUpgradeLink(url: link, surface: surface))
+    }
+
+    /// A plan card link in Settings: `upsell_plan_card_click` and
+    /// `cua_upgrade_link_opened`; the link says it came from there.
+    public func openPlanLink(_ link: String) -> URL? {
+        telemetry?.record(appTelemetryUpsell(surface: "plan_card", action: "click", kind: nil, plan: relayUsage?.plan))
+        return URL(string: appUpgradeLink(url: link, surface: "app_plan_card"))
+    }
+
     public func dismissRelayNotice() {
+        if refusal != nil {
+            refusal = nil
+            return
+        }
         guard let key = relayUsageView?.notice?.dismissKey else { return }
         recordUpsell("upsell_meter_dismiss")
         relayNoticeDismissed = key
@@ -696,7 +763,6 @@ public final class DevicesModel {
 @MainActor
 final class DeviceNotifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = DeviceNotifier()
-    private var authorized: Bool?
     /// A notification was clicked (its identifier): the app opens its main UI.
     var onOpen: ((String) -> Void)?
 
@@ -712,10 +778,7 @@ final class DeviceNotifier: NSObject, UNUserNotificationCenterDelegate {
         content.sound = .default
         let request = UNNotificationRequest(identifier: "device-\(prompt.deviceId)", content: content, trigger: nil)
         Task {
-            if authorized == nil {
-                authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-            }
-            guard authorized == true else { return }
+            guard await PermissionRequester.notificationsAuthorized(center) else { return }
             try? await center.add(request)
         }
     }

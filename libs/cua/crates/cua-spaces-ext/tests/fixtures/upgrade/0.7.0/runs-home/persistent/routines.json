@@ -1,0 +1,15 @@
+[
+  {
+    "id": "F957B9D2-5350-4959-B178-F2C96D82802F",
+    "botID": "kit",
+    "title": "Nightly",
+    "prompt": "Run the nightly checks",
+    "schedule": {
+      "kind": "dailyAt",
+      "hour": 2,
+      "minute": 30
+    },
+    "isEnabled": true,
+    "createdAt": "2026-10-24T16:35:58Z"
+  }
+]

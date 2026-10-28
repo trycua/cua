@@ -30,11 +30,12 @@
  */
 
 import type { MachineAccessNotice } from "./contracts/devices";
-import type { MachinePageRow } from "./contracts/host";
+import type { MachinePageRow, MachinesView, RuntimesInput } from "./contracts/host";
 import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
+import { THREAD_WEBKIT_METHODS } from "./ops/thread";
 
 export const WEBKIT_HANDLER_NAME = "cua";
 /** The window event the host dispatches. */
@@ -50,22 +51,35 @@ export const WEBKIT_METHODS = [
   "session.get",
   "session.signIn",
   "session.signOut",
+  "onboarding.get",
+  "onboarding.complete",
   "spaces.list",
   "spaces.open",
   "spaces.createOptions",
   "spaces.create",
   "spaces.setPower",
   "spaces.delete",
+  "spaces.deleteMany",
+  "spaces.leave",
+  "spaces.rename",
   "spaces.cancelCreate",
   "machines.list",
   "host.status",
   "agents.list",
   "agents.runs",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.pause",
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  "agents.signIn",
+  "agents.status",
+  "agents.connect",
+  "agents.disconnect",
+  "agents.signInStart",
+  "agents.signInWait",
   ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
@@ -75,6 +89,8 @@ export const WEBKIT_METHODS = [
   "clouds.status",
   "clouds.test",
   "clouds.connect",
+  "clouds.disconnect",
+  "clouds.approve",
   "teleport.catalog",
   "teleport.entryForPath",
   "teleport.windows",
@@ -89,6 +105,8 @@ export const WEBKIT_METHODS = [
   "sharing.list",
   "sharing.share",
   "sharing.unshare",
+  "sharing.removals",
+  "sharing.ackRemovals",
   "volume.overview",
   "volume.storage",
   "volume.storageSet",
@@ -108,6 +126,8 @@ export const WEBKIT_METHODS = [
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
+  "runtimes.check",
+  "runtimes.browse",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -125,6 +145,9 @@ export const WEBKIT_METHODS = [
   "notifications.markAllRead",
   "notifications.markRead",
   "telemetry.track",
+  "telemetry.linkNotice",
+  "telemetry.acknowledgeLinkNotice",
+  "crashReporting.config",
   "spaces.usage",
   "spaces.windows",
   "stream.pip",
@@ -138,6 +161,7 @@ export const WEBKIT_METHODS = [
   "host.openSettings",
   "settings.get",
   "settings.choose",
+  "settings.update",
   "keyvault.get",
   "keyvault.lock",
   "keyvault.unlock",
@@ -152,19 +176,30 @@ export const WEBKIT_METHODS = [
   "startup.get",
   "startup.act",
   "relay.usage",
+  "nudges.pending",
+  "nudges.answer",
+  "resources.get",
+  "machines.rename",
+  "machines.remove",
+  "machines.checkHealth",
   "checklist.get",
   "checklist.send",
+  "links.list",
+  "links.create",
+  "links.stop",
+  "cli.plan",
+  "cli.install",
+  ...THREAD_WEBKIT_METHODS,
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
 
 /** What only the Electron host answers: it draws a Space's video in the
  * page (WebCodecs), so the page asks it for a media ticket
- * (`ops/stream.ts`), and its first run is this page's (`onboarding.get`,
- * `onboarding.complete`); the Mac app draws video and its first run
- * natively. It also joins presence for the video the page draws
+ * (`ops/stream.ts`); the Mac app draws video natively. (Both hosts run
+ * this page's first run: `onboarding.get`, `onboarding.complete`.) It also joins presence for the video the page draws
  * (`presence.*`, `ops/presence.ts`). */
-export const ELECTRON_HOST_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
+export const ELECTRON_HOST_METHODS = ["spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
 
 /** `onboarding.get` and `onboarding.complete`'s answer: whether the first run finished, and as what. */
 export interface WkOnboarding {
@@ -226,13 +261,13 @@ export interface WkSpace {
   detail: string;
   lastUsedAt: number;
   startedAt?: number | null;
-  provider?: "cloud" | "local" | "direct" | "relay" | null;
+  provider?: "local" | "direct" | "relay" | null;
   sdk?: { features: string[]; spacesdVersion: string; reachable: boolean; error?: string | null } | null;
   osName?: string | null;
   osPrettyName?: string | null;
   image?: string | null;
   imageDigest?: string | null;
-  kind?: "container" | "vm" | null;
+  kind?: "container" | "vm" | "microvm" | null;
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
@@ -240,6 +275,8 @@ export interface WkSpace {
   cloud?: string | null;
   cloudPlace?: string | null;
   cloudDelete?: string | null;
+  /** Whose it is and what you may do with it (`model::SpaceAccess`). */
+  access?: import("./contracts/spaces").SpaceAccess | null;
   /** A create the app runs (its own pending row): its progress, or why it failed. */
   progress?: import("./contracts/spaces").SpaceProgress | null;
 }
@@ -255,6 +292,18 @@ export interface WkSpaces {
   /** Another app keeps its own daemon running and this app uses it
    * (`AppModel.daemonNotice`): a line above every page. Null otherwise. */
   daemonNotice?: string | null;
+  /** Some of the account's computers have not answered the last read yet
+   * (`Spaces.list_known`): the list may grow, and is not "no Spaces".
+   * Absent from a host that lists complete lists only. */
+  incomplete?: boolean;
+  /** How many computers are still being reached (0 when unknown). */
+  reaching?: number;
+  /** Your other computers' rows are the last known ones (kept across a
+   * daemon restart), not yet confirmed by the relay. */
+  stale?: boolean;
+  /** Spaces your other computers are creating now (CUA-2349). Absent from
+   * a host that does not read them. */
+  creatingElsewhere?: import("./contracts/spaces").CreatingElsewhere[];
 }
 
 /** `machines.list`: the sidebar and the account's devices. */
@@ -285,6 +334,9 @@ export interface WkMachines {
   /** The page's rows as the core lists them (`machines::page_rows`, what
    * the SwiftUI Machines page shows); absent from an older host. */
   rows?: MachinePageRow[] | null;
+  /** The Machines page as the core draws it (`machines_view::view`, what
+   * the SwiftUI Machines page shows); absent from an older host. */
+  view?: MachinesView | null;
 }
 
 /** `session.get`, `session.signIn`, `session.signOut`. */
@@ -292,8 +344,8 @@ export interface WkSession {
   identity: string | null;
   signedIn: boolean;
   cloudConfigured: boolean;
-  /** `idle`, `starting`, `{type: "waiting", userCode}`, `{type: "failed", message}`. */
-  signIn: string | { type: string; userCode?: string | null; message?: string };
+  /** `idle`, `starting`, `{type: "waiting", userCode, opened}`, `{type: "failed", reason, message, detail}`. */
+  signIn: string | { type: string; userCode?: string | null; opened?: boolean; reason?: string; message?: string; detail?: string | null };
   /** The page a waiting sign-in finishes on (null otherwise), to show and copy. */
   signInUrl?: string | null;
 }
@@ -319,6 +371,13 @@ export interface WkSettings {
   globalShortcut?: { label: string; registered: boolean } | null;
   /** The host's account app (`app_account_app_url`); absent or null: none named. */
   accountUrl?: string | null;
+  /** The CLI the app installs (its install plan's file name) and whether it
+   * is on this computer; absent or null: not known. */
+  cli?: { name: string; installed: boolean } | null;
+  /** `AppSettings.tips`; absent: an older host that keeps none. Saved with `settings.update`. */
+  tips?: { off: boolean; done: string[] };
+  /** Settings, Advanced's runtimes as the host read them (`runtimes::RuntimesInput`); absent: not read. */
+  runtimes?: RuntimesInput | null;
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */
@@ -364,4 +423,6 @@ export interface WkHostState {
   account?: { id?: string | null; email?: string | null; display?: string | null } | null;
   /** `HostModel.progress`: what a running setup or Sign In waits for. */
   progress?: string | null;
+  /** The app's name as System Settings lists it ("Cua Spaces Local"). */
+  appName?: string | null;
 }

@@ -13,7 +13,7 @@ No network is needed in the guest.
 
     cb run dataset libs/cua-bench/tasks/miniwob --agent <agent>
     cb run dataset libs/cua-bench/tasks/miniwob --oracle        # the tasks with scripted solutions
-    cb run dataset libs/cua-bench/tasks/miniwob --kind vm --on cloud
+    cb run dataset libs/cua-bench/tasks/miniwob --kind vm
 
 ``CUA_BENCH_MINIWOB_TASKS`` (comma list) and ``CUA_BENCH_MINIWOB_SEEDS``
 (seeds per task, default 1) select the variants; ``CUA_BENCH_MINIWOB_SECONDS``

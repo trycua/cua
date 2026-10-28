@@ -1,4 +1,11 @@
-//! Sharing a Space with other cua.ai accounts, to watch or to edit.
+//! Sharing a Space with people in your team, to watch or to edit.
+//!
+//! Sharing is for teams (CUA-1883): only members of your own team, one at a
+//! time or the whole team, and only from an account in a team on a plan with
+//! sharing. The Spaces API decides (team membership comes from Keycloak
+//! organisations); the relay enforces, when a share is made and each time one
+//! is used. This crate asks first only to give a clear message, and turns the
+//! refusals into plain words ([`NO_TEAM`], [`outside_team`]).
 //!
 //! Every shared Space is a machine of the owner's account on the relay
 //! (`relay:<machine-id>` to the people it is shared with):
@@ -27,6 +34,17 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result, SpaceId, Spaces};
+
+/// Why an account without a team cannot share, as the apps say it.
+pub const NO_TEAM: &str = "Sharing is for teams. Start a team to share this Space.";
+
+/// Where Teams starts, at one seat.
+pub const TEAMS_URL: &str = "https://app.cua.ai/buy/teams?from=app_share";
+
+/// Why `who` cannot be shared with.
+pub fn outside_team(who: &str) -> String {
+    format!("{who} isn't in your team. Invite them to your team first.")
+}
 
 /// The user's confirmation before a Space is shared: sharing hands a
 /// desktop to another account, so an agent calling `share_space` must not
@@ -184,11 +202,11 @@ fn team_err(e: cua_host::Error) -> Error {
             "that team (you are not in it, or it does not exist; a team joined a moment ago shows up after you sign in again)".into(),
         ),
         e if is_feature_required(&e) => Error::Relay(cua_host::Error::PermissionDenied(
-            "this team's plan does not include team machines (yet): finish the Teams checkout at app.cua.ai, then try again".into(),
+            "this team's plan does not include team computers (yet): finish the Teams checkout at app.cua.ai, then try again".into(),
         )),
         cua_host::Error::PermissionDenied(m) if m.contains("machine_limit") => {
             Error::Relay(cua_host::Error::PermissionDenied(
-                "the team has as many machines as its seats allow: add seats at app.cua.ai".into(),
+                "the team has as many computers as its seats allow: add seats at app.cua.ai".into(),
             ))
         }
         other => Error::Relay(other),
@@ -269,7 +287,62 @@ fn entries(m: &crate::relay::RelayMachine) -> Vec<ShareEntry> {
         .collect()
 }
 
+/// A refusal from the relay or the Spaces API about who a Space is shared
+/// with, in plain words; any other error as it is.
+fn share_refused(e: cua_host::Error, who: &str) -> Error {
+    let text = e.to_string();
+    if text.contains("sharing_needs_team") {
+        Error::Relay(cua_host::Error::PermissionDenied(NO_TEAM.into()))
+    } else if text.contains("share_outside_team") {
+        Error::Relay(cua_host::Error::PermissionDenied(outside_team(who)))
+    } else {
+        Error::Relay(e)
+    }
+}
+
 impl Spaces {
+    /// Refuses early, before asking the user to confirm, when this account
+    /// is in no team that can share. Best effort: a server that predates
+    /// team-only sharing, or one that cannot be reached, lets the share
+    /// through to the relay, which decides.
+    async fn require_team_to_share(&self) -> Result<()> {
+        let relay = self.relay()?;
+        let (Ok(api), Ok(token)) = (relay.spaces_api(), relay.tokens.access_token().await) else {
+            return Ok(());
+        };
+        match api.sharing(&token).await {
+            Ok(s) if !s.can_share => Err(Error::Relay(cua_host::Error::PermissionDenied(
+                NO_TEAM.into(),
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    /// People removed from this account's shared Spaces because they are not
+    /// in its team, since the owner last acknowledged. For the one-line note
+    /// in the apps; empty when there is nothing, or the server has nothing
+    /// like it yet.
+    pub async fn share_removals(&self) -> Result<Vec<cua_host::spaces_api::ApiShareRemoval>> {
+        let relay = self.relay()?;
+        let api = relay.spaces_api()?;
+        let token = relay.tokens.access_token().await?;
+        match api.share_removals(&token).await {
+            Err(e) if cua_host::spaces_api::is_teams_unavailable(&e) => Ok(vec![]),
+            other => Ok(other?),
+        }
+    }
+
+    /// The owner has seen [`Self::share_removals`].
+    pub async fn ack_share_removals(&self) -> Result<()> {
+        let relay = self.relay()?;
+        let api = relay.spaces_api()?;
+        let token = relay.tokens.access_token().await?;
+        match api.ack_share_removals(&token).await {
+            Err(e) if cua_host::spaces_api::is_teams_unavailable(&e) => Ok(()),
+            other => Ok(other?),
+        }
+    }
+
     fn shares_path(&self) -> PathBuf {
         self.home_dir().join("shared-spaces.json")
     }
@@ -283,6 +356,15 @@ impl Spaces {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default()
+    }
+
+    /// The Spaces this device attached to the relay to share them: Space
+    /// id -> relay machine id.
+    pub(crate) fn attached_machines(&self) -> BTreeMap<String, String> {
+        self.attached()
+            .into_iter()
+            .map(|(space, a)| (space, a.machine))
+            .collect()
     }
 
     fn save_attached(&self, all: &BTreeMap<String, Attached>) -> Result<()> {
@@ -327,6 +409,104 @@ impl Spaces {
         }
     }
 
+    /// [`Spaces::rename`] on the relay: a `relay:` Space, a Space you
+    /// shared (its attached machine) and a Space this computer provides to
+    /// your other devices are machines there, renamed so everyone who
+    /// lists them sees the new name. A `relay:` Space you do not own is
+    /// refused; for the others nothing on the relay is a refusal (signed
+    /// out, the machine gone, one a teammate created on this computer):
+    /// they are renamed here only.
+    pub(crate) async fn rename_on_relay(
+        &self,
+        info: &crate::SpaceInfo,
+        id: &SpaceId,
+        name: &str,
+    ) -> Result<()> {
+        let relay_space = matches!(id, SpaceId::Relay { .. });
+        let machine = match id {
+            SpaceId::Relay { machine_id } => Some(machine_id.clone()),
+            _ => self
+                .attached()
+                .get(&info.id)
+                .map(|a| a.machine.clone())
+                .or_else(|| {
+                    cua_host::provided::load_provided(
+                        &cua_host::Host::new(self.home_dir()).paths().dir,
+                    )
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|p| p.local_space == info.id)
+                    .map(|p| p.relay_machine)
+                }),
+        };
+        let Some(machine) = machine else {
+            return Ok(());
+        };
+        let shown = info.shown_name().to_string();
+        let refused = || {
+            Error::Relay(cua_host::Error::PermissionDenied(format!(
+                "{shown} is shared with you. Only its owner can rename it."
+            )))
+        };
+        let relay = match self.relay_account() {
+            Some(r) => r,
+            // Not signed in: the relay's own "sign in" error.
+            None if relay_space => self.relay()?,
+            None => {
+                tracing::info!(space = %info.id, "renamed here only: not signed in to the relay");
+                return Ok(());
+            }
+        };
+        let token = relay.tokens.access_token().await?;
+        let client = relay.client().await?;
+        let m = match client.machine(&token, &machine).await.map_err(Error::from) {
+            Ok(m) => m,
+            Err(e) if !relay_space && e.tag() == "not_found" => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        if m.role != "owner" {
+            if relay_space {
+                return Err(refused());
+            }
+            return Ok(());
+        }
+        client
+            .patch(
+                &token,
+                &machine,
+                &cua_host::MachinePatch {
+                    name: Some(name.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| match e {
+                cua_host::Error::PermissionDenied(_) => refused(),
+                e => e.into(),
+            })?;
+        for m in self
+            .inner
+            .relay_cache
+            .lock()
+            .expect("relay cache")
+            .iter_mut()
+            .filter(|m| m.id == machine)
+        {
+            m.name = name.to_string();
+        }
+        // A `relay:` Space added to this device's registry lists its record.
+        if relay_space && let Some(mut record) = self.inner.registry.get(&info.id)? {
+            record.name = name.to_string();
+            let credential = self
+                .inner
+                .registry
+                .credential(&info.id)?
+                .unwrap_or_default();
+            self.inner.registry.upsert(record, credential)?;
+        }
+        Ok(())
+    }
+
     /// Makes sure `space` is a machine of the owner's account on the relay,
     /// online now, and returns its id: a host already is one; any other
     /// Space's driver is attached (registered on first share, re-attached
@@ -362,7 +542,7 @@ impl Spaces {
         let listed = self.list()?.into_iter().find(|i| i.id == canonical);
         let os = listed.as_ref().map(|i| i.os.clone()).unwrap_or_default();
         let name = listed
-            .map(|i| i.name)
+            .map(|i| i.shown_name().to_string())
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| canonical.clone());
         // What the Space runs, so the relay can keep macOS Spaces out of
@@ -440,9 +620,20 @@ impl Spaces {
                 if let Ok(ms) = api.org_machines(&token, &org.id).await
                     && ms.iter().any(|m| m.machine_id == machine)
                 {
+                    let role = ms
+                        .iter()
+                        .find(|m| m.machine_id == machine)
+                        .map(|m| m.role.as_str())
+                        .map_or(ShareRole::Editor, |r| {
+                            if r == "viewer" {
+                                ShareRole::Viewer
+                            } else {
+                                ShareRole::Editor
+                            }
+                        });
                     shares.push(ShareEntry {
                         who: format!("team:{}", org.id),
-                        role: ShareRole::Editor,
+                        role,
                         connected: false,
                     });
                 }
@@ -468,10 +659,13 @@ impl Spaces {
         role: ShareRole,
     ) -> Result<SpaceShares> {
         if let Some(team) = team_of(who) {
-            return self.share_with_team(space, &team?).await;
+            return self
+                .share_with_team_as(space, &team?, role, &mut |_| {})
+                .await;
         }
         let who = normalize_who(who)?;
         let canonical = self.resolve(space)?.to_string();
+        self.require_team_to_share().await?;
         let consent = self
             .inner
             .share_consent
@@ -513,7 +707,8 @@ impl Spaces {
                     ..Default::default()
                 },
             )
-            .await?;
+            .await
+            .map_err(|e| share_refused(e, &who))?;
         self.audit_share("share", &canonical, &format!("{who} {}", role.as_str()));
         self.shares_of(&canonical, &machine).await
     }
@@ -606,12 +801,36 @@ impl Spaces {
         self.share_with_team_waiting(space, team, &mut |_| {}).await
     }
 
+    /// [`Self::share_with_team`] with what the whole team may do: "Can view"
+    /// (`Viewer`: watch only) or "Can edit" (`Editor`). Sharing again with
+    /// the other role changes it.
+    pub async fn share_with_team_as(
+        &self,
+        space: &str,
+        team: &str,
+        role: ShareRole,
+        waiting: &mut (dyn FnMut(std::time::Duration) + Send),
+    ) -> Result<SpaceShares> {
+        self.share_with_team_role(space, team, role, waiting).await
+    }
+
     /// [`Self::share_with_team`], calling `waiting` while a just-paid plan
     /// is on its way (show "Finishing setup…").
     pub async fn share_with_team_waiting(
         &self,
         space: &str,
         team: &str,
+        waiting: &mut (dyn FnMut(std::time::Duration) + Send),
+    ) -> Result<SpaceShares> {
+        self.share_with_team_role(space, team, ShareRole::Editor, waiting)
+            .await
+    }
+
+    async fn share_with_team_role(
+        &self,
+        space: &str,
+        team: &str,
+        role: ShareRole,
         waiting: &mut (dyn FnMut(std::time::Duration) + Send),
     ) -> Result<SpaceShares> {
         let id = self.resolve(space)?;
@@ -622,7 +841,7 @@ impl Spaces {
         let org = api.resolve_org(&token, team).await.map_err(team_err)?;
         if !org.manages() {
             return Err(Error::Relay(cua_host::Error::PermissionDenied(format!(
-                "only an owner or admin of {} can add machines to it",
+                "only an owner or admin of {} can add computers to it",
                 org.label()
             ))));
         }
@@ -635,28 +854,42 @@ impl Spaces {
             .filter(|o| !o.is_empty())
             .unwrap_or_default();
         let label = listed.map(|i| i.name).unwrap_or_default();
-        self.confirm_share(format!(
-            "Let every member of team {} use {canonical} (see and control it)",
-            org.label()
-        ))
+        self.confirm_share(match role {
+            ShareRole::Viewer => {
+                format!("Let every member of team {} watch {canonical}", org.label())
+            }
+            ShareRole::Editor => format!(
+                "Let every member of team {} use {canonical} (see and control it)",
+                org.label()
+            ),
+        })
         .await?;
         let machine = self.ensure_shared_machine(&canonical).await?;
         let token = relay.tokens.access_token().await?;
-        api.finishing_setup(
-            &token,
-            cua_host::spaces_api::SETUP_RETRY_WINDOW,
-            waiting,
-            || api.add_org_machine(&token, &org.id, &machine, &os, &label),
-        )
-        .await
-        .map_err(team_err)?;
-        self.audit_share("share", &canonical, &format!("team:{} editor", org.id));
+        if let Err(e) = api
+            .finishing_setup_org(
+                &token,
+                &org.id,
+                cua_host::spaces_api::SETUP_RETRY_WINDOW,
+                waiting,
+                || api.add_org_machine_as(&token, &org.id, &machine, &os, &label, role.as_str()),
+            )
+            .await
+        {
+            let e = api.explain_plan_error(&token, &org.id, e).await;
+            return Err(team_err(e));
+        }
+        self.audit_share(
+            "share",
+            &canonical,
+            &format!("team:{} {}", org.id, role.as_str()),
+        );
         let mut shares = self.shares_of(&canonical, &machine).await?;
         let who = format!("team:{}", org.id);
         if !shares.shares.iter().any(|s| s.who == who) {
             shares.shares.push(ShareEntry {
                 who,
-                role: ShareRole::Editor,
+                role,
                 connected: false,
             });
         }
@@ -716,6 +949,20 @@ impl Spaces {
     /// network, the Cua app elsewhere) reach it as `relay:<machine>`, and
     /// nobody else until it is shared. Idempotent; re-attaches after the
     /// Space restarted. Returns the relay Space id.
+    /// After a local Space booted again (a start of a stopped VM, a
+    /// resize), attaches it to the relay again when it was on it: its
+    /// guest forgot the attachment when it shut down. Best effort; a Space
+    /// that was never on the relay is left alone.
+    pub(crate) async fn reattach_relay_after_boot(&self, id: &SpaceId) {
+        let canonical = id.to_string();
+        if !self.attached().contains_key(&canonical) {
+            return;
+        }
+        if let Err(e) = self.relay_register(&canonical).await {
+            tracing::warn!(space = %canonical, error = %e, "re-attaching to the relay after a boot failed");
+        }
+    }
+
     pub async fn relay_register(&self, space: &str) -> Result<RelayRegistration> {
         let canonical = self.resolve(space)?.to_string();
         let machine = self.ensure_shared_machine(&canonical).await?;
@@ -834,7 +1081,7 @@ impl Spaces {
             Err(e) => {
                 tracing::warn!(space = canonical, machine, "relay machine not removed: {e}");
                 Some(format!(
-                    "its relay machine relay:{machine} could not be removed ({e}); remove it with \
+                    "its relay computer relay:{machine} could not be removed ({e}); remove it with \
                      `cua spaces relay-unregister relay:{machine}`"
                 ))
             }

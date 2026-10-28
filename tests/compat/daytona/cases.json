@@ -1,0 +1,1082 @@
+[
+ {
+  "id": "api.auth_bad_key",
+  "needs": "mock",
+  "ref": "common/errors.py STATUS_CODE_TO_ERROR 401",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.create_defaults",
+  "needs": "mock",
+  "ref": "_sync/daytona.py create; models/sandbox.py",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.create_from_image_disk",
+  "needs": "mock",
+  "ref": "_sync/daytona.py _create (resources.disk)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.create_from_image_resources",
+  "needs": "mock",
+  "ref": "_sync/daytona.py _create (buildInfo, resources)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.create_name_conflict",
+  "needs": "mock",
+  "ref": "common/errors.py STATUS_CODE_TO_ERROR 409",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.create_params",
+  "needs": "mock",
+  "ref": "common/daytona.py CreateSandboxBaseParams; _sync/sandbox.py __process_sandbox_dto",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.create_validation_is_client_side",
+  "needs": "mock",
+  "ref": "_sync/daytona.py _create validations",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.delete",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py delete; _sync/daytona.py delete",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.delete_wait",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py delete(wait=True)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.ephemeral",
+  "needs": "mock",
+  "ref": "common/daytona.py CreateSandboxBaseParams (ephemeral -> auto_delete_interval=0)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.fork",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py fork",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.get_missing",
+  "needs": "mock",
+  "ref": "common/errors.py STATUS_CODE_TO_ERROR 404",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.intervals",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py set_autostop_interval/set_auto_archive_interval/set_auto_delete_interval/set_ttl",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.labels_set",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py set_labels",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.lifecycle_archive_rules",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py archive ('must be stopped before archiving')",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.lifecycle_pause",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py pause",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.lifecycle_recover_only_in_error",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py recover",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.lifecycle_stop_start",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py start/stop/wait_for_sandbox_stop",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.list_filters",
+  "needs": "mock",
+  "ref": "common/sandbox.py ListSandboxesQuery",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.list_labels_and_pages",
+  "needs": "mock",
+  "ref": "_sync/daytona.py list/_fetch_sandbox_page",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.list_rejects_bad_limit",
+  "needs": "mock",
+  "ref": "_sync/daytona.py list (limit < 1)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.public_flag",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py set_public",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.refresh",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py refresh_data/refresh_activity",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.resize_applies_on_a_real_guest",
+  "needs": "space",
+  "ref": "_sync/sandbox.py resize (stopped sandbox: cpu, memory and disk grow)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "api.resize_rules",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py resize (hot resize only increases; disk only when stopped)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "computer.accessibility",
+  "needs": "mock",
+  "ref": "_sync/computer_use.py Accessibility",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "computer.display_and_windows",
+  "needs": "mock",
+  "ref": "_sync/computer_use.py Display",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "computer.keyboard",
+  "needs": "mock",
+  "ref": "_sync/computer_use.py Keyboard",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "computer.mouse",
+  "needs": "mock",
+  "ref": "_sync/computer_use.py Mouse",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "computer.real_desktop",
+  "needs": "space",
+  "ref": "_sync/computer_use.py (a real Cua desktop)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "computer.recording",
+  "needs": "space",
+  "ref": "_sync/computer_use.py RecordingService",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "computer.screenshots",
+  "needs": "mock",
+  "ref": "_sync/computer_use.py Screenshot",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "computer.start_status_and_processes",
+  "needs": "mock",
+  "ref": "_sync/computer_use.py start/stop/get_status/get_process_status/restart_process/get_process_logs/get_process_errors",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.bulk_upload_download",
+  "needs": "mock",
+  "ref": "_sync/filesystem.py upload_files/download_files",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.concurrent_transfers",
+  "needs": "mock",
+  "ref": "_sync/filesystem.py (shared connection pool)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.download_to_local_path_and_stream",
+  "needs": "mock",
+  "ref": "_sync/filesystem.py download_file(remote, local)/download_file_stream",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.errors_carry_file_codes",
+  "needs": "mock",
+  "ref": "common/errors.py CODE_TO_ERROR (FILE_NOT_FOUND)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.find_search_replace",
+  "needs": "space",
+  "ref": "_sync/filesystem.py find_files/search_files/replace_in_files",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.large_file_integrity",
+  "needs": "space",
+  "ref": "_sync/filesystem.py upload_file/download_file_stream",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.list_info_folder_move_delete",
+  "needs": "mock",
+  "ref": "_sync/filesystem.py list_files/get_file_info/create_folder/move_files/delete_file",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.permissions_and_owner",
+  "needs": "space",
+  "ref": "_sync/filesystem.py set_file_permissions/get_file_info",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.roundtrip_binary_and_empty",
+  "needs": "mock",
+  "ref": "_sync/filesystem.py upload_file/download_file",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.signed_urls",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py download_url/upload_url; _utils/file_url_signing.py",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.unicode_and_space_names",
+  "needs": "mock",
+  "ref": "_sync/filesystem.py (paths in query/multipart)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.upload_creates_parents_and_overwrites",
+  "needs": "mock",
+  "ref": "_sync/filesystem.py upload_file",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "fs.upload_stream",
+  "needs": "mock",
+  "ref": "_sync/filesystem.py upload_file_stream (chunked body)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.branch_lifecycle",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.clone_depth_commit",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.commit_status_flow",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.config",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.dirty_checkout",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.history_route",
+  "needs": "space",
+  "ref": "daytona_toolbox_api_client/api/git_api.py get_history (not exposed by the SDK classes)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.http_auth",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR; GitCloneRequest username/password; dangerously_authenticate",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.init_branches",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.push_pull_roundtrip",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.push_rejected_and_conflict",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.remotes",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.repo_errors",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "git.reset_restore",
+  "needs": "space",
+  "ref": "daytona/_sync/git.py; common/errors.py CODE_TO_ERROR",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "image.context_upload",
+  "needs": "mock",
+  "ref": "_sync/object_storage.py upload; common/image.py add_local_file/add_local_dir",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "image.create_with_layers",
+  "needs": "mock",
+  "ref": "_sync/daytona.py _create (PENDING_BUILD, on_snapshot_create_logs)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "image.unbuildable_dockerfile_is_refused",
+  "needs": "mock",
+  "ref": "Cua: Dockerfile subset",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "interpreter.contexts_are_isolated",
+  "needs": "space",
+  "ref": "_sync/code_interpreter.py create_context/list_contexts/delete_context",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "interpreter.default_context_keeps_state",
+  "needs": "space",
+  "ref": "_sync/code_interpreter.py run_code (default shared context)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "interpreter.envs_and_exit",
+  "needs": "space",
+  "ref": "_sync/code_interpreter.py run_code (envs)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "interpreter.streams_stdout_stderr_and_errors",
+  "needs": "space",
+  "ref": "_sync/code_interpreter.py run_code (on_stdout, on_stderr, on_error)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "interpreter.timeout",
+  "needs": "space",
+  "ref": "_sync/code_interpreter.py _maybe_raise_from_close (4008)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "lsp.errors",
+  "needs": "space",
+  "ref": "common/errors.py LSP_SERVER_NOT_INITIALIZED",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "lsp.python_session",
+  "needs": "space",
+  "ref": "_sync/lsp_server.py start/did_open/completions/document_symbols/sandbox_symbols/did_close/stop",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "preview.port_not_open",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py get_preview_link",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "preview.private_link_needs_its_token",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py get_preview_link ('401 Unauthorized' without credentials)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "preview.public_link_needs_nothing",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py get_preview_link ('Public sandboxes need no credentials')",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "preview.signed_url",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py create_signed_preview_url/expire_signed_preview_url",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.background_server_and_port",
+  "needs": "space",
+  "ref": "_sync/process.py exec (background process); sandbox.py get_preview_link",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.code_run_charts",
+  "needs": "space",
+  "ref": "_sync/process.py code_run; common/charts.py",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.code_run_python",
+  "needs": "space",
+  "ref": "_sync/process.py code_run",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.code_run_timeout",
+  "needs": "space",
+  "ref": "_sync/process.py code_run (timeout)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.exec_cwd_env_user",
+  "needs": "space",
+  "ref": "_sync/process.py exec (cwd, env)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.exec_large_output",
+  "needs": "space",
+  "ref": "_sync/process.py exec",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.exec_result_and_exit_code",
+  "needs": "mock",
+  "ref": "_sync/process.py exec",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.exec_shell_semantics",
+  "needs": "space",
+  "ref": "_sync/process.py exec (first of zsh, bash, sh)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.exec_timeout_error",
+  "needs": "mock",
+  "ref": "common/errors.py PROCESS_EXECUTION_TIMEOUT (408)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.pty_resize_list_kill",
+  "needs": "space",
+  "ref": "_sync/process.py resize_pty_session/list_pty_sessions/kill_pty_session",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.pty_roundtrip",
+  "needs": "space",
+  "ref": "_sync/process.py create_pty_session; handle/pty_handle.py",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.session_async_command_and_logs",
+  "needs": "space",
+  "ref": "_sync/process.py execute_session_command(run_async)/get_session_command/get_session_command_logs",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.session_command_ordering",
+  "needs": "space",
+  "ref": "_sync/process.py execute_session_command (commands run in order)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.session_errors",
+  "needs": "mock",
+  "ref": "common/errors.py (404)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.session_follow_logs",
+  "needs": "space",
+  "ref": "_sync/process.py get_session_command_logs (on_stdout, on_stderr)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.session_input_to_running_command",
+  "needs": "space",
+  "ref": "_sync/process.py send_session_command_input",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "process.session_state_carries_over",
+  "needs": "space",
+  "ref": "_sync/process.py create_session/execute_session_command",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "sandbox.home_and_work_dirs",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py get_user_home_dir/get_work_dir/get_user_root_dir",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "sandbox.metrics",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py get_metrics/get_metrics_latest",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "secret.crud",
+  "needs": "mock",
+  "ref": "_sync/secret.py; common/secret.py",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "secret.mount_is_opt_in",
+  "needs": "mock",
+  "ref": "models/create_sandbox.py secrets; Cua: no egress substitution proxy",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "snapshot.activate_deactivate",
+  "needs": "mock",
+  "ref": "_sync/snapshot.py activate; snapshots_api deactivate",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "snapshot.build_failure_is_reported",
+  "needs": "mock",
+  "ref": "_sync/snapshot.py create (BUILD_FAILED -> DaytonaError)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "snapshot.build_from_image_object",
+  "needs": "mock",
+  "ref": "_sync/snapshot.py create (buildInfo, on_logs); common/image.py",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "snapshot.create_list_get_delete",
+  "needs": "mock",
+  "ref": "_sync/snapshot.py create/list/get/delete",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "snapshot.duplicate_and_missing",
+  "needs": "mock",
+  "ref": "common/errors.py 409/404",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "snapshot.from_sandbox",
+  "needs": "mock",
+  "ref": "_sync/sandbox.py create_snapshot",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "snapshot.pagination",
+  "needs": "mock",
+  "ref": "_sync/snapshot.py list(page, limit)",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "ssh.access_token_lifecycle",
+  "needs": "space",
+  "ref": "_sync/sandbox.py create_ssh_access/validate_ssh_access/revoke_ssh_access",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "ssh.login_through_the_endpoint",
+  "needs": "space",
+  "ref": "Cua: sshCommand reaches the guest's sshd",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "volume.crud",
+  "needs": "mock",
+  "ref": "_sync/volume.py",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "volume.mount_needs_cua_volume",
+  "needs": "hermetic",
+  "ref": "common/volume.py VolumeMount; models/sandbox_volume.py",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "volume.mount_without_a_grant_is_explained",
+  "needs": "space",
+  "ref": "common/volume.py VolumeMount",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "volume.shared_between_sandboxes",
+  "needs": "space",
+  "ref": "common/volume.py VolumeMount; _sync/volume.py",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ },
+ {
+  "id": "warm_pool.crud",
+  "needs": "mock",
+  "ref": "_sync/warm_pool.py",
+  "runners": [
+   "python-sync",
+   "python-async",
+   "typescript"
+  ]
+ }
+]

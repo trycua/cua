@@ -27,8 +27,8 @@ pub mod targeted;
 pub use focus_guard::{FocusGuardReport, FocusSnapshot, SameAppWindow};
 pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
 pub use mpx_keyboard::{
-    real_keyboard_input_available, send_virtual_keyboard_key, send_virtual_keyboard_text,
-    KeyboardDeliveryReport, MPX_UINPUT_PATH,
+    real_keyboard_input_available, send_popup_keyboard_key, send_popup_keyboard_text,
+    send_virtual_keyboard_key, send_virtual_keyboard_text, KeyboardDeliveryReport, MPX_UINPUT_PATH,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -43,7 +43,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
@@ -155,6 +155,7 @@ static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
 static MPX_OP_LOCK: Mutex<()> = Mutex::new(());
 static MPX_LAST_USE: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
 static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
+static MPX_CLICK_POPUPS: OnceLock<Mutex<HashMap<String, ClickPopups>>> = OnceLock::new();
 /// A session's retained master pair is removed after this much inactivity;
 /// `end_session` and the startup reaper cover the explicit and crash cases.
 /// `XIRemoveMaster` churns the XInput hierarchy, and mutter 42.x segfaults when
@@ -165,6 +166,7 @@ static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
 /// `end_session`; the startup reaper reclaims anything it misses.
 const MPX_IDLE_TTL: Duration = Duration::from_secs(1800);
 const MPX_IDLE_REAPER_PERIOD: Duration = Duration::from_secs(60);
+const MPX_POPUP_QUIET: Duration = Duration::from_millis(250);
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
 // evdev 0.12.2 asserts `name.len() + 1 < UINPUT_MAX_NAME_SIZE` while building
 // a device. Linux defines UINPUT_MAX_NAME_SIZE as 80, leaving 78 usable bytes.
@@ -189,6 +191,66 @@ fn mpx_last_use() -> &'static Mutex<HashMap<String, std::time::Instant>> {
     MPX_LAST_USE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[derive(Default)]
+struct ClickPopups {
+    windows: Vec<u64>,
+    removal_due: Option<Instant>,
+}
+
+fn mpx_click_popups() -> &'static Mutex<HashMap<String, ClickPopups>> {
+    MPX_CLICK_POPUPS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn mark_mpx_use(cursor_id: &str) {
+    mpx_last_use()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), Instant::now());
+    if let Some(popups) = mpx_click_popups().lock().unwrap().get_mut(cursor_id) {
+        popups.removal_due = None;
+    }
+}
+
+fn track_click_popups(cursor_id: &str, opened: impl IntoIterator<Item = u64>) {
+    let opened: Vec<u64> = opened.into_iter().collect();
+    let mut tracked = mpx_click_popups().lock().unwrap();
+    for (id, popups) in tracked.iter_mut() {
+        if id != cursor_id {
+            popups.windows.retain(|window| !opened.contains(window));
+        }
+    }
+    let windows = &mut tracked.entry(cursor_id.to_owned()).or_default().windows;
+    windows.extend(opened);
+    windows.sort_unstable();
+    windows.dedup();
+}
+
+fn popup_owner(
+    window: u64,
+    appeared: &HashMap<String, ClickPopups>,
+    live: impl Fn(&str) -> bool,
+) -> Option<String> {
+    appeared
+        .iter()
+        .find(|(id, popups)| popups.windows.contains(&window) && live(id))
+        .map(|(id, _)| id.clone())
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("no live session's click opened the popup")]
+pub struct PopupOwnerGone;
+
+fn popup_owner_guard(popup: u64) -> Result<(std::sync::MutexGuard<'static, ()>, String)> {
+    let guard = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let appeared = mpx_click_popups().lock().unwrap();
+    let pointers = mpx_pointers().lock().unwrap();
+    let owner = popup_owner(popup, &appeared, |id| pointers.contains_key(id));
+    drop((pointers, appeared));
+    Ok((guard, owner.ok_or(PopupOwnerGone)?))
+}
+
 /// Take the MPX operation lock for one call on `cursor_id`, stamp its last
 /// use, and make sure the idle reaper is running. Hold the guard for the
 /// whole operation.
@@ -196,10 +258,7 @@ fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
     let guard = MPX_OP_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    mpx_last_use()
-        .lock()
-        .unwrap()
-        .insert(cursor_id.to_owned(), std::time::Instant::now());
+    mark_mpx_use(cursor_id);
     MPX_IDLE_REAPER.call_once(|| {
         std::thread::Builder::new()
             .name("cua-mpx-idle-reaper".into())
@@ -214,7 +273,7 @@ fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
                 };
                 for cursor_id in stale {
                     tracing::info!(cursor_id, "removing idle MPX master pair");
-                    forget_master_pointer(&cursor_id);
+                    forget_master_pointer_locked(&cursor_id);
                 }
             })
             .ok();
@@ -321,6 +380,10 @@ fn master_keyboard_device_name(master_name: &str) -> String {
 }
 
 fn open_display() -> Result<*mut x11::xlib::Display> {
+    open_named_display(ptr::null())
+}
+
+fn open_named_display(name: *const std::ffi::c_char) -> Result<*mut x11::xlib::Display> {
     match XLIB_THREADS_READY.get_or_init(|| {
         let rc = unsafe { x11::xlib::XInitThreads() };
         if rc == 0 {
@@ -332,7 +395,7 @@ fn open_display() -> Result<*mut x11::xlib::Display> {
         Ok(()) => {}
         Err(err) => bail!("{err}"),
     }
-    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
+    let display = unsafe { x11::xlib::XOpenDisplay(name) };
     if display.is_null() {
         bail!("XOpenDisplay returned null");
     }
@@ -715,7 +778,81 @@ fn ensure_master_pointer_for_session(
 }
 
 pub fn forget_master_pointer(cursor_id: &str) {
-    mpx_last_use().lock().unwrap().remove(cursor_id);
+    let _op = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    forget_master_pointer_locked(cursor_id);
+}
+
+fn forget_master_pointer_locked(cursor_id: &str) {
+    let mut tracked = mpx_click_popups().lock().unwrap();
+    let mut last_use = mpx_last_use().lock().unwrap();
+    match tracked.get_mut(cursor_id) {
+        Some(popups) if popups.removal_due.is_some() => {}
+        Some(popups) if !popups.windows.is_empty() => {
+            let remove_by = *last_use.get(cursor_id).unwrap_or(&Instant::now()) + MPX_IDLE_TTL;
+            match spawn_popup_waiter(cursor_id.to_owned(), remove_by) {
+                Ok(_) => {
+                    popups.removal_due = Some(remove_by);
+                    last_use.remove(cursor_id);
+                }
+                Err(error) => tracing::warn!(cursor_id, %error, "MPX popup waiter not started"),
+            }
+        }
+        _ => {
+            tracked.remove(cursor_id);
+            last_use.remove(cursor_id);
+            remove_master_pair(cursor_id);
+        }
+    }
+}
+
+fn popups_mapped(windows: &[u64]) -> Option<bool> {
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    let mut mapped = false;
+    for &window in windows {
+        match conn.get_window_attributes(window as Window).ok()?.reply() {
+            Ok(attrs) => mapped |= attrs.map_state == MapState::VIEWABLE,
+            Err(x11rb::errors::ReplyError::X11Error(_)) => {}
+            Err(_) => return None,
+        }
+    }
+    Some(mapped)
+}
+
+fn popup_wait_over(mapped: Option<bool>, quiet: &mut Option<Instant>, remove_by: Instant) -> bool {
+    let now = Instant::now();
+    *quiet = (mapped == Some(false)).then(|| quiet.unwrap_or(now));
+    quiet.is_some_and(|since| now - since >= MPX_POPUP_QUIET) || now >= remove_by
+}
+
+fn spawn_popup_waiter(cursor_id: String, remove_by: Instant) -> Result<()> {
+    std::thread::Builder::new()
+        .name("cua-mpx-popup-wait".into())
+        .spawn(move || {
+            let mut quiet = None;
+            loop {
+                sleep(Duration::from_millis(100));
+                let _op = MPX_OP_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut tracked = mpx_click_popups().lock().unwrap();
+                let Some(popups) = tracked.get(&cursor_id) else {
+                    return;
+                };
+                if popups.removal_due != Some(remove_by) {
+                    return;
+                }
+                if popup_wait_over(popups_mapped(&popups.windows), &mut quiet, remove_by) {
+                    tracked.remove(&cursor_id);
+                    return remove_master_pair(&cursor_id);
+                }
+            }
+        })?;
+    Ok(())
+}
+
+fn remove_master_pair(cursor_id: &str) {
     // Drop the uinput slaves first: closing the fds unplugs them, so the master
     // removal below never has to hand a live slave back to the user's core
     // devices (XIAttachToMaster only re-homes slaves that still exist).
@@ -1436,11 +1573,8 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
             .map(|(id, _)| id.as_str())
             .unwrap_or("default"),
     );
-    {
-        let mut last_use = mpx_last_use().lock().unwrap();
-        for (cursor_id, _) in drags {
-            last_use.insert(cursor_id.clone(), std::time::Instant::now());
-        }
+    for (cursor_id, _) in drags {
+        mark_mpx_use(cursor_id);
     }
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
@@ -1803,11 +1937,7 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
     if attrs.width <= 1 || attrs.height <= 1 {
         return None;
     }
-    let pid = crate::x11::window_pid(child).or_else(|| {
-        window_children(display, child)
-            .into_iter()
-            .find_map(crate::x11::window_pid)
-    });
+    let pid = window_or_child_pid(display, child);
     Some(PopupWindow {
         window: child,
         x: attrs.x,
@@ -1816,6 +1946,14 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
         height: attrs.height as u32,
         title: window_title_for_report(display, child),
         pid,
+    })
+}
+
+fn window_or_child_pid(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> Option<u32> {
+    crate::x11::window_pid(window).or_else(|| {
+        window_children(display, window)
+            .into_iter()
+            .find_map(crate::x11::window_pid)
     })
 }
 
@@ -2394,8 +2532,7 @@ fn window_title_for_report(display: *mut x11::xlib::Display, window: x11::xlib::
     title.unwrap_or_default()
 }
 
-/// Direct children of `window` (empty on error). Caller installs the error
-/// handler.
+/// Direct children of `window` (empty on error).
 fn window_children(
     display: *mut x11::xlib::Display,
     window: x11::xlib::Window,
@@ -2404,6 +2541,7 @@ fn window_children(
     let mut parent: x11::xlib::Window = 0;
     let mut children: *mut x11::xlib::Window = ptr::null_mut();
     let mut count: std::os::raw::c_uint = 0;
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
     let rc = unsafe {
         x11::xlib::XQueryTree(
             display,
@@ -2414,6 +2552,7 @@ fn window_children(
             &mut count,
         )
     };
+    unsafe { x11::xlib::XSetErrorHandler(previous_handler) };
     if rc == 0 || children.is_null() {
         return Vec::new();
     }
@@ -2557,10 +2696,6 @@ pub fn send_virtual_pointer_click(
     click: &VirtualPointerClick,
 ) -> Result<PointerEffect> {
     let _op = mpx_op_guard(cursor_id);
-    mpx_last_use()
-        .lock()
-        .unwrap()
-        .insert(cursor_id.to_owned(), std::time::Instant::now());
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let saved_focus = save_focus_state(display);
@@ -2627,6 +2762,19 @@ pub fn send_virtual_pointer_click(
             click.y,
         );
         effect.retargeted_to = retargeted_to;
+        let target_pid = if effect.popups.is_empty() {
+            None
+        } else {
+            window_or_child_pid(display, click.target_window as x11::xlib::Window)
+        };
+        track_click_popups(
+            cursor_id,
+            effect
+                .popups
+                .iter()
+                .filter(|popup| popup.pid.is_some() && popup.pid == target_pid)
+                .map(|popup| popup.window),
+        );
         Ok(effect)
     })();
 
@@ -2646,10 +2794,6 @@ pub fn send_virtual_pointer_drag(
     drag: &VirtualPointerDrag,
 ) -> Result<PointerEffect> {
     let _op = mpx_op_guard(cursor_id);
-    mpx_last_use()
-        .lock()
-        .unwrap()
-        .insert(cursor_id.to_owned(), std::time::Instant::now());
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let saved_focus = save_focus_state(display);
@@ -2861,6 +3005,23 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         // ours has landed — so don't stop at first success: require the
         // active window to hold stable for consecutive checks, re-sending on
         // every regression, within a bounded budget.
+        let name = unsafe { std::ffi::CStr::from_ptr(x11::xlib::XDisplayString(display)) };
+        let conn = name
+            .to_str()
+            .ok()
+            .and_then(|name| RustConnection::connect(Some(name)).ok())
+            .map(|(conn, _)| conn);
+        let prev_pid = conn
+            .as_ref()
+            .zip(u32::try_from(prev).ok())
+            .and_then(|(conn, prev)| crate::x11::get_window_pid(conn, prev).ok().flatten());
+        let own_dialog = |now: Option<x11::xlib::Window>| match (&conn, prev_pid, now) {
+            (Some(conn), Some(pid), Some(now)) => now != prev && is_own_dialog(conn, pid, now),
+            _ => false,
+        };
+        if own_dialog(ewmh_active_window(display)) {
+            return;
+        }
         sleep(Duration::from_millis(300));
         let mut stable = 0;
         for attempt in 0..15 {
@@ -2870,6 +3031,8 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
                 if stable >= 3 {
                     return;
                 }
+            } else if own_dialog(now) {
+                return;
             } else {
                 stable = 0;
                 // MPX clicks can leave a core-protocol WM believing the
@@ -2929,6 +3092,36 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         x11::xlib::XSync(display, 0);
         x11::xlib::XSetErrorHandler(prev_handler);
     }
+}
+
+fn is_own_dialog(conn: &RustConnection, previous_pid: u32, active: x11::xlib::Window) -> bool {
+    let Ok(active) = u32::try_from(active) else {
+        return false;
+    };
+    if crate::x11::get_window_pid(conn, active).ok().flatten() != Some(previous_pid) {
+        return false;
+    }
+    let windows = |property: Atom, kind: Atom| -> Vec<u32> {
+        conn.get_property(false, active, property, kind, 0, 32)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|reply| reply.value32().map(|values| values.collect()))
+            .unwrap_or_default()
+    };
+    if windows(AtomEnum::WM_TRANSIENT_FOR.into(), AtomEnum::WINDOW.into())
+        .iter()
+        .any(|&parent| parent != x11rb::NONE)
+    {
+        return true;
+    }
+    let atom = |name: &str| crate::x11::get_atom(conn, name).ok();
+    let (Some(window_type), Some(dialog)) = (
+        atom("_NET_WM_WINDOW_TYPE"),
+        atom("_NET_WM_WINDOW_TYPE_DIALOG"),
+    ) else {
+        return false;
+    };
+    windows(window_type, AtomEnum::ATOM.into()).contains(&dialog)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3200,107 +3393,6 @@ pub fn send_click_with_modifiers(
     settle_synthetic_events(&conn);
     Ok(())
 }
-
-/// Send a press-drag-release gesture via XSendEvent (ButtonPress + MotionNotify steps + ButtonRelease).
-///
-/// `xid` — target window XID. `from_x/y`, `to_x/y` — window-local coords.
-/// `duration_ms` — total budget. `steps` — interpolated MotionNotify events.
-/// `button` — X11 button number (1=left, 2=middle, 3=right).
-pub fn send_drag(
-    xid: u64,
-    from: (i32, i32),
-    to: (i32, i32),
-    duration_ms: u64,
-    steps: usize,
-    button: u8,
-) -> Result<()> {
-    let ((from_x, from_y), (to_x, to_y)) = (from, to);
-    let (conn, _) = connect_x11_for_input()?;
-    let root = conn.setup().roots[0].root;
-    let steps = steps.max(1);
-    let step_delay_ms = if steps > 1 {
-        duration_ms / steps as u64
-    } else {
-        duration_ms
-    };
-    let press_target = resolve_event_target(&conn, xid, from_x, from_y)?;
-
-    // ButtonPress at start.
-    let press = ButtonPressEvent {
-        response_type: BUTTON_PRESS_EVENT,
-        detail: button,
-        sequence: 0,
-        time: x11rb::CURRENT_TIME,
-        root,
-        event: press_target.window,
-        child: x11rb::NONE,
-        root_x: press_target.root_x,
-        root_y: press_target.root_y,
-        event_x: press_target.local_x,
-        event_y: press_target.local_y,
-        state: KeyButMask::from(0u16),
-        same_screen: true,
-    };
-    conn.send_event(false, press_target.window, EventMask::BUTTON_PRESS, press)?;
-    conn.flush()?;
-    sleep(Duration::from_millis(CLICK_DELAY_MS));
-
-    // Interpolated MotionNotify steps.
-    for i in 1..=steps {
-        let t = i as f64 / steps as f64;
-        let ix = from_x + ((to_x - from_x) as f64 * t).round() as i32;
-        let iy = from_y + ((to_y - from_y) as f64 * t).round() as i32;
-        let target = resolve_event_target(&conn, xid, ix, iy)?;
-        let motion = MotionNotifyEvent {
-            response_type: MOTION_NOTIFY_EVENT,
-            detail: Motion::NORMAL,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: target.window,
-            child: x11rb::NONE,
-            root_x: target.root_x,
-            root_y: target.root_y,
-            event_x: target.local_x,
-            event_y: target.local_y,
-            state: button_state_mask(button),
-            same_screen: true,
-        };
-        conn.send_event(false, target.window, EventMask::POINTER_MOTION, motion)?;
-        conn.flush()?;
-        if step_delay_ms > 0 {
-            sleep(Duration::from_millis(step_delay_ms));
-        }
-    }
-
-    // ButtonRelease at end.
-    let release_target = resolve_event_target(&conn, xid, to_x, to_y)?;
-    let release = ButtonReleaseEvent {
-        response_type: BUTTON_RELEASE_EVENT,
-        detail: button,
-        sequence: 0,
-        time: x11rb::CURRENT_TIME,
-        root,
-        event: release_target.window,
-        child: x11rb::NONE,
-        root_x: release_target.root_x,
-        root_y: release_target.root_y,
-        event_x: release_target.local_x,
-        event_y: release_target.local_y,
-        state: button_state_mask(button),
-        same_screen: true,
-    };
-    conn.send_event(
-        false,
-        release_target.window,
-        EventMask::BUTTON_RELEASE,
-        release,
-    )?;
-    conn.flush()?;
-    settle_synthetic_events(&conn);
-    Ok(())
-}
-
 pub fn send_button_down(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
     let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
@@ -3838,32 +3930,6 @@ pub fn send_scroll_xtest_desktop(x: i32, y: i32, direction: &str, amount: usize)
     Ok(())
 }
 
-/// Screen-absolute drag via XTest. The caller activates the target first; XTest
-/// then supplies one real press, interpolated pointer motion, and one release.
-/// This is the foreground counterpart to the window-addressed XSendEvent drag.
-pub fn send_drag_xtest_desktop(
-    from_x: i32,
-    from_y: i32,
-    to_x: i32,
-    to_y: i32,
-    button: u8,
-    duration_ms: u64,
-    steps: usize,
-) -> Result<()> {
-    send_drag_xtest_desktop_with_modifiers(
-        from_x,
-        from_y,
-        to_x,
-        to_y,
-        button,
-        duration_ms,
-        steps,
-        &[],
-    )
-}
-
-/// Screen-absolute drag via XTest with physical modifier transitions around
-/// the complete press/motion/release gesture.
 pub fn send_drag_xtest_desktop_with_modifiers(
     from_x: i32,
     from_y: i32,
@@ -4183,6 +4249,149 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
         _ => anyhow::bail!("Unknown key: {key}"),
     };
     Ok(keysym)
+}
+
+#[cfg(test)]
+mod own_dialog_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use x11rb::protocol::{xproto::*, Event};
+    use x11rb::wrapper::ConnectionExt as _;
+
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    fn set32(conn: &RustConnection, win: u32, name: &str, ty: AtomEnum, values: &[u32]) {
+        let atom = crate::x11::get_atom(conn, name).unwrap();
+        conn.change_property32(PropMode::REPLACE, win, atom, ty, values)
+            .unwrap();
+    }
+    #[test]
+    fn focus_restore_leaves_focus_on_a_dialog_the_app_opened() {
+        let mut server = Server(
+            Command::new("Xvfb")
+                .args(["-displayfd", "1", "-nolisten", "tcp"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("install xvfb to run focus tests"),
+        );
+        let mut number = String::new();
+        BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut number)
+            .unwrap();
+        let name = format!(":{}", number.trim());
+        let (conn, screen) = RustConnection::connect(Some(&name)).unwrap();
+        let root = conn.setup().roots[screen].root;
+        let window = |pid, transient| {
+            let win = conn.generate_id().unwrap();
+            conn.create_window(
+                0,
+                win,
+                root,
+                0,
+                0,
+                50,
+                50,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new(),
+            )
+            .unwrap();
+            if pid != 0 {
+                set32(&conn, win, "_NET_WM_PID", AtomEnum::CARDINAL, &[pid]);
+            }
+            if transient != 0 {
+                set32(
+                    &conn,
+                    win,
+                    "WM_TRANSIENT_FOR",
+                    AtomEnum::WINDOW,
+                    &[transient],
+                );
+            }
+            conn.map_window(win).unwrap();
+            win
+        };
+        let main = window(4242, 0);
+        let dialog = window(4242, main);
+        let sibling = window(4242, 0);
+        let foreign = window(4343, main);
+        let typed = window(4242, 0);
+        let pidless = window(0, main);
+        set32(
+            &conn,
+            typed,
+            "_NET_WM_WINDOW_TYPE",
+            AtomEnum::ATOM,
+            &[crate::x11::get_atom(&conn, "_NET_WM_WINDOW_TYPE_DIALOG").unwrap()],
+        );
+        assert!(is_own_dialog(&conn, 4242, dialog.into()));
+        assert!(is_own_dialog(&conn, 4242, typed.into()));
+        for win in [sibling, foreign, pidless] {
+            assert!(!is_own_dialog(&conn, 4242, win.into()));
+        }
+        conn.get_input_focus().unwrap().reply().unwrap();
+        let cname = std::ffi::CString::new(name.clone()).unwrap();
+        let display = open_named_display(cname.as_ptr()).unwrap();
+        // The WM honors every activation, except the first delayed request opens a dialog.
+        for delayed in [false, true] {
+            let (wm, _) = RustConnection::connect(Some(&name)).unwrap();
+            wm.change_window_attributes(
+                root,
+                &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+            set32(
+                &conn,
+                root,
+                "_NET_ACTIVE_WINDOW",
+                AtomEnum::WINDOW,
+                &[sibling],
+            );
+            conn.set_input_focus(InputFocus::PARENT, sibling, 0u32)
+                .unwrap();
+            conn.get_input_focus().unwrap().reply().unwrap();
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done = stop.clone();
+            let thread = std::thread::spawn(move || {
+                let mut first = delayed;
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    match wm.poll_for_event().unwrap() {
+                        Some(Event::ClientMessage(event)) => {
+                            let target = if first { dialog } else { event.window };
+                            first = false;
+                            set32(&wm, root, "_NET_ACTIVE_WINDOW", AtomEnum::WINDOW, &[target]);
+                            wm.set_input_focus(InputFocus::PARENT, target, 0u32)
+                                .unwrap();
+                            wm.flush().unwrap();
+                        }
+                        _ => std::thread::sleep(Duration::from_millis(1)),
+                    }
+                }
+            });
+            restore_focus_state(
+                display,
+                &SavedFocus {
+                    ewmh_active: Some(main.into()),
+                    core_focus: 0,
+                    core_revert_to: 0,
+                },
+            );
+            let focus = conn.get_input_focus().unwrap().reply().unwrap().focus;
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            thread.join().unwrap();
+            assert_eq!(focus, if delayed { dialog } else { main });
+        }
+        unsafe { x11::xlib::XCloseDisplay(display) };
+    }
 }
 
 #[cfg(test)]
@@ -4854,6 +5063,181 @@ mod path_tests {
         stale.sort();
         assert_eq!(stale, vec!["edge".to_owned(), "old".to_owned()]);
         assert!(stale_cursor_ids(&std::collections::HashMap::new(), now, MPX_IDLE_TTL).is_empty());
+    }
+
+    fn popup_removal_due(cursor_id: &str) -> Option<Option<std::time::Instant>> {
+        super::mpx_click_popups()
+            .lock()
+            .unwrap()
+            .get(cursor_id)
+            .map(|popups| popups.removal_due)
+    }
+
+    fn mpx_op_lock() -> std::sync::MutexGuard<'static, ()> {
+        super::MPX_OP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn end_session_after_click(cursor_id: &str, opened: &[u64]) {
+        super::mark_mpx_use(cursor_id);
+        super::track_click_popups(cursor_id, opened.iter().copied());
+        super::forget_master_pointer_locked(cursor_id);
+    }
+
+    #[test]
+    fn a_second_end_leaves_the_master_to_the_pending_popup_waiter() {
+        let _op = mpx_op_lock();
+        let cursor_id = "popup-test-double-end";
+        end_session_after_click(cursor_id, &[0x7fff_0001]);
+        let due = popup_removal_due(cursor_id);
+        assert!(matches!(due, Some(Some(_))));
+        super::forget_master_pointer_locked(cursor_id);
+        assert_eq!(popup_removal_due(cursor_id), due);
+        assert!(!super::mpx_last_use()
+            .lock()
+            .unwrap()
+            .contains_key(cursor_id));
+    }
+
+    #[test]
+    fn an_end_without_tracked_popups_removes_the_master_at_once() {
+        let _op = mpx_op_lock();
+        end_session_after_click("popup-test-no-popup", &[]);
+        assert_eq!(popup_removal_due("popup-test-no-popup"), None);
+        assert!(!super::mpx_last_use()
+            .lock()
+            .unwrap()
+            .contains_key("popup-test-no-popup"));
+    }
+
+    #[test]
+    fn a_click_that_opens_nothing_keeps_earlier_tracked_popups() {
+        let _op = mpx_op_lock();
+        let cursor_id = "popup-test-union";
+        super::track_click_popups(cursor_id, [5, 3]);
+        super::track_click_popups(cursor_id, []);
+        super::track_click_popups(cursor_id, [3, 7]);
+        let windows = super::mpx_click_popups().lock().unwrap()[cursor_id]
+            .windows
+            .clone();
+        assert_eq!(windows, vec![3, 5, 7]);
+    }
+
+    #[test]
+    fn reusing_an_ended_session_disowns_its_popup_waiter() {
+        let _op = mpx_op_lock();
+        let cursor_id = "popup-test-reuse";
+        end_session_after_click(cursor_id, &[0x7fff_0003]);
+        assert!(matches!(popup_removal_due(cursor_id), Some(Some(_))));
+        super::mark_mpx_use(cursor_id);
+        assert_eq!(popup_removal_due(cursor_id), Some(None));
+        super::forget_master_pointer_locked(cursor_id);
+        assert!(matches!(popup_removal_due(cursor_id), Some(Some(_))));
+    }
+
+    #[test]
+    fn a_popup_that_remaps_during_the_quiet_wait_keeps_the_master_until_the_deadline() {
+        use super::{popup_wait_over, MPX_POPUP_QUIET};
+        let now = std::time::Instant::now();
+        let deadline = now + std::time::Duration::from_secs(60);
+        let quiet_elapsed = Some(now - MPX_POPUP_QUIET * 2);
+        let mut quiet = quiet_elapsed;
+        assert!(!popup_wait_over(Some(true), &mut quiet, deadline));
+        assert_eq!(quiet, None);
+        assert!(!popup_wait_over(Some(false), &mut quiet, deadline));
+        assert!(quiet.is_some());
+        let mut quiet = quiet_elapsed;
+        assert!(!popup_wait_over(None, &mut quiet, deadline));
+        assert_eq!(quiet, None);
+        let mut quiet = quiet_elapsed;
+        assert!(popup_wait_over(Some(false), &mut quiet, deadline));
+        assert!(popup_wait_over(Some(true), &mut None, now));
+    }
+
+    #[test]
+    fn a_popup_belongs_to_the_live_session_whose_click_saw_it_appear() {
+        use super::{popup_owner, ClickPopups};
+        use std::collections::HashMap;
+        let appeared = HashMap::from([
+            (
+                "ctx".to_owned(),
+                ClickPopups {
+                    windows: vec![25165852],
+                    removal_due: None,
+                },
+            ),
+            ("combo".to_owned(), ClickPopups::default()),
+        ]);
+        let live = |_: &str| true;
+        assert_eq!(
+            popup_owner(25165852, &appeared, live).as_deref(),
+            Some("ctx")
+        );
+        assert_eq!(popup_owner(25165982, &appeared, live), None);
+        assert_eq!(
+            popup_owner(25165852, &appeared, |id: &str| id != "ctx"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_click_that_sees_a_popup_appear_takes_it_from_other_sessions() {
+        use super::{mpx_click_popups, popup_owner, track_click_popups};
+        let _op = mpx_op_lock();
+        track_click_popups("popup-reuse-a", [77_001, 77_002]);
+        track_click_popups("popup-reuse-b", [77_001]);
+        let mut tracked = mpx_click_popups().lock().unwrap();
+        assert_eq!(tracked["popup-reuse-a"].windows, vec![77_002]);
+        assert_eq!(
+            popup_owner(77_001, &tracked, |_: &str| true).as_deref(),
+            Some("popup-reuse-b")
+        );
+        tracked.remove("popup-reuse-a");
+        tracked.remove("popup-reuse-b");
+    }
+
+    #[test]
+    fn keys_for_a_popup_neither_stamp_nor_recreate_the_owner_pair() {
+        use super::{
+            mpx_last_use, mpx_pointers, popup_owner_guard, MasterPointerIds, PopupOwnerGone,
+        };
+        let gone = popup_owner_guard(90_001).unwrap_err();
+        assert!(gone.is::<PopupOwnerGone>());
+        super::track_click_popups("popup-owner-live", [90_001]);
+        mpx_pointers().lock().unwrap().insert(
+            "popup-owner-live".to_owned(),
+            MasterPointerIds {
+                pointer_id: 90,
+                keyboard_id: 91,
+                _slave_pointer_id: 92,
+                slave_keyboard_id: None,
+            },
+        );
+        assert_eq!(popup_owner_guard(90_001).unwrap().1, "popup-owner-live");
+        super::track_click_popups("popup-owner-next", [90_001]);
+        assert!(popup_owner_guard(90_001)
+            .unwrap_err()
+            .is::<PopupOwnerGone>());
+        mpx_pointers().lock().unwrap().insert(
+            "popup-owner-next".to_owned(),
+            MasterPointerIds {
+                pointer_id: 93,
+                keyboard_id: 94,
+                _slave_pointer_id: 95,
+                slave_keyboard_id: None,
+            },
+        );
+        assert_eq!(popup_owner_guard(90_001).unwrap().1, "popup-owner-next");
+        mpx_pointers().lock().unwrap().remove("popup-owner-next");
+        mpx_pointers().lock().unwrap().remove("popup-owner-live");
+        let mut tracked = super::mpx_click_popups().lock().unwrap();
+        tracked.remove("popup-owner-live");
+        tracked.remove("popup-owner-next");
+        drop(tracked);
+        let last_use = mpx_last_use().lock().unwrap();
+        assert!(!last_use.contains_key("popup-owner-live"));
+        assert!(!last_use.contains_key("popup-owner-next"));
     }
 
     #[test]

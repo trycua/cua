@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings → Agents: `useAgentKeys()` over `ops/agent-keys.ts`, with every
+ * Settings → Connectors: `useAgentKeys()` over `ops/agent-keys.ts`, with every
  * word and rule from the app core's `agentKeys.*` (`agent_keys.rs`): the
  * rows, the add or replace sheet, which variable names can hold a key and
  * the question before removing one.
@@ -23,7 +23,7 @@ import type { AgentKeyProvider, AgentKeysReport } from "./ops/agent-keys";
 
 /** What the section shows (`agent_keys::AgentKeysInput`). */
 export interface AgentKeysInput {
-  keys: { provider: string; env: string; last4: string; addedMs: number }[];
+  keys: { provider: string; env: string; last4: string; addedMs: number; expired?: boolean }[];
   unavailable?: string | null;
   error?: string | null;
 }
@@ -83,7 +83,7 @@ export interface AgentKeyConfirm {
 }
 
 export const agentKeysInputOf = (report: AgentKeysReport | undefined, error: Error | null): AgentKeysInput => ({
-  keys: (report?.keys ?? []).map(({ provider, env, last4, addedMs }) => ({ provider, env, last4, addedMs })),
+  keys: (report?.keys ?? []).map(({ provider, env, last4, addedMs, expired }) => ({ provider, env, last4, addedMs, ...(expired ? { expired: true } : {}) })),
   unavailable: report?.available === false ? (report.unavailable ?? "this machine can't keep keys") : null,
   error: error ? error.message : null,
 });
@@ -174,15 +174,26 @@ export class AgentKeysStore {
     return done;
   }
 
-  private async read(epoch: number): Promise<void> {
+  private async read(epoch: number, op: "agentKeys.list" | "agentKeys.check" = "agentKeys.list"): Promise<void> {
     try {
-      const report = await this.adapter.call("agentKeys.list", {});
+      const report = await this.adapter.call(op, {});
       if (!this.pinned && epoch === this.epoch) this.set({ report, error: null });
     } catch (e) {
       if (this.pinned || epoch !== this.epoch) return;
       if (isUnsupported(e)) this.set({ unsupported: true });
       else this.set({ error: asError(e) });
     }
+  }
+
+  /**
+   * Reads the list after the providers were asked whether the saved API keys still work
+   * (`agentKeys.check`: cheap, answers reused for a few minutes, never logged), so a key that was
+   * revoked reads "Needs reconnect" instead of "Connected". Falls back to the plain list on a host
+   * without the check. Opening Settings, Connectors and the Agents page does this.
+   */
+  check(): Promise<void> {
+    const epoch = this.epoch;
+    return this.read(epoch, "agentKeys.check").then(() => undefined);
   }
 
   /** Reads the list now, and again whenever the window gets focus, the document becomes visible
@@ -249,7 +260,7 @@ export class AgentKeysStore {
 
 const stores = new WeakMap<DataAdapter, AgentKeysStore>();
 
-/** The adapter's one Settings → Agents store. */
+/** The adapter's one Settings → Connectors store. */
 export function agentKeysStore(adapter: DataAdapter): AgentKeysStore {
   let s = stores.get(adapter);
   if (!s) stores.set(adapter, (s = new AgentKeysStore(adapter)));
@@ -265,6 +276,8 @@ export interface AgentKeysHook extends AgentKeysState {
   view: AgentKeysView | null;
   core: CoreClient;
   refresh(): Promise<void>;
+  /** The list after the providers were asked whether the saved keys still work. */
+  check(): Promise<void>;
   /** Adds or replaces a key; `env` names an Other key. */
   save(provider: AgentKeyProvider, value: string, env: string | null): Promise<void>;
   remove(env: string): Promise<void>;
@@ -276,6 +289,15 @@ export interface AgentKeysHook extends AgentKeysState {
 }
 
 const noopSubscribe = () => () => {};
+
+/** Asks the providers whether the saved sign-ins and keys still work, once when the page that calls it opens. */
+export function useKeysRecheck(): void {
+  const ctx = useContext(BridgeContext);
+  const store = ctx?.adapter ? agentKeysStore(ctx.adapter) : null;
+  useEffect(() => {
+    void store?.check();
+  }, [store]);
+}
 
 /** `watch`: read the list again whenever the page is in front (mounted), the window gets focus
  * or the document becomes visible, so a key changed with the CLI shows up. */
@@ -298,6 +320,7 @@ export function useAgentKeys({ watch = false }: { watch?: boolean } = {}): Agent
     view: agentKeysView(ctx.core, input),
     core: ctx.core,
     refresh: () => (store ? store.refresh() : Promise.resolve()),
+    check: () => (store ? store.check() : Promise.resolve()),
     save: (provider, value, env) => need().save(provider, value, env),
     remove: (env) => need().remove(env),
     openSheet: (provider, env = null) => store?.openSheet(provider, env),

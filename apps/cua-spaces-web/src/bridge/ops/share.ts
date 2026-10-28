@@ -15,20 +15,29 @@
  * | `sharing.list` `{spaceId}` | `space_shares` |
  * | `sharing.share` `{spaceId, who, role}` | `share_space` (also changes a role) |
  * | `sharing.unshare` `{spaceId, who}` | `unshare_space` |
+ * | `sharing.removals` `{}` | `share_removals` |
+ * | `sharing.ackRemovals` `{}` | `ack_share_removals` |
  *
- * Each answers the people the Space is shared with afterwards.
+ * The first three answer the people the Space is shared with afterwards.
+ * `sharing.removals` answers who lost access to which computer when sharing
+ * became team-only (the owner's one-line note, worded by `share.removalNote`);
+ * `sharing.ackRemovals` marks them seen. A host without them shows no note.
  *
  * **Native hosts** (the Electron shell answers the Swift host's methods): (`WebUIBridge+Pages.swift`): `sharing.list/share/unshare`
  * with the same args go to `SpacesBackend.shares/share/unshare(id:...)`, as
  * `ShareModel` calls them.
  */
 
-import type { ShareEntry } from "../contracts/share";
+import type { ShareEntry, ShareRemoval } from "../contracts/share";
 
 export interface ShareOperations {
   "sharing.list": { args: { spaceId: string }; result: ShareEntry[] };
   "sharing.share": { args: { spaceId: string; who: string; role: string }; result: ShareEntry[] };
   "sharing.unshare": { args: { spaceId: string; who: string }; result: ShareEntry[] };
+  /** People removed from the account's shared computers (sharing became team-only), until acknowledged. */
+  "sharing.removals": { args: Record<string, never>; result: ShareRemoval[] };
+  /** The owner has seen the note: it is not shown again. */
+  "sharing.ackRemovals": { args: Record<string, never>; result: null };
 }
 
 export type ShareOpName = keyof ShareOperations;
@@ -36,7 +45,7 @@ export type ShareHandlers = {
   [K in ShareOpName]: (args: ShareOperations[K]["args"]) => Promise<ShareOperations[K]["result"]>;
 };
 
-export const SHARE_OPERATIONS = ["sharing.list", "sharing.share", "sharing.unshare"] as const satisfies readonly ShareOpName[];
+export const SHARE_OPERATIONS = ["sharing.list", "sharing.share", "sharing.unshare", "sharing.removals", "sharing.ackRemovals"] as const satisfies readonly ShareOpName[];
 
 const row = <K extends ShareOpName>(op: K, tauri: string) => ({
   webkit: { methods: [op] as const },
@@ -47,6 +56,8 @@ export const SHARE_COVERAGE = {
   "sharing.list": row("sharing.list", "space_shares"),
   "sharing.share": row("sharing.share", "share_space"),
   "sharing.unshare": row("sharing.unshare", "unshare_space"),
+  "sharing.removals": row("sharing.removals", "share_removals"),
+  "sharing.ackRemovals": row("sharing.ackRemovals", "ack_share_removals"),
 } as const;
 
 /** `cua_spaces::share::SpaceShares`: the people are its `shares`. */
@@ -60,5 +71,10 @@ export function tauriShareOps(invoke: Invoke): ShareHandlers {
     "sharing.list": async ({ spaceId }) => people(await invoke("space_shares", { spaceId })),
     "sharing.share": async ({ spaceId, who, role }) => people(await invoke("share_space", { spaceId, who, role })),
     "sharing.unshare": async ({ spaceId, who }) => people(await invoke("unshare_space", { spaceId, who })),
+    "sharing.removals": async () => (await invoke<ShareRemoval[] | null>("share_removals")) ?? [],
+    "sharing.ackRemovals": async () => {
+      await invoke("ack_share_removals");
+      return null;
+    },
   };
 }

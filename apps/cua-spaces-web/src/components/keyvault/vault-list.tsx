@@ -55,10 +55,10 @@ export function VaultList({
           <Input value={query} onChange={(e) => send({ type: "query", text: e.target.value })} placeholder={view.searchPrompt} aria-label="Search Keyvault" className="pl-8" />
         </div>
         {view.namesHidden ? (
-          <div className="mb-3 flex items-center gap-3 rounded-xl border bg-brand-surface/60 px-4 py-2.5" data-vault-hidden>
+          <div className="mb-3 flex items-center gap-3 rounded-lg bg-brand-surface px-4 py-2.5" data-vault-hidden>
             <EyeOffIcon className="size-4 shrink-0 text-muted-foreground" />
             <p className="min-w-0 flex-1 text-[13px] text-muted-foreground">{view.hiddenNote}</p>
-            <Button size="sm" variant="outline" disabled={busy} onClick={onShowItems} data-vault-show-items>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={onShowItems} data-vault-show-items>
               {view.showNamesLabel}
             </Button>
           </div>
@@ -160,7 +160,7 @@ const triChecked = (t: Tri) => t === "on";
 
 function AppMonogram({ app }: { app: VaultApp }) {
   return (
-    <span aria-hidden className="flex size-5 items-center justify-center rounded-[5px] bg-foreground/10 text-[11px] font-semibold">
+    <span aria-hidden className="flex size-5 items-center justify-center rounded-lg bg-foreground/10 text-[11px] font-semibold">
       {app.name.slice(0, 1).toUpperCase()}
     </span>
   );
@@ -280,7 +280,7 @@ function LockButton({ state, name, unlockIds, lockIds, help, actions, blocked }:
         else if (unlockIds.length) actions.unlock(unlockIds, unlockIds.length === 1 ? name : undefined);
       }}
       className={cn(
-        "flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-foreground/[0.06] focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40",
+        "flex size-6 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-foreground/[0.06] focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40",
         state === "locked" ? "text-muted-foreground" : "text-amber-600 dark:text-amber-400",
         state === "mixed" && "opacity-60",
       )}
@@ -307,25 +307,25 @@ function BatchBar({
   onDelete: (ids: string[]) => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-2 border-t bg-muted/60 px-8 py-2.5" data-vault-batch>
+    <div className="flex shrink-0 items-center gap-2 bg-muted/60 px-8 py-2.5" data-vault-batch>
       <span className="text-[13px] font-medium">{selection.title}</span>
       <Button size="sm" variant="ghost" onClick={() => send({ type: "clear" })}>
         Clear
       </Button>
       <span className="flex-1" />
-      <Button size="sm" variant="outline" disabled={!selection.canLock || busy} onClick={() => actions.lock(selection.lockIds)}>
+      <Button size="sm" variant="secondary" disabled={!selection.canLock || busy} onClick={() => actions.lock(selection.lockIds)}>
         <LockIcon /> Lock
       </Button>
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         disabled={!selection.canUnlock || blocked || busy}
         title={selection.alwaysAsk > 0 ? "Identity provider sessions always ask and stay locked." : undefined}
         onClick={() => actions.unlock(selection.unlockIds)}
       >
         <LockOpenIcon /> Unlock
       </Button>
-      <Button size="sm" variant="outline" disabled={busy} onClick={() => onDelete(selection.ids)}>
+      <Button size="sm" variant="secondary" disabled={busy} onClick={() => onDelete(selection.ids)}>
         <Trash2Icon /> Delete
       </Button>
     </div>

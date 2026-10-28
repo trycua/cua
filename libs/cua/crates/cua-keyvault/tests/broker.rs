@@ -2116,11 +2116,9 @@ async fn import_and_teleport_refuses_when_nothing_was_captured() {
     assert!(r.backend.delivered.lock().unwrap().is_empty());
 }
 
-/// A whole-app (`Selector::App`) request only ever captures the provider's
-/// existing default (login-only) selection UNLESS the human's own approval
-/// widens it with `ApproveOptions::paths` -- the requester's own `include`
-/// (an MCP/automation caller, never authoritative, red-team E2) never
-/// reaches the capture on its own.
+/// A whole-app (`Selector::App`) request that names no parts only ever
+/// captures the provider's existing default (login-only) selection UNLESS
+/// the human's own approval widens it with `ApproveOptions::paths`.
 #[tokio::test]
 async fn approve_options_paths_widens_a_whole_app_capture_the_requester_cannot() {
     let r = rig().await;
@@ -2196,4 +2194,206 @@ async fn approve_without_paths_leaves_the_whole_app_default_selection_alone() {
         .find(|s| s.whole_app)
         .expect("a whole-app capture happened");
     assert_eq!(spec.paths, None);
+}
+
+/// What the vault holds for an app is not keyed by manifest path, so a
+/// request that names the parts it wants (`AccessRequest::paths`) never
+/// resolves to the stored items: approval captures exactly those paths and
+/// the grant covers only what that capture produced. Before this, the same
+/// request resolved to every deliverable item the vault held for the app.
+#[tokio::test]
+async fn a_path_selection_grants_and_delivers_only_what_was_selected() {
+    let r = rig().await;
+    // The vault already holds a stored session for the app: a cookie and a
+    // file, both deliverable.
+    r.broker
+        .import(
+            &r.cua,
+            ImportSpec {
+                app: "chrome".into(),
+                sites: vec![SiteChoice {
+                    site: "github.com".into(),
+                    include_storage: false,
+                    include_passwords: false,
+                }],
+                whole_app: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let stored: Vec<ItemMeta> = all_items(&r).await;
+    assert!(
+        stored.iter().any(|i| i.kind == ItemKind::Cookie),
+        "the vault holds a stored cookie"
+    );
+    r.backend.captures.lock().unwrap().clear();
+
+    let pending = r
+        .broker
+        .request_access(
+            &r.koala,
+            AccessRequest {
+                selectors: vec![Selector::App {
+                    app: "chrome".into(),
+                }],
+                targets: vec!["dev-1".into()],
+                reason: "teleport_app: move chrome's Preferences into dev-1".into(),
+                paths: Some(vec!["Default/Preferences".into()]),
+                uses: Some(0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    // It resolved to nothing stored: it is an import of the named path.
+    assert!(pending.items.is_empty(), "{:?}", pending.items);
+    assert_eq!(
+        pending.needs_import,
+        vec![Selector::App {
+            app: "chrome".into()
+        }]
+    );
+
+    r.broker
+        .approve(&r.cua, &pending.id, ApproveOptions::default())
+        .await
+        .unwrap();
+    // The capture was for exactly the requested path (the approver set none).
+    {
+        let captures = r.backend.captures.lock().unwrap();
+        let spec = captures.iter().find(|s| s.whole_app).expect("a capture");
+        assert_eq!(
+            spec.paths.as_deref(),
+            Some(&["Default/Preferences".to_string()][..])
+        );
+    }
+    // The prompt the approver answers names what is selected.
+    let asked = r.presence.asked.lock().unwrap().clone();
+    assert!(
+        asked.iter().any(|a| a.contains("Default/Preferences")),
+        "{asked:?}"
+    );
+
+    let (token, items) = match r
+        .broker
+        .await_decision(&r.koala, &pending.id, Duration::from_millis(50))
+        .await
+        .unwrap()
+    {
+        Decision::Granted { token, items, .. } => (token, items),
+        other => panic!("{other:?}"),
+    };
+    let all = all_items(&r).await;
+    let granted: Vec<&ItemMeta> = all.iter().filter(|i| items.contains(&i.id)).collect();
+    assert_eq!(granted.len(), 1, "{granted:?}");
+    assert_eq!(granted[0].kind, ItemKind::File);
+    assert_eq!(granted[0].key, "Default/Preferences");
+
+    // Delivery moves that one file; the stored cookie stays in the vault.
+    r.broker
+        .teleport(
+            &r.koala,
+            TeleportRequest {
+                token: Some(token),
+                items,
+                target: "dev-1".into(),
+                include_passwords: false,
+                launch: false,
+            },
+        )
+        .await
+        .unwrap();
+    let delivered = r.backend.delivered.lock().unwrap();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].2, ["Default/Preferences"]);
+    assert!(r.backend.delivered_hosts.lock().unwrap()[0].is_empty());
+}
+
+/// The approver's own `paths` still win over what the requester asked for
+/// (the human may widen or narrow it).
+#[tokio::test]
+async fn the_approvers_paths_win_over_the_requested_ones() {
+    let r = rig().await;
+    let pending = r
+        .broker
+        .request_access(
+            &r.koala,
+            AccessRequest {
+                selectors: vec![Selector::App {
+                    app: "chrome".into(),
+                }],
+                targets: vec!["dev-1".into()],
+                paths: Some(vec!["Default/Preferences".into()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    r.broker
+        .approve(
+            &r.cua,
+            &pending.id,
+            ApproveOptions {
+                paths: Some(vec!["Default/Bookmarks".into()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let captures = r.backend.captures.lock().unwrap();
+    let spec = captures.iter().find(|s| s.whole_app).expect("a capture");
+    assert_eq!(
+        spec.paths.as_deref(),
+        Some(&["Default/Bookmarks".to_string()][..])
+    );
+}
+
+/// A path selection must narrow exactly one whole-app selector and be plain,
+/// non-empty and bounded; anything else is refused before it is filed.
+#[tokio::test]
+async fn a_malformed_path_selection_is_refused() {
+    let r = rig().await;
+    let app = || Selector::App {
+        app: "chrome".into(),
+    };
+    let bad: Vec<(Vec<Selector>, Option<Vec<String>>)> = vec![
+        // Empty selection: ambiguous.
+        (vec![app()], Some(vec![])),
+        // A blank path and one with control characters.
+        (vec![app()], Some(vec!["  ".into()])),
+        (vec![app()], Some(vec!["a\nb".into()])),
+        // Not a whole-app selector.
+        (
+            vec![Selector::Site {
+                app: "chrome".into(),
+                site: "github.com".into(),
+            }],
+            Some(vec!["Default/Preferences".into()]),
+        ),
+        // More than one selector: which one would it narrow?
+        (vec![app(), app()], Some(vec!["Default/Preferences".into()])),
+        // Too many paths.
+        (
+            vec![app()],
+            Some((0..300).map(|n| format!("Default/f{n}")).collect()),
+        ),
+    ];
+    for (selectors, paths) in bad {
+        let err = r
+            .broker
+            .request_access(
+                &r.koala,
+                AccessRequest {
+                    selectors,
+                    targets: vec!["dev-1".into()],
+                    paths,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    }
+    assert!(r.broker.list_pending(&r.cua).await.unwrap().is_empty());
 }

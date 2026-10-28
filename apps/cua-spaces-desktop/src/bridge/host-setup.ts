@@ -61,7 +61,7 @@ export function settingsPaneUrl(url: string, platform: NodeJS.Platform): string 
 }
 
 export function hostSetupMethods({ model, platform, system }: BridgeContext): Handlers {
-  const unavailable = () => Failure.unsupported(`${platform === "darwin" ? "This Mac" : platform === "win32" ? "This PC" : "This computer"} can't be set up for access in this build`);
+  const unavailable = () => Failure.unsupported(`${platform === "darwin" ? "This Mac" : platform === "win32" ? "This PC" : "This machine"} can't be set up for access in this build`);
   return {
     "host.setUp": async (args) => {
       if (!model.host.host) throw unavailable();

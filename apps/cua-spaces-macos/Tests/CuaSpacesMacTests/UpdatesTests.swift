@@ -49,7 +49,7 @@ struct UpdatesTests {
         var v = model.view
         #expect(v.title == "Cua Spaces for macOS")
         #expect(v.versionLine == "Version 0.2.0-staging.5 (0.2.0.105)")
-        #expect(v.links.map(\.label) == ["Acknowledgements", "Privacy Policy", "Terms of Service", "Report an Issue\u{2026}"])
+        #expect(v.links.map(\.label) == ["Acknowledgements", "Privacy Policy", "Terms of Service", "System Status", "Report an Issue\u{2026}"])
         #expect(v.updates?.lastCheck == "Last check: Never")
         #expect(v.updates?.autoInstallEnabled == true)
 
@@ -80,7 +80,7 @@ struct UpdatesTests {
     @Test func noUpdaterNoControls() {
         let model = UpdatesModel(updater: nil, info: Self.info)
         #expect(model.view.updates == nil)
-        #expect(model.view.links.count == 4)
+        #expect(model.view.links.count == 5)
     }
 
     @Test func theChannelIsSavedAndGivesSparkleItsChannels() {
@@ -370,44 +370,6 @@ struct UpdatesTests {
         #expect(UpdateRefresh.launchPath(ProcessInfo.processInfo.processIdentifier).map {
             URL(fileURLWithPath: $0).resolvingSymlinksInPath().path
         } == URL(fileURLWithPath: me!).resolvingSymlinksInPath().path)
-    }
-
-    // MARK: - Acknowledgements
-
-    @Test func theNoticesParseIntoBlocks() {
-        let blocks = NoticeBlock.parse("""
-            # Third-party notices
-
-            Intro line one
-            line two.
-
-            | Project | Used in | What |
-            |---|---|---|
-            | [A](https://a) | `x.swift` | a thing |
-
-            ## Sparkle
-
-            ```
-            Copyright (c) 2006 Someone
-              indented
-            ```
-            """)
-        #expect(blocks == [
-            .heading(1, "Third-party notices"),
-            .paragraph("Intro line one line two."),
-            .row(["[A](https://a)", "`x.swift`", "a thing"]),
-            .heading(2, "Sparkle"),
-            .verbatim("Copyright (c) 2006 Someone\n  indented"),
-        ])
-    }
-
-    @Test func theBundledNoticesNameSparkle() throws {
-        let file = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("THIRD_PARTY_NOTICES.md")
-        let blocks = NoticeBlock.parse(try String(contentsOf: file, encoding: .utf8))
-        #expect(blocks.contains(.heading(2, "Sparkle")))
-        #expect(blocks.contains { if case .verbatim(let t) = $0 { t.contains("Andy Matuschak") } else { false } })
     }
 }
 

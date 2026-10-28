@@ -10,19 +10,22 @@
 //! | `container:<ref>` / `docker:<ref>` or a bare OCI ref | container (gVisor `runsc` when available) |
 //! | `vm:<ref>` (containerDisk) / `disk:<path>` / a `.qcow2`/`.img`/`.raw`/`.iso` path | QEMU |
 //! | `lume:<ref>`, or any image with `os = macos` | Lume |
+//! | any rootfs image with `kind = microvm` (or `runtime = firecracker`) | Firecracker (Linux/KVM) |
+//! | the same on a Mac (or `runtime = vz`) | Virtualization.framework under `cua-vz` (macOS 14+; checkpoints and forks) |
+//! | the same on a Mac without `cua-vz` (or `runtime = containerization`) | Apple's Containerization (macOS 26) |
 //! | bare ref without a container engine, with ready QEMU and a containerDisk | QEMU |
 //!
 //! A bare, `vm:` or `container:` OCI ref is resolved first by the one
 //! resolver ([`cua_image::resolve`]: the variant the backend runs, pinned by
-//! digest), so any Fleet or canonical image ref runs on the right backend:
+//! digest), so any canonical image ref runs on the right backend:
 //! a KubeVirt containerDisk boots under QEMU for the architecture the image
 //! offers (the host's when it has one), a Lume image under Lume, a rootfs as
 //! a container, and an image no local backend runs fails with
-//! [`RuntimeError::UnsupportedImage`]. `fleet:<pool-or-template>` images are
-//! resolved one layer up, in `cua_sandbox_core::fleet_local`.
+//! [`RuntimeError::UnsupportedImage`].
 //!
 //! Operations on an existing instance find its backend by asking each one
-//! (container, QEMU, Lume) for the instance's status.
+//! (container, QEMU, Lume, Firecracker, vz, Containerization) for the
+//! instance's status, all at once.
 
 use crate::{Error, Result};
 use async_trait::async_trait;
@@ -35,11 +38,13 @@ use cua_vmm::{
     VmmError,
     auto::{self, DoctorReport},
     container::{ContainerConfig, ContainerRuntime},
+    containerization::ContainerizationRuntime,
     lume::LumeRuntime,
     managed::{self, LinuxSource},
+    microvm::{MicroVmConfig, MicroVmRuntime},
     qemu::{QemuConfig, QemuRuntime},
 };
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 /// The engine that answered for `name` among `answers` (each engine's
 /// status lookup, in the order asked). Not found only when every engine
@@ -69,6 +74,7 @@ fn rt_err(e: VmmError) -> RuntimeError {
         VmmError::NotFound(n) => RuntimeError::NotFound(n),
         VmmError::UnsupportedImage { reason, .. } => RuntimeError::UnsupportedImage(reason),
         VmmError::InsufficientDisk(d) => RuntimeError::InsufficientDisk(d.to_string()),
+        VmmError::HostCapacity(m) => RuntimeError::HostCapacity(m),
         VmmError::Unsupported { backend, op } => RuntimeError::Unsupported {
             backend: backend.to_string(),
             op: op.to_string(),
@@ -90,6 +96,7 @@ pub fn vmm_error(e: VmmError) -> Error {
             Error::ProviderNotConfigured(e.to_string())
         }
         VmmError::InsufficientDisk(d) => Error::InsufficientDisk(d.to_string()),
+        VmmError::HostCapacity(m) => Error::HostCapacity(m),
         other => Error::Runtime(other.to_string()),
     }
 }
@@ -255,6 +262,38 @@ pub async fn resolve_placement_for(
         return resolve_placement_with(image, os, creds).await;
     }
     let image = image.trim();
+    // A microVM boots the image's container rootfs: Firecracker on Linux;
+    // on a Mac cua's own monitor (checkpoints and forks), else Apple's
+    // Containerization.
+    if kind == Kind::MicroVm
+        || matches!(
+            runtime,
+            Runtime::Firecracker | Runtime::Vz | Runtime::Containerization
+        )
+    {
+        let mut r = resolve_placement_inner(&format!("container:{image}"), os, creds, true).await?;
+        r.placement.backend = match runtime {
+            Runtime::Firecracker => BackendKind::Firecracker,
+            Runtime::Vz => BackendKind::Vz,
+            Runtime::Containerization => BackendKind::Containerization,
+            // `runtime.microvm`: Cua's own monitor, Apple's container
+            // already on this Mac, or (auto) the monitor when it runs here.
+            _ if cfg!(target_os = "macos") => {
+                use cua_vmm::kinds::{KindSource, RuntimeKind, source};
+                match source(RuntimeKind::Microvm) {
+                    KindSource::Builtin => BackendKind::Vz,
+                    KindSource::System => BackendKind::Containerization,
+                    KindSource::Auto if cua_sandbox_core::placement::HostFacts::current().vz => {
+                        BackendKind::Vz
+                    }
+                    KindSource::Auto => BackendKind::Containerization,
+                }
+            }
+            _ => BackendKind::Firecracker,
+        };
+        r.arch = None;
+        return Ok(r);
+    }
     let macos = matches!(os.to_ascii_lowercase().as_str(), "macos" | "darwin");
     let prefix = match (kind, runtime) {
         (_, Runtime::Gvisor | Runtime::Runc) | (Kind::Container, _) => "container",
@@ -273,6 +312,23 @@ pub async fn resolve_placement_for(
         return resolve_placement_inner(&format!("lume:{image}"), os, creds, true).await;
     }
     first
+}
+
+/// What to do instead of a VM for a bare OCI image: a VM boots a disk with a
+/// kernel and a bootloader, which only Cua's VM images carry.
+fn vm_hint(backend: cua_image::resolve::Backend, offers: &[String]) -> &'static str {
+    let rootfs_only = !offers.is_empty() && offers.iter().all(|v| v == "rootfs");
+    if rootfs_only
+        && !matches!(
+            backend,
+            cua_image::resolve::Backend::Container | cua_image::resolve::Backend::Lume
+        )
+    {
+        ". A VM needs a Cua disk image: use kind container or microvm (cua-spacesd is put into \
+         the image), or `cua build` FROM a Cua image"
+    } else {
+        ""
+    }
 }
 
 #[rustfmt::skip]
@@ -355,9 +411,10 @@ async fn resolve_placement_inner(
                 };
                 return Err(Error::InvalidPlacement {
                     message: format!(
-                        "{reference} has no {wanted} variant (it offers: {}); valid: {}",
+                        "{reference} has no {wanted} variant (it offers: {}); valid: {}{}",
                         offers.join(", "),
-                        valid.join(", ")
+                        valid.join(", "),
+                        vm_hint(backend, &found),
                     ),
                     axis: "image".into(),
                     valid,
@@ -471,6 +528,7 @@ fn endpoints_of(e: Endpoints) -> LocalEndpoints {
         ssh: e.ssh.map(|s| format!("{}:{}", s.host, s.port)),
         serial_log: e.serial_log.map(|p| p.display().to_string()),
         container_id: e.container_id,
+        bulk: e.bulk.map(|p| p.display().to_string()),
     }
 }
 
@@ -482,7 +540,26 @@ pub struct VmmLocal {
     container: tokio::sync::Mutex<Option<(LinuxSource, Engine)>>,
     qemu: Arc<QemuRuntime>,
     lume: Arc<LumeRuntime>,
+    microvm: Arc<MicroVmRuntime>,
+    /// microVMs on a Mac (Apple's Containerization).
+    apple: Arc<ContainerizationRuntime>,
+    /// The warm pool, once [`VmmLocal::enable_pool`] turned it on (the
+    /// daemon does; an embedded runtime never pools).
+    pool: std::sync::OnceLock<crate::pool::WarmPool>,
+    /// Named pools as last applied: shape key, or why not.
+    named_state: std::sync::Mutex<HashMap<String, (Option<String>, String)>>,
+    /// Image placements as last resolved, served at once on a warm-pool
+    /// host and refreshed in the background, so a create never waits on a
+    /// registry for a tag it resolved before.
+    resolved: Arc<std::sync::Mutex<HashMap<ResolveKey, (std::time::Instant, Resolved)>>>,
 }
+
+/// What an image placement is resolved for: image, OS, kind, runtime.
+type ResolveKey = (String, String, String, String);
+
+/// How old a cached placement may be before a create refreshes it (in the
+/// background; the create uses the cached one).
+const RESOLVE_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The container engine [`VmmLocal`] uses.
 #[derive(Clone)]
@@ -505,6 +582,7 @@ impl VmmLocal {
     pub fn new(container_cfg: ContainerConfig) -> Self {
         let qemu = QemuRuntime::new(QemuConfig {
             resolver: Some(cua_image::ContainerDiskResolver::shared()),
+            identity: Some(Arc::new(crate::guest_identity::SpacesdIdentity)),
             ..QemuConfig::default()
         });
         Self {
@@ -512,7 +590,279 @@ impl VmmLocal {
             container: tokio::sync::Mutex::new(None),
             qemu: Arc::new(qemu),
             lume: Arc::new(LumeRuntime::with_defaults()),
+            microvm: Arc::new(MicroVmRuntime::new(MicroVmConfig {
+                resolver: Some(cua_image::RootfsLayerResolver::shared()),
+                ..MicroVmConfig::default()
+            })),
+            apple: Arc::new(ContainerizationRuntime::with_defaults()),
+            pool: std::sync::OnceLock::new(),
+            named_state: Default::default(),
+            resolved: Default::default(),
         }
+    }
+
+    /// Reports what this machine's QEMU VMs use and may still use to the
+    /// host's capacity (`HostNodeStatus.vm_*`, `on="auto"` placement), as
+    /// [`cua_vmm::density`] measures it: shared snapshot memory counted
+    /// once. Measured at most once a second. The daemon does, at start.
+    #[cfg(feature = "spaces")]
+    pub fn report_vm_capacity(self: &Arc<Self>) {
+        let qemu = Arc::downgrade(&self.qemu);
+        let overcommit = self.qemu.config().density.vcpu_overcommit as f32;
+        type Cached = Option<(std::time::Instant, Option<cua_cluster::sysinfo::VmCapacity>)>;
+        let cache: std::sync::Mutex<Cached> = std::sync::Mutex::new(None);
+        cua_cluster::sysinfo::set_vm_capacity_report(overcommit, move || {
+            let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((at, v)) = *c
+                && at.elapsed() < std::time::Duration::from_secs(1)
+            {
+                return v;
+            }
+            let d = qemu.upgrade()?.density();
+            let v = d.headroom_mb.map(|free| cua_cluster::sysinfo::VmCapacity {
+                memory_free_mb: free,
+                typical_mb: d.typical_vm_mb.unwrap_or(0),
+                vcpu_overcommit: overcommit,
+            });
+            *c = Some((std::time::Instant::now(), v));
+            v
+        });
+    }
+
+    /// Turns on warm pools for the Spaces this runtime starts (`cua
+    /// daemon` does, at start): adopts the members a previous daemon left,
+    /// then keeps the pool in shape every [`POOL_TICK`]. Members are leased
+    /// in `state`. With `pool.auto = off` only explicit pools run.
+    pub fn enable_pool(
+        self: &Arc<Self>,
+        state: cua_sandbox_core::StateStore,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        let settings = crate::pool::PoolSettings::load();
+        let host = Arc::new(PoolHost {
+            local: Arc::downgrade(self),
+        });
+        let pool = crate::pool::WarmPool::new(host, state, settings);
+        self.pool.set(pool.clone()).ok()?;
+        // `on="auto"` placement prefers a machine with a ready member of the
+        // requested shape.
+        #[cfg(feature = "spaces")]
+        {
+            let p = pool.clone();
+            cua_cluster::node::set_warm_report(move || {
+                let mut out = std::collections::HashMap::new();
+                for r in p.ready_by_request() {
+                    for (cpus, memory_mb) in r.sizes() {
+                        let key = cua_cluster::placement::warm_key(
+                            &r.image, &r.kind, &r.runtime, cpus, memory_mb,
+                        );
+                        *out.entry(key).or_insert(0) += r.ready;
+                    }
+                }
+                out
+            });
+        }
+        let me = Arc::downgrade(self);
+        Some(tokio::spawn(async move {
+            if let Some(local) = me.upgrade() {
+                let kinds = [
+                    BackendKind::Container,
+                    BackendKind::Qemu,
+                    BackendKind::Lume,
+                    BackendKind::Firecracker,
+                    BackendKind::Vz,
+                    BackendKind::Containerization,
+                ];
+                let mut rts = HashMap::new();
+                for k in kinds {
+                    if let Ok(rt) = local.runtime(k).await {
+                        rts.insert(k, rt);
+                    }
+                }
+                drop(local);
+                pool.adopt(|k| rts.get(&k).cloned()).await;
+            }
+            let mut ticks = 0u64;
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => return,
+                    _ = tokio::time::sleep(POOL_TICK) => {}
+                }
+                let Some(local) = me.upgrade() else { return };
+                ticks += 1;
+                // Settings and `pool.warm` shapes are read every half
+                // minute; the policy runs every tick.
+                if ticks % 15 == 1 {
+                    pool.set_settings(crate::pool::PoolSettings::load());
+                    local.apply_pools().await;
+                }
+                drop(local);
+                pool.tick().await;
+            }
+        }))
+    }
+
+    /// The warm pool, when on.
+    pub fn pool(&self) -> Option<&crate::pool::WarmPool> {
+        self.pool.get()
+    }
+
+    /// Applies the explicit pools: the shapes `pool.warm` lists (as a plain
+    /// local create of each image would start them) and the named pools
+    /// (`ApplyPool`). Pools no longer listed are withdrawn; their members
+    /// drain at the next tick.
+    pub async fn apply_pools(&self) {
+        let Some(pool) = self.pool.get() else { return };
+        use cua_sandbox_core::{CreateOptions, ProviderKind, Sandboxes, placement::On};
+        let mut sources = std::collections::HashSet::new();
+        for (image, count) in pool.settings().warm {
+            let mut o = CreateOptions::new(ProviderKind::Local, image.clone());
+            if let Ok(r) = cua_sandbox_core::settings::Settings::load()
+                .and_then(|s| s.resolve(Some(On::Local), None, None))
+            {
+                o.kind = r.kind;
+                o.runtime = r.runtime;
+            }
+            if let Err(e) = o.apply_placement() {
+                tracing::warn!(%image, error = %e, "pool.warm: cannot run this image here");
+                continue;
+            }
+            let spec = Sandboxes::local_start_spec(&o, "warm", Some("warm"));
+            match self
+                .explicit(pool, &spec, &format!("warm:{image}"), count, None, None)
+                .await
+            {
+                Ok(_) => {
+                    sources.insert(format!("warm:{image}"));
+                }
+                Err(e) => tracing::warn!(%image, "pool.warm: {e}"),
+            }
+        }
+        for np in pool.named_pools() {
+            let source = format!("pool:{}", np.name);
+            let outcome = async {
+                let o = crate::runtime::local_options(np.request().map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+                let spec = Sandboxes::local_start_spec(&o, "pool", Some("pool"));
+                self.explicit(pool, &spec, &source, np.min, Some(np.max), np.idle())
+                    .await
+            }
+            .await;
+            let state = match outcome {
+                Ok(key) => {
+                    sources.insert(source.clone());
+                    (Some(key), String::new())
+                }
+                Err(e) => (None, e),
+            };
+            self.named_state
+                .lock()
+                .unwrap()
+                .insert(np.name.clone(), state);
+        }
+        pool.retain_explicit(|src| {
+            !(src.starts_with("warm:") || src.starts_with("pool:")) || sources.contains(src)
+        });
+    }
+
+    /// Keeps `min` (at most `max`) members of `spec`'s shape for explicit
+    /// pool `source`; the shape key, or why it does not pool here.
+    async fn explicit(
+        &self,
+        pool: &crate::pool::WarmPool,
+        spec: &LocalStartSpec,
+        source: &str,
+        min: u32,
+        max: Option<u32>,
+        idle: Option<std::time::Duration>,
+    ) -> std::result::Result<String, String> {
+        let p = self.prepare(spec).await.map_err(|e| e.to_string())?;
+        if p.injected {
+            return Err(
+                "an image without cua-spacesd cannot keep Spaces ready: its cua-spacesd is \
+                 injected when a Space starts; use an image that carries cua-spacesd"
+                    .to_string(),
+            );
+        }
+        let spacesd = p.image.as_ref().and_then(|i| i.spacesd) == Some(true);
+        let key = pool
+            .set_explicit(
+                source, &p.spec, p.backend, spacesd, p.rt, min, max, None, idle,
+            )
+            .ok_or_else(|| {
+                "only images that run cua-spacesd, without sidecars, a GPU, a disk size or a \
+                 build, keep Spaces ready"
+                    .to_string()
+            })?;
+        pool.note_request(&p.spec, p.backend, spacesd, requested_words(spec));
+        Ok(key)
+    }
+
+    /// A named pool's state: its shape key once applied, or why it could
+    /// not be.
+    pub fn named_pool_state(&self, name: &str) -> (Option<String>, String) {
+        self.named_state
+            .lock()
+            .unwrap()
+            .get(name)
+            .cloned()
+            .unwrap_or((None, "not applied yet".into()))
+    }
+
+    /// [`resolve_placement_for`], served from the last resolution of the
+    /// same request on a warm-pool host (refreshed in the background when
+    /// older than [`RESOLVE_REFRESH`]). Private-registry requests always
+    /// ask the registry.
+    async fn resolve_cached(
+        &self,
+        image: &str,
+        os: &str,
+        kind: cua_sandbox_core::placement::Kind,
+        runtime: &cua_sandbox_core::placement::Runtime,
+        creds: Option<&cua_image::RegistryCredentials>,
+    ) -> Result<Resolved> {
+        if self.pool.get().is_none() || creds.is_some() {
+            return resolve_placement_for(image, os, kind, runtime, creds).await;
+        }
+        let key = (
+            image.trim().to_string(),
+            os.to_string(),
+            kind.to_string(),
+            runtime.to_string(),
+        );
+        let cached = self.resolved.lock().unwrap().get(&key).cloned();
+        if let Some((at, r)) = cached {
+            if at.elapsed() >= RESOLVE_REFRESH {
+                let cache = self.resolved.clone();
+                let (image, os, runtime) = (image.to_string(), os.to_string(), runtime.clone());
+                tokio::spawn(async move {
+                    if let Ok(r) = resolve_placement_for(&image, &os, kind, &runtime, None).await
+                        && r.image.is_some()
+                    {
+                        cache
+                            .lock()
+                            .unwrap()
+                            .insert(key, (std::time::Instant::now(), r));
+                    }
+                });
+            }
+            return Ok(r);
+        }
+        let r = resolve_placement_for(image, os, kind, runtime, None).await?;
+        // Only what a registry answered (a syntactic fallback may be a
+        // registry that was unreachable this once).
+        if r.image.is_some() {
+            self.resolved
+                .lock()
+                .unwrap()
+                .insert(key, (std::time::Instant::now(), r.clone()));
+        }
+        Ok(r)
+    }
+
+    /// The microVM (Firecracker) backend.
+    pub fn microvm(&self) -> &Arc<MicroVmRuntime> {
+        &self.microvm
     }
 
     /// The engine local Linux Spaces use ([`managed::choose`]): this Mac's
@@ -534,6 +884,22 @@ impl VmmLocal {
         Ok(e)
     }
 
+    /// Stops the built-in Linux runtime VM now when no Linux Space or
+    /// kept-warm member needs it, and says what it did. A stopping daemon
+    /// calls this: the VM must not outlive it (it held host file
+    /// descriptors and memory for nobody). Spaces still running keep it up;
+    /// it stops when they do, or when the next daemon finds it idle
+    /// ([`Self::stop_idle_linux_runtime`]).
+    pub async fn stop_linux_runtime_now(&self) -> managed::RuntimeStop {
+        if !managed::running() {
+            return managed::RuntimeStop::NotRunning;
+        }
+        match self.engine().await {
+            Ok(Engine::Builtin(m)) => m.stop_now().await,
+            _ => managed::RuntimeStop::NotRunning,
+        }
+    }
+
     /// The container backend (connects to the engine on first use, and
     /// boots the built-in Linux runtime when that is the engine).
     pub async fn container(&self) -> std::result::Result<Arc<ContainerRuntime>, VmmError> {
@@ -552,6 +918,20 @@ impl VmmLocal {
         }
     }
 
+    /// Stops the built-in Linux runtime VM (after its idle grace) when it
+    /// runs but no Linux Space does, giving its memory back to the host.
+    /// Deleting the last Space does this too; this covers a VM that a
+    /// previous daemon left running with no Space in it, which nothing
+    /// would delete again. Cheap when the VM is down.
+    pub async fn stop_idle_linux_runtime(&self) {
+        if !managed::running() {
+            return;
+        }
+        if let Ok(Engine::Builtin(m)) = self.engine().await {
+            m.stop_if_idle().await;
+        }
+    }
+
     /// The QEMU backend.
     pub fn qemu(&self) -> &Arc<QemuRuntime> {
         &self.qemu
@@ -567,24 +947,384 @@ impl VmmLocal {
                 Engine::Builtin(m) => m as Arc<dyn VmmRuntime>,
             },
             BackendKind::Lume => self.lume.clone() as Arc<dyn VmmRuntime>,
+            BackendKind::Firecracker | BackendKind::Vz => {
+                self.microvm.clone() as Arc<dyn VmmRuntime>
+            }
+            BackendKind::Containerization => self.apple.clone() as Arc<dyn VmmRuntime>,
             _ => self.qemu.clone() as Arc<dyn VmmRuntime>,
         })
     }
 
-    /// The backend that owns `name`.
-    async fn owner(&self, name: &str) -> RuntimeResult<(BackendKind, Arc<dyn VmmRuntime>)> {
-        let mut answers = Vec::new();
-        for kind in [BackendKind::Container, BackendKind::Qemu, BackendKind::Lume] {
-            let Ok(rt) = self.runtime(kind).await else {
-                continue;
-            };
-            if kind == BackendKind::Lume && !cfg!(target_os = "macos") {
-                continue;
-            }
-            let status = rt.status(name).await.map(|_| ());
-            answers.push((kind, status, rt));
+    /// The backends an instance may live on here, in lookup order.
+    fn backends() -> Vec<BackendKind> {
+        let mut v = vec![BackendKind::Container, BackendKind::Qemu];
+        if cfg!(target_os = "macos") {
+            v.push(BackendKind::Lume);
+            v.push(BackendKind::Vz);
+            v.push(BackendKind::Containerization);
         }
+        if cfg!(target_os = "linux") {
+            v.push(BackendKind::Firecracker);
+        }
+        v
+    }
+
+    /// The backend a persisted `runtime_type` names, if it names one.
+    fn backend_of(runtime_type: &str) -> Option<BackendKind> {
+        match runtime_type.trim().to_ascii_lowercase().as_str() {
+            "qemu" => Some(BackendKind::Qemu),
+            "lume" if cfg!(target_os = "macos") => Some(BackendKind::Lume),
+            "firecracker" | "microvm" if cfg!(target_os = "linux") => {
+                Some(BackendKind::Firecracker)
+            }
+            "containerization" if cfg!(target_os = "macos") => Some(BackendKind::Containerization),
+            "vz" if cfg!(target_os = "macos") => Some(BackendKind::Vz),
+            "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker" => {
+                Some(BackendKind::Container)
+            }
+            _ => None,
+        }
+    }
+
+    /// The backend that owns `name`.
+    /// Asks every backend at once (a slow engine does not hold up the
+    /// others), in [`Self::backends`] order.
+    async fn owner(&self, name: &str) -> RuntimeResult<(BackendKind, Arc<dyn VmmRuntime>)> {
+        let asks = Self::backends().into_iter().map(|kind| async move {
+            let rt = self.runtime(kind).await.ok()?;
+            let status = rt.status(name).await.map(|_| ());
+            Some((kind, status, rt))
+        });
+        let answers = futures_util::future::join_all(asks)
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
         pick_owner(name, answers)
+    }
+}
+
+/// How often the warm pool's policy runs (pre-warm windows open on time;
+/// settings, memory and strays are checked every 15th tick).
+pub const POOL_TICK: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// What the warm pool asks of this machine: cua-spacesd of its members, and
+/// the memory they draw on.
+struct PoolHost {
+    local: std::sync::Weak<VmmLocal>,
+}
+
+/// A client for the cua-spacesd at `endpoints` with `token`: native gRPC,
+/// no capability probe (the pool knows what it talks to).
+async fn member_client(
+    endpoints: &Endpoints,
+    token: &str,
+) -> std::result::Result<cua_spacesd_client::SpacesdClient, String> {
+    let port = endpoints
+        .ports
+        .get(&cua_image::resolve::SPACESD_PORT)
+        .copied()
+        .ok_or("the member publishes no cua-spacesd port")?;
+    let host = if endpoints.host.is_empty() {
+        "127.0.0.1"
+    } else {
+        endpoints.host.as_str()
+    };
+    let opts = cua_spacesd_client::ConnectOptions::parse(&format!("http://{host}:{port}"))
+        .map_err(|e| e.to_string())?
+        .token(token)
+        .transport(cua_spacesd_client::TransportPreference::Native)
+        .probe(false);
+    cua_spacesd_client::SpacesdClient::connect(opts)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[async_trait]
+impl crate::pool::PoolHost for PoolHost {
+    async fn member_ready(
+        &self,
+        endpoints: &Endpoints,
+        secret: &str,
+        desktop: bool,
+        timeout: std::time::Duration,
+    ) -> std::result::Result<(), String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut last = String::from("starting");
+        loop {
+            let attempt = async {
+                let c = member_client(endpoints, secret).await?;
+                c.metrics().await.map_err(|e| e.to_string())?;
+                if desktop {
+                    let ready = c.desktop_readiness().await.map_err(|e| e.to_string())?;
+                    if !ready.ready {
+                        return Err(format!("desktop: {}", ready.detail));
+                    }
+                }
+                // The first command and screenshot of a fresh guest pay
+                // for warming its caches: the member pays, not the Space.
+                let out = c
+                    .run(cua_spacesd_client::Command::shell("true"))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if !out.success() {
+                    return Err("the first command failed".into());
+                }
+                if desktop {
+                    c.screenshot(Default::default())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            };
+            match tokio::time::timeout_at(deadline, attempt).await {
+                Ok(Ok(())) => return Ok(()),
+                Ok(Err(e)) => last = e,
+                Err(_) => {}
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "the member was not ready within {timeout:?}: {last}"
+                ));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+
+    async fn rotate(
+        &self,
+        endpoints: &Endpoints,
+        backend: BackendKind,
+        secret: &str,
+        token: &str,
+    ) -> std::result::Result<(), String> {
+        use cua_spacesd_client::{Error as E, pb};
+        let request = |rotate: bool| {
+            let mut entropy = vec![0u8; 32];
+            rand::RngCore::fill_bytes(&mut rand::rng(), &mut entropy);
+            pb::InitRequest {
+                token: if rotate {
+                    token.to_string()
+                } else {
+                    String::new()
+                },
+                now: Some(crate::convert::ts(std::time::SystemTime::now())),
+                new_machine: true,
+                entropy,
+                ..Default::default()
+            }
+        };
+        let r = if claim_delivers_token(backend) {
+            // The claim gave the guest the Space's token already: initialise
+            // it with that token, never with the pool secret.
+            let c = member_client(endpoints, token).await?;
+            c.init(request(false)).await.map_err(|e| e.to_string())?
+        } else {
+            let c = member_client(endpoints, secret).await?;
+            match c.init(request(true)).await {
+                Ok(r) => r,
+                // The backend delivered the Space's token its own way: the
+                // guest is initialised with that token.
+                Err(E::Unauthenticated(_) | E::PermissionDenied(_) | E::NotInitialized(_)) => {
+                    let c = member_client(endpoints, token).await?;
+                    c.init(request(false)).await.map_err(|e| e.to_string())?
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        };
+        if !r.new_machine {
+            // A cua-spacesd that predates `new_machine`: the token is the
+            // Space's, but the guest keeps the per-machine secrets it booted
+            // with (as a cold Space of that image does).
+            tracing::info!(
+                "this image's cua-spacesd predates new_machine; the claimed Space keeps its boot-time machine secrets"
+            );
+        }
+        Ok(())
+    }
+
+    async fn memory(&self, backend: BackendKind) -> Option<crate::pool::Memory> {
+        let host = host_memory();
+        if backend != BackendKind::Container {
+            return host;
+        }
+        let local = self.local.upgrade()?;
+        let rt = local.container_if_up().await?;
+        let total = rt.memory_total_mb().await?;
+        let names = rt.running_containers().await.ok()?;
+        let used: u64 = futures_util::future::join_all(names.iter().map(|n| rt.memory_used_mb(n)))
+            .await
+            .into_iter()
+            .flatten()
+            .sum();
+        // An engine in a VM (the built-in runtime, Docker Desktop) has its
+        // own memory; a Linux engine shares the host's.
+        let engine = crate::pool::Memory {
+            total_mb: total,
+            available_mb: total.saturating_sub(used),
+        };
+        Some(match host {
+            Some(h) if cfg!(target_os = "linux") => crate::pool::Memory {
+                total_mb: engine.total_mb.min(h.total_mb),
+                available_mb: engine.available_mb.min(h.available_mb),
+            },
+            _ => engine,
+        })
+    }
+
+    async fn wake(&self, backend: BackendKind) {
+        if backend == BackendKind::Container
+            && let Some(local) = self.local.upgrade()
+            && let Err(e) = local.container().await
+        {
+            tracing::warn!("pool.warm: the container engine did not start: {e}");
+        }
+    }
+
+    fn on_battery(&self) -> bool {
+        on_battery()
+    }
+
+    fn busy(&self) -> bool {
+        cpu_saturated()
+    }
+
+    async fn members_present(&self, backend: BackendKind) -> Option<Vec<String>> {
+        if backend != BackendKind::Container {
+            return None;
+        }
+        let local = self.local.upgrade()?;
+        let rt = local.container_if_up().await?;
+        let members = rt.pool_members().await.ok()?;
+        Some(members.into_iter().map(|m| m.name).collect())
+    }
+
+    async fn used_mb(&self, backend: BackendKind, name: &str) -> Option<u64> {
+        if backend != BackendKind::Container {
+            return None;
+        }
+        let local = self.local.upgrade()?;
+        local.container_if_up().await?.memory_used_mb(name).await
+    }
+}
+
+/// Whether the CPUs are saturated by other work: the one-minute load
+/// average is at least 0.9 per CPU. Warm members the policy merely wants
+/// do not start on such a machine.
+#[cfg(unix)]
+fn cpu_saturated() -> bool {
+    let mut v = [0f64; 1];
+    // SAFETY: an out array of one double and its length.
+    let n = unsafe { libc::getloadavg(v.as_mut_ptr(), 1) };
+    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get()) as f64;
+    n >= 1 && v[0] >= 0.9 * cpus
+}
+
+#[cfg(not(unix))]
+fn cpu_saturated() -> bool {
+    false
+}
+
+/// Whether this machine draws on its battery now (checked at most once a
+/// minute): a Mac's `pmset -g ps`, Linux's `/sys/class/power_supply`.
+fn on_battery() -> bool {
+    use std::sync::Mutex;
+    static LAST: Mutex<Option<(std::time::Instant, bool)>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, v)) = *last
+        && at.elapsed() < std::time::Duration::from_secs(60)
+    {
+        return v;
+    }
+    let v = battery_now();
+    *last = Some((std::time::Instant::now(), v));
+    v
+}
+
+fn battery_now() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/usr/bin/pmset")
+            .args(["-g", "ps"])
+            .output()
+            .ok()
+            .is_some_and(|o| String::from_utf8_lossy(&o.stdout).contains("'Battery Power'"))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(rd) = std::fs::read_dir("/sys/class/power_supply") else {
+            return false;
+        };
+        let mut battery_discharging = false;
+        let mut mains_online = false;
+        for e in rd.flatten() {
+            let p = e.path();
+            let read = |f: &str| std::fs::read_to_string(p.join(f)).unwrap_or_default();
+            match read("type").trim() {
+                "Battery" => battery_discharging |= read("status").trim() == "Discharging",
+                "Mains" => mains_online |= read("online").trim() == "1",
+                _ => {}
+            }
+        }
+        battery_discharging && !mains_online
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        false
+    }
+}
+
+/// This machine's memory, in MiB: `MemAvailable` on Linux; on a Mac the
+/// share the kernel reports as available (`kern.memorystatus_level`).
+fn host_memory() -> Option<crate::pool::Memory> {
+    #[cfg(target_os = "linux")]
+    {
+        let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+        let field = |name: &str| -> Option<u64> {
+            let line = text.lines().find(|l| l.starts_with(name))?;
+            line.split_whitespace().nth(1)?.parse::<u64>().ok()
+        };
+        Some(crate::pool::Memory {
+            total_mb: field("MemTotal:")? / 1024,
+            available_mb: field("MemAvailable:")? / 1024,
+        })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let total = sysctl_u64(c"hw.memsize")? / (1024 * 1024);
+        let level = sysctl_u64(c"kern.memorystatus_level")?.min(100);
+        Some(crate::pool::Memory {
+            total_mb: total,
+            available_mb: total * level / 100,
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn sysctl_u64(name: &std::ffi::CStr) -> Option<u64> {
+    let mut buf = [0u8; 8];
+    let mut len = buf.len();
+    // SAFETY: a NUL-terminated name, an out buffer and its length;
+    // sysctlbyname writes at most `len` bytes and updates `len`.
+    let r = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            buf.as_mut_ptr().cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    match (r, len) {
+        (0, 8) => Some(u64::from_ne_bytes(buf)),
+        (0, 4) => Some(u64::from(u32::from_ne_bytes([
+            buf[0], buf[1], buf[2], buf[3],
+        ]))),
+        _ => None,
     }
 }
 
@@ -637,7 +1377,341 @@ async fn local_build_base(
 fn runtime_label(inst: &cua_vmm::Instance) -> String {
     match (inst.backend, &inst.isolation) {
         (BackendKind::Container, cua_vmm::Isolation::Gvisor) => "gvisor".into(),
+        (BackendKind::Firecracker, _) => "firecracker".into(),
         (backend, _) => backend.as_str().to_string(),
+    }
+}
+
+/// A start, resolved: what to start, on which backend.
+struct Prepared {
+    spec: StartSpec,
+    backend: BackendKind,
+    rt: Arc<dyn VmmRuntime>,
+    image: Option<cua_image::ResolvedImage>,
+    /// A static cua-spacesd is injected into the image (which has none).
+    injected: bool,
+}
+
+/// Whether an image gets a static cua-spacesd injected: a Linux container
+/// rootfs without one, run by a backend that boots OCI images directly
+/// (containers and microVMs), unless the caller asked for it as it is.
+/// A VM keeps needing a Cua disk image.
+fn wants_injection(
+    requested: Option<bool>,
+    image: Option<&cua_image::ResolvedImage>,
+    backend: BackendKind,
+) -> bool {
+    requested != Some(false)
+        && matches!(
+            backend,
+            BackendKind::Container
+                | BackendKind::Containerization
+                | BackendKind::Firecracker
+                | BackendKind::Vz
+        )
+        && image.is_some_and(|i| {
+            i.os == "linux"
+                && i.variant == cua_image::resolve::Variant::Rootfs
+                && i.spacesd != Some(true)
+        })
+}
+
+/// The image's info as the sandbox layer records it.
+fn image_info_of(
+    image: Option<&cua_image::ResolvedImage>,
+    injected: bool,
+) -> Option<cua_sandbox_core::ImageInfo> {
+    image.map(|i| {
+        let mut info: cua_sandbox_core::ImageInfo = i.into();
+        info.injected = injected;
+        info
+    })
+}
+
+/// The image, kind and runtime a local start asked for, as given.
+fn requested_words(spec: &LocalStartSpec) -> (String, String, String) {
+    (
+        spec.image.trim().to_string(),
+        spec.kind.clone().unwrap_or_default(),
+        spec.runtime.clone().unwrap_or_default(),
+    )
+}
+
+/// A started [`cua_vmm::Instance`] as the sandbox layer sees it.
+fn local_instance(inst: cua_vmm::Instance) -> LocalInstance {
+    LocalInstance {
+        backend: runtime_label(&inst),
+        name: inst.name,
+        status: status_of(inst.status),
+        endpoints: endpoints_of(inst.endpoints),
+    }
+}
+
+impl VmmLocal {
+    /// Resolves `spec` (image placement, backend, runtime) into the
+    /// [`StartSpec`] its backend starts.
+    async fn prepare(&self, spec: &LocalStartSpec) -> RuntimeResult<Prepared> {
+        use cua_sandbox_core::placement::{Kind, PlacementError, Runtime};
+        let kind = spec
+            .kind
+            .as_deref()
+            .map(Kind::parse)
+            .transpose()
+            .map_err(RuntimeError::InvalidPlacement)?
+            .unwrap_or_default();
+        let runtime = spec
+            .runtime
+            .as_deref()
+            .map(Runtime::parse)
+            .transpose()
+            .map_err(RuntimeError::InvalidPlacement)?
+            .unwrap_or_default();
+        let mut r = self
+            .resolve_cached(
+                &spec.image,
+                &spec.os,
+                kind,
+                &runtime,
+                spec.registry_credentials.as_ref(),
+            )
+            .await
+            .map_err(|e| match e {
+                Error::Unsupported(m) => RuntimeError::UnsupportedImage(m),
+                Error::InvalidPlacement {
+                    message,
+                    axis,
+                    valid,
+                } => RuntimeError::InvalidPlacement(PlacementError {
+                    axis: match axis.as_str() {
+                        "on" => cua_sandbox_core::placement::Axis::On,
+                        "kind" => cua_sandbox_core::placement::Axis::Kind,
+                        "runtime" => cua_sandbox_core::placement::Axis::Runtime,
+                        _ => cua_sandbox_core::placement::Axis::Image,
+                    },
+                    given: spec.image.clone(),
+                    message,
+                    valid,
+                }),
+                other => RuntimeError::Other(other.to_string()),
+            })?;
+        if missing_fallback_allowed(
+            kind,
+            &runtime,
+            backend_prefix(&spec.image),
+            r.placement.backend,
+            LinuxSource::current(),
+        ) && let Err(e @ VmmError::Missing { .. }) = self.engine().await
+        {
+            let ready = doctor_report()
+                .await
+                .backend(BackendKind::Qemu)
+                .is_some_and(|b| b.ready);
+            r = vm_instead(
+                &spec.image,
+                &spec.os,
+                spec.registry_credentials.as_ref(),
+                ready,
+            )
+            .await
+            .ok_or_else(|| rt_err(e))?;
+        }
+        let p = r.placement.clone();
+        if p.backend == BackendKind::Firecracker && !cfg!(target_os = "linux") {
+            return Err(RuntimeError::Unsupported {
+                backend: "firecracker".into(),
+                op: "a host other than Linux (microVMs need Linux with KVM)".into(),
+            });
+        }
+        if p.backend == BackendKind::Vz && !cfg!(target_os = "macos") {
+            return Err(RuntimeError::Unsupported {
+                backend: "vz".into(),
+                op: "a host other than a Mac (macOS microVMs need Virtualization.framework)".into(),
+            });
+        }
+        if p.backend == BackendKind::Containerization && !cfg!(target_os = "macos") {
+            return Err(RuntimeError::Unsupported {
+                backend: "containerization".into(),
+                op: "a host other than a Mac (Apple's Containerization needs macOS 26)".into(),
+            });
+        }
+        if spec.disk_size_gb.is_some() && p.backend == BackendKind::Container {
+            return Err(RuntimeError::Unsupported {
+                backend: "container".into(),
+                op: "a disk size (disk_gb sizes VM disks; a container uses its engine's)".into(),
+            });
+        }
+        refuse_gpu(&spec.image, spec.gpu.is_some(), &r)?;
+        // An image without cua-spacesd gets a static one, so any OCI image
+        // is a full Space on the container and microVM kinds.
+        let inject = if wants_injection(spec.spacesd, r.image.as_ref(), p.backend) {
+            let arch = r.arch.unwrap_or_else(cua_vmm::Arch::host);
+            Some(cua_vmm::inject::require_binary(arch).map_err(rt_err)?)
+        } else {
+            None
+        };
+        if inject.is_some()
+            && let Some(i) = r.image.as_mut()
+        {
+            i.spacesd = Some(true);
+        }
+        // The machine checks (public's preflight) cover the container, QEMU
+        // and Lume backends; microVMs and Apple Containerization refuse
+        // above with their own reasons.
+        if matches!(
+            p.backend,
+            BackendKind::Container | BackendKind::Qemu | BackendKind::Lume
+        ) {
+            preflight_refusal(os_of(&spec.os), p.backend).await?;
+        }
+        let rt = self.runtime(p.backend).await.map_err(rt_err)?;
+        let mut s = StartSpec::new(&spec.name, p.image)
+            .os(os_of(&spec.os))
+            .cpus(spec.cpus.max(1))
+            .memory_mb(spec.memory_mb.max(256))
+            .ready_timeout(spec.ready_timeout);
+        if let Some(a) = r.arch {
+            s = s.arch(a);
+        }
+        if let Some(f) = spec.firmware.as_deref().filter(|f| !f.is_empty()) {
+            s = s.firmware(
+                f.parse()
+                    .map_err(|e: VmmError| RuntimeError::Other(e.to_string()))?,
+            );
+        }
+        // Publish cua-spacesd's port only when the image may carry it
+        // (a probe on it keeps it: the caller expects it).
+        let no_env = r.image.as_ref().and_then(|i| i.spacesd) == Some(false)
+            && !spec
+                .probes
+                .iter()
+                .any(|p| p.port == cua_image::resolve::SPACESD_PORT);
+        for port in &spec.ports {
+            if no_env && *port == cua_image::resolve::SPACESD_PORT {
+                continue;
+            }
+            s = s.port(*port);
+        }
+        for pr in &spec.probes {
+            s = s.probe(match &pr.http_path {
+                Some(path) => cua_vmm::Probe::http(pr.port, path.clone()),
+                None => cua_vmm::Probe::tcp(pr.port),
+            });
+        }
+        let has_spacesd = r.image.as_ref().and_then(|i| i.spacesd) == Some(true);
+        let injected = inject.is_some();
+        s.inject_spacesd = inject;
+        let own_command = spec.command.as_ref().is_some_and(|c| !c.is_empty());
+        // A headless container or microVM runs cua-spacesd as its command
+        // (an image's entrypoint starts its desktop first).
+        let headless_command = spec.headless
+            && has_spacesd
+            && !injected
+            && !own_command
+            && matches!(
+                p.backend,
+                BackendKind::Container
+                    | BackendKind::Containerization
+                    | BackendKind::Firecracker
+                    | BackendKind::Vz
+            );
+        // An injected cua-spacesd runs whatever the command is.
+        let runs_spacesd = has_spacesd && (!own_command || headless_command || injected);
+        if s.probes.is_empty() && runs_spacesd {
+            // A microVM or VM Space is ready once cua-spacesd listens: that
+            // is the point its warm snapshot is taken at (and a restore
+            // waits for).
+            if matches!(
+                p.backend,
+                BackendKind::Firecracker | BackendKind::Vz | BackendKind::Qemu
+            ) {
+                s = s.probe(cua_vmm::Probe::tcp(cua_image::resolve::SPACESD_PORT));
+            }
+            // Behind a port forward, once cua-spacesd answers through the
+            // host-side endpoint the caller dials: a guest that listens is
+            // not enough while the forward to it (Lima's for the built-in
+            // Linux runtime, Docker's, slirp for QEMU) is still being set
+            // up, and the first call would fail with a reset (3 of 64
+            // gVisor creates at once, 4 of 64 QEMU VMs). A microVM is
+            // dialed at its own address, with no forward in between; probing
+            // it before its network is up cost every start about a second.
+            if matches!(p.backend, BackendKind::Container | BackendKind::Qemu) {
+                s = s.probe(cua_vmm::Probe::http(
+                    cua_image::resolve::SPACESD_PORT,
+                    cua_proto::metadata::HEALTH_PATH,
+                ));
+            }
+        }
+        if spec.ephemeral {
+            s = s.label(cua_vmm::container::LABEL_EPHEMERAL, "true");
+        }
+        s.env = spec.env.clone();
+        s.command = spec.command.clone().filter(|c| !c.is_empty());
+        if spec.headless && has_spacesd {
+            s.env.extend(headless_env());
+            if headless_command {
+                s.command = Some(headless_command_line());
+            }
+        }
+        s.registry_auth = spec.registry_credentials.clone();
+        s.container_runtime = spec.container_runtime.clone();
+        s.restrict_network = spec.restrict_network;
+        s.forkable = spec.forkable;
+        s.egress = spec.egress.clone();
+        s.disk_size_gb = spec.disk_size_gb;
+        s.mounts = spec.mounts.clone();
+        // The layers from the manifest: progress knows the total, and the
+        // layers the engine already has, from the first byte.
+        s.pull_layers = r
+            .image
+            .as_ref()
+            .map(|i| i.layers.clone())
+            .unwrap_or_default();
+        // What a macOS base pull writes, from the image catalog (the same
+        // sizes the app's New Space checks), so a Mac without room for it
+        // is refused before the download instead of during it.
+        if p.backend == BackendKind::Lume
+            && let ImageSource::Oci { reference } = &s.image
+        {
+            s.pull_bytes = catalog_pull_bytes(reference, cua_vmm::Arch::host().oci());
+        }
+        // `auto` (or empty) is the backend's own option.
+        s.gpu = spec.gpu.as_deref().map(|g| match (g.trim(), p.backend) {
+            ("" | "auto" | "on", BackendKind::Lume) => cua_vmm::gpu::PARAVIRTUAL.to_string(),
+            ("" | "auto" | "on", BackendKind::Qemu) => cua_vmm::gpu::VIRGL.to_string(),
+            ("" | "auto" | "on", BackendKind::Container) => cua_vmm::gpu::NVIDIA.to_string(),
+            (other, _) => other.to_string(),
+        });
+        if let Some(c) = spec
+            .sidecars
+            .iter()
+            .find(|c| c.args.is_some() || c.cpu.is_some() || c.memory.is_some())
+        {
+            return Err(RuntimeError::Unsupported {
+                backend: "local".into(),
+                op: format!(
+                    "sidecar {:?} args/cpu/memory (fold args into command)",
+                    c.name
+                ),
+            });
+        }
+        s.sidecars = spec
+            .sidecars
+            .iter()
+            .map(|c| cua_vmm::SidecarSpec {
+                name: c.name.clone(),
+                image: c.image.clone(),
+                command: c.command.clone(),
+                env: c.env.clone(),
+                ports: c.ports.clone(),
+            })
+            .collect();
+        Ok(Prepared {
+            spec: s,
+            backend: p.backend,
+            rt,
+            image: r.image,
+            injected,
+        })
     }
 }
 
@@ -647,10 +1721,40 @@ impl LocalRuntime for VmmLocal {
         "vmm".into()
     }
 
+    /// VMs nobody uses first (a lifetime that passed, an owner that is
+    /// gone: [`crate::guard`]), then the warm pool's idle members for what
+    /// is still short. A VM ended counts as the 2 CPUs and 4 GiB a Space
+    /// reserves.
+    async fn warm_held(&self) -> Vec<cua_sandbox_core::WarmHeld> {
+        self.pool().map(|p| p.held()).unwrap_or_default()
+    }
+
+    async fn reclaim(&self, need: cua_sandbox_core::Shortfall) -> cua_sandbox_core::Reclaimed {
+        let mut out = cua_sandbox_core::Reclaimed::default();
+        let home = cua_home::cua_home();
+        let ended = crate::guard::sweep(&home, true, &crate::guard::Policy::default(), false).await;
+        let freed = ended.iter().filter(|e| e.error.is_none()).count() as u32;
+        out.ended = ended
+            .into_iter()
+            .filter(|e| e.error.is_none())
+            .map(|e| e.name)
+            .collect();
+        let need = cua_sandbox_core::Shortfall {
+            millicpus: need.millicpus.saturating_sub(freed * 2000),
+            memory_mb: need.memory_mb.saturating_sub(u64::from(freed) * 4096),
+        };
+        if (need.millicpus > 0 || need.memory_mb > 0)
+            && let Some(pool) = self.pool()
+        {
+            out.warm_members = pool.reclaim(need).await;
+        }
+        out
+    }
+
     async fn build_image(
         &self,
-        spec: &cua_fleet::BuildSpec,
-        creds: Option<&cua_fleet::RegistryCredentials>,
+        spec: &cua_image::build::BuildSpec,
+        creds: Option<&cua_image::RegistryCredentials>,
     ) -> RuntimeResult<String> {
         let from = spec.from.trim();
         let (prefix, rest) = match from.split_once(':') {
@@ -672,11 +1776,11 @@ impl LocalRuntime for VmmLocal {
         let files = spec
             .files
             .iter()
-            .map(cua_fleet::builds::local_build_file)
+            .map(cua_image::build::local_build_file)
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| RuntimeError::Other(e.to_string()))?;
-        let recipe = cua_fleet::builds::build_recipe(spec, &pinned, files, None);
-        let tag = cua_fleet::builds::build_name(&recipe);
+        let recipe = cua_image::build::build_recipe(spec, &pinned, files, None);
+        let tag = cua_image::build::build_name(&recipe);
         let reference = format!("{LOCAL_BUILD_REPO}:{tag}");
         let ledger = cua_vmm::container::ledger::PullLedger::default();
         if rt.docker().inspect_image(&reference).await.is_ok() {
@@ -724,7 +1828,7 @@ impl LocalRuntime for VmmLocal {
         );
         let budget = spec
             .timeout
-            .unwrap_or(cua_fleet::builds::DEFAULT_BUILD_TIMEOUT);
+            .unwrap_or(cua_image::build::DEFAULT_BUILD_TIMEOUT);
         let built = tokio::time::timeout(budget, build).await;
         // The build directory is scratch either way.
         let _ = std::fs::remove_dir_all(&out);
@@ -783,170 +1887,92 @@ impl LocalRuntime for VmmLocal {
         &self,
         spec: &LocalStartSpec,
     ) -> RuntimeResult<(LocalInstance, Option<cua_sandbox_core::ImageInfo>)> {
-        use cua_sandbox_core::placement::{Kind, PlacementError, Runtime};
-        let kind = spec
-            .kind
-            .as_deref()
-            .map(Kind::parse)
-            .transpose()
-            .map_err(RuntimeError::InvalidPlacement)?
-            .unwrap_or_default();
-        let runtime = spec
-            .runtime
-            .as_deref()
-            .map(Runtime::parse)
-            .transpose()
-            .map_err(RuntimeError::InvalidPlacement)?
-            .unwrap_or_default();
-        let mut r = resolve_placement_for(
-            &spec.image,
-            &spec.os,
-            kind,
-            &runtime,
-            spec.registry_credentials.as_ref(),
-        )
-        .await
-        .map_err(|e| match e {
-            Error::Unsupported(m) => RuntimeError::UnsupportedImage(m),
-            Error::InvalidPlacement {
-                message,
-                axis,
-                valid,
-            } => RuntimeError::InvalidPlacement(PlacementError {
-                axis: match axis.as_str() {
-                    "on" => cua_sandbox_core::placement::Axis::On,
-                    "kind" => cua_sandbox_core::placement::Axis::Kind,
-                    "runtime" => cua_sandbox_core::placement::Axis::Runtime,
-                    _ => cua_sandbox_core::placement::Axis::Image,
-                },
-                given: spec.image.clone(),
-                message,
-                valid,
-            }),
-            other => RuntimeError::Other(other.to_string()),
-        })?;
-        if missing_fallback_allowed(
-            kind,
-            &runtime,
-            backend_prefix(&spec.image),
-            r.placement.backend,
-            LinuxSource::current(),
-        ) && let Err(e @ VmmError::Missing { .. }) = self.engine().await
+        let started = std::time::Instant::now();
+        let Prepared {
+            spec: s,
+            backend,
+            rt,
+            image,
+            injected,
+        } = self.prepare(spec).await?;
+        let resolved_ms = started.elapsed().as_millis() as u64;
+        let spacesd = image.as_ref().and_then(|i| i.spacesd) == Some(true);
+        // A warm pool keeps members of images that carry cua-spacesd: an
+        // injected one is started for its Space. A warm member ran before
+        // this Space had a policy: one that takes a policy at once (bound to
+        // its running network, atomically) may be claimed; a QEMU VM would
+        // have to move into its namespace, so it starts cold instead.
+        let pool = self
+            .pool
+            .get()
+            .filter(|_| spec.warm != Some(false) && !injected)
+            .filter(|_| s.egress.is_empty() || backend != BackendKind::Qemu);
+        if let Some(pool) = pool
+            && let Some(inst) = pool.claim(&s, backend, spacesd).await
         {
-            let ready = doctor_report()
-                .await
-                .backend(BackendKind::Qemu)
-                .is_some_and(|b| b.ready);
-            r = vm_instead(
-                &spec.image,
-                &spec.os,
-                spec.registry_credentials.as_ref(),
-                ready,
-            )
-            .await
-            .ok_or_else(|| rt_err(e))?;
-        }
-        let p = r.placement.clone();
-        if spec.disk_size_gb.is_some() && p.backend == BackendKind::Container {
-            return Err(RuntimeError::Unsupported {
-                backend: "container".into(),
-                op: "a disk size (disk_gb sizes VM disks; a container uses its engine's)".into(),
-            });
-        }
-        refuse_gpu(&spec.image, spec.gpu.is_some(), &r)?;
-        let rt = self.runtime(p.backend).await.map_err(rt_err)?;
-        let mut s = StartSpec::new(&spec.name, p.image)
-            .os(os_of(&spec.os))
-            .cpus(spec.cpus.max(1))
-            .memory_mb(spec.memory_mb.max(256))
-            .ready_timeout(spec.ready_timeout);
-        if let Some(a) = r.arch {
-            s = s.arch(a);
-        }
-        if let Some(f) = spec.firmware.as_deref().filter(|f| !f.is_empty()) {
-            s = s.firmware(
-                f.parse()
-                    .map_err(|e: VmmError| RuntimeError::Other(e.to_string()))?,
-            );
-        }
-        // Publish cua-spacesd's port only when the image may carry it
-        // (a probe on it keeps it: the caller expects it).
-        let no_env = r.image.as_ref().and_then(|i| i.spacesd) == Some(false)
-            && !spec
-                .probes
-                .iter()
-                .any(|p| p.port == cua_image::resolve::SPACESD_PORT);
-        for port in &spec.ports {
-            if no_env && *port == cua_image::resolve::SPACESD_PORT {
-                continue;
+            if !s.egress.is_empty()
+                && let Err(e) = rt.set_egress(&inst.name, &s.egress).await
+            {
+                // Never hand out a Space without its policy.
+                let _ = rt.delete(&inst.name).await;
+                return Err(rt_err(e));
             }
-            s = s.port(*port);
+            tracing::debug!(
+                name = spec.name,
+                backend = %backend,
+                resolve_ms = resolved_ms,
+                claim_ms = started.elapsed().as_millis() as u64 - resolved_ms,
+                "local start (warm)"
+            );
+            pool.note_request(&s, backend, spacesd, requested_words(spec));
+            return Ok((
+                local_instance(inst),
+                image_info_of(image.as_ref(), injected),
+            ));
         }
-        for pr in &spec.probes {
-            s = s.probe(match &pr.http_path {
-                Some(path) => cua_vmm::Probe::http(pr.port, path.clone()),
-                None => cua_vmm::Probe::tcp(pr.port),
-            });
-        }
-        if spec.ephemeral {
-            s = s.label(cua_vmm::container::LABEL_EPHEMERAL, "true");
-        }
-        s.env = spec.env.clone();
-        s.command = spec.command.clone().filter(|c| !c.is_empty());
-        s.registry_auth = spec.registry_credentials.clone();
-        s.container_runtime = spec.container_runtime.clone();
-        s.restrict_network = spec.restrict_network;
-        s.disk_size_gb = spec.disk_size_gb;
-        // The layers from the manifest: progress knows the total, and the
-        // layers the engine already has, from the first byte.
-        s.pull_layers = r
-            .image
-            .as_ref()
-            .map(|i| i.layers.clone())
-            .unwrap_or_default();
-        // `auto` (or empty) is the backend's own option.
-        s.gpu = spec.gpu.as_deref().map(|g| match (g.trim(), p.backend) {
-            ("" | "auto" | "on", BackendKind::Lume) => cua_vmm::gpu::PARAVIRTUAL.to_string(),
-            ("" | "auto" | "on", BackendKind::Qemu) => cua_vmm::gpu::VIRGL.to_string(),
-            ("" | "auto" | "on", BackendKind::Container) => cua_vmm::gpu::NVIDIA.to_string(),
-            (other, _) => other.to_string(),
-        });
-        if let Some(c) = spec
-            .sidecars
-            .iter()
-            .find(|c| c.args.is_some() || c.cpu.is_some() || c.memory.is_some())
-        {
-            return Err(RuntimeError::Unsupported {
-                backend: "local".into(),
-                op: format!(
-                    "sidecar {:?} args/cpu/memory (cloud pool templates only; fold args into \
-                     command)",
-                    c.name
-                ),
-            });
-        }
-        s.sidecars = spec
-            .sidecars
-            .iter()
-            .map(|c| cua_vmm::SidecarSpec {
-                name: c.name.clone(),
-                image: c.image.clone(),
-                command: c.command.clone(),
-                env: c.env.clone(),
-                ports: c.ports.clone(),
-            })
-            .collect();
+        let start_at = std::time::Instant::now();
         let inst = rt.start(&s).await.map_err(rt_err)?;
+        // Behind a port forward (the probe on cua-spacesd's port says so),
+        // ready once it serves an authenticated call with the Space's
+        // token: see `guest_identity::wait_accepts`.
+        let spacesd_probe = s.probes.iter().any(|p| {
+            matches!(p, cua_vmm::Probe::Http { port, .. } if *port == cua_image::resolve::SPACESD_PORT)
+        });
+        if spacesd_probe
+            && let Some(token) = ["CUA_ENV_TOKEN", "CUA_SPACESD_TOKEN"]
+                .iter()
+                .find_map(|k| s.env.get(*k))
+                .filter(|t| !t.is_empty())
+        {
+            // A failed create is cleaned up (or kept, `keep_on_failure`)
+            // by the caller, as for a failed start.
+            crate::guest_identity::wait_accepts(&inst.endpoints, token, s.ready_timeout)
+                .await
+                .map_err(rt_err)?;
+        }
+        tracing::debug!(
+            name = spec.name,
+            backend = %backend,
+            resolve_ms = resolved_ms,
+            start_ms = started.elapsed().as_millis() as u64 - resolved_ms,
+            "local start"
+        );
+        if let Some(pool) = pool {
+            pool.observe(
+                &s,
+                backend,
+                spacesd,
+                rt.clone(),
+                started,
+                start_at.elapsed().as_secs_f64(),
+            );
+            pool.note_request(&s, backend, spacesd, requested_words(spec));
+        }
         // The start may have pulled an image or a base VM.
         crate::maintenance::spawn_auto_gc("start");
         Ok((
-            LocalInstance {
-                backend: runtime_label(&inst),
-                name: inst.name,
-                status: status_of(inst.status),
-                endpoints: endpoints_of(inst.endpoints),
-            },
-            r.image.as_ref().map(Into::into),
+            local_instance(inst),
+            image_info_of(image.as_ref(), injected),
         ))
     }
 
@@ -955,24 +1981,29 @@ impl LocalRuntime for VmmLocal {
         rt.stop(name).await.map_err(rt_err)
     }
 
+    async fn set_egress(
+        &self,
+        name: &str,
+        policy: &cua_vmm::egress::EgressPolicy,
+    ) -> RuntimeResult<cua_vmm::egress::Enforcement> {
+        let (_, rt) = self.owner(name).await?;
+        rt.set_egress(name, policy).await.map_err(rt_err)
+    }
+
+    async fn egress(&self, name: &str) -> RuntimeResult<cua_vmm::egress::EgressPolicy> {
+        let (_, rt) = self.owner(name).await?;
+        rt.egress(name).await.map_err(rt_err)
+    }
+
     async fn suspend(&self, name: &str) -> RuntimeResult<()> {
         let (_, rt) = self.owner(name).await?;
         rt.suspend(name).await.map_err(rt_err)
     }
 
     async fn resume(&self, name: &str) -> RuntimeResult<LocalInstance> {
-        let (kind, rt) = self.owner(name).await?;
-        // QEMU resumes a paused VM over QMP; a stopped one has no process
-        // to resume and no start spec to boot from.
-        if kind == BackendKind::Qemu && rt.status(name).await.map_err(rt_err)? == Status::Stopped {
-            return Err(RuntimeError::Unsupported {
-                backend: "qemu".into(),
-                op: format!(
-                    "starting {name} again: a QEMU VM resumes from suspend only, and this one \
-                     was stopped (its disk is kept; delete it and create a new one)"
-                ),
-            });
-        }
+        // A paused QEMU VM runs again over QMP; a stopped one boots again
+        // from its own disk (`QemuRuntime::resume`).
+        let (_, rt) = self.owner(name).await?;
         let inst = rt.resume(name).await.map_err(rt_err)?;
         Ok(LocalInstance {
             backend: runtime_label(&inst),
@@ -982,20 +2013,34 @@ impl LocalRuntime for VmmLocal {
         })
     }
 
-    /// Containers pause in memory (`docker pause`) and QEMU VMs pause over
-    /// QMP; Lume has no pause, so a Lume VM stops and boots again. On the
+    async fn resize(&self, name: &str, shape: &cua_vmm::Resize) -> RuntimeResult<LocalInstance> {
+        let (_, rt) = self.owner(name).await?;
+        let inst = rt.resize(name, shape).await.map_err(rt_err)?;
+        Ok(LocalInstance {
+            backend: runtime_label(&inst),
+            name: inst.name,
+            status: status_of(inst.status),
+            endpoints: endpoints_of(inst.endpoints),
+        })
+    }
+
+    /// Containers pause in memory (`docker pause`). VMs stop and boot again
+    /// from their disk: turning a VM off gives its memory back to the
+    /// machine (a paused QEMU VM would keep all of it; `Sandboxes::suspend`
+    /// still pauses one when asked), and Lume has no pause at all. On the
     /// built-in Linux runtime containers stop too, so its VM can stop once
     /// no Linux Space runs (a paused one would hold it up).
     fn power_control(&self, runtime_type: &str) -> Option<cua_sandbox_core::PowerControl> {
         use cua_sandbox_core::PowerControl;
         match runtime_type.trim().to_ascii_lowercase().as_str() {
-            "lume" => Some(PowerControl::Stop),
+            // The VM stops (its memory goes back to the machine) and boots
+            // again from its disk.
+            "lume" | "containerization" | "qemu" => Some(PowerControl::Stop),
             "gvisor" | "runsc" | "runc" | "container" | "docker" if managed::in_use() => {
                 Some(PowerControl::Stop)
             }
-            "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker" | "qemu" => {
-                Some(PowerControl::Suspend)
-            }
+            "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker"
+            | "firecracker" | "vz" => Some(PowerControl::Suspend),
             _ => None,
         }
     }
@@ -1013,18 +2058,165 @@ impl LocalRuntime for VmmLocal {
             .map_err(rt_err)
     }
 
+    async fn checkpoint_shared(&self, name: &str, checkpoint: &str) -> RuntimeResult<bool> {
+        let (_, rt) = self.owner(name).await?;
+        rt.checkpoint(name, checkpoint)
+            .await
+            .map(|info| info.shared_memory)
+            .map_err(rt_err)
+    }
+
+    async fn pin_checkpoint(
+        &self,
+        runtime_type: &str,
+        checkpoint: &str,
+        pinned: bool,
+    ) -> RuntimeResult<()> {
+        let kind = Self::backend_of(runtime_type).ok_or_else(|| {
+            RuntimeError::Other(format!("no local engine runs {runtime_type:?} sandboxes"))
+        })?;
+        let rt = self.runtime(kind).await.map_err(rt_err)?;
+        match rt.pin_checkpoint(checkpoint, pinned).await {
+            // An engine without pins of its own: the record's pin guards
+            // delete and prune.
+            Ok(()) | Err(VmmError::Unsupported { .. }) => Ok(()),
+            Err(e) => Err(rt_err(e)),
+        }
+    }
+
+    async fn fork_on(&self, runtime_type: &str, source: &str, new_name: &str) -> RuntimeResult<()> {
+        let kind = Self::backend_of(runtime_type).ok_or_else(|| {
+            RuntimeError::Other(format!("no local engine runs {runtime_type:?} sandboxes"))
+        })?;
+        let rt = self.runtime(kind).await.map_err(rt_err)?;
+        rt.fork(source, new_name).await.map_err(rt_err)
+    }
+
+    async fn delete_checkpoint(&self, runtime_type: &str, checkpoint: &str) -> RuntimeResult<()> {
+        let kind = Self::backend_of(runtime_type).ok_or_else(|| {
+            RuntimeError::Other(format!("no local engine runs {runtime_type:?} sandboxes"))
+        })?;
+        let rt = self.runtime(kind).await.map_err(rt_err)?;
+        rt.delete_checkpoint(checkpoint).await.map_err(rt_err)
+    }
+
+    async fn export_checkpoint_on(
+        &self,
+        runtime_type: &str,
+        checkpoint: &str,
+    ) -> RuntimeResult<cua_vmm::CheckpointExport> {
+        let kind = Self::backend_of(runtime_type).ok_or_else(|| {
+            RuntimeError::Other(format!("no local engine runs {runtime_type:?} sandboxes"))
+        })?;
+        let rt = self.runtime(kind).await.map_err(rt_err)?;
+        rt.export_checkpoint(checkpoint).await.map_err(rt_err)
+    }
+
+    async fn import_dir_on(&self, runtime_type: &str, digest: &str) -> Option<std::path::PathBuf> {
+        let kind = Self::backend_of(runtime_type)?;
+        self.runtime(kind).await.ok()?.import_dir(digest)
+    }
+
+    async fn import_checkpoint_on(
+        &self,
+        runtime_type: &str,
+        checkpoint: &str,
+        state: serde_json::Value,
+        qcow2_rebase: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    ) -> RuntimeResult<()> {
+        let kind = Self::backend_of(runtime_type).ok_or_else(|| {
+            RuntimeError::Other(format!("no local engine runs {runtime_type:?} sandboxes"))
+        })?;
+        let rt = self.runtime(kind).await.map_err(rt_err)?;
+        rt.import_checkpoint(checkpoint, state, qcow2_rebase)
+            .await
+            .map_err(rt_err)
+    }
+
+    async fn snapshot_abis(&self) -> Vec<String> {
+        // Only QEMU checkpoints are copied between hosts today.
+        match self.runtime(BackendKind::Qemu).await {
+            Ok(rt) => rt.snapshot_abis(),
+            Err(_) => vec![],
+        }
+    }
+
+    async fn start_fork(
+        &self,
+        runtime_type: &str,
+        spec: &LocalStartSpec,
+    ) -> RuntimeResult<LocalInstance> {
+        let rt = match Self::backend_of(runtime_type) {
+            Some(kind) => self.runtime(kind).await.map_err(rt_err)?,
+            None => self.owner(&spec.name).await?.1,
+        };
+        let mut s = StartSpec::new(&spec.name, ImageSource::Existing)
+            .cpus(spec.cpus.max(1))
+            .memory_mb(spec.memory_mb.max(256))
+            .ready_timeout(spec.ready_timeout);
+        for p in &spec.ports {
+            s = s.port(*p);
+        }
+        for pr in &spec.probes {
+            s = s.probe(match &pr.http_path {
+                Some(path) => cua_vmm::Probe::http(pr.port, path.clone()),
+                None => cua_vmm::Probe::tcp(pr.port),
+            });
+        }
+        s.env = spec.env.clone();
+        s.forkable = spec.forkable;
+        let inst = rt.start(&s).await.map_err(rt_err)?;
+        Ok(LocalInstance {
+            backend: runtime_label(&inst),
+            name: inst.name,
+            status: status_of(inst.status),
+            endpoints: endpoints_of(inst.endpoints),
+        })
+    }
+
+    /// A microVM fork gets its own token over vsock when it starts; a
+    /// container fork is created again with its own token in its
+    /// environment before its first start (a memory fork's restored
+    /// cua-spacesd is given it with `Init`); a QEMU VM's through cua-spacesd
+    /// when it restores its source's memory (a fork of a disk boots with
+    /// the new token in its cloud-init seed).
+    fn fork_has_own_identity(&self, runtime_type: &str) -> bool {
+        matches!(
+            Self::backend_of(runtime_type),
+            Some(
+                BackendKind::Firecracker
+                    | BackendKind::Vz
+                    | BackendKind::Container
+                    | BackendKind::Qemu
+            )
+        )
+    }
+
     async fn list(&self) -> RuntimeResult<Vec<LocalSummary>> {
         let mut out = Vec::new();
-        for kind in [BackendKind::Container, BackendKind::Qemu] {
+        let mut kinds = vec![BackendKind::Container, BackendKind::Qemu];
+        if cfg!(target_os = "linux") {
+            kinds.push(BackendKind::Firecracker);
+        }
+        if cfg!(target_os = "macos") {
+            kinds.push(BackendKind::Vz);
+            kinds.push(BackendKind::Containerization);
+        }
+        for kind in kinds {
             let Ok(rt) = self.runtime(kind).await else {
                 continue;
             };
             if let Ok(list) = rt.list().await {
-                out.extend(list.into_iter().map(|s| LocalSummary {
-                    name: s.name,
-                    backend: s.backend.as_str().to_string(),
-                    status: status_of(s.status),
-                }));
+                // Warm-pool members are not Spaces until claimed.
+                out.extend(
+                    list.into_iter()
+                        .filter(|s| !cua_vmm::is_pool_member(&s.name))
+                        .map(|s| LocalSummary {
+                            name: s.name,
+                            backend: s.backend.as_str().to_string(),
+                            status: status_of(s.status),
+                        }),
+                );
             }
         }
         Ok(out)
@@ -1064,20 +2256,13 @@ impl LocalRuntime for VmmLocal {
 
     async fn status_on(&self, name: &str, runtime_type: &str) -> RuntimeResult<InstanceStatus> {
         // The engine the state file names; unknown words ask every engine.
-        let kind = match runtime_type.trim().to_ascii_lowercase().as_str() {
-            "qemu" => BackendKind::Qemu,
-            "lume" if cfg!(target_os = "macos") => BackendKind::Lume,
-            "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker" => {
-                BackendKind::Container
-            }
+        let kind = match Self::backend_of(runtime_type) {
+            Some(k) => k,
             // Any engine may own it: not found only when every engine was
             // reachable and said so.
-            _ => {
+            None => {
                 let mut unreachable = None;
-                for kind in [BackendKind::Container, BackendKind::Qemu, BackendKind::Lume] {
-                    if kind == BackendKind::Lume && !cfg!(target_os = "macos") {
-                        continue;
-                    }
+                for kind in Self::backends() {
                     let rt = match self.runtime(kind).await {
                         Ok(rt) => rt,
                         Err(e) => {
@@ -1183,8 +2368,11 @@ impl LocalRuntime for VmmLocal {
             via: "vnc".into(),
             // `lume attach` opens the VM's own display (VNC as its fallback)
             // and handles the password.
-            open_command: cua_vmm::lume::lume_bin()
-                .map(|b| vec![b.display().to_string(), "attach".into(), name.to_string()]),
+            // Run with the channel's Lume environment, so a Local Lume
+            // attaches to a Local VM.
+            open_command: cua_vmm::lume::lume_cmd()
+                .map_err(rt_err)?
+                .map(|l| l.argv(["attach", name])),
         })
     }
 }
@@ -1207,6 +2395,15 @@ impl VmmLocal {
     /// [`RuntimeError::Unsupported`].
     async fn agentless_owner(&self, name: &str, op: &str) -> RuntimeResult<Arc<dyn VmmRuntime>> {
         let (kind, rt) = self.owner(name).await?;
+        // A microVM's init (or `container exec`) runs commands (no display
+        // without cua-spacesd).
+        if matches!(
+            kind,
+            BackendKind::Firecracker | BackendKind::Vz | BackendKind::Containerization
+        ) && op == "exec"
+        {
+            return Ok(rt);
+        }
         if kind != BackendKind::Lume {
             return Err(RuntimeError::Unsupported {
                 backend: kind.as_str().into(),
@@ -1217,34 +2414,61 @@ impl VmmLocal {
     }
 }
 
+// ------------------------------------------------------------------ preflight
+
+/// What pulling `reference` writes on a host of `arch` (`arm64`, `amd64`):
+/// the image catalog's download plus unpacked size. `None` for an image the
+/// catalog does not list or has not measured.
+fn catalog_pull_bytes(reference: &str, arch: &str) -> Option<u64> {
+    let bare = reference.split('@').next().unwrap_or(reference);
+    let entry = cua_image::catalog::find(bare)?;
+    let p = entry.sizes.as_ref()?.platform(arch)?;
+    Some(p.download.saturating_add(p.unpacked))
+}
+
+/// Refuses a create the machine cannot run, in plain words (the first
+/// failed check of [`cua_vmm::preflight`]), before anything is pulled. The
+/// disk is left to the guards of the create itself, which know the image's
+/// real size.
+async fn preflight_refusal(os: cua_vmm::GuestOs, backend: BackendKind) -> RuntimeResult<()> {
+    use cua_create_failure::preflight::Runs;
+    let runs = if backend == BackendKind::Container {
+        Runs::Container
+    } else {
+        Runs::Vm
+    };
+    let req = cua_vmm::preflight::request(cua_vmm::preflight::guest_of(os), runs, None);
+    let mut facts =
+        cua_vmm::preflight::gather_waiting(&req, cua_vmm::local_network::PROMPT_PATIENCE).await;
+    facts.free_bytes = None;
+    match cua_vmm::preflight::evaluate(&req, &facts)
+        .into_iter()
+        .next()
+    {
+        Some(issue) => Err(RuntimeError::Other(refusal_text(issue))),
+        None => Ok(()),
+    }
+}
+
+/// The refusal's words: a Local Network refusal names the app macOS holds
+/// responsible for this daemon (what System Settings lists: "Cua Spaces
+/// Local" for the Local build), not the generic name.
+fn refusal_text(issue: cua_create_failure::preflight::Issue) -> String {
+    use cua_create_failure::preflight::{IssueKind, local_network_denied};
+    if issue.kind == IssueKind::LocalNetwork
+        && let Some(app) = cua_vmm::local_network::ResponsibleApp::of_this_process()
+        && app.bundle
+    {
+        return local_network_denied(&app.name);
+    }
+    issue.message
+}
+
 // ------------------------------------------------------------------ doctor
 
 /// `cua runtime doctor`: the `cua-vmm` report (read-only).
 pub async fn doctor_report() -> DoctorReport {
     auto::doctor().await
-}
-
-/// `RuntimeService.Doctor`'s answer: the runtime report, plus on macOS
-/// Local Network access as this process has it and which app macOS holds
-/// responsible for it (`local_network`). This process is the one that
-/// talks to the VMs (the daemon, or the SDK embedding it); a CLI's own
-/// connect would test the terminal's grant instead (CUA-1807).
-pub async fn doctor_response() -> cua_proto::daemon::v1::DoctorResponse {
-    let report = doctor_report().await;
-    let mut json = serde_json::to_value(&report).unwrap_or_default();
-    if cfg!(target_os = "macos")
-        && let Some(map) = json.as_object_mut()
-    {
-        let ln = cua_vmm::local_network::report(&cua_vmm::local_network::lume_base()).await;
-        map.insert(
-            "local_network".into(),
-            serde_json::to_value(ln).unwrap_or_default(),
-        );
-    }
-    cua_proto::daemon::v1::DoctorResponse {
-        checks: doctor_checks(&report),
-        report_json: json.to_string(),
-    }
 }
 
 /// The report as `cua.daemon.v1` checks (one per backend).
@@ -1274,12 +2498,178 @@ pub fn doctor_checks(r: &DoctorReport) -> Vec<cua_proto::daemon::v1::RuntimeChec
                     BackendKind::Qemu => r.qemu.version.clone().unwrap_or_default(),
                     BackendKind::Lume => r.lume.version.clone().unwrap_or_default(),
                     BackendKind::Container => r.container.engine.clone().unwrap_or_default(),
+                    BackendKind::Firecracker => r
+                        .microvm
+                        .as_ref()
+                        .and_then(|m| m.firecracker_version.clone())
+                        .unwrap_or_default(),
+                    BackendKind::Containerization => r
+                        .containerization
+                        .as_ref()
+                        .map(|c| c.version.clone())
+                        .unwrap_or_default(),
                     _ => String::new(),
                 },
                 detail,
             }
         })
         .collect()
+}
+
+/// The `spacesd-static` row of `cua runtime doctor`: the static cua-spacesd
+/// that containers and microVMs put into an OCI image that carries none.
+/// Only a host with such a backend ready needs it.
+pub fn static_spacesd_check(needed: bool) -> cua_proto::daemon::v1::RuntimeCheck {
+    use cua_proto::daemon::v1::{CheckStatus, RuntimeCheck};
+    let arch = cua_vmm::Arch::host();
+    let (status, detail) = match cua_vmm::inject::require_binary(arch) {
+        Ok(p) => (
+            CheckStatus::Ok,
+            format!("{} (images without cua-spacesd get it)", p.display()),
+        ),
+        Err(e) if needed => (CheckStatus::Error, e.to_string()),
+        Err(_) => (
+            CheckStatus::NotApplicable,
+            "no container or microVM runtime is ready here".to_string(),
+        ),
+    };
+    RuntimeCheck {
+        name: "spacesd-static".into(),
+        status: status as i32,
+        version: String::new(),
+        detail,
+    }
+}
+
+/// How long a provider's `doctor` may take in `cua runtime doctor`.
+const EXTERNAL_DOCTOR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// One `cua runtime doctor` row per installed external runtime provider
+/// ([`cua_sandbox_core::external`]), from its `doctor` answer, and one per
+/// `cua-runtime-*` executable that is ignored (with why). Empty when none
+/// is installed.
+pub async fn external_doctor(
+    registry: &cua_sandbox_core::external::Registry,
+) -> Vec<(cua_proto::daemon::v1::RuntimeCheck, serde_json::Value)> {
+    use cua_proto::daemon::v1::{CheckStatus, RuntimeCheck};
+    use cua_sandbox_core::external::ExternalRuntime;
+    let found = registry.discover();
+    let asks = found.providers.iter().cloned().map(|p| async move {
+        let rt = ExternalRuntime::new(p.clone()).with_call_timeout(EXTERNAL_DOCTOR_TIMEOUT);
+        let answer = rt.doctor().await;
+        let m = &p.manifest;
+        let (ready, mut detail, missing) = match answer {
+            Ok(d) => (d.ready, d.detail, d.missing),
+            Err(e) => (false, format!("doctor failed: {e}"), vec![]),
+        };
+        let json = serde_json::json!({
+            "name": m.name,
+            "display_name": m.label(),
+            "kind": p.kind.as_str(),
+            "path": p.path.display().to_string(),
+            "os": m.os,
+            "arch": m.arch,
+            "images": m.images,
+            "ready": ready,
+            "detail": detail,
+            "missing": missing,
+        });
+        if !missing.is_empty() {
+            detail.push_str(&format!("; missing: {}", missing.join(", ")));
+        }
+        let detail = if detail.is_empty() {
+            format!("{} ({})", m.label(), p.kind)
+        } else {
+            format!("{} ({}): {detail}", m.label(), p.kind)
+        };
+        let check = RuntimeCheck {
+            name: m.name.clone(),
+            status: if ready {
+                CheckStatus::Ok
+            } else {
+                CheckStatus::Error
+            } as i32,
+            version: String::new(),
+            detail,
+        };
+        (check, json)
+    });
+    let mut out = futures_util::future::join_all(asks).await;
+    for s in &found.skipped {
+        let name = format!(
+            "{}{}",
+            cua_sandbox_core::external::EXECUTABLE_PREFIX,
+            s.name
+        );
+        out.push((
+            RuntimeCheck {
+                name: name.clone(),
+                status: CheckStatus::Error as i32,
+                version: String::new(),
+                detail: format!("ignored: {}", s.reason),
+            },
+            serde_json::json!({
+                "name": s.name,
+                "path": s.path.display().to_string(),
+                "ignored": s.reason,
+            }),
+        ));
+    }
+    out
+}
+
+/// `cua runtime doctor` as the daemon answers it: one check per built-in
+/// backend, then one per external runtime provider. The JSON report is
+/// the `cua-vmm` report, with an `external` list only when a provider is
+/// installed.
+pub async fn doctor_response() -> cua_proto::daemon::v1::DoctorResponse {
+    let (report, external) = tokio::join!(
+        doctor_report(),
+        external_doctor(cua_sandbox_core::external::Registry::global())
+    );
+    let mut checks = doctor_checks(&report);
+    let needs_static = [
+        BackendKind::Container,
+        BackendKind::Containerization,
+        BackendKind::Firecracker,
+        BackendKind::Vz,
+    ]
+    .into_iter()
+    .any(|k| report.backend(k).is_some_and(|b| b.ready));
+    checks.push(static_spacesd_check(needs_static));
+    let mut json = serde_json::to_value(&report).unwrap_or_default();
+    // On macOS: Local Network access as this process has it and which app
+    // macOS holds responsible for it (`local_network`). This process is the
+    // one that talks to the VMs (the daemon, or the SDK embedding it); a
+    // CLI's own connect would test the terminal's grant instead (CUA-1807).
+    if cfg!(target_os = "macos")
+        && let Some(map) = json.as_object_mut()
+    {
+        let ln = cua_vmm::local_network::report(&cua_vmm::local_network::lume_base()).await;
+        map.insert(
+            "local_network".into(),
+            serde_json::to_value(ln).unwrap_or_default(),
+        );
+    }
+    if let Some(map) = json.as_object_mut() {
+        // What would stop a create here, per Space the host can run, in
+        // words the apps and the CLI show as they are.
+        map.insert(
+            "preflight".into(),
+            serde_json::to_value(cua_vmm::preflight::report().await).unwrap_or_default(),
+        );
+    }
+    if !external.is_empty() {
+        let (rows, list): (Vec<_>, Vec<_>) = external.into_iter().unzip();
+        checks.extend(rows);
+        if let serde_json::Value::Object(o) = &mut json {
+            o.insert("external".into(), serde_json::Value::Array(list));
+        }
+    }
+    cua_proto::daemon::v1::DoctorResponse {
+        checks,
+        report_json: json.to_string(),
+    }
 }
 
 /// `cua runtime setup`: provisions `components` (`qemu`, `lume`; `runsc`
@@ -1289,8 +2679,26 @@ pub async fn setup(
     components: &[String],
     dry_run: bool,
 ) -> Result<Vec<cua_proto::daemon::v1::SetupStep>> {
+    setup_with(
+        doctor_report().await,
+        components,
+        dry_run,
+        cua_vmm::qemu::install_qemu,
+        cua_vmm::lume::install_lume,
+        kvm_step,
+    )
+    .await
+}
+
+async fn setup_with(
+    report: DoctorReport,
+    components: &[String],
+    dry_run: bool,
+    install_qemu: impl AsyncFn() -> cua_vmm::Result<()>,
+    install_lume: impl AsyncFn() -> cua_vmm::Result<()>,
+    kvm: impl AsyncFn(bool) -> Option<cua_proto::daemon::v1::SetupStep>,
+) -> Result<Vec<cua_proto::daemon::v1::SetupStep>> {
     use cua_proto::daemon::v1::{CheckStatus, SetupStep};
-    let report = doctor_report().await;
     let wanted: Vec<String> = if components.is_empty() {
         report
             .backends
@@ -1307,6 +2715,10 @@ pub async fn setup(
             "qemu" => Some(BackendKind::Qemu),
             "lume" => Some(BackendKind::Lume),
             "container" | "runsc" | "gvisor" => Some(BackendKind::Container),
+            "firecracker" => Some(BackendKind::Firecracker),
+            "microvm" | "vz" if cfg!(target_os = "macos") => Some(BackendKind::Vz),
+            "microvm" => Some(BackendKind::Firecracker),
+            "containerization" | "apple" => Some(BackendKind::Containerization),
             _ => None,
         };
         let Some(kind) = kind else {
@@ -1334,8 +2746,15 @@ pub async fn setup(
             continue;
         }
         let result = match kind {
-            BackendKind::Qemu => cua_vmm::qemu::install_qemu().await,
-            BackendKind::Lume => cua_vmm::lume::install_lume().await,
+            BackendKind::Qemu => install_qemu().await,
+            BackendKind::Lume => install_lume().await,
+            BackendKind::Firecracker => install_microvm().await,
+            BackendKind::Vz => install_vz().await,
+            BackendKind::Containerization => {
+                ContainerizationRuntime::with_defaults()
+                    .ensure_ready()
+                    .await
+            }
             _ => Err(VmmError::Unsupported {
                 backend: "container",
                 op: "unattended runsc install (run the plan shown by --dry-run)",
@@ -1354,7 +2773,107 @@ pub async fn setup(
             },
         });
     }
+    let qemu_installed = report.qemu.qemu_img.is_some()
+        && (report.qemu.binaries)
+            .get(report.host.arch.qemu())
+            .is_some_and(Option::is_some);
+    let qemu_present = match steps.iter().find(|s| s.name == "qemu") {
+        Some(s) => s.status != CheckStatus::Error as i32,
+        None => components.is_empty() && qemu_installed,
+    };
+    if qemu_present {
+        steps.extend(kvm(dry_run).await);
+    }
     Ok(steps)
+}
+
+/// The guest environment of a headless Space: the image's entrypoint skips
+/// its desktop (`CUA_HEADLESS`) and cua-spacesd serves no desktop services
+/// and no QUIC media socket.
+pub(crate) fn headless_env() -> [(String, String); 3] {
+    [
+        ("CUA_HEADLESS".into(), "1".into()),
+        ("CUA_ENV_NO_DESKTOP".into(), "true".into()),
+        ("CUA_ENV_QUIC_PORT".into(), "0".into()),
+    ]
+}
+
+/// The command of a headless container or microVM: cua-spacesd alone, at
+/// the path every Cua image installs it (`CUA_SPACESD_BIN` in the images'
+/// start scripts). Its token comes from the environment, else from the
+/// token files the images' start scripts read (a warm-pool member's secret
+/// is written to `/etc/cua/env-token`, and a claim rewrites both).
+pub(crate) fn headless_command_line() -> Vec<String> {
+    vec![
+        "/bin/sh".into(),
+        "-c".into(),
+        concat!(
+            "if [ -z \"$CUA_ENV_TOKEN\" ]; then ",
+            "for f in /run/cua/env-token /etc/cua/env-token; do ",
+            "if [ -r \"$f\" ]; then CUA_ENV_TOKEN=$(tr -d '\\r\\n' < \"$f\"); export CUA_ENV_TOKEN; break; fi; ",
+            "done; fi; ",
+            "exec \"${CUA_SPACESD_BIN:-/usr/local/bin/cua-spacesd}\""
+        )
+        .into(),
+    ]
+}
+
+/// `cua runtime setup firecracker`: the pinned Firecracker release into
+/// `~/.cua/bin` and the guest kernel into the microVM cache.
+/// macOS microVMs: the pinned guest kernel and gvproxy (`cua-vz` and the
+/// guest init ship with cua).
+async fn install_vz() -> std::result::Result<(), VmmError> {
+    use cua_vmm::microvm::{assets, vz};
+    if let Some(why) = vz::unsupported_reason() {
+        return Err(VmmError::other(why));
+    }
+    if vz::vz_bin().is_none() || assets::init_bin().is_none() {
+        return Err(VmmError::missing(
+            "cua-vz and cua-microvm-init",
+            "they ship next to `cua` (a cua release, or libs/cua/vz/build.sh and a static \
+             aarch64-unknown-linux-musl cua-microvm-init in ~/.cua/bin)",
+        ));
+    }
+    vz::ensure_gvproxy().await?;
+    assets::ensure_kernel(&MicroVmConfig::default().root).await?;
+    Ok(())
+}
+
+async fn install_microvm() -> std::result::Result<(), VmmError> {
+    if cua_vmm::microvm::assets::firecracker_bin().is_none() {
+        cua_vmm::microvm::assets::install_firecracker().await?;
+    }
+    cua_vmm::microvm::assets::ensure_kernel(&MicroVmConfig::default().root).await?;
+    Ok(())
+}
+
+async fn kvm_step(dry_run: bool) -> Option<cua_proto::daemon::v1::SetupStep> {
+    use cua_proto::daemon::v1::{CheckStatus, SetupStep};
+    if cua_vmm::host::HostOs::current() != cua_vmm::host::HostOs::Linux {
+        return None;
+    }
+    let denied = cua_vmm::host::kvm_usable()
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+    if denied && !dry_run && !cua_vmm::host::sudo_available() {
+        return Some(SetupStep {
+            name: "kvm".into(),
+            status: CheckStatus::Ok as i32,
+            detail: "KVM access denied; using slow TCG emulation (sudo unavailable)".into(),
+        });
+    }
+    let user = std::env::var("USER").ok();
+    let run = async |program: &str, args: &[&str]| cua_vmm::host::run(program, args).await;
+    let (status, detail) =
+        match cua_vmm::qemu::grant_kvm(cua_vmm::host::kvm_usable, user, dry_run, run).await {
+            Ok(detail) if dry_run && denied => (CheckStatus::Installable, detail),
+            Ok(detail) => (CheckStatus::Ok, detail),
+            Err(e) => (CheckStatus::Error, Some(e.to_string())),
+        };
+    detail.map(|detail| SetupStep {
+        name: "kvm".into(),
+        status: status as i32,
+        detail,
+    })
 }
 
 // ------------------------------------------------------------------ images
@@ -1545,8 +3064,44 @@ async fn build_with(
     Ok(out)
 }
 
+/// Whether `backend`'s `Runtime::claim` delivers the Space's token to the
+/// guest itself (a microVM over vsock, a QEMU VM through its token file), so
+/// the pool secret no longer opens it and is never presented to it.
+fn claim_delivers_token(backend: BackendKind) -> bool {
+    matches!(
+        backend,
+        BackendKind::Firecracker | BackendKind::Vz | BackendKind::Qemu
+    )
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_macos_pull_is_sized_from_the_catalog() {
+        let gib = 1u64 << 30;
+        let mac = super::catalog_pull_bytes("ghcr.io/trycua/macos:26", "arm64").unwrap();
+        // About 24 GB download plus about 35 GB unpacked, not a 30 GB guess.
+        assert!(mac > 50 * gib, "{mac}");
+        // A pinned reference is the same image.
+        assert_eq!(
+            super::catalog_pull_bytes("ghcr.io/trycua/macos:26@sha256:00", "arm64"),
+            Some(mac)
+        );
+        assert_eq!(
+            super::catalog_pull_bytes("example.com/not/listed:1", "arm64"),
+            None
+        );
+    }
+
+    #[test]
+    fn only_backends_whose_claim_delivers_the_token_skip_the_pool_secret() {
+        assert!(claim_delivers_token(BackendKind::Firecracker));
+        assert!(claim_delivers_token(BackendKind::Vz));
+        assert!(claim_delivers_token(BackendKind::Qemu));
+        assert!(!claim_delivers_token(BackendKind::Container));
+        assert!(!claim_delivers_token(BackendKind::Lume));
+        assert!(!claim_delivers_token(BackendKind::Containerization));
+    }
 
     #[test]
     fn refuse_gpu_follows_the_catalog() {
@@ -1676,6 +3231,82 @@ mod tests {
             accel: "hvf".into(),
         };
         assert_eq!(runtime_label(&inst(BackendKind::Qemu, vm)), "qemu");
+        let vz = Isolation::Vm { accel: "vz".into() };
+        assert_eq!(
+            runtime_label(&inst(BackendKind::Containerization, vz)),
+            "containerization"
+        );
+    }
+
+    /// A Mac's microVMs live on Apple's Containerization: found by their
+    /// label, and stopped (no pause) when idle.
+    #[test]
+    fn a_macs_microvms_are_containerization_spaces() {
+        use cua_sandbox_core::{LocalRuntime, PowerControl};
+        let local = VmmLocal::default();
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                VmmLocal::backend_of("containerization"),
+                Some(BackendKind::Containerization)
+            );
+            assert!(VmmLocal::backends().contains(&BackendKind::Containerization));
+            assert!(!VmmLocal::backends().contains(&BackendKind::Firecracker));
+        } else {
+            assert_eq!(VmmLocal::backend_of("containerization"), None);
+            assert!(!VmmLocal::backends().contains(&BackendKind::Containerization));
+        }
+        assert_eq!(
+            local.power_control("containerization"),
+            Some(PowerControl::Stop)
+        );
+        assert!(!local.fork_has_own_identity("containerization"));
+        // A container fork is created again with its own token.
+        assert!(local.fork_has_own_identity("gvisor"));
+        assert!(local.fork_has_own_identity("runc"));
+        // A QEMU fork gets its own through cua-spacesd (memory) or its seed.
+        assert!(local.fork_has_own_identity("qemu"));
+    }
+
+    /// Turning a VM off frees its memory: QEMU and Lume VMs stop (their
+    /// disk is kept) and boot again; containers still pause.
+    #[test]
+    fn vms_stop_and_free_their_memory_containers_pause() {
+        use cua_sandbox_core::{LocalRuntime, PowerControl};
+        let local = VmmLocal::default();
+        assert_eq!(local.power_control("qemu"), Some(PowerControl::Stop));
+        assert_eq!(local.power_control("lume"), Some(PowerControl::Stop));
+        if !managed::in_use() {
+            assert_eq!(local.power_control("gvisor"), Some(PowerControl::Suspend));
+        }
+        assert_eq!(
+            local.power_control("firecracker"),
+            Some(PowerControl::Suspend)
+        );
+    }
+
+    /// A Mac's microVMs under cua-vz: found by their label, paused when
+    /// idle (in memory, like Firecracker's), and a fork restored from
+    /// memory gets its own identity from the guest init.
+    #[test]
+    fn a_macs_vz_microvms_suspend_and_forks_get_their_own_identity() {
+        use cua_sandbox_core::{LocalRuntime, PowerControl};
+        let local = VmmLocal::default();
+        if cfg!(target_os = "macos") {
+            assert_eq!(VmmLocal::backend_of("vz"), Some(BackendKind::Vz));
+            assert!(VmmLocal::backends().contains(&BackendKind::Vz));
+            assert!(local.fork_has_own_identity("vz"));
+        } else {
+            assert_eq!(VmmLocal::backend_of("vz"), None);
+            assert!(!VmmLocal::backends().contains(&BackendKind::Vz));
+        }
+        assert_eq!(local.power_control("vz"), Some(PowerControl::Suspend));
+        assert_eq!(
+            cua_sandbox_core::placement_of_backend("vz"),
+            (
+                cua_sandbox_core::placement::Kind::MicroVm,
+                cua_sandbox_core::placement::Runtime::Vz
+            )
+        );
     }
 
     use super::*;
@@ -1773,6 +3404,149 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(lume_only_vm.unwrap().placement.backend, BackendKind::Lume);
+    }
+
+    /// Any OCI rootfs without cua-spacesd is injected one on the kinds that
+    /// run OCI images directly; images that carry it, VMs and an explicit
+    /// opt-out are left as they are.
+    #[tokio::test]
+    async fn an_image_without_spacesd_gets_one_on_containers_and_microvms() {
+        use cua_sandbox_core::placement::{Kind, Runtime};
+        let _turn = FAKE_REGISTRY.lock().await;
+        let host = cua_vmm::Arch::host().oci();
+        let mut reg = cua_image::testing::FakeRegistry::default();
+        reg.index("docker.io/library/alpine:3.20", &[host], false, None);
+        reg.index(
+            "ghcr.io/acme/cua:1",
+            &[host],
+            false,
+            Some(serde_json::json!({"ai.cua.spacesd": "true"})),
+        );
+        cua_image::resolve::set_source(Some(Arc::new(reg)));
+        let resolve = |image: &'static str, kind: Kind| async move {
+            resolve_placement_for(image, "linux", kind, &Runtime::Auto, None)
+                .await
+                .unwrap()
+        };
+        let plain = resolve("docker.io/library/alpine:3.20", Kind::Container).await;
+        let cua = resolve("ghcr.io/acme/cua:1", Kind::Container).await;
+        let microvm = resolve("docker.io/library/alpine:3.20", Kind::MicroVm).await;
+        cua_image::resolve::set_source(None);
+
+        let plain_image = plain.image.as_ref();
+        assert_eq!(plain_image.unwrap().spacesd, Some(false));
+        for backend in [
+            BackendKind::Container,
+            BackendKind::Containerization,
+            BackendKind::Firecracker,
+            BackendKind::Vz,
+        ] {
+            assert!(wants_injection(None, plain_image, backend), "{backend}");
+            assert!(
+                wants_injection(Some(true), plain_image, backend),
+                "{backend}"
+            );
+            assert!(
+                !wants_injection(Some(false), plain_image, backend),
+                "spacesd=false keeps today's behaviour on {backend}"
+            );
+        }
+        for backend in [BackendKind::Qemu, BackendKind::Lume] {
+            assert!(!wants_injection(None, plain_image, backend), "{backend}");
+        }
+        assert!(!wants_injection(None, None, BackendKind::Container));
+        assert!(
+            !wants_injection(None, cua.image.as_ref(), BackendKind::Container),
+            "an image that carries cua-spacesd is left alone"
+        );
+        assert!(matches!(
+            microvm.placement.backend,
+            BackendKind::Firecracker | BackendKind::Vz | BackendKind::Containerization
+        ));
+        assert!(wants_injection(
+            None,
+            microvm.image.as_ref(),
+            microvm.placement.backend
+        ));
+    }
+
+    /// A VM of a bare OCI image is refused with the way out.
+    #[tokio::test]
+    async fn a_vm_of_a_bare_oci_image_says_to_use_a_container_or_microvm() {
+        use cua_sandbox_core::placement::{Kind, Runtime};
+        let _turn = FAKE_REGISTRY.lock().await;
+        let host = cua_vmm::Arch::host().oci();
+        let mut reg = cua_image::testing::FakeRegistry::default();
+        reg.index("docker.io/library/alpine:3.20", &[host], false, None);
+        cua_image::resolve::set_source(Some(Arc::new(reg)));
+        let vm = resolve_placement_for(
+            "docker.io/library/alpine:3.20",
+            "linux",
+            Kind::Vm,
+            &Runtime::Auto,
+            None,
+        )
+        .await;
+        cua_image::resolve::set_source(None);
+        match vm.unwrap_err() {
+            Error::InvalidPlacement { message, .. } => {
+                assert!(message.contains("kind container or microvm"), "{message}");
+                assert!(message.contains("cua build"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn doctor_reports_the_static_spacesd_where_a_runtime_needs_it() {
+        use cua_proto::daemon::v1::CheckStatus;
+        let dir = tempfile::tempdir().unwrap();
+        let good = dir.path().join("cua-spacesd");
+        // A minimal static ELF for the host's architecture.
+        let mut elf = vec![0u8; 64 + 56];
+        elf[..4].copy_from_slice(b"\x7fELF");
+        elf[4] = 2;
+        elf[5] = 1;
+        let machine: u16 = if cfg!(target_arch = "aarch64") {
+            183
+        } else {
+            62
+        };
+        elf[18..20].copy_from_slice(&machine.to_le_bytes());
+        elf[32..40].copy_from_slice(&64u64.to_le_bytes());
+        elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+        elf[56..58].copy_from_slice(&1u16.to_le_bytes());
+        std::fs::write(&good, &elf).unwrap();
+        // SAFETY: this is the only test of this crate that sets the variable.
+        unsafe { std::env::set_var(cua_vmm::inject::ENV_BINARY, &good) };
+        let ok = static_spacesd_check(true);
+        assert_eq!(
+            (ok.name.as_str(), ok.status),
+            ("spacesd-static", CheckStatus::Ok as i32)
+        );
+        assert!(ok.detail.contains("cua-spacesd"), "{}", ok.detail);
+        // A dynamic or foreign file is no use: an error where it is needed.
+        std::fs::write(dir.path().join("bad"), b"not an elf").unwrap();
+        unsafe {
+            std::env::set_var(cua_vmm::inject::ENV_BINARY, dir.path().join("bad"));
+        }
+        assert_eq!(static_spacesd_check(true).status, CheckStatus::Error as i32);
+        assert_eq!(
+            static_spacesd_check(false).status,
+            CheckStatus::NotApplicable as i32,
+            "nothing to inject into on this host"
+        );
+        unsafe { std::env::remove_var(cua_vmm::inject::ENV_BINARY) };
+    }
+
+    #[test]
+    fn the_vm_hint_is_only_for_rootfs_only_images_asked_for_a_vm() {
+        use cua_image::resolve::Backend;
+        let rootfs = vec!["rootfs".to_string()];
+        assert!(vm_hint(Backend::Vm, &rootfs).contains("microvm"));
+        assert_eq!(vm_hint(Backend::Container, &rootfs), "");
+        assert_eq!(vm_hint(Backend::Vm, &["containerdisk".to_string()]), "");
+        assert_eq!(vm_hint(Backend::Vm, &[]), "");
     }
 
     #[tokio::test]
@@ -1883,5 +3657,186 @@ mod tests {
         let r = place("localhost:5000/img:tag", "linux").unwrap();
         assert_eq!(r.image, ImageSource::oci("localhost:5000/img:tag"));
         assert!(place(" ", "linux").is_err());
+    }
+
+    fn qemu_report(ready: bool) -> cua_vmm::auto::DoctorReport {
+        use cua_vmm::auto::{BackendStatus, DoctorReport, HostReport};
+        DoctorReport {
+            host: HostReport {
+                os: cua_vmm::host::HostOs::Linux,
+                arch: cua_vmm::Arch::X86_64,
+                kvm: false,
+                accel: Default::default(),
+            },
+            backends: vec![BackendStatus {
+                backend: super::BackendKind::Qemu,
+                ready,
+                provisionable: true,
+                detail: String::new(),
+                missing: vec![],
+                provisioning: vec!["apt-get install qemu".into()],
+            }],
+            qemu: Default::default(),
+            lume: Default::default(),
+            container: Default::default(),
+            containerization: Default::default(),
+            microvm: Default::default(),
+            vz: Default::default(),
+        }
+    }
+
+    #[test]
+    fn doctor_preserves_backend_contract() {
+        use cua_proto::daemon::v1::CheckStatus;
+        let mut report = qemu_report(false);
+        assert_eq!(
+            super::doctor_checks(&report)[0].status,
+            CheckStatus::Installable as i32
+        );
+        report.backends[0].provisionable = false;
+        assert_eq!(
+            super::doctor_checks(&report)[0].status,
+            CheckStatus::Error as i32
+        );
+    }
+
+    fn kvm_step() -> Option<cua_proto::daemon::v1::SetupStep> {
+        Some(cua_proto::daemon::v1::SetupStep {
+            name: "kvm".into(),
+            status: cua_proto::daemon::v1::CheckStatus::Ok as i32,
+            detail: "added".into(),
+        })
+    }
+
+    async fn setup_steps(
+        report: cua_vmm::auto::DoctorReport,
+        components: &[&str],
+        dry_run: bool,
+        installs: bool,
+    ) -> Vec<(String, cua_proto::daemon::v1::CheckStatus)> {
+        let components: Vec<String> = components.iter().map(|c| c.to_string()).collect();
+        let install = async || match installs {
+            true => Ok(()),
+            false => Err(super::VmmError::PermissionDenied("sudo".into())),
+        };
+        let kvm = async |_| kvm_step();
+        super::setup_with(report, &components, dry_run, &install, &install, kvm)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.name, s.status.try_into().unwrap()))
+            .collect()
+    }
+
+    fn steps(
+        steps: &[(&str, cua_proto::daemon::v1::CheckStatus)],
+    ) -> Vec<(String, cua_proto::daemon::v1::CheckStatus)> {
+        steps.iter().map(|(n, s)| (n.to_string(), *s)).collect()
+    }
+
+    #[tokio::test]
+    async fn the_kvm_step_follows_qemu_once_it_is_present() {
+        use cua_proto::daemon::v1::CheckStatus::{Installable, Ok};
+        assert_eq!(
+            setup_steps(qemu_report(false), &[], false, true).await,
+            steps(&[("qemu", Ok), ("kvm", Ok)])
+        );
+        assert_eq!(
+            setup_steps(qemu_report(true), &["qemu"], false, true).await,
+            steps(&[("qemu", Ok), ("kvm", Ok)])
+        );
+        assert_eq!(
+            setup_steps(qemu_report(false), &["qemu"], true, true).await,
+            steps(&[("qemu", Installable), ("kvm", Ok)])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_qemu_install_has_no_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
+        assert_eq!(
+            setup_steps(qemu_report(false), &["qemu"], false, false).await,
+            steps(&[("qemu", Error)])
+        );
+    }
+
+    #[tokio::test]
+    async fn components_without_qemu_have_no_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
+        assert_eq!(
+            setup_steps(qemu_report(false), &["lume"], false, false).await,
+            steps(&[("lume", Error)])
+        );
+        assert!(
+            setup_steps(qemu_report(true), &[], false, true)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn installed_qemu_denied_kvm_still_gets_a_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Ok;
+        let mut report = qemu_report(false);
+        report.backends[0].provisionable = false;
+        report.qemu.qemu_img = Some("/usr/bin/qemu-img".into());
+        let system = Some("/usr/bin/qemu-system-x86_64".into());
+        report.qemu.binaries.insert("x86_64".into(), system);
+        assert_eq!(
+            setup_steps(report, &[], false, true).await,
+            steps(&[("kvm", Ok)])
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod external_doctor_tests {
+    use super::external_doctor;
+    use cua_proto::daemon::v1::CheckStatus;
+    use cua_sandbox_core::external::Registry;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn install(dir: &std::path::Path, name: &str, doctor: &str) {
+        let exe = dir.join(format!("cua-runtime-{name}"));
+        let script = format!(
+            "#!/bin/sh\ncat >/dev/null\ncase \"$1\" in\n\
+             info) echo '{{\"protocol\":1,\"name\":\"{name}\",\"display_name\":\"macOS VMs\",\"kind\":\"vm\"}}';;\n\
+             doctor) echo '{doctor}';;\nesac\n"
+        );
+        std::fs::write(&exe, script).unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn doctor_has_a_row_per_provider_and_none_without() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::with_dirs(vec![dir.path().into()]);
+        assert!(external_doctor(&reg).await.is_empty());
+
+        install(dir.path(), "acme", r#"{"ready":true,"detail":"up"}"#);
+        install(
+            dir.path(),
+            "beta",
+            r#"{"ready":false,"detail":"not set up","missing":["service"]}"#,
+        );
+        install(dir.path(), "qemu", r#"{"ready":true}"#);
+        let mut rows = external_doctor(&reg).await;
+        rows.sort_by(|a, b| a.0.name.cmp(&b.0.name));
+        let names: Vec<&str> = rows.iter().map(|r| r.0.name.as_str()).collect();
+        assert_eq!(names, ["acme", "beta", "cua-runtime-qemu"]);
+        assert_eq!(rows[0].0.status, CheckStatus::Ok as i32);
+        assert_eq!(rows[0].0.detail, "macOS VMs (vm): up");
+        assert_eq!(rows[1].0.status, CheckStatus::Error as i32);
+        assert_eq!(
+            rows[1].0.detail,
+            "macOS VMs (vm): not set up; missing: service"
+        );
+        assert_eq!(rows[1].1["missing"][0], "service");
+        assert_eq!(rows[2].0.status, CheckStatus::Error as i32);
+        assert!(
+            rows[2].0.detail.starts_with("ignored: "),
+            "{}",
+            rows[2].0.detail
+        );
     }
 }

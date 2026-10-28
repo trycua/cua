@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  headingName,
   fenceIndentedCode,
   SANDBOX_PAGES,
   assertCoverage,
@@ -75,30 +76,25 @@ test('classes render a signature fence, attributes table and one heading per met
 
 test('every page section maps to a unique anchor on its page', () => {
   const anchors = sandboxAnchors();
-  assert.equal(anchors.get('Image'), '/cua-sdk/reference/python/image#image');
-  assert.equal(anchors.get('Pool'), '/cua-sdk/reference/python/pool#pool');
+  assert.equal(anchors.get('Image'), '/cua-sdk/reference/python/sandbox#image');
+  assert.equal(anchors.get('Pool'), undefined);
   assert.equal(anchors.get('Shell'), '/cua-sdk/reference/python/interfaces#shell');
-  const names = SANDBOX_PAGES.flatMap((p) =>
-    p.sections.flatMap((s) => s.objects.map((o) => o.split('.').at(-1)))
-  );
+  // Pools on this machine are a section of the Sandbox page.
+  assert.equal(anchors.get('list_pools'), '/cua-sdk/reference/python/sandbox#list_pools');
+  const heading = (s: { prefix?: string }, o: string) => headingName(o.split('.').at(-1)!, undefined, s.prefix);
+  const names = SANDBOX_PAGES.flatMap((p) => p.sections.flatMap((s) => s.objects.map((o) => heading(s, o))));
   assert.equal(new Set(names).size, names.length, 'object names must be unique across pages');
   // Section titles must not collide with object anchors on the same page.
   for (const page of SANDBOX_PAGES) {
     const objects = new Set(
-      page.sections.flatMap((s) => s.objects.map((o) => o.split('.').at(-1)!.toLowerCase()))
+      page.sections.flatMap((s) => s.objects.map((o) => heading(s, o).toLowerCase()))
     );
     for (const section of page.sections)
       assert.ok(!objects.has(section.title.toLowerCase()), section.title);
   }
 });
 
-test('coverage fails on an undocumented public name and tolerates fleet_sdk re-exports', () => {
-  assert.doesNotThrow(() =>
-    assertCoverage({
-      objects: [],
-      modules: [module(['Image', 'VmTemplate'], { VmTemplate: 'fleet_sdk' })],
-    })
-  );
+test('coverage fails on an undocumented public name', () => {
   assert.throws(
     () => assertCoverage({ objects: [], modules: [module(['Image', 'Brand New'])] }),
     /Brand New/
@@ -107,10 +103,10 @@ test('coverage fails on an undocumented public name and tolerates fleet_sdk re-e
 
 test('re-exports are grouped by source module', () => {
   const text = renderReexports(
-    module(['Image', 'B', 'A'], { A: 'fleet_sdk', B: 'fleet_sdk' }),
+    module(['Image', 'B', 'A'], { A: 'other_sdk', B: 'other_sdk' }),
     new Set(['Image'])
   );
-  assert.match(text, /\| `fleet_sdk` \| `A`, `B` \|/);
+  assert.match(text, /\| `other_sdk` \| `A`, `B` \|/);
   assert.equal(renderReexports(module(['Image']), new Set(['Image'])), '');
 });
 

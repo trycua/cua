@@ -20,6 +20,7 @@ import { AppTeleportPicker } from "./AppTeleportPicker";
 import { useGridLoads } from "./pickerLoads";
 import { PickerTileView, tileIconKey, tileThumbnailKey } from "./PickerTile";
 import { SearchGlyph } from "./SearchGlyph";
+import { useT } from "../i18n";
 
 /** The picker's tabs: the app catalog (default), this Mac's open windows,
  * and the Space's own windows (streamed here). */
@@ -37,6 +38,7 @@ export function TeleportPicker({
   bridge,
   apps,
 }: { bridge?: TeleportBridge; apps?: TeleportAppsBridge } = {}) {
+  const t = useT(["teleport", "common"]);
   const teleport = useMemo(() => bridge ?? createTeleportBridge(), [bridge]);
   const appsBridge = useMemo(() => apps ?? createTeleportAppsBridge(), [apps]);
   const [config, setConfig] = useState<TeleportPickerConfig | null>(null);
@@ -136,11 +138,11 @@ export function TeleportPicker({
     return (
       <div className="hp-window">
         <section className="hp-panel hp-panel-status" role="dialog" aria-modal="true">
-          <h1 className="hp-status-title">Could not open the teleport picker</h1>
+          <h1 className="hp-status-title">{t("teleport.picker.open_failed")}</h1>
           <p className="hp-status-error">{fatal}</p>
           <div className="hp-status-actions">
             <button type="button" className="hp-button" onClick={close}>
-              Close
+              {t("common.action.close")}
             </button>
           </div>
         </section>
@@ -152,7 +154,7 @@ export function TeleportPicker({
     return (
       <div className="hp-window">
         <section className="hp-panel hp-panel-status" role="dialog" aria-modal="true">
-          <p className="hp-status-hint">Preparing…</p>
+          <p className="hp-status-hint">{t("teleport.picker.preparing")}</p>
         </section>
       </div>
     );
@@ -168,7 +170,7 @@ export function TeleportPicker({
   return (
     <div className="hp-window">
       <section className="hp-panel" role="dialog" aria-modal="true" data-tab={tab}>
-        <div className="hp-tabs" role="tablist" aria-label="Teleport">
+        <div className="hp-tabs" role="tablist" aria-label={t("teleport.picker.tabs_label")}>
           {tabs.map((t) => (
             <button
               key={t.id}
@@ -252,6 +254,7 @@ function PickView({
   onChoose: (entry: CatalogEntry) => void;
   onCancel: () => void;
 }) {
+  const t = useT(["teleport", "common"]);
   const gridTab: PickerGridTab = tab === "space" ? "windows" : "space";
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -384,8 +387,8 @@ function PickView({
           type="search"
           value={query}
           autoFocus
-          placeholder="Search"
-          aria-label="Search"
+          placeholder={t("teleport.picker.search")}
+          aria-label={t("teleport.picker.search")}
           onChange={(event) => setQuery(event.target.value)}
         />
       </div>
@@ -416,7 +419,7 @@ function PickView({
         )}
         <div className="hp-footer-right">
           <button type="button" className="hp-cancel" onClick={onCancel}>
-            Cancel
+            {t("common.action.cancel")}
           </button>
           <button
             type="button"

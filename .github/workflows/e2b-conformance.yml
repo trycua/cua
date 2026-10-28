@@ -1,0 +1,203 @@
+name: "e2b conformance (cua-e2b)"
+
+# cua-e2b claims the e2b 2.42.0, 2.56.0 and 2.58.0 Python APIs (2.58 is the
+# newest golden). This workflow keeps that claim honest:
+#
+# - hermetic: the whole cua-e2b test suite over the in-memory backend, with
+#   hypothesis, the shim-overhead perf guard (1.5x of the committed baseline)
+#   and the coverage matrix check (PRs that touch cua-e2b, and weekly).
+# - api: each pinned e2b release must still dump exactly its committed API
+#   and public-surface golden, and the latest e2b release is diffed against
+#   the newest golden, so a new or changed signature, dataclass field,
+#   module, class or exception base fails loudly (weekly, and on PRs that
+#   touch cua-e2b). When a newer release changes the API, record its goldens
+#   (`python -m conformance.api`, `python -m conformance.surface`), make
+#   cua-e2b meet it, and add it to PINNED_E2B.
+# - live-e2b: with the E2B_API_KEY secret, the conformance suite runs against
+#   E2B through the latest e2b release and is compared with the committed
+#   behaviour golden: a changed return shape or error fails (weekly).
+# - live-cua: on a runner that can boot Linux VMs (`vars.CUA_E2B_VM_RUNNER`,
+#   a self-hosted macOS label), the same suite runs through cua-e2b against
+#   real Linux `vm` Spaces (weekly and on demand).
+
+on:
+  pull_request:
+    paths:
+      - "libs/python/cua-e2b/**"
+      - ".github/workflows/e2b-conformance.yml"
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PINNED_E2B: "2.42.0 2.56.0 2.58.0"
+  NEWEST_E2B: "2.58.0"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  hermetic:
+    name: Hermetic suite, properties, perf guard, coverage matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: libs/python/cua-e2b
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Tests (surface of three e2b releases, semantics, sync API, properties, matrix)
+        run: |
+          uv run --no-project --isolated --python 3.12 --with pytest --with pytest-asyncio \
+            --with hypothesis --with-editable . python -m pytest -q -p no:cacheprovider tests
+      - name: Shim overhead stays within 1.5x of the committed baseline
+        env:
+          CUA_E2B_PERF: "1"
+        run: |
+          uv run --no-project --isolated --python 3.12 --with pytest --with pytest-asyncio \
+            --with-editable . python -m pytest -q -p no:cacheprovider -m perf tests/test_perf_guard.py
+
+  api:
+    name: API golden (pinned and latest e2b)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libs/python/cua-e2b/tests
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: The pinned releases still match their goldens
+        run: |
+          for v in $PINNED_E2B; do
+            uv run --no-project --isolated --python 3.12 --with "e2b==$v" \
+              python -m conformance.api > /tmp/pinned.json
+            diff -u conformance/golden/e2b-$v-api.json /tmp/pinned.json
+          done
+      - name: The pinned releases still match their public-surface goldens
+        run: |
+          for v in $PINNED_E2B; do
+            uv run --no-project --isolated --python 3.12 --with "e2b==$v" \
+              python -m conformance.surface > /tmp/pinned-surface.json
+            cmp conformance/golden/e2b-$v-surface.json /tmp/pinned-surface.json
+          done
+      # A new e2b release drifting is news for the weekly run, not a reason
+      # to block an unrelated PR.
+      - name: The latest release has not drifted from the golden
+        if: github.event_name != 'pull_request'
+        run: |
+          uv run --no-project --isolated --python 3.12 --with e2b \
+            python -c "import importlib.metadata as m; print('latest e2b', m.version('e2b'))"
+          uv run --no-project --isolated --python 3.12 --with e2b \
+            python -m conformance.api > /tmp/latest.json
+          uv run --no-project --python 3.12 python - <<'EOF'
+          import json, sys
+          from conformance import api
+          golden = json.load(open(f"conformance/golden/e2b-{__import__('os').environ['NEWEST_E2B']}-api.json"))
+          latest = json.load(open("/tmp/latest.json"))
+          problems = api.compare(golden, latest)
+          added = sorted(set(latest["callables"]) - set(golden["callables"]))
+          for p in problems:
+              print("DRIFT:", p)
+          if problems:
+              sys.exit("the latest e2b changed the API cua-e2b covers; update cua-e2b and the golden")
+          print("no drift in the covered API", "(new members: %s)" % added if added else "")
+          EOF
+      - name: The latest release has no public name, signature or field the newest golden lacks
+        if: github.event_name != 'pull_request'
+        run: |
+          uv run --no-project --isolated --python 3.12 --with e2b \
+            python -m conformance.surface > /tmp/latest-surface.json
+          uv run --no-project --python 3.12 python - <<'EOF'
+          import json, os, sys
+          from conformance import surface
+          golden = json.load(open(f"conformance/golden/e2b-{os.environ['NEWEST_E2B']}-surface.json"))
+          latest = json.load(open("/tmp/latest-surface.json"))
+          problems = surface.compare(latest, golden)  # what the latest has that the golden lacks
+          for p in problems:
+              print("DRIFT:", p)
+          if problems:
+              sys.exit("the latest e2b changed or added public API; record its goldens and make cua-e2b meet it")
+          print("no drift in the public surface")
+          EOF
+      - name: cua-e2b matches the golden
+        run: |
+          uv run --no-project --isolated --python 3.12 --with pytest --with pytest-asyncio \
+            --with-editable .. python -m pytest -q -p no:cacheprovider test_conformance.py -k api
+
+  live-e2b:
+    name: Behaviour golden (live E2B, latest e2b)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: libs/python/cua-e2b/tests
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Run the suite against E2B and compare
+        env:
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+        run: |
+          if [ -z "$E2B_API_KEY" ]; then
+            echo "::warning::E2B_API_KEY is not set: the live E2B drift check did not run"
+            exit 0
+          fi
+          uv run --no-project --isolated --python 3.12 --with e2b \
+            python -m conformance.suite > /tmp/e2b.json
+          uv run --no-project --python 3.12 python - <<'EOF'
+          import json, sys
+          from conformance import suite
+          golden = json.load(open("conformance/golden/e2b-2.56.0-behavior.json"))["results"]
+          diffs = suite.compare(golden, json.load(open("/tmp/e2b.json"))["results"])
+          for d in diffs:
+              print("DRIFT:", d)
+          sys.exit(1 if diffs else 0)
+          EOF
+
+  live-cua:
+    name: Behaviour golden (cua-e2b on Linux vm Spaces)
+    if: github.event_name != 'pull_request' && vars.CUA_E2B_VM_RUNNER != ''
+    runs-on: ${{ fromJSON(format('["self-hosted","macOS","ARM64","{0}"]', vars.CUA_E2B_VM_RUNNER)) }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Build the SDK wheel
+        working-directory: libs/cua
+        run: |
+          cargo build --locked --release -p cua-sdk -p cua-cli
+          node scripts/stage-uniffi-library.mjs --only=python
+          cd python && uv run --no-project --python 3.12 --with build python build_wheel.py --cli ../target/release/cua --out-dir dist
+      - name: Run the suite through cua-e2b and compare
+        working-directory: libs/python/cua-e2b/tests
+        run: |
+          export CUA_HOME="$RUNNER_TEMP/cua-home" CUA_E2B_ON=local CONFORMANCE_SCHEME=http
+          WHEEL=$(ls ../../../cua/python/dist/cua-[0-9]*.whl); CLI_WHEEL=$(ls ../../../cua/python/dist/cua_cli-*.whl)
+          uv run --no-project --isolated --python 3.12 --with "$WHEEL" --with "$CLI_WHEEL" --with-editable .. \
+            python -m conformance.suite > "$RUNNER_TEMP/cua.json"
+          uv run --no-project --python 3.12 python - <<'EOF'
+          import json, os, sys
+          from conformance import suite
+          got = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "cua.json")))
+          diffs = []
+          for version, allow in (("2.56.0", ()), ("2.42.0", suite.SINCE_2_56)):
+              golden = json.load(open(f"conformance/golden/e2b-{version}-behavior.json"))["results"]
+              skip = set(got["results"]) - set(golden)  # a release without the case
+              diffs += [f"[e2b {version}] {d}" for d in suite.compare(golden, got["results"], skip=skip, allow=allow)]
+          for d in diffs:
+              print("DRIFT:", d)
+          print("timings:", got["timings"])
+          sys.exit(1 if diffs else 0)
+          EOF
+      - name: Delete what the run left
+        if: always()
+        run: |
+          export CUA_HOME="$RUNNER_TEMP/cua-home"
+          for s in $(libs/cua/target/release/cua spaces ls --json 2>/dev/null | python3 -c 'import json,sys; print(" ".join(x["id"] for x in json.load(sys.stdin) if x["name"].startswith("e2b-")))' 2>/dev/null); do
+            libs/cua/target/release/cua spaces delete "$s" --force || true
+          done
+          libs/cua/target/release/cua daemon stop || true

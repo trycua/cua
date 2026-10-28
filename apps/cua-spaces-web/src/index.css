@@ -36,11 +36,23 @@
   --brand-strong: oklch(0.56 0.11 232);
   --brand-surface: oklch(0.764 0.108 227.5 / 0.14);
   --success: oklch(0.62 0.15 152);
+  /* The Space header's power icon while on: deeper than --success so a thin
+     glyph on the light surface reads (4.7:1 on --background, 4.1:1 on --accent). */
+  --power-on: oklch(0.527 0.137 150);
   --warning: oklch(0.72 0.15 75);
   --destructive: oklch(0.58 0.2 27);
   --destructive-foreground: oklch(0.985 0 0);
   --thumb: oklch(0.93 0.005 264);
   --thumb-line: oklch(0.905 0.005 264);
+  /* Borderless tiles and rows: a fill a step off the page, and one step more on hover. */
+  --tile: oklch(0.952 0.004 264);
+  --tile-hover: oklch(0.935 0.005 264);
+
+  /* The design language (CUA-2298; components/ui/grouped.tsx). One radius,
+     8 px (`rounded-lg`); regions differ by surface tone, not by lines; the
+     only lines span their container. A row's hover and selected surfaces: */
+  --row-hover: oklch(0.22 0.01 264 / 0.05);
+  --row-selected: oklch(0.22 0.01 264 / 0.07);
 
   --glass-blur: 20px;
   --glass-saturation: 1.6;
@@ -78,14 +90,27 @@
   --brand-strong: oklch(0.8 0.1 227.5);
   --brand-surface: oklch(0.764 0.108 227.5 / 0.16);
   --success: oklch(0.72 0.15 152);
+  /* --success already reads on the dark surface (7.6:1). */
+  --power-on: var(--success);
   --warning: oklch(0.8 0.14 80);
   --destructive: oklch(0.66 0.19 25);
   --thumb: oklch(0.255 0.01 264);
   --thumb-line: oklch(0.285 0.01 264);
+  --tile: oklch(0.242 0.01 264);
+  --tile-hover: oklch(0.265 0.01 264);
+  --row-hover: oklch(1 0 0 / 0.05);
+  --row-selected: oklch(1 0 0 / 0.08);
   --shadow-color: 220 40% 2%;
 }
 
+/* The first run's headline type (Outfit) and its one accent word (Instrument Serif). */
+@font-face { font-family: "Outfit"; font-weight: 500; font-display: swap; src: url(/onboarding/fonts/outfit-latin-500-normal.woff2) format("woff2"); }
+@font-face { font-family: "Outfit"; font-weight: 600; font-display: swap; src: url(/onboarding/fonts/outfit-latin-600-normal.woff2) format("woff2"); }
+@font-face { font-family: "Instrument Serif"; font-style: italic; font-weight: 400; font-display: swap; src: url(/onboarding/fonts/instrument-serif-latin-400-italic.woff2) format("woff2"); }
+
 @theme {
+  --font-display: "Outfit", var(--font-sans);
+  --font-accent: "Instrument Serif", ui-serif, Georgia, serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 
@@ -127,11 +152,16 @@
   --color-brand-strong: var(--brand-strong);
   --color-brand-surface: var(--brand-surface);
   --color-success: var(--success);
+  --color-power-on: var(--power-on);
   --color-warning: var(--warning);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-thumb: var(--thumb);
   --color-thumb-line: var(--thumb-line);
+  --color-tile: var(--tile);
+  --color-tile-hover: var(--tile-hover);
+  --color-row-hover: var(--row-hover);
+  --color-row-selected: var(--row-selected);
 }
 
 @layer base {
@@ -241,5 +271,32 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* The thread's live row: three dots that pulse in turn. */
+@keyframes live-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.live-dot {
+  animation: live-dot 1.2s infinite both;
+}
+.live-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.live-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+    opacity: 0.6;
   }
 }

@@ -41,7 +41,7 @@ describe.skipIf(!wasmBuilt)("Spaces filter box, ⌘K keywords and tile power err
 
     fireEvent.change(box, { target: { value: "nothing-like-this" } });
     await waitFor(() => expect(tileNames()).toEqual([]));
-    expect(document.body.textContent).toContain("No matches");
+    expect(document.body.textContent).toContain("No Spaces found");
 
     fireEvent.keyDown(box, { key: "Escape" });
     await waitFor(() => expect(tileNames().length).toBe(all));

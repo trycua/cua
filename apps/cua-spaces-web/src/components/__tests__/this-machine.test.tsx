@@ -4,12 +4,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { BridgeProvider, type HostAccessRow, type HostPanelView, type HostSetupFormView } from "@/bridge";
+import { BridgeProvider, useThisMachine, type HostAccessRow, type HostPanelView, type HostSetupFormView } from "@/bridge";
 import { HostError, type DataAdapter } from "@/bridge/adapter";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { unavailableCore, type CoreClient } from "@/bridge/core";
 import { ThisMachineStore, type HostFormState } from "@/bridge/this-machine";
-import { HostSetupForm, logLineParts, ThisMachine } from "@/components/this-machine";
+import { HostSetupForm, logLineParts, ThisMachineExtras } from "@/components/this-machine";
 
 afterEach(cleanup);
 
@@ -75,11 +75,24 @@ function host(fail?: () => Error) {
   return { adapter, actions };
 }
 
-/** Renders the panel once the bridge's store is up (its buttons need it). */
+/** A switch on the Machines page: runs one host action, as the page's
+ * switches do (`machines_view` gives each switch its actions). */
+function Press({ action }: { action: "stop-sharing" }) {
+  const host = useThisMachine(null);
+  return (
+    <button type="button" data-press={action} onClick={() => void host.run(action).catch(() => {})}>
+      {action}
+    </button>
+  );
+}
+
+/** Renders This machine's alerts and logs once the bridge's store is up. */
 async function mount(panel: HostPanelView, adapter: DataAdapter, progress?: string) {
   render(
     <BridgeProvider adapter={adapter} core={unavailableCore("test: no core")}>
-      <ThisMachine panel={panel} progress={progress} />
+      <Press action="stop-sharing" />
+      <ThisMachineExtras panel={panel} progress={progress} part="alerts" />
+      <ThisMachineExtras panel={panel} part="logs" />
     </BridgeProvider>,
   );
   await act(() => new Promise((r) => setTimeout(r, 10)));
@@ -116,31 +129,12 @@ describe("This machine's logs", () => {
     expect(activity.querySelector("[data-host-log-background]")).toBeNull();
   });
 
-  it("keeps Stop Sharing and Remove in a bar under the page", async () => {
-    await mount(sharing, host().adapter);
-    const bar = document.querySelector("[data-host-actions]")!;
-    expect(bar.className).toContain("sticky");
-    expect([...bar.querySelectorAll("[data-host-action]")].map((b) => b.textContent)).toEqual(["Stop Sharing", "Remove host setup"]);
-  });
 });
 
-describe("relay sharing paused while signed out", () => {
-  it("says so in place of the summary, with Sign In, and what the sign-in waits for", async () => {
-    const { adapter, actions } = host();
-    await mount(paused, adapter, "Sign in to Cua in your browser to continue. Setup finishes on its own after that.");
-    expect(document.querySelector("[data-host-summary]")).toBeNull();
-    expect(document.querySelector("[data-host-notice]")?.textContent).toBe(paused.notice);
+describe("what a running setup or Sign In waits for", () => {
+  it("shows over the logs while it runs", async () => {
+    await mount(paused, host().adapter, "Sign in to Cua in your browser to continue. Setup finishes on its own after that.");
     expect(document.querySelector("[data-host-progress]")?.textContent).toMatch(/Sign in to Cua in your browser/);
-    fireEvent.click(document.querySelector('[data-host-notice-action="sign-in"]')!);
-    await waitFor(() => expect(actions).toEqual(["sign-in"]));
-  });
-
-  it("draws a button the core turned off as disabled, with its help as the tooltip", async () => {
-    await mount(paused, host().adapter);
-    const resume = document.querySelector<HTMLButtonElement>('[data-host-action="resume-sharing"]')!;
-    expect(resume.disabled).toBe(true);
-    expect(resume.parentElement?.getAttribute("title")).toBe("Turn on a setting to share first");
-    expect(document.querySelector<HTMLButtonElement>('[data-host-action="remove"]')!.disabled).toBe(false);
   });
 });
 
@@ -149,7 +143,7 @@ describe("a failed This machine button", () => {
     let failing = true;
     const { adapter, actions } = host(() =>
       failing
-        ? new HostError("macOS didn’t start the service your other devices connect to.", "failed", {
+        ? new HostError("macOS didn’t start the service your other machines connect to.", "failed", {
             title: "Couldn’t start the Cua host service",
             details: "launchctl bootstrap failed: 5",
             actionLabel: "Retry",
@@ -159,7 +153,7 @@ describe("a failed This machine button", () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     await mount(sharing, adapter);
-    fireEvent.click(document.querySelector('[data-host-action="stop-sharing"]')!);
+    fireEvent.click(document.querySelector('[data-press="stop-sharing"]')!);
     const failure = await waitFor(() => {
       const f = document.querySelector<HTMLElement>("[data-host-failure]");
       if (!f) throw new Error("no failure");
@@ -184,7 +178,7 @@ describe("a failed This machine button", () => {
 
 const form: HostSetupFormView = {
   title: "Set Up for Access",
-  lede: "Your other devices reach this Mac through the Cua relay.",
+  lede: "Your other machines reach this Mac through the Cua relay.",
   fields: [],
   advancedLabel: "Advanced",
   advancedOpen: false,

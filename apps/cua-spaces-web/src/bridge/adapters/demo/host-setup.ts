@@ -29,6 +29,9 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
       await wait(stepMs * 2);
       const spare = request.profile === "spare";
       const direct = request.mode === "direct";
+      // As cua-host decides when the request leaves it out: a machine set up
+      // before keeps its setting; a new relay setup provides Spaces.
+      const keep = state.host.configured ? state.host.provideSpaces : true;
       return set({
         ...demoHostStatus(now()),
         mode: direct ? "direct" : "relay",
@@ -36,7 +39,7 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
         directUrl: direct ? `http://${request.direct ?? "0.0.0.0:3211"}` : null,
         name: request.name?.trim() || "This Mac",
         shareDesktop: request.shareDesktop ?? !spare,
-        provideSpaces: !direct && (request.provideSpaces ?? spare),
+        provideSpaces: !direct && (request.provideSpaces ?? (spare || keep)),
         permissions: state.host.permissions,
         clients: [],
         recentAccess: [],
@@ -70,6 +73,11 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
     // A browser can't open System Settings; the pane only has to be one.
     "host.openSettings": ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");
+      // The demo plays the user turning it on in System Settings.
+      setTimeout(() => {
+        state.host = { ...state.host, permissions: state.host.permissions.map((p) => (p.settingsUrl === url ? { ...p, granted: true } : p)) };
+        emit({ type: "machines.changed" });
+      }, stepMs * 4);
       return null;
     },
   };

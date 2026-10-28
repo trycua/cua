@@ -28,7 +28,7 @@ export function Menu({ trigger, items, label }: { trigger: ReactElement; items: 
                 disabled={item.disabled}
                 onClick={item.onSelect}
                 className={cn(
-                  "flex cursor-default items-center rounded-md px-2 py-1 text-[13px] outline-none data-disabled:opacity-50 data-highlighted:bg-brand data-highlighted:text-white",
+                  "flex cursor-default items-center rounded-lg px-2 py-1 text-[13px] outline-none data-disabled:opacity-50 data-highlighted:bg-brand data-highlighted:text-white",
                   item.destructive && "text-destructive",
                 )}
               >

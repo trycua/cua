@@ -1,0 +1,71 @@
+name: "CI: Cua Spaces SwiftUI Rust slice (producer)"
+
+# The one trusted producer of the SwiftUI app's compiled Rust slice. It builds
+# the slice on main for every change to its inputs and saves it in the Actions
+# cache under the key the release build (cd-cua-spaces.yml, macos-rust) computes
+# from the same action, so a release restores it (seconds) instead of
+# compiling (33 to 60 minutes). The key covers every file the build reads
+# (libs/cua and the files outside it that its crates embed), and a build here
+# checks that claim against what rustc and the build scripts really opened.
+# Tag runs can read the default branch's cache; they cannot read another
+# tag's or a pull request's. A manual run of this workflow on a branch proves
+# the contract: run it twice and compare the cache-hit notice and the job
+# time. The release still signs and verifies the app; this only supplies the
+# unsigned compiled slice.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/**"
+      # Files outside libs/cua that the crates of the slice read at compile
+      # time (the action's cache key hashes them; `inputs` of
+      # .github/scripts/spaces_rust_slice_inputs.py lists them, and
+      # test_spaces_rust_slice_inputs.py fails when this list falls behind).
+      - "libs/cua-spacesd/VERSION"
+      - "libs/images/sandbox-images.json"
+      - "apps/cua-spaces-web/src/lib/keybindings.json"
+      - ".cargo/**"
+      - ".github/scripts/spaces_rust_slice_inputs.py"
+      - ".github/actions/spaces-rust-slice/**"
+      - ".github/workflows/ci-cua-spaces-rust-slice.yml"
+  # A change to the producer itself proves its contract: the first run builds,
+  # a re-run of the same commit restores (the pull request's own cache scope).
+  pull_request:
+    paths:
+      - ".github/scripts/spaces_rust_slice_inputs.py"
+      - ".github/actions/spaces-rust-slice/**"
+      - ".github/workflows/ci-cua-spaces-rust-slice.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel a build in progress: its cache is the point.
+concurrency:
+  group: ci-cua-spaces-rust-slice-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Same namespace as cd-cua-spaces.yml, so the keys match.
+  CUA_RELEASE_REPOSITORY: ${{ github.repository }}
+
+jobs:
+  slice:
+    name: SwiftUI Rust (${{ matrix.arch }})
+    runs-on: macos-26
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, triple: aarch64-apple-darwin }
+          - { arch: x86_64, triple: x86_64-apple-darwin }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/spaces-rust-slice
+        with:
+          triple: ${{ matrix.triple }}
+          # The producer is where a key that misses an input is found: it
+          # fails here, on main, instead of serving a stale library later.
+          verify-key: "true"

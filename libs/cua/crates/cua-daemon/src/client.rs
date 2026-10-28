@@ -7,7 +7,7 @@ use crate::{
     runtime::CreateRequest,
 };
 use cua_proto::daemon::v1::{
-    self as pb, daemon_service_client::DaemonServiceClient,
+    self as pb, daemon_service_client::DaemonServiceClient, pool_service_client::PoolServiceClient,
     runtime_service_client::RuntimeServiceClient, sandbox_service_client::SandboxServiceClient,
     space_service_client::SpaceServiceClient,
 };
@@ -177,6 +177,14 @@ impl DaemonClient {
             .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
     }
 
+    fn share_svc(&self) -> pb::share_service_client::ShareServiceClient<Chan> {
+        pb::share_service_client::ShareServiceClient::new(self.channel.clone())
+    }
+
+    fn pools(&self) -> PoolServiceClient<Chan> {
+        PoolServiceClient::new(self.channel.clone())
+    }
+
     fn runtime(&self) -> RuntimeServiceClient<Chan> {
         RuntimeServiceClient::new(self.channel.clone())
             .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
@@ -197,6 +205,20 @@ impl DaemonClient {
         SpaceServiceClient::new(self.channel.clone())
             .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
             .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+    }
+
+    /// The raw `HostThreadService` client: what the host's cua-spacesd
+    /// calls on this daemon's socket for the people the host is shared
+    /// with (on the loopback listener, every caller is this machine's
+    /// user).
+    pub fn host_thread(
+        &self,
+    ) -> cua_proto::env::v1::host_thread_service_client::HostThreadServiceClient<Chan> {
+        cua_proto::env::v1::host_thread_service_client::HostThreadServiceClient::new(
+            self.channel.clone(),
+        )
+        .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+        .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
     }
 
     fn map(e: tonic::Status) -> Error {
@@ -234,6 +256,21 @@ impl DaemonClient {
                 name: name.into(),
                 open_media_json: open_media_json.unwrap_or_default(),
             })
+            .await
+            .map_err(Self::map)?
+            .into_inner())
+    }
+
+    /// `HostSpacesService.DiagnoseHost`: this machine's health as its
+    /// daemon checks it, or with `machine` set, another of the owner's
+    /// machines' (asked over the relay by this daemon).
+    pub async fn diagnose_host(
+        &self,
+        machine: String,
+    ) -> Result<cua_proto::env::v1::DiagnoseHostResponse> {
+        use cua_proto::env::v1::host_spaces_service_client::HostSpacesServiceClient;
+        Ok(HostSpacesServiceClient::new(self.channel.clone())
+            .diagnose_host(cua_proto::env::v1::DiagnoseHostRequest { machine })
             .await
             .map_err(Self::map)?
             .into_inner())
@@ -323,14 +360,40 @@ impl DaemonClient {
     /// `CreateSandbox`.
     pub async fn create(&self, r: CreateRequest) -> Result<SandboxRecord> {
         let req = create_pb(r);
-        Self::sandbox_of(
-            self.sandboxes()
-                .create_sandbox(req)
-                .await
-                .map_err(Self::map)?
-                .into_inner()
-                .sandbox,
-        )
+        let asked = req.network.clone();
+        let r = self
+            .sandboxes()
+            .create_sandbox(req)
+            .await
+            .map_err(Self::map)?
+            .into_inner();
+        self.applied(&asked, r).await
+    }
+
+    /// The sandbox a create answered, once the daemon says it applied the
+    /// guest network asked for (`CreateSandboxResponse.network`). A daemon
+    /// that predates `network` never reads it and creates the sandbox with
+    /// outbound network: that sandbox is deleted and the create refused,
+    /// never handed back open.
+    async fn applied(&self, asked: &str, r: pb::CreateSandboxResponse) -> Result<SandboxRecord> {
+        let rec = Self::sandbox_of(r.sandbox)?;
+        let none = cua_sandbox_core::NetworkMode::parse(asked)
+            .is_ok_and(|n| n == cua_sandbox_core::NetworkMode::None);
+        if !none || r.network == "none" {
+            return Ok(rec);
+        }
+        let _ = self.delete(&rec.name).await;
+        let version = self
+            .info()
+            .await
+            .map(|i| format!(" ({})", i.version))
+            .unwrap_or_default();
+        Err(Error::CapabilityMissing(format!(
+            "network none: the cua daemon{version} is too old to enforce it (the sandbox would \
+             have outbound network), so the sandbox it made ({}) was deleted; update cua and \
+             restart its daemon",
+            rec.name
+        )))
     }
 
     /// `CreateSandboxStream`: [`DaemonClient::create`], passing what the
@@ -344,6 +407,7 @@ impl DaemonClient {
     ) -> Result<SandboxRecord> {
         use pb::create_sandbox_stream_response::Event;
         let req = create_pb(r);
+        let asked = req.network.clone();
         let mut stream = match self
             .sandboxes()
             .create_sandbox_stream(pb::CreateSandboxStreamRequest {
@@ -353,14 +417,13 @@ impl DaemonClient {
         {
             Ok(s) => s.into_inner(),
             Err(e) if e.code() == tonic::Code::Unimplemented => {
-                return Self::sandbox_of(
-                    self.sandboxes()
-                        .create_sandbox(req)
-                        .await
-                        .map_err(Self::map)?
-                        .into_inner()
-                        .sandbox,
-                );
+                let r = self
+                    .sandboxes()
+                    .create_sandbox(req)
+                    .await
+                    .map_err(Self::map)?
+                    .into_inner();
+                return self.applied(&asked, r).await;
             }
             Err(e) => return Err(Self::map(e)),
         };
@@ -371,7 +434,7 @@ impl DaemonClient {
                         progress(&p);
                     }
                 }
-                Some(Event::Result(r)) => return Self::sandbox_of(r.sandbox),
+                Some(Event::Result(r)) => return self.applied(&asked, r).await,
                 None => {}
             }
         }
@@ -406,51 +469,7 @@ pub fn progress_from_pb(
 /// out for daemons that predate `location` / `kind` / `runtime`.
 #[allow(deprecated)]
 fn create_pb(r: CreateRequest) -> pb::CreateSandboxRequest {
-    pb::CreateSandboxRequest {
-        location: r.location.clone().unwrap_or_default(),
-        kind: r.kind.clone().unwrap_or_default(),
-        runtime: r.runtime.clone().unwrap_or_default(),
-        name: r.name.unwrap_or_default(),
-        provider: r
-            .provider
-            .map(|p| provider_to_pb(p) as i32)
-            .unwrap_or_default(),
-        image: r.image,
-        pool: r.pool.unwrap_or_default(),
-        url: r.url.unwrap_or_default(),
-        token: r.token.unwrap_or_default(),
-        labels: r.labels.into_iter().collect(),
-        os: r.os.unwrap_or_default(),
-        cpus: r.cpus.unwrap_or_default(),
-        memory_mb: r.memory_mb.unwrap_or_default(),
-        ports: r.ports.iter().map(|p| *p as u32).collect(),
-        services: r.services.into_iter().map(|(k, v)| (k, v as u32)).collect(),
-        wait_for: r.wait_for.iter().map(probe_to_pb).collect(),
-        ready_timeout: r.ready_timeout.map(dur),
-        env: r.env.into_iter().collect(),
-        command: r.command.unwrap_or_default(),
-        fleet_runtime: r.fleet_runtime.unwrap_or_default(),
-        fleet_replicas: r.fleet_replicas.unwrap_or_default(),
-        fleet_ttl_seconds: r.fleet_ttl_seconds.unwrap_or_default(),
-        fleet_warm: r.fleet_warm,
-        fleet_max_pool_size: r.fleet_max_pool_size.unwrap_or_default(),
-        fleet_apply: r.fleet_apply,
-        sidecars: r
-            .sidecars
-            .iter()
-            .map(crate::convert::sidecar_to_pb)
-            .collect(),
-        registry_secret: r
-            .registry_credentials
-            .as_ref()
-            .map(crate::convert::registry_secret_to_pb),
-        build: r.build.as_ref().map(crate::convert::build_to_pb),
-        container_runtime: r.container_runtime.clone().unwrap_or_default(),
-        network: r.network.clone().unwrap_or_default(),
-        owner_pid: r.owner_pid.unwrap_or_default(),
-        keep_on_failure: r.keep_on_failure,
-        gpu: r.gpu.clone().unwrap_or_default(),
-    }
+    crate::convert::create_request_to_pb(r)
 }
 
 impl DaemonClient {
@@ -479,13 +498,11 @@ impl DaemonClient {
     }
 
     /// `ListSandboxes`: the known sandboxes of `provider` (all when
-    /// `None`), plus live Fleet claims with `include_cloud` (see
-    /// [`crate::Runtime::list_filtered`]).
+    /// `None`).
     #[allow(deprecated)]
     pub async fn list_filtered(
         &self,
         provider: Option<ProviderKind>,
-        include_cloud: bool,
     ) -> Result<crate::runtime::Listing> {
         let r = self
             .sandboxes()
@@ -496,7 +513,6 @@ impl DaemonClient {
                 provider: provider
                     .map(|p| provider_to_pb(p) as i32)
                     .unwrap_or_default(),
-                include_cloud: Some(include_cloud),
             })
             .await
             .map_err(Self::map)?
@@ -507,9 +523,9 @@ impl DaemonClient {
         })
     }
 
-    /// `ListSandboxes` of the known sandboxes only (no live Fleet listing).
+    /// `ListSandboxes` of the known sandboxes only.
     pub async fn list(&self, provider: Option<ProviderKind>) -> Result<Vec<SandboxRecord>> {
-        Ok(self.list_filtered(provider, false).await?.sandboxes)
+        Ok(self.list_filtered(provider).await?.sandboxes)
     }
 
     /// `DeleteSandbox`.
@@ -530,6 +546,201 @@ impl DaemonClient {
             .await
             .map_err(Self::map)?;
         Ok(())
+    }
+
+    /// `CheckpointSandbox`.
+    pub async fn checkpoint(&self, name: &str, checkpoint: &str) -> Result<pb::Checkpoint> {
+        self.checkpoint_with(name, checkpoint, false).await
+    }
+
+    /// `CheckpointSandbox`, pinning the new checkpoint when `pin`.
+    pub async fn checkpoint_with(
+        &self,
+        name: &str,
+        checkpoint: &str,
+        pin: bool,
+    ) -> Result<pb::Checkpoint> {
+        self.sandboxes()
+            .checkpoint_sandbox(pb::CheckpointSandboxRequest {
+                name: name.into(),
+                checkpoint: checkpoint.into(),
+                pin,
+            })
+            .await
+            .map_err(Self::map)?
+            .into_inner()
+            .checkpoint
+            .ok_or_else(|| Error::Internal("no checkpoint in the answer".into()))
+    }
+
+    /// `ForkSandbox`: `name`, started from a sandbox or a checkpoint.
+    pub async fn fork(&self, source: &str, name: &str) -> Result<SandboxRecord> {
+        Self::sandbox_of(
+            self.sandboxes()
+                .fork_sandbox(pb::ForkSandboxRequest {
+                    source: source.into(),
+                    name: name.into(),
+                    labels: Default::default(),
+                })
+                .await
+                .map_err(Self::map)?
+                .into_inner()
+                .sandbox,
+        )
+    }
+
+    /// `ForkSandboxBatch`: the batch's events as they happen (the last is
+    /// `done`).
+    pub async fn fork_batch(
+        &self,
+        req: pb::ForkSandboxBatchRequest,
+    ) -> Result<tonic::Streaming<pb::ForkSandboxBatchResponse>> {
+        Ok(
+            cua_proto::daemon::v1::fork_batch_service_client::ForkBatchServiceClient::new(
+                self.channel.clone(),
+            )
+            .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+            .fork_sandbox_batch(req)
+            .await
+            .map_err(Self::map)?
+            .into_inner(),
+        )
+    }
+
+    /// `HostSnapshotsService.PublishHostSnapshot` on this machine: uploads
+    /// checkpoint `name` to `fallback`. Returns the bytes uploaded.
+    pub async fn publish_checkpoint(
+        &self,
+        name: &str,
+        fallback: cua_proto::env::v1::SnapshotFallback,
+    ) -> Result<u64> {
+        let mut s =
+            cua_proto::env::v1::host_snapshots_service_client::HostSnapshotsServiceClient::new(
+                self.channel.clone(),
+            )
+            .publish_host_snapshot(cua_proto::env::v1::PublishHostSnapshotRequest {
+                name: name.into(),
+                fallback: Some(fallback),
+            })
+            .await
+            .map_err(Self::map)?
+            .into_inner();
+        let mut done = 0;
+        while let Some(m) = s.message().await.map_err(Self::map)? {
+            if let Some(p) = m.progress {
+                done = p.bytes_done;
+            }
+        }
+        Ok(done)
+    }
+
+    /// `ListCheckpoints`.
+    pub async fn checkpoints(&self) -> Result<Vec<pb::Checkpoint>> {
+        Ok(self
+            .sandboxes()
+            .list_checkpoints(pb::ListCheckpointsRequest {})
+            .await
+            .map_err(Self::map)?
+            .into_inner()
+            .checkpoints)
+    }
+
+    /// `DeleteCheckpoint`.
+    pub async fn delete_checkpoint(&self, name: &str) -> Result<()> {
+        self.sandboxes()
+            .delete_checkpoint(pb::DeleteCheckpointRequest { name: name.into() })
+            .await
+            .map_err(Self::map)?;
+        Ok(())
+    }
+
+    /// `PinCheckpoint`: pins or unpins a checkpoint.
+    pub async fn pin_checkpoint(&self, name: &str, pinned: bool) -> Result<pb::Checkpoint> {
+        self.sandboxes()
+            .pin_checkpoint(pb::PinCheckpointRequest {
+                name: name.into(),
+                pinned,
+            })
+            .await
+            .map_err(Self::map)?
+            .into_inner()
+            .checkpoint
+            .ok_or_else(|| Error::Internal("no checkpoint in the answer".into()))
+    }
+
+    /// `PruneCheckpoints`: deletes every checkpoint that is not pinned;
+    /// returns their names.
+    pub async fn prune_checkpoints(&self) -> Result<Vec<String>> {
+        Ok(self
+            .sandboxes()
+            .prune_checkpoints(pb::PruneCheckpointsRequest {})
+            .await
+            .map_err(Self::map)?
+            .into_inner()
+            .deleted)
+    }
+
+    /// `CreatePool`.
+    pub async fn create_pool(
+        &self,
+        name: Option<&str>,
+        spec: CreateRequest,
+        min: u32,
+        max: u32,
+        idle: Option<std::time::Duration>,
+    ) -> Result<crate::PoolInfo> {
+        let r = self
+            .pools()
+            .create_pool(pb::CreatePoolRequest {
+                name: name.unwrap_or_default().into(),
+                spec: Some(crate::convert::create_request_to_pb(spec)),
+                min,
+                max,
+                idle: idle.map(dur),
+            })
+            .await
+            .map_err(Self::map)?
+            .into_inner();
+        r.pool
+            .map(crate::convert::pool_from_pb)
+            .ok_or_else(|| Error::Internal("the daemon answered without the pool".into()))
+    }
+
+    /// `GetPool`.
+    pub async fn get_pool(&self, name: &str) -> Result<crate::PoolInfo> {
+        self.pools()
+            .get_pool(pb::GetPoolRequest { name: name.into() })
+            .await
+            .map_err(Self::map)?
+            .into_inner()
+            .pool
+            .map(crate::convert::pool_from_pb)
+            .ok_or_else(|| Error::Internal("the daemon answered without the pool".into()))
+    }
+
+    /// `ListPools`.
+    pub async fn list_pools(&self) -> Result<Vec<crate::PoolInfo>> {
+        Ok(self
+            .pools()
+            .list_pools(pb::ListPoolsRequest {})
+            .await
+            .map_err(Self::map)?
+            .into_inner()
+            .pools
+            .into_iter()
+            .map(crate::convert::pool_from_pb)
+            .collect())
+    }
+
+    /// `DeletePool`.
+    pub async fn delete_pool(&self, name: &str) -> Result<bool> {
+        Ok(self
+            .pools()
+            .delete_pool(pb::DeletePoolRequest { name: name.into() })
+            .await
+            .map_err(Self::map)?
+            .into_inner()
+            .deleted)
     }
 
     /// `SuspendSandbox`.
@@ -559,12 +770,46 @@ impl DaemonClient {
         Ok(())
     }
 
+    /// `ResizeSandbox`.
+    pub async fn resize(&self, name: &str, shape: &cua_vmm::Resize) -> Result<()> {
+        self.sandboxes()
+            .resize_sandbox(pb::ResizeSandboxRequest {
+                name: name.into(),
+                cpus: shape.cpus,
+                memory_mb: shape.memory_mb,
+                disk_gb: shape.disk_gb,
+            })
+            .await
+            .map_err(Self::map)?;
+        Ok(())
+    }
+
     /// `KeepAlive`.
     pub async fn keep_alive(&self, name: &str, d: Duration) -> Result<()> {
         self.sandboxes()
             .keep_alive(pb::KeepAliveRequest {
                 name: name.into(),
                 duration: Some(dur(d)),
+                on_expire: String::new(),
+            })
+            .await
+            .map_err(Self::map)?;
+        Ok(())
+    }
+
+    /// `KeepAlive` with `on_expire`: a local sandbox's lifetime and what
+    /// ends it (`delete` or `suspend`).
+    pub async fn set_lifetime(
+        &self,
+        name: &str,
+        d: Duration,
+        on_expire: cua_sandbox_core::LocalExpiry,
+    ) -> Result<()> {
+        self.sandboxes()
+            .keep_alive(pb::KeepAliveRequest {
+                name: name.into(),
+                duration: Some(dur(d)),
+                on_expire: on_expire.as_str().into(),
             })
             .await
             .map_err(Self::map)?;
@@ -742,6 +987,75 @@ impl DaemonClient {
         Ok(())
     }
 
+    /// `CreateShare`: a link to a port, a Space port, a file or a folder.
+    pub async fn create_share(
+        &self,
+        target: &crate::ShareTarget,
+        access: crate::ShareAccess,
+        ttl: Option<Duration>,
+        name: Option<String>,
+    ) -> Result<crate::ShareInfo> {
+        let r = self
+            .share_svc()
+            .create_share(pb::CreateShareRequest {
+                target: Some(target.to_pb()),
+                access: access.to_pb(),
+                ttl: ttl.map(dur),
+                name: name.unwrap_or_default(),
+            })
+            .await
+            .map_err(Self::map)?
+            .into_inner();
+        r.share
+            .as_ref()
+            .map(crate::ShareInfo::from_pb)
+            .ok_or_else(|| Error::Internal("daemon returned no share".into()))
+    }
+
+    /// `ListShares`.
+    pub async fn list_shares(&self) -> Result<Vec<crate::ShareInfo>> {
+        let r = self
+            .share_svc()
+            .list_shares(pb::ListSharesRequest {})
+            .await
+            .map_err(Self::map)?
+            .into_inner();
+        Ok(r.shares.iter().map(crate::ShareInfo::from_pb).collect())
+    }
+
+    /// `StopShare` for one share (id or name), or all of them.
+    pub async fn stop_share(&self, id: Option<&str>, all: bool) -> Result<Vec<String>> {
+        Ok(self
+            .share_svc()
+            .stop_share(pb::StopShareRequest {
+                id: id.unwrap_or_default().into(),
+                all,
+            })
+            .await
+            .map_err(Self::map)?
+            .into_inner()
+            .stopped)
+    }
+
+    /// `CheckShare`: opens the link once, as its owner.
+    pub async fn check_share(&self, id: &str, path: Option<&str>) -> Result<crate::ShareCheck> {
+        let r = self
+            .share_svc()
+            .check_share(pb::CheckShareRequest {
+                id: id.into(),
+                path: path.unwrap_or_default().into(),
+            })
+            .await
+            .map_err(Self::map)?
+            .into_inner();
+        Ok(crate::ShareCheck {
+            status: r.status as u16,
+            ok: r.ok,
+            via: r.via,
+            detail: r.detail,
+        })
+    }
+
     /// `CloseForward`.
     pub async fn close_forward(&self, id: &str) -> Result<()> {
         self.sandboxes()
@@ -915,6 +1229,24 @@ pub async fn existing_daemon() -> Result<DaemonClient> {
     Ok(c)
 }
 
+/// [`existing_daemon`], but a daemon that is recorded as running and does
+/// not answer yet (busy with a burst of creates, answering after 5 s) is
+/// waited for up to `patience` instead of being taken for absent: an
+/// absent daemon is started, and a CLI lookup that fails there turned a
+/// busy daemon into "no cua daemon is running".
+pub async fn existing_daemon_patient(patience: Duration) -> Result<DaemonClient> {
+    let deadline = tokio::time::Instant::now() + patience;
+    loop {
+        match existing_daemon().await {
+            Ok(c) => return Ok(c),
+            // Nothing recorded as running: the caller starts one.
+            Err(e) if live_address().is_none() => return Err(e),
+            Err(e) if tokio::time::Instant::now() >= deadline => return Err(e),
+            Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
+        }
+    }
+}
+
 /// The `cua` CLI used to start a daemon: `CUA_BIN`, else this executable
 /// when it is the CLI, else `cua` on `PATH`.
 pub fn cua_binary() -> Option<PathBuf> {
@@ -963,7 +1295,7 @@ fn outdated_daemon_policy(value: Option<&str>) -> OutdatedDaemon {
 /// sessions it hosts for other clients. `CUA_DAEMON_RESTART_OUTDATED=1`
 /// stops it and starts this version instead.
 pub async fn ensure_daemon() -> Result<DaemonClient> {
-    if let Ok(c) = existing_daemon().await {
+    if let Ok(c) = existing_daemon_patient(Duration::from_secs(30)).await {
         let running = c.info().await.map(|i| i.version).unwrap_or_default();
         if !daemon_is_outdated(&running, crate::VERSION) {
             return Ok(c);

@@ -10,7 +10,7 @@
 //!   QEMU backend boots `ImageSource::Oci` refs.
 //! * [`detect`] — classify a reference (containerDisk, rootfs, Lume, other macOS).
 //! * [`resolve`] — the one resolver: reference + backend + arch to a pinned
-//!   variant (`ResolvedImage`), used by every SDK, the daemon and cua-fleet.
+//!   variant (`ResolvedImage`), used by every SDK and the daemon.
 //! * [`canonical`] — `ghcr.io/trycua/{linux,windows,macos}`, their tiers
 //!   (`-slim`, full, `-xcode`), Omarchy and their aliases.
 //! * [`catalog`] — the shared image catalog (`libs/images/sandbox-images.json`).
@@ -19,8 +19,13 @@
 //! * [`spec`] — the `images.cua.ai/v1alpha1` Image resource (schemars).
 //! * [`builder`] — local builder: boot under `cua-vmm`, apply layers through a
 //!   [`cua_vmm::GuestExec`], pack as containerDisk and/or rootfs, push.
+//! * [`build`] — what a layered build on a registry base is
+//!   ([`build::BuildSpec`]) and the content-addressed names and recipes it gets.
+//! * [`sidecar`] — extra containers next to a sandbox and the rules every
+//!   provider applies to them.
 
 pub mod auth;
+pub mod build;
 pub mod builder;
 pub mod cache;
 pub mod canonical;
@@ -28,6 +33,7 @@ pub mod catalog;
 pub mod containerdisk;
 pub mod detect;
 pub mod digest;
+pub mod dockerfile;
 pub mod error;
 pub mod layout;
 pub mod manifest;
@@ -36,14 +42,16 @@ pub mod publish;
 pub mod registry;
 pub mod resolve;
 pub mod rootfs;
+pub mod sidecar;
 pub mod spec;
 pub mod testing;
 
 pub use cache::ImageCache;
 pub use containerdisk::ContainerDiskResolver;
 pub use cua_vmm::{GuestExec, RegistryCredentials, normalize_registry, registry_of};
-pub use error::{ImageError, Result};
+pub use error::{ImageError, InvalidArgument, Result};
 pub use layout::{PackedImage, push_multiarch};
 pub use registry::{ManifestSource, RegistryClient};
 pub use resolve::{Backend, ResolvedImage, Variant, resolve};
+pub use rootfs::RootfsLayerResolver;
 pub use spec::ImageResource;

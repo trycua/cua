@@ -10,8 +10,7 @@
 //! Beyond the portal window, the shell hosts the cua SDK: [`core`] links
 //! `cua-spaces` in-process (the shared `~/.cua` Spaces registry, streams,
 //! files, teleport, hotspot, agents) and connects to or starts `cua daemon`
-//! (the webview media bridge for Fleet Spaces, and the process CLI / MCP
-//! clients share Spaces through). [`commands`] are thin Tauri wrappers over
+//! (the process CLI / MCP clients share Spaces through). [`commands`] are thin Tauri wrappers over
 //! it; [`viewer_windows`], [`window_drag`] and the notch stay app UI, and
 //! [`control`] lets `cua daemon mcp` ask the app to present a Space.
 
@@ -288,11 +287,17 @@ fn set_display_style(
 }
 
 /// Open an `http(s)` URL in the user's default browser (Settings "Sign in to
-/// Cua"). Restricted to web schemes so a webview call can never launch an
+/// Cua"), or the diagnostic report's email link to Cua support in the user's
+/// mail app. Restricted to those so a webview call can never launch an
 /// arbitrary local handler, and it hands the URL to the OS opener as a single
 /// argument (never a shell string) so nothing is interpreted by a shell.
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
+    if let Some(link) = checked_support_mailto(&url) {
+        // Not the link in the message: it carries the report.
+        return open_with_os(link)
+            .map_err(|error| format!("failed to open your mail app: {error}"));
+    }
     open_web_url(&url)
 }
 
@@ -304,6 +309,11 @@ fn open_external(url: String) -> Result<(), String> {
 /// shell.
 pub(crate) fn open_web_url(url: &str) -> Result<(), String> {
     let url = checked_web_url(url)?;
+    open_with_os(url).map_err(|error| format!("failed to open {url}: {error}"))
+}
+
+/// Hands an already checked `url` to the OS opener as one argument.
+fn open_with_os(url: &str) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut c = std::process::Command::new("open");
@@ -324,10 +334,16 @@ pub(crate) fn open_web_url(url: &str) -> Result<(), String> {
         c.arg(url);
         c
     };
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("failed to open {url}: {error}"))
+    command.spawn().map(|_| ())
+}
+
+/// The first character of `url` that a real URL percent-encodes: anything but
+/// printable ASCII, and quotes, backslashes, angle brackets, carets, pipes,
+/// backticks and braces.
+fn unencoded_char(url: &str) -> Option<char> {
+    url.chars().find(|c| {
+        !c.is_ascii_graphic() || matches!(c, '"' | '\\' | '<' | '>' | '^' | '|' | '`' | '{' | '}')
+    })
 }
 
 /// The URL `open_web_url` hands to the OS opener: an `http(s)` URL with a
@@ -344,15 +360,31 @@ fn checked_web_url(url: &str) -> Result<&str, String> {
     if host.is_empty() {
         return Err("the URL has no host".to_string());
     }
-    if let Some(bad) = trimmed.chars().find(|c| {
-        !c.is_ascii_graphic() || matches!(c, '"' | '\\' | '<' | '>' | '^' | '|' | '`' | '{' | '}')
-    }) {
+    if let Some(bad) = unencoded_char(trimmed) {
         return Err(format!(
             "the URL contains a character that must be percent-encoded ({:?})",
             bad
         ));
     }
     Ok(trimmed)
+}
+
+/// The diagnostic report's link: a `mailto:` to Cua support (and nobody else)
+/// with a percent-encoded subject and body. Nothing else with that scheme
+/// opens.
+fn checked_support_mailto(url: &str) -> Option<&str> {
+    let trimmed = url.trim();
+    let rest = trimmed.strip_prefix("mailto:support@trycua.com")?;
+    if !(rest.is_empty() || rest.starts_with('?')) || unencoded_char(trimmed).is_some() {
+        return None;
+    }
+    // Only the subject and body: no `cc`, `bcc` or second recipient.
+    let only_subject_and_body = rest
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|kv| !kv.is_empty())
+        .all(|kv| kv.starts_with("subject=") || kv.starts_with("body="));
+    only_subject_and_body.then_some(trimmed)
 }
 
 /// The host backend: the `cua-host` library driven by the app's sign-in.
@@ -409,14 +441,12 @@ pub fn run() {
             set_display_style,
             open_external,
             sf_symbol::sf_symbol,
-            commands::fleet_status,
+            commands::account_status,
             commands::begin_sign_in,
             commands::sign_out,
             commands::daemon_status,
             commands::ensure_daemon,
             commands::local_status,
-            commands::cloud_pricing,
-            commands::billing_status,
             commands::host_arch,
             commands::list_spaces,
             commands::space_info,
@@ -430,7 +460,6 @@ pub fn run() {
             commands::get_default_location,
             commands::set_default_location,
             commands::remove_space,
-            commands::keep_alive_space,
             commands::space_screenshot,
             commands::send_files_to_space,
             commands::list_remote_windows,
@@ -521,6 +550,8 @@ pub fn run() {
             commands::share_space,
             commands::cloud_tool,
             commands::unshare_space,
+            commands::share_removals,
+            commands::ack_share_removals,
             commands::agents_tool,
             commands::drive_reveal,
             tray::tray_set_menu,
@@ -538,11 +569,14 @@ pub fn run() {
             keyvault::keyvault_approve,
             keyvault::keyvault_deny,
             telemetry::telemetry_status,
+            telemetry::telemetry_link_notice,
+            telemetry::telemetry_acknowledge_link_notice,
             telemetry::telemetry_set_enabled,
             telemetry::telemetry_acknowledge_notice,
             telemetry::telemetry_record_feature,
             telemetry::telemetry_record_step,
             telemetry::telemetry_record_signals,
+            telemetry::telemetry_set_ui_locale,
             telemetry::telemetry_welcome_left,
             telemetry::telemetry_record_stream,
             webview_data::ui_storage_set,
@@ -554,6 +588,13 @@ pub fn run() {
         ])
         .setup(move |app| {
             let accessory_activation = false;
+
+            // Links usage data to the signed-in account when the Spaces API
+            // offers it (CUA-1881). Best effort, off the startup path.
+            {
+                let core = core.clone();
+                tauri::async_runtime::spawn(async move { core.sync_usage_link().await });
+            }
 
             // Webview data stays in the app's data directory (webview_data):
             // the page's settings file, then the tauri.conf.json windows
@@ -630,8 +671,7 @@ pub fn run() {
             control::spawn(app.handle().clone(), core.clone());
 
             // Connect to (or start) `cua daemon` in the background, so CLI and
-            // MCP clients share Spaces with the app and Fleet streams have
-            // their media bridge. Failure only disables Fleet streaming.
+            // MCP clients share Spaces with the app. A failure is only logged.
             {
                 let core = core.clone();
                 tauri::async_runtime::spawn(async move {
@@ -847,7 +887,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod open_web_url_tests {
-    use super::checked_web_url;
+    use super::{checked_support_mailto, checked_web_url};
 
     #[test]
     fn only_plain_web_urls_reach_the_opener() {
@@ -877,6 +917,41 @@ mod open_web_url_tests {
         ] {
             assert!(checked_web_url(bad).is_err(), "{bad:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod support_mailto_tests {
+    use super::{checked_support_mailto, checked_web_url};
+
+    #[test]
+    fn only_the_report_email_to_cua_support_opens() {
+        for ok in [
+            "mailto:support@trycua.com",
+            "mailto:support@trycua.com?subject=Spaces%3A%20create%20failed&body=a%0D%0Ab",
+            "  mailto:support@trycua.com?body=x  ",
+        ] {
+            assert_eq!(checked_support_mailto(ok), Some(ok.trim()), "{ok:?}");
+        }
+        for bad in [
+            "",
+            "mailto:",
+            "mailto:other@example.com?subject=x",
+            "mailto:support@trycua.com,other@example.com?subject=x",
+            "mailto:support@trycua.com.evil.example?subject=x",
+            "mailto:support@trycua.com?cc=other@example.com",
+            "mailto:support@trycua.com?subject=x&bcc=other@example.com",
+            "mailto:support@trycua.com?to=other@example.com",
+            "mailto:support@trycua.com?subject=a b",
+            "mailto:support@trycua.com?subject=\"x\"",
+            "mailto:support@trycua.com?subject=\u{e9}",
+            "MAILTO:other@example.com",
+            "https://trycua.com",
+        ] {
+            assert_eq!(checked_support_mailto(bad), None, "{bad:?}");
+        }
+        // The sign-in's opener stays web only.
+        assert!(checked_web_url("mailto:support@trycua.com").is_err());
     }
 }
 

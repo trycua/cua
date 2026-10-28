@@ -2,7 +2,7 @@
 //!
 //! - `/v1/sandboxes/<name>/env/<grpc path>`: forwards any `cua.env.v1` call
 //!   through the sandbox's env channel (which attaches the env token, the
-//!   Fleet bearer and claim, and the gateway path prefix). The caller's
+//!   gateway bearer and the path prefix). The caller's
 //!   daemon token never leaves the daemon. `/v1/sandboxes/<name>/env/media`
 //!   WebSocket upgrades are relayed to the spacesd's `/media` socket.
 //! - `/v1/sandboxes/<name>/svc/<service>/<path>` and
@@ -160,7 +160,6 @@ async fn forward(
     for h in [
         http::header::AUTHORIZATION.as_str(),
         cua_proto::metadata::ENV_AUTHORIZATION,
-        cua_spacesd_client::transport::FLEET_CLAIM_HEADER,
         "host",
     ] {
         parts.headers.remove(h);
@@ -196,8 +195,8 @@ pub(crate) async fn env_passthrough(
 }
 
 /// `/v1/spaces/<key>/env/<rest>`: the same passthrough for a registered
-/// Space, with the Space's own credentials (env token, Fleet bearer and
-/// claim) attached here.
+/// Space, with the Space's own credentials (env token, gateway bearer)
+/// attached here.
 pub(crate) async fn space_env_passthrough(
     State(shared): State<Arc<Shared>>,
     Path((key, rest)): Path<(String, String)>,
@@ -299,8 +298,8 @@ async fn proxy(
 }
 
 /// `/v1/sandboxes/<name>/svc/<service>/<rest>`: a request to a named service
-/// of a sandbox, with its route and credentials (loopback, the Fleet
-/// gateway bearer and claim) attached here (see [`proxy`]).
+/// of a sandbox, with its route and credentials (loopback, a provider's
+/// access headers) attached here (see [`proxy`]).
 pub(crate) async fn service_passthrough(
     State(shared): State<Arc<Shared>>,
     Path((name, service, rest)): Path<(String, String, String)>,

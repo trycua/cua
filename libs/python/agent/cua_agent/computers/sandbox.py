@@ -144,7 +144,7 @@ def open_sandbox(
     if provider == "localhost":
         raise ValueError(
             "The localhost provider was removed. Use cua-driver (its SDK or MCP "
-            "server) to control this machine, or a sandbox provider."
+            "server) to control this computer, or a sandbox provider."
         )
     from cua_sandbox import Image, Sandbox
 

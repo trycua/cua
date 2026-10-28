@@ -9,13 +9,14 @@
 // The owner check is the system's prompt through the app core
 // (`model/presence.ts`: Touch ID, Windows Hello, polkit), with a dialog of
 // the app's own that says so where Windows or Linux has none.
-import { app, BrowserWindow, dialog, Notification, shell } from "electron";
+import { app, BrowserWindow, dialog, nativeImage, Notification, shell } from "electron";
 import * as os from "node:os";
 import type { SystemNote, SystemServices } from "./bridge/system";
 import type { GlobalShortcut } from "./global-shortcut";
 import { confirmOwner } from "./model/presence";
 import { makeLoginItem } from "./login-item";
 import type { Native } from "./native/load";
+import { noteIconPath } from "./note-icon";
 import { ElectronUpdater } from "./updater";
 
 const OPENABLE = /^(https?:|x-apple\.systempreferences:|ms-settings:)/;
@@ -23,6 +24,8 @@ const OPENABLE = /^(https?:|x-apple\.systempreferences:|ms-settings:)/;
 export function makeSystem(o: {
   native: Native;
   showRoute: (route: string) => void;
+  /** The web build's directory: where a note's `icon` is found. */
+  webRoot?: string;
   globalShortcut?: GlobalShortcut | null;
   platform?: NodeJS.Platform;
 }): SystemServices {
@@ -33,7 +36,9 @@ export function makeSystem(o: {
   const notify = (note: SystemNote) => {
     if (!Notification.isSupported()) return;
     shown.get(note.id)?.close();
-    const n = new Notification({ title: note.title, body: note.body });
+    const file = note.icon && o.webRoot ? noteIconPath(o.webRoot, note.icon) : null;
+    const icon = file ? nativeImage.createFromPath(file) : null;
+    const n = new Notification({ title: note.title, body: note.body, ...(icon && !icon.isEmpty() ? { icon } : {}) });
     n.on("click", () => {
       app.focus({ steal: true });
       o.showRoute(note.route ?? "/spaces");
@@ -68,5 +73,6 @@ export function makeSystem(o: {
     updater: ElectronUpdater.start(),
     home: process.env.HOME || os.homedir(),
     globalShortcut: () => o.globalShortcut?.ensure() ?? null,
+    setGlobalShortcut: o.globalShortcut ? (accelerator) => o.globalShortcut!.change(accelerator) : undefined,
   };
 }

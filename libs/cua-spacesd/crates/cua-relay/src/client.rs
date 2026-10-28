@@ -87,6 +87,10 @@ pub struct JoinConfig {
     pub heartbeat: Duration,
     /// Backoff cap.
     pub max_backoff: Duration,
+    /// The first reconnect after a session that was up is spread over this
+    /// long (uniformly from a tenth of it): a relay restart drops every
+    /// machine at once, and they should not all knock together.
+    pub reconnect_spread: Duration,
     /// Re-read the relay token from this file before every attempt (so
     /// `cua host setup` can rotate the machine token under a running
     /// service). Overrides `relay_token` when readable and non-empty.
@@ -111,6 +115,7 @@ impl JoinConfig {
             local,
             heartbeat: Duration::from_secs(15),
             max_backoff: Duration::from_secs(30),
+            reconnect_spread: Duration::from_secs(5),
             relay_token_file: None,
             account: Arc::default(),
         }
@@ -148,13 +153,35 @@ pub fn connect_url(relay_url: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
-/// Backoff with full jitter in [base/2, base], doubling up to `cap`.
+/// Backoff with jitter in [base/2, base], doubling up to `cap`.
 pub fn backoff(attempt: u32, cap: Duration) -> Duration {
+    backoff_with(attempt, cap, rand::thread_rng().gen_range(0.5..=1.0))
+}
+
+/// [`backoff`] with the jitter factor (0.5 to 1.0) given.
+pub fn backoff_with(attempt: u32, cap: Duration, jitter: f64) -> Duration {
     let base = Duration::from_millis(500)
         .saturating_mul(1u32 << attempt.min(16))
         .min(cap);
-    let jitter = rand::thread_rng().gen_range(0.5..=1.0);
     base.mul_f64(jitter)
+}
+
+/// How long to wait before the next connect. The first one after a session
+/// that was up is spread over `spread` (`unit` is a random number from 0 to
+/// 1): machines drop together when the relay restarts, and a thousand of
+/// them retrying within half a second is a storm. Later attempts back off.
+pub fn reconnect_delay(
+    attempt: u32,
+    cap: Duration,
+    was_up: bool,
+    spread: Duration,
+    unit: f64,
+) -> Duration {
+    if was_up && attempt == 0 && !spread.is_zero() {
+        let low = spread / 10;
+        return low + (spread - low).mul_f64(unit.clamp(0.0, 1.0));
+    }
+    backoff_with(attempt, cap, 0.5 + 0.5 * unit.clamp(0.0, 1.0))
 }
 
 /// Why a session ended.
@@ -166,6 +193,9 @@ pub enum SessionEnd {
     Refused(String),
     /// Transport failure.
     Lost(String),
+    /// The relay is busy admitting joins (`503` with `Retry-After`): come
+    /// back after this long.
+    Throttled(Duration),
 }
 
 /// Runs until `shutdown`: connect, serve, reconnect with backoff.
@@ -178,13 +208,30 @@ pub async fn run(config: JoinConfig, shutdown: CancellationToken) {
             SessionEnd::Shutdown => return,
             SessionEnd::Refused(reason) => tracing::warn!(%reason, "relay join refused"),
             SessionEnd::Lost(reason) => tracing::info!(%reason, "relay connection lost"),
+            SessionEnd::Throttled(after) => tracing::info!(?after, "the relay is busy"),
         }
         // A session that stayed up for a while resets the backoff.
         if started.elapsed() > Duration::from_secs(60) {
             attempt = 0;
         }
-        let delay = backoff(attempt, config.max_backoff);
-        attempt = attempt.saturating_add(1);
+        let was_up = started.elapsed() > Duration::from_secs(10);
+        let delay = match &end {
+            // The relay said when: that, and up to a second more.
+            SessionEnd::Throttled(after) => {
+                *after + Duration::from_millis(rand::thread_rng().gen_range(0..1000))
+            }
+            _ => {
+                let d = reconnect_delay(
+                    attempt,
+                    config.max_backoff,
+                    was_up,
+                    config.reconnect_spread,
+                    rand::thread_rng().gen_range(0.0..=1.0),
+                );
+                attempt = attempt.saturating_add(1);
+                d
+            }
+        };
         tracing::info!(?delay, "reconnecting to the relay");
         tokio::select! {
             _ = tokio::time::sleep(delay) => {}
@@ -255,7 +302,7 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
         }
     };
     let heartbeat = heartbeat(handle.clone(), config.heartbeat);
-    tokio::select! {
+    let end = tokio::select! {
         _ = shutdown.cancelled() => SessionEnd::Shutdown,
         result = &mut driver => SessionEnd::Lost(match result {
             Ok(Ok(())) => "relay closed the connection".into(),
@@ -264,7 +311,11 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
         }),
         _ = accept => SessionEnd::Lost("stream acceptor ended".into()),
         reason = heartbeat => SessionEnd::Lost(reason),
-    }
+    };
+    // The connection ends with the session: a stopped client must not leave
+    // its relay connection up until the relay's heartbeat notices.
+    driver.abort();
+    end
 }
 
 /// Records the relay keys and owner from the 101 response. With pinned
@@ -283,7 +334,7 @@ pub fn learn_account(link: &AccountLink, headers: &http::HeaderMap) -> Result<()
                 crate::assertion::ed25519_keys(&crate::assertion::decode_jwks_header(value)?)?
             }
             None => {
-                return Err("the relay presented no assertion key; this machine pins one".into())
+                return Err("the relay presented no assertion key; this computer pins one".into())
             }
         };
         if !presented.iter().any(|k| pinned.contains(k)) {
@@ -298,7 +349,7 @@ pub fn learn_account(link: &AccountLink, headers: &http::HeaderMap) -> Result<()
     if let Some(jwks) = jwks {
         match link.keys.set_from_header(jwks) {
             Ok(n) => {
-                tracing::info!(keys = n, owner = ?owner, "account mode: trusting the relay's assertion keys")
+                tracing::info!(keys = n, owner = ?owner.as_deref().map(crate::ident::tag), "account mode: trusting the relay's assertion keys")
             }
             Err(error) => tracing::warn!(%error, "ignoring the relay's key header"),
         }
@@ -389,6 +440,54 @@ mod tests {
             assert!(d >= Duration::from_millis(250));
         }
         assert!(backoff(20, cap) >= Duration::from_secs(15));
+    }
+
+    #[test]
+    fn the_first_reconnect_after_a_session_is_spread_and_later_ones_back_off() {
+        let cap = Duration::from_secs(30);
+        let spread = Duration::from_secs(5);
+        // A session that was up: anywhere from a tenth of the spread to all of it.
+        assert_eq!(
+            reconnect_delay(0, cap, true, spread, 0.0),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            reconnect_delay(0, cap, true, spread, 1.0),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            reconnect_delay(0, cap, true, spread, 0.5),
+            Duration::from_millis(2750)
+        );
+        // One that never got up, or a second try: the doubling backoff, whatever the spread.
+        assert_eq!(
+            reconnect_delay(0, cap, false, spread, 1.0),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            reconnect_delay(1, cap, true, spread, 1.0),
+            Duration::from_secs(1)
+        );
+        assert!(reconnect_delay(20, cap, true, spread, 1.0) <= cap);
+        // No spread configured: the old behaviour.
+        assert_eq!(
+            reconnect_delay(0, cap, true, Duration::ZERO, 1.0),
+            Duration::from_millis(500)
+        );
+    }
+
+    #[test]
+    fn a_thousand_machines_dropped_together_do_not_retry_in_one_second() {
+        // Evenly spaced "random" draws: how many of 1,000 retry in the busiest second.
+        let cap = Duration::from_secs(30);
+        let mut per_second = std::collections::BTreeMap::<u64, u32>::new();
+        for i in 0..1000 {
+            let d = reconnect_delay(0, cap, true, Duration::from_secs(5), f64::from(i) / 999.0);
+            *per_second.entry(d.as_secs()).or_default() += 1;
+        }
+        let busiest = per_second.values().copied().max().unwrap();
+        // Before: all 1,000 inside half a second. Now: about 220 a second.
+        assert!(busiest <= 260, "{busiest} in one second: {per_second:?}");
     }
 
     #[test]

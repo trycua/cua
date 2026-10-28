@@ -51,9 +51,8 @@ def test_sandbox_refs_parse_qualify_and_carry_candidates():
     # One ref scheme: qualified ids round-trip, legacy spellings parse.
     for ref in ("local:box", "cloud:box", "direct:10.0.0.5:3211", "relay:0123abcd4567ef89"):
         assert cua.parse_sandbox_ref(ref).id == ref
-    legacy = cua.parse_sandbox_ref("space://fleet/ns/box")
+    legacy = cua.parse_sandbox_ref("space://cloud/box")
     assert (legacy.location, legacy.name, legacy.id) == ("cloud", "box", "cloud:box")
-    assert cua.parse_sandbox_ref("fleet:ns:box").id == "cloud:box"
     assert cua.parse_sandbox_ref("url:h:1").id == "direct:h:1"
     bare = cua.parse_sandbox_ref("box")
     assert (bare.location, bare.id) == (None, "box")
@@ -75,16 +74,14 @@ def test_listing_and_lookup_use_refs(tmp_path):
     c = cua.embedded(
         state_dir=str(tmp_path / "sandboxes"),
         spaces_home=str(tmp_path / "cua"),
-        fleet_pool_home=str(tmp_path / "pools"),
-        fleet_from_env=False,
-        fleet_from_session=False,
     )
     import asyncio
 
     async def go():
         sbx = c.sandboxes()
-        # A cloud ref needs Fleet; a bare name searches what is configured.
-        with pytest.raises(cua.CuaError.ProviderNotConfigured):
+        # A cloud ref parses, but Cua Cloud has ended; a bare name searches
+        # what is configured.
+        with pytest.raises(cua.CuaError.Unsupported, match="Cua Cloud has ended"):
             await sbx.get("cloud:nope")
         with pytest.raises(cua.CuaError.NotFound):
             await sbx.get("nope")

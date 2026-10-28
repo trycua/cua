@@ -1,0 +1,65 @@
+---
+title: Create failure kinds
+description: The fixed error_kind words a failed sandbox or Space create sends, and what each means.
+---
+
+When a create fails, `cua_space_create`, `cua_sandbox_created` and
+`cua_host_space_provided` set `error_kind` to a fixed word for the cause. The
+program reads the error on your machine and sends only the word, never the
+error text.
+
+| `error_kind` | Cause |
+|---|---|
+| `image_pull_not_found` | The image is not in the registry. |
+| `image_pull_auth` | The registry refused the download. |
+| `image_pull_network` | The network failed or timed out during the download. |
+| `image_pull_rate_limited` | The registry rate-limited the download. |
+| `image_pull` | The download failed for another reason, or stopped partway. |
+| `insufficient_disk` | Not enough disk space. |
+| `runtime_missing`, `runtime_not_running`, `runtime_permission` | The local runtime (Docker, Lume, QEMU) is not installed, not running, or not allowed. |
+| `virtualization_unavailable` | The machine cannot run VMs (no Virtualization.framework, KVM or hardware virtualization). |
+| `vm_limit` | The Mac already runs the two macOS VMs Apple allows. |
+| `vm_boot_timeout` | The VM did not finish booting in time. |
+| `services_unreachable` | The Space booted but its services never answered. |
+| `local_network` | macOS Local Network privacy blocked the connection to the new VM. `cua_space_create` says why in `error_subclass`: `local_network_denied` (Local Network access is off for the app) or `local_network_vpn` (access is on, but a VPN or firewall blocks the Mac's own VM network). |
+| `out_of_memory` | The machine ran out of memory for the guest. |
+| `port_in_use` | A port the Space needs is already taken. |
+| `file_access` | A file or folder could not be written (access denied, in use, path too long). |
+| `network` | The machine could not reach the network (DNS, proxy, certificate) outside the image download. |
+| `quota_exceeded` | The account's quota, plan limit or credits ran out. |
+| `cloud_ended` | The create asked for Cua Cloud, which has ended. The create is refused up front; it is not a failure to fix. |
+| `cancelled` | You cancelled the create. |
+
+Otherwise it is the error's type (for example `unauthenticated`, `timeout`,
+`runtime`), and `other` only when nothing names the cause. A failed create
+never reports `none`.
+
+## Finer causes
+
+The Spaces app's `cua_space_create` also sets `error_subclass` where
+`error_kind` alone is too coarse. It is `none` when there is nothing finer to
+say.
+
+| `error_subclass` | Cause |
+|---|---|
+| `runtime_start` | A local runtime did not start this time (the built-in Linux runtime, its Docker engine, Apple's container services, a microVM). |
+| `daemon_unresponsive` | Cua's background service did not take the create in time. |
+| `pull_interrupted` | The image download stopped partway. Another try resumes it. |
+| `local_network_denied` | macOS Local Network privacy is off for the app or its service. |
+| `local_network_vpn` | A VPN routes the VM's private network away. |
+
+## Automatic retry
+
+The Spaces app runs a create once more by itself, and says **Retrying…**,
+when it fails for a reason that usually passes: `runtime_start`,
+`daemon_unresponsive`, `pull_interrupted`, `image_pull_network`,
+`vm_boot_timeout` or `services_unreachable`. It never retries a lasting
+cause, such as `insufficient_disk`, `runtime_permission`, `runtime_missing`,
+`runtime_not_running`, `unsupported`, `invalid_argument`, `local_network`,
+`out_of_memory` or `quota_exceeded`.
+
+`cua_space_create` is sent once per create, for its final outcome, with
+`retry_attempt` set to `1` when the app retried it. A retried create that
+worked sends `outcome` `ok` with the `error_subclass` of the failure it got
+past.
+

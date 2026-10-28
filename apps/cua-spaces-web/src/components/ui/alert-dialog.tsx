@@ -15,7 +15,7 @@ export function AlertDialogPopup({ className, children, ...props }: AlertDialogP
       <AlertDialogPrimitive.Backdrop data-window-dim="" className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0 dark:bg-black/40" />
       <AlertDialogPrimitive.Popup
         className={cn(
-          "glass fixed top-[22vh] left-1/2 z-50 w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-xl border text-popover-foreground shadow-float outline-none transition-[opacity,scale] duration-150 ease-out-soft data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
+          "glass fixed top-[22vh] left-1/2 z-50 w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-lg border text-popover-foreground shadow-float outline-none transition-[opacity,scale] duration-150 ease-out-soft data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
           className,
         )}
         {...props}

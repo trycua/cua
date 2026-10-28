@@ -9,7 +9,6 @@ rust-version = "1.95"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [features]
 default = ["http"]

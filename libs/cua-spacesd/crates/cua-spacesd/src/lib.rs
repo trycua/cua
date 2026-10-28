@@ -21,12 +21,20 @@ use cua_spacesd_session::{Connection, OutboundPacket, ServerRuntime};
 /// Used by `--listen` when no address is given and by the Linux default mode.
 pub const DEFAULT_PORT: u16 = 3211;
 
+// The legacy daemon modes serve the desktop; the static headless build
+// (musl, see build.rs) has none of them.
+#[cfg(not(cua_headless))]
 pub mod quic;
+#[cfg(not(cua_headless))]
 mod remote;
 
+#[cfg(not(cua_headless))]
 pub use remote::{serve_remote, serve_remote_listener, RemoteShareConfig};
+#[cfg(not(cua_headless))]
 pub mod mcp_serve;
+#[cfg(not(cua_headless))]
 pub mod presence;
+#[cfg(not(cua_headless))]
 pub mod ws;
 
 #[cfg(unix)]

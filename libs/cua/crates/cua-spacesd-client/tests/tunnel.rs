@@ -1,9 +1,10 @@
 //! `SpacesdClient::forward_tcp` against the mock driver's `TunnelService` and
-//! `/tunnel` WebSocket, directly and through the emulated Fleet gateway.
+//! `/tunnel` WebSocket, directly and through the emulated gateway.
 //! Every read is bounded by a timeout and an exact byte count.
 
 use cua_spacesd_client::{
-    ConnectOptions, Error, ForwardOptions, SpacesdClient, StaticBearer, TUNNEL_FORWARD_FEATURE, pb,
+    ConnectOptions, Error, ForwardOptions, SpacesdClient, StaticBearer, TUNNEL_FORWARD_FEATURE,
+    TransportPreference, pb,
     testing::{MockAuth, MockGateway, MockServer},
 };
 use std::{net::SocketAddr, sync::Arc, sync::atomic::Ordering, time::Duration};
@@ -188,27 +189,26 @@ async fn revoked_ticket_is_renewed() {
 }
 
 #[tokio::test]
-async fn through_the_fleet_gateway() {
+async fn through_the_gateway() {
     let echo = echo_server().await;
-    let prefix = "/api/svc/cua-e2e-pool/sbx-1-env";
+    let prefix = "/m/abcd1234";
     let srv = MockServer::start(MockAuth {
         token: Some(TOKEN.into()),
         gateway: Some(MockGateway {
             prefix: prefix.into(),
-            bearer: "fleet-bearer".into(),
-            claim: "claim-abc".into(),
+            bearer: "gateway-bearer".into(),
         }),
         prefix: None,
     })
     .await;
     srv.state.advertise(&[TUNNEL_FORWARD_FEATURE]);
-    let endpoint =
-        cua_spacesd_client::Endpoint::fleet_service(&srv.url(), "cua-e2e-pool", "sbx-1", "env")
-            .unwrap();
-    let env = SpacesdClient::connect(ConnectOptions::new(endpoint).token(TOKEN).fleet_gateway(
-        Arc::new(StaticBearer("fleet-bearer".into())),
-        Some("claim-abc".into()),
-    ))
+    let endpoint = cua_spacesd_client::Endpoint::parse(&format!("{}{prefix}", srv.url())).unwrap();
+    let env = SpacesdClient::connect(
+        ConnectOptions::new(endpoint)
+            .token(TOKEN)
+            .transport(TransportPreference::GrpcWeb)
+            .gateway(Arc::new(StaticBearer("gateway-bearer".into()))),
+    )
     .await
     .unwrap();
     let fwd = env
@@ -225,8 +225,7 @@ async fn through_the_fleet_gateway() {
         a.path.starts_with(&format!("{prefix}/tunnel?ticket=")),
         "{a:?}"
     );
-    assert_eq!(a.authorization.as_deref(), Some("Bearer fleet-bearer"));
-    assert_eq!(a.claim.as_deref(), Some("claim-abc"));
+    assert_eq!(a.authorization.as_deref(), Some("Bearer gateway-bearer"));
     assert_eq!(
         a.env_authorization.as_deref(),
         Some(format!("Bearer {TOKEN}").as_str())

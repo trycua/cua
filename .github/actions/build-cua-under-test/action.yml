@@ -29,13 +29,20 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Free disk space
+      uses: ./.github/actions/free-disk-space
     - name: Install protoc
       uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
       with:
         version: "29.x"
         repo-token: ${{ github.token }}
+    # Three release builds outgrow the root disk's 13 GB free.
+    - uses: ./.github/actions/linux-rust-prep
+      with:
+        install-deps: "false"
+        free-more: "true"
     - uses: dtolnay/rust-toolchain@1.97.1
-    - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+    - uses: ./.github/actions/rust-cache
       with:
         workspaces: |
           libs/cua -> target
@@ -58,6 +65,13 @@ runs:
         COMPONENTS: ${{ inputs.components }}
         CUA_FEATURES: ${{ inputs.cua-features }}
         CARGO_BUILD_JOBS: "4"
+        # The doctor checks behavior and embedded revisions, not speed: a
+        # cheaper release profile compiles about a quarter faster.
+        CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
+        CARGO_PROFILE_RELEASE_DEBUG: "0"
+        CARGO_PROFILE_RELEASE_LTO: "off"
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        CARGO_PROFILE_DEV_DEBUG: "0"
       run: |
         set -euo pipefail
         sha="$(git rev-parse HEAD)"

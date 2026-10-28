@@ -3,17 +3,19 @@
 # cua-driver installation has different names and paths and is never touched.
 set -euo pipefail
 
-RESET_TCC=1
+# Opt in with --reset-permissions; the grant belongs to the signed app identity
+# and is kept by default.
+RESET_TCC=0
 FORCE=0
 VALIDATE_ONLY=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --keep-tcc) RESET_TCC=0 ;;
-        --reset-tcc) RESET_TCC=1 ;;
+        --reset-permissions|--reset-tcc) RESET_TCC=1 ;;
         --force) FORCE=1 ;;
         --validate-only) VALIDATE_ONLY=1 ;;
         --help|-h)
-            echo "Usage: $0 [--force] [--keep-tcc] [--validate-only]"
+            echo "Usage: $0 [--force] [--reset-permissions] [--validate-only]"
             exit 0
             ;;
         *) echo "error: unknown option: $1" >&2; exit 2 ;;

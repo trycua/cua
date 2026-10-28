@@ -191,6 +191,22 @@ class CustomComputerHandler(AsyncComputerHandler):
             await self._call_function(self.functions["keypress"], keys)
         # No-op if not implemented
 
+    async def key_down(self, keys: Union[List[str], str]) -> None:
+        """Hold keys down until key_up."""
+        if "key_down" not in self.functions:
+            from ..types import ToolError
+
+            raise ToolError("Unknown computer action: key_down")
+        await self._call_function(self.functions["key_down"], keys)
+
+    async def key_up(self, keys: Union[List[str], str]) -> None:
+        """Release keys held by key_down."""
+        if "key_up" not in self.functions:
+            from ..types import ToolError
+
+            raise ToolError("Unknown computer action: key_up")
+        await self._call_function(self.functions["key_up"], keys)
+
     async def drag(self, path: List[Dict[str, int]]) -> None:
         """Drag along specified path."""
         if "drag" in self.functions:

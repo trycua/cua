@@ -117,6 +117,7 @@ const CLAUDE_EXTRA: &str = r#"  auth)
     echo '{"authMethod":"none"}'; exit 1 ;;
   setup-token)
     if [ -f "$HOME/.fake-claude-cancel" ]; then echo "Login cancelled"; exit 1; fi
+    if [ -f "$HOME/.fake-claude-short" ]; then printf 'Your OAuth token:\r\n\r\n  sk-ant-oat01-FAKEtoken_0123456789\r\n' ; exit 0; fi
     printf 'Your OAuth token:\r\n\r\n  sk-ant-oat01-FAKEtoken_0123456789abcdef_ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz_0123456789_QQQQ\r\n' ; exit 0 ;;
 "#;
 
@@ -129,10 +130,6 @@ impl World {
         std::fs::create_dir_all(&bin).unwrap();
         let mut env = HostEnv::isolated(&home);
         env.path = vec![bin.clone()];
-        // The pre-save token check asks this address, where nothing answers
-        // (the check is then inconclusive and the token is saved).
-        env.vars
-            .insert("CUA_TOKEN_CHECK_URL".into(), "http://127.0.0.1:9".into());
         let w = World {
             _dir: dir,
             home,
@@ -423,33 +420,40 @@ fn connected_but_not_signed_in_says_so_and_offers_sign_in_where_cua_can_start_it
     assert_eq!(r.signed_in, SignedInState::Unknown);
 }
 
-/// A corrupted token gets the provider's 401 from a local stub and is never
-/// saved: Connect reports it, and the vault stays empty.
+/// A token cut short (a redraw, a wrapped line) is never saved, and the line
+/// says what happened in plain words, never "Connected" next to "not copied".
 #[test]
-fn a_token_the_provider_refuses_is_never_saved() {
-    use std::io::{Read, Write};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let server = std::thread::spawn(move || {
-        let (mut c, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let _ = c.read(&mut buf).unwrap();
-        let body = r#"{"type":"error","error":{"type":"authentication_error","message":"OAuth token invalid"}}"#;
-        let _ = write!(
-            c,
-            "HTTP/1.1 401 Unauthorized\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        );
-    });
-    let mut w = World::new();
-    w.env.vars.insert("CUA_TOKEN_CHECK_URL".into(), url);
+fn a_truncated_token_is_refused_with_a_plain_line_and_a_whole_one_is_saved() {
+    let w = World::new();
     w.install("claude-code", "2.4.1");
     w.sign_in("claude-code");
-    w.connect("claude-code", true);
-    server.join().unwrap();
+    w.write(".fake-claude-short", "1");
+    let mut env = w.env.clone();
+    env.run_agent_clis = true;
+    let r = AgentSetup::new(env)
+        .connect(
+            &["claude-code".into()],
+            &w.server(),
+            ConnectParts {
+                skills: false,
+                mcp: false,
+                sign_in: true,
+            },
+            Some(&w.vault),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+    let s = r[0].sign_in.as_ref().unwrap();
+    assert_eq!(
+        s.line.as_deref(),
+        Some("Couldn't read the sign-in from Claude. Try Connect again.")
+    );
+    assert!(!s.line.as_ref().unwrap().contains("Connected"));
     assert_eq!(w.vault.value("claude-code"), None);
-    let r = w.row("claude-code");
-    assert_ne!(r.signin_import, ImportState::Ok, "{r:#?}");
+    // The whole token (about 108 characters) is saved with no network involved.
+    std::fs::remove_file(w.home.join(".fake-claude-short")).unwrap();
+    w.connect("claude-code", true);
+    assert_eq!(w.vault.value("claude-code").unwrap().len(), 109);
 }
 
 #[test]
@@ -606,7 +610,7 @@ fn a_refused_sign_in_copy_leaves_the_tools_connected_with_one_line() {
         s.line
             .as_ref()
             .unwrap()
-            .starts_with("Connected. Sign-in not copied")
+            .starts_with("The browser approval was cancelled")
     );
     // Hermes on an OAuth provider: not yet.
     w.install("hermes", "0.22.5");

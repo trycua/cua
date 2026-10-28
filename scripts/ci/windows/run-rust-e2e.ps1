@@ -119,7 +119,8 @@ if (($suite -in @("shared", "native", "all")) -and (Test-HarnessWanted "webview"
 }
 if ($suite -in @("native", "all")) {
     $requiredFixtures += @(
-        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winui3\CuaTestHarness.WinUI3.exe")
+        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winui3\CuaTestHarness.WinUI3.exe"),
+        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winforms-modal\CuaTestHarness.WinFormsModal.exe")
     )
 }
 foreach ($fixture in $requiredFixtures) {

@@ -207,6 +207,13 @@ fn run_modal_scenario(mut driver: McpDriver) -> Observation {
     assert_eq!(busy.structured()["code"], "background_unavailable");
     assert_eq!(busy.structured()["uia_status"], "busy");
     assert_eq!(busy.structured()["effect"], "refused");
+    for reply in [&response, &busy] {
+        let data = reply.structured();
+        let hint = data["hint"].as_str().expect("public no-replay hint");
+        assert!(hint.contains("Do not replay this click"), "{hint}");
+        assert!(!hint.contains("foreground"), "{hint}");
+        assert_eq!(data["next_call"]["tool"], "get_window_state");
+    }
     assert_eq!(counts(&journal).get("opened"), Some(&1));
     assert_eq!(
         counts(&journal).get("mouse_down"),

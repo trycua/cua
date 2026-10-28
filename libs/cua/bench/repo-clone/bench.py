@@ -126,7 +126,10 @@ class SimSpace:
         os.makedirs(os.path.join(self.dir, "work"), exist_ok=True)
 
     def env(self) -> dict:
-        e = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_TERMINAL_PROMPT="0", CUA_REPO_CACHE_LOG=self.log)
+        # What a Space has, not what this machine has: no token of the host's.
+        keep = ("PATH", "LANG", "TERM", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR")
+        e = {k: os.environ[k] for k in keep if k in os.environ}
+        e.update(HOME=self.dir, GIT_CONFIG_GLOBAL="/dev/null", GIT_TERMINAL_PROMPT="0", CUA_REPO_CACHE_LOG=self.log)
         if self.case != "off":
             root = self.cua.root
             e.update(
@@ -259,12 +262,13 @@ def canary(make_space, cua: Cua, url: str) -> dict:
     try:
         a.create()
         b.create()
-        where = f"/tmp/bench-canary-{uuid.uuid4().hex[:8]}"
-        for s in (a, b):
+        where_a = f"/tmp/bench-canary-{uuid.uuid4().hex[:8]}"
+        where_b = f"/tmp/bench-canary-{uuid.uuid4().hex[:8]}"
+        for s, where in ((a, where_a), (b, where_b)):
             if s.exec(f"git clone --quiet {url} {where}").returncode != 0:
                 return {"ran": False}
-        h = a.exec(f"echo canary-$$-$(date +%s) | git -C {where} hash-object -w --stdin").stdout.strip()
-        seen_b = b.exec(f"git -C {where} cat-file -e {h}").returncode == 0
+        h = a.exec(f"echo canary-$$-$(date +%s) | git -C {where_a} hash-object -w --stdin").stdout.strip()
+        seen_b = b.exec(f"git -C {where_b} cat-file -e {h}").returncode == 0
         mirror_has = False
         if isinstance(a, SimSpace):
             for name in os.listdir(os.path.join(cua.root, "m")):

@@ -913,11 +913,7 @@ impl VmmLocal {
         {
             return None;
         }
-        Some(cua_vmm::Mount {
-            host: root,
-            guest: cua_sandbox_core::repo_cache::GUEST_ROOT.to_string(),
-            read_only: true,
-        })
+        Some(cua_sandbox_core::repo_cache::mount(root))
     }
 
     async fn engine(&self) -> std::result::Result<Engine, VmmError> {

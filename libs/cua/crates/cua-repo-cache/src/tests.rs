@@ -509,3 +509,60 @@ async fn turning_the_cache_off_stops_spaces_using_what_it_holds() {
             .contains(&repo.key)
     );
 }
+
+#[tokio::test]
+async fn a_repository_the_cache_does_not_hold_clones_the_plain_way_without_the_helper() {
+    let (t, src, root) = dirs();
+    let held = source(&src, "held", 2, 16);
+    let other = source(&src, "other", 2, 16);
+    let c = cache(&root, Some(1 << 30));
+    assert!(matches!(c.ensure(&held).await, Outcome::Filled { .. }));
+    // `other` has no mirror: its URL is not rewritten, the helper never runs.
+    let dest = t.path().join("clone");
+    let out = clone_like_a_space(&root, &other.url, &dest, &[]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        !root.join("guest.log").exists(),
+        "the helper ran for an unmirrored repository"
+    );
+    assert_eq!(
+        git(&dest, &["rev-parse", "HEAD"]),
+        git(&src.join("other"), &["rev-parse", "HEAD"])
+    );
+}
+
+#[tokio::test]
+async fn an_object_written_in_one_clone_is_in_no_other_clone_and_not_in_the_mirror() {
+    let (t, src, root) = dirs();
+    let repo = source(&src, "a", 2, 16);
+    let c = cache(&root, Some(1 << 30));
+    assert!(matches!(c.ensure(&repo).await, Outcome::Filled { .. }));
+    let (a, b) = (t.path().join("a"), t.path().join("b"));
+    for d in [&a, &b] {
+        let out = clone_like_a_space(&root, &repo.url, d, &[]);
+        assert!(out.status.success(), "{out:?}");
+    }
+    let canary = Command::new("sh")
+        .current_dir(&a)
+        .arg("-c")
+        .arg("echo canary-object | git hash-object -w --stdin")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    let h = String::from_utf8(canary.stdout).unwrap().trim().to_string();
+    let seen = |dir: &Path| {
+        Command::new("git")
+            .current_dir(dir)
+            .args(["cat-file", "-e", &h])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(seen(&a));
+    assert!(!seen(&b), "another clone sees it");
+    assert!(
+        !seen(&store::mirror_dir(&root, &repo.key)),
+        "the mirror has it"
+    );
+}

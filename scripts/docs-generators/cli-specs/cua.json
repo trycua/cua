@@ -13405,7 +13405,7 @@
     },
     {
      "abstract": "Show or change what this computer shares: its own desktop, and whether it creates Spaces for your other devices",
-     "after_help": "Examples:\n  cua host config\n  # Stop sharing this desktop; keep providing Spaces\n  cua host config --desktop off --provide-spaces on\n  cua host config --max-spaces 6\n  # Give the Spaces other machines create here at most 32 GB of memory and\n  # 200 GB of disk in total, and stop each after 8 hours (0: no limit)\n  cua host config --max-memory 32 --max-disk 200 --max-run-time 480",
+     "after_help": "Examples:\n  cua host config\n  # Stop sharing this desktop; keep providing Spaces\n  cua host config --desktop off --provide-spaces on\n  cua host config --max-spaces 6\n  # Give the Spaces other machines create here at most 32 GB of memory and\n  # 200 GB of disk in total, and stop each after 8 hours (0: no limit)\n  cua host config --max-memory 32 --max-disk 200 --max-run-time 480\n  # Keep no copies of public git repositories on this machine, or at most 2 GB\n  cua host config --repo-cache off\n  cua host config --repo-cache on --repo-cache-size 2",
      "aliases": [],
      "arguments": [],
      "flags": [],
@@ -13530,11 +13530,113 @@
        "takes_value": true,
        "type": "integer",
        "value_name": "MINUTES"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The repo cache: on | off. It keeps verified copies of public git repositories on this machine so a repeat `git clone` in a Space starts from one (never private repositories, never anything off this machine's disk)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "repo-cache",
+       "possible_values": [
+        "on",
+        "off"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "on | off",
+       "value_name": "REPO_CACHE"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The most disk the repo cache may use, in GB (`auto`: the smaller of 5 GB and a tenth of the free disk). The least recently used repositories go first",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "repo-cache-size",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "GB"
       }
      ],
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua host config [OPTIONS]"
+    },
+    {
+     "abstract": "What the repo cache holds, and empty it",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "cache",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [
+      {
+       "abstract": "What the repo cache holds: repositories, size and what the last week saved",
+       "after_help": "Examples:\n  cua host cache status",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "status",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache status [OPTIONS]"
+      },
+      {
+       "abstract": "Copy one public repository into the cache now, instead of when a Space first clones it (or bring a copy up to date). A repository that needs a sign-in is never cached",
+       "after_help": "Examples:\n  cua host cache fill https://github.com/vitejs/vite",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "The repository's `https` address",
+         "hidden": false,
+         "is_optional": false,
+         "name": "URL",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "fill",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache fill [OPTIONS] <URL>"
+      },
+      {
+       "abstract": "Delete every repository the cache holds. They are copied again the next time a Space clones them",
+       "after_help": "Examples:\n  cua host cache clear",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "clear",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache clear [OPTIONS]"
+      }
+     ],
+     "usage": "cua host cache [OPTIONS] <COMMAND>"
     },
     {
      "abstract": "Show whether this computer is set up, the service, and who is connected",

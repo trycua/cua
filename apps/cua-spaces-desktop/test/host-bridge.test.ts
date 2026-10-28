@@ -240,6 +240,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       "storage.run": { request: { kind: "clear-cache" } } as never,
       "host.setUp": { request: { mode: "direct", direct: "0.0.0.0:3211" } } as never,
       "host.action": { action: "provide-spaces" } as never,
+      "host.limits": { maxSpaces: 2 },
       "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
       "settings.set": { key: "telemetry", value: false },
       "settings.choose": { row: "auto-connect", option: "off" },
@@ -275,6 +276,15 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(host.calls.at(-1)).toBe("configure:-:true");
     expect(await code("host.action", { action: "set-up" })).toBe("bad_args");
     expect(await code("host.setUp", { request: {} })).toBe("bad_args");
+  });
+
+  it("changes the limits on the Spaces other machines create, and refuses a bad count", async () => {
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    const r = (await call("host.limits", { maxSpaces: 2 })) as Record<string, unknown>;
+    expect(r).toMatchObject({ configured: true });
+    expect(host.calls.at(-1)).toBe("configure:-:-");
+    expect(await code("host.limits", { maxSpaces: -1 })).toBe("bad_args");
+    expect(await code("host.limits", { maxDiskGb: "lots" })).toBe("bad_args");
   });
 
   it("carries the whole state, the owner and the progress", async () => {

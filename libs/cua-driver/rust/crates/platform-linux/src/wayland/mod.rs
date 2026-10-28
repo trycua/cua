@@ -4178,7 +4178,9 @@ mod tests {
     }
 
     /// Run the display cascade's portal-then-X11 tail with a portal request
-    /// that resolves to `outcome`, reporting whether X11 was captured.
+    /// that resolves to `outcome`, reporting whether X11 was captured. The
+    /// refusal contract is owned by `tests/portal_screenshot_cascade.rs`,
+    /// which drives the public capture path against a portal on D-Bus.
     fn portal_tail(
         outcome: Result<String, portal_screenshot::RequestError>,
     ) -> (anyhow::Result<Vec<u8>>, bool) {
@@ -4200,41 +4202,6 @@ mod tests {
             },
         );
         (result, x11_called.get())
-    }
-
-    #[test]
-    fn portal_denial_reaches_caller_without_x11() {
-        use ashpd::desktop::ResponseError;
-        use ashpd::PortalError;
-        for denial in [
-            ashpd::Error::Response(ResponseError::Cancelled),
-            ashpd::Error::Portal(PortalError::NotAllowed("screenshots disabled".into())),
-            ashpd::Error::Portal(PortalError::Cancelled("dismissed".into())),
-        ] {
-            let label = denial.to_string();
-            let (result, x11_called) = portal_tail(Err(denial.into()));
-            let message = result.expect_err(&label).to_string();
-            assert!(
-                message.starts_with("xdg-desktop-portal Screenshot denied"),
-                "{label}: {message}"
-            );
-            assert!(!x11_called, "{label}: denial fell back to X11");
-        }
-    }
-
-    #[test]
-    fn portal_unspecified_response_is_not_granted_without_x11() {
-        let (result, x11_called) = portal_tail(Err(ashpd::Error::Response(
-            ashpd::desktop::ResponseError::Other,
-        )
-        .into()));
-        let message = result.unwrap_err().to_string();
-        assert!(
-            message.starts_with("xdg-desktop-portal Screenshot not granted"),
-            "{message}"
-        );
-        assert!(!message.contains("denied"), "{message}");
-        assert!(!x11_called);
     }
 
     #[test]

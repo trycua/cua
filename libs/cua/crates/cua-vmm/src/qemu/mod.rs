@@ -1672,12 +1672,15 @@ impl QemuRuntime {
         !host::pid_alive(pid)
     }
 
-    /// The directory a VM runs in (where its pidfiles and `tpm/` live).
+    /// The directory a VM runs in (where its pidfiles and `tpm/` live). A
+    /// checkpoint's or base's disk lives in a shared store, so those use
+    /// their entry.
     fn run_dir(&self, st: &QemuState) -> PathBuf {
-        st.disk
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| self.dir(&st.name))
+        match st.kind {
+            EntryKind::Instance => st.disk.parent().map(Path::to_path_buf),
+            EntryKind::Base | EntryKind::Checkpoint => None,
+        }
+        .unwrap_or_else(|| self.dir(&st.name))
     }
 
     /// End every swtpm this VM launched; a record goes only once its swtpm
@@ -3595,6 +3598,34 @@ mod tests {
         assert_eq!(err, format!("checkpoint 'ck2' {msg}"));
     }
 
+    /// A stopped checkpoint's disk lives in the shared layer store; deleting
+    /// it must not treat that store as its run directory.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn deleting_a_checkpoint_leaves_a_swtpm_in_the_layer_store_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        r.checkpoint("vm1", "ck1").await.unwrap();
+        let shared = r.load("ck1").unwrap().disk.parent().unwrap().to_path_buf();
+        assert_ne!(shared, r.dir("ck1"), "the checkpoint's disk is shared");
+        let link = super::tpm_tests::fake_swtpm_link(tmp.path());
+        let mut other = super::tpm_tests::spawn_fake(
+            &link,
+            &shared.join("swtpm.other.pid"),
+            &shared.join("tpm"),
+        );
+        r.delete("ck1").await.unwrap();
+        assert!(r.load("ck1").is_err());
+        assert!(
+            other.try_wait().unwrap().is_none(),
+            "a swtpm that is not the checkpoint's was stopped"
+        );
+        other.kill().unwrap();
+        other.wait().unwrap();
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn tpm_copy_fails_closed() {
@@ -3643,35 +3674,36 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn a_copy_waits_for_its_vm_without_holding_the_runtime_lock() {
+    async fn a_copy_waiting_for_its_vm_lets_unrelated_vms_proceed() {
         let tmp = tempfile::tempdir().unwrap();
         let Some(r) = tpm_runtime(tmp.path()).await else {
             return;
         };
         let r = Arc::new(r);
         let root = tmp.path().join("qemu");
-        let owner = r.own("vm1").await;
-        let fork = {
-            let r = r.clone();
-            tokio::spawn(async move { r.fork("vm1", "f1").await })
-        };
-        super::tpm_tests::wait_queued(&r, "vm1").await;
-        assert!(r.lock.try_lock().is_ok(), "fork queued without self.lock");
-        // Hold the VM again behind the fork, for the checkpoint to queue.
-        drop(owner);
-        fork.await.unwrap().unwrap();
-        let owner = r.own("vm1").await;
-        let ck = {
-            let r = r.clone();
-            tokio::spawn(async move { r.checkpoint("vm1", "ck1").await })
-        };
-        super::tpm_tests::wait_queued(&r, "vm1").await;
-        assert!(
-            r.lock.try_lock().is_ok(),
-            "checkpoint queued without self.lock"
-        );
-        drop(owner);
-        ck.await.unwrap().unwrap();
+        // Each copy of vm1 waits behind its owner while a fork of another
+        // source completes; the copy finishes once vm1 is released.
+        for (other, checkpoint) in [("other1", false), ("other2", true)] {
+            let owner = r.own("vm1").await;
+            let r2 = r.clone();
+            let copy = tokio::spawn(async move {
+                match checkpoint {
+                    true => r2.checkpoint("vm1", "ck1").await.map(drop),
+                    false => r2.fork("vm1", "f1").await,
+                }
+            });
+            // The single-threaded test runtime runs the copy until it waits.
+            for _ in 0..10 {
+                tokio::task::yield_now().await;
+            }
+            tokio::time::timeout(Duration::from_secs(10), r.fork("base", other))
+                .await
+                .expect("an unrelated fork completes while a copy waits")
+                .unwrap();
+            assert!(!copy.is_finished(), "the copy waits for vm1");
+            drop(owner);
+            copy.await.unwrap().unwrap();
+        }
         assert!(root.join("f1/tpm/tpm2-00.permall").exists());
         assert!(root.join("ck1/tpm/tpm2-00.permall").exists());
     }

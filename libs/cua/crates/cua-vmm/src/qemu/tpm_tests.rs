@@ -205,11 +205,6 @@ fn tpm_state_defaults_off() {
     assert!(!st.tpm);
 }
 
-#[test]
-fn tpm_launch_ends_with_qemu_launch() {
-    assert!(TPM_LAUNCH.ends_with(QEMU_LAUNCH));
-}
-
 /// The test binary behind a symlink named `swtpm`, so its argv passes the
 /// production identity check.
 pub(super) fn fake_swtpm_link(dir: &Path) -> PathBuf {

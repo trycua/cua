@@ -1,5 +1,5 @@
 //! Provider keys for agent runs, kept on this machine (Cua Spaces →
-//! Settings → Connectors).
+//! Settings → Connections).
 //!
 //! The keys live in the OS credential vault through cua-auth's secret store
 //! ([`cua_auth::Store::save_secret`]): one item, `agent-keys`, next to the
@@ -18,6 +18,7 @@
 
 use crate::error::{Error, Result};
 use cua_agents::claude_login;
+pub use cua_agents::connections as registry;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
@@ -39,13 +40,11 @@ pub const APP_METHODS: &[&str] = &[
 ];
 
 /// The provider keys Cua may read from your login shell, by name (Settings,
-/// Connectors: "Use ANTHROPIC_API_KEY from your shell"). Nothing else is
-/// ever read there.
-pub const SHELL_NAMES: &[&str] = &[
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "COPILOT_GITHUB_TOKEN",
-];
+/// Connections: "Use ANTHROPIC_API_KEY from your shell"): the API key names of
+/// the providers in the registry. Nothing else is ever read there.
+pub fn shell_allowed() -> Vec<&'static str> {
+    registry::shell_names()
+}
 
 /// How long the login shell has to answer.
 const SHELL_WAIT: Duration = Duration::from_secs(5);
@@ -62,15 +61,23 @@ pub fn login_shell() -> std::path::PathBuf {
 }
 
 /// `name`'s value in a login, interactive `shell` (the profile files your
-/// terminal reads), when it is one of [`SHELL_NAMES`] and set. The shell's
+/// terminal reads), when it is one of [`shell_allowed`] and set. The shell's
 /// stdin is closed and it is stopped after [`SHELL_WAIT`].
 pub fn shell_value(shell: &std::path::Path, name: &str) -> Option<String> {
-    if !SHELL_NAMES.contains(&name) {
+    if !shell_allowed().contains(&name) {
         return None;
     }
     let script = format!("printf '\\n{SHELL_MARK}%s' \"${{{name}-}}\"");
+    let text = run_shell(shell, &script)?;
+    let value = text.rsplit_once(SHELL_MARK)?.1.trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+/// Runs `script` in a login, interactive `shell` with stdin closed, stopped
+/// after [`SHELL_WAIT`]; what it printed.
+fn run_shell(shell: &std::path::Path, script: &str) -> Option<String> {
     let mut child = std::process::Command::new(shell)
-        .args(["-l", "-i", "-c", &script])
+        .args(["-l", "-i", "-c", script])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -96,17 +103,27 @@ pub fn shell_value(shell: &std::path::Path, name: &str) -> Option<String> {
             }
         }
     }
-    let text = reader.join().ok()?;
-    let value = text.rsplit_once(SHELL_MARK)?.1.trim().to_string();
-    (!value.is_empty()).then_some(value)
+    reader.join().ok()
 }
 
-/// Which of [`SHELL_NAMES`] your login shell has set (names only).
+/// Which of [`shell_allowed`] your login shell has set (names only), in one
+/// shell start: the shell prints the names that are set, never a value.
 pub fn shell_names(shell: &std::path::Path) -> Vec<String> {
-    SHELL_NAMES
-        .iter()
-        .filter(|n| shell_value(shell, n).is_some())
-        .map(|n| (*n).to_string())
+    let allowed = shell_allowed();
+    let script = format!(
+        "printf '\\n{SHELL_MARK}'; for n in {}; do eval \"v=\\${{$n-}}\"; [ -n \"$v\" ] && printf ' %s' \"$n\"; done; true",
+        allowed.join(" ")
+    );
+    let Some(text) = run_shell(shell, &script) else {
+        return vec![];
+    };
+    let Some((_, names)) = text.rsplit_once(SHELL_MARK) else {
+        return vec![];
+    };
+    names
+        .split_whitespace()
+        .filter(|n| allowed.contains(n))
+        .map(str::to_string)
         .collect()
 }
 
@@ -115,7 +132,7 @@ pub fn is_app_method(name: &str) -> bool {
     APP_METHODS.contains(&name)
 }
 
-/// A provider with its own row in Settings.
+/// A provider with its own row in Settings: the registry's visible providers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Provider {
     pub id: &'static str,
@@ -123,27 +140,23 @@ pub struct Provider {
     pub env: &'static str,
 }
 
-/// Anthropic and OpenAI; anything else is `other` with its own name.
-pub const PROVIDERS: &[Provider] = &[
-    Provider {
-        id: "anthropic",
-        label: "Anthropic",
-        env: "ANTHROPIC_API_KEY",
-    },
-    Provider {
-        id: "openai",
-        label: "OpenAI",
-        env: "OPENAI_API_KEY",
-    },
-];
+/// The providers a key can be saved for (`cua_connections`, visible ones with
+/// a key to save); anything else is `other` with its own name.
+pub fn providers() -> Vec<Provider> {
+    registry::visible()
+        .filter_map(|p| {
+            p.key_method().map(|m| Provider {
+                id: p.id,
+                label: p.name,
+                env: m.env,
+            })
+        })
+        .collect()
+}
 
-/// The provider id for a variable: its row's, else `other`.
+/// The provider id for a variable: its provider's, else `other`.
 pub fn provider_of(env: &str) -> &'static str {
-    PROVIDERS
-        .iter()
-        .find(|p| p.env == env)
-        .map(|p| p.id)
-        .unwrap_or("other")
+    registry::provider_of_env(env).map_or("other", |p| p.id)
 }
 
 /// Names a stored key may not take: they would change how a run's shell,
@@ -267,6 +280,13 @@ pub struct KeyInfo {
     pub expires_ms: Option<u64>,
     /// It has stopped working (`expires_ms` has passed): runs no longer get it.
     pub expired: bool,
+    /// The region or plan chosen for it (Z.AI), when the provider has them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    /// Non-secret values saved with it: a custom endpoint's `base_url`, `model`
+    /// and `wire`, or a `model` chosen for a provider. Never the key.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
 }
 
 /// `agent_keys.list`: the stored keys and whether this machine can store
@@ -303,6 +323,12 @@ struct Stored {
     /// Code's own sign-in when it runs out ([`AgentKeys::sync_claude_login`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     origin: Option<String>,
+    /// The region or plan chosen for a provider that has them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    region: Option<String>,
+    /// Non-secret values saved with the key (a custom endpoint's URL, model and wire).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    fields: BTreeMap<String, String>,
 }
 
 impl std::fmt::Debug for Stored {
@@ -343,6 +369,8 @@ impl Stored {
             expires_ms: self.expires_ms,
             // A rejected credential reads like an expired one: it no longer works, Reconnect.
             expired: !self.usable(),
+            region: self.region.clone(),
+            fields: self.fields.clone(),
         }
     }
 }
@@ -534,15 +562,33 @@ impl AgentKeys {
     pub fn report(&self) -> Result<KeysReport> {
         Ok(KeysReport {
             keys: self.list()?,
-            providers: PROVIDERS.to_vec(),
+            providers: providers(),
             available: self.available(),
             unavailable: self.unavailable.clone(),
         })
     }
 
-    /// Adds or replaces a key. `provider` is `anthropic`, `openai` or
-    /// `other`; `other` needs `env` (checked by [`validate_name`]).
+    /// Adds or replaces a key. `provider` is a provider id of the registry
+    /// (`anthropic`, `deepseek`, ...) or `other`; `other` needs `env` (checked
+    /// by [`validate_name`]).
     pub fn set(&self, provider: &str, env: Option<&str>, value: &str) -> Result<KeyInfo> {
+        self.set_with(provider, env, value, None, &BTreeMap::new())
+    }
+
+    /// [`AgentKeys::set`] with the non-secret choices a connection can carry: a
+    /// `region` (a plan or endpoint the provider lists) and `fields`
+    /// (`model`, and for a custom endpoint its `base_url` and `wire`). Saving
+    /// never asks the provider anything; a check runs later, in the
+    /// background ([`AgentKeys::recheck`]).
+    pub fn set_with(
+        &self,
+        provider: &str,
+        env: Option<&str>,
+        value: &str,
+        region: Option<&str>,
+        fields: &BTreeMap<String, String>,
+    ) -> Result<KeyInfo> {
+        let mut optional_secret = false;
         // A Claude token (`sk-ant-oat...`, from `claude setup-token`) pasted where an API
         // key goes is a sign-in for Claude Code, not an API key: saved as one, so it
         // works for Claude Code and is never offered to another app as a key.
@@ -558,28 +604,35 @@ impl AgentKeys {
                 copy.origin.as_deref(),
             );
         }
-        let env = match (provider, env.map(str::trim).filter(|e| !e.is_empty())) {
+        let (env, id) = match (provider, env.map(str::trim).filter(|e| !e.is_empty())) {
             ("other", Some(e)) => {
                 validate_name(e)?;
-                e.to_string()
+                (e.to_string(), "other".to_string())
             }
             ("other", None) => {
                 return Err(Error::InvalidArgument(
                     "an Other key needs its environment variable name".into(),
                 ));
             }
-            (p, _) => PROVIDERS
-                .iter()
-                .find(|x| x.id == p)
-                .ok_or_else(|| {
+            (p, _) => {
+                let def = registry::provider(p).filter(|d| d.visible()).ok_or_else(|| {
                     Error::InvalidArgument(format!(
-                        "unknown provider {p:?}: use anthropic, openai or other"
+                        "unknown provider {p:?}: use a provider from `cua connections list`, or other"
                     ))
-                })?
-                .env
-                .to_string(),
+                })?;
+                let m = def.key_method().ok_or_else(|| {
+                    Error::InvalidArgument(format!("{} is connected another way", def.name))
+                })?;
+                optional_secret = m.secret_optional;
+                check_choices(def, m, region, fields)?;
+                (m.env.to_string(), def.id.to_string())
+            }
         };
-        let value = validate_value(value)?;
+        let value = if optional_secret && value.trim().is_empty() {
+            ""
+        } else {
+            validate_value(value)?
+        };
         if self.store.is_none() {
             return Err(self.refusal());
         }
@@ -587,7 +640,7 @@ impl AgentKeys {
         let mut keys = self.read(&mut g, true)?;
         keys.retain(|k| k.env != env);
         let stored = Stored {
-            provider: provider_of(&env).into(),
+            provider: id,
             env,
             value: value.into(),
             added_ms: now_ms(),
@@ -596,6 +649,12 @@ impl AgentKeys {
             expires_ms: None,
             rejected_ms: None,
             origin: None,
+            region: region.filter(|r| !r.is_empty()).map(str::to_string),
+            fields: fields
+                .iter()
+                .filter(|(_, v)| !v.trim().is_empty())
+                .map(|(k, v)| (k.clone(), v.trim().to_string()))
+                .collect(),
         };
         let info = stored.info();
         keys.push(stored);
@@ -659,6 +718,8 @@ impl AgentKeys {
             expires_ms,
             rejected_ms: None,
             origin: origin.map(str::to_string),
+            region: None,
+            fields: BTreeMap::new(),
         };
         let info = stored.info();
         keys.push(stored);
@@ -833,6 +894,50 @@ impl AgentKeys {
 }
 
 impl AgentKeys {
+    /// The connections the saved keys make: one per provider that has a usable
+    /// credential a run may be given (a sign-in scoped to one app counts for
+    /// that app's provider too), with the region and non-secret fields saved
+    /// with it. Never a value.
+    pub fn connections(&self) -> Vec<registry::Connected> {
+        let mut g = self.lock();
+        let keys = match self.read(&mut g, false) {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(error = %e, "agent keys: the store can't be read");
+                return vec![];
+            }
+        };
+        let mut out: Vec<registry::Connected> = vec![];
+        for k in keys.into_iter().filter(Stored::usable) {
+            let Some(def) = registry::provider_of_env(&k.env) else {
+                continue;
+            };
+            // The empty key of a server that needs none still connects it.
+            if k.value.is_empty() && !def.key_method().is_some_and(|m| m.secret_optional) {
+                continue;
+            }
+            match out.iter_mut().find(|c| c.provider == def.id) {
+                Some(c) => {
+                    // A sign-in saved beside a key never overwrites the key's choices.
+                    if c.region.is_none() {
+                        c.region = k.region.clone();
+                    }
+                    for (f, v) in &k.fields {
+                        c.fields.entry(f.clone()).or_insert_with(|| v.clone());
+                    }
+                }
+                None => out.push(registry::Connected {
+                    provider: def.id.to_string(),
+                    region: k.region.clone(),
+                    fields: k.fields.clone(),
+                }),
+            }
+        }
+        out
+    }
+}
+
+impl AgentKeys {
     /// Notes that the credentials named in `envs` were rejected by their provider (a run of an
     /// agent got an authentication failure with them): they read as needing a reconnect and no run
     /// gets them until they are saved again. Returns the names that changed.
@@ -870,20 +975,42 @@ impl AgentKeys {
         Ok(changed)
     }
 
-    /// The API keys to check against their provider: `(env, added_ms, value)`. A sign-in token
+    /// The API keys to check against their provider. A sign-in token
     /// (`CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`) has no check that is known to accept it,
-    /// so it is not asked about.
-    fn checkable(&self) -> Vec<(String, u64, String)> {
+    /// so it is not asked about; nor is a custom endpoint, which Cua never probes.
+    fn checkable(&self) -> Vec<Checkable> {
         let mut g = self.lock();
         match self.read(&mut g, true) {
             Ok(keys) => keys
                 .into_iter()
-                .filter(|k| endpoint_for(&k.env).is_some() && !k.expired())
-                .map(|k| (k.env, k.added_ms, k.value))
+                .filter(|k| !k.expired() && !k.value.is_empty())
+                .filter_map(|k| {
+                    let def = registry::provider_of_env(&k.env)?;
+                    def.check?;
+                    if def.scope_of(&k.env).is_some() {
+                        return None;
+                    }
+                    Some(Checkable {
+                        provider: def.id,
+                        env: k.env,
+                        added_ms: k.added_ms,
+                        value: k.value,
+                        region: k.region,
+                    })
+                })
                 .collect(),
             Err(_) => vec![],
         }
     }
+}
+
+/// A saved API key a provider can be asked about.
+struct Checkable {
+    provider: &'static str,
+    env: String,
+    added_ms: u64,
+    value: String,
+    region: Option<String>,
 }
 
 /// What the provider said of a key.
@@ -897,29 +1024,24 @@ pub enum KeyCheck {
     Unknown,
 }
 
-/// The providers' read-only "list models" requests: free, about 100 ms, and they answer 401 for a
-/// key that does not work. Only API keys are asked about (see [`AgentKeys::checkable`]).
-#[derive(Clone, Debug)]
+/// Where the providers' read-only requests go: each provider's own host from
+/// its file (a request is a cheap "list models" style GET that answers 401 for
+/// a key that does not work). `overrides` replaces a provider's whole check
+/// URL by provider id, for a test's local server.
+#[derive(Clone, Debug, Default)]
 pub struct CheckEndpoints {
-    pub anthropic: String,
-    pub openai: String,
+    pub overrides: BTreeMap<String, String>,
 }
 
-impl Default for CheckEndpoints {
-    fn default() -> Self {
+impl CheckEndpoints {
+    /// Every provider checked at `url` (a test's local server).
+    pub fn all_at(url: &str) -> Self {
         Self {
-            anthropic: "https://api.anthropic.com/v1/models?limit=1".into(),
-            openai: "https://api.openai.com/v1/models".into(),
+            overrides: registry::PROVIDERS
+                .iter()
+                .map(|p| (p.id.to_string(), url.to_string()))
+                .collect(),
         }
-    }
-}
-
-/// Which provider's request checks `env`, if it is an API key we can check.
-fn endpoint_for(env: &str) -> Option<&'static str> {
-    match env {
-        "ANTHROPIC_API_KEY" => Some("anthropic"),
-        "OPENAI_API_KEY" => Some("openai"),
-        _ => None,
     }
 }
 
@@ -935,19 +1057,25 @@ fn check_cache() -> &'static CheckCache {
 
 /// Asks the provider about one key. The value only goes into the request's header; nothing here
 /// logs it, and an error is reported without its text.
-async fn ask_provider(
-    client: &reqwest::Client,
-    ep: &CheckEndpoints,
-    env: &str,
-    value: &str,
-) -> KeyCheck {
-    let request = match endpoint_for(env) {
-        Some("anthropic") => client
-            .get(&ep.anthropic)
-            .header("x-api-key", value)
+async fn ask_provider(client: &reqwest::Client, ep: &CheckEndpoints, c: &Checkable) -> KeyCheck {
+    let Some(def) = registry::provider(c.provider) else {
+        return KeyCheck::Unknown;
+    };
+    let Some(check) = def.check else {
+        return KeyCheck::Unknown;
+    };
+    let url = ep
+        .overrides
+        .get(def.id)
+        .cloned()
+        .unwrap_or_else(|| format!("{}{}", def.base_url_for(c.region.as_deref()), check.path));
+    let request = client.get(&url);
+    let request = match check.auth {
+        "x-api-key" => request
+            .header("x-api-key", &c.value)
             .header("anthropic-version", "2023-06-01"),
-        Some(_) => client.get(&ep.openai).bearer_auth(value),
-        None => return KeyCheck::Unknown,
+        "x-goog-api-key" => request.header("x-goog-api-key", &c.value),
+        _ => request.bearer_auth(&c.value),
     };
     match request.send().await {
         Ok(r) if r.status().is_success() => KeyCheck::Valid,
@@ -970,7 +1098,8 @@ impl AgentKeys {
                 .map_err(|e| Error::Agent(e.to_string()))?;
             let mut rejected: Vec<(String, u64)> = vec![];
             let mut accepted: Vec<(String, u64)> = vec![];
-            for (env, added, value) in todo {
+            for c in todo {
+                let (env, added) = (c.env.clone(), c.added_ms);
                 let cached = check_cache()
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
@@ -980,14 +1109,14 @@ impl AgentKeys {
                 let answer = match cached {
                     Some(c) => c,
                     None => {
-                        let c = ask_provider(&client, ep, &env, &value).await;
-                        if c != KeyCheck::Unknown {
+                        let a = ask_provider(&client, ep, &c).await;
+                        if a != KeyCheck::Unknown {
                             check_cache()
                                 .lock()
                                 .unwrap_or_else(|p| p.into_inner())
-                                .insert((env.clone(), added), (Instant::now(), c));
+                                .insert((env.clone(), added), (Instant::now(), a));
                         }
-                        c
+                        a
                     }
                 };
                 match answer {
@@ -1012,27 +1141,80 @@ pub fn mark_rejected_for_run(harness: &str, provider: &str) {
     let Some(h) = super::harness::harness(harness) else {
         return;
     };
+    let Some(def) = registry::provider(provider) else {
+        return;
+    };
     let envs: Vec<&str> = h
         .keys
         .iter()
         .copied()
-        .filter(|k| provider_envs(provider).contains(k))
+        .filter(|k| def.envs().any(|e| e == *k))
+        .chain(
+            // The app reads the credential under another name than the one saved
+            // (Goose's GOOGLE_API_KEY comes from the saved GEMINI_API_KEY).
+            def.delivery_for(harness)
+                .iter()
+                .filter(|e| def.scope_of(e.src).is_none_or(|s| s == harness))
+                .map(|e| e.src),
+        )
         .collect();
     if envs.is_empty() {
         return;
     }
+    let mut envs = envs;
+    envs.sort_unstable();
+    envs.dedup();
     if let Err(e) = global().mark_rejected(&envs) {
         tracing::warn!(error = %e, "agent keys: could not note a rejected credential");
     }
 }
 
-/// The variables that hold a provider's credentials (a key, a sign-in token).
-fn provider_envs(provider: &str) -> &'static [&'static str] {
-    match provider {
-        "anthropic" => &["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"],
-        "openai" => &["OPENAI_API_KEY", "CODEX_AUTH_JSON"],
-        _ => &[],
+/// Checks the non-secret choices saved with a connection against its
+/// provider file: a region it lists, fields it asks for, URLs that are URLs.
+fn check_choices(
+    def: &registry::Provider,
+    m: &registry::Method,
+    region: Option<&str>,
+    fields: &BTreeMap<String, String>,
+) -> Result<()> {
+    let bad = |m: String| Err(Error::InvalidArgument(m));
+    if let Some(r) = region.filter(|r| !r.is_empty())
+        && !def.regions.iter().any(|x| x.id == r)
+    {
+        return bad(format!("{} has no region or plan {r:?}", def.name));
     }
+    for (k, v) in fields {
+        let known = k == "model" || m.fields.iter().any(|f| f.id == *k);
+        if !known {
+            return bad(format!("{} has no field {k:?}", def.name));
+        }
+        if v.len() > 512 || v.chars().any(|c| c.is_control()) {
+            return bad(format!("{k} must be one line of at most 512 characters"));
+        }
+    }
+    for f in m.fields {
+        let v = fields.get(f.id).map(|v| v.trim()).unwrap_or_default();
+        if f.required && v.is_empty() {
+            return bad(format!("{} needs {}", def.name, f.label.to_lowercase()));
+        }
+        if f.kind == "url"
+            && !v.is_empty()
+            && !(v.starts_with("http://") || v.starts_with("https://"))
+        {
+            return bad(format!("{} must start with http:// or https://", f.label));
+        }
+        if f.kind == "choice" && !v.is_empty() && !f.options.contains(&v) {
+            return bad(format!("{} must be one of {}", f.label, f.options.join(", ")));
+        }
+    }
+    // A provider with no default model needs one chosen.
+    if def.default_model.is_empty()
+        && def.kind != registry::Kind::Custom
+        && fields.get("model").is_none_or(|v| v.trim().is_empty())
+    {
+        return bad(format!("{} needs a model", def.name));
+    }
+    Ok(())
 }
 
 fn store_err(e: cua_auth::Error) -> Error {
@@ -1066,7 +1248,12 @@ struct SetArgs {
     provider: String,
     #[serde(default)]
     env: Option<String>,
+    #[serde(default)]
     value: String,
+    #[serde(default)]
+    region: Option<String>,
+    #[serde(default)]
+    fields: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -1112,7 +1299,9 @@ pub fn app_call(
                 .map_err(|e| {
                     Error::InvalidArgument(format!("agent_keys.set: {}", redact_serde(&e)))
                 })
-                .and_then(|a| keys.set(&a.provider, a.env.as_deref(), &a.value))
+                .and_then(|a| {
+                    keys.set_with(&a.provider, a.env.as_deref(), &a.value, a.region.as_deref(), &a.fields)
+                })
                 .and_then(|_| keys.report()),
         ),
         "agent_keys.remove" => report(
@@ -1182,7 +1371,7 @@ fn redact_serde(e: &serde_json::Error) -> String {
     if s.contains("missing field") || s.contains("unknown field") {
         s
     } else {
-        "expected {provider, env?, value} as strings".into()
+        "expected {provider, env?, value, region?, fields?} as strings".into()
     }
 }
 
@@ -1353,10 +1542,7 @@ mod tests {
     async fn a_saved_key_the_provider_refuses_needs_a_reconnect() {
         let (keys, dir) = temp_keys();
         let (url, hits) = provider().await;
-        let ep = CheckEndpoints {
-            anthropic: url.clone(),
-            openai: url,
-        };
+        let ep = CheckEndpoints::all_at(&url);
         keys.set("anthropic", None, "sk-ant-stale-0000-abcd")
             .unwrap();
         keys.set("openai", None, "sk-good-1111-wxyz").unwrap();
@@ -1399,16 +1585,10 @@ mod tests {
     async fn an_unreachable_provider_flags_nothing() {
         let (keys, dir) = temp_keys();
         let (url, _) = provider().await;
-        let ep = CheckEndpoints {
-            anthropic: url.clone(),
-            openai: url,
-        };
+        let ep = CheckEndpoints::all_at(&url);
         keys.set("openai", None, "sk-flaky-3333-wxyz").unwrap();
         assert!(!keys.recheck(&ep).await.unwrap().keys[0].expired);
-        let offline = CheckEndpoints {
-            anthropic: "http://127.0.0.1:1/x".into(),
-            openai: "http://127.0.0.1:1/x".into(),
-        };
+        let offline = CheckEndpoints::all_at("http://127.0.0.1:1/x");
         keys.set("anthropic", None, "sk-ant-offline-4444").unwrap();
         assert!(
             !keys
@@ -1443,7 +1623,7 @@ mod tests {
             .keys
             .iter()
             .copied()
-            .filter(|k| provider_envs("anthropic").contains(k))
+            .filter(|k| registry::provider("anthropic").unwrap().envs().any(|e| e == *k))
             .collect();
         assert!(envs.contains(&"ANTHROPIC_API_KEY"));
         keys.mark_rejected(&envs).unwrap();
@@ -1930,5 +2110,46 @@ mod tests {
     fn the_host_login_reads_nothing_in_a_test_process() {
         assert_eq!(HostClaudeLogin.lookup(), claude_login::Lookup::NotSignedIn);
         assert!(!HostClaudeLogin.ask_to_refresh());
+    }
+
+    /// Any provider that declares a check is asked on its own host, the others never are, and a
+    /// custom endpoint is never probed. A refusal marks only that provider's key.
+    #[tokio::test]
+    async fn every_provider_that_declares_a_check_is_checked_and_only_those() {
+        let (keys, dir) = temp_keys();
+        let (url, hits) = provider().await;
+        let ep = CheckEndpoints::all_at(&url);
+        keys.set("deepseek", None, "ds-stale-0000-abcd").unwrap();
+        keys.set("openrouter", None, "sk-or-good-1111-wxyz").unwrap();
+        // No check declared (Fireworks): never asked, so it is never marked.
+        keys.set("fireworks", None, "fw-stale-2222-abcd").unwrap();
+        let mut f = BTreeMap::new();
+        f.insert("base_url".to_string(), "http://127.0.0.1:1/v1".to_string());
+        f.insert("model".to_string(), "m".to_string());
+        f.insert("wire".to_string(), "openai-chat".to_string());
+        keys.set_with("custom", None, "stale-key-3333-abcd", None, &f).unwrap();
+        let report = keys.recheck(&ep).await.unwrap();
+        let by = |env: &str| report.keys.iter().find(|k| k.env == env).unwrap().expired;
+        assert!(by("DEEPSEEK_API_KEY"));
+        assert!(!by("OPENROUTER_API_KEY"));
+        assert!(!by("FIREWORKS_API_KEY"), "a provider with no declared check is left alone");
+        assert!(!by("CUSTOM_ENDPOINT_API_KEY"), "a custom endpoint is never probed");
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // Connected means valid: the refused provider's key reaches no run.
+        assert!(keys.values(&["DEEPSEEK_API_KEY"]).is_empty());
+        assert_eq!(keys.connections().iter().map(|c| c.provider.as_str()).collect::<Vec<_>>(), ["custom", "fireworks", "openrouter"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_shell_may_only_be_asked_for_provider_key_names() {
+        let allowed = shell_allowed();
+        for n in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "COPILOT_GITHUB_TOKEN", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"] {
+            assert!(allowed.contains(&n), "{n}");
+        }
+        // Not a sign-in, a hidden provider's name, or anything that is not a provider key.
+        for n in ["CLAUDE_CODE_OAUTH_TOKEN", "CODEX_AUTH_JSON", "NOUS_API_KEY", "PATH", "HOME", "AWS_SECRET_ACCESS_KEY"] {
+            assert!(!allowed.contains(&n), "{n}");
+        }
     }
 }

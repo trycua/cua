@@ -127,6 +127,11 @@ pub struct RunOptions {
     /// journal, a tool ledger, resume with a recovery note. Implies
     /// `exit_when_idle`.
     pub durable: Option<crate::durable::DurableOptions>,
+    /// Hermes's `config.yaml`, generated from the person's connections
+    /// (names the provider and model, no secrets): Hermes starts from it, not
+    /// from the guest's own setup. Ignored for other harnesses and with an
+    /// endpoint.
+    pub hermes_config: Option<String>,
 }
 
 /// `meta.json`.
@@ -975,13 +980,14 @@ impl Agents {
             }
             e
         });
-        let mut launch = harness::launch_with_home(
+        let mut launch = harness::launch_with_config(
             h,
             endpoint.as_ref(),
             opts.model.as_deref(),
             &rdir,
             &cwd,
             home_dir.as_deref(),
+            opts.hermes_config.as_deref(),
         )?;
         if opts.durable.as_ref().is_some_and(|d| d.guard) {
             launch.env.extend(crate::durable::guard_env(h));
@@ -1634,7 +1640,7 @@ mod tests {
                 "{e}"
             );
             assert!(
-                e.contains("Add an Anthropic API key in Cua Spaces → Settings → Connectors"),
+                e.contains("Connect Anthropic in Cua Spaces → Settings → Connections"),
                 "{e}"
             );
         }
@@ -1646,7 +1652,7 @@ mod tests {
             "{e}"
         );
         assert!(
-            e.contains("Add an OpenAI API key in Cua Spaces → Settings → Connectors"),
+            e.contains("Connect OpenAI in Cua Spaces → Settings → Connections"),
             "{e}"
         );
         // A key in the guest environment, or a sign-in file: allowed.

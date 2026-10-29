@@ -2343,6 +2343,7 @@ version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "cua-agent-setup",
+ "cua-connections",
  "cua-proto",
  "cua-spacesd-client",
  "flate2",

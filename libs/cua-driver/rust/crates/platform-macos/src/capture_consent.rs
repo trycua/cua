@@ -219,6 +219,7 @@ fn macos_has_direct_capture_consent() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cua_driver_core::bundle_identity::{LOCAL_BUNDLE_ID, RELEASE_BUNDLE_ID};
 
     #[test]
     fn app_bundle_is_found_only_for_bundled_executables() {
@@ -278,7 +279,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("ScreenCaptureApprovals.plist");
         let bundle = Path::new("/Applications/CuaDriver.app");
-        let id = Some("com.trycua.driver");
+        let id = Some(RELEASE_BUNDLE_ID);
 
         let _ = std::fs::remove_file(&file);
         assert_eq!(consent_state(&file, bundle, id), ConsentState::Missing);
@@ -286,11 +287,11 @@ mod tests {
         write_plist(&file, &["file:///Applications/Other.app/"]);
         assert_eq!(consent_state(&file, bundle, id), ConsentState::Missing);
 
-        write_plist(&file, &["com.trycua.driver"]);
+        write_plist(&file, &[RELEASE_BUNDLE_ID]);
         assert_eq!(consent_state(&file, bundle, id), ConsentState::Recorded);
         assert_eq!(consent_state(&file, bundle, None), ConsentState::Missing);
         assert_eq!(
-            consent_state(&file, bundle, Some("com.trycua.driver.local")),
+            consent_state(&file, bundle, Some(LOCAL_BUNDLE_ID)),
             ConsentState::Missing
         );
 

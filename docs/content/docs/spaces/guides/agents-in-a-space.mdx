@@ -139,8 +139,11 @@ A harness needs a provider key. Save it once in **Cua Spaces, Settings,
 Agents** (or `cua agent keys set`), and each run gets the keys its harness
 reads, written 0600 inside the run and redacted from its log; see
 [Agent keys](/spaces/guides/connect-your-agent#agent-keys). Credential files on
-your computer, such as `~/.claude/.credentials.json` or Codex's ChatGPT
-sign-in, are never copied into a Space. A harness can use a sign-in that is
+your computer are never copied into a Space. The one exception is Claude Code's
+own sign-in, which you choose to import: Cua reads it once you agree and gives
+Claude Code runs the access token only, never the refresh token (see
+[Claude Code and your Claude plan](/spaces/guides/connect-your-agent#claude-code-and-your-claude-plan)).
+Codex's ChatGPT sign-in is never copied: Codex signs in with its own code. A harness can use a sign-in that is
 already inside the Space, for example one you moved there with
 [Teleport an app](/spaces/guides/teleport-an-app), which asks you first.
 

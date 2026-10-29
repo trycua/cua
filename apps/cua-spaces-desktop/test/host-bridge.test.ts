@@ -578,6 +578,24 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(settingsEvents).toBeGreaterThan(0);
   });
 
+  it("keeps the notch's pins in the app settings (`settings.update`), in pin order, across a restart", async () => {
+    const before = (await call("settings.get")) as { notchPinned: string[] };
+    expect(before.notchPinned).toEqual([]);
+    const after = (await call("settings.update", { notchPinned: ["relay:wsl", "local:aurora"] })) as typeof before;
+    expect(after.notchPinned).toEqual(["relay:wsl", "local:aurora"]);
+    // Saved with the rest of the app's settings (a launch reads them back); the tips are untouched.
+    expect(native.appSettingsLoad(model.settingsPath).notchPinned).toEqual(["relay:wsl", "local:aurora"]);
+    expect(model.settings.tips).toEqual({ off: false, done: [] });
+    expect(await code("settings.update", { notchPinned: "relay:wsl" })).toBe("bad_args");
+    expect(await code("settings.update", { notchPinned: [1] })).toBe("bad_args");
+    // The core's rule for Pin to notch: pinned last, unpinned when pinned, never This machine.
+    expect(native.appNotchTogglePin(["a"], "b")).toEqual(["a", "b"]);
+    expect(native.appNotchTogglePin(["a", "b"], "a")).toEqual(["b"]);
+    expect(native.appNotchTogglePin([], "this-mac")).toEqual([]);
+    await call("settings.update", { notchPinned: [] });
+    expect(native.appSettingsLoad(model.settingsPath).notchPinned).toEqual([]);
+  });
+
   it("keeps the page's tips in the app settings (`settings.update`), and Show tips and Reset tips", async () => {
     const before = (await call("settings.get")) as { tips: unknown };
     expect(before.tips).toEqual({ off: false, done: [] });
@@ -972,6 +990,42 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(ids.sort()).toEqual(realSpaces(model.spaces).map((s) => s.id).sort());
     // The tab counts the Spaces on or starting (never a stopped one), though it lists them all.
     expect(view.tab.count).toBe(String(native.appOnCount(model.spaces)));
+  });
+
+  it("the notch lists a machine's shared desktop, counts it while it runs, and a pin puts it first and keeps it when it goes offline", async () => {
+    const { wireView } = await import("../src/notch/core");
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    const wsl = { ...backend.rowsNow[2]!, id: "relay:wsl", name: "WSL", provider: "relay", host: undefined, features: ["desktop_stream", "window_stream", "host_spaces"], reachable: true };
+    const studio = { ...backend.rowsNow[2]!, id: "relay:studio", name: "Studio", provider: "relay", host: undefined, features: ["host_spaces"], reachable: true };
+    backend.rowsNow = [...backend.rowsNow, wsl, studio];
+    await model.refresh();
+    const core = native as unknown as import("../src/notch/core").NotchCore;
+    const open = (pinned: string[]) => {
+      const shown = core.appNotchReduce(core.appNotchInitial(), { tag: "Visibility", inner: { shown: true } });
+      const clicked = core.appNotchReduce(shown.state, { tag: "Click" });
+      const state = core.appNotchReduce(clicked.state, { tag: "Pinned", inner: { ids: pinned } }).state;
+      return wireView(core.appNotchView(state, model.spaces));
+    };
+    // The shared desktop is a tile of its own kind; the machine that only provides Spaces is not.
+    let view = open([]);
+    const ids = view.tiles.map((t) => t.id);
+    expect(ids).toContain("relay:wsl");
+    expect(ids).not.toContain("relay:studio");
+    expect(view.tiles.find((t) => t.id === "relay:wsl")).toMatchObject({ desktop: true, location: "Desktop" });
+    // It counts as a running Space, as the menu's count does.
+    expect(view.tab.count).toBe(String(native.appOnCount(model.spaces)));
+    expect(native.appOnCount(model.spaces)).toBeGreaterThan(0);
+    // Pinned: first, with the pin.
+    view = open(["relay:wsl"]);
+    expect(view.tiles[0]).toMatchObject({ id: "relay:wsl", pinned: true });
+    // The machine goes offline: the unpinned desktop leaves, the pinned one stays dimmed and says so, and neither counts.
+    const on = native.appOnCount(model.spaces);
+    backend.rowsNow = backend.rowsNow.map((r) => (r.id === "relay:wsl" ? { ...r, reachable: false } : r));
+    await model.refresh();
+    expect(open([]).tiles.map((t) => t.id)).not.toContain("relay:wsl");
+    const kept = open(["relay:wsl"]).tiles.find((t) => t.id === "relay:wsl");
+    expect(kept).toMatchObject({ pinned: true, desktop: true, dim: true, note: "Offline" });
+    expect(native.appOnCount(model.spaces)).toBe(on - 1);
   });
 
   it("says the launch is still waiting first", async () => {

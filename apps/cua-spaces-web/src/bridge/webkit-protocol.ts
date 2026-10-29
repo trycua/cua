@@ -380,6 +380,8 @@ export interface WkSettings {
   cli?: { name: string; installed: boolean } | null;
   /** `AppSettings.tips`; absent: an older host that keeps none. Saved with `settings.update`. */
   tips?: { off: boolean; done: string[] };
+  /** `AppSettings.notchPinned`: the Spaces and desktops pinned to the notch, in pin order; absent: an older host. Saved with `settings.update`. */
+  notchPinned?: string[];
   /** Settings, Advanced's runtimes as the host read them (`runtimes::RuntimesInput`); absent: not read. */
   runtimes?: RuntimesInput | null;
 }

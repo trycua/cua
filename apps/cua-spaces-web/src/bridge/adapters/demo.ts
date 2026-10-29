@@ -32,6 +32,7 @@ import {
   demoMachineRows,
   demoKeyvaultItems,
   demoKeyvaultOverview,
+  demoDesktopRows,
   demoSpaceRows,
   demoTelemetry,
 } from "./demo-data";
@@ -86,6 +87,8 @@ export interface DemoOptions {
   keys?: "none" | "several";
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
+  /** `?demo=desktops`: the Linux box also shares its desktop (a Space row of its own, `relay:linux-box`). */
+  desktops?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
    * scripts/scale-bench.mjs). */
   extraSpaces?: number;
@@ -185,6 +188,7 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space: New
  * Space and the first Space offers see it too), and `?demo=intel-mac` /
  * `?demo=linux-pc` (an Intel Mac, an x64 Linux PC with QEMU), and
+ * `?demo=desktops` (the Linux box shares its desktop, a shared desktop row beside the Spaces), and
  * `?demo=creating-elsewhere` (the Mac mini is creating a Space). */
 /** The account's signed-in machines that share nothing, as a host lists them (`?demo=signed-in-machines`): one enrolled, and the demo devices that wait. */
 function demoSignedInRows(nowMs: number): MachineRow[] {
@@ -236,6 +240,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("claude-expired") ? { claudeLogin: "expired" as const } : flags.has("claude-signed-in") ? { claudeLogin: "signed-in" as const } : flags.has("claude-none") ? { claudeLogin: "none" as const } : {}),
     ...(flags.has("chatgpt-signed-in") ? { chatgptLogin: true } : {}),
     noSpaces: flags.has("empty"),
+    desktops: flags.has("desktops"),
     ...(() => {
       const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
       return scale ? { extraSpaces: Math.min(5000, Number(scale.slice(6))) } : {};
@@ -332,14 +337,14 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
   const state: DemoState = {
-    rows: options.noSpaces ? [] : [...demoSpaceRows(now()), ...demoScaleRows(now(), options.extraSpaces ?? 0)],
+    rows: options.noSpaces ? [] : [...demoSpaceRows(now()), ...(options.desktops ? demoDesktopRows(now()) : []), ...demoScaleRows(now(), options.extraSpaces ?? 0)],
     items: demoKeyvaultItems(now()),
     keyvaultLocked: Boolean(options.keyvaultLocked),
     keyvaultDisabled: false,
     pendingRequests: true,
     revokedGrants: new Set(),
     // Kept as the Mac and Electron apps keep the core's settings: tips and the Pro banner's close.
-    settings: { ...DEFAULT_SETTINGS, launchAtLogin: true, updateChannel: "stable", tips: { off: false, done: [] } },
+    settings: { ...DEFAULT_SETTINGS, launchAtLogin: true, updateChannel: "stable", tips: { off: false, done: [] }, notchPinned: [] },
     identity: options.signedIn === false ? undefined : DEMO_IDENTITY,
     onboarding: { completed: options.onboarded !== false, mode: options.onboarded === false ? null : "client" },
     creates: new Map(),

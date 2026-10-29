@@ -612,6 +612,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "runtimes": BridgeValue.encode(model.runtimesInput),
             // The app core's own settings the page reads and saves (`settings.update`).
             "tips": ["off": model.settings.tips.off, "done": model.settings.tips.done] as [String: Any],
+            // The Spaces and machine desktops pinned to the notch, in pin order.
+            "notchPinned": model.settings.notchPinned,
         ]
     }
 
@@ -1191,16 +1193,23 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     // MARK: - The core's own settings
 
     /// `settings.update`: each key given is saved as is (`tips`:
-    /// `{off, done}`).
+    /// `{off, done}`; `notchPinned`: the pinned ids in pin order).
     func updateSettings(_ args: [String: Any]) throws {
         var next = model.settings
         if let raw = args["tips"] {
             guard let t = raw as? [String: Any] else { throw Failure.badArgs("tips: {off, done}") }
             next.tips = AppTipsState(off: t["off"] as? Bool ?? false, done: t["done"] as? [String] ?? [])
         }
+        if let raw = args["notchPinned"] {
+            guard let ids = raw as? [String] else { throw Failure.badArgs("notchPinned: string[]") }
+            next.notchPinned = ids
+        }
         guard next != model.settings else { return }
+        let pinned = next.notchPinned
         model.settings = next
         model.saveSettings()
+        // The notch lists the pinned first at once.
+        model.notch.setPinned(pinned)
     }
 
     // MARK: - Events

@@ -739,6 +739,17 @@ pub const JOIN_TOOLS: &[&str] = &[
 /// Agents whose sign-in Connect copies into Keyvault on This Mac
 /// (`cua-agent-setup` ids), or `other`.
 pub const SIGNIN_HARNESSES: &[&str] = &["hermes", "claude-code", "codex", "other"];
+/// How a copied sign-in was made: read from Claude Code's own sign-in (its
+/// Keychain item or its credentials file), a device code, a pasted token.
+pub const SIGNIN_VIAS: &[&str] = &[
+    "claude_login_keychain",
+    "claude_login_file",
+    "device_code",
+    "token",
+    "other",
+];
+/// Why Connect did not copy a sign-in (`cua-agent-setup`'s refusal kinds).
+pub const SIGNIN_REFUSALS: &[&str] = &["not_signed_in", "cancelled", "not_yet", "failed", "other"];
 /// Where an agent run was started from: a Spaces tool call (the MCP
 /// `agent_start`, the SDKs' `Space.agent_start`, the Spaces app), the
 /// `cua agent` CLI, the SDKs' sandbox `Agents.run`, a persistent agent's
@@ -975,6 +986,7 @@ pub mod event {
     pub const INSTALLER_STEP: &str = "cua_installer_step";
     pub const AGENT_USED_SPACE: &str = "cua_agent_used_space";
     pub const AGENT_SIGNIN_IMPORTED: &str = "cua_agent_signin_imported";
+    pub const AGENT_SIGNIN_REFUSED: &str = "cua_agent_signin_refused";
     pub const PLAN_LIMIT_SHOWN: &str = "cua_plan_limit_shown";
     pub const UPGRADE_LINK_OPENED: &str = "cua_upgrade_link_opened";
 }
@@ -1271,16 +1283,43 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::AGENT_SIGNIN_IMPORTED,
+        version: 2,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: ALL,
+        props: &[
+            p(
+                "harness",
+                Kind::Enum(SIGNIN_HARNESSES),
+                "The agent whose sign-in Connect copied into Keyvault on This Mac. Never the sign-in, the account or the provider.",
+            ),
+            p(
+                "via",
+                Kind::Enum(SIGNIN_VIAS),
+                "How it was made: read from Claude Code's own sign-in (Keychain or file), a device code, or a pasted token. Never the account.",
+            ),
+        ],
+        purpose: "One-click Connect: how often an agent's sign-in is copied, per agent and way.",
+    },
+    EventSpec {
+        name: event::AGENT_SIGNIN_REFUSED,
         version: 1,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: ALL,
-        props: &[p(
-            "harness",
-            Kind::Enum(SIGNIN_HARNESSES),
-            "The agent whose sign-in Connect copied into Keyvault on This Mac. Never the sign-in, the account or the provider.",
-        )],
-        purpose: "One-click Connect: how often an agent's sign-in is copied, per agent.",
+        props: &[
+            p(
+                "harness",
+                Kind::Enum(SIGNIN_HARNESSES),
+                "The agent whose sign-in Connect could not copy.",
+            ),
+            p(
+                "reason",
+                Kind::Enum(SIGNIN_REFUSALS),
+                "Why: not signed in, cancelled, not supported yet, or failed. Never the error text or the account.",
+            ),
+        ],
+        purpose: "One-click Connect: how often importing a sign-in fails, and why, so the import can be made to work for more people.",
     },
     EventSpec {
         name: event::AGENT_RUN_STARTED,

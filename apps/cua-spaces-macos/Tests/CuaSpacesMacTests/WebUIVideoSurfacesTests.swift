@@ -648,11 +648,12 @@ struct WebUIVideoSurfacesTests {
         s.removeAll()
     }
 
-    /// CUA-2641: a modal dialog over the viewer no longer hides the stream.
-    /// The page reports the viewer non-interactive instead: the video stays
-    /// shown and live, but it gives back the keyboard and takes no clicks
-    /// (the dialog's backdrop and Escape work), and takes both again after.
-    @Test func aModalDialogOverTheViewerKeepsItLiveButTakesItsKeysAndClicks() async throws {
+    /// A modal dialog over the viewer (the page's dimmed layer is up): the page reports the
+    /// viewer occluded and non-interactive, so the native video is not drawn over the dialog
+    /// or the dimmed page, takes no clicks, and gives the keyboard back; the stream keeps
+    /// running, and the video, the pointer and the keys come back when the dialog closes.
+    /// (A popover or menu over it is still a hole: `aMenuOverTheViewerCutsAHoleAndTheVideoStaysLive`.)
+    @Test func aModalDialogOverTheViewerHidesItAndTakesItsKeysAndClicks() async throws {
         let host = Host()
         let units = AccessUnit.split(Self.tinyH264)
         let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
@@ -661,18 +662,17 @@ struct WebUIVideoSurfacesTests {
         s.handle(["type": "focus", "surfaceId": "v"])
         #expect(s.focusedId == "v")
         let view = try #require(s.surfaces["v"]?.view)
-        // The dialog opens: not occluded, not interactive, one hole where its popup is.
-        var modal = entry("v", space: "a", interactive: false)
-        modal["holes"] = [["x": 100, "y": 60, "width": 200, "height": 120]]
-        s.handle(message([modal]))
-        #expect(!view.isHidden)
-        #expect(host.phases("v").last == "live")
+        // The dialog opens: occluded, not interactive, no holes (the whole video is hidden).
+        s.handle(message([entry("v", space: "a", interactive: false, occluded: true)]))
+        #expect(view.isHidden)
         #expect(s.focusedId == nil)
-        #expect(view.layer?.mask != nil)
+        #expect(view.layer?.mask == nil)
         s.handle(["type": "focus", "surfaceId": "v"])
         #expect(s.focusedId == nil)
-        // Closed: the viewer takes the keyboard again.
+        // Closed: it is drawn again and takes the keyboard again, still live.
         s.handle(message([entry("v", space: "a")]))
+        #expect(!view.isHidden)
+        #expect(host.phases("v").last == "live")
         s.handle(["type": "focus", "surfaceId": "v"])
         #expect(s.focusedId == "v")
         s.removeAll()

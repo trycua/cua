@@ -1472,10 +1472,28 @@ pub fn space_tool_group(tool: &str) -> Option<&'static str> {
 }
 
 /// `cua_agent_signin_imported`: Connect copied `harness`'s sign-in into
-/// Keyvault on This Mac (only that it happened, and for which agent).
-pub fn agent_signin_imported(harness: &str) -> Event {
+/// Keyvault on This Mac (only that it happened, for which agent, and how:
+/// `origin` is the copy's origin, `claude-login-keychain` and so on).
+pub fn agent_signin_imported(harness: &str, origin: Option<&str>) -> Event {
+    let via = match origin {
+        Some("claude-login-keychain") => "claude_login_keychain",
+        Some("claude-login-file") => "claude_login_file",
+        Some("device-code") => "device_code",
+        Some("token") => "token",
+        _ => "other",
+    };
     Event::new(event::AGENT_SIGNIN_IMPORTED)
         .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
+        .s("via", via)
+}
+
+/// `cua_agent_signin_refused`: Connect could not copy `harness`'s sign-in;
+/// `kind` is the refusal kind (`not_signed_in`, `cancelled`, `not_yet`,
+/// `failed`). Never the line, the error or the account.
+pub fn agent_signin_refused(harness: &str, kind: &str) -> Event {
+    Event::new(event::AGENT_SIGNIN_REFUSED)
+        .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
+        .s("reason", pick(schema::SIGNIN_REFUSALS, kind, "other"))
 }
 
 /// `cua_repo_cache`: what the repo cache did for one clone. Only fixed words

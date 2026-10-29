@@ -24,8 +24,14 @@ export interface DemoKeyStore {
   rejected: string[];
 }
 
-export const demoKeyStore = (now: () => number, rejected: string[] = []): DemoKeyStore => ({
-  keys: [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: now() - 6 * 24 * 3600_000 }],
+export const demoKeyStore = (now: () => number, rejected: string[] = [], claude?: "signed-in" | "expired" | "none"): DemoKeyStore => ({
+  keys: [
+    { provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: now() - 6 * 24 * 3600_000 },
+    // The sign-in imported from Claude Code (`?demo=claude-signed-in`), or one that ran out (`?demo=claude-expired`).
+    ...(claude === "signed-in" || claude === "expired"
+      ? [{ provider: "other" as const, env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now() - 26 * 3600_000, label: "Signed in as ada@example.com (Claude Max)", ...(claude === "expired" ? { expired: true } : {}) }]
+      : []),
+  ],
   rejected,
 });
 

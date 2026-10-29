@@ -22,10 +22,13 @@
 //! - **The setup card** ([`setup_card`]): what a task that couldn't start
 //!   because its app isn't connected says, with "Connect <app>".
 //!
-//! Only official sign-in paths are offered: an app's own token command
-//! (`claude setup-token`, which prints a token meant for this use), a key
-//! the person pastes, or a key already exported in their shell. Cua never
-//! reads another app's private sign-in store for these.
+//! The sign-in paths offered: for Claude Code, the sign-in Claude Code
+//! already has on this machine, imported once the person agrees
+//! ([`import_sheet_on`]; `cua-agent-setup`'s `claude_login` reads it and keeps
+//! the access token only), a token from `claude setup-token` the person
+//! pastes, a key the person pastes, or a key already exported in their shell.
+//! Codex signs in with its own device code, in a folder Cua owns; Cua never
+//! reads Codex's own `auth.json` for it.
 //!
 //! Every credential lives where the agent keys do (`agent_keys`: the
 //! daemon's Keychain-backed store); this module only decides the words.
@@ -55,6 +58,14 @@ enum Way {
         label: &'static str,
         help: &'static str,
     },
+    /// A token the person pastes (Claude's `claude setup-token`), saved
+    /// under `env`; only that app uses it.
+    Token {
+        app: &'static str,
+        env: &'static str,
+        label: &'static str,
+        help: &'static str,
+    },
     /// A key the person pastes.
     Key,
     /// The key already exported in the person's shell, saved once.
@@ -79,8 +90,15 @@ struct Provider {
 const CLAUDE_TOKEN: Way = Way::AppToken {
     app: "claude-code",
     env: "CLAUDE_CODE_OAUTH_TOKEN",
-    label: "Sign in with Claude",
-    help: "Opens your browser to approve. Uses your Claude plan. Only Claude Code uses this sign-in.",
+    label: "Use your Claude Code sign-in",
+    help: "Reads the sign-in Claude Code already has on this machine. Uses your Claude plan. Only Claude Code uses it.",
+};
+
+const CLAUDE_PASTE: Way = Way::Token {
+    app: "claude-code",
+    env: "CLAUDE_CODE_OAUTH_TOKEN",
+    label: "Paste a Claude token",
+    help: "Advanced. A token made by running claude setup-token in Terminal. It lasts a year. Only Claude Code uses it.",
 };
 
 const CODEX_DEVICE: Way = Way::AppDevice {
@@ -99,7 +117,7 @@ const PROVIDERS: &[Provider] = &[
         used_by: "Claude Code. Hermes and other apps that use Claude need an API key.",
         key_help: "Create a key at console.anthropic.com. Every app that uses Claude can use it.",
         placeholder: "sk-ant-…",
-        ways: &[CLAUDE_TOKEN, Way::Key, Way::Shell],
+        ways: &[CLAUDE_TOKEN, CLAUDE_PASTE, Way::Key, Way::Shell],
     },
     Provider {
         id: "openai",
@@ -373,7 +391,7 @@ pub struct ConnectorAppInput {
 #[serde(rename_all = "camelCase", default)]
 pub struct ConnectorBusy {
     pub id: String,
-    /// `connecting` (tools), `signing-in` (a browser approval), `signing-out`.
+    /// `connecting` (tools), `signing-in` (reading the app's sign-in, or a device code), `signing-out`.
     pub step: String,
 }
 
@@ -479,12 +497,33 @@ fn app_signed_in(input: &ConnectorsInput, app: &str) -> bool {
 }
 
 /// An app's sign-in is saved but expired.
+///
+/// Only a sign-in the app can read counts: Claude Code's sign-in running out
+/// is Claude Code's to reconnect, not Hermes' (it reads an API key).
 fn app_expired(input: &ConnectorsInput, app: &str) -> bool {
     app_sign_in(app).is_some_and(|a| {
+        if !a.reads.is_empty() {
+            return a
+                .reads
+                .iter()
+                .any(|k| input.key(k).is_some_and(|k| k.expired));
+        }
         a.providers
             .iter()
             .filter_map(|p| provider(p))
             .any(|p| provider_expired(input, p))
+    })
+}
+
+/// "Signed in as ada@example.com (Claude Max)": the name of the sign-in an app
+/// reads, when it has one that works (a copied sign-in, never a typed key).
+fn signed_in_as(input: &ConnectorsInput, app: &str) -> Option<String> {
+    app_sign_in(app)?.reads.iter().find_map(|e| {
+        input
+            .key(e)
+            .filter(|k| !k.expired)
+            .and_then(|k| k.label.clone())
+            .filter(|l| !l.is_empty())
     })
 }
 
@@ -499,8 +538,12 @@ fn dots(k: &AgentKeyInput) -> String {
 /// How a saved credential reads on its provider's row.
 fn credential_text(p: &Provider, k: &AgentKeyInput) -> String {
     match k.env.as_str() {
-        "CLAUDE_CODE_OAUTH_TOKEN" => "Claude Code sign-in".into(),
-        "CODEX_AUTH_JSON" => "ChatGPT sign-in, for Codex".into(),
+        "CLAUDE_CODE_OAUTH_TOKEN" => k
+            .label
+            .clone()
+            .filter(|l| !l.is_empty())
+            .unwrap_or_else(|| "Signed in to Claude".into()),
+        "CODEX_AUTH_JSON" => "Signed in with ChatGPT, for Codex".into(),
         e if e == p.env => format!("API key {}", dots(k)),
         e => format!("{e} {}", dots(k)),
     }
@@ -551,7 +594,7 @@ pub struct ConnectorProviderRow {
     /// `connected`, `not-connected`, `connecting`, `failed`.
     pub state: String,
     /// "Not connected", "API key •••• 3f9a", "Claude Code sign-in",
-    /// "Approve in your browser…".
+    /// "Reading your Claude Code sign-in…".
     pub status: String,
     /// Who uses it.
     pub detail: String,
@@ -661,7 +704,7 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
             {
                 "Enter the code in your browser…".to_string()
             }
-            "signing-in" => "Approve in your browser…".to_string(),
+            "signing-in" => "Reading your Claude Code sign-in…".to_string(),
             "signing-out" => "Signing out…".to_string(),
             _ => format!("Adding Cua to {}…", a.name),
         };
@@ -680,7 +723,9 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
         // Not on this machine: say where it runs, once.
         (
             "connected",
-            (!a.installed && !a.configured).then(|| "Runs in your Spaces".to_string()),
+            signed_in_as(input, &a.agent).or_else(|| {
+                (!a.installed && !a.configured).then(|| "Runs in your Spaces".to_string())
+            }),
             None,
         )
     } else if a.configured || !a.installed {
@@ -689,7 +734,7 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
         (
             "not-connected",
             if reconnect {
-                Some("Needs reconnect.".to_string())
+                Some("Needs reconnect".to_string())
             } else {
                 needs
             },
@@ -727,7 +772,7 @@ fn provider_row(input: &ConnectorsInput, p: &Provider, can_edit: bool) -> Connec
             "signing-in" if p.ways.iter().any(|w| matches!(w, Way::AppDevice { .. })) => {
                 "Enter the code in your browser…"
             }
-            "signing-in" => "Approve in your browser…",
+            "signing-in" => "Reading your Claude Code sign-in…",
             _ => "Connecting…",
         };
         (
@@ -863,8 +908,9 @@ pub fn view_on(input: &ConnectorsInput, os: SpaceOs) -> ConnectorsView {
 pub struct ConnectPlan {
     /// Add Cua's skills and MCP server (`agents.connect`).
     pub tools: bool,
-    /// Run the app's own token command (`agents.connect` with `signIn`): one
-    /// browser approval.
+    /// Import the sign-in the app already has on this machine
+    /// (`agents.connect` with `signIn`), after the person agrees
+    /// ([`import_sheet_on`]).
     pub app_token: bool,
     /// Run the app's own device-code sign-in (`agents.signInStart`, then
     /// `agents.signInWait`): a code to show, entered on the provider's page.
@@ -931,12 +977,13 @@ pub fn provider_label(id: &str) -> Option<&'static str> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderWay {
-    /// `app-token`, `key`, `shell`.
+    /// `app-token`, `app-device`, `token`, `key`, `shell`.
     pub id: String,
     pub label: String,
     pub help: String,
     pub button: String,
-    /// For `app-token`: the app whose command runs (`agents.connect` with `signIn`).
+    /// For `app-token`: the app whose sign-in is imported (`agents.connect` with `signIn`).
+    /// For `token`: the app the pasted token is for.
     pub app: Option<String>,
     /// For `shell`: the variable read from the shell.
     pub env: Option<String>,
@@ -955,6 +1002,9 @@ pub struct ProviderSheetView {
     pub key_label: String,
     pub key_placeholder: String,
     pub key_help: String,
+    /// The field when the person picks Paste a Claude token.
+    pub token_label: String,
+    pub token_placeholder: String,
     pub save_label: String,
     /// What `agentKeys.set` gets with a pasted key: `anthropic`, `openai`, or `other` with `key_env`.
     pub key_provider: String,
@@ -1014,6 +1064,16 @@ pub fn provider_sheet_on(
                 app: Some(app.into()),
                 env: None,
             }),
+            Way::Token {
+                app, label, help, ..
+            } => for_app.is_none_or(|a| a == app).then(|| ProviderWay {
+                id: "token".into(),
+                label: label.into(),
+                help: help.into(),
+                button: "Paste token".into(),
+                app: Some(app.into()),
+                env: None,
+            }),
             Way::Key => Some(ProviderWay {
                 id: "key".into(),
                 label: "Paste an API key".into(),
@@ -1062,6 +1122,8 @@ pub fn provider_sheet_on(
         key_label: "API key".into(),
         key_placeholder: p.placeholder.into(),
         key_help: format!("It's saved {place}on {this} and won't be shown again."),
+        token_label: "Claude token".into(),
+        token_placeholder: "sk-ant-oat01-\u{2026}".into(),
         save_label: "Save".into(),
         key_provider: if matches!(p.id, "anthropic" | "openai") {
             p.id
@@ -1073,6 +1135,100 @@ pub fn provider_sheet_on(
         others_label: (!others.is_empty()).then(|| "Or choose another provider".into()),
         others,
     })
+}
+
+/// What importing Claude Code's sign-in says before it reads anything, and
+/// what it offers when there is nothing to import.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSheetView {
+    pub title: String,
+    pub lede: String,
+    /// What is read, what is kept, where it goes: plain sentences.
+    pub points: Vec<String>,
+    pub confirm_label: String,
+    pub cancel_label: String,
+    /// While it reads (and macOS may be asking to allow it).
+    pub reading_label: String,
+    /// When there is no sign-in to import.
+    pub not_found_title: String,
+    pub not_found_lede: String,
+    /// In order: sign in with Claude Code, paste a token, use an API key.
+    pub options: Vec<ImportOption>,
+}
+
+/// One way forward when there is no sign-in to import.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportOption {
+    /// `login`, `token`, `key`.
+    pub id: String,
+    pub label: String,
+    pub help: String,
+    /// Something to copy and run (`claude auth login`), when there is one.
+    pub command: Option<String>,
+    pub button: String,
+}
+
+/// The words around importing Claude Code's sign-in, for a shell on `os`.
+pub fn import_sheet_on(os: SpaceOs) -> ImportSheetView {
+    let this = os.this_machine_lower();
+    let keychain = vault(os);
+    let from = match os {
+        SpaceOs::Macos => {
+            "the Keychain item \u{201c}Claude Code-credentials\u{201d} (macOS asks you to allow it), or the file ~/.claude/.credentials.json"
+        }
+        SpaceOs::Windows => "the .credentials.json file in your .claude folder",
+        SpaceOs::Linux | SpaceOs::Unknown => "the file ~/.claude/.credentials.json",
+    };
+    let keep = match keychain {
+        Some(v) => format!("in Cua's own item in {v}"),
+        None => "in Cua's own place for credentials".to_string(),
+    };
+    ImportSheetView {
+        title: "Use your Claude Code sign-in".into(),
+        lede: format!(
+            "Run Claude Code in your Spaces with the Claude plan you already use on {this}."
+        ),
+        points: vec![
+            format!("Cua reads your Claude Code sign-in from {from}."),
+            format!(
+                "It keeps the access token {keep}, never your refresh token, and doesn't change Claude Code's sign-in. You stay signed in to Claude Code."
+            ),
+            "Your Spaces get that access token so Claude Code can run there. Only Claude Code uses it.".into(),
+            "When it runs out, Cua reads the newer one from Claude Code. Sign out here to remove the copy.".into(),
+        ],
+        confirm_label: "Use my sign-in".into(),
+        cancel_label: "Cancel".into(),
+        reading_label: "Reading your Claude Code sign-in…".into(),
+        not_found_title: "No Claude Code sign-in found".into(),
+        not_found_lede: format!(
+            "Claude Code isn't signed in on {this}, or its sign-in couldn't be read. Pick one:"
+        ),
+        options: vec![
+            ImportOption {
+                id: "login".into(),
+                label: "Sign in with Claude Code".into(),
+                help: "Run this in Terminal, finish signing in, then try again.".into(),
+                command: Some("claude auth login".into()),
+                button: "Try again".into(),
+            },
+            ImportOption {
+                id: "token".into(),
+                label: "Paste a token".into(),
+                help: "Advanced. A token made by running claude setup-token.".into(),
+                command: None,
+                button: "Paste token".into(),
+            },
+            ImportOption {
+                id: "key".into(),
+                label: "Use an Anthropic API key".into(),
+                help: "Create a key at console.anthropic.com. It's billed to your API account, not your Claude plan.".into(),
+                command: None,
+                button: "Paste key".into(),
+            },
+        ],
+    }
 }
 
 /// A switch on an app's page.
@@ -1096,7 +1252,7 @@ pub struct ConnectorSignIn {
     /// The provider row's status for it ("Claude Code sign-in", "Not connected").
     pub status: String,
     pub connected: bool,
-    /// How Connect signs it in ("Claude sign-in, through claude setup-token").
+    /// How Connect signs it in ("the sign-in Claude Code already has").
     pub way: String,
     /// The provider it uses (for Sign in and Sign out).
     pub provider: String,
@@ -1131,7 +1287,7 @@ pub struct AppDetailView {
 fn way_text(app: &str) -> &'static str {
     match app {
         "claude-code" => {
-            "Connect runs claude setup-token: one browser approval, using your Claude plan. Or connect Anthropic with an API key."
+            "Connect uses the sign-in Claude Code already has on this machine, with your Claude plan. Or connect Anthropic with an API key."
         }
         "codex" => {
             "Connect signs Codex in with ChatGPT: a code to enter on openai.com, using your ChatGPT plan. Or connect OpenAI with an API key."
@@ -1222,7 +1378,7 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
         name: a.name.clone(),
         back_label: "Connectors".into(),
         status: match row.state.as_str() {
-            "connected" => "Connected".into(),
+            "connected" => signed_in_as(input, agent).unwrap_or_else(|| "Connected".into()),
             _ => row.line.clone().unwrap_or_else(|| "Not connected".into()),
         },
         connected: row.state == "connected",
@@ -1269,7 +1425,7 @@ pub fn setup_card(input: &ConnectorsInput, agent: &str, name: &str) -> SetupCard
         .map(|p| p.label);
     let body = match provider {
         Some(p) if plan.app_token => format!(
-            "{name} needs a sign-in to {p} to work here. Connect it once: approve in your browser, and every Space can use it."
+            "{name} needs a sign-in to {p} to work here. Connect it once: Cua uses the sign-in {name} already has on this machine, and every Space can use it."
         ),
         Some(p) => format!(
             "{name} needs a sign-in to {p} to work here. Connect it once and every Space can use it."
@@ -1281,7 +1437,7 @@ pub fn setup_card(input: &ConnectorsInput, agent: &str, name: &str) -> SetupCard
         body,
         connect_label: format!("Connect {name}"),
         connecting_label: if plan.app_token {
-            "Approve in your browser…".into()
+            "Reading your Claude Code sign-in…".into()
         } else if plan.device {
             "Enter the code in your browser…".into()
         } else {
@@ -1323,6 +1479,7 @@ mod tests {
             last4: last4.into(),
             added_ms: 1_000,
             expired: false,
+            label: None,
         }
     }
 
@@ -1552,7 +1709,7 @@ mod tests {
         assert_eq!(p.status, "Needs reconnect");
         assert_eq!(p.button.label, "Reconnect");
         let a = v.apps.iter().find(|a| a.agent == "claude-code").unwrap();
-        assert_eq!(a.line.as_deref(), Some("Needs reconnect."));
+        assert_eq!(a.line.as_deref(), Some("Needs reconnect"));
         // The app's row offers Reconnect, not a first Connect.
         assert_eq!(
             a.button.as_ref().map(|b| b.label.as_str()),
@@ -1606,7 +1763,7 @@ mod tests {
         assert_eq!(v.apps[0].state, "connected");
         let a = &v.providers[0];
         assert_eq!(a.state, "connected");
-        assert_eq!(a.status, "Claude Code sign-in");
+        assert_eq!(a.status, "Signed in to Claude");
         assert_eq!(a.button.label, "Sign out");
         assert_eq!(a.sign_out_envs, ["CLAUDE_CODE_OAUTH_TOKEN"]);
         // The sign-in token is the provider's, not an Other key.
@@ -1645,10 +1802,13 @@ mod tests {
         });
         let v = view(&i);
         assert_eq!(v.apps[0].state, "connecting");
-        assert_eq!(v.apps[0].line.as_deref(), Some("Approve in your browser…"));
+        assert_eq!(
+            v.apps[0].line.as_deref(),
+            Some("Reading your Claude Code sign-in…")
+        );
         assert!(!v.apps[0].button.as_ref().unwrap().enabled);
         assert_eq!(v.providers[0].state, "connecting");
-        assert_eq!(v.providers[0].status, "Approve in your browser…");
+        assert_eq!(v.providers[0].status, "Reading your Claude Code sign-in…");
         assert_eq!(v.apps[1].state, "failed");
         assert_eq!(v.apps[1].button.as_ref().unwrap().label, "Try again");
     }
@@ -1718,16 +1878,17 @@ mod tests {
         let s = provider_sheet(&i, "anthropic").unwrap();
         assert_eq!(s.title, "Connect Anthropic");
         let ids: Vec<_> = s.ways.iter().map(|w| w.id.as_str()).collect();
-        assert_eq!(ids, ["app-token", "key", "shell"]);
+        assert_eq!(ids, ["app-token", "token", "key", "shell"]);
         assert_eq!(s.ways[0].app.as_deref(), Some("claude-code"));
-        assert_eq!(s.ways[2].label, "Use ANTHROPIC_API_KEY from your shell");
+        assert_eq!(s.ways[3].label, "Use ANTHROPIC_API_KEY from your shell");
         // Without Claude Code there is no Claude sign-in to offer; without the
         // variable, no shell row.
         i.apps.retain(|a| a.agent != "claude-code");
         i.shell_keys.clear();
         let s = provider_sheet(&i, "anthropic").unwrap();
         let ids: Vec<_> = s.ways.iter().map(|w| w.id.as_str()).collect();
-        assert_eq!(ids, ["key"]);
+        // A token from `claude setup-token` can be pasted without Claude Code here.
+        assert_eq!(ids, ["token", "key"]);
         assert_eq!((s.key_provider.as_str(), s.key_env), ("anthropic", None));
         let g = provider_sheet(&i, "github").unwrap();
         assert_eq!(
@@ -1772,13 +1933,127 @@ mod tests {
         assert!(d.sign_in_note.unwrap().contains("signs in on its own"));
     }
 
+    fn imported(label: &str) -> AgentKeyInput {
+        let mut k = key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA");
+        k.label = Some(label.into());
+        k
+    }
+
+    /// One sign-in, one wording, on every surface: the Claude Code app row, the
+    /// Anthropic provider row, the app's page and the sign-in block.
+    #[test]
+    fn an_imported_sign_in_reads_signed_in_as_everywhere() {
+        let who = "Signed in as ada@example.com (Claude Max)";
+        let mut i = input();
+        i.apps[0].configured = true;
+        i.keys.keys.push(imported(who));
+        let v = view(&i);
+        assert_eq!(v.apps[0].state, "connected");
+        assert_eq!(v.apps[0].line.as_deref(), Some(who));
+        assert_eq!(v.providers[0].status, who);
+        let d = app_detail(&i, "claude-code").unwrap();
+        assert_eq!(d.status, who);
+        assert_eq!(d.sign_in.as_ref().unwrap().status, who);
+        assert_eq!(d.sign_in.as_ref().unwrap().button.label, "Sign out");
+        // Without a name (an older copy) it still says what it is.
+        let mut j = input();
+        j.apps[0].configured = true;
+        j.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+        assert_eq!(view(&j).providers[0].status, "Signed in to Claude");
+    }
+
+    #[test]
+    fn needs_reconnect_reads_the_same_on_every_surface() {
+        let mut i = input();
+        i.apps[0].configured = true;
+        let mut k = imported("Signed in as ada@example.com (Claude Max)");
+        k.expired = true;
+        i.keys.keys.push(k);
+        let v = view(&i);
+        assert_eq!(v.apps[0].line.as_deref(), Some("Needs reconnect"));
+        assert_eq!(v.providers[0].status, "Needs reconnect");
+        assert_eq!(v.apps[0].button.as_ref().unwrap().label, "Reconnect");
+        assert_eq!(v.providers[0].button.label, "Reconnect");
+        let d = app_detail(&i, "claude-code").unwrap();
+        assert_eq!(d.status, "Needs reconnect");
+        assert_eq!(d.connect.as_ref().unwrap().label, "Reconnect");
+        // An expired copy never shows the name as if it worked.
+        assert!(!format!("{v:?}").contains("ada@example.com"));
+    }
+
+    #[test]
+    fn claude_codes_sign_in_running_out_is_not_hermes_to_reconnect() {
+        let mut i = input();
+        i.apps[0].configured = true;
+        let mut k = imported("Signed in as ada@example.com (Claude Max)");
+        k.expired = true;
+        i.keys.keys.push(k);
+        let v = view(&i);
+        let hermes = v.apps.iter().find(|a| a.agent == "hermes").unwrap();
+        assert_eq!(
+            hermes.line.as_deref(),
+            Some("Needs an API key for Anthropic or OpenAI.")
+        );
+        assert_eq!(hermes.button.as_ref().unwrap().label, "Connect");
+        let claude = v.apps.iter().find(|a| a.agent == "claude-code").unwrap();
+        assert_eq!(claude.button.as_ref().unwrap().label, "Reconnect");
+    }
+
+    #[test]
+    fn the_import_sheet_says_what_is_read_kept_and_sent_in_plain_words() {
+        let mac = import_sheet_on(SpaceOs::Macos);
+        let text = format!("{}\n{}", mac.lede, mac.points.join("\n"));
+        assert!(
+            text.contains("Claude Code-credentials")
+                && text.contains("~/.claude/.credentials.json")
+        );
+        assert!(text.contains("Keychain") && text.contains("never your refresh token"));
+        assert!(text.contains("stay signed in to Claude Code"));
+        assert!(text.contains("Your Spaces get that access token"));
+        assert_eq!(mac.confirm_label, "Use my sign-in");
+        // Nothing found: sign in with Claude Code, then a token, then a key, in that order.
+        let ids: Vec<_> = mac.options.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(ids, ["login", "token", "key"]);
+        assert_eq!(mac.options[0].command.as_deref(), Some("claude auth login"));
+        // Other systems name their own place, never the macOS Keychain.
+        let linux = import_sheet_on(SpaceOs::Linux);
+        assert!(!linux.points.join(" ").contains("Keychain"));
+        let win = import_sheet_on(SpaceOs::Windows);
+        assert!(win.points[0].contains(".credentials.json"));
+    }
+
+    /// The words of this feature: no middle dot, no "devices", no promise of
+    /// `claude setup-token` as the way Connect works.
+    #[test]
+    fn the_claude_wording_has_no_middle_dot_devices_or_setup_token_promise() {
+        let mut i = input();
+        i.apps[0].configured = true;
+        i.keys
+            .keys
+            .push(imported("Signed in as ada@example.com (Claude Max)"));
+        let mut all = format!("{:?}", view(&i));
+        for os in [SpaceOs::Macos, SpaceOs::Windows, SpaceOs::Linux] {
+            all += &format!("{:?}", import_sheet_on(os));
+        }
+        all += &format!("{:?}", app_detail(&i, "claude-code"));
+        all += &format!("{:?}", provider_sheet(&input(), "anthropic"));
+        all += &format!("{:?}", setup_card(&input(), "claude-code", "Claude Code"));
+        assert!(!all.contains('\u{b7}'), "no middle dot");
+        assert!(
+            !all.to_lowercase().contains("device"),
+            "machines, not devices"
+        );
+        assert!(!all.contains("Connect runs claude setup-token"));
+        assert!(!all.contains("one browser approval"));
+    }
+
     #[test]
     fn setup_card_names_the_app() {
         let i = input();
         let c = setup_card(&i, "claude-code", "Claude Code");
         assert_eq!(c.title, "Connect Claude Code to start");
         assert_eq!(c.connect_label, "Connect Claude Code");
-        assert_eq!(c.connecting_label, "Approve in your browser…");
+        assert_eq!(c.connecting_label, "Reading your Claude Code sign-in…");
         assert!(c.body.contains("sign-in to Anthropic"));
         let c = setup_card(&i, "codex", "OpenAI Codex");
         assert_eq!(c.connect_label, "Connect OpenAI Codex");

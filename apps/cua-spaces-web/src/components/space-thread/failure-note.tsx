@@ -58,11 +58,14 @@ function ConnectActions({ harness, provider, taskText, onRetry }: { harness: str
     // Once, when the failure appears.
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const app = failureApp(harness, provider);
-  const connected = app ? c.view?.apps.find((a) => a.agent === app)?.state === "connected" : false;
+  const row = app ? c.view?.apps.find((a) => a.agent === app) : undefined;
+  const connected = row?.state === "connected";
+  // The same word as the Connectors row: Reconnect when the saved sign-in ran out or was refused.
+  const label = row?.button?.label === "Reconnect" ? "Reconnect" : "Connect";
   return (
     <>
       <Button size="sm" variant="outline" data-failure-connect="" render={app ? <Link to="/settings/connectors/$app" params={{ app }} /> : <Link to="/settings/connectors" />}>
-        <PlugIcon /> Connect
+        <PlugIcon /> {label}
       </Button>
       <RetryButton taskText={taskText} onRetry={onRetry} enabled={connected} />
     </>

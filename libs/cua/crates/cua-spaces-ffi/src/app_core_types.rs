@@ -6671,6 +6671,8 @@ pub struct AppAgentKeyInput {
     pub added_ms: u64,
     /// A sign-in past its expiry: not used by any run until reconnected.
     pub expired: bool,
+    /// A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+    pub label: Option<String>,
 }
 
 /// What the section shows.

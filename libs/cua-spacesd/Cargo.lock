@@ -2184,6 +2184,8 @@ dependencies = [
  "bytes",
  "clap",
  "cua-driver-core",
+ "cua-driver-sdk",
+ "cua-home",
  "cua-logging",
  "cua-media-codec",
  "cua-media-protocol",

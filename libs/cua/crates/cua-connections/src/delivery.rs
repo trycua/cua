@@ -13,10 +13,7 @@ use crate::{Connected, ENDPOINT_HARNESSES, HARNESS_IDS, Provider, provider, visi
 /// name that only a scoped sign-in saves (the Claude Code sign-in, the ChatGPT
 /// sign-in) is skipped for every app but its own, even if a provider file
 /// listed it (the generator refuses such a file too).
-pub fn deliver(
-    harness: &str,
-    lookup: &dyn Fn(&str) -> Option<String>,
-) -> BTreeMap<String, String> {
+pub fn deliver(harness: &str, lookup: &dyn Fn(&str) -> Option<String>) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for p in visible() {
         for e in p.delivery_for(harness) {
@@ -52,7 +49,8 @@ pub fn works_with(p: &Provider) -> Vec<&'static str> {
 fn endpoint_wire(p: &Provider, harness: &str) -> Option<&'static str> {
     let (_, wire) = ENDPOINT_HARNESSES.iter().find(|(h, _)| *h == harness)?;
     let serves = p.wire == *wire || p.also_wires.contains(wire);
-    let usable = p.kind == crate::Kind::Custom || (!p.base_url.is_empty() && !p.default_model.is_empty());
+    let usable =
+        p.kind == crate::Kind::Custom || (!p.base_url.is_empty() && !p.default_model.is_empty());
     (serves && usable && p.visible()).then_some(*wire)
 }
 

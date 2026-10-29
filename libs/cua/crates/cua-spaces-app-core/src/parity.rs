@@ -5077,8 +5077,18 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
                 &p["button"]["label"],
             ])
         };
-        let providers: Vec<String> = v["providers"].as_array().into_iter().flatten().map(row).collect();
-        let more: Vec<String> = v["moreProviders"].as_array().into_iter().flatten().map(row).collect();
+        let providers: Vec<String> = v["providers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(row)
+            .collect();
+        let more: Vec<String> = v["moreProviders"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(row)
+            .collect();
         frames.push(json!({
             "step": step["step"],
             "apps": apps,
@@ -5106,7 +5116,15 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .map(|f| line(&[&f["id"], &f["label"], &f["kind"], &f["required"], &f["value"]]))
+                    .map(|f| {
+                        line(&[
+                            &f["id"],
+                            &f["label"],
+                            &f["kind"],
+                            &f["required"],
+                            &f["value"],
+                        ])
+                    })
                     .collect();
                 json!({
                     "way": line(&[&w["id"], &w["kind"], &w["label"], &w["button"], &w["secret"]]),

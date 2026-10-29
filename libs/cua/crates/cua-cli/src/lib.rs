@@ -27,7 +27,6 @@
 mod add_aws;
 mod agent_cmd;
 mod agent_keys_cmd;
-mod connections_cmd;
 mod agent_session_cmd;
 mod agents;
 mod auth;
@@ -40,6 +39,7 @@ mod cloud_cmd;
 mod compat_cmd;
 mod computer;
 mod config_cmd;
+mod connections_cmd;
 mod devices_cmd;
 mod do_cmd;
 mod doctor;

@@ -359,7 +359,10 @@ mod tests {
     #[test]
     fn hermes_failures_name_the_provider_the_card_connects() {
         for (t, p) in [
-            ("OpenRouter rejected your API key (model anthropic/claude-sonnet-5)", "openrouter"),
+            (
+                "OpenRouter rejected your API key (model anthropic/claude-sonnet-5)",
+                "openrouter",
+            ),
             ("DeepSeek rejected your API key", "deepseek"),
             ("Moonshot rejected your API key", "kimi"),
             ("xAI rejected your API key", "xai"),
@@ -371,16 +374,31 @@ mod tests {
             assert_eq!(f.provider.as_deref(), Some(p), "{t}");
         }
         let f = classify("hermes", "OpenRouter rejected your API key");
-        assert_eq!(plain(&f, "hermes"), "OpenRouter rejected the key Hermes used. Update it, then try again.");
+        assert_eq!(
+            plain(&f, "hermes"),
+            "OpenRouter rejected the key Hermes used. Update it, then try again."
+        );
     }
 
     #[test]
     fn a_failed_agent_reads_with_the_connections_words() {
         let w = |h: &str, t: &str| status_word(&classify(h, t));
         assert_eq!(w("claude-code", "Authentication required"), "Not connected");
-        assert_eq!(w("claude-code", "API Error: 401 OAuth access token is invalid"), "Needs reconnect");
-        assert_eq!(w("hermes", "OpenRouter rejected your API key"), "Needs reconnect");
-        assert_eq!(w("hermes", "Hermes is not connected to any AI provider"), "Not connected");
+        assert_eq!(
+            w(
+                "claude-code",
+                "API Error: 401 OAuth access token is invalid"
+            ),
+            "Needs reconnect"
+        );
+        assert_eq!(
+            w("hermes", "OpenRouter rejected your API key"),
+            "Needs reconnect"
+        );
+        assert_eq!(
+            w("hermes", "Hermes is not connected to any AI provider"),
+            "Not connected"
+        );
         assert_eq!(w("claude-code", "rate limited, try later"), "Stopped");
     }
 

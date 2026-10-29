@@ -217,7 +217,13 @@ fn provider_envs(p: &reg::Provider) -> Vec<&'static str> {
     let mut v: Vec<&'static str> = p
         .methods
         .iter()
-        .filter(|m| !m.terms_review && matches!(m.kind, reg::MethodKind::ApiKey | reg::MethodKind::CustomEndpoint))
+        .filter(|m| {
+            !m.terms_review
+                && matches!(
+                    m.kind,
+                    reg::MethodKind::ApiKey | reg::MethodKind::CustomEndpoint
+                )
+        })
         .flat_map(|m| std::iter::once(m.env).chain(m.aliases.iter().copied()))
         .collect();
     for e in p.envs() {
@@ -322,7 +328,10 @@ impl ConnectorsInput {
 
 /// The saved credential that connects a provider, first match wins: the
 /// pasted key, then a sign-in token.
-fn provider_credential<'a>(input: &'a ConnectorsInput, p: &reg::Provider) -> Option<&'a AgentKeyInput> {
+fn provider_credential<'a>(
+    input: &'a ConnectorsInput,
+    p: &reg::Provider,
+) -> Option<&'a AgentKeyInput> {
     provider_envs(p)
         .into_iter()
         .find_map(|e| input.key(e).filter(|k| !k.expired))
@@ -371,7 +380,9 @@ fn app_signed_in(input: &ConnectorsInput, app: &str) -> bool {
     a.reads
         .iter()
         .any(|k| input.key(k).is_some_and(|k| !k.expired))
-        || a.providers.iter().any(|p| endpoint_connected(input, p, harness))
+        || a.providers
+            .iter()
+            .any(|p| endpoint_connected(input, p, harness))
 }
 
 /// An app's sign-in is saved but expired.
@@ -602,12 +613,16 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
         let names = if s.way.is_some() {
             s.providers.first().map(|p| p.name.to_string())
         } else if s.providers.len() <= 3 {
-            Some(or_list(&s.providers.iter().map(|p| p.name).collect::<Vec<_>>()))
+            Some(or_list(
+                &s.providers.iter().map(|p| p.name).collect::<Vec<_>>(),
+            ))
         } else {
             None
         };
         match names {
-            Some(n) if s.way.is_none() && !s.reads.is_empty() => format!("Needs an API key for {n}."),
+            Some(n) if s.way.is_none() && !s.reads.is_empty() => {
+                format!("Needs an API key for {n}.")
+            }
             Some(n) => format!("Needs a sign-in to {n}."),
             None => "Needs a connected provider.".to_string(),
         }
@@ -684,10 +699,13 @@ fn chips(p: &reg::Provider) -> Vec<WorkChip> {
     let mut v: Vec<WorkChip> = reg::works_with(p)
         .into_iter()
         .filter_map(|h| {
-            HARNESS_APPS.iter().find(|x| x.harness == h).map(|x| WorkChip {
-                agent: x.app.into(),
-                name: x.name.into(),
-            })
+            HARNESS_APPS
+                .iter()
+                .find(|x| x.harness == h)
+                .map(|x| WorkChip {
+                    agent: x.app.into(),
+                    name: x.name.into(),
+                })
         })
         .collect();
     for a in p.apps {
@@ -708,7 +726,11 @@ fn provider_app_name(app: &str) -> &'static str {
     }
 }
 
-fn provider_row(input: &ConnectorsInput, p: &reg::Provider, can_edit: bool) -> ConnectorProviderRow {
+fn provider_row(
+    input: &ConnectorsInput,
+    p: &reg::Provider,
+    can_edit: bool,
+) -> ConnectorProviderRow {
     let id = format!("provider:{}", p.id);
     let busy = input.busy(&id);
     let cred = provider_credential(input, p);
@@ -716,7 +738,8 @@ fn provider_row(input: &ConnectorsInput, p: &reg::Provider, can_edit: bool) -> C
         let status = match step {
             "signing-out" => "Signing out…",
             "signing-in"
-                if p.offered().any(|m| m.kind == reg::MethodKind::SubscriptionLogin) =>
+                if p.offered()
+                    .any(|m| m.kind == reg::MethodKind::SubscriptionLogin) =>
             {
                 "Enter the code in your browser…"
             }
@@ -757,10 +780,17 @@ fn provider_row(input: &ConnectorsInput, p: &reg::Provider, can_edit: bool) -> C
         id: p.id.into(),
         label: p.name.into(),
         icon: p.icon.into(),
-        tier: if p.tier == reg::Tier::Top { "top" } else { "more" }.into(),
+        tier: if p.tier == reg::Tier::Top {
+            "top"
+        } else {
+            "more"
+        }
+        .into(),
         state: state.into(),
         status,
-        credential: cred.filter(|_| busy.is_none()).map(|k| credential_text(p, k)),
+        credential: cred
+            .filter(|_| busy.is_none())
+            .map(|k| credential_text(p, k)),
         works_with: chips(p),
         works_with_label: "Works with".into(),
         button: btn,
@@ -791,8 +821,9 @@ pub fn provider_matches(p: &reg::Provider, query: &str) -> bool {
                 .collect::<Vec<_>>()
         })
         .collect();
-    q.split_whitespace()
-        .all(|w| hay.iter().any(|h| h.starts_with(w)) || p.name.to_lowercase().contains(w) && w.len() > 2)
+    q.split_whitespace().all(|w| {
+        hay.iter().any(|h| h.starts_with(w)) || p.name.to_lowercase().contains(w) && w.len() > 2
+    })
 }
 
 /// The page on a Mac.
@@ -895,9 +926,10 @@ pub fn view_on(input: &ConnectorsInput, os: SpaceOs) -> ConnectorsView {
             })
             .collect(),
         add_other_label: "Add a key by variable name".into(),
-        other_help: "For a provider that isn't listed, save its key under the variable its app reads, like \
+        other_help:
+            "For a provider that isn't listed, save its key under the variable its app reads, like \
                      MISTRAL_API_KEY."
-            .into(),
+                .into(),
         can_edit,
         notice,
         added_label: "Added".into(),
@@ -934,10 +966,12 @@ pub fn connect_plan(input: &ConnectorsInput, agent: &str) -> ConnectPlan {
     // The app's own sign-in is made on This Mac: only where the app is.
     let app_token = !signed_in
         && app.is_some()
-        && s.as_ref().is_some_and(|s| matches!(s.way, Some(Way::AppToken(_))));
+        && s.as_ref()
+            .is_some_and(|s| matches!(s.way, Some(Way::AppToken(_))));
     let device = !signed_in
         && app.is_some()
-        && s.as_ref().is_some_and(|s| matches!(s.way, Some(Way::AppDevice(_))));
+        && s.as_ref()
+            .is_some_and(|s| matches!(s.way, Some(Way::AppDevice(_))));
     let provider = if signed_in || app_token || device {
         None
     } else {
@@ -969,8 +1003,16 @@ pub fn connect_plan(input: &ConnectorsInput, agent: &str) -> ConnectPlan {
 pub fn app_providers(agent: &str) -> Vec<String> {
     app_sign_in(agent)
         .map(|s| {
-            let n = if s.way.is_some() { 1 } else { s.providers.len() };
-            s.providers.iter().take(n).map(|p| p.id.to_string()).collect()
+            let n = if s.way.is_some() {
+                1
+            } else {
+                s.providers.len()
+            };
+            s.providers
+                .iter()
+                .take(n)
+                .map(|p| p.id.to_string())
+                .collect()
         })
         .unwrap_or_default()
 }
@@ -1119,7 +1161,11 @@ fn way_fields(p: &reg::Provider, m: &reg::Method) -> Vec<WayField> {
     if !p.regions.is_empty() {
         out.push(WayField {
             id: "region".into(),
-            label: if p.id == "zai" { "Plan".into() } else { "Region".into() },
+            label: if p.id == "zai" {
+                "Plan".into()
+            } else {
+                "Region".into()
+            },
             kind: "choice".into(),
             placeholder: String::new(),
             required: true,
@@ -1140,7 +1186,11 @@ fn way_fields(p: &reg::Provider, m: &reg::Method) -> Vec<WayField> {
             .iter()
             .map(|o| FieldOption {
                 id: (*o).into(),
-                label: if f.id == "wire" { wire_label(o).into() } else { (*o).into() },
+                label: if f.id == "wire" {
+                    wire_label(o).into()
+                } else {
+                    (*o).into()
+                },
             })
             .collect();
         out.push(WayField {
@@ -1154,7 +1204,10 @@ fn way_fields(p: &reg::Provider, m: &reg::Method) -> Vec<WayField> {
         });
     }
     // A provider with no default model asks for one when an app is told which to use.
-    if p.default_model.is_empty() && p.kind != reg::Kind::Custom && !p.delivery_for("hermes").is_empty() {
+    if p.default_model.is_empty()
+        && p.kind != reg::Kind::Custom
+        && !p.delivery_for("hermes").is_empty()
+    {
         out.push(WayField {
             id: "model".into(),
             label: "Model".into(),
@@ -1180,7 +1233,12 @@ pub fn provider_sheet_on(
     let installed = |app: &str| input.app(app).is_some_and(|a| a.installed);
     let mut ways: Vec<ProviderWay> = vec![];
     for m in p.offered() {
-        let way = |id: &str, button: &str, secret: &str, app: Option<&str>, env: Option<&str>, fields: Vec<WayField>| ProviderWay {
+        let way = |id: &str,
+                   button: &str,
+                   secret: &str,
+                   app: Option<&str>,
+                   env: Option<&str>,
+                   fields: Vec<WayField>| ProviderWay {
             id: id.into(),
             kind: m.kind.word().into(),
             method: m.id.into(),
@@ -1196,17 +1254,38 @@ pub fn provider_sheet_on(
             // An app's own sign-in is that app's alone: another app's sheet offers a key.
             (reg::MethodKind::ImportLogin, "") => {
                 if installed(m.app) && for_app.is_none_or(|a| a == m.app) {
-                    ways.push(way("app-token", "Sign in", "none", Some(m.app), None, vec![]));
+                    ways.push(way(
+                        "app-token",
+                        "Sign in",
+                        "none",
+                        Some(m.app),
+                        None,
+                        vec![],
+                    ));
                 }
             }
             (reg::MethodKind::ImportLogin, "paste") => {
                 if for_app.is_none_or(|a| a == m.app) {
-                    ways.push(way("token", "Paste token", "required", Some(m.app), None, vec![]));
+                    ways.push(way(
+                        "token",
+                        "Paste token",
+                        "required",
+                        Some(m.app),
+                        None,
+                        vec![],
+                    ));
                 }
             }
             (reg::MethodKind::SubscriptionLogin, "device_code") => {
                 if installed(m.app) && for_app.is_none_or(|a| a == m.app) {
-                    ways.push(way("app-device", "Sign in", "none", Some(m.app), None, vec![]));
+                    ways.push(way(
+                        "app-device",
+                        "Sign in",
+                        "none",
+                        Some(m.app),
+                        None,
+                        vec![],
+                    ));
                 }
             }
             (reg::MethodKind::ApiKey, _) => {
@@ -1218,13 +1297,26 @@ pub fn provider_sheet_on(
                     let mut sh = way("shell", "Use it", "none", None, Some(m.env), vec![]);
                     sh.kind = "api_key".into();
                     sh.label = format!("Use {} from your shell", m.env);
-                    sh.help = "Cua saves a copy now. It doesn't follow later changes in your shell.".into();
+                    sh.help =
+                        "Cua saves a copy now. It doesn't follow later changes in your shell."
+                            .into();
                     sh.fields = way_fields(p, m);
                     ways.push(sh);
                 }
             }
             (reg::MethodKind::CustomEndpoint, _) => {
-                let mut w = way("endpoint", "Set up", if m.secret_optional { "optional" } else { "required" }, None, None, way_fields(p, m));
+                let mut w = way(
+                    "endpoint",
+                    "Set up",
+                    if m.secret_optional {
+                        "optional"
+                    } else {
+                        "required"
+                    },
+                    None,
+                    None,
+                    way_fields(p, m),
+                );
                 w.label = "Connect a server by its base URL".into();
                 w.help = p.key_help.into();
                 ways.push(w);
@@ -1240,7 +1332,12 @@ pub fn provider_sheet_on(
     } else {
         format!(
             "Works with {}.",
-            and_list(&works_with.iter().map(|c| c.name.as_str()).collect::<Vec<_>>())
+            and_list(
+                &works_with
+                    .iter()
+                    .map(|c| c.name.as_str())
+                    .collect::<Vec<_>>()
+            )
         )
     };
     let this = os.this_machine_lower();
@@ -1294,7 +1391,8 @@ pub fn provider_picker(
     };
     let searching = !query.trim().is_empty();
     let open = expanded || searching;
-    let up_front = |p: &reg::Provider| p.tier == reg::Tier::Top || provider_credential(input, p).is_some();
+    let up_front =
+        |p: &reg::Provider| p.tier == reg::Tier::Top || provider_credential(input, p).is_some();
     let items: Vec<ProviderChoice> = usable
         .iter()
         .filter(|p| provider_matches(p, query))
@@ -1753,7 +1851,12 @@ mod tests {
                         p.id
                     );
                 } else {
-                    assert!(native.iter().all(|e| a.reads.contains(&e.dest)), "{}: {}", h.app, p.id);
+                    assert!(
+                        native.iter().all(|e| a.reads.contains(&e.dest)),
+                        "{}: {}",
+                        h.app,
+                        p.id
+                    );
                 }
             }
         }
@@ -1780,10 +1883,7 @@ mod tests {
         );
         let hermes = v.apps.iter().find(|a| a.agent == "hermes").unwrap();
         assert_eq!(hermes.name, "Hermes");
-        assert_eq!(
-            hermes.line.as_deref(),
-            Some("Needs a connected provider.")
-        );
+        assert_eq!(hermes.line.as_deref(), Some("Needs a connected provider."));
         // The other apps Cua knows (not agents) wait under Show all with where to get them.
         let mut i = input();
         i.apps.push(ConnectorAppInput {
@@ -1849,16 +1949,45 @@ mod tests {
         // The choice lists the first tier for the app, then the rest on request.
         let pick = provider_picker(&i, Some("opencode"), "", false);
         let up_front: Vec<_> = pick.items.iter().map(|c| c.provider.as_str()).collect();
-        assert_eq!(up_front, ["anthropic", "openai", "openrouter", "google", "xai", "deepseek", "kimi", "custom"]);
+        assert_eq!(
+            up_front,
+            [
+                "anthropic",
+                "openai",
+                "openrouter",
+                "google",
+                "xai",
+                "deepseek",
+                "kimi",
+                "custom"
+            ]
+        );
         assert_eq!(pick.more_label.as_deref(), Some("More providers"));
         assert!(pick.more_count > 10);
         let found = provider_picker(&i, Some("opencode"), "fire", false);
-        assert_eq!(found.items.iter().map(|c| c.provider.as_str()).collect::<Vec<_>>(), ["fireworks"]);
+        assert_eq!(
+            found
+                .items
+                .iter()
+                .map(|c| c.provider.as_str())
+                .collect::<Vec<_>>(),
+            ["fireworks"]
+        );
         assert!(found.more_label.is_none());
-        assert!(provider_picker(&i, Some("opencode"), "zzzz", false).empty.is_some());
+        assert!(
+            provider_picker(&i, Some("opencode"), "zzzz", false)
+                .empty
+                .is_some()
+        );
         // Claude Code takes Anthropic only, so there is nothing to choose.
         let cc = provider_picker(&i, Some("claude-code"), "", true);
-        assert_eq!(cc.items.iter().map(|c| c.provider.as_str()).collect::<Vec<_>>(), ["anthropic"]);
+        assert_eq!(
+            cc.items
+                .iter()
+                .map(|c| c.provider.as_str())
+                .collect::<Vec<_>>(),
+            ["anthropic"]
+        );
         let s = provider_sheet_on(&i, "anthropic", SpaceOs::Macos, Some("opencode")).unwrap();
         assert_eq!(s.switch_label, "Other providers");
         // OpenRouter is an API key.
@@ -1867,7 +1996,11 @@ mod tests {
         assert_eq!(ids, ["key"]);
         assert_eq!(o.ways[0].kind, "api_key");
         assert_eq!(o.ways[0].secret, "required");
-        assert!(o.lede.starts_with("Works with ") && o.lede.contains("Hermes"), "{}", o.lede);
+        assert!(
+            o.lede.starts_with("Works with ") && o.lede.contains("Hermes"),
+            "{}",
+            o.lede
+        );
     }
 
     #[test]
@@ -1945,13 +2078,20 @@ mod tests {
         let ids: Vec<_> = v.providers.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(
             ids,
-            ["anthropic", "openai", "openrouter", "google", "xai", "deepseek", "kimi", "custom"]
+            [
+                "anthropic",
+                "openai",
+                "openrouter",
+                "google",
+                "xai",
+                "deepseek",
+                "kimi",
+                "custom"
+            ]
         );
-        assert!(
-            v.providers
-                .iter()
-                .all(|p| p.status == "Not connected" && p.button.label == "Connect" && p.credential.is_none())
-        );
+        assert!(v.providers.iter().all(|p| p.status == "Not connected"
+            && p.button.label == "Connect"
+            && p.credential.is_none()));
         // Everything else waits in the searchable list, closed until opened.
         assert!(v.more_providers.is_empty() && v.more_count > 10);
     }
@@ -2106,7 +2246,10 @@ mod tests {
         assert_eq!(ids, ["token", "key"]);
         assert_eq!(s.provider, "anthropic");
         let g = provider_sheet(&i, "github").unwrap();
-        assert_eq!(g.ways.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(), ["key"]);
+        assert_eq!(
+            g.ways.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(),
+            ["key"]
+        );
         assert!(provider_sheet(&i, "nope").is_none());
     }
 
@@ -2172,7 +2315,10 @@ mod tests {
         let mut j = input();
         j.apps[0].configured = true;
         j.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
-        assert_eq!(view(&j).providers[0].credential.as_deref(), Some("Signed in to Claude"));
+        assert_eq!(
+            view(&j).providers[0].credential.as_deref(),
+            Some("Signed in to Claude")
+        );
     }
 
     #[test]
@@ -2203,10 +2349,7 @@ mod tests {
         i.keys.keys.push(k);
         let v = view(&i);
         let hermes = v.apps.iter().find(|a| a.agent == "hermes").unwrap();
-        assert_eq!(
-            hermes.line.as_deref(),
-            Some("Needs a connected provider.")
-        );
+        assert_eq!(hermes.line.as_deref(), Some("Needs a connected provider."));
         assert_eq!(hermes.button.as_ref().unwrap().label, "Connect");
         let claude = v.apps.iter().find(|a| a.agent == "claude-code").unwrap();
         assert_eq!(claude.button.as_ref().unwrap().label, "Reconnect");
@@ -2305,17 +2448,50 @@ mod tests {
                 .map(|c| c.name.clone())
                 .collect()
         };
-        assert_eq!(names("anthropic"), ["Claude Code", "OpenCode", "Goose", "Pi", "Hermes", "OpenClaw", "T3 Code"]);
-        assert_eq!(names("openai"), ["OpenAI Codex", "OpenCode", "Goose", "Pi", "Hermes", "OpenClaw", "T3 Code"]);
-        assert_eq!(names("deepseek"), ["OpenCode", "Goose", "Pi", "Hermes", "OpenClaw"]);
+        assert_eq!(
+            names("anthropic"),
+            [
+                "Claude Code",
+                "OpenCode",
+                "Goose",
+                "Pi",
+                "Hermes",
+                "OpenClaw",
+                "T3 Code"
+            ]
+        );
+        assert_eq!(
+            names("openai"),
+            [
+                "OpenAI Codex",
+                "OpenCode",
+                "Goose",
+                "Pi",
+                "Hermes",
+                "OpenClaw",
+                "T3 Code"
+            ]
+        );
+        assert_eq!(
+            names("deepseek"),
+            ["OpenCode", "Goose", "Pi", "Hermes", "OpenClaw"]
+        );
         // Only Claude Code takes the Anthropic sign-in, and the chips never claim it elsewhere.
         for row in v.providers.iter().chain(v.more_providers.iter()) {
             assert_eq!(row.works_with_label, "Works with");
-            assert_eq!(row.works_with.iter().any(|c| c.agent == "claude-code"), row.id == "anthropic", "{}", row.id);
+            assert_eq!(
+                row.works_with.iter().any(|c| c.agent == "claude-code"),
+                row.id == "anthropic",
+                "{}",
+                row.id
+            );
         }
         // A chip opens its app's page: it is the app's setup id.
         let c = &v.providers[0].works_with[0];
-        assert_eq!((c.agent.as_str(), c.name.as_str()), ("claude-code", "Claude Code"));
+        assert_eq!(
+            (c.agent.as_str(), c.name.as_str()),
+            ("claude-code", "Claude Code")
+        );
     }
 
     #[test]
@@ -2327,14 +2503,37 @@ mod tests {
         i.more_open = true;
         let v = view(&i);
         let ids: Vec<_> = v.more_providers.iter().map(|p| p.id.as_str()).collect();
-        assert!(ids.contains(&"huggingface") && ids.contains(&"zai") && ids.contains(&"fireworks") && ids.contains(&"nvidia") && ids.contains(&"ollama-cloud"));
+        assert!(
+            ids.contains(&"huggingface")
+                && ids.contains(&"zai")
+                && ids.contains(&"fireworks")
+                && ids.contains(&"nvidia")
+                && ids.contains(&"ollama-cloud")
+        );
         // Hidden providers (unreviewed logins, unverified ones) never show.
-        for hidden in ["nous", "qwen-oauth", "minimax-oauth", "xai-oauth", "vertex", "bedrock", "azure-foundry", "meta-ai"] {
+        for hidden in [
+            "nous",
+            "qwen-oauth",
+            "minimax-oauth",
+            "xai-oauth",
+            "vertex",
+            "bedrock",
+            "azure-foundry",
+            "meta-ai",
+        ] {
             assert!(!ids.contains(&hidden), "{hidden} is hidden");
             assert!(!v.providers.iter().any(|p| p.id == hidden));
         }
         // Search by name, id or alias; each word starts a word.
-        for (q, want) in [("hugg", "huggingface"), ("hf", "huggingface"), ("glm", "zai"), ("z.ai", "zai"), ("nim", "nvidia"), ("fire", "fireworks"), ("together", "")] {
+        for (q, want) in [
+            ("hugg", "huggingface"),
+            ("hf", "huggingface"),
+            ("glm", "zai"),
+            ("z.ai", "zai"),
+            ("nim", "nvidia"),
+            ("fire", "fireworks"),
+            ("together", ""),
+        ] {
             i.query = q.into();
             let v = view(&i);
             let got: Vec<_> = v.more_providers.iter().map(|p| p.id.as_str()).collect();
@@ -2349,7 +2548,10 @@ mod tests {
         i.query = "fireworks".into();
         assert_eq!(view(&i).more_providers.len(), 1);
         i.query = "zzz".into();
-        assert_eq!(view(&i).more_empty.as_deref(), Some("No provider matches that."));
+        assert_eq!(
+            view(&i).more_empty.as_deref(),
+            Some("No provider matches that.")
+        );
         // One that is connected moves up front, and one that needs reconnecting too.
         let mut c = input();
         c.keys.keys.push(keyed("FIREWORKS_API_KEY", "fireworks"));
@@ -2357,9 +2559,19 @@ mod tests {
         r.expired = true;
         c.keys.keys.push(r);
         let v = view(&c);
-        let up: Vec<_> = v.providers.iter().map(|p| (p.id.as_str(), p.state.as_str(), p.status.as_str())).collect();
-        assert!(up.contains(&("fireworks", "connected", "Connected")), "{up:?}");
-        assert!(up.contains(&("huggingface", "not-connected", "Needs reconnect")), "{up:?}");
+        let up: Vec<_> = v
+            .providers
+            .iter()
+            .map(|p| (p.id.as_str(), p.state.as_str(), p.status.as_str()))
+            .collect();
+        assert!(
+            up.contains(&("fireworks", "connected", "Connected")),
+            "{up:?}"
+        );
+        assert!(
+            up.contains(&("huggingface", "not-connected", "Needs reconnect")),
+            "{up:?}"
+        );
         assert!(v.providers.len() == 10);
     }
 
@@ -2378,12 +2590,17 @@ mod tests {
         let mut c = ConnectorsInput::default();
         c.keys.keys.push(keyed("CUSTOM_ENDPOINT_API_KEY", "custom"));
         assert!(!app_signed_in(&c, "opencode"));
-        c.keys.keys[0].fields.insert("base_url".into(), "http://127.0.0.1:1234/v1".into());
+        c.keys.keys[0]
+            .fields
+            .insert("base_url".into(), "http://127.0.0.1:1234/v1".into());
         c.keys.keys[0].fields.insert("model".into(), "qwen".into());
         assert!(app_signed_in(&c, "opencode") && app_signed_in(&c, "hermes"));
         let v = view(&c);
         let row = v.providers.iter().find(|p| p.id == "custom").unwrap();
-        assert_eq!((row.state.as_str(), row.credential.as_deref()), ("connected", Some("http://127.0.0.1:1234/v1")));
+        assert_eq!(
+            (row.state.as_str(), row.credential.as_deref()),
+            ("connected", Some("http://127.0.0.1:1234/v1"))
+        );
         assert_eq!(row.button.label, "Disconnect");
         assert_eq!(row.sign_out_envs, ["CUSTOM_ENDPOINT_API_KEY"]);
     }
@@ -2396,26 +2613,54 @@ mod tests {
         let key = &z.ways[0];
         assert_eq!((key.id.as_str(), key.kind.as_str()), ("key", "api_key"));
         let plan = key.fields.iter().find(|f| f.id == "region").unwrap();
-        assert_eq!((plan.label.as_str(), plan.kind.as_str(), plan.value.as_str()), ("Plan", "choice", "global"));
-        assert_eq!(plan.options.iter().map(|o| o.label.as_str()).collect::<Vec<_>>(), ["Global", "China", "Global, Coding Plan", "China, Coding Plan"]);
+        assert_eq!(
+            (plan.label.as_str(), plan.kind.as_str(), plan.value.as_str()),
+            ("Plan", "choice", "global")
+        );
+        assert_eq!(
+            plan.options
+                .iter()
+                .map(|o| o.label.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Global",
+                "China",
+                "Global, Coding Plan",
+                "China, Coding Plan"
+            ]
+        );
         // A provider with no default model asks for one.
         let d = provider_sheet(&i, "deepinfra").unwrap();
-        assert!(d.ways[0].fields.iter().any(|f| f.id == "model" && f.required));
+        assert!(
+            d.ways[0]
+                .fields
+                .iter()
+                .any(|f| f.id == "model" && f.required)
+        );
         let o = provider_sheet(&i, "openrouter").unwrap();
         assert!(o.ways[0].fields.is_empty());
         // A custom endpoint: URL, model and API style, a key only if the server asks.
         let c = provider_sheet(&i, "custom").unwrap();
         let w = &c.ways[0];
-        assert_eq!((w.id.as_str(), w.kind.as_str(), w.secret.as_str()), ("endpoint", "custom_endpoint", "optional"));
+        assert_eq!(
+            (w.id.as_str(), w.kind.as_str(), w.secret.as_str()),
+            ("endpoint", "custom_endpoint", "optional")
+        );
         let ids: Vec<_> = w.fields.iter().map(|f| f.id.as_str()).collect();
         assert_eq!(ids, ["base_url", "model", "wire"]);
         assert!(w.fields.iter().all(|f| f.required));
         assert_eq!(w.fields[2].value, "openai-chat");
         let note = c.note.as_deref().unwrap();
-        assert!(note.contains("only reachable from a Space that is allowed to reach that port"), "{note}");
+        assert!(
+            note.contains("only reachable from a Space that is allowed to reach that port"),
+            "{note}"
+        );
         // The Anthropic sheet offers the Claude sign-in only where Claude Code is, and says who uses it.
         let a = provider_sheet(&i, "anthropic").unwrap();
-        assert_eq!(a.ways.iter().map(|w| w.kind.as_str()).collect::<Vec<_>>(), ["import_login", "import_login", "api_key"]);
+        assert_eq!(
+            a.ways.iter().map(|w| w.kind.as_str()).collect::<Vec<_>>(),
+            ["import_login", "import_login", "api_key"]
+        );
         // Hidden providers have no sheet.
         for hidden in ["nous", "xai-oauth", "qwen-oauth", "minimax-oauth", "vertex"] {
             assert!(provider_sheet(&i, hidden).is_none(), "{hidden}");
@@ -2424,9 +2669,23 @@ mod tests {
         let mut j = input();
         j.apps.push(app("codex", "OpenAI Codex", true));
         let for_hermes = provider_sheet_on(&j, "openai", SpaceOs::Macos, Some("hermes")).unwrap();
-        assert_eq!(for_hermes.ways.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(), ["key"]);
+        assert_eq!(
+            for_hermes
+                .ways
+                .iter()
+                .map(|w| w.id.as_str())
+                .collect::<Vec<_>>(),
+            ["key"]
+        );
         let for_codex = provider_sheet_on(&j, "openai", SpaceOs::Macos, Some("codex")).unwrap();
-        assert_eq!(for_codex.ways.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(), ["app-device", "key"]);
+        assert_eq!(
+            for_codex
+                .ways
+                .iter()
+                .map(|w| w.id.as_str())
+                .collect::<Vec<_>>(),
+            ["app-device", "key"]
+        );
     }
 
     #[test]
@@ -2453,6 +2712,11 @@ mod tests {
         all += &format!("{:?}", provider_picker(&i, None, "", true));
         assert!(!all.contains('\u{b7}'), "no middle dot");
         // `app-device` is the way's id, not a word anyone reads.
-        assert!(!all.replace("app-device", "").to_lowercase().contains("device"), "machines, not devices");
+        assert!(
+            !all.replace("app-device", "")
+                .to_lowercase()
+                .contains("device"),
+            "machines, not devices"
+        );
     }
 }

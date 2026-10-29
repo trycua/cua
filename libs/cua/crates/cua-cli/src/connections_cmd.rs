@@ -106,7 +106,11 @@ pub struct Row {
 }
 
 /// The key from stdin: piped, never typed (a terminal would echo it).
-pub fn read_key(stdin: &mut dyn Read, is_terminal: bool, required: bool) -> Result<String, CuaError> {
+pub fn read_key(
+    stdin: &mut dyn Read,
+    is_terminal: bool,
+    required: bool,
+) -> Result<String, CuaError> {
     if is_terminal {
         if !required {
             return Ok(String::new());
@@ -161,7 +165,10 @@ pub fn rows(report: &serde_json::Value, all: bool) -> Vec<Row> {
                 .and_then(|r| p.regions.iter().find(|x| x.id == r))
                 .map(|r| format!(", {}", r.name))
                 .unwrap_or_default();
-            format!("{}{region}", method_of(p, k["env"].as_str().unwrap_or_default()))
+            format!(
+                "{}{region}",
+                method_of(p, k["env"].as_str().unwrap_or_default())
+            )
         });
         let mut works: Vec<String> = reg::works_with(p).into_iter().map(harness_name).collect();
         works.extend(p.apps.iter().map(|a| match *a {
@@ -232,9 +239,19 @@ pub fn list_lines(rows: &[Row], report: &serde_json::Value) -> Vec<String> {
 }
 
 /// The daemon call for `cmd`: method and arguments, after the input checks.
-pub fn plan(cmd: &ConnectionsCmd, key: impl FnOnce(bool) -> Result<String, CuaError>) -> Result<(String, serde_json::Value), CuaError> {
+pub fn plan(
+    cmd: &ConnectionsCmd,
+    key: impl FnOnce(bool) -> Result<String, CuaError>,
+) -> Result<(String, serde_json::Value), CuaError> {
     match cmd {
-        ConnectionsCmd::Add { provider, method, region, model, base_url, wire } => {
+        ConnectionsCmd::Add {
+            provider,
+            method,
+            region,
+            model,
+            base_url,
+            wire,
+        } => {
             let def = reg::provider(provider)
                 .filter(|p| p.visible())
                 .ok_or_else(|| {
@@ -243,7 +260,13 @@ pub fn plan(cmd: &ConnectionsCmd, key: impl FnOnce(bool) -> Result<String, CuaEr
                         reg::PROVIDER_IDS.join(", ")
                     ))
                 })?;
-            let want = method.as_deref().unwrap_or(if def.kind == reg::Kind::Custom { "endpoint" } else { "key" });
+            let want = method
+                .as_deref()
+                .unwrap_or(if def.kind == reg::Kind::Custom {
+                    "endpoint"
+                } else {
+                    "key"
+                });
             let offered: Vec<&str> = def
                 .offered()
                 .filter_map(|m| match m.kind {
@@ -253,17 +276,22 @@ pub fn plan(cmd: &ConnectionsCmd, key: impl FnOnce(bool) -> Result<String, CuaEr
                 })
                 .collect();
             if !offered.contains(&want) {
-                let other = def
-                    .offered()
-                    .any(|m| matches!(m.kind, reg::MethodKind::ImportLogin | reg::MethodKind::SubscriptionLogin));
-                return Err(CuaError::InvalidArgument(if other && matches!(want, "import" | "login") {
-                    format!(
-                        "{} signs in through its app: run `cua connect setup <app> --sign-in`, or use --method key with an API key",
-                        def.name
+                let other = def.offered().any(|m| {
+                    matches!(
+                        m.kind,
+                        reg::MethodKind::ImportLogin | reg::MethodKind::SubscriptionLogin
                     )
-                } else {
-                    format!("{} can be connected with: {}", def.name, offered.join(", "))
-                }));
+                });
+                return Err(CuaError::InvalidArgument(
+                    if other && matches!(want, "import" | "login") {
+                        format!(
+                            "{} signs in through its app: run `cua connect setup <app> --sign-in`, or use --method key with an API key",
+                            def.name
+                        )
+                    } else {
+                        format!("{} can be connected with: {}", def.name, offered.join(", "))
+                    },
+                ));
             }
             let optional = def.key_method().is_some_and(|m| m.secret_optional);
             let value = key(!optional)?;
@@ -279,10 +307,14 @@ pub fn plan(cmd: &ConnectionsCmd, key: impl FnOnce(bool) -> Result<String, CuaEr
                 if let Some(b) = base_url {
                     fields.insert("base_url".into(), b.clone().into());
                 }
-                fields.insert("wire".into(), wire.clone().unwrap_or_else(|| "openai-chat".into()).into());
+                fields.insert(
+                    "wire".into(),
+                    wire.clone().unwrap_or_else(|| "openai-chat".into()).into(),
+                );
             } else if base_url.is_some() || wire.is_some() {
                 return Err(CuaError::InvalidArgument(
-                    "--base-url and --wire are for a custom endpoint (cua connections add custom)".into(),
+                    "--base-url and --wire are for a custom endpoint (cua connections add custom)"
+                        .into(),
                 ));
             }
             if !fields.is_empty() {
@@ -303,16 +335,29 @@ pub fn plan(cmd: &ConnectionsCmd, key: impl FnOnce(bool) -> Result<String, CuaEr
             // The names saved for it are known only from the list: `run` resolves them.
             reg::provider(provider)
                 .filter(|p| p.visible())
-                .ok_or_else(|| CuaError::InvalidArgument(format!("unknown provider {provider:?}")))?;
+                .ok_or_else(|| {
+                    CuaError::InvalidArgument(format!("unknown provider {provider:?}"))
+                })?;
             Ok(("agent_keys.list".into(), serde_json::json!({})))
         }
     }
 }
 
-async fn call(cua: &Arc<Cua>, method: &str, args: serde_json::Value) -> Result<serde_json::Value, CuaError> {
-    let r = cua.spaces().call_tool_json(method.into(), Some(args.to_string())).await?;
+async fn call(
+    cua: &Arc<Cua>,
+    method: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, CuaError> {
+    let r = cua
+        .spaces()
+        .call_tool_json(method.into(), Some(args.to_string()))
+        .await?;
     if r.is_error {
-        let msg = r.text.strip_prefix("error: ").unwrap_or(&r.text).to_string();
+        let msg = r
+            .text
+            .strip_prefix("error: ")
+            .unwrap_or(&r.text)
+            .to_string();
         return Err(CuaError::InvalidArgument(msg));
     }
     Ok(serde_json::from_str(&r.text).unwrap_or_default())
@@ -325,14 +370,22 @@ pub async fn run(
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
     let (method, args) = plan(&cmd, |required| {
-        read_key(&mut std::io::stdin(), std::io::stdin().is_terminal(), required)
+        read_key(
+            &mut std::io::stdin(),
+            std::io::stdin().is_terminal(),
+            required,
+        )
     })?;
     match cmd {
         ConnectionsCmd::List { all } => {
             let report = call(cua, &method, args).await?;
             let rows = rows(&report, all);
             if json {
-                line(out, serde_json::json!({ "connections": rows, "available": report["available"] }).to_string());
+                line(
+                    out,
+                    serde_json::json!({ "connections": rows, "available": report["available"] })
+                        .to_string(),
+                );
             } else {
                 for l in list_lines(&rows, &report) {
                     line(out, l);
@@ -346,8 +399,19 @@ pub async fn run(
             if json {
                 line(out, serde_json::json!({ "connection": row }).to_string());
             } else if let Some(r) = row {
-                line(out, format!("{}: {}. It works with {}.", r.name, state_words(r.state), r.works_with.join(", ")));
-                line(out, hint("Saved without asking the provider. Check it with: cua connections test"));
+                line(
+                    out,
+                    format!(
+                        "{}: {}. It works with {}.",
+                        r.name,
+                        state_words(r.state),
+                        r.works_with.join(", ")
+                    ),
+                );
+                line(
+                    out,
+                    hint("Saved without asking the provider. Check it with: cua connections test"),
+                );
             }
             Ok(0)
         }
@@ -355,7 +419,11 @@ pub async fn run(
             // The daemon asks each provider (six seconds at most each); the whole is bounded here.
             let report = tokio::time::timeout(TEST_WAIT, call(cua, &method, args))
                 .await
-                .map_err(|_| CuaError::InvalidArgument("the providers did not answer in time; nothing was changed".into()))??;
+                .map_err(|_| {
+                    CuaError::InvalidArgument(
+                        "the providers did not answer in time; nothing was changed".into(),
+                    )
+                })??;
             let mut shown = rows(&report, false);
             if let Some(p) = &provider {
                 shown.retain(|r| &r.id == p);
@@ -406,14 +474,24 @@ mod tests {
     use super::*;
 
     fn cmd_add(p: &str) -> ConnectionsCmd {
-        ConnectionsCmd::Add { provider: p.into(), method: None, region: None, model: None, base_url: None, wire: None }
+        ConnectionsCmd::Add {
+            provider: p.into(),
+            method: None,
+            region: None,
+            model: None,
+            base_url: None,
+            wire: None,
+        }
     }
 
     #[test]
     fn the_key_comes_only_from_a_pipe() {
         assert!(read_key(&mut "sk".as_bytes(), true, true).is_err());
         assert!(read_key(&mut "  \n".as_bytes(), false, true).is_err());
-        assert_eq!(read_key(&mut "sk-test-0000\n".as_bytes(), false, true).unwrap(), "sk-test-0000");
+        assert_eq!(
+            read_key(&mut "sk-test-0000\n".as_bytes(), false, true).unwrap(),
+            "sk-test-0000"
+        );
         // A server that needs no key may be added from a terminal, with none.
         assert_eq!(read_key(&mut "".as_bytes(), true, false).unwrap(), "");
         assert_eq!(read_key(&mut "".as_bytes(), false, false).unwrap(), "");
@@ -424,16 +502,36 @@ mod tests {
         let key = |_| Ok("sk-test-0000".to_string());
         let (m, a) = plan(&cmd_add("deepseek"), key).unwrap();
         assert_eq!(m, "agent_keys.set");
-        assert_eq!(a, serde_json::json!({"provider": "deepseek", "value": "sk-test-0000"}));
+        assert_eq!(
+            a,
+            serde_json::json!({"provider": "deepseek", "value": "sk-test-0000"})
+        );
         let mut z = cmd_add("zai");
         if let ConnectionsCmd::Add { region, .. } = &mut z {
             *region = Some("coding-global".into());
         }
-        assert_eq!(plan(&z, key).unwrap().1, serde_json::json!({"provider": "zai", "value": "sk-test-0000", "region": "coding-global"}));
+        assert_eq!(
+            plan(&z, key).unwrap().1,
+            serde_json::json!({"provider": "zai", "value": "sk-test-0000", "region": "coding-global"})
+        );
         // A custom endpoint: URL, model and wire as fields, and no key needed.
-        let c = ConnectionsCmd::Add { provider: "custom".into(), method: None, region: None, model: Some("qwen".into()), base_url: Some("http://h:1234/v1".into()), wire: None };
-        let (_, a) = plan(&c, |required| { assert!(!required); Ok(String::new()) }).unwrap();
-        assert_eq!(a["fields"], serde_json::json!({"model": "qwen", "base_url": "http://h:1234/v1", "wire": "openai-chat"}));
+        let c = ConnectionsCmd::Add {
+            provider: "custom".into(),
+            method: None,
+            region: None,
+            model: Some("qwen".into()),
+            base_url: Some("http://h:1234/v1".into()),
+            wire: None,
+        };
+        let (_, a) = plan(&c, |required| {
+            assert!(!required);
+            Ok(String::new())
+        })
+        .unwrap();
+        assert_eq!(
+            a["fields"],
+            serde_json::json!({"model": "qwen", "base_url": "http://h:1234/v1", "wire": "openai-chat"})
+        );
         assert_eq!(a["value"], "");
         // --base-url is a custom endpoint's.
         let mut d = cmd_add("deepseek");
@@ -447,9 +545,19 @@ mod tests {
     fn unknown_hidden_and_sign_in_only_providers_are_refused_in_words() {
         let key = |_| Ok("k".to_string());
         let e = plan(&cmd_add("nope"), key).unwrap_err().to_string();
-        assert!(e.contains("unknown provider") && e.contains("deepseek"), "{e}");
+        assert!(
+            e.contains("unknown provider") && e.contains("deepseek"),
+            "{e}"
+        );
         // An unreviewed login and an unverified provider are not there to add.
-        for hidden in ["nous", "xai-oauth", "qwen-oauth", "minimax-oauth", "vertex", "meta-ai"] {
+        for hidden in [
+            "nous",
+            "xai-oauth",
+            "qwen-oauth",
+            "minimax-oauth",
+            "vertex",
+            "meta-ai",
+        ] {
             assert!(plan(&cmd_add(hidden), key).is_err(), "{hidden}");
         }
         let mut c = cmd_add("anthropic");
@@ -462,7 +570,12 @@ mod tests {
         if let ConnectionsCmd::Add { method, .. } = &mut c {
             *method = Some("login".into());
         }
-        assert!(plan(&c, key).unwrap_err().to_string().contains("can be connected with: key"));
+        assert!(
+            plan(&c, key)
+                .unwrap_err()
+                .to_string()
+                .contains("can be connected with: key")
+        );
     }
 
     #[test]
@@ -484,7 +597,12 @@ mod tests {
         assert_eq!(state("fireworks"), None);
         assert!(rows(&report, true).iter().any(|x| x.id == "fireworks"));
         let text = list_lines(&r, &report).join("\n");
-        assert!(text.contains("Needs reconnect") && text.contains("Connected") && text.contains("Not connected"), "{text}");
+        assert!(
+            text.contains("Needs reconnect")
+                && text.contains("Connected")
+                && text.contains("Not connected"),
+            "{text}"
+        );
         assert!(text.contains("Global, Coding Plan"), "{text}");
         assert!(text.contains("sign-in found on this machine"), "{text}");
         for leak in ["9c2e", "9z9z", "7d1f", "sk-"] {
@@ -494,6 +612,9 @@ mod tests {
         assert!(!text.to_lowercase().contains("device") && !text.contains('\u{b7}'));
         // Hermes works with the DeepSeek key; Claude Code does not.
         let ds = r.iter().find(|x| x.id == "deepseek").unwrap();
-        assert!(ds.works_with.contains(&"Hermes".to_string()) && !ds.works_with.contains(&"Claude Code".to_string()));
+        assert!(
+            ds.works_with.contains(&"Hermes".to_string())
+                && !ds.works_with.contains(&"Claude Code".to_string())
+        );
     }
 }

@@ -26,7 +26,10 @@ fn the_snapshot_is_the_pinned_release() {
     let v: Value = serde_json::from_str(&installables).expect("json");
     let hermes = &v["items"]["hermes"];
     let snap = snapshot();
-    assert_eq!(snap["commit"], hermes["commit"], "pin moved: regenerate hermes-pin.json (providers/README.md)");
+    assert_eq!(
+        snap["commit"], hermes["commit"],
+        "pin moved: regenerate hermes-pin.json (providers/README.md)"
+    );
     assert_eq!(snap["version"], hermes["version"]);
 }
 
@@ -38,9 +41,12 @@ fn provider_files_use_what_hermes_uses() {
         if p.hermes_id.is_empty() {
             continue;
         }
-        let h = theirs
-            .get(p.hermes_id)
-            .unwrap_or_else(|| panic!("{}: Hermes has no provider {:?} at the pin", p.id, p.hermes_id));
+        let h = theirs.get(p.hermes_id).unwrap_or_else(|| {
+            panic!(
+                "{}: Hermes has no provider {:?} at the pin",
+                p.id, p.hermes_id
+            )
+        });
         let env: BTreeSet<&str> = h["env"]
             .as_array()
             .unwrap()
@@ -84,15 +90,13 @@ fn every_hermes_provider_is_listed_or_left_out_on_purpose() {
         .filter(|p| !p.hermes_id.is_empty())
         .map(|p| p.hermes_id)
         .collect();
-    let allowed: BTreeSet<String> = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/hermes-unlisted.txt"
-    ))
-    .unwrap()
-    .lines()
-    .map(|l| l.split('#').next().unwrap().trim().to_string())
-    .filter(|l| !l.is_empty())
-    .collect();
+    let allowed: BTreeSet<String> =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/hermes-unlisted.txt"))
+            .unwrap()
+            .lines()
+            .map(|l| l.split('#').next().unwrap().trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
     let theirs: BTreeSet<String> = snap["providers"]
         .as_object()
         .unwrap()
@@ -109,7 +113,13 @@ fn every_hermes_provider_is_listed_or_left_out_on_purpose() {
     );
     // The allowlist does not keep ids that no longer exist or that now have a file.
     for id in &allowed {
-        assert!(theirs.contains(id), "{id} is not a Hermes provider at the pin");
-        assert!(!ours.contains(id.as_str()), "{id} has a provider file: remove it from hermes-unlisted.txt");
+        assert!(
+            theirs.contains(id),
+            "{id} is not a Hermes provider at the pin"
+        );
+        assert!(
+            !ours.contains(id.as_str()),
+            "{id} has a provider file: remove it from hermes-unlisted.txt"
+        );
     }
 }

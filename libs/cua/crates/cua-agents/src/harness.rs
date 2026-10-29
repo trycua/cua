@@ -335,7 +335,9 @@ pub fn settings_hint(env: &str) -> String {
             "Connect {} in Cua Spaces \u{2192} Settings \u{2192} Connections",
             p.name
         ),
-        None => format!("Add {env} under Other keys in Cua Spaces \u{2192} Settings \u{2192} Connections"),
+        None => format!(
+            "Add {env} under Other keys in Cua Spaces \u{2192} Settings \u{2192} Connections"
+        ),
     }
 }
 
@@ -1194,25 +1196,69 @@ mod tests {
     fn hermes_starts_from_the_config_cua_generated() {
         let hermes = harness("hermes").unwrap();
         let yaml = "model:\n  provider: \"openrouter\"\n";
-        let l = launch_with_config(hermes, None, None, "/run/1", "/work", None, Some(yaml)).unwrap();
-        let f = l.files.iter().find(|f| f.rel == "hermes-home/config.yaml").unwrap();
+        let l =
+            launch_with_config(hermes, None, None, "/run/1", "/work", None, Some(yaml)).unwrap();
+        let f = l
+            .files
+            .iter()
+            .find(|f| f.rel == "hermes-home/config.yaml")
+            .unwrap();
         assert_eq!(f.body, yaml);
-        assert!(l.env.contains(&("HERMES_HOME".into(), "/run/1/hermes-home".into())));
+        assert!(
+            l.env
+                .contains(&("HERMES_HOME".into(), "/run/1/hermes-home".into()))
+        );
         // Nothing is copied from the guest's own Hermes setup, no wrapper or prelude is needed.
         assert!(l.prelude.is_empty() && l.wrapper.is_none());
         // With a persistent home the file lands in the home, over any older copy.
-        let l = launch_with_config(hermes, None, None, "/run/1", "/work", Some("/home/a"), Some(yaml)).unwrap();
-        assert!(l.files.iter().any(|f| f.rel == "/home/a/hermes/config.yaml" && f.body == yaml));
+        let l = launch_with_config(
+            hermes,
+            None,
+            None,
+            "/run/1",
+            "/work",
+            Some("/home/a"),
+            Some(yaml),
+        )
+        .unwrap();
+        assert!(
+            l.files
+                .iter()
+                .any(|f| f.rel == "/home/a/hermes/config.yaml" && f.body == yaml)
+        );
         // An explicit endpoint wins, and never borrows logins either.
-        let ep = Endpoint { base_url: "http://x/v1".into(), wire: None, model: Some("m".into()) };
-        let l = launch_with_config(hermes, Some(&ep), None, "/run/1", "/work", None, Some(yaml)).unwrap();
-        let f = l.files.iter().find(|f| f.rel == "hermes-home/config.yaml").unwrap();
-        assert!(f.body.contains("provider: custom") && f.body.contains("adopt_external_logins: false"), "{}", f.body);
+        let ep = Endpoint {
+            base_url: "http://x/v1".into(),
+            wire: None,
+            model: Some("m".into()),
+        };
+        let l = launch_with_config(hermes, Some(&ep), None, "/run/1", "/work", None, Some(yaml))
+            .unwrap();
+        let f = l
+            .files
+            .iter()
+            .find(|f| f.rel == "hermes-home/config.yaml")
+            .unwrap();
+        assert!(
+            f.body.contains("provider: custom") && f.body.contains("adopt_external_logins: false"),
+            "{}",
+            f.body
+        );
         // No connections: the guest's own setup, as before.
-        let l = launch_with_config(hermes, None, None, "/run/1", "/work", Some("/home/a"), None).unwrap();
+        let l = launch_with_config(hermes, None, None, "/run/1", "/work", Some("/home/a"), None)
+            .unwrap();
         assert!(l.files.is_empty() && !l.prelude.is_empty());
         // Other apps ignore it.
-        let l = launch_with_config(harness("goose").unwrap(), None, None, "/run/1", "/work", None, Some(yaml)).unwrap();
+        let l = launch_with_config(
+            harness("goose").unwrap(),
+            None,
+            None,
+            "/run/1",
+            "/work",
+            None,
+            Some(yaml),
+        )
+        .unwrap();
         assert!(l.files.is_empty());
     }
 }

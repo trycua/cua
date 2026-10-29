@@ -1207,7 +1207,11 @@ fn check_choices(
             return bad(format!("{} must start with http:// or https://", f.label));
         }
         if f.kind == "choice" && !v.is_empty() && !f.options.contains(&v) {
-            return bad(format!("{} must be one of {}", f.label, f.options.join(", ")));
+            return bad(format!(
+                "{} must be one of {}",
+                f.label,
+                f.options.join(", ")
+            ));
         }
     }
     // A provider with no default model needs one chosen when an app is told which to use.
@@ -1225,7 +1229,8 @@ fn check_choices(
 /// the kind of method, the action and how it ended (`cua_connection_changed`).
 /// Never a key, a URL, an account or an error text.
 fn note_connection(env_or_provider: &str, action: &str, outcome: &str) {
-    let def = registry::provider(env_or_provider).or_else(|| registry::provider_of_env(env_or_provider));
+    let def =
+        registry::provider(env_or_provider).or_else(|| registry::provider_of_env(env_or_provider));
     let (provider, method) = match def {
         Some(d) => {
             let kind = d
@@ -1238,7 +1243,9 @@ fn note_connection(env_or_provider: &str, action: &str, outcome: &str) {
         }
         None => ("other", "api_key"),
     };
-    cua_telemetry::capture(cua_telemetry::events::connection_changed(provider, method, action, outcome));
+    cua_telemetry::capture(cua_telemetry::events::connection_changed(
+        provider, method, action, outcome,
+    ));
 }
 
 fn store_err(e: cua_auth::Error) -> Error {
@@ -1332,14 +1339,23 @@ pub fn app_call(
             let parsed = serde_json::from_value::<SetArgs>(args).map_err(|e| {
                 Error::InvalidArgument(format!("agent_keys.set: {}", redact_serde(&e)))
             });
-            let provider = parsed.as_ref().map(|a| a.provider.clone()).unwrap_or_default();
+            let provider = parsed
+                .as_ref()
+                .map(|a| a.provider.clone())
+                .unwrap_or_default();
             // A key saved again (or one that was refused) is a reconnect.
             let had = keys
                 .list()
                 .map(|l| l.iter().any(|k| k.provider == provider))
                 .unwrap_or(false);
             let saved = parsed.and_then(|a| {
-                keys.set_with(&a.provider, a.env.as_deref(), &a.value, a.region.as_deref(), &a.fields)
+                keys.set_with(
+                    &a.provider,
+                    a.env.as_deref(),
+                    &a.value,
+                    a.region.as_deref(),
+                    &a.fields,
+                )
             });
             note_connection(
                 &provider,
@@ -1380,7 +1396,11 @@ pub fn app_call(
                         a.region.as_deref(),
                         &a.fields,
                     );
-                    note_connection(provider, "connect", if saved.is_ok() { "ok" } else { "failed" });
+                    note_connection(
+                        provider,
+                        "connect",
+                        if saved.is_ok() { "ok" } else { "failed" },
+                    );
                     saved
                 })
                 .and_then(|_| keys.report()),
@@ -1677,7 +1697,12 @@ mod tests {
             .keys
             .iter()
             .copied()
-            .filter(|k| registry::provider("anthropic").unwrap().envs().any(|e| e == *k))
+            .filter(|k| {
+                registry::provider("anthropic")
+                    .unwrap()
+                    .envs()
+                    .any(|e| e == *k)
+            })
             .collect();
         assert!(envs.contains(&"ANTHROPIC_API_KEY"));
         keys.mark_rejected(&envs).unwrap();
@@ -2174,35 +2199,62 @@ mod tests {
         let (url, hits) = provider().await;
         let ep = CheckEndpoints::all_at(&url);
         keys.set("deepseek", None, "ds-stale-0000-abcd").unwrap();
-        keys.set("openrouter", None, "sk-or-good-1111-wxyz").unwrap();
+        keys.set("openrouter", None, "sk-or-good-1111-wxyz")
+            .unwrap();
         // No check declared (Fireworks): never asked, so it is never marked.
         keys.set("fireworks", None, "fw-stale-2222-abcd").unwrap();
         let mut f = BTreeMap::new();
         f.insert("base_url".to_string(), "http://127.0.0.1:1/v1".to_string());
         f.insert("model".to_string(), "m".to_string());
         f.insert("wire".to_string(), "openai-chat".to_string());
-        keys.set_with("custom", None, "stale-key-3333-abcd", None, &f).unwrap();
+        keys.set_with("custom", None, "stale-key-3333-abcd", None, &f)
+            .unwrap();
         let report = keys.recheck(&ep).await.unwrap();
         let by = |env: &str| report.keys.iter().find(|k| k.env == env).unwrap().expired;
         assert!(by("DEEPSEEK_API_KEY"));
         assert!(!by("OPENROUTER_API_KEY"));
-        assert!(!by("FIREWORKS_API_KEY"), "a provider with no declared check is left alone");
-        assert!(!by("CUSTOM_ENDPOINT_API_KEY"), "a custom endpoint is never probed");
+        assert!(
+            !by("FIREWORKS_API_KEY"),
+            "a provider with no declared check is left alone"
+        );
+        assert!(
+            !by("CUSTOM_ENDPOINT_API_KEY"),
+            "a custom endpoint is never probed"
+        );
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
         // Connected means valid: the refused provider's key reaches no run.
         assert!(keys.values(&["DEEPSEEK_API_KEY"]).is_empty());
-        assert_eq!(keys.connections().iter().map(|c| c.provider.as_str()).collect::<Vec<_>>(), ["custom", "fireworks", "openrouter"]);
+        assert_eq!(
+            keys.connections()
+                .iter()
+                .map(|c| c.provider.as_str())
+                .collect::<Vec<_>>(),
+            ["custom", "fireworks", "openrouter"]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn the_shell_may_only_be_asked_for_provider_key_names() {
         let allowed = shell_allowed();
-        for n in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "COPILOT_GITHUB_TOKEN", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"] {
+        for n in [
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "COPILOT_GITHUB_TOKEN",
+            "DEEPSEEK_API_KEY",
+            "OPENROUTER_API_KEY",
+        ] {
             assert!(allowed.contains(&n), "{n}");
         }
         // Not a sign-in, a hidden provider's name, or anything that is not a provider key.
-        for n in ["CLAUDE_CODE_OAUTH_TOKEN", "CODEX_AUTH_JSON", "NOUS_API_KEY", "PATH", "HOME", "AWS_SECRET_ACCESS_KEY"] {
+        for n in [
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CODEX_AUTH_JSON",
+            "NOUS_API_KEY",
+            "PATH",
+            "HOME",
+            "AWS_SECRET_ACCESS_KEY",
+        ] {
             assert!(!allowed.contains(&n), "{n}");
         }
     }

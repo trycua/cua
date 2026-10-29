@@ -1529,10 +1529,16 @@ pub fn repo_cache(
 /// error text.
 pub fn connection_changed(provider: &str, method: &str, action: &str, outcome: &str) -> Event {
     Event::new(event::CONNECTION_CHANGED)
-        .s("provider", pick(schema::CONNECTION_PROVIDERS, provider, "other"))
+        .s(
+            "provider",
+            pick(schema::CONNECTION_PROVIDERS, provider, "other"),
+        )
         .s("method", pick(schema::CONNECTION_METHODS, method, "other"))
         .s("action", pick(schema::CONNECTION_ACTIONS, action, "check"))
-        .s("outcome", pick(schema::CONNECTION_OUTCOMES, outcome, "failed"))
+        .s(
+            "outcome",
+            pick(schema::CONNECTION_OUTCOMES, outcome, "failed"),
+        )
 }
 
 /// `cua_agent_used_space`: an agent's tool call reached a Space and worked.

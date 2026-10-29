@@ -25,7 +25,10 @@ pub static PROVIDERS: &[Provider] = &[
         hermes_id: "anthropic",
         key_help: "Create a key at console.anthropic.com. Every app that uses Claude can use it.",
         placeholder: "sk-ant-…",
-        check: Some(Check { path: "/v1/models?limit=1", auth: "x-api-key" }),
+        check: Some(Check {
+            path: "/v1/models?limit=1",
+            auth: "x-api-key",
+        }),
         apps: &["t3code"],
         methods: &[
             Method {
@@ -40,8 +43,7 @@ pub static PROVIDERS: &[Provider] = &[
                 help: "Reads the sign-in Claude Code already has on this machine. Uses your Claude plan. Only Claude Code uses it.",
                 terms_review: false,
                 secret_optional: false,
-                fields: &[
-                ],
+                fields: &[],
             },
             Method {
                 id: "claude-token",
@@ -55,8 +57,7 @@ pub static PROVIDERS: &[Provider] = &[
                 help: "Advanced. A token made by running claude setup-token in Terminal. It lasts a year. Only Claude Code uses it.",
                 terms_review: false,
                 secret_optional: false,
-                fields: &[
-                ],
+                fields: &[],
             },
             Method {
                 id: "key",
@@ -70,19 +71,63 @@ pub static PROVIDERS: &[Provider] = &[
                 help: "",
                 terms_review: false,
                 secret_optional: false,
-                fields: &[
-                ],
+                fields: &[],
             },
         ],
-        regions: &[
-        ],
+        regions: &[],
         delivery: &[
-            Delivery { harness: "claude-code", entries: &[Entry { dest: "ANTHROPIC_API_KEY", src: "ANTHROPIC_API_KEY" }, Entry { dest: "CLAUDE_CODE_OAUTH_TOKEN", src: "CLAUDE_CODE_OAUTH_TOKEN" }, Entry { dest: "ANTHROPIC_AUTH_TOKEN", src: "ANTHROPIC_AUTH_TOKEN" }, ] },
-            Delivery { harness: "goose", entries: &[Entry { dest: "ANTHROPIC_API_KEY", src: "ANTHROPIC_API_KEY" }, ] },
-            Delivery { harness: "hermes", entries: &[Entry { dest: "ANTHROPIC_API_KEY", src: "ANTHROPIC_API_KEY" }, ] },
-            Delivery { harness: "openclaw", entries: &[Entry { dest: "ANTHROPIC_API_KEY", src: "ANTHROPIC_API_KEY" }, ] },
-            Delivery { harness: "opencode", entries: &[Entry { dest: "ANTHROPIC_API_KEY", src: "ANTHROPIC_API_KEY" }, ] },
-            Delivery { harness: "pi", entries: &[Entry { dest: "ANTHROPIC_API_KEY", src: "ANTHROPIC_API_KEY" }, ] },
+            Delivery {
+                harness: "claude-code",
+                entries: &[
+                    Entry {
+                        dest: "ANTHROPIC_API_KEY",
+                        src: "ANTHROPIC_API_KEY",
+                    },
+                    Entry {
+                        dest: "CLAUDE_CODE_OAUTH_TOKEN",
+                        src: "CLAUDE_CODE_OAUTH_TOKEN",
+                    },
+                    Entry {
+                        dest: "ANTHROPIC_AUTH_TOKEN",
+                        src: "ANTHROPIC_AUTH_TOKEN",
+                    },
+                ],
+            },
+            Delivery {
+                harness: "goose",
+                entries: &[Entry {
+                    dest: "ANTHROPIC_API_KEY",
+                    src: "ANTHROPIC_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "hermes",
+                entries: &[Entry {
+                    dest: "ANTHROPIC_API_KEY",
+                    src: "ANTHROPIC_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "openclaw",
+                entries: &[Entry {
+                    dest: "ANTHROPIC_API_KEY",
+                    src: "ANTHROPIC_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "opencode",
+                entries: &[Entry {
+                    dest: "ANTHROPIC_API_KEY",
+                    src: "ANTHROPIC_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "pi",
+                entries: &[Entry {
+                    dest: "ANTHROPIC_API_KEY",
+                    src: "ANTHROPIC_API_KEY",
+                }],
+            },
         ],
     },
     Provider {
@@ -104,7 +149,10 @@ pub static PROVIDERS: &[Provider] = &[
         hermes_id: "openai-api",
         key_help: "Create a key at platform.openai.com. Every app that uses OpenAI can use it.",
         placeholder: "sk-…",
-        check: Some(Check { path: "/models", auth: "bearer" }),
+        check: Some(Check {
+            path: "/models",
+            auth: "bearer",
+        }),
         apps: &["t3code"],
         methods: &[
             Method {
@@ -119,8 +167,7 @@ pub static PROVIDERS: &[Provider] = &[
                 help: "Shows a code to enter on openai.com. It uses your ChatGPT plan and only Codex uses it.",
                 terms_review: false,
                 secret_optional: false,
-                fields: &[
-                ],
+                fields: &[],
             },
             Method {
                 id: "key",
@@ -134,19 +181,63 @@ pub static PROVIDERS: &[Provider] = &[
                 help: "",
                 terms_review: false,
                 secret_optional: false,
-                fields: &[
-                ],
+                fields: &[],
             },
         ],
-        regions: &[
-        ],
+        regions: &[],
         delivery: &[
-            Delivery { harness: "goose", entries: &[Entry { dest: "OPENAI_API_KEY", src: "OPENAI_API_KEY" }, ] },
-            Delivery { harness: "hermes", entries: &[Entry { dest: "OPENAI_API_KEY", src: "OPENAI_API_KEY" }, ] },
-            Delivery { harness: "openai-codex", entries: &[Entry { dest: "OPENAI_API_KEY", src: "OPENAI_API_KEY" }, Entry { dest: "CODEX_API_KEY", src: "CODEX_API_KEY" }, Entry { dest: "CODEX_AUTH_JSON", src: "CODEX_AUTH_JSON" }, ] },
-            Delivery { harness: "openclaw", entries: &[Entry { dest: "OPENAI_API_KEY", src: "OPENAI_API_KEY" }, ] },
-            Delivery { harness: "opencode", entries: &[Entry { dest: "OPENAI_API_KEY", src: "OPENAI_API_KEY" }, ] },
-            Delivery { harness: "pi", entries: &[Entry { dest: "OPENAI_API_KEY", src: "OPENAI_API_KEY" }, ] },
+            Delivery {
+                harness: "goose",
+                entries: &[Entry {
+                    dest: "OPENAI_API_KEY",
+                    src: "OPENAI_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "hermes",
+                entries: &[Entry {
+                    dest: "OPENAI_API_KEY",
+                    src: "OPENAI_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "openai-codex",
+                entries: &[
+                    Entry {
+                        dest: "OPENAI_API_KEY",
+                        src: "OPENAI_API_KEY",
+                    },
+                    Entry {
+                        dest: "CODEX_API_KEY",
+                        src: "CODEX_API_KEY",
+                    },
+                    Entry {
+                        dest: "CODEX_AUTH_JSON",
+                        src: "CODEX_AUTH_JSON",
+                    },
+                ],
+            },
+            Delivery {
+                harness: "openclaw",
+                entries: &[Entry {
+                    dest: "OPENAI_API_KEY",
+                    src: "OPENAI_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "opencode",
+                entries: &[Entry {
+                    dest: "OPENAI_API_KEY",
+                    src: "OPENAI_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "pi",
+                entries: &[Entry {
+                    dest: "OPENAI_API_KEY",
+                    src: "OPENAI_API_KEY",
+                }],
+            },
         ],
     },
     Provider {
@@ -168,33 +259,62 @@ pub static PROVIDERS: &[Provider] = &[
         hermes_id: "openrouter",
         key_help: "Create a key at openrouter.ai/keys. Every app that uses OpenRouter can use it.",
         placeholder: "sk-or-…",
-        check: Some(Check { path: "/auth/key", auth: "bearer" }),
+        check: Some(Check {
+            path: "/auth/key",
+            auth: "bearer",
+        }),
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "OPENROUTER_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "OPENROUTER_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
         delivery: &[
-            Delivery { harness: "goose", entries: &[Entry { dest: "OPENROUTER_API_KEY", src: "OPENROUTER_API_KEY" }, ] },
-            Delivery { harness: "hermes", entries: &[Entry { dest: "OPENROUTER_API_KEY", src: "OPENROUTER_API_KEY" }, ] },
-            Delivery { harness: "openclaw", entries: &[Entry { dest: "OPENROUTER_API_KEY", src: "OPENROUTER_API_KEY" }, ] },
-            Delivery { harness: "opencode", entries: &[Entry { dest: "OPENROUTER_API_KEY", src: "OPENROUTER_API_KEY" }, ] },
-            Delivery { harness: "pi", entries: &[Entry { dest: "OPENROUTER_API_KEY", src: "OPENROUTER_API_KEY" }, ] },
+            Delivery {
+                harness: "goose",
+                entries: &[Entry {
+                    dest: "OPENROUTER_API_KEY",
+                    src: "OPENROUTER_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "hermes",
+                entries: &[Entry {
+                    dest: "OPENROUTER_API_KEY",
+                    src: "OPENROUTER_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "openclaw",
+                entries: &[Entry {
+                    dest: "OPENROUTER_API_KEY",
+                    src: "OPENROUTER_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "opencode",
+                entries: &[Entry {
+                    dest: "OPENROUTER_API_KEY",
+                    src: "OPENROUTER_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "pi",
+                entries: &[Entry {
+                    dest: "OPENROUTER_API_KEY",
+                    src: "OPENROUTER_API_KEY",
+                }],
+            },
         ],
     },
     Provider {
@@ -216,34 +336,81 @@ pub static PROVIDERS: &[Provider] = &[
         hermes_id: "gemini",
         key_help: "Create a key at aistudio.google.com/apikey. Every app that uses Gemini can use it.",
         placeholder: "AIza…",
-        check: Some(Check { path: "/models", auth: "x-goog-api-key" }),
+        check: Some(Check {
+            path: "/models",
+            auth: "x-goog-api-key",
+        }),
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "GEMINI_API_KEY",
-                aliases: &["GOOGLE_API_KEY"],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "GEMINI_API_KEY",
+            aliases: &["GOOGLE_API_KEY"],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[
+            Delivery {
+                harness: "gemini-cli",
+                entries: &[
+                    Entry {
+                        dest: "GEMINI_API_KEY",
+                        src: "GEMINI_API_KEY",
+                    },
+                    Entry {
+                        dest: "GOOGLE_API_KEY",
+                        src: "GOOGLE_API_KEY",
+                    },
                 ],
             },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "gemini-cli", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, Entry { dest: "GOOGLE_API_KEY", src: "GOOGLE_API_KEY" }, ] },
-            Delivery { harness: "google-antigravity", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, ] },
-            Delivery { harness: "goose", entries: &[Entry { dest: "GOOGLE_API_KEY", src: "GOOGLE_API_KEY" }, Entry { dest: "GOOGLE_API_KEY", src: "GEMINI_API_KEY" }, ] },
-            Delivery { harness: "hermes", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, ] },
-            Delivery { harness: "opencode", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, ] },
-            Delivery { harness: "pi", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, ] },
+            Delivery {
+                harness: "google-antigravity",
+                entries: &[Entry {
+                    dest: "GEMINI_API_KEY",
+                    src: "GEMINI_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "goose",
+                entries: &[
+                    Entry {
+                        dest: "GOOGLE_API_KEY",
+                        src: "GOOGLE_API_KEY",
+                    },
+                    Entry {
+                        dest: "GOOGLE_API_KEY",
+                        src: "GEMINI_API_KEY",
+                    },
+                ],
+            },
+            Delivery {
+                harness: "hermes",
+                entries: &[Entry {
+                    dest: "GEMINI_API_KEY",
+                    src: "GEMINI_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "opencode",
+                entries: &[Entry {
+                    dest: "GEMINI_API_KEY",
+                    src: "GEMINI_API_KEY",
+                }],
+            },
+            Delivery {
+                harness: "pi",
+                entries: &[Entry {
+                    dest: "GEMINI_API_KEY",
+                    src: "GEMINI_API_KEY",
+                }],
+            },
         ],
     },
     Provider {
@@ -265,30 +432,33 @@ pub static PROVIDERS: &[Provider] = &[
         hermes_id: "xai",
         key_help: "Create a key at console.x.ai. Every app that uses Grok can use it.",
         placeholder: "xai-…",
-        check: Some(Check { path: "/models", auth: "bearer" }),
+        check: Some(Check {
+            path: "/models",
+            auth: "bearer",
+        }),
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "XAI_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "XAI_API_KEY", src: "XAI_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "XAI_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "XAI_API_KEY",
+                src: "XAI_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "deepseek",
@@ -309,30 +479,33 @@ pub static PROVIDERS: &[Provider] = &[
         hermes_id: "deepseek",
         key_help: "Create a key at platform.deepseek.com. Every app that uses DeepSeek can use it.",
         placeholder: "sk-…",
-        check: Some(Check { path: "/models", auth: "bearer" }),
+        check: Some(Check {
+            path: "/models",
+            auth: "bearer",
+        }),
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "DEEPSEEK_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "DEEPSEEK_API_KEY", src: "DEEPSEEK_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "DEEPSEEK_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "DEEPSEEK_API_KEY",
+                src: "DEEPSEEK_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "kimi",
@@ -353,30 +526,33 @@ pub static PROVIDERS: &[Provider] = &[
         hermes_id: "kimi-coding",
         key_help: "Create a key at platform.moonshot.ai, or a Kimi Code key (sk-kimi-). Every app that uses Kimi can use it.",
         placeholder: "sk-…",
-        check: Some(Check { path: "/models", auth: "bearer" }),
+        check: Some(Check {
+            path: "/models",
+            auth: "bearer",
+        }),
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "KIMI_API_KEY",
-                aliases: &["KIMI_CODING_API_KEY"],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "KIMI_API_KEY", src: "KIMI_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "KIMI_API_KEY",
+            aliases: &["KIMI_CODING_API_KEY"],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "KIMI_API_KEY",
+                src: "KIMI_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "github",
@@ -399,27 +575,22 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "github_pat_…",
         check: None,
         apps: &["copilot-cli"],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "COPILOT_GITHUB_TOKEN",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "COPILOT_GITHUB_TOKEN",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[],
     },
     Provider {
         id: "huggingface",
@@ -442,28 +613,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "hf_…",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "HF_TOKEN",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "HF_TOKEN", src: "HF_TOKEN" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "HF_TOKEN",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "HF_TOKEN",
+                src: "HF_TOKEN",
+            }],
+        }],
     },
     Provider {
         id: "zai",
@@ -486,32 +657,49 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "GLM_API_KEY",
-                aliases: &["ZAI_API_KEY", "Z_AI_API_KEY"],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "GLM_API_KEY",
+            aliases: &["ZAI_API_KEY", "Z_AI_API_KEY"],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[
+            Region {
+                id: "global",
+                name: "Global",
+                base_url: "https://api.z.ai/api/paas/v4",
+            },
+            Region {
+                id: "cn",
+                name: "China",
+                base_url: "https://open.bigmodel.cn/api/paas/v4",
+            },
+            Region {
+                id: "coding-global",
+                name: "Global, Coding Plan",
+                base_url: "https://api.z.ai/api/coding/paas/v4",
+            },
+            Region {
+                id: "coding-cn",
+                name: "China, Coding Plan",
+                base_url: "https://open.bigmodel.cn/api/coding/paas/v4",
             },
         ],
-        regions: &[
-            Region { id: "global", name: "Global", base_url: "https://api.z.ai/api/paas/v4" },
-            Region { id: "cn", name: "China", base_url: "https://open.bigmodel.cn/api/paas/v4" },
-            Region { id: "coding-global", name: "Global, Coding Plan", base_url: "https://api.z.ai/api/coding/paas/v4" },
-            Region { id: "coding-cn", name: "China, Coding Plan", base_url: "https://open.bigmodel.cn/api/coding/paas/v4" },
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "GLM_API_KEY", src: "GLM_API_KEY" }, ] },
-        ],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "GLM_API_KEY",
+                src: "GLM_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "fireworks",
@@ -534,28 +722,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "fw_…",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "FIREWORKS_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "FIREWORKS_API_KEY", src: "FIREWORKS_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "FIREWORKS_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "FIREWORKS_API_KEY",
+                src: "FIREWORKS_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "nvidia",
@@ -578,28 +766,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "nvapi-…",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "NVIDIA_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "NVIDIA_API_KEY", src: "NVIDIA_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "NVIDIA_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "NVIDIA_API_KEY",
+                src: "NVIDIA_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "ollama-cloud",
@@ -622,28 +810,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "OLLAMA_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "OLLAMA_API_KEY", src: "OLLAMA_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "OLLAMA_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "OLLAMA_API_KEY",
+                src: "OLLAMA_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "deepinfra",
@@ -666,28 +854,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "DEEPINFRA_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "DEEPINFRA_API_KEY", src: "DEEPINFRA_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "DEEPINFRA_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "DEEPINFRA_API_KEY",
+                src: "DEEPINFRA_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "novita",
@@ -710,28 +898,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "sk_…",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "NOVITA_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "NOVITA_API_KEY", src: "NOVITA_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "NOVITA_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "NOVITA_API_KEY",
+                src: "NOVITA_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "nebius-token-factory",
@@ -754,28 +942,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "NEBIUS_API_KEY",
-                aliases: &["NEBIUS_TOKEN_FACTORY_API_KEY"],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "NEBIUS_API_KEY", src: "NEBIUS_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "NEBIUS_API_KEY",
+            aliases: &["NEBIUS_TOKEN_FACTORY_API_KEY"],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "NEBIUS_API_KEY",
+                src: "NEBIUS_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "gmi",
@@ -798,28 +986,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "GMI_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "GMI_API_KEY", src: "GMI_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "GMI_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "GMI_API_KEY",
+                src: "GMI_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "upstage",
@@ -842,28 +1030,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "up_…",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "UPSTAGE_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "UPSTAGE_API_KEY", src: "UPSTAGE_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "UPSTAGE_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "UPSTAGE_API_KEY",
+                src: "UPSTAGE_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "arcee",
@@ -886,28 +1074,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "ARCEEAI_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "ARCEEAI_API_KEY", src: "ARCEEAI_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "ARCEEAI_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "ARCEEAI_API_KEY",
+                src: "ARCEEAI_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "ai-gateway",
@@ -930,28 +1118,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "AI_GATEWAY_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "AI_GATEWAY_API_KEY", src: "AI_GATEWAY_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "AI_GATEWAY_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "AI_GATEWAY_API_KEY",
+                src: "AI_GATEWAY_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "opencode-zen",
@@ -974,28 +1162,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "OPENCODE_ZEN_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "OPENCODE_ZEN_API_KEY", src: "OPENCODE_ZEN_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "OPENCODE_ZEN_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "OPENCODE_ZEN_API_KEY",
+                src: "OPENCODE_ZEN_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "opencode-go",
@@ -1018,28 +1206,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "OPENCODE_GO_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "OPENCODE_GO_API_KEY", src: "OPENCODE_GO_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "OPENCODE_GO_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "OPENCODE_GO_API_KEY",
+                src: "OPENCODE_GO_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "kilocode",
@@ -1062,28 +1250,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "KILOCODE_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "KILOCODE_API_KEY", src: "KILOCODE_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "KILOCODE_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "KILOCODE_API_KEY",
+                src: "KILOCODE_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "xiaomi",
@@ -1106,28 +1294,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "XIAOMI_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "XIAOMI_API_KEY", src: "XIAOMI_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "XIAOMI_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "XIAOMI_API_KEY",
+                src: "XIAOMI_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "stepfun",
@@ -1150,28 +1338,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "STEPFUN_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "STEPFUN_API_KEY", src: "STEPFUN_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "STEPFUN_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "STEPFUN_API_KEY",
+                src: "STEPFUN_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "minimax",
@@ -1194,28 +1382,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "MINIMAX_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "MINIMAX_API_KEY", src: "MINIMAX_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "MINIMAX_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "MINIMAX_API_KEY",
+                src: "MINIMAX_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "alibaba",
@@ -1238,28 +1426,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "sk-…",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "DASHSCOPE_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "DASHSCOPE_API_KEY", src: "DASHSCOPE_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "DASHSCOPE_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "DASHSCOPE_API_KEY",
+                src: "DASHSCOPE_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "meta-ai",
@@ -1282,28 +1470,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "MODEL_API_KEY",
-                aliases: &["META_API_KEY", "META_MODEL_API_KEY"],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "MODEL_API_KEY", src: "MODEL_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "MODEL_API_KEY",
+            aliases: &["META_API_KEY", "META_MODEL_API_KEY"],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "MODEL_API_KEY",
+                src: "MODEL_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "router",
@@ -1326,28 +1514,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "RAMP_ROUTER_API_KEY",
-                aliases: &["ROUTER_API_KEY"],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "RAMP_ROUTER_API_KEY", src: "RAMP_ROUTER_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "RAMP_ROUTER_API_KEY",
+            aliases: &["ROUTER_API_KEY"],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "RAMP_ROUTER_API_KEY",
+                src: "RAMP_ROUTER_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "commandcode",
@@ -1370,28 +1558,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "COMMANDCODE_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "COMMANDCODE_API_KEY", src: "COMMANDCODE_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "COMMANDCODE_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "COMMANDCODE_API_KEY",
+                src: "COMMANDCODE_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "actual",
@@ -1414,28 +1602,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "ACTUAL_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "ACTUAL_API_KEY", src: "ACTUAL_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "ACTUAL_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "ACTUAL_API_KEY",
+                src: "ACTUAL_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "tencent-tokenhub",
@@ -1458,28 +1646,28 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "TOKENHUB_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "TOKENHUB_API_KEY", src: "TOKENHUB_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "key",
+            kind: MethodKind::ApiKey,
+            env: "TOKENHUB_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "TOKENHUB_API_KEY",
+                src: "TOKENHUB_API_KEY",
+            }],
+        }],
     },
     Provider {
         id: "nous",
@@ -1502,27 +1690,22 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "portal",
-                kind: MethodKind::DeviceCode,
-                env: "NOUS_API_KEY",
-                aliases: &[],
-                scope: "hermes",
-                app: "",
-                flow: "",
-                label: "Sign in with Nous Portal",
-                help: "Shows a code to enter on the Nous Portal. Only Hermes uses this sign-in.",
-                terms_review: true,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-        ],
+        methods: &[Method {
+            id: "portal",
+            kind: MethodKind::DeviceCode,
+            env: "NOUS_API_KEY",
+            aliases: &[],
+            scope: "hermes",
+            app: "",
+            flow: "",
+            label: "Sign in with Nous Portal",
+            help: "Shows a code to enter on the Nous Portal. Only Hermes uses this sign-in.",
+            terms_review: true,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[],
     },
     Provider {
         id: "qwen-oauth",
@@ -1545,27 +1728,22 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "qwen-login",
-                kind: MethodKind::ImportLogin,
-                env: "QWEN_API_KEY",
-                aliases: &[],
-                scope: "hermes",
-                app: "",
-                flow: "",
-                label: "Use your Qwen CLI sign-in",
-                help: "Copies the sign-in the Qwen CLI made on this machine. Only Hermes uses it.",
-                terms_review: true,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-        ],
+        methods: &[Method {
+            id: "qwen-login",
+            kind: MethodKind::ImportLogin,
+            env: "QWEN_API_KEY",
+            aliases: &[],
+            scope: "hermes",
+            app: "",
+            flow: "",
+            label: "Use your Qwen CLI sign-in",
+            help: "Copies the sign-in the Qwen CLI made on this machine. Only Hermes uses it.",
+            terms_review: true,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[],
     },
     Provider {
         id: "minimax-oauth",
@@ -1588,27 +1766,22 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "portal",
-                kind: MethodKind::SubscriptionLogin,
-                env: "",
-                aliases: &[],
-                scope: "hermes",
-                app: "",
-                flow: "",
-                label: "Sign in with MiniMax",
-                help: "Opens MiniMax in your browser. Only Hermes uses this sign-in.",
-                terms_review: true,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-        ],
+        methods: &[Method {
+            id: "portal",
+            kind: MethodKind::SubscriptionLogin,
+            env: "",
+            aliases: &[],
+            scope: "hermes",
+            app: "",
+            flow: "",
+            label: "Sign in with MiniMax",
+            help: "Opens MiniMax in your browser. Only Hermes uses this sign-in.",
+            terms_review: true,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[],
     },
     Provider {
         id: "xai-oauth",
@@ -1631,27 +1804,22 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "supergrok",
-                kind: MethodKind::SubscriptionLogin,
-                env: "",
-                aliases: &[],
-                scope: "hermes",
-                app: "",
-                flow: "",
-                label: "Sign in with SuperGrok",
-                help: "Shows a code to enter on x.ai. Only Hermes uses this sign-in.",
-                terms_review: true,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-        ],
+        methods: &[Method {
+            id: "supergrok",
+            kind: MethodKind::SubscriptionLogin,
+            env: "",
+            aliases: &[],
+            scope: "hermes",
+            app: "",
+            flow: "",
+            label: "Sign in with SuperGrok",
+            help: "Shows a code to enter on x.ai. Only Hermes uses this sign-in.",
+            terms_review: true,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[],
     },
     Provider {
         id: "vertex",
@@ -1674,27 +1842,22 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "adc",
-                kind: MethodKind::Adc,
-                env: "",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "Use your Google Cloud sign-in",
-                help: "Uses the application default credentials on this machine.",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-        ],
+        methods: &[Method {
+            id: "adc",
+            kind: MethodKind::Adc,
+            env: "",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "Use your Google Cloud sign-in",
+            help: "Uses the application default credentials on this machine.",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[],
     },
     Provider {
         id: "bedrock",
@@ -1717,27 +1880,22 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "adc",
-                kind: MethodKind::Adc,
-                env: "",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "Use your AWS credentials",
-                help: "Uses the AWS profile or environment on this machine.",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-        ],
+        methods: &[Method {
+            id: "adc",
+            kind: MethodKind::Adc,
+            env: "",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "Use your AWS credentials",
+            help: "Uses the AWS profile or environment on this machine.",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[],
     },
     Provider {
         id: "azure-foundry",
@@ -1760,27 +1918,22 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "adc",
-                kind: MethodKind::Adc,
-                env: "",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "Use your Microsoft sign-in",
-                help: "Uses Entra ID on this machine.",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-        ],
+        methods: &[Method {
+            id: "adc",
+            kind: MethodKind::Adc,
+            env: "",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "Use your Microsoft sign-in",
+            help: "Uses Entra ID on this machine.",
+            terms_review: false,
+            secret_optional: false,
+            fields: &[],
+        }],
+        regions: &[],
+        delivery: &[],
     },
     Provider {
         id: "custom",
@@ -1792,7 +1945,17 @@ pub static PROVIDERS: &[Provider] = &[
         hidden: false,
         hidden_reason: "",
         terms_review: false,
-        aliases: &["openai compatible", "lm studio", "ollama", "vllm", "llama.cpp", "litellm", "local server", "gateway", "proxy"],
+        aliases: &[
+            "openai compatible",
+            "lm studio",
+            "ollama",
+            "vllm",
+            "llama.cpp",
+            "litellm",
+            "local server",
+            "gateway",
+            "proxy",
+        ],
         wire: "openai-chat",
         also_wires: &[],
         base_url: "",
@@ -1803,43 +1966,112 @@ pub static PROVIDERS: &[Provider] = &[
         placeholder: "Key, if the server asks for one",
         check: None,
         apps: &[],
-        methods: &[
-            Method {
-                id: "endpoint",
-                kind: MethodKind::CustomEndpoint,
-                env: "CUSTOM_ENDPOINT_API_KEY",
-                aliases: &[],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: true,
-                fields: &[
-                    Field { id: "base_url", label: "Base URL", kind: "url", placeholder: "http://host:1234/v1", required: true, options: &[] },
-                    Field { id: "model", label: "Model", kind: "text", placeholder: "The model id the server serves", required: true, options: &[] },
-                    Field { id: "wire", label: "API style", kind: "choice", placeholder: "", required: true, options: &["openai-chat", "openai-responses", "anthropic"] },
-                ],
-            },
-        ],
-        regions: &[
-        ],
-        delivery: &[
-            Delivery { harness: "hermes", entries: &[Entry { dest: "CUSTOM_ENDPOINT_API_KEY", src: "CUSTOM_ENDPOINT_API_KEY" }, ] },
-        ],
+        methods: &[Method {
+            id: "endpoint",
+            kind: MethodKind::CustomEndpoint,
+            env: "CUSTOM_ENDPOINT_API_KEY",
+            aliases: &[],
+            scope: "",
+            app: "",
+            flow: "",
+            label: "",
+            help: "",
+            terms_review: false,
+            secret_optional: true,
+            fields: &[
+                Field {
+                    id: "base_url",
+                    label: "Base URL",
+                    kind: "url",
+                    placeholder: "http://host:1234/v1",
+                    required: true,
+                    options: &[],
+                },
+                Field {
+                    id: "model",
+                    label: "Model",
+                    kind: "text",
+                    placeholder: "The model id the server serves",
+                    required: true,
+                    options: &[],
+                },
+                Field {
+                    id: "wire",
+                    label: "API style",
+                    kind: "choice",
+                    placeholder: "",
+                    required: true,
+                    options: &["openai-chat", "openai-responses", "anthropic"],
+                },
+            ],
+        }],
+        regions: &[],
+        delivery: &[Delivery {
+            harness: "hermes",
+            entries: &[Entry {
+                dest: "CUSTOM_ENDPOINT_API_KEY",
+                src: "CUSTOM_ENDPOINT_API_KEY",
+            }],
+        }],
     },
 ];
 
 /// The names each app reads from saved connections, in rank order (visible providers).
-pub const READS_CLAUDE_CODE: &[&str] = &["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"];
+pub const READS_CLAUDE_CODE: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_AUTH_TOKEN",
+];
 pub const READS_OPENAI_CODEX: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_AUTH_JSON"];
 pub const READS_GEMINI_CLI: &[&str] = &["GEMINI_API_KEY", "GOOGLE_API_KEY"];
 pub const READS_GOOGLE_ANTIGRAVITY: &[&str] = &["GEMINI_API_KEY"];
-pub const READS_OPENCODE: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"];
-pub const READS_GOOSE: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GOOGLE_API_KEY"];
-pub const READS_PI: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"];
-pub const READS_HERMES: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY", "DEEPSEEK_API_KEY", "KIMI_API_KEY", "HF_TOKEN", "GLM_API_KEY", "FIREWORKS_API_KEY", "NVIDIA_API_KEY", "OLLAMA_API_KEY", "DEEPINFRA_API_KEY", "NOVITA_API_KEY", "NEBIUS_API_KEY", "GMI_API_KEY", "UPSTAGE_API_KEY", "ARCEEAI_API_KEY", "AI_GATEWAY_API_KEY", "OPENCODE_ZEN_API_KEY", "OPENCODE_GO_API_KEY", "KILOCODE_API_KEY", "XIAOMI_API_KEY", "STEPFUN_API_KEY", "MINIMAX_API_KEY", "DASHSCOPE_API_KEY", "CUSTOM_ENDPOINT_API_KEY"];
+pub const READS_OPENCODE: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+];
+pub const READS_GOOSE: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GOOGLE_API_KEY",
+];
+pub const READS_PI: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+];
+pub const READS_HERMES: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+    "XAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "KIMI_API_KEY",
+    "HF_TOKEN",
+    "GLM_API_KEY",
+    "FIREWORKS_API_KEY",
+    "NVIDIA_API_KEY",
+    "OLLAMA_API_KEY",
+    "DEEPINFRA_API_KEY",
+    "NOVITA_API_KEY",
+    "NEBIUS_API_KEY",
+    "GMI_API_KEY",
+    "UPSTAGE_API_KEY",
+    "ARCEEAI_API_KEY",
+    "AI_GATEWAY_API_KEY",
+    "OPENCODE_ZEN_API_KEY",
+    "OPENCODE_GO_API_KEY",
+    "KILOCODE_API_KEY",
+    "XIAOMI_API_KEY",
+    "STEPFUN_API_KEY",
+    "MINIMAX_API_KEY",
+    "DASHSCOPE_API_KEY",
+    "CUSTOM_ENDPOINT_API_KEY",
+];
 pub const READS_OPENCLAW: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"];
 
 /// [`READS_*`](READS_CLAUDE_CODE) by harness id.
@@ -1856,7 +2088,36 @@ pub const READS: &[(&str, &[&str])] = &[
 ];
 
 /// The ids `cua connections add` takes (visible providers).
-pub const PROVIDER_IDS: &[&str] = &["anthropic", "openai", "openrouter", "google", "xai", "deepseek", "kimi", "github", "huggingface", "zai", "fireworks", "nvidia", "ollama-cloud", "deepinfra", "novita", "nebius-token-factory", "gmi", "upstage", "arcee", "ai-gateway", "opencode-zen", "opencode-go", "kilocode", "xiaomi", "stepfun", "minimax", "alibaba", "custom"];
+pub const PROVIDER_IDS: &[&str] = &[
+    "anthropic",
+    "openai",
+    "openrouter",
+    "google",
+    "xai",
+    "deepseek",
+    "kimi",
+    "github",
+    "huggingface",
+    "zai",
+    "fireworks",
+    "nvidia",
+    "ollama-cloud",
+    "deepinfra",
+    "novita",
+    "nebius-token-factory",
+    "gmi",
+    "upstage",
+    "arcee",
+    "ai-gateway",
+    "opencode-zen",
+    "opencode-go",
+    "kilocode",
+    "xiaomi",
+    "stepfun",
+    "minimax",
+    "alibaba",
+    "custom",
+];
 
 /// The text under `cua connections add --help`.
 pub const CLI_PROVIDER_HELP: &str = "Providers:\n  anthropic             Anthropic\n  openai                OpenAI\n  openrouter            OpenRouter\n  google                Google AI Studio\n  xai                   xAI\n  deepseek              DeepSeek\n  kimi                  Kimi (Moonshot)\n  github                GitHub Copilot\n  huggingface           Hugging Face\n  zai                   Z.AI (GLM)\n  fireworks             Fireworks AI\n  nvidia                NVIDIA NIM\n  ollama-cloud          Ollama Cloud\n  deepinfra             DeepInfra\n  novita                Novita AI\n  nebius-token-factory  Nebius Token Factory\n  gmi                   GMI Cloud\n  upstage               Upstage Solar\n  arcee                 Arcee AI\n  ai-gateway            Vercel AI Gateway\n  opencode-zen          OpenCode Zen\n  opencode-go           OpenCode Go\n  kilocode              Kilo Code\n  xiaomi                Xiaomi MiMo\n  stepfun               StepFun\n  minimax               MiniMax\n  alibaba               Qwen Cloud (Alibaba)\n  custom                Custom endpoint\n\nMethods: key (an API key read from stdin), import (the sign-in another app made on this machine), login (a code sign-in), endpoint (a base URL).\n";

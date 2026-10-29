@@ -48,7 +48,10 @@ fn list(items: &[String]) -> String {
     if items.is_empty() {
         "&[]".into()
     } else {
-        format!("&[{}]", items.iter().map(|i| s(i)).collect::<Vec<_>>().join(", "))
+        format!(
+            "&[{}]",
+            items.iter().map(|i| s(i)).collect::<Vec<_>>().join(", ")
+        )
     }
 }
 
@@ -83,7 +86,10 @@ fn rust(all: &[ProviderDef]) -> String {
         o.push_str(&format!("        name: {},\n", s(&p.name)));
         let icon = if p.icon.is_empty() { &p.id } else { &p.icon };
         o.push_str(&format!("        icon: {},\n", s(icon)));
-        o.push_str(&format!("        tier: Tier::{},\n", if p.tier == "top" { "Top" } else { "More" }));
+        o.push_str(&format!(
+            "        tier: Tier::{},\n",
+            if p.tier == "top" { "Top" } else { "More" }
+        ));
         o.push_str(&format!("        rank: {},\n", p.rank));
         let kind = match p.kind.as_str() {
             "hosted" => "Hosted",
@@ -94,14 +100,20 @@ fn rust(all: &[ProviderDef]) -> String {
         };
         o.push_str(&format!("        kind: Kind::{kind},\n"));
         o.push_str(&format!("        hidden: {},\n", p.hidden));
-        o.push_str(&format!("        hidden_reason: {},\n", s(&p.hidden_reason)));
+        o.push_str(&format!(
+            "        hidden_reason: {},\n",
+            s(&p.hidden_reason)
+        ));
         o.push_str(&format!("        terms_review: {},\n", p.terms_review()));
         o.push_str(&format!("        aliases: {},\n", list(&p.aliases)));
         o.push_str(&format!("        wire: {},\n", s(&p.wire)));
         o.push_str(&format!("        also_wires: {},\n", list(&p.also_wires)));
         o.push_str(&format!("        base_url: {},\n", s(&p.base_url)));
         o.push_str(&format!("        base_url_env: {},\n", s(&p.base_url_env)));
-        o.push_str(&format!("        default_model: {},\n", s(&p.default_model)));
+        o.push_str(&format!(
+            "        default_model: {},\n",
+            s(&p.default_model)
+        ));
         o.push_str(&format!("        hermes_id: {},\n", s(&p.hermes_id)));
         o.push_str(&format!("        key_help: {},\n", s(&p.key_help)));
         o.push_str(&format!("        placeholder: {},\n", s(&p.placeholder)));
@@ -128,8 +140,14 @@ fn rust(all: &[ProviderDef]) -> String {
             o.push_str(&format!("                flow: {},\n", s(&m.flow)));
             o.push_str(&format!("                label: {},\n", s(&m.label)));
             o.push_str(&format!("                help: {},\n", s(&m.help)));
-            o.push_str(&format!("                terms_review: {},\n", m.terms == "review"));
-            o.push_str(&format!("                secret_optional: {},\n", m.secret == "optional"));
+            o.push_str(&format!(
+                "                terms_review: {},\n",
+                m.terms == "review"
+            ));
+            o.push_str(&format!(
+                "                secret_optional: {},\n",
+                m.secret == "optional"
+            ));
             o.push_str("                fields: &[\n");
             for f in &m.field {
                 o.push_str(&format!(
@@ -155,7 +173,10 @@ fn rust(all: &[ProviderDef]) -> String {
         }
         o.push_str("        ],\n        delivery: &[\n");
         for (h, entries) in &p.delivery {
-            o.push_str(&format!("            Delivery {{ harness: {}, entries: &[", s(h)));
+            o.push_str(&format!(
+                "            Delivery {{ harness: {}, entries: &[",
+                s(h)
+            ));
             for raw in entries {
                 let (d, src) = ProviderDef::entry(raw);
                 o.push_str(&format!("Entry {{ dest: {}, src: {} }}, ", s(d), s(src)));
@@ -165,7 +186,9 @@ fn rust(all: &[ProviderDef]) -> String {
         o.push_str("        ],\n    },\n");
     }
     o.push_str("];\n\n");
-    o.push_str("/// The names each app reads from saved connections, in rank order (visible providers).\n");
+    o.push_str(
+        "/// The names each app reads from saved connections, in rank order (visible providers).\n",
+    );
     for h in HARNESS_IDS {
         o.push_str(&format!(
             "pub const {}: &[&str] = {};\n",
@@ -178,18 +201,31 @@ fn rust(all: &[ProviderDef]) -> String {
         o.push_str(&format!("    ({}, {}),\n", s(h), const_name(h)));
     }
     o.push_str("];\n\n");
-    let ids: Vec<String> = all.iter().filter(|p| !p.hidden && !p.terms_review()).map(|p| p.id.clone()).collect();
+    let ids: Vec<String> = all
+        .iter()
+        .filter(|p| !p.hidden && !p.terms_review())
+        .map(|p| p.id.clone())
+        .collect();
     o.push_str("/// The ids `cua connections add` takes (visible providers).\n");
-    o.push_str(&format!("pub const PROVIDER_IDS: &[&str] = {};\n\n", list(&ids)));
+    o.push_str(&format!(
+        "pub const PROVIDER_IDS: &[&str] = {};\n\n",
+        list(&ids)
+    ));
     o.push_str("/// The text under `cua connections add --help`.\n");
-    o.push_str(&format!("pub const CLI_PROVIDER_HELP: &str = {};\n", s(&cli_help(all))));
+    o.push_str(&format!(
+        "pub const CLI_PROVIDER_HELP: &str = {};\n",
+        s(&cli_help(all))
+    ));
     o
 }
 
 /// The provider list for `cua connections add --help`.
 pub fn cli_help(all: &[ProviderDef]) -> String {
     let mut o = String::from("Providers:\n");
-    let vis: Vec<&ProviderDef> = all.iter().filter(|p| !p.hidden && !p.terms_review()).collect();
+    let vis: Vec<&ProviderDef> = all
+        .iter()
+        .filter(|p| !p.hidden && !p.terms_review())
+        .collect();
     let w = vis.iter().map(|p| p.id.len()).max().unwrap_or(0);
     for p in &vis {
         o.push_str(&format!("  {:<w$}  {}\n", p.id, p.name));
@@ -254,7 +290,9 @@ fn ts(all: &[ProviderDef]) -> String {
             s(&p.name),
             s(icon),
             s(&p.tier),
-            serde_json::to_string(&p.aliases).expect("json").replace(',', ", "),
+            serde_json::to_string(&p.aliases)
+                .expect("json")
+                .replace(',', ", "),
             s(key_env)
         ));
     }
@@ -310,7 +348,12 @@ pub fn docs_table(all: &[ProviderDef]) -> String {
             }
         }
         let works = works_with_names(p, all);
-        o.push_str(&format!("| {} | {} | {} |\n", p.name, how.join(", "), works.join(", ")));
+        o.push_str(&format!(
+            "| {} | {} | {} |\n",
+            p.name,
+            how.join(", "),
+            works.join(", ")
+        ));
     }
     o
 }
@@ -345,7 +388,10 @@ fn works_with_names(p: &ProviderDef, _all: &[ProviderDef]) -> Vec<String> {
     for h in HARNESS_IDS {
         let native = p.delivery.get(*h).is_some_and(|e| !e.is_empty());
         let has_any = p.delivery.contains_key(*h);
-        let wire = ENDPOINT_HARNESSES.iter().find(|(x, _)| x == h).map(|(_, w)| *w);
+        let wire = ENDPOINT_HARNESSES
+            .iter()
+            .find(|(x, _)| x == h)
+            .map(|(_, w)| *w);
         let overlap = wire.is_some_and(|w| p.wire == w || p.also_wires.iter().any(|a| a == w))
             && (p.kind == "custom" || (!p.base_url.is_empty() && !p.default_model.is_empty()));
         if native || (!has_any && overlap) {
@@ -387,9 +433,12 @@ pub fn render(root: &Path) -> Result<BTreeMap<String, String>, String> {
     out.insert(JSON_OUT.to_string(), json(&all));
     out.insert(TS_OUT.to_string(), ts(&all));
     out.insert(SWIFT_OUT.to_string(), swift(&all));
-    let page = std::fs::read_to_string(root.join(DOCS_PAGE))
-        .map_err(|e| format!("{DOCS_PAGE}: {e}"))?;
-    out.insert(DOCS_PAGE.to_string(), splice_docs(&page, &docs_table(&all))?);
+    let page =
+        std::fs::read_to_string(root.join(DOCS_PAGE)).map_err(|e| format!("{DOCS_PAGE}: {e}"))?;
+    out.insert(
+        DOCS_PAGE.to_string(),
+        splice_docs(&page, &docs_table(&all))?,
+    );
     Ok(out)
 }
 
@@ -416,7 +465,9 @@ pub fn check(root: &Path) -> Result<Vec<String>, String> {
     let files = render(root)?;
     Ok(files
         .into_iter()
-        .filter(|(rel, text)| std::fs::read_to_string(root.join(rel)).ok().as_deref() != Some(text.as_str()))
+        .filter(|(rel, text)| {
+            std::fs::read_to_string(root.join(rel)).ok().as_deref() != Some(text.as_str())
+        })
         .map(|(rel, _)| rel)
         .collect())
 }

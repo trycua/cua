@@ -13,7 +13,9 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Ok(stale) => {
-                eprintln!("connections: stale generated files (run `cargo run -p cua-connections --bin cua-connections-gen`):");
+                eprintln!(
+                    "connections: stale generated files (run `cargo run -p cua-connections --bin cua-connections-gen`):"
+                );
                 for s in stale {
                     eprintln!("  {s}");
                 }

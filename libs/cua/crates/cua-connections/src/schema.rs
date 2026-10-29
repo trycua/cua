@@ -146,7 +146,11 @@ pub fn load_dir(dir: &Path) -> Result<Vec<ProviderDef>, String> {
             toml::from_str(&text).map_err(|e| format!("{}: {e}", f.display()))?;
         let stem = f.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
         if stem != def.id {
-            return Err(format!("{}: the file is named for the id {:?}", f.display(), def.id));
+            return Err(format!(
+                "{}: the file is named for the id {:?}",
+                f.display(),
+                def.id
+            ));
         }
         out.push(def);
     }
@@ -188,7 +192,10 @@ pub fn check(all: &[ProviderDef]) -> Result<(), String> {
         if !matches!(p.tier.as_str(), "top" | "more") {
             return Err(at("tier is top or more"));
         }
-        if !matches!(p.kind.as_str(), "hosted" | "aggregator" | "local" | "custom" | "cloud") {
+        if !matches!(
+            p.kind.as_str(),
+            "hosted" | "aggregator" | "local" | "custom" | "cloud"
+        ) {
             return Err(at("kind is hosted, aggregator, local, custom or cloud"));
         }
         if !matches!(p.terms.as_str(), "" | "ok" | "review") {
@@ -208,7 +215,9 @@ pub fn check(all: &[ProviderDef]) -> Result<(), String> {
             .chain(p.method.iter().map(|m| &m.help))
             .chain(p.method.iter().map(|m| &m.label))
         {
-            if t.to_ascii_lowercase().contains("device") && !t.to_ascii_lowercase().contains("device code") {
+            if t.to_ascii_lowercase().contains("device")
+                && !t.to_ascii_lowercase().contains("device code")
+            {
                 return Err(at("UI text says machines, not devices"));
             }
         }
@@ -231,7 +240,10 @@ pub fn check(all: &[ProviderDef]) -> Result<(), String> {
                 return Err(at(&format!("method {}: terms is ok or review", m.id)));
             }
             if !matches!(m.secret.as_str(), "" | "required" | "optional") {
-                return Err(at(&format!("method {}: secret is required or optional", m.id)));
+                return Err(at(&format!(
+                    "method {}: secret is required or optional",
+                    m.id
+                )));
             }
             let needs_env = matches!(
                 kind,
@@ -259,13 +271,22 @@ pub fn check(all: &[ProviderDef]) -> Result<(), String> {
                 MethodKind::ImportLogin | MethodKind::SubscriptionLogin | MethodKind::DeviceCode
             );
             if signin && m.scope.is_empty() {
-                return Err(at(&format!("method {}: a sign-in names the one app that may use it (scope)", m.id)));
+                return Err(at(&format!(
+                    "method {}: a sign-in names the one app that may use it (scope)",
+                    m.id
+                )));
             }
             if !m.scope.is_empty() && !HARNESS_IDS.contains(&m.scope.as_str()) {
-                return Err(at(&format!("method {}: scope {:?} is not an app", m.id, m.scope)));
+                return Err(at(&format!(
+                    "method {}: scope {:?} is not an app",
+                    m.id, m.scope
+                )));
             }
             if kind == MethodKind::ImportLogin && m.app.is_empty() && m.terms != "review" {
-                return Err(at(&format!("method {}: an import names the app it is read from", m.id)));
+                return Err(at(&format!(
+                    "method {}: an import names the app it is read from",
+                    m.id
+                )));
             }
             if (m.kind == "device_code" || m.flow == "device_code") && m.label.is_empty() {
                 return Err(at(&format!("method {}: a sign-in has a label", m.id)));
@@ -304,13 +325,19 @@ pub fn check(all: &[ProviderDef]) -> Result<(), String> {
             for raw in entries {
                 let (dest, src) = ProviderDef::entry(raw);
                 if !env_ok(dest) || !env_ok(src) {
-                    return Err(at(&format!("delivery entry {raw:?} is not a variable name")));
+                    return Err(at(&format!(
+                        "delivery entry {raw:?} is not a variable name"
+                    )));
                 }
                 let method = p
                     .method
                     .iter()
                     .find(|m| m.env == src || m.aliases.iter().any(|a| a == src))
-                    .ok_or_else(|| at(&format!("delivery entry {raw:?}: this provider saves no {src}")))?;
+                    .ok_or_else(|| {
+                        at(&format!(
+                            "delivery entry {raw:?}: this provider saves no {src}"
+                        ))
+                    })?;
                 if !method.scope.is_empty() && method.scope != *harness {
                     return Err(at(&format!(
                         "{src} is the {} sign-in: it may only go to {}, not {harness}",
@@ -320,9 +347,9 @@ pub fn check(all: &[ProviderDef]) -> Result<(), String> {
             }
         }
         // Endpoint harnesses are fed by wire: the file must name a model.
-        let overlaps = ENDPOINT_HARNESSES.iter().any(|(_, w)| {
-            *w == p.wire || p.also_wires.iter().any(|a| a == w)
-        });
+        let overlaps = ENDPOINT_HARNESSES
+            .iter()
+            .any(|(_, w)| *w == p.wire || p.also_wires.iter().any(|a| a == w));
         if overlaps && p.kind != "custom" && !p.default_model.is_empty() && p.base_url.is_empty() {
             return Err(at("serves an endpoint wire but has no base URL"));
         }

@@ -384,7 +384,8 @@ pub fn connection_plan(
     let names = reg::all_env_names();
     let saved_values = saved.values(&names);
     let has = |n: &str| {
-        env.get(n).is_some_and(|v| !v.is_empty()) || saved_values.get(n).is_some_and(|v| !v.is_empty())
+        env.get(n).is_some_and(|v| !v.is_empty())
+            || saved_values.get(n).is_some_and(|v| !v.is_empty())
     };
     // What is connected: the saved connections, and the providers whose key the
     // caller passed in the run's env (never a sign-in scoped to another app).
@@ -409,7 +410,10 @@ pub fn connection_plan(
     }
     let h = harness::harness(harness).expect("checked");
     // An app that has a credential of its own is left to use it.
-    let own = h.keys.iter().any(|k| env.get(*k).is_some_and(|v| !v.is_empty()));
+    let own = h
+        .keys
+        .iter()
+        .any(|k| env.get(*k).is_some_and(|v| !v.is_empty()));
     if own {
         return plan;
     }
@@ -418,7 +422,12 @@ pub fn connection_plan(
         let var = harness::endpoint_key_var(h, wire);
         let key = e
             .key_src
-            .and_then(|s| env.get(s).filter(|v| !v.is_empty()).cloned().or_else(|| saved_values.get(s).cloned()))
+            .and_then(|s| {
+                env.get(s)
+                    .filter(|v| !v.is_empty())
+                    .cloned()
+                    .or_else(|| saved_values.get(s).cloned())
+            })
             .unwrap_or_else(|| "no-key-required".to_string());
         plan.env.insert(var.to_string(), key);
         plan.endpoint = Some(Endpoint {
@@ -800,34 +809,82 @@ mod tests {
             let (k, dir) = saved(&[]);
             let mut fields = BTreeMap::new();
             if p.kind == keys::registry::Kind::Custom {
-                fields.insert("base_url".to_string(), "http://127.0.0.1:1234/v1".to_string());
+                fields.insert(
+                    "base_url".to_string(),
+                    "http://127.0.0.1:1234/v1".to_string(),
+                );
                 fields.insert("model".to_string(), "m".to_string());
                 fields.insert("wire".to_string(), "openai-chat".to_string());
             } else if p.default_model.is_empty() {
                 fields.insert("model".to_string(), "some-model".to_string());
             }
-            k.set_with(p.id, None, "secret-value-0000", None, &fields).unwrap();
+            k.set_with(p.id, None, "secret-value-0000", None, &fields)
+                .unwrap();
             for h in harness::HARNESSES {
                 let (env, _) = run_env_with(&k, h.id, &none, &[], false).unwrap();
                 let allowed: Vec<&str> = p.delivery_for(h.id).iter().map(|e| e.dest).collect();
                 for name in env.keys() {
-                    assert!(allowed.contains(&name.as_str()), "{}: {} reached {name}", p.id, h.id);
-                    assert!(h.keys.contains(&name.as_str()), "{}: {name} is not one {} reads", p.id, h.id);
+                    assert!(
+                        allowed.contains(&name.as_str()),
+                        "{}: {} reached {name}",
+                        p.id,
+                        h.id
+                    );
+                    assert!(
+                        h.keys.contains(&name.as_str()),
+                        "{}: {name} is not one {} reads",
+                        p.id,
+                        h.id
+                    );
                 }
                 if allowed.is_empty() {
-                    assert!(env.is_empty(), "{} reached {} without a delivery entry", p.id, h.id);
+                    assert!(
+                        env.is_empty(),
+                        "{} reached {} without a delivery entry",
+                        p.id,
+                        h.id
+                    );
                 }
             }
             let _ = std::fs::remove_dir_all(&dir);
         }
         // The Claude sign-in and the ChatGPT sign-in, beside a key for the same provider.
-        let (k, dir) = saved(&[("anthropic", None, "sk-ant-test-0000-aaaa"), ("openai", None, "sk-test-0000-bbbb")]);
-        k.import("claude-code", "CLAUDE_CODE_OAUTH_TOKEN", "Claude sign-in", "sk-ant-oat01-whatever", None, None).unwrap();
-        k.import("codex", "CODEX_AUTH_JSON", "ChatGPT sign-in", "{\"tokens\":{}}", None, None).unwrap();
+        let (k, dir) = saved(&[
+            ("anthropic", None, "sk-ant-test-0000-aaaa"),
+            ("openai", None, "sk-test-0000-bbbb"),
+        ]);
+        k.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude sign-in",
+            "sk-ant-oat01-whatever",
+            None,
+            None,
+        )
+        .unwrap();
+        k.import(
+            "codex",
+            "CODEX_AUTH_JSON",
+            "ChatGPT sign-in",
+            "{\"tokens\":{}}",
+            None,
+            None,
+        )
+        .unwrap();
         for h in harness::HARNESSES {
             let (env, _) = run_env_with(&k, h.id, &none, &[], false).unwrap();
-            assert_eq!(env.contains_key("CLAUDE_CODE_OAUTH_TOKEN"), h.id == "claude-code", "{}", h.id);
-            assert_eq!(env.contains_key("CODEX_AUTH_JSON"), h.id == "openai-codex", "{}", h.id);
+            assert_eq!(
+                env.contains_key("CLAUDE_CODE_OAUTH_TOKEN"),
+                h.id == "claude-code",
+                "{}",
+                h.id
+            );
+            assert_eq!(
+                env.contains_key("CODEX_AUTH_JSON"),
+                h.id == "openai-codex",
+                "{}",
+                h.id
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -839,17 +896,30 @@ mod tests {
         let (env, _) = run_env_with(&k, "hermes", &none, &[], false).unwrap();
         let plan = connection_plan(&k, "hermes", &env, false);
         let y = plan.hermes_config.unwrap();
-        assert!(y.contains("provider: \"openrouter\"") && y.contains("adopt_external_logins: false"), "{y}");
+        assert!(
+            y.contains("provider: \"openrouter\"") && y.contains("adopt_external_logins: false"),
+            "{y}"
+        );
         assert!(plan.endpoint.is_none() && plan.env.is_empty());
         // Through the options an agent_start gets.
-        let a: cua_spaces_contract::inputs::AgentStart = serde_json::from_value(serde_json::json!({
-            "space": "local:dev", "agent": "hermes", "prompt": "hi"})).unwrap();
+        let a: cua_spaces_contract::inputs::AgentStart =
+            serde_json::from_value(serde_json::json!({
+            "space": "local:dev", "agent": "hermes", "prompt": "hi"}))
+            .unwrap();
         let (opts, _) = start_options_with(&k, &a).unwrap();
         assert_eq!(opts.env.keys().collect::<Vec<_>>(), ["OPENROUTER_API_KEY"]);
         assert!(opts.hermes_config.unwrap().contains("openrouter"));
         // A Claude sign-in alone is nothing Hermes can use: no config, no key.
         let (k2, dir2) = saved(&[]);
-        k2.import("claude-code", "CLAUDE_CODE_OAUTH_TOKEN", "Claude sign-in", "sk-ant-oat01-x", None, None).unwrap();
+        k2.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude sign-in",
+            "sk-ant-oat01-x",
+            None,
+            None,
+        )
+        .unwrap();
         let (opts, _) = start_options_with(&k2, &a).unwrap();
         assert!(opts.env.is_empty() && opts.hermes_config.is_none());
         // A custom endpoint of the caller's own is left alone.
@@ -865,13 +935,22 @@ mod tests {
     fn an_app_without_a_variable_for_the_provider_is_pointed_at_its_endpoint() {
         let (k, dir) = saved(&[("deepseek", None, "ds-test-0000-aaaa")]);
         let start = |agent: &str| {
-            let a: cua_spaces_contract::inputs::AgentStart = serde_json::from_value(serde_json::json!({
-                "space": "local:dev", "agent": agent, "prompt": "hi"})).unwrap();
+            let a: cua_spaces_contract::inputs::AgentStart =
+                serde_json::from_value(serde_json::json!({
+                "space": "local:dev", "agent": agent, "prompt": "hi"}))
+                .unwrap();
             start_options_with(&k, &a).unwrap().0
         };
         let o = start("opencode");
         let e = o.endpoint.unwrap();
-        assert_eq!((e.base_url.as_str(), e.wire, e.model.as_deref()), ("https://api.deepseek.com/v1", Some(Wire::OpenaiChat), Some("deepseek-flash")));
+        assert_eq!(
+            (e.base_url.as_str(), e.wire, e.model.as_deref()),
+            (
+                "https://api.deepseek.com/v1",
+                Some(Wire::OpenaiChat),
+                Some("deepseek-flash")
+            )
+        );
         assert_eq!(o.env["OPENAI_API_KEY"], "ds-test-0000-aaaa");
         // Claude Code and Gemini take no such provider: nothing is added, nothing is pointed anywhere.
         for agent in ["claude-code", "gemini-cli", "google-antigravity"] {
@@ -894,14 +973,20 @@ mod tests {
         let mut f = BTreeMap::new();
         // The URL and model are required; the wire is one of the closed set.
         assert!(k.set_with("custom", None, "", None, &f).is_err());
-        f.insert("base_url".to_string(), "http://127.0.0.1:1234/v1".to_string());
+        f.insert(
+            "base_url".to_string(),
+            "http://127.0.0.1:1234/v1".to_string(),
+        );
         f.insert("model".to_string(), "qwen".to_string());
         f.insert("wire".to_string(), "carrier-pigeon".to_string());
         assert!(k.set_with("custom", None, "", None, &f).is_err());
         f.insert("wire".to_string(), "openai-chat".to_string());
         f.insert("base_url".to_string(), "ftp://nope".to_string());
         assert!(k.set_with("custom", None, "", None, &f).is_err());
-        f.insert("base_url".to_string(), "http://127.0.0.1:1234/v1".to_string());
+        f.insert(
+            "base_url".to_string(),
+            "http://127.0.0.1:1234/v1".to_string(),
+        );
         let info = k.set_with("custom", None, "", None, &f).unwrap();
         assert_eq!(info.env, "CUSTOM_ENDPOINT_API_KEY");
         assert_eq!(info.fields["base_url"], "http://127.0.0.1:1234/v1");
@@ -910,13 +995,21 @@ mod tests {
         let none = BTreeMap::new();
         let (env, _) = run_env_with(&k, "hermes", &none, &[], false).unwrap();
         assert!(env.is_empty(), "no key is delivered when there is none");
-        let y = connection_plan(&k, "hermes", &env, false).hermes_config.unwrap();
-        assert!(y.contains("provider: \"custom\"") && y.contains("base_url: \"http://127.0.0.1:1234/v1\"") && y.contains("no-key-required"), "{y}");
+        let y = connection_plan(&k, "hermes", &env, false)
+            .hermes_config
+            .unwrap();
+        assert!(
+            y.contains("provider: \"custom\"")
+                && y.contains("base_url: \"http://127.0.0.1:1234/v1\"")
+                && y.contains("no-key-required"),
+            "{y}"
+        );
         let plan = connection_plan(&k, "goose", &BTreeMap::new(), false);
         assert_eq!(plan.endpoint.unwrap().model.as_deref(), Some("qwen"));
         assert_eq!(plan.env["OPENAI_API_KEY"], "no-key-required");
         // The key, when there is one, stays out of every report.
-        k.set_with("custom", None, "local-key-1234-abcd", None, &f).unwrap();
+        k.set_with("custom", None, "local-key-1234-abcd", None, &f)
+            .unwrap();
         let text = serde_json::to_string(&k.report().unwrap()).unwrap();
         assert!(!text.contains("local-key"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -927,16 +1020,30 @@ mod tests {
         let (k, dir) = saved(&[]);
         let mut f = BTreeMap::new();
         // Z.AI bills its plans separately: the plan must be one it lists.
-        assert!(k.set_with("zai", None, "zai-key-0000-aaaa", Some("moon"), &f).is_err());
-        let info = k.set_with("zai", None, "zai-key-0000-aaaa", Some("coding-global"), &f).unwrap();
+        assert!(
+            k.set_with("zai", None, "zai-key-0000-aaaa", Some("moon"), &f)
+                .is_err()
+        );
+        let info = k
+            .set_with("zai", None, "zai-key-0000-aaaa", Some("coding-global"), &f)
+            .unwrap();
         assert_eq!(info.region.as_deref(), Some("coding-global"));
         // A provider with no default model asks for one.
-        assert!(k.set_with("deepinfra", None, "di-key-0000-aaaa", None, &f).is_err());
+        assert!(
+            k.set_with("deepinfra", None, "di-key-0000-aaaa", None, &f)
+                .is_err()
+        );
         f.insert("model".to_string(), "meta-llama/x".to_string());
-        assert!(k.set_with("deepinfra", None, "di-key-0000-aaaa", None, &f).is_ok());
+        assert!(
+            k.set_with("deepinfra", None, "di-key-0000-aaaa", None, &f)
+                .is_ok()
+        );
         // A field the provider does not ask for is refused; so is a hidden provider.
         f.insert("base_url".to_string(), "https://evil.example".to_string());
-        assert!(k.set_with("deepinfra", None, "di-key-0000-aaaa", None, &f).is_err());
+        assert!(
+            k.set_with("deepinfra", None, "di-key-0000-aaaa", None, &f)
+                .is_err()
+        );
         assert!(k.set("nous", None, "x-key-0000-aaaa").is_err());
         assert!(k.set("xai-oauth", None, "x-key-0000-aaaa").is_err());
         let _ = std::fs::remove_dir_all(&dir);

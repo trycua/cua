@@ -5590,6 +5590,12 @@
             "message",
             "retryable"
           ]
+        },
+        "fanoutOf": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [

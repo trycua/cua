@@ -8832,7 +8832,11 @@ export type AppAgentKeyInput = {
     /**
      * A sign-in past its expiry: not used by any run until reconnected.
      */
-    expired: boolean
+    expired: boolean,
+    /**
+     * A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+     */
+    label?: string
 }
 
 /**
@@ -8860,7 +8864,8 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
                 env: FfiConverterString.read(from),
                 last4: FfiConverterString.read(from),
                 addedMs: FfiConverterUInt64.read(from),
-                expired: FfiConverterBool.read(from)
+                expired: FfiConverterBool.read(from),
+                label: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -8869,13 +8874,15 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
             FfiConverterString.write(value.last4, into);
             FfiConverterUInt64.write(value.addedMs, into);
             FfiConverterBool.write(value.expired, into);
+            FfiConverterOptionalString.write(value.label, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.provider) +
              FfiConverterString.allocationSize(value.env) +
              FfiConverterString.allocationSize(value.last4) +
              FfiConverterUInt64.allocationSize(value.addedMs) +
-             FfiConverterBool.allocationSize(value.expired);
+             FfiConverterBool.allocationSize(value.expired) +
+             FfiConverterOptionalString.allocationSize(value.label);
 
         }
     };

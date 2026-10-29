@@ -22,7 +22,11 @@
 #                                          which the app's own executable runs as its
 #                                          login item; never in Contents/MacOS, where
 #                                          it would register as the app)
-#   Cua Spaces.app                         com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
+#   Contents/Helpers/cua-cursor-theme      cua-cursor-theme (Cua Driver's cursor themes)
+#   Contents/Helpers/cua-driver            cua-driver, its own entitlements kept (Cua
+#                                          Driver, pinned in cua-driver.release.json;
+#                                          the host service runs it as its child)
+#   Cua Spaces.app                        com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
 #
 #   scripts/build-release.sh --version 0.2.0[-suffix][+build] [--build-number N]
 #       [--bundle-version A.B.C.D[.E]] [--arch universal|arm64|x86_64]
@@ -175,6 +179,9 @@ if [ -n "$feed_url" ]; then
   /usr/libexec/PlistBuddy -c "Set :SUFeedURL $feed_url" "$plist"
 fi
 [ -x "$app/Contents/Helpers/cua-spacesd" ] || { echo "$app has no Contents/Helpers/cua-spacesd" >&2; exit 1; }
+for f in cua-driver cua-cursor-theme; do
+  [ -x "$app/Contents/Helpers/$f" ] || { echo "$app has no Contents/Helpers/$f" >&2; exit 1; }
+done
 [ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist" ] ||
   { echo "$app has no com.trycua.spaces.helper.plist" >&2; exit 1; }
 # The symbols build-app.sh took out of the binaries, for symbolicating crash
@@ -226,6 +233,11 @@ fi
 # are the app's (designated requirement: identifier and team, checked
 # below), and they stay granted across updates.
 "${sign[@]}" --identifier com.trycua.cua-env-driver "$app/Contents/Helpers/cua-spacesd"
+# Cua Driver, which the host service runs as its child. Same identifiers as
+# the standalone release, and the driver keeps its entitlements.
+driver_parts=("$app/Contents/Helpers/cua-cursor-theme" "$app/Contents/Helpers/cua-driver")
+"${sign[@]}" --identifier cua-cursor-theme "$app/Contents/Helpers/cua-cursor-theme"
+"${sign[@]}" --identifier cua-driver --preserve-metadata=entitlements "$app/Contents/Helpers/cua-driver"
 app_entitlements="$here/Support/CuaSpacesMac.entitlements"
 if [ "$identity" = "-" ]; then
   app_entitlements="$out/.adhoc.entitlements"
@@ -237,7 +249,7 @@ fi
 
 codesign --verify --deep --strict --verbose=2 "$app" >&2
 for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}" \
-  "$app/Contents/Helpers/cua-spacesd" ${vz_parts[@]+"${vz_parts[@]}"}; do
+  "$app/Contents/Helpers/cua-spacesd" "${driver_parts[@]}" ${vz_parts[@]+"${vz_parts[@]}"}; do
   flags="$(codesign -dv "$f" 2>&1 | sed -n 's/^CodeDirectory.*flags=\([^ ]*\).*/\1/p')"
   case "$flags" in *runtime*) ;; *) echo "$f is not signed with the hardened runtime ($flags)" >&2; exit 1 ;; esac
 done
@@ -280,7 +292,7 @@ fi
 # A Developer ID build signs Sparkle with the same team (library
 # validation stays on: the app loads only its own team's code).
 if [ "$identity" != "-" ]; then
-  for f in "${sparkle_parts[@]}" "$app/Contents/Helpers/cua-spacesd"; do
+  for f in "${sparkle_parts[@]}" "$app/Contents/Helpers/cua-spacesd" "${driver_parts[@]}"; do
     codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = \"$team\"" "$f" ||
       { echo "$f is not signed by team $team" >&2; exit 1; }
   done

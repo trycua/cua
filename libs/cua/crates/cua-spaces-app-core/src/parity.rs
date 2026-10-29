@@ -5084,6 +5084,23 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
             .collect();
         frames.push(json!({ "sheet": p, "title": s["title"], "ways": ways, "key": line(&[&s["keyProvider"], &s["keyEnv"]]) }));
     }
+    for os in ["macos", "linux"] {
+        let s = c(h, "connectors.importSheet", json!({ "hostOs": os }))?;
+        let options: Vec<String> = s["options"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|o| line(&[&o["id"], &o["label"], &o["command"], &o["button"]]))
+            .collect();
+        frames.push(json!({
+            "importSheet": os,
+            "title": s["title"],
+            "points": s["points"],
+            "buttons": line(&[&s["confirmLabel"], &s["cancelLabel"], &s["readingLabel"]]),
+            "notFound": line(&[&s["notFoundTitle"], &s["notFoundLede"]]),
+            "options": options,
+        }));
+    }
     for a in f["plans"].as_array().into_iter().flatten() {
         let p = c(
             h,

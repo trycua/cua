@@ -313,6 +313,11 @@ pub fn run_env_with(
     custom_endpoint: bool,
 ) -> Result<(BTreeMap<String, String>, Vec<String>)> {
     let (host_env, missing) = env_from_host_with(saved, env_from_host)?;
+    // A copy of Claude Code's own sign-in that is running out is read again
+    // from Claude Code first (never refreshed by Cua: [`keys::AgentKeys::sync_claude_login`]).
+    if harness == "claude-code" {
+        saved.sync_claude_login(&keys::HostClaudeLogin, true);
+    }
     let mut out = env.clone();
     out.extend(host_env);
     if !custom_endpoint && let Some(h) = harness::harness(harness) {
@@ -324,7 +329,28 @@ pub fn run_env_with(
             .collect();
         out.extend(saved.values(&wanted));
     }
+    oauth_token_as_api_key(harness, &mut out);
     Ok((out, missing))
+}
+
+/// A Claude token (`sk-ant-oat...`) in `ANTHROPIC_API_KEY` is a subscription
+/// sign-in that was put where a key goes (typed there, or exported that way
+/// in a shell). Claude Code gets it as the sign-in it is
+/// (`CLAUDE_CODE_OAUTH_TOKEN`; an API key slot answers it with a 401); no
+/// other harness gets it at all: the Claude subscription is Claude Code's alone.
+fn oauth_token_as_api_key(harness: &str, env: &mut BTreeMap<String, String>) {
+    const KEY: &str = "ANTHROPIC_API_KEY";
+    const TOKEN: &str = "CLAUDE_CODE_OAUTH_TOKEN";
+    if !env
+        .get(KEY)
+        .is_some_and(|v| v.trim().starts_with("sk-ant-oat"))
+    {
+        return;
+    }
+    let value = env.remove(KEY).unwrap_or_default();
+    if harness == "claude-code" && env.get(TOKEN).is_none_or(|v| v.is_empty()) {
+        env.insert(TOKEN.into(), value.trim().to_string());
+    }
 }
 
 /// Largest host file `agent_start.files` attaches.
@@ -462,6 +488,78 @@ mod tests {
             k.set(p, *e, v).unwrap();
         }
         (k, dir)
+    }
+
+    /// Hermes (and every harness but Claude Code) gets exactly what its own adapter takes
+    /// as an API key: never the Claude subscription sign-in, in any slot.
+    /// Hermes' adapter would use `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_TOKEN` or a token in
+    /// `ANTHROPIC_API_KEY` as a subscription login (and, given `~/.claude/.credentials.json`
+    /// with a refresh token, refresh it and spend Claude Code's single-use refresh token), so
+    /// none of those is ever forwarded to it.
+    #[test]
+    fn hermes_gets_api_keys_and_never_the_claude_subscription_sign_in() {
+        let none = BTreeMap::new();
+        let token = format!("sk-ant-oat01-{}", "aB3_".repeat(24));
+        let (k, dir) = saved(&[
+            ("openai", None, "sk-test-0000-bbbb"),
+            ("other", Some("OPENROUTER_API_KEY"), "sk-or-test-0000-cccc"),
+        ]);
+        // The imported Claude sign-in is saved too.
+        k.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Signed in as ada@example.com (Claude Max)",
+            &token,
+            Some(u64::MAX / 2),
+            Some("claude-login-file"),
+        )
+        .unwrap();
+        let (env, _) = run_env_with(&k, "hermes", &none, &[], false).unwrap();
+        assert_eq!(
+            env.keys().collect::<Vec<_>>(),
+            ["OPENAI_API_KEY", "OPENROUTER_API_KEY"],
+            "Hermes gets provider keys only"
+        );
+        let (env, _) = run_env_with(&k, "claude-code", &none, &[], false).unwrap();
+        assert_eq!(env["CLAUDE_CODE_OAUTH_TOKEN"], token);
+        for h in [
+            "hermes",
+            "opencode",
+            "goose",
+            "pi",
+            "openclaw",
+            "gemini-cli",
+            "openai-codex",
+        ] {
+            let (env, _) = run_env_with(&k, h, &none, &[], false).unwrap();
+            assert!(
+                env.values().all(|v| !v.contains("sk-ant-oat")),
+                "{h} must not get the Claude subscription token"
+            );
+            assert!(
+                !env.contains_key("CLAUDE_CODE_OAUTH_TOKEN")
+                    && !env.contains_key("ANTHROPIC_TOKEN"),
+                "{h}"
+            );
+        }
+        // A token that was exported as ANTHROPIC_API_KEY: Claude Code gets it as its sign-in,
+        // Hermes gets nothing from it (so Hermes says it needs an API key).
+        let shell = BTreeMap::from([("ANTHROPIC_API_KEY".to_string(), token.clone())]);
+        let (env, _) = run_env_with(&k, "hermes", &shell, &[], false).unwrap();
+        assert!(
+            !env.contains_key("ANTHROPIC_API_KEY") && !env.contains_key("CLAUDE_CODE_OAUTH_TOKEN")
+        );
+        let (env, _) = run_env_with(&k, "claude-code", &shell, &[], false).unwrap();
+        assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+        assert_eq!(env["CLAUDE_CODE_OAUTH_TOKEN"], token);
+        // A real API key still goes to Hermes as ANTHROPIC_API_KEY.
+        let key = BTreeMap::from([(
+            "ANTHROPIC_API_KEY".to_string(),
+            "sk-ant-api03-real".to_string(),
+        )]);
+        let (env, _) = run_env_with(&k, "hermes", &key, &[], false).unwrap();
+        assert_eq!(env["ANTHROPIC_API_KEY"], "sk-ant-api03-real");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

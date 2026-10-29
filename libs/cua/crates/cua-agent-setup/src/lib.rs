@@ -15,6 +15,7 @@
 //! - Host-safe: everything resolves from a [`HostEnv`] (HOME, XDG and agent
 //!   overrides, PATH, app folders), so tests run against a temporary home.
 
+pub mod claude_login;
 pub mod config;
 pub mod connection;
 mod edit;
@@ -156,6 +157,8 @@ const VARS: &[&str] = &[
     "LOCALAPPDATA",
     "CUA_HOME",
     "CLAUDE_CONFIG_DIR",
+    "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    "USER",
     "CODEX_HOME",
     "GEMINI_CLI_HOME",
     "CLINE_DATA_DIR",

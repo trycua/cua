@@ -40,6 +40,8 @@ export interface AgentKeyInfo {
   addedMs: number;
   /** A sign-in past its expiry: no run gets it until it is reconnected. */
   expired?: boolean;
+  /** A copied sign-in's name ("Signed in as ada@example.com (Claude Max)"); never a value. */
+  label?: string;
 }
 
 /** A provider row (`keys::Provider`). */
@@ -124,6 +126,8 @@ const PROVIDERS: AgentKeyProviderRow[] = [
 ];
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
+/** A sign-in's name: one short line of text, else none. */
+const label = (v: unknown): string => (typeof v === "string" && v.length <= 160 && !/[\u0000-\u001f]/.test(v) ? v.trim() : "");
 const providerOf = (v: unknown): AgentKeyProvider => (v === "anthropic" || v === "openai" ? v : "other");
 
 /** The daemon's `KeysReport` (snake_case) as the page reads it. Drops anything
@@ -136,7 +140,7 @@ export function agentKeysFromWire(raw: unknown): AgentKeysReport {
     const env = str(r.env);
     if (!env) return [];
     const added = r.added_ms ?? r.addedMs;
-    return [{ provider: providerOf(r.provider), env, last4: str(r.last4).slice(-4), addedMs: typeof added === "number" ? added : 0, ...(r.expired === true ? { expired: true } : {}) }];
+    return [{ provider: providerOf(r.provider), env, last4: str(r.last4).slice(-4), addedMs: typeof added === "number" ? added : 0, ...(r.expired === true ? { expired: true } : {}), ...(label(r.label) ? { label: label(r.label) } : {}) }];
   });
   const providers = (Array.isArray(o.providers) ? o.providers : []).flatMap((p): AgentKeyProviderRow[] => {
     const r = (p ?? {}) as Record<string, unknown>;

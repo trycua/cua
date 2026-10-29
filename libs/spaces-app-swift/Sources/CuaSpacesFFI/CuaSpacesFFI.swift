@@ -4435,6 +4435,10 @@ public struct AppAgentKeyInput: Equatable, Hashable {
      * A sign-in past its expiry: not used by any run until reconnected.
      */
     public var expired: Bool
+    /**
+     * A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+     */
+    public var label: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4453,12 +4457,16 @@ public struct AppAgentKeyInput: Equatable, Hashable {
          */addedMs: UInt64,
         /**
          * A sign-in past its expiry: not used by any run until reconnected.
-         */expired: Bool) {
+         */expired: Bool,
+        /**
+         * A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+         */label: String?) {
         self.provider = provider
         self.env = env
         self.last4 = last4
         self.addedMs = addedMs
         self.expired = expired
+        self.label = label
     }
 
 
@@ -4481,7 +4489,8 @@ public struct FfiConverterTypeAppAgentKeyInput: FfiConverterRustBuffer {
                 env: FfiConverterString.read(from: &buf),
                 last4: FfiConverterString.read(from: &buf),
                 addedMs: FfiConverterUInt64.read(from: &buf),
-                expired: FfiConverterBool.read(from: &buf)
+                expired: FfiConverterBool.read(from: &buf),
+                label: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -4491,6 +4500,7 @@ public struct FfiConverterTypeAppAgentKeyInput: FfiConverterRustBuffer {
         FfiConverterString.write(value.last4, into: &buf)
         FfiConverterUInt64.write(value.addedMs, into: &buf)
         FfiConverterBool.write(value.expired, into: &buf)
+        FfiConverterOptionString.write(value.label, into: &buf)
     }
 }
 

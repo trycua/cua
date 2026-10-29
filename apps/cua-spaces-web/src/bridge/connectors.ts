@@ -85,6 +85,21 @@ export interface ConnectorsView {
   addedLabel: string;
 }
 
+/** The words around importing Claude Code's sign-in (`connectors.importSheet`). */
+export interface ImportSheetView {
+  title: string;
+  lede: string;
+  /** What is read, what is kept, where it goes. */
+  points: string[];
+  confirmLabel: string;
+  cancelLabel: string;
+  readingLabel: string;
+  notFoundTitle: string;
+  notFoundLede: string;
+  /** In order: sign in with Claude Code, paste a token, use an API key. */
+  options: { id: "login" | "token" | "key"; label: string; help: string; command: string | null; button: string }[];
+}
+
 export interface ConnectPlan {
   tools: boolean;
   appToken: boolean;
@@ -94,7 +109,7 @@ export interface ConnectPlan {
 }
 
 export interface ProviderWay {
-  id: "app-token" | "app-device" | "key" | "shell";
+  id: "app-token" | "app-device" | "token" | "key" | "shell";
   label: string;
   help: string;
   button: string;
@@ -111,6 +126,9 @@ export interface ProviderSheetView {
   keyLabel: string;
   keyPlaceholder: string;
   keyHelp: string;
+  /** The field when the person picks Paste a Claude token. */
+  tokenLabel: string;
+  tokenPlaceholder: string;
   saveLabel: string;
   keyProvider: "anthropic" | "openai" | "other";
   keyEnv: string | null;
@@ -188,6 +206,9 @@ export const connectPlan = (core: CoreClient, input: ConnectorsInput, agent: str
 
 export const providerSheet = (core: CoreClient, input: ConnectorsInput, provider: string, os: HostOs = hostOs(), forApp: string | null = null): ProviderSheetView | null =>
   core.tryCall<ProviderSheetView | null>("connectors.providerSheet", { input: input as unknown as Json, provider, hostOs: os, forApp }) ?? null;
+
+export const importSheet = (core: CoreClient, os: HostOs = hostOs()): ImportSheetView | null =>
+  core.tryCall<ImportSheetView>("connectors.importSheet", { hostOs: os }) ?? null;
 
 export const appDetail = (core: CoreClient, input: ConnectorsInput, agent: string): AppDetailView | null =>
   core.tryCall<AppDetailView | null>("connectors.appDetail", { input: input as unknown as Json, agent }) ?? null;

@@ -71,7 +71,8 @@ public final class AgentKeysModel {
             AppAgentKeyInput(provider: k["provider"] as? String ?? "other", env: k["env"] as? String ?? "",
                              last4: k["last4"] as? String ?? "",
                              addedMs: (k["added_ms"] as? NSNumber)?.uint64Value ?? 0,
-                             expired: k["expired"] as? Bool ?? false)
+                             expired: k["expired"] as? Bool ?? false,
+                             label: k["label"] as? String)
         }
         let unavailable = report?["available"] as? Bool == false
             ? (report?["unavailable"] as? String ?? "this computer can't keep keys") : nil

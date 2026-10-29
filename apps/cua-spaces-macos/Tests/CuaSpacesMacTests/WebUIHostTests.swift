@@ -441,7 +441,7 @@ struct WebUIHostTests {
         for m in ["spaces.add", "clouds.status", "teleport.catalog", "teleport.run", "sharing.share", "volume.overview",
                   "agents.setupDriver", "about.set", "update.get", "update.install", "loginItem.set", "devices.approve", "storage.run",
                   "notifications.list", "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.windows", "stream.pip", "spaces.thumbnail", "spaces.sendFiles", "host.setUp", "host.action",
-                  "host.limits", "host.openSettings"] {
+                  "host.limits", "host.openSettings", "repoCache.get", "repoCache.set", "repoCache.clear"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
         #expect(!WebUIBridge.methods.contains("spaces.new"))
@@ -577,6 +577,29 @@ struct WebUIHostTests {
         #expect(none?["maxSpaces"] as? Int == 0, "0 is no limit")
         #expect(await failure(bridge, "host.limits", ["maxSpaces": -1]) == "bad_args")
         #expect(await failure(bridge, "host.limits", ["maxSpaces": 1.5]) == "bad_args")
+    }
+
+    /// Settings, General's repo cache: read, switched, sized and cleared in
+    /// the host's words; a value that is not a number of GB is refused.
+    @Test func theRepoCacheReadsChangesAndClears() async throws {
+        let (bridge, _) = bridge(backend: FixtureSpacesBackend())
+        let got = try #require(try await bridge.handle("repoCache.get", [:]) as? [String: Any])
+        #expect(got["enabled"] as? Bool == true)
+        #expect(got["summary"] as? String == "Repos: 3, 1.2 GB of 5 GB")
+        #expect(got["sizeSetting"] as? String == "auto")
+        let off = try #require(try await bridge.handle("repoCache.set", ["enabled": false]) as? [String: Any])
+        #expect(off["enabled"] as? Bool == false)
+        #expect(off["sizeSetting"] as? String == "auto", "a field not given keeps its value")
+        let sized = try #require(try await bridge.handle("repoCache.set", ["enabled": true, "sizeGb": 2]) as? [String: Any])
+        #expect(sized["sizeSetting"] as? String == "2")
+        #expect(sized["summary"] as? String == "Repos: 3, 1.2 GB of 2 GB")
+        let auto = try #require(try await bridge.handle("repoCache.set", ["sizeGb": NSNull()]) as? [String: Any])
+        #expect(auto["sizeSetting"] as? String == "auto")
+        #expect(await failure(bridge, "repoCache.set", ["sizeGb": -1]) == "bad_args")
+        #expect(await failure(bridge, "repoCache.set", ["sizeGb": "lots"]) == "bad_args")
+        #expect(await failure(bridge, "repoCache.set", ["enabled": "yes"]) == "bad_args")
+        let cleared = try #require(try await bridge.handle("repoCache.clear", [:]) as? [String: Any])
+        #expect(cleared["repos"] as? Int == 0)
     }
 
     @Test func hostStatusCarriesTheWholeStateAndTheProgress() async throws {

@@ -36,6 +36,7 @@ import type {
   SpaceLike,
   SpacePresenceLike,
   PresenceIdentity,
+  RepoCacheStatus,
   ResourcesSnapshot,
   TeleportLike,
 } from "../native/generated/index";
@@ -169,6 +170,12 @@ export interface SpacesBackend {
   runtimeCheckPath(kind: string, path: string): Promise<AppRuntimePathCheck>;
   /** Writes a runtime setting (`runtime.container`, `runtime.vm_path`), or unsets it (null). */
   setRuntimeSetting(key: string, value: string | null): Promise<void>;
+  /** The repo cache: on or off, what it holds and saved (`repo_cache_status`); null when unknown. */
+  repoCacheStatus(): Promise<RepoCacheStatus | null>;
+  /** Turns the repo cache on or off and sets its size in GB (null: automatic); a missing field keeps its value. */
+  setRepoCache(change: { enabled?: boolean; sizeGb?: number | null }): Promise<RepoCacheStatus | null>;
+  /** Deletes every repository the repo cache holds. */
+  clearRepoCache(): Promise<RepoCacheStatus | null>;
   localStorage(): Promise<LocalStorage | null>;
   /** A Cua account is signed in (or client credentials are set). */
   loggedIn(): Promise<boolean>;
@@ -598,6 +605,28 @@ export class LiveSpacesBackend implements SpacesBackend {
   async setRuntimeSetting(key: string, value: string | null): Promise<void> {
     if (value === null) this.native.configUnset(key);
     else this.native.configSet(key, value);
+  }
+
+  async repoCacheStatus(): Promise<RepoCacheStatus | null> {
+    try {
+      return this.native.repoCacheStatus();
+    } catch {
+      return null;
+    }
+  }
+
+  async setRepoCache(change: { enabled?: boolean; sizeGb?: number | null }): Promise<RepoCacheStatus | null> {
+    if (change.enabled !== undefined) this.native.configSet("cache.repos", change.enabled ? "on" : "off");
+    if (change.sizeGb !== undefined) this.native.configSet("cache.repos_size_gb", change.sizeGb === null ? "auto" : String(change.sizeGb));
+    return this.repoCacheStatus();
+  }
+
+  async clearRepoCache(): Promise<RepoCacheStatus | null> {
+    try {
+      return this.native.repoCacheClear();
+    } catch {
+      return null;
+    }
   }
 
   async localStorage(): Promise<LocalStorage | null> {

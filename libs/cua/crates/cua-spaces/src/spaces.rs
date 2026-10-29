@@ -2878,6 +2878,16 @@ impl Spaces {
                 return Err(e);
             }
         };
+        // A container Space reads the repo cache through a read-only mount:
+        // its git gets the helper (best effort, bounded, silent).
+        let guest_os = crate::host_spaces::resolve_image(&image).1;
+        if opts.kind != Kind::Vm
+            && opts.kind != Kind::MicroVm
+            && guest_os != "macos"
+            && guest_os != "windows"
+        {
+            crate::repo_cache::install(&space, &name).await;
+        }
         self.store(&space, credential)?;
         self.inner
             .connections
@@ -3109,6 +3119,12 @@ impl Spaces {
 
     async fn delete_copy_of(&self, id: SpaceId) -> Result<String> {
         self.learn_usage_before_delete(&id.to_string()).await;
+        if let SpaceId::Local { name } = &id {
+            if let Ok(space) = self.space(&id.to_string()).await {
+                crate::repo_cache::collect(&space, name).await;
+            }
+            crate::repo_cache::forget(name);
+        }
         // A Space added by address keeps running: if it is attached to the
         // relay, its driver is asked to leave while it is still reachable.
         #[cfg(feature = "spaces-agents")]

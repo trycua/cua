@@ -33756,6 +33756,157 @@ public func FfiConverterTypeRelayMachine_lower(_ value: RelayMachine) -> RustBuf
 
 
 /**
+ * What the repo cache holds and what it saved, in plain words for
+ * Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+ * changed with [`config_set`]).
+ */
+public struct RepoCacheStatus: Equatable, Hashable {
+    /**
+     * The cache is on (`cache.repos`).
+     */
+    public var enabled: Bool
+    /**
+     * Repositories held.
+     */
+    public var repos: UInt32
+    /**
+     * What they take on disk.
+     */
+    public var bytes: UInt64
+    /**
+     * The size cap in force.
+     */
+    public var capBytes: UInt64
+    /**
+     * The size setting: `auto`, or the number of GB.
+     */
+    public var sizeSetting: String
+    /**
+     * `Repos: 3, 1.2 GB of 5 GB`.
+     */
+    public var summary: String
+    /**
+     * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+     */
+    public var week: String
+    /**
+     * Clones served from the cache in the last week.
+     */
+    public var hits: UInt32
+    /**
+     * Clones that downloaded in the last week.
+     */
+    public var misses: UInt32
+    /**
+     * Seconds the hits saved.
+     */
+    public var secondsSaved: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The cache is on (`cache.repos`).
+         */enabled: Bool,
+        /**
+         * Repositories held.
+         */repos: UInt32,
+        /**
+         * What they take on disk.
+         */bytes: UInt64,
+        /**
+         * The size cap in force.
+         */capBytes: UInt64,
+        /**
+         * The size setting: `auto`, or the number of GB.
+         */sizeSetting: String,
+        /**
+         * `Repos: 3, 1.2 GB of 5 GB`.
+         */summary: String,
+        /**
+         * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+         */week: String,
+        /**
+         * Clones served from the cache in the last week.
+         */hits: UInt32,
+        /**
+         * Clones that downloaded in the last week.
+         */misses: UInt32,
+        /**
+         * Seconds the hits saved.
+         */secondsSaved: UInt64) {
+        self.enabled = enabled
+        self.repos = repos
+        self.bytes = bytes
+        self.capBytes = capBytes
+        self.sizeSetting = sizeSetting
+        self.summary = summary
+        self.week = week
+        self.hits = hits
+        self.misses = misses
+        self.secondsSaved = secondsSaved
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RepoCacheStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRepoCacheStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RepoCacheStatus {
+        return
+            try RepoCacheStatus(
+                enabled: FfiConverterBool.read(from: &buf),
+                repos: FfiConverterUInt32.read(from: &buf),
+                bytes: FfiConverterUInt64.read(from: &buf),
+                capBytes: FfiConverterUInt64.read(from: &buf),
+                sizeSetting: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                week: FfiConverterString.read(from: &buf),
+                hits: FfiConverterUInt32.read(from: &buf),
+                misses: FfiConverterUInt32.read(from: &buf),
+                secondsSaved: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RepoCacheStatus, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterUInt32.write(value.repos, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+        FfiConverterUInt64.write(value.capBytes, into: &buf)
+        FfiConverterString.write(value.sizeSetting, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterString.write(value.week, into: &buf)
+        FfiConverterUInt32.write(value.hits, into: &buf)
+        FfiConverterUInt32.write(value.misses, into: &buf)
+        FfiConverterUInt64.write(value.secondsSaved, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRepoCacheStatus_lift(_ buf: RustBuffer) throws -> RepoCacheStatus {
+    return try FfiConverterTypeRepoCacheStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRepoCacheStatus_lower(_ value: RepoCacheStatus) -> RustBuffer {
+    return FfiConverterTypeRepoCacheStatus.lower(value)
+}
+
+
+/**
  * A reference resolved for a backend.
  */
 public struct ResolvedImage: Equatable, Hashable {
@@ -50659,6 +50810,26 @@ public func locations() -> [LocationInfo]  {
 })
 }
 /**
+ * Deletes every repository the repo cache holds (they are copied again the
+ * next time a Space clones them). Returns the cache after.
+ */
+public func repoCacheClear()throws  -> RepoCacheStatus  {
+    return try  FfiConverterTypeRepoCacheStatus_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_func_repo_cache_clear($0
+    )
+})
+}
+/**
+ * The repo cache now: on or off, how much it holds of its cap, and what
+ * the last week saved.
+ */
+public func repoCacheStatus()throws  -> RepoCacheStatus  {
+    return try  FfiConverterTypeRepoCacheStatus_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_func_repo_cache_status($0
+    )
+})
+}
+/**
  * The canonical image for `os` (`linux`, `windows`, `macos`) and
  * `version` (`None` = default: `ghcr.io/trycua/linux:24.04`,
  * `ghcr.io/trycua/windows:2022`, `ghcr.io/trycua/macos:26`; macOS accepts
@@ -51202,6 +51373,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_locations() != 62174) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_repo_cache_clear() != 39088) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_repo_cache_status() != 20147) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_canonical_image() != 8955) {

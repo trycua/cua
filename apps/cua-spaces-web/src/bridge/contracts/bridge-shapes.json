@@ -3933,6 +3933,53 @@
         "targetEpoch"
       ]
     },
+    "RepoCacheView": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "repos": {
+          "type": "number"
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "capBytes": {
+          "type": "number"
+        },
+        "sizeSetting": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "week": {
+          "type": "string"
+        },
+        "hits": {
+          "type": "number"
+        },
+        "misses": {
+          "type": "number"
+        },
+        "secondsSaved": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "enabled",
+        "repos",
+        "bytes",
+        "capBytes",
+        "sizeSetting",
+        "summary",
+        "week",
+        "hits",
+        "misses",
+        "secondsSaved"
+      ]
+    },
     "RuntimeFix": {
       "type": "object",
       "properties": {
@@ -8265,6 +8312,15 @@
         "upgradeUrl"
       ]
     },
+    "repoCache.clear": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.get": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.set": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
     "resources.get": {
       "type": [
         "object",
@@ -10662,6 +10718,15 @@
         "reasons",
         "upgradeUrl"
       ]
+    },
+    "repoCache.clear": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.get": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.set": {
+      "$ref": "#/$defs/RepoCacheView"
     },
     "resources.get": {
       "type": [

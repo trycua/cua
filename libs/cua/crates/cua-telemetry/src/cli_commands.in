@@ -113,6 +113,7 @@
     "doctor.parity",
     "dump-docs",
     "fleet",
+    "host.cache",
     "host.config",
     "host.migrate",
     "host.pair",

@@ -539,6 +539,10 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_qualify_sandbox_ref() != 59566:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_repo_cache_clear() != 39088:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_repo_cache_status() != 20147:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_resolve_image() != 56346:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_resolve_image_with_secret() != 48984:
@@ -2379,6 +2383,14 @@ _UniffiLib.uniffi_cua_sdk_fn_func_qualify_sandbox_ref.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_qualify_sandbox_ref.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_sdk_fn_func_resolve_image.argtypes = (
     _UniffiRustBuffer,
     _UniffiRustBuffer,
@@ -4963,6 +4975,12 @@ _UniffiLib.uniffi_cua_sdk_checksum_func_presence_text_color.restype = ctypes.c_u
 _UniffiLib.uniffi_cua_sdk_checksum_func_qualify_sandbox_ref.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_qualify_sandbox_ref.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_clear.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_clear.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_status.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_status.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_resolve_image.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_resolve_image.restype = ctypes.c_uint16
@@ -20911,6 +20929,95 @@ class _UniffiFfiConverterTypeReadinessProbe(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.http_path, buf)
         _UniffiFfiConverterOptionalUInt16.write(value.http_status, buf)
         _UniffiFfiConverterOptionalString.write(value.service, buf)
+
+@dataclass
+class RepoCacheStatus:
+    """
+    What the repo cache holds and what it saved, in plain words for
+    Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+    changed with [`config_set`]).
+"""
+    def __init__(self, *, enabled:bool, repos:int, bytes:int, cap_bytes:int, size_setting:str, summary:str, week:str, hits:int, misses:int, seconds_saved:int):
+        self.enabled = enabled
+        self.repos = repos
+        self.bytes = bytes
+        self.cap_bytes = cap_bytes
+        self.size_setting = size_setting
+        self.summary = summary
+        self.week = week
+        self.hits = hits
+        self.misses = misses
+        self.seconds_saved = seconds_saved
+
+
+
+
+    def __str__(self):
+        return "RepoCacheStatus(enabled={}, repos={}, bytes={}, cap_bytes={}, size_setting={}, summary={}, week={}, hits={}, misses={}, seconds_saved={})".format(self.enabled, self.repos, self.bytes, self.cap_bytes, self.size_setting, self.summary, self.week, self.hits, self.misses, self.seconds_saved)
+    def __eq__(self, other):
+        if self.enabled != other.enabled:
+            return False
+        if self.repos != other.repos:
+            return False
+        if self.bytes != other.bytes:
+            return False
+        if self.cap_bytes != other.cap_bytes:
+            return False
+        if self.size_setting != other.size_setting:
+            return False
+        if self.summary != other.summary:
+            return False
+        if self.week != other.week:
+            return False
+        if self.hits != other.hits:
+            return False
+        if self.misses != other.misses:
+            return False
+        if self.seconds_saved != other.seconds_saved:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeRepoCacheStatus(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return RepoCacheStatus(
+            enabled=_UniffiFfiConverterBoolean.read(buf),
+            repos=_UniffiFfiConverterUInt32.read(buf),
+            bytes=_UniffiFfiConverterUInt64.read(buf),
+            cap_bytes=_UniffiFfiConverterUInt64.read(buf),
+            size_setting=_UniffiFfiConverterString.read(buf),
+            summary=_UniffiFfiConverterString.read(buf),
+            week=_UniffiFfiConverterString.read(buf),
+            hits=_UniffiFfiConverterUInt32.read(buf),
+            misses=_UniffiFfiConverterUInt32.read(buf),
+            seconds_saved=_UniffiFfiConverterUInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBoolean.check_lower(value.enabled)
+        _UniffiFfiConverterUInt32.check_lower(value.repos)
+        _UniffiFfiConverterUInt64.check_lower(value.bytes)
+        _UniffiFfiConverterUInt64.check_lower(value.cap_bytes)
+        _UniffiFfiConverterString.check_lower(value.size_setting)
+        _UniffiFfiConverterString.check_lower(value.summary)
+        _UniffiFfiConverterString.check_lower(value.week)
+        _UniffiFfiConverterUInt32.check_lower(value.hits)
+        _UniffiFfiConverterUInt32.check_lower(value.misses)
+        _UniffiFfiConverterUInt64.check_lower(value.seconds_saved)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBoolean.write(value.enabled, buf)
+        _UniffiFfiConverterUInt32.write(value.repos, buf)
+        _UniffiFfiConverterUInt64.write(value.bytes, buf)
+        _UniffiFfiConverterUInt64.write(value.cap_bytes, buf)
+        _UniffiFfiConverterString.write(value.size_setting, buf)
+        _UniffiFfiConverterString.write(value.summary, buf)
+        _UniffiFfiConverterString.write(value.week, buf)
+        _UniffiFfiConverterUInt32.write(value.hits, buf)
+        _UniffiFfiConverterUInt32.write(value.misses, buf)
+        _UniffiFfiConverterUInt64.write(value.seconds_saved, buf)
 
 @dataclass
 class ResolvedImage:
@@ -46781,6 +46888,36 @@ def qualify_sandbox_ref(name: str,local: typing.Union[object, typing.Optional[bo
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def repo_cache_clear() -> RepoCacheStatus:
+    """
+    Deletes every repository the repo cache holds (they are copied again the
+    next time a Space clones them). Returns the cache after.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeRepoCacheStatus.lift
+    _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def repo_cache_status() -> RepoCacheStatus:
+    """
+    The repo cache now: on or off, how much it holds of its cap, and what
+    the last week saved.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeRepoCacheStatus.lift
+    _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def resolve_image(reference: str,backend: str,arch: typing.Optional[str]) -> ResolvedImage:
     """
     Resolves `reference` for `backend` (`auto`, `local`, `provider`,
@@ -47403,6 +47540,7 @@ __all__ = [
     "PtySize",
     "PublicUrl",
     "ReadinessProbe",
+    "RepoCacheStatus",
     "ResolvedImage",
     "SharedBase",
     "SpaceResources",
@@ -47514,6 +47652,8 @@ __all__ = [
     "presence_now_ms",
     "presence_text_color",
     "qualify_sandbox_ref",
+    "repo_cache_clear",
+    "repo_cache_status",
     "resolve_image",
     "resolve_image_with_secret",
     "sandbox_locations",

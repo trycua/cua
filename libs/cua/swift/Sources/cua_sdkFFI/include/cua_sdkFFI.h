@@ -3060,6 +3060,18 @@ RustBuffer uniffi_cua_sdk_fn_func_locations(RustCallStatus *_Nonnull out_status
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_CLEAR
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_CLEAR
+RustBuffer uniffi_cua_sdk_fn_func_repo_cache_clear(RustCallStatus *_Nonnull out_status
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_STATUS
+RustBuffer uniffi_cua_sdk_fn_func_repo_cache_status(RustCallStatus *_Nonnull out_status
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_CANONICAL_IMAGE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_CANONICAL_IMAGE
 RustBuffer uniffi_cua_sdk_fn_func_canonical_image(RustBuffer os, RustBuffer version, RustCallStatus *_Nonnull out_status
@@ -3617,6 +3629,18 @@ uint16_t uniffi_cua_sdk_checksum_func_config_unset(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_LOCATIONS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_LOCATIONS
 uint16_t uniffi_cua_sdk_checksum_func_locations(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_CLEAR
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_CLEAR
+uint16_t uniffi_cua_sdk_checksum_func_repo_cache_clear(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_STATUS
+uint16_t uniffi_cua_sdk_checksum_func_repo_cache_status(void
 
 );
 #endif

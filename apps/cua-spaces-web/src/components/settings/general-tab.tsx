@@ -9,6 +9,7 @@ import type { HostLimitRow, HostLimits } from "@/bridge/contracts/host";
 import { chooseSettings, useBridge, useLoginItem, useMachines, useSession, useSettings, useThisMachine, useTips, type GlobalShortcut, type SettingsRow as CoreRow } from "@/bridge";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { CoreSettingsRow } from "@/components/settings/core-section";
+import { RepoCacheGroup } from "@/components/settings/repo-cache-group";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
@@ -127,6 +128,7 @@ export function GeneralTab() {
         ) : null}
       </SettingsGroup>
       <SharingGroup />
+      <RepoCacheGroup />
     </div>
   );
 }

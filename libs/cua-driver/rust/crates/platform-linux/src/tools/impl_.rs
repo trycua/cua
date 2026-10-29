@@ -684,13 +684,20 @@ fn megapixel_long_edge_cap(w: u32, h: u32, max_pixels: u64) -> Option<u32> {
 mod megapixel_cap_tests;
 
 /// Build a single structured element entry for `get_window_state`.
-/// Returns `None` when the node has no `element_index` (non-actionable rows).
+/// Returns `None` when the node has no `element_index` (non-actionable rows),
+/// unless `display_only_rows`: such a row is returned with `display_only: true`
+/// and no index or token.
 fn build_element_entry(
     n: &crate::atspi::AtspiNode,
     snapshot_id: Option<u32>,
     bounds: Option<(i32, i32, u32, u32)>,
+    display_only_rows: bool,
 ) -> Option<serde_json::Value> {
-    let idx = n.element_index?;
+    let idx = match n.element_index {
+        Some(idx) => Some(idx),
+        None if display_only_rows => None,
+        None => return None,
+    };
     // `label` mirrors what a human reading the markdown row would call this
     // element: its name, else its description (Qt keeps a button's tooltip
     // there: "Play"/"Pause"). Never its value: four spin buttons all labelled
@@ -705,12 +712,18 @@ fn build_element_entry(
         .clone()
         .or_else(|| n.description.clone().filter(|_| !unlabelled));
     let mut entry = json!({
-        "element_index": idx,
         "role": n.role,
         "depth": n.depth,
     });
-    if let Some(snapshot_id) = snapshot_id {
-        entry["element_token"] = json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+    match idx {
+        Some(idx) => {
+            entry["element_index"] = json!(idx);
+            if let Some(snapshot_id) = snapshot_id {
+                entry["element_token"] =
+                    json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+            }
+        }
+        None => entry["display_only"] = json!(true),
     }
     if n.in_web_content {
         entry["in_web_content"] = json!(true);
@@ -1055,8 +1068,10 @@ impl Tool for GetWindowStateTool {
                 structured `elements` array instead (explicit `element_token`, `role`, \
                 `label`, `value`, `enabled`, `selected`, `actions`, `frame: {x,y,w,h}` when \
                 AT-SPI reports usable bounds, `parent_index`, `depth`), or `\"both\"` for \
-                both (about twice the size). Set `query` to project the tree to matching rows \
-                plus their ancestor chain while preserving original indices; \
+                both (about twice the size); `include_display_only:true` adds the display-only \
+                rows to that array (static text, labels, disabled controls: \
+                `display_only:true`, no token). Set `query` to project the tree to matching \
+                rows plus their ancestor chain while preserving original indices; \
                 `total_element_count` reports the complete snapshot.\n\n\
                 Size: a read is bounded by default (`max_elements` 250 actionable nodes). \
                 When the walk stops at that budget the response says `Tree truncated at \
@@ -1598,15 +1613,15 @@ impl Tool for GetWindowStateTool {
                         .into_iter()
                         .map(|(i, x, y, w, h)| (i, (x, y, w, h)))
                         .collect();
+                    let display_only_rows = view.include_display_only;
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
                         .iter()
                         .filter_map(|n| {
-                            build_element_entry(
-                                n,
-                                snapshot_id,
-                                bounds_by_idx.get(&n.element_index?).copied(),
-                            )
+                            let bounds = n
+                                .element_index
+                                .and_then(|idx| bounds_by_idx.get(&idx).copied());
+                            build_element_entry(n, snapshot_id, bounds, display_only_rows)
                         })
                         .collect();
                     let elements = cua_driver_core::element_query::project_elements_for_query(
@@ -1641,7 +1656,12 @@ impl Tool for GetWindowStateTool {
                         ),
                         _ => elements,
                     };
-                    structured["total_element_count"] = json!(count);
+                    // Every row counts when the display-only ones are returned.
+                    structured["total_element_count"] = json!(if display_only_rows {
+                        tr.nodes.len()
+                    } else {
+                        count
+                    });
                     structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.

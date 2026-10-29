@@ -27,7 +27,7 @@ const AX_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_se
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_window_state".into(),
-        description: "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\
+        description: "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size); `include_display_only:true` adds the display-only rows to that array (static text, labels: `display_only:true`, `automation_id`, no token). Pass the token to click, type_text, press_key, etc.\n\
             \n\
             START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring; matching rows plus ancestors) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
             \n\
@@ -644,7 +644,11 @@ impl Tool for GetWindowStateTool {
         // alongside for back-compat with existing text-parsing callers
         // (Hermes' regex parser, Codex, Claude Code) and is signalled as
         // preferred-for-back-compat-only via the `_note` field below.
+        let include_display_only = view.include_display_only;
         let elements_json: Vec<serde_json::Value> = match (snapshot_id, tree_result.as_ref()) {
+            (sid, Some(r)) if include_display_only && (sid.is_some() || scope_matched) => {
+                build_all_rows_array(&r.nodes, sid)
+            }
             (Some(sid), Some(r)) => build_elements_array_with_token(&r.nodes, Some(sid)),
             (None, Some(r)) if scope_matched && observation_only => {
                 build_observation_elements_array(&r.nodes)
@@ -670,6 +674,11 @@ impl Tool for GetWindowStateTool {
             _ => elements_json,
         };
         let filtered_element_count = elements_json.len();
+        // Every row counts when the display-only ones are returned.
+        let total_element_count = match tree_result.as_ref() {
+            Some(r) if include_display_only => r.nodes.len(),
+            _ => element_count,
+        };
         // The structured array intentionally contains only actionable nodes,
         // and AX child reads can fail independently of the element/depth caps.
         // Until the walker exposes a proof over the projected search domain,
@@ -680,7 +689,7 @@ impl Tool for GetWindowStateTool {
             "window_id": window_id,
             "pid": pid,
             "element_count": element_count,
-            "total_element_count": element_count,
+            "total_element_count": total_element_count,
             "returned_element_count": filtered_element_count,
             "elements_complete": elements_complete,
             "tree_markdown": tree_md,
@@ -1125,7 +1134,20 @@ pub(crate) fn build_elements_array_with_token(
 pub(crate) fn build_observation_elements_array(
     nodes: &[crate::ax::tree::AXNode],
 ) -> Vec<serde_json::Value> {
-    nodes.iter().map(|node| element_entry(node, None)).collect()
+    build_all_rows_array(nodes, None)
+}
+
+/// Every row of the tree in DFS order: the actionable rows as
+/// [`build_elements_array_with_token`] emits them, plus the display-only
+/// rows with `display_only: true`.
+pub(crate) fn build_all_rows_array(
+    nodes: &[crate::ax::tree::AXNode],
+    snapshot_id: Option<u32>,
+) -> Vec<serde_json::Value> {
+    nodes
+        .iter()
+        .map(|node| element_entry(node, snapshot_id))
+        .collect()
 }
 
 fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> serde_json::Value {
@@ -1158,6 +1180,9 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
         }
     } else {
         entry["display_only"] = serde_json::Value::Bool(true);
+    }
+    if let Some(id) = node.identifier.as_deref().filter(|id| !id.is_empty()) {
+        entry["automation_id"] = serde_json::Value::String(id.to_owned());
     }
     if let Some(label) = label {
         entry["label"] = serde_json::Value::String(label);
@@ -2009,6 +2034,59 @@ mod tests {
             assert_eq!(wid, Some(9));
             assert_eq!(resolved_idx, Some(idx));
         }
+    }
+
+    #[test]
+    fn all_rows_array_keeps_display_only_rows_with_their_identifier() {
+        // A caption and a staff-ID label (no index) beside a date field.
+        let mut caption = node(
+            None,
+            "AXStaticText",
+            Some("Book return time"),
+            2,
+            None,
+            None,
+            vec![],
+        );
+        caption.identifier = Some("lblReturnCaption".to_owned());
+        let mut shown = node(
+            None,
+            "AXStaticText",
+            Some("RP-20417"),
+            2,
+            None,
+            None,
+            vec![],
+        );
+        shown.identifier = Some("lblAgent".to_owned());
+        let mut field = node(
+            Some(3),
+            "AXTextField",
+            Some("Book return time"),
+            2,
+            None,
+            None,
+            vec!["AXConfirm".to_owned()],
+        );
+        field.identifier = Some("dtReturn".to_owned());
+        let nodes = vec![caption, shown, field];
+
+        // Without `include_display_only`: the label rows are omitted, as before.
+        let elements = build_elements_array_with_token(&nodes, Some(7));
+        assert_eq!(elements.len(), 1);
+        assert_eq!(elements[0]["element_index"], json!(3));
+        assert_eq!(elements[0]["automation_id"], json!("dtReturn"));
+        assert!(elements[0].get("display_only").is_none());
+
+        // With it: every row, the label rows identifiable and not addressable.
+        let rows = build_all_rows_array(&nodes, Some(7));
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[1]["display_only"], json!(true));
+        assert_eq!(rows[1]["label"], json!("RP-20417"));
+        assert_eq!(rows[1]["automation_id"], json!("lblAgent"));
+        assert!(rows[1].get("element_index").is_none());
+        assert!(rows[1].get("element_token").is_none());
+        assert_eq!(rows[2], elements[0]);
     }
 
     #[test]

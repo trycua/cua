@@ -184,7 +184,7 @@ pub struct ImportedSignIn {
     pub source: String,
     /// The variable a run in a Space gets it as.
     pub env: String,
-    /// "Codex · ChatGPT sign-in".
+    /// "ChatGPT sign-in for Codex".
     pub label: String,
     /// When it stops working (Unix ms), when known.
     pub expires_ms: Option<u64>,

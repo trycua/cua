@@ -471,7 +471,10 @@ describe.skipIf(!built)("agents", () => {
     const removed = await call(bridge, "agentKeys.remove", { env: "ANTHROPIC_API_KEY" });
     expect(keys.calls.at(-1)).toEqual(["agent_keys.remove", { env: "ANTHROPIC_API_KEY" }]);
     for (const [m, a] of [["agentKeys.list", listed], ["agentKeys.set", set], ["agentKeys.remove", removed]] as const) expect(shapeProblems(m, a)).toEqual([]);
-    expect(await code(bridge, "agentKeys.set", { provider: "anthropic" })).toBe("bad_args");
+    // A connection may have no key (a custom endpoint): the bridge forwards an empty value and the daemon decides; a provider is always required.
+    await call(bridge, "agentKeys.set", { provider: "anthropic" });
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "anthropic", value: "" }]);
+    expect(await code(bridge, "agentKeys.set", { value: "sk-ant-test-0000" })).toBe("bad_args");
     expect(await code(bridge, "agentKeys.remove", {})).toBe("bad_args");
   });
 

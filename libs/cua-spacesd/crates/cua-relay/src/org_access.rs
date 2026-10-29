@@ -799,7 +799,7 @@ impl OrgAccess {
                         message: match device {
                             None => "team machines need an enrolled device: run `cua devices enroll` (or sign in again)".into(),
                             Some(d) => format!(
-                                "this device ({d}) is waiting for a team admin's approval before it can open {}'s machines: ask an owner or admin to approve it at app.cua.ai/team/devices",
+                                "this device ({d}) is waiting for a team admin's approval before it can open {}'s computers. An owner or admin can approve it under Computers at app.cua.ai/machines",
                                 org.alias
                             ),
                         },

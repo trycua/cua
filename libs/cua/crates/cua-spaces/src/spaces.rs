@@ -2038,6 +2038,12 @@ impl Spaces {
                             label.as_deref().unwrap_or(&id.to_string()),
                         ));
                     }
+                    if let SpaceId::Relay { .. } = &id
+                        && let Some(message) = crate::host_spaces::team_device_refusal(&reason)
+                    {
+                        // Refused by the team, not a Space still starting.
+                        return Err(crate::host_spaces::team_device_refused(message));
+                    }
                     if !generic_ok {
                         return Err(Error::SpacesdNotAvailable {
                             space: id.to_string(),

@@ -2503,6 +2503,24 @@ pub(crate) fn is_stopped_sharing(reason: &str) -> bool {
     reason.contains("stopped sharing")
 }
 
+/// The relay's own sentence when it refused a team computer because this
+/// device still needs a team admin's approval (or is not enrolled), from a
+/// failed connection's reason. That refusal is the whole story: the computer
+/// is not "still starting" and waiting does not help (CUA-2835).
+pub(crate) fn team_device_refusal(reason: &str) -> Option<String> {
+    const MARKERS: [&str; 2] = ["this device (", "team machines need an enrolled device"];
+    let start = MARKERS.iter().filter_map(|m| reason.find(m)).min()?;
+    let rest = &reason[start..];
+    // One line per transport tried, joined with "; ": keep the first.
+    let line = rest.split("; ").next().unwrap_or(rest).trim();
+    (line.contains("approv") || line.contains("enroll")).then(|| line.to_string())
+}
+
+/// A team computer refused because of this device, with the relay's words.
+pub(crate) fn team_device_refused(message: String) -> Error {
+    Error::Relay(cua_host::Error::PermissionDenied(message))
+}
+
 /// [`HostLimit::resource`] of a host the relay sees connected whose owner
 /// stopped sharing it (it refuses every call). Not a count: `used` and
 /// `limit` are 0 and `reason` is the line to show. It travels with the
@@ -4566,6 +4584,26 @@ mod snapshot_takers {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn team_device_refusal_keeps_the_relays_sentence() {
+        let msg = "this device (dev_ab12) is waiting for a team admin's approval before it can open Acme's computers. An owner or admin can approve it at app.cua.ai/machines";
+        let reason = format!("gRPC-Web: {msg}; HTTP/2: {msg}");
+        assert_eq!(super::team_device_refusal(&reason).as_deref(), Some(msg));
+        let enroll =
+            "team machines need an enrolled device: run `cua devices enroll` (or sign in again)";
+        assert_eq!(super::team_device_refusal(enroll).as_deref(), Some(enroll));
+        assert_eq!(
+            super::team_device_refusal(
+                "nothing answered at https://x (it may still be starting; retry in a few seconds)"
+            ),
+            None
+        );
+        assert_eq!(
+            super::team_device_refusal("the host stopped sharing this machine"),
+            None
+        );
+    }
+
     /// An old host (a Cua 0.7 machine, protocol revision 8) is refused up
     /// front, by name, with how to update; a current one is not.
     #[test]

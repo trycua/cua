@@ -55,17 +55,8 @@ enum Way {
     AppDevice(&'static reg::Method),
 }
 
-impl Way {
-    fn method(self) -> &'static reg::Method {
-        match self {
-            Way::AppToken(m) | Way::AppDevice(m) => m,
-        }
-    }
-}
-
 /// Which providers an app signs in to, and the way its Connect uses.
 struct AppSignIn {
-    app: &'static str,
     /// Any one of these connected is enough: the providers that deliver a
     /// variable to the app, then those it can be pointed at by wire.
     providers: Vec<&'static reg::Provider>,
@@ -97,7 +88,6 @@ fn app_way(app: &str) -> Option<Way> {
 fn app_sign_in(app: &str) -> Option<AppSignIn> {
     if let Some(h) = HARNESS_APPS.iter().find(|h| h.app == app) {
         return Some(AppSignIn {
-            app: h.app,
             providers: reg::visible()
                 .filter(|p| reg::works_with(p).contains(&h.harness))
                 .collect(),
@@ -107,21 +97,12 @@ fn app_sign_in(app: &str) -> Option<AppSignIn> {
     }
     if is_provider_app(app) {
         return Some(AppSignIn {
-            app: name_static(app)?,
             providers: reg::visible().filter(|p| p.apps.contains(&app)).collect(),
             way: None,
             reads: &[],
         });
     }
     None
-}
-
-/// The `'static` spelling of a provider app's id.
-fn name_static(app: &str) -> Option<&'static str> {
-    reg::PROVIDERS
-        .iter()
-        .flat_map(|p| p.apps.iter().copied())
-        .find(|a| *a == app)
 }
 
 /// Every agent harness that can run in a Space (`cua_agents::harness`), with
@@ -1307,14 +1288,14 @@ pub fn provider_picker(
     };
     let searching = !query.trim().is_empty();
     let open = expanded || searching;
-    let up_front = |p: &&&reg::Provider| p.tier == reg::Tier::Top || provider_credential(input, p).is_some();
+    let up_front = |p: &reg::Provider| p.tier == reg::Tier::Top || provider_credential(input, p).is_some();
     let items: Vec<ProviderChoice> = usable
         .iter()
         .filter(|p| provider_matches(p, query))
-        .filter(|p| open || up_front(&p))
+        .filter(|p| open || up_front(p))
         .map(|p| choice(p))
         .collect();
-    let hidden = usable.iter().filter(|p| !up_front(&p)).count() as u32;
+    let hidden = usable.iter().filter(|p| !up_front(p)).count() as u32;
     ProviderPickerView {
         title: "Connect a provider".into(),
         lede: match for_app.and_then(|a| input.row_app(a)) {

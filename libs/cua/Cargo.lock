@@ -3468,6 +3468,7 @@ dependencies = [
 name = "cua-telemetry"
 version = "0.9.0"
 dependencies = [
+ "cua-connections",
  "hex",
  "rand 0.9.5",
  "serde",

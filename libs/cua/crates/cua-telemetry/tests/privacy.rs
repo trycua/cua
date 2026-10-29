@@ -327,6 +327,8 @@ fn all_builders(s: &str) -> Vec<Event> {
         .unwrap(),
     );
     assert!(events::repo_cache("https://github.com/o/r", "local", 0, 0, "none").is_none());
+    v.push(events::connection_changed("deepseek", "api_key", "connect", "ok"));
+    v.push(events::connection_changed(s, s, s, s));
     v.push(events::agent_used_space("space_bash").unwrap());
     v.push(events::agent_used_space("computer_click").unwrap());
     assert!(events::installer_step(s, "cli", "network", "sh", &[]).is_none());
@@ -1979,4 +1981,27 @@ fn plan_limit_events_keep_their_vocabulary() {
             "{s}"
         );
     }
+}
+
+/// The fixed provider words are the registry's ids, and a connection event carries nothing else.
+#[test]
+fn connection_events_use_the_registrys_words_only() {
+    let mut registry: Vec<&str> = cua_connections::PROVIDERS.iter().map(|p| p.id).collect();
+    registry.push("other");
+    registry.sort_unstable();
+    let mut ours: Vec<&str> = schema::CONNECTION_PROVIDERS.to_vec();
+    ours.sort_unstable();
+    assert_eq!(ours, registry, "regenerate schema::CONNECTION_PROVIDERS from providers/*.toml");
+    let mut kinds: Vec<&str> = cua_connections::MethodKind::ALL.iter().map(|k| k.word()).collect();
+    kinds.push("other");
+    assert_eq!(schema::CONNECTION_METHODS, kinds.as_slice());
+    // A provider, method or action that is not a fixed word is sent as the fallback, never as typed.
+    let e = events::connection_changed("http://127.0.0.1:1234/v1", "sk-ant-secret", "ada@example.com", "401 from api.example");
+    let text = format!("{e:?}");
+    for leak in ["127.0.0.1", "sk-ant", "ada@", "401", "example"] {
+        assert!(!text.contains(leak), "{text}");
+    }
+    let e = events::connection_changed("openrouter", "api_key", "connect", "ok");
+    let text = format!("{e:?}");
+    assert!(text.contains("openrouter") && text.contains("api_key") && text.contains("connect"), "{text}");
 }

@@ -127,8 +127,8 @@ export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'agents',
     title: 'Agents, MCP and skills',
-    summary: 'Agents in a Space, connecting your AI agents, the stdio MCP server, and recorded skills',
-    commands: ['agent', 'thread', 'join', 'connect', 'agents', 'mcp', 'skills'],
+    summary: 'Agents in a Space, connecting your AI agents and the AI providers they use, the stdio MCP server, and recorded skills',
+    commands: ['agent', 'thread', 'join', 'connect', 'connections', 'agents', 'mcp', 'skills'],
   },
   {
     slug: 'account-and-setup',

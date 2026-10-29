@@ -1125,10 +1125,13 @@ impl AgentKeys {
                     KeyCheck::Unknown => {}
                 }
             }
-            self.set_rejected(
+            for env in self.set_rejected(
                 rejected.iter().map(|(e, a)| (e.as_str(), Some(*a))),
                 Some(now_ms()),
-            )?;
+            )? {
+                // A key the provider refused: only that it happened, for which provider.
+                note_connection(&env, "check", "needs_reconnect");
+            }
             self.set_rejected(accepted.iter().map(|(e, a)| (e.as_str(), Some(*a))), None)?;
         }
         self.report()
@@ -1218,6 +1221,26 @@ fn check_choices(
     Ok(())
 }
 
+/// Tells telemetry a connection changed: only the registry's provider id and
+/// the kind of method, the action and how it ended (`cua_connection_changed`).
+/// Never a key, a URL, an account or an error text.
+fn note_connection(env_or_provider: &str, action: &str, outcome: &str) {
+    let def = registry::provider(env_or_provider).or_else(|| registry::provider_of_env(env_or_provider));
+    let (provider, method) = match def {
+        Some(d) => {
+            let kind = d
+                .methods
+                .iter()
+                .find(|m| m.env == env_or_provider || m.aliases.contains(&env_or_provider))
+                .or_else(|| d.key_method())
+                .map_or("other", |m| m.kind.word());
+            (d.id, kind)
+        }
+        None => ("other", "api_key"),
+    };
+    cua_telemetry::capture(cua_telemetry::events::connection_changed(provider, method, action, outcome));
+}
+
 fn store_err(e: cua_auth::Error) -> Error {
     Error::Agent(format!("the Keychain refused the agent keys: {e}"))
 }
@@ -1305,20 +1328,36 @@ pub fn app_call(
             keys.sync_claude_login(&HostClaudeLogin, false);
             report(keys.report())
         }
-        "agent_keys.set" => report(
-            serde_json::from_value::<SetArgs>(args)
-                .map_err(|e| {
-                    Error::InvalidArgument(format!("agent_keys.set: {}", redact_serde(&e)))
-                })
-                .and_then(|a| {
-                    keys.set_with(&a.provider, a.env.as_deref(), &a.value, a.region.as_deref(), &a.fields)
-                })
-                .and_then(|_| keys.report()),
-        ),
+        "agent_keys.set" => {
+            let parsed = serde_json::from_value::<SetArgs>(args).map_err(|e| {
+                Error::InvalidArgument(format!("agent_keys.set: {}", redact_serde(&e)))
+            });
+            let provider = parsed.as_ref().map(|a| a.provider.clone()).unwrap_or_default();
+            // A key saved again (or one that was refused) is a reconnect.
+            let had = keys
+                .list()
+                .map(|l| l.iter().any(|k| k.provider == provider))
+                .unwrap_or(false);
+            let saved = parsed.and_then(|a| {
+                keys.set_with(&a.provider, a.env.as_deref(), &a.value, a.region.as_deref(), &a.fields)
+            });
+            note_connection(
+                &provider,
+                if had { "reconnect" } else { "connect" },
+                if saved.is_ok() { "ok" } else { "failed" },
+            );
+            report(saved.and_then(|_| keys.report()))
+        }
         "agent_keys.remove" => report(
             serde_json::from_value::<RemoveArgs>(args)
                 .map_err(|e| Error::InvalidArgument(format!("agent_keys.remove: {e}")))
-                .and_then(|a| keys.remove(&a.env))
+                .and_then(|a| {
+                    let removed = keys.remove(&a.env)?;
+                    if removed {
+                        note_connection(&a.env, "remove", "ok");
+                    }
+                    Ok(removed)
+                })
                 .and_then(|_| keys.report()),
         ),
         "agent_keys.shell" => serde_json::to_value(ShellReport {
@@ -1334,13 +1373,15 @@ pub fn app_call(
                         Error::InvalidArgument(format!("{} isn't set in your shell", a.env))
                     })?;
                     let provider = provider_of(&a.env);
-                    keys.set_with(
+                    let saved = keys.set_with(
                         provider,
                         (provider == "other").then_some(a.env.as_str()),
                         &value,
                         a.region.as_deref(),
                         &a.fields,
-                    )
+                    );
+                    note_connection(provider, "connect", if saved.is_ok() { "ok" } else { "failed" });
+                    saved
                 })
                 .and_then(|_| keys.report()),
         ),

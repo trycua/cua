@@ -5,11 +5,12 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useAgentKeys, useBridge, useFirstRun, useSpaces, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
+import { pointerSettings, useAgentKeys, useBridge, useDriver, useFirstRun, useSpaces, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
 import { readSavedOnboarding } from "@/bridge/onboarding";
 import { AddAgentSheet } from "@/components/add-agent/add-agent-sheet";
 import { APP_MARKS, AppMarkImage } from "@/components/agents/harness-mark";
 import { CuaLogo } from "@/components/cua-logo";
+import { PointerPreview } from "@/components/driver/pointer-preview";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
@@ -49,6 +50,25 @@ function OnboardingPage() {
   const fr = useFirstRun();
   const navigate = useNavigate();
   const { view } = fr;
+  // "Meet Cua Driver" (CUA-2706): step 2, between Welcome and the core's
+  // next page, while this Mac runs the embedded driver. Seen once per run.
+  const driver = useDriver();
+  const [driverStep, setDriverStep] = useState<DriverStep | null>(null);
+  const [driverSeen, setDriverSeen] = useState(false);
+  const offerDriver = driver.available && Boolean(driver.status?.thisMachine);
+  const welcomeNext = () => {
+    if (offerDriver && !driverSeen) setDriverStep("meet");
+    else void fr.act(view.welcome!.primary.id);
+  };
+  const driverDone = () => {
+    setDriverStep(null);
+    setDriverSeen(true);
+    if (view.welcome) void fr.act(view.welcome.primary.id);
+  };
+  const driverBack = () => setDriverStep((s) => (s === "watch" ? "allow" : s === "allow" ? "meet" : null));
+  const back = driverStep ? driverBack : fr.back;
+  const extraDot = offerDriver || driverSeen ? 1 : 0;
+  const dots = { dots: view.dots + extraDot, current: driverStep ? 1 : view.step === "welcome" ? 0 : view.current + extraDot };
 
   const leave = () => {
     fr.later();
@@ -66,27 +86,27 @@ function OnboardingPage() {
   // A new screen: focus moves to its heading, so a screen reader reads it.
   useEffect(() => {
     document.querySelector<HTMLElement>("[data-onboarding-heading]")?.focus();
-  }, [view.step]);
+  }, [view.step, driverStep]);
 
   // Esc goes back a step, like the "Back" link, on every step that has one.
   // An open sheet or menu keeps its own Esc.
-  const canGoBack = view.step !== "welcome";
+  const canGoBack = view.step !== "welcome" || driverStep !== null;
   useEffect(() => {
     if (!canGoBack) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
       if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return;
       e.preventDefault();
-      fr.back();
+      back();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [canGoBack, fr.back]);
+  }, [canGoBack, back]);
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] [--ob-x:clamp(40px,8vw,96px)] [--ob-art-h:min(58vh,560px)] dark:bg-[#07080a]" data-step={view.step}>
       <Backdrop />
-      <Art art={view.art} step={view.step} />
+      {driverStep ? <DriverArt step={driverStep} settings={pointerSettings(driver.config)} /> : <Art art={view.art} step={view.step} />}
       <header className="relative z-30 flex shrink-0 items-center justify-between pr-10 pl-[var(--ob-x)] pt-[calc(var(--titlebar-height)+12px)] pb-2">
         <CuaWordmark />
         <button type="button" onClick={leave} className={SKIP_PILL} data-onboarding-later="">
@@ -97,16 +117,22 @@ function OnboardingPage() {
         {/* Centre the step on the window, a little above true centre (about 45% from the top). The min heights keep a gap under the logo bar and above the progress dots; tall steps scroll. */}
         <div aria-hidden data-onboarding-spacer-top="" className="min-h-[clamp(8px,2vh,32px)] shrink-0 grow-[33] basis-0 [@media(max-width:999px)]:grow-[50]" />
         <div className="flex w-full max-w-[520px] shrink-0 flex-col">
-          {view.welcome ? <Welcome fr={fr} view={view} /> : null}
-          {view.connect ? <Connect fr={fr} view={view} /> : null}
-          {view.cli ? <CommandLine fr={fr} view={view} /> : null}
-          {view.devices ? <Devices fr={fr} view={view} /> : null}
-          {view.permissions ? <Permissions fr={fr} view={view} /> : null}
-          {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
+          {driverStep ? (
+            <MeetDriver step={driverStep} setStep={setDriverStep} onBack={driverBack} onDone={driverDone} />
+          ) : (
+            <>
+              {view.welcome ? <Welcome view={view} onNext={welcomeNext} /> : null}
+              {view.connect ? <Connect fr={fr} view={view} /> : null}
+              {view.cli ? <CommandLine fr={fr} view={view} /> : null}
+              {view.devices ? <Devices fr={fr} view={view} /> : null}
+              {view.permissions ? <Permissions fr={fr} view={view} /> : null}
+              {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
+            </>
+          )}
         </div>
         <div aria-hidden data-onboarding-spacer-bottom="" className="min-h-6 shrink-0 grow-[67] basis-0 [@media(max-width:999px)]:grow-[50]" />
       </div>
-      <Dots view={view} />
+      <Dots dots={dots.dots} current={dots.current} />
     </div>
   );
 }
@@ -211,7 +237,7 @@ function StatusLine({ row, onAct }: { row: FirstRunRow; onAct?: () => void }) {
 
 /* ---- 1 · Welcome ------------------------------------------------------------------ */
 
-function Welcome({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
+function Welcome({ view, onNext }: { view: FirstRunView; onNext: () => void }) {
   const w = view.welcome!;
   return (
     <div data-first-run="welcome">
@@ -220,8 +246,152 @@ function Welcome({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       <Heading>{w.title}</Heading>
       <Lede>{w.lede}</Lede>
       <div className="mt-8">
-        <Primary label={w.primary.label} onClick={() => void fr.act(w.primary.id)} />
+        <Primary label={w.primary.label} onClick={onNext} />
       </div>
+    </div>
+  );
+}
+
+/* ---- 1b · Meet Cua Driver (CUA-2706) -------------------------------------------------- */
+
+type DriverStep = "meet" | "allow" | "watch";
+
+const DRIVER_PERMISSION_ROWS = [
+  { id: "screen", row: "screen-recording", title: "See the screen", note: "So agents can read what's in an app." },
+  { id: "accessibility", row: "accessibility", title: "Use the mouse and keyboard", note: "In the background. Your own pointer stays yours." },
+] as const;
+
+/**
+ * Cua Driver's three screens: what it is and the two switches it needs;
+ * waiting while the person turns Cua Spaces on in the real System Settings
+ * (the app's guide to the pane, never a drawing of it); then a live test
+ * that moves the agent's pointer while theirs stays put.
+ */
+function MeetDriver({ step, setStep, onBack, onDone }: { step: DriverStep; setStep: (s: DriverStep) => void; onBack: () => void; onDone: () => void }) {
+  const driver = useDriver();
+  const { data: adapter } = useBridge();
+  const navigate = useNavigate();
+  const status = driver.status;
+  const perms = status?.permissions ?? [];
+  const granted = (id: string) => perms.find((p) => p.id === id)?.granted ?? true;
+  const missing = perms.find((p) => !p.granted) ?? null;
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ passed: boolean; failure: string | null; tookMs: number | null } | null>(null);
+  const open = (url: string | null) => {
+    if (url && adapter) void adapter.call("host.openSettings", { url }).catch(() => {});
+  };
+  const runTest = () => {
+    setTesting(true);
+    setResult(null);
+    void driver
+      .test()
+      .then((t) => setResult({ passed: t.passed, failure: t.failure, tookMs: t.tookMs ?? null }))
+      .catch((e: unknown) => setResult({ passed: false, failure: e instanceof Error ? e.message : String(e), tookMs: null }))
+      .finally(() => setTesting(false));
+  };
+  // Both switches on while waiting: move on and run the live test.
+  useEffect(() => {
+    if (step === "allow" && status && !missing) setStep("watch");
+  }, [step, status, missing, setStep]);
+  useEffect(() => {
+    if (step === "watch" && !testing && !result) runTest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+  const rows = (allowedNote: string) =>
+    DRIVER_PERMISSION_ROWS.map((r) => {
+      const on = granted(r.id);
+      const p = perms.find((x) => x.id === r.id);
+      return (
+        <StatusLine
+          key={r.id}
+          row={{ id: r.row, state: on ? "ok" : step === "allow" ? "checking" : "fix", title: r.title, note: on ? allowedNote : r.note, action: !on && step === "allow" ? { id: "allow", label: "Open" } : null, settingsUrl: p?.settingsUrl ?? null }}
+          onAct={!on && step === "allow" ? () => open(p?.settingsUrl ?? null) : undefined}
+        />
+      );
+    });
+
+  if (step === "meet") {
+    return (
+      <Step id="driver-meet" onBack={onBack}>
+        <Heading>Meet Cua Driver.</Heading>
+        <Lede>Lets agents see and use the apps on this computer. Claude Code, Codex and T3 Code use it to click, type and check their work.</Lede>
+        <Rows className="mt-8" data-first-run-driver-rows="">
+          {rows("Allowed")}
+        </Rows>
+        <p className="mt-4 text-[13px] text-muted-foreground">You allow Cua Spaces once in System Settings. Cua Driver updates keep it.</p>
+        <div className="mt-8 flex flex-wrap items-center gap-3">
+          {missing ? (
+            <Primary
+              label="Allow in System Settings"
+              data-first-run-driver-allow=""
+              onClick={() => {
+                open(missing.settingsUrl);
+                setStep("allow");
+              }}
+            />
+          ) : (
+            <Primary label="Continue" data-first-run-driver-continue="" onClick={() => setStep("watch")} />
+          )}
+          <Secondary label="Not now" data-first-run-driver-later="" onClick={onDone} />
+        </div>
+      </Step>
+    );
+  }
+  if (step === "allow") {
+    return (
+      <Step id="driver-allow" onBack={onBack}>
+        <Heading>Turn on Cua Spaces.</Heading>
+        <Lede>System Settings is open. Turn on Cua Spaces in the list, then come back. This page moves on by itself.</Lede>
+        <Rows className="mt-8" data-first-run-driver-rows="">
+          {rows("Allowed")}
+        </Rows>
+        <p className="mt-4 text-[13px] text-muted-foreground">After Screen Recording, macOS may ask you to quit and reopen Cua Spaces. Your setup picks up where it left off.</p>
+        <div className="mt-8 flex flex-wrap items-center gap-3">
+          <Secondary label="Not now" data-first-run-driver-later="" onClick={onDone} />
+        </div>
+      </Step>
+    );
+  }
+  const seconds = result?.tookMs ? Math.max(1, Math.round(result.tookMs / 1000)) : null;
+  const testRow = {
+    id: "computer" as const,
+    state: testing || !result ? ("checking" as const) : result.passed ? ("ok" as const) : ("fix" as const),
+    title: status?.version ? `Cua Driver ${status.version}` : "Cua Driver",
+    note: testing || !result ? "Testing now" : result.passed ? (seconds ? `Test passed in ${seconds} seconds` : "Test passed") : `Test didn't pass: ${result.failure ?? "no reason given"}`,
+    action: result && !result.passed && !testing ? { id: "retry", label: "Try again" } : null,
+    settingsUrl: null,
+  };
+  return (
+    <Step id="driver-watch" onBack={onBack}>
+      <Heading>Watch the agent move.</Heading>
+      <Lede>That second pointer is Cua Driver at work. Yours never moves.</Lede>
+      <Rows className="mt-8" data-first-run-driver-rows="">
+        {rows("Allowed")}
+        <StatusLine row={testRow} onAct={testRow.action ? runTest : undefined} />
+      </Rows>
+      <div className="mt-8 flex flex-wrap items-center gap-3">
+        <Primary label="Continue" data-first-run-driver-done="" onClick={onDone} />
+        <Secondary
+          label="Change the pointer"
+          onClick={() => {
+            onDone();
+            void navigate({ to: "/driver" });
+          }}
+        />
+      </div>
+    </Step>
+  );
+}
+
+/** Beside Cua Driver's screens: the Cua key, then the agent pointer playing. */
+function DriverArt({ step, settings }: { step: DriverStep; settings: ReturnType<typeof pointerSettings> }) {
+  return (
+    <div aria-hidden={step !== "watch"} className="pointer-events-none absolute inset-y-0 right-0 hidden w-[46%] items-center justify-center pr-10 [@media(min-width:1000px)]:flex" data-first-run-driver-art={step}>
+      {step === "watch" ? (
+        <PointerPreview className="w-full max-w-[520px]" settings={settings} caption="Cua Driver moves its own pointer on this Mac. You can keep using your mouse." />
+      ) : (
+        <img src="/onboarding/cua.webp" alt="" draggable={false} className="w-[46%] max-w-[300px]" />
+      )}
     </div>
   );
 }
@@ -976,11 +1146,11 @@ function SlotOutline() {
   );
 }
 
-function Dots({ view }: { view: FirstRunView }) {
+function Dots({ dots, current }: { dots: number; current: number }) {
   return (
-    <ol className="relative z-10 flex shrink-0 justify-start gap-2 pt-4 pb-6 pl-[var(--ob-x)]" aria-label={`Step ${view.current + 1} of ${view.dots}`}>
-      {Array.from({ length: view.dots }, (_, i) => (
-        <li key={i} aria-current={i === view.current ? "step" : undefined} className={cn("h-1 w-7 rounded-full bg-foreground/30", i <= view.current && "bg-foreground")} />
+    <ol className="relative z-10 flex shrink-0 justify-start gap-2 pt-4 pb-6 pl-[var(--ob-x)]" aria-label={`Step ${current + 1} of ${dots}`}>
+      {Array.from({ length: dots }, (_, i) => (
+        <li key={i} aria-current={i === current ? "step" : undefined} className={cn("h-1 w-7 rounded-full bg-foreground/30", i <= current && "bg-foreground")} />
       ))}
     </ol>
   );

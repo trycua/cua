@@ -67,6 +67,7 @@ import { THREAD_OPERATIONS } from "../ops/thread";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
 import { cloudApproveTauriOps } from "../ops/cloud-approve";
 import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
+import { DRIVER_OPERATIONS } from "../ops/driver";
 import { tauriTelemetryOps } from "../ops/telemetry";
 import { tauriStartupOps } from "../ops/startup";
 
@@ -121,6 +122,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "crashReporting.config",
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
+  ...DRIVER_OPERATIONS,
 ];
 
 /** `persistent_agent_list`'s snake_case agents, as `PersistentAgent`s (as `src/native/persistent.ts` maps them). */

@@ -67,6 +67,7 @@ import type { AgentKeysReport } from "../ops/agent-keys";
 import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { DriverActivity, DriverApp, DriverLiveTest, DriverMachine, DriverPermission, DriverStatus, DriverUpdate } from "../ops/driver";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SharedBase, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
@@ -86,6 +87,7 @@ const ref = (name: string, s: Schema) => defs.ref(name, s);
 const strings = list(str);
 const limits = list(object({ resource: str, used: num, limit: num, reason: str }));
 const os = oneOf("macos", "windows", "linux", "unknown");
+const DriverLiveTestShape = ref("DriverLiveTest", obj<DriverLiveTest>()({ passed: bool, atMs: num, failure: nullable(str), tookMs: optNull(num) }));
 
 /* ---- Spaces and machines --------------------------------------------------- */
 
@@ -1366,6 +1368,39 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
   "nudges.pending": list(obj<RiskyRequest>()({ id: str, agent: str, action: str, atMs: num, expiresMs: num })),
   "nudges.answer": nul,
+  "driver.status": nullable(
+    obj<DriverStatus>()({
+      machineId: str,
+      machineName: str,
+      thisMachine: bool,
+      state: oneOf("ready", "starting", "stopped", "paused", "needs-permission", "failed"),
+      version: nullable(str),
+      update: nullable(obj<DriverUpdate>()({ version: str, note: nullable(str) })),
+      lastTest: nullable(DriverLiveTestShape),
+      lastError: nullable(str),
+      permissions: list(obj<DriverPermission>()({ id: oneOf("screen", "accessibility"), granted: bool, settingsUrl: nullable(str) })),
+      apps: nullable(list(obj<DriverApp>()({ id: str, name: str, on: bool, own: bool, bringsOwn: bool }))),
+      activity: list(obj<DriverActivity>()({ app: str, target: str })),
+      canPause: bool,
+    }),
+  ),
+  "driver.list": list(
+    obj<DriverMachine>()({
+      machineId: str,
+      name: str,
+      os: oneOf("macos", "windows", "linux"),
+      thisMachine: bool,
+      state: oneOf("ready", "starting", "stopped", "paused", "needs-permission", "failed"),
+      version: nullable(str),
+      update: nullable(str),
+    }),
+  ),
+  "driver.config": dict(any),
+  "driver.setConfig": dict(any),
+  "driver.test": DriverLiveTestShape,
+  "driver.pause": nul,
+  "driver.setApp": nul,
+  "driver.update": nul,
   "relay.usage": nullable(
     obj<RelayUsage>()({
       metered: bool,

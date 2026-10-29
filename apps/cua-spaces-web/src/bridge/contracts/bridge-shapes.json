@@ -1610,6 +1610,34 @@
         "method"
       ]
     },
+    "DriverLiveTest": {
+      "type": "object",
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "atMs": {
+          "type": "number"
+        },
+        "failure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tookMs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "passed",
+        "atMs",
+        "failure"
+      ]
+    },
     "DriveStorageInput": {
       "type": "object",
       "properties": {
@@ -7893,6 +7921,247 @@
       "type": "null"
     },
     "devices.revokePairingCode": {
+      "type": "null"
+    },
+    "driver.config": {
+      "type": "object",
+      "additionalProperties": {}
+    },
+    "driver.list": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "machineId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "os": {
+            "enum": [
+              "macos",
+              "windows",
+              "linux"
+            ]
+          },
+          "thisMachine": {
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "starting",
+              "stopped",
+              "paused",
+              "needs-permission",
+              "failed"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "update": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "machineId",
+          "name",
+          "os",
+          "thisMachine",
+          "state",
+          "version",
+          "update"
+        ]
+      }
+    },
+    "driver.pause": {
+      "type": "null"
+    },
+    "driver.setApp": {
+      "type": "null"
+    },
+    "driver.setConfig": {
+      "type": "object",
+      "additionalProperties": {}
+    },
+    "driver.status": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "machineId": {
+          "type": "string"
+        },
+        "machineName": {
+          "type": "string"
+        },
+        "thisMachine": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "ready",
+            "starting",
+            "stopped",
+            "paused",
+            "needs-permission",
+            "failed"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "update": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "version",
+            "note"
+          ]
+        },
+        "lastTest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DriverLiveTest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "enum": [
+                  "screen",
+                  "accessibility"
+                ]
+              },
+              "granted": {
+                "type": "boolean"
+              },
+              "settingsUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "granted",
+              "settingsUrl"
+            ]
+          }
+        },
+        "apps": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "on": {
+                "type": "boolean"
+              },
+              "own": {
+                "type": "boolean"
+              },
+              "bringsOwn": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "on",
+              "own",
+              "bringsOwn"
+            ]
+          }
+        },
+        "activity": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "app": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "app",
+              "target"
+            ]
+          }
+        },
+        "canPause": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "machineId",
+        "machineName",
+        "thisMachine",
+        "state",
+        "version",
+        "update",
+        "lastTest",
+        "lastError",
+        "permissions",
+        "apps",
+        "activity",
+        "canPause"
+      ]
+    },
+    "driver.test": {
+      "$ref": "#/$defs/DriverLiveTest"
+    },
+    "driver.update": {
       "type": "null"
     },
     "experiments.get": {

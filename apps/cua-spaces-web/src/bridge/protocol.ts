@@ -57,6 +57,7 @@ import { THREAD_OPERATIONS, type ThreadOps } from "./ops/thread";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { CLOUD_APPROVE_OPERATIONS, type CloudApproveOps } from "./ops/cloud-approve";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
+import { DRIVER_OPERATIONS, type DriverOps } from "./ops/driver";
 import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
 import type { TipsState } from "./contracts/spaces-page";
 import { STARTUP_EVENTS, STARTUP_OPERATIONS, type StartupHostEvent, type StartupOps } from "./ops/startup";
@@ -234,7 +235,8 @@ export interface HostOperations
     ThreadOps,
     PresenceOps,
     CloudApproveOps,
-    RuntimeFixOps {
+    RuntimeFixOps,
+    DriverOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
   /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch). */
   "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs; notifyWhenReady?: boolean }; result: SpaceRow };
@@ -386,6 +388,7 @@ export const OPERATIONS = [
   ...PRESENCE_OPERATIONS,
   ...CLOUD_APPROVE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
+  ...DRIVER_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
   ...TELEMETRY_OPERATIONS,

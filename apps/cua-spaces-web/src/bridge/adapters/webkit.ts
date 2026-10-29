@@ -67,6 +67,7 @@ import type { LinkCreate, ShareLink } from "../ops/links";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { cloudApproveWebkitOps } from "../ops/cloud-approve";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
+import { unsupportedDriverOps } from "../ops/driver";
 import type { CliInstallPlan } from "../contracts/first-run";
 import type { BulkResult } from "../contracts/spaces-page";
 import type { CreatingElsewhere, ListStatus, SpaceAccess, SpaceRow, SpaceSharingFacts } from "../contracts/spaces";
@@ -776,6 +777,8 @@ export function createWebkitAdapter(
     ...(electron
       ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
       : unsupportedRuntimeFixOps("webkit")),
+    // Cua Driver inside Cua Spaces: no host routes it yet (ops/driver.ts).
+    ...unsupportedDriverOps("webkit"),
   };
 
   const onEvent = (detail: WebkitEventDetail) => {

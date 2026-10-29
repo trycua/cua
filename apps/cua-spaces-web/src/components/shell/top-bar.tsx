@@ -12,6 +12,7 @@ import { useTheme } from "@/lib/theme";
 import { useUiStore } from "@/stores/ui";
 import { useNavItems } from "./nav";
 import { TopBarUpdateIndicator } from "./update-indicator";
+import { TopBarDriver } from "@/components/driver/top-bar-driver";
 
 export function TopBar() {
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
@@ -38,6 +39,8 @@ export function TopBar() {
       </Tooltip>
       <span className="truncate text-[13px] font-semibold">{title}</span>
       <div className="flex-1" />
+      {/* "Agents can use this Mac": Cua Driver, named on every page (CUA-2706). */}
+      <TopBarDriver />
       <button
         type="button"
         onClick={() => setPaletteOpen(true)}

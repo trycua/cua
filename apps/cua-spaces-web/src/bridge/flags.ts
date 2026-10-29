@@ -24,10 +24,16 @@ import { useSyncExternalStore } from "react";
  *   Home page that asks what you want done, starts it on a fresh computer and
  *   follows it as a conversation. Settings → Advanced → Labs turns it on for
  *   this device.
+ * - `spaces_embedded_driver`: Cua Driver inside Cua Spaces (CUA-2706): the
+ *   Cua Driver page in the sidebar, its first-run step and the top bar's
+ *   "Agents can use this Mac". The UI's side of `cua-spacesd`'s
+ *   `CUA_SPACESD_EMBEDDED_DRIVER=1`; it also needs a host that answers
+ *   `driver.status` (`ops/driver.ts`), so turning it on alone changes nothing
+ *   until the backend ships.
  */
-export type FlagName = "upsell_cards" | "spaces_ask_first_home";
+export type FlagName = "upsell_cards" | "spaces_ask_first_home" | "spaces_embedded_driver";
 
-const DEFAULTS: Record<FlagName, boolean> = { upsell_cards: false, spaces_ask_first_home: false };
+const DEFAULTS: Record<FlagName, boolean> = { upsell_cards: false, spaces_ask_first_home: false, spaces_embedded_driver: false };
 
 const key = (name: string) => `cua.flag.${name}`;
 

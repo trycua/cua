@@ -2435,7 +2435,7 @@ mod tests {
             })
             .collect();
         let last = many.last().unwrap().id.clone();
-        let t = tiles_pinned(&many, None, "", &[last.clone()]);
+        let t = tiles_pinned(&many, None, "", std::slice::from_ref(&last));
         assert_eq!(t.len(), MAX_TILES);
         assert_eq!(t[0].id, last);
     }
@@ -2547,8 +2547,8 @@ mod tests {
             open: true,
             ..Default::default()
         };
-        assert_eq!(view(&open, &[a.clone()]).label, "1 Space");
-        assert_eq!(view(&open, &[wsl.clone()]).label, "1 desktop");
+        assert_eq!(view(&open, std::slice::from_ref(&a)).label, "1 Space");
+        assert_eq!(view(&open, std::slice::from_ref(&wsl)).label, "1 desktop");
         assert_eq!(view(&open, &[a, wsl]).label, "1 Space and 1 desktop");
         assert_eq!(view(&open, &[]).label, "0 Spaces");
     }

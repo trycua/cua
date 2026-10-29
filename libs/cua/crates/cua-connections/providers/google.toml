@@ -1,0 +1,28 @@
+id = "google"
+name = "Google AI Studio"
+icon = "google"
+tier = "top"
+rank = 40
+kind = "hosted"
+aliases = ["gemini", "google ai", "aistudio"]
+wire = "gemini"
+base_url = "https://generativelanguage.googleapis.com/v1beta"
+default_model = "gemini-3.8-flash"
+hermes_id = "gemini"
+key_help = "Create a key at aistudio.google.com/apikey. Every app that uses Gemini can use it."
+placeholder = "AIza…"
+check = { path = "/models", auth = "x-goog-api-key" }
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "GEMINI_API_KEY"
+aliases = ["GOOGLE_API_KEY"]
+
+[delivery]
+gemini-cli = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+google-antigravity = ["GEMINI_API_KEY"]
+opencode = ["GEMINI_API_KEY"]
+pi = ["GEMINI_API_KEY"]
+goose = ["GOOGLE_API_KEY", "GOOGLE_API_KEY<-GEMINI_API_KEY"]
+hermes = ["GEMINI_API_KEY"]

@@ -12,13 +12,15 @@ repository.workspace = true
 # In-process servers for tests (`cua_sandbox_core::testing`): an rmcp MCP
 # server with multimodal tools and a raw streaming HTTP server. Never
 # enabled in release builds.
-testing = ["rmcp/server", "rmcp/transport-streamable-http-server", "dep:axum", "dep:base64"]
+testing = ["rmcp/server", "rmcp/transport-streamable-http-server", "dep:axum"]
 
 [dependencies]
 cua-home.workspace = true
+cua-repo-cache.workspace = true
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest", "reqwest-tls-no-provider", "base64"] }
 axum = { workspace = true, optional = true }
-base64 = { workspace = true, optional = true }
+# External runtime providers send guest output and screenshots as base64.
+base64.workspace = true
 futures-util.workspace = true
 cua-spacesd-client.workspace = true
 # `ImageInfo` from the one resolver's result.

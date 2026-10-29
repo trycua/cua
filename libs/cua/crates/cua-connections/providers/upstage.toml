@@ -1,0 +1,22 @@
+id = "upstage"
+name = "Upstage Solar"
+icon = "upstage"
+tier = "more"
+rank = 190
+kind = "hosted"
+aliases = ["solar"]
+wire = "openai-chat"
+base_url = "https://api.upstage.ai/v1"
+base_url_env = "UPSTAGE_BASE_URL"
+default_model = "solar-pro3"
+hermes_id = "upstage"
+key_help = "Create a key at console.upstage.ai."
+placeholder = "up_…"
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "UPSTAGE_API_KEY"
+
+[delivery]
+hermes = ["UPSTAGE_API_KEY"]

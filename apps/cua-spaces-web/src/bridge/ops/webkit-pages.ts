@@ -39,6 +39,7 @@ export const WEBKIT_PAGE_OPS = [
   "clouds.status",
   "clouds.test",
   "clouds.connect",
+  "clouds.disconnect",
   "teleport.catalog",
   "teleport.entryForPath",
   "teleport.windows",
@@ -74,6 +75,11 @@ export const WEBKIT_PAGE_OPS = [
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
+  "runtimes.check",
+  "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -101,6 +107,7 @@ export const WEBKIT_PAGE_OPS = [
   "host.setUp",
   "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
 ] as const satisfies readonly OpName[];
 
@@ -211,6 +218,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "clouds.status": async () => (await request<OpResult<"clouds.status"> | null>("clouds.status")) ?? { providers: [] },
     "clouds.test": call("clouds.test"),
     "clouds.connect": call("clouds.connect"),
+    "clouds.disconnect": call("clouds.disconnect"),
 
     "teleport.catalog": async ({ spaceId }) => arr(await request("teleport.catalog", { spaceId })).map((e) => entryFromWk(e as Json)),
     "teleport.entryForPath": async ({ path }) => entryFromWk(await request<Json>("teleport.entryForPath", { path })),
@@ -253,6 +261,12 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "loginItem.get": call("loginItem.get"),
     "loginItem.set": call("loginItem.set"),
     "loginItem.openSettings": none("loginItem.openSettings"),
+    "runtimes.check": call("runtimes.check"),
+    // The file panel waits for the person: no timeout.
+    "runtimes.browse": async (args) => (await request("runtimes.browse", { ...args }, null)) as { path: string | null },
+    "repoCache.get": call("repoCache.get"),
+    "repoCache.set": call("repoCache.set"),
+    "repoCache.clear": call("repoCache.clear"),
     "devices.get": call("devices.get"),
     "devices.enroll": call("devices.enroll"),
     "devices.checkEnrolled": async () => Boolean(await request("devices.checkEnrolled")),
@@ -294,6 +308,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "host.setUp": host("host.setUp"),
     "host.joinWithCode": ({ code, relay }) => request("host.joinWithCode", { code, relay: relay ?? null }),
     "host.action": host("host.action"),
+    "host.limits": host("host.limits"),
     "host.openSettings": async ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");
       await request("host.openSettings", { url });

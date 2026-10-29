@@ -52,12 +52,24 @@ fn qemu_state(h: &Home, name: &str, disk: &Path, created_at: u64) {
         accel: String::new(),
         ssh: None,
         restrict_network: false,
+        egress: None,
+        netns: false,
+        pasta_pid: None,
         extra_args: vec![],
         snapshots: vec![],
         paused: false,
         source: None,
         created_at,
         gpu: None,
+        restore_from: None,
+        memory: None,
+        last_start: None,
+        free_page_reporting: false,
+        ram_file: None,
+        headless: false,
+        shared_memory: false,
+        pinned: false,
+        bulk: false,
     };
     std::fs::write(dir.join("state.json"), serde_json::to_vec(&st).unwrap()).unwrap();
 }
@@ -203,6 +215,8 @@ async fn orphaned_ephemeral_sandboxes_are_reaped_on_the_next_cli_run() {
     assert!(base.exists());
 }
 
+// Windows has no QEMU runtime here, so the runtime check fails before the disk guard.
+#[cfg(not(windows))]
 #[tokio::test]
 async fn low_disk_guard_fails_typed_with_a_prune_hint() {
     let mut h = home();

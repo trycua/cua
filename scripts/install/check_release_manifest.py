@@ -14,7 +14,10 @@ It fails unless:
   recognises: the SwiftUI, Electron, Tauri and CLI artifacts) is listed in
   release-artifacts.json under that component and version, with the file's
   sha256 and size and, with --base-url, its download URL; and every listed
-  artifact of that component names an asset that is here.
+  artifact of that component names an asset that is here. With
+  --allow-carried-forward (a partial release), an entry of another version is
+  a platform's earlier build: it must carry a url and sha256 but need not name
+  an asset of this release.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from release_manifest import classify, sha256  # noqa: E402
 META = {"checksums.txt", "release-artifacts.json", "latest.json"}
 
 
-def check(directory: Path, component: str, version: str, base_url: str | None) -> list[str]:
+def check(directory: Path, component: str, version: str, base_url: str | None, carried: bool = False) -> list[str]:
     errors: list[str] = []
     assets = {
         p.name: p
@@ -91,7 +94,14 @@ def check(directory: Path, component: str, version: str, base_url: str | None) -
                 errors.append(f"{where} version {row.get('version')!r}, want {version!r}")
             if base_url and row.get("url") != f"{base_url.rstrip('/')}/{name}":
                 errors.append(f"{where} url {row.get('url')} is not {base_url.rstrip('/')}/{name}")
-    for name in by_name:
+    for name, rows in by_name.items():
+        # A partial release keeps other platforms' entries from their own
+        # (older) release; they name assets of that release, not this one.
+        if carried and all(row.get("version") != version for row in rows):
+            for row in rows:
+                if not row.get("url") or not row.get("sha256"):
+                    errors.append(f"release-artifacts.json: carried-forward {name} ({row.get('platform')}) lacks a url or sha256")
+            continue
         if name not in assets:
             errors.append(f"release-artifacts.json lists {name}, which is not on the release")
     return errors
@@ -103,8 +113,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--component", choices=("cli", "app"), required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--base-url")
+    parser.add_argument("--allow-carried-forward", action="store_true",
+                        help="partial release: entries of another version are other platforms' earlier builds")
     args = parser.parse_args(argv)
-    errors = check(Path(args.dir), args.component, args.version, args.base_url)
+    errors = check(Path(args.dir), args.component, args.version, args.base_url, args.allow_carried_forward)
     for error in errors:
         print(f"FAIL {error}")
     if errors:

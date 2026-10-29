@@ -1,0 +1,1193 @@
+{
+  "harnesses": [
+    "claude-code",
+    "openai-codex",
+    "gemini-cli",
+    "google-antigravity",
+    "opencode",
+    "goose",
+    "pi",
+    "hermes",
+    "openclaw"
+  ],
+  "methodKinds": [
+    "api_key",
+    "import_login",
+    "device_code",
+    "browser_oauth",
+    "subscription_login",
+    "adc",
+    "local_server",
+    "custom_endpoint"
+  ],
+  "providers": [
+    {
+      "aliases": [],
+      "alsoWires": [],
+      "delivery": {
+        "claude-code": [
+          "ANTHROPIC_API_KEY",
+          "CLAUDE_CODE_OAUTH_TOKEN",
+          "ANTHROPIC_AUTH_TOKEN"
+        ],
+        "goose": [
+          "ANTHROPIC_API_KEY"
+        ],
+        "hermes": [
+          "ANTHROPIC_API_KEY"
+        ],
+        "openclaw": [
+          "ANTHROPIC_API_KEY"
+        ],
+        "opencode": [
+          "ANTHROPIC_API_KEY"
+        ],
+        "pi": [
+          "ANTHROPIC_API_KEY"
+        ]
+      },
+      "hermesId": "anthropic",
+      "hidden": false,
+      "icon": "anthropic",
+      "id": "anthropic",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "claude-login",
+          "kind": "import_login",
+          "scope": "claude-code"
+        },
+        {
+          "id": "claude-token",
+          "kind": "import_login",
+          "scope": "claude-code"
+        },
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Anthropic",
+      "rank": 10,
+      "regions": [],
+      "tier": "top",
+      "wire": "anthropic"
+    },
+    {
+      "aliases": [],
+      "alsoWires": [
+        "openai-chat"
+      ],
+      "delivery": {
+        "goose": [
+          "OPENAI_API_KEY"
+        ],
+        "hermes": [
+          "OPENAI_API_KEY"
+        ],
+        "openai-codex": [
+          "OPENAI_API_KEY",
+          "CODEX_API_KEY",
+          "CODEX_AUTH_JSON"
+        ],
+        "openclaw": [
+          "OPENAI_API_KEY"
+        ],
+        "opencode": [
+          "OPENAI_API_KEY"
+        ],
+        "pi": [
+          "OPENAI_API_KEY"
+        ]
+      },
+      "hermesId": "openai-api",
+      "hidden": false,
+      "icon": "openai",
+      "id": "openai",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "chatgpt-login",
+          "kind": "subscription_login",
+          "scope": "openai-codex"
+        },
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "OpenAI",
+      "rank": 20,
+      "regions": [],
+      "tier": "top",
+      "wire": "openai-responses"
+    },
+    {
+      "aliases": [],
+      "alsoWires": [],
+      "delivery": {
+        "goose": [
+          "OPENROUTER_API_KEY"
+        ],
+        "hermes": [
+          "OPENROUTER_API_KEY"
+        ],
+        "openclaw": [
+          "OPENROUTER_API_KEY"
+        ],
+        "opencode": [
+          "OPENROUTER_API_KEY"
+        ],
+        "pi": [
+          "OPENROUTER_API_KEY"
+        ]
+      },
+      "hermesId": "openrouter",
+      "hidden": false,
+      "icon": "openrouter",
+      "id": "openrouter",
+      "kind": "aggregator",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "OpenRouter",
+      "rank": 30,
+      "regions": [],
+      "tier": "top",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "gemini",
+        "google ai",
+        "aistudio"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "gemini-cli": [
+          "GEMINI_API_KEY",
+          "GOOGLE_API_KEY"
+        ],
+        "google-antigravity": [
+          "GEMINI_API_KEY"
+        ],
+        "goose": [
+          "GOOGLE_API_KEY",
+          "GOOGLE_API_KEY<-GEMINI_API_KEY"
+        ],
+        "hermes": [
+          "GEMINI_API_KEY"
+        ],
+        "opencode": [
+          "GEMINI_API_KEY"
+        ],
+        "pi": [
+          "GEMINI_API_KEY"
+        ]
+      },
+      "hermesId": "gemini",
+      "hidden": false,
+      "icon": "google",
+      "id": "google",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Google AI Studio",
+      "rank": 40,
+      "regions": [],
+      "tier": "top",
+      "wire": "gemini"
+    },
+    {
+      "aliases": [
+        "grok"
+      ],
+      "alsoWires": [
+        "openai-chat"
+      ],
+      "delivery": {
+        "hermes": [
+          "XAI_API_KEY"
+        ]
+      },
+      "hermesId": "xai",
+      "hidden": false,
+      "icon": "xai",
+      "id": "xai",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "xAI",
+      "rank": 50,
+      "regions": [],
+      "tier": "top",
+      "wire": "openai-responses"
+    },
+    {
+      "aliases": [],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "DEEPSEEK_API_KEY"
+        ]
+      },
+      "hermesId": "deepseek",
+      "hidden": false,
+      "icon": "deepseek",
+      "id": "deepseek",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "DeepSeek",
+      "rank": 60,
+      "regions": [],
+      "tier": "top",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "moonshot",
+        "kimi code"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "KIMI_API_KEY"
+        ]
+      },
+      "hermesId": "kimi-coding",
+      "hidden": false,
+      "icon": "kimi",
+      "id": "kimi",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Kimi (Moonshot)",
+      "rank": 70,
+      "regions": [],
+      "tier": "top",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "copilot",
+        "github copilot cli"
+      ],
+      "alsoWires": [],
+      "delivery": {},
+      "hermesId": "",
+      "hidden": false,
+      "icon": "github",
+      "id": "github",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "GitHub Copilot",
+      "rank": 80,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "hf"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "HF_TOKEN"
+        ]
+      },
+      "hermesId": "huggingface",
+      "hidden": false,
+      "icon": "huggingface",
+      "id": "huggingface",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Hugging Face",
+      "rank": 100,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "glm",
+        "zhipu",
+        "z.ai"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "GLM_API_KEY"
+        ]
+      },
+      "hermesId": "zai",
+      "hidden": false,
+      "icon": "zai",
+      "id": "zai",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Z.AI (GLM)",
+      "rank": 110,
+      "regions": [
+        "global",
+        "cn",
+        "coding-global",
+        "coding-cn"
+      ],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "fw"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "FIREWORKS_API_KEY"
+        ]
+      },
+      "hermesId": "fireworks",
+      "hidden": false,
+      "icon": "fireworks",
+      "id": "fireworks",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Fireworks AI",
+      "rank": 120,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "nim",
+        "nemotron",
+        "build.nvidia.com"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "NVIDIA_API_KEY"
+        ]
+      },
+      "hermesId": "nvidia",
+      "hidden": false,
+      "icon": "nvidia",
+      "id": "nvidia",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "NVIDIA NIM",
+      "rank": 130,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "ollama"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "OLLAMA_API_KEY"
+        ]
+      },
+      "hermesId": "ollama-cloud",
+      "hidden": false,
+      "icon": "ollama-cloud",
+      "id": "ollama-cloud",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Ollama Cloud",
+      "rank": 140,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "deep infra"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "DEEPINFRA_API_KEY"
+        ]
+      },
+      "hermesId": "deepinfra",
+      "hidden": false,
+      "icon": "deepinfra",
+      "id": "deepinfra",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "DeepInfra",
+      "rank": 150,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "novitaai"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "NOVITA_API_KEY"
+        ]
+      },
+      "hermesId": "novita",
+      "hidden": false,
+      "icon": "novita",
+      "id": "novita",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Novita AI",
+      "rank": 160,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "nebius"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "NEBIUS_API_KEY"
+        ]
+      },
+      "hermesId": "nebius-token-factory",
+      "hidden": false,
+      "icon": "nebius-token-factory",
+      "id": "nebius-token-factory",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Nebius Token Factory",
+      "rank": 170,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "gmicloud"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "GMI_API_KEY"
+        ]
+      },
+      "hermesId": "gmi",
+      "hidden": false,
+      "icon": "gmi",
+      "id": "gmi",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "GMI Cloud",
+      "rank": 180,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "solar"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "UPSTAGE_API_KEY"
+        ]
+      },
+      "hermesId": "upstage",
+      "hidden": false,
+      "icon": "upstage",
+      "id": "upstage",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Upstage Solar",
+      "rank": 190,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "trinity"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "ARCEEAI_API_KEY"
+        ]
+      },
+      "hermesId": "arcee",
+      "hidden": false,
+      "icon": "arcee",
+      "id": "arcee",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Arcee AI",
+      "rank": 200,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "vercel"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "AI_GATEWAY_API_KEY"
+        ]
+      },
+      "hermesId": "ai-gateway",
+      "hidden": false,
+      "icon": "ai-gateway",
+      "id": "ai-gateway",
+      "kind": "aggregator",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Vercel AI Gateway",
+      "rank": 210,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "zen"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "OPENCODE_ZEN_API_KEY"
+        ]
+      },
+      "hermesId": "opencode-zen",
+      "hidden": false,
+      "icon": "opencode-zen",
+      "id": "opencode-zen",
+      "kind": "aggregator",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "OpenCode Zen",
+      "rank": 220,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "go"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "OPENCODE_GO_API_KEY"
+        ]
+      },
+      "hermesId": "opencode-go",
+      "hidden": false,
+      "icon": "opencode-go",
+      "id": "opencode-go",
+      "kind": "aggregator",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "OpenCode Go",
+      "rank": 230,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "kilo"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "KILOCODE_API_KEY"
+        ]
+      },
+      "hermesId": "kilocode",
+      "hidden": false,
+      "icon": "kilocode",
+      "id": "kilocode",
+      "kind": "aggregator",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Kilo Code",
+      "rank": 240,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "mimo"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "XIAOMI_API_KEY"
+        ]
+      },
+      "hermesId": "xiaomi",
+      "hidden": false,
+      "icon": "xiaomi",
+      "id": "xiaomi",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Xiaomi MiMo",
+      "rank": 250,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "step"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "STEPFUN_API_KEY"
+        ]
+      },
+      "hermesId": "stepfun",
+      "hidden": false,
+      "icon": "stepfun",
+      "id": "stepfun",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "StepFun",
+      "rank": 260,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "mini-max"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "MINIMAX_API_KEY"
+        ]
+      },
+      "hermesId": "minimax",
+      "hidden": false,
+      "icon": "minimax",
+      "id": "minimax",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "MiniMax",
+      "rank": 270,
+      "regions": [],
+      "tier": "more",
+      "wire": "anthropic"
+    },
+    {
+      "aliases": [
+        "qwen",
+        "dashscope",
+        "alibaba cloud"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "DASHSCOPE_API_KEY"
+        ]
+      },
+      "hermesId": "alibaba",
+      "hidden": false,
+      "icon": "alibaba",
+      "id": "alibaba",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Qwen Cloud (Alibaba)",
+      "rank": 280,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "meta",
+        "muse"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "MODEL_API_KEY"
+        ]
+      },
+      "hermesId": "meta-ai",
+      "hidden": true,
+      "icon": "meta-ai",
+      "id": "meta-ai",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Meta Model API",
+      "rank": 290,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-responses"
+    },
+    {
+      "aliases": [
+        "ramp"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "RAMP_ROUTER_API_KEY"
+        ]
+      },
+      "hermesId": "router",
+      "hidden": true,
+      "icon": "router",
+      "id": "router",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Ramp Router",
+      "rank": 300,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-responses"
+    },
+    {
+      "aliases": [],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "COMMANDCODE_API_KEY"
+        ]
+      },
+      "hermesId": "commandcode",
+      "hidden": true,
+      "icon": "commandcode",
+      "id": "commandcode",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "CommandCode",
+      "rank": 310,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "aci"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "ACTUAL_API_KEY"
+        ]
+      },
+      "hermesId": "actual",
+      "hidden": true,
+      "icon": "actual",
+      "id": "actual",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Actual Computer",
+      "rank": 320,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "tencent",
+        "hunyuan"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "TOKENHUB_API_KEY"
+        ]
+      },
+      "hermesId": "tencent-tokenhub",
+      "hidden": true,
+      "icon": "tencent-tokenhub",
+      "id": "tencent-tokenhub",
+      "kind": "hosted",
+      "methods": [
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
+        }
+      ],
+      "name": "Tencent TokenHub",
+      "rank": 330,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "nous research",
+        "hermes"
+      ],
+      "alsoWires": [],
+      "delivery": {},
+      "hermesId": "nous",
+      "hidden": true,
+      "icon": "nous",
+      "id": "nous",
+      "kind": "aggregator",
+      "methods": [],
+      "name": "Nous Portal",
+      "rank": 340,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "qwen cli",
+        "qwen code"
+      ],
+      "alsoWires": [],
+      "delivery": {},
+      "hermesId": "qwen-oauth",
+      "hidden": true,
+      "icon": "qwen",
+      "id": "qwen-oauth",
+      "kind": "hosted",
+      "methods": [],
+      "name": "Qwen CLI sign-in",
+      "rank": 350,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "minimax coding plan"
+      ],
+      "alsoWires": [],
+      "delivery": {},
+      "hermesId": "minimax-oauth",
+      "hidden": true,
+      "icon": "minimax",
+      "id": "minimax-oauth",
+      "kind": "hosted",
+      "methods": [],
+      "name": "MiniMax sign-in",
+      "rank": 360,
+      "regions": [],
+      "tier": "more",
+      "wire": "anthropic"
+    },
+    {
+      "aliases": [
+        "supergrok",
+        "grok subscription"
+      ],
+      "alsoWires": [],
+      "delivery": {},
+      "hermesId": "xai-oauth",
+      "hidden": true,
+      "icon": "xai",
+      "id": "xai-oauth",
+      "kind": "hosted",
+      "methods": [],
+      "name": "SuperGrok sign-in",
+      "rank": 370,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-responses"
+    },
+    {
+      "aliases": [
+        "gcp",
+        "google cloud"
+      ],
+      "alsoWires": [],
+      "delivery": {},
+      "hermesId": "vertex",
+      "hidden": true,
+      "icon": "google",
+      "id": "vertex",
+      "kind": "cloud",
+      "methods": [
+        {
+          "id": "adc",
+          "kind": "adc",
+          "scope": ""
+        }
+      ],
+      "name": "Google Vertex AI",
+      "rank": 380,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "aws",
+        "amazon"
+      ],
+      "alsoWires": [],
+      "delivery": {},
+      "hermesId": "bedrock",
+      "hidden": true,
+      "icon": "aws",
+      "id": "bedrock",
+      "kind": "cloud",
+      "methods": [
+        {
+          "id": "adc",
+          "kind": "adc",
+          "scope": ""
+        }
+      ],
+      "name": "Amazon Bedrock",
+      "rank": 390,
+      "regions": [],
+      "tier": "more",
+      "wire": "bedrock"
+    },
+    {
+      "aliases": [
+        "azure",
+        "azure openai",
+        "microsoft"
+      ],
+      "alsoWires": [],
+      "delivery": {},
+      "hermesId": "azure-foundry",
+      "hidden": true,
+      "icon": "azure",
+      "id": "azure-foundry",
+      "kind": "cloud",
+      "methods": [
+        {
+          "id": "adc",
+          "kind": "adc",
+          "scope": ""
+        }
+      ],
+      "name": "Azure AI Foundry",
+      "rank": 400,
+      "regions": [],
+      "tier": "more",
+      "wire": "openai-chat"
+    },
+    {
+      "aliases": [
+        "openai compatible",
+        "lm studio",
+        "ollama",
+        "vllm",
+        "llama.cpp",
+        "litellm",
+        "local server",
+        "gateway",
+        "proxy"
+      ],
+      "alsoWires": [],
+      "delivery": {
+        "hermes": [
+          "CUSTOM_ENDPOINT_API_KEY"
+        ]
+      },
+      "hermesId": "custom",
+      "hidden": false,
+      "icon": "custom",
+      "id": "custom",
+      "kind": "custom",
+      "methods": [
+        {
+          "id": "endpoint",
+          "kind": "custom_endpoint",
+          "scope": ""
+        }
+      ],
+      "name": "Custom endpoint",
+      "rank": 900,
+      "regions": [],
+      "tier": "top",
+      "wire": "openai-chat"
+    }
+  ]
+}

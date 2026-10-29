@@ -88,7 +88,12 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
     /// One session per Space and tier, shared by its surfaces.
     final class Stream {
         var session: LiveStreamSession?
+        /// Slots showing it, plus holds (`holdViewer`).
         var users = 0
+        /// Holders other than slots: the desktop's picture-in-picture panel,
+        /// which shows this same session. A held stream keeps going while
+        /// the window is hidden, and outlives its slots.
+        var holds = 0
         var opening: Task<Void, Never>?
         var failure: String?
         var status: AnyCancellable?
@@ -139,7 +144,9 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         case let .surfaces(update, remove):
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            for id in remove { self.remove(id) }
+            // A viewer the page moves (the Space page's call and thread layouts)
+            // comes back to the same live session (`slotGrace`).
+            for id in remove { self.remove(id, grace: true) }
             for u in update { place(u) }
             CATransaction.commit()
         case let .focus(id):
@@ -152,6 +159,12 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
     /// Tears every surface and session down (window closed, page replaced).
     func removeAll() {
         for id in Array(surfaces.keys) { remove(id) }
+        // A viewer still in its `slotGrace` has no page to come back to:
+        // stop it now (a picture-in-picture hold keeps its own).
+        for (key, stream) in streams where stream.holds == 0 {
+            stream.users = 1
+            letGo(stream, key: key)
+        }
     }
 
     // MARK: - Surfaces
@@ -171,8 +184,10 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.view.input.showsCursorOverlay = u.interactive && surface.view.presence?.presenceView == nil
         surface.view.apply(surface.layout)
         show(surface)
-        // Keys never stay with a viewer that page UI covers or that left the screen.
-        if focusedId == surface.id, surface.view.isHidden { focus(nil) }
+        // Keys never stay with a viewer that page UI covers or that left the
+        // screen, nor with one the page made non-interactive (a modal dialog
+        // is open over it: the video keeps playing, the dialog takes the keys).
+        if focusedId == surface.id, surface.view.isHidden || !u.interactive { focus(nil) }
     }
 
     private func attach(_ u: VideoSurfaceUpdate, in webView: WKWebView) -> Surface {
@@ -316,7 +331,7 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.view.isHidden = surface.layout.hidden || surface.phase != .live
     }
 
-    private func remove(_ surfaceId: String) {
+    private func remove(_ surfaceId: String, grace: Bool = false) {
         guard let surface = surfaces.removeValue(forKey: surfaceId) else { return }
         if focusedId == surfaceId { focus(nil) }
         surface.view.input.keyboardReturn.forget()
@@ -330,12 +345,91 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.view.removeFromSuperview()
         if surfaces.isEmpty { unwatchWindow() }
         guard let stream = streams[surface.key] else { return }
+        guard grace, surface.key.tier == .full, stream.session != nil, slotGrace > .zero else {
+            return letGo(stream, key: surface.key)
+        }
+        let key = surface.key
+        Task { @MainActor [weak self, weak stream] in
+            try? await Task.sleep(for: self?.slotGrace ?? .zero)
+            guard let self, let stream else { return }
+            self.letGo(stream, key: key)
+        }
+    }
+
+    /// How long a viewer's session outlives its slot: the page that moves
+    /// the viewer (call view to thread view and back) mounts its new slot
+    /// in that time, and it binds to the same live session.
+    var slotGrace: Duration = .milliseconds(1500)
+
+    /// One user fewer; the last one stops the session.
+    private func letGo(_ stream: Stream, key: StreamKey) {
         stream.users -= 1
-        guard stream.users <= 0 else { return }
-        streams[surface.key] = nil
+        guard stream.users <= 0, streams[key] === stream else { return }
+        streams[key] = nil
         stream.opening?.cancel()
         stream.status?.cancel()
         if let session = stream.session { Task { await session.stop() } }
+    }
+
+    // MARK: - Picture in picture
+
+    /// How long a released hold keeps the session for the page's slot to
+    /// come back to it (the page hears the panel closed, then mounts its
+    /// slot again).
+    static let handBackGrace: Duration = .seconds(5)
+
+    /// The Space's viewer session (its full-tier stream), held for the
+    /// desktop's picture-in-picture panel: the panel shows this same
+    /// session, so popping out and back in never closes or reopens the
+    /// stream. The inline slot that comes back binds to the live session
+    /// and shows its current frame at once. Opens the stream when no slot
+    /// has. Balance with `releaseViewer`.
+    func holdViewer(spaceId: String) async throws -> LiveStreamSession {
+        let key = StreamKey(spaceId: spaceId, tier: .full)
+        let stream: Stream
+        if let existing = streams[key], existing.failure == nil {
+            stream = existing
+        } else {
+            // A stream that failed to open starts over for the panel.
+            if let failed = streams[key] { failed.opening?.cancel(); failed.status?.cancel() }
+            stream = Stream()
+            stream.users = streams[key]?.users ?? 0
+            streams[key] = stream
+        }
+        stream.users += 1
+        stream.holds += 1
+        if stream.session == nil, stream.opening == nil { openStream(stream, key: key) }
+        await stream.opening?.value
+        guard let session = stream.session else {
+            let why = stream.failure ?? "the desktop stream did not open"
+            stream.holds -= 1
+            letGo(stream, key: key)
+            throw Failure(why)
+        }
+        // A hidden window paused it; the panel shows it regardless.
+        if paused { Task { await session.start() } }
+        return session
+    }
+
+    /// The panel closed: after `grace`, the hold goes (the session stops
+    /// unless a slot shows it by then).
+    func releaseViewer(spaceId: String, after grace: Duration = handBackGrace) {
+        let key = StreamKey(spaceId: spaceId, tier: .full)
+        guard let stream = streams[key], stream.holds > 0 else { return }
+        Task { @MainActor [weak self, weak stream] in
+            if grace > .zero { try? await Task.sleep(for: grace) }
+            guard let self, let stream else { return }
+            stream.holds -= 1
+            self.letGo(stream, key: key)
+            if self.paused, stream.holds == 0, self.streams[key] === stream, let session = stream.session {
+                await session.stop()
+            }
+        }
+    }
+
+    struct Failure: Error, CustomStringConvertible {
+        let description: String
+        init(_ description: String) { self.description = description }
     }
 
     /// The streams and their sessions (the harness's stats).
@@ -412,7 +506,8 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         guard hidden != paused else { return }
         paused = hidden
         for stream in streams.values {
-            guard let session = stream.session else { continue }
+            // The picture-in-picture panel shows a held stream: it keeps going.
+            guard let session = stream.session, stream.holds == 0 else { continue }
             Task { hidden ? await session.stop() : await session.start() }
         }
     }
@@ -446,11 +541,34 @@ final class VideoSurfaceView: NSView {
 
     override var isFlipped: Bool { true }
 
+    /// Where the page's floating UI sits over the video (container coordinates).
+    private(set) var layout = VideoSurfaceLayout.none
+
     func apply(_ layout: VideoSurfaceLayout) {
+        self.layout = layout
         frame = layout.container
         input.frame = layout.video
         input.layer?.cornerRadius = layout.radius
         presence?.frame = layout.video
+        applyHoles()
+    }
+
+    /// Cuts the video out under the page's menus, popovers, tooltips and
+    /// toasts, so they show and the rest of the desktop keeps playing
+    /// (hiding the whole view for a menu turned it black).
+    private func applyHoles() {
+        guard let layer else { return }
+        guard !layout.holes.isEmpty else {
+            layer.mask = nil
+            return
+        }
+        // The holes are in this (flipped) view's coordinates: into the layer's.
+        let toLayer = VideoSurfaceLayout(container: layout.container, video: layout.video, radius: layout.radius,
+                                         holes: layout.holes.map { convertToLayer($0) }, hidden: layout.hidden)
+        let mask = (layer.mask as? CAShapeLayer) ?? CAShapeLayer()
+        mask.frame = layer.bounds
+        mask.path = toLayer.maskPath
+        layer.mask = mask
     }
 
     /// Adds the presence layer over the picture. It takes no clicks or keys
@@ -475,6 +593,8 @@ final class VideoSurfaceView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard interactive, !isHidden else { return nil }
+        // Over a hole the page's own UI (a menu, the key bar) takes the click.
+        if layout.inHole(convert(point, from: superview)) { return nil }
         if NSApp.currentEvent?.type == .scrollWheel, window?.firstResponder !== input { return nil }
         return super.hitTest(point)
     }

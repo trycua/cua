@@ -1,59 +1,68 @@
 ---
 title: Add a computer
-description: 'Connect another Mac, Windows or Linux computer you own to Cua Spaces, so your agents and your other devices can use it. Also how to turn a spare Mac into a place that runs Spaces.'
+description: 'Connect another Mac, Windows or Linux computer you own to Cua Spaces, so your agents and your other machines can use it. Also how to turn a spare Mac into a place that runs Spaces.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 A computer you add runs Spaces for you. Once it is added, it shows up in
-**Computers** on all your devices, your agents can create Spaces on it, and you
+**Machines** on all your machines, your agents can create Spaces on it, and you
 can open its desktop from anywhere, even when nobody is sitting at it. Cua
 doesn't rent computers: add a Mac on your desk, a spare box in the office, or a
-VM in your own cloud account.
+VM in your own cloud account. For a walkthrough of each, see
+[Bring your own compute](/spaces/guides/bring-your-own-compute).
 
-<VideoDemo
-  src="https://trycua.github.io/assets/videos/cua-spaces/add-a-computer.mp4"
-  poster="https://trycua.github.io/assets/videos/cua-spaces/add-a-computer-poster.jpg"
-  title="Add a computer to Cua Spaces"
->
-  Add a second computer with a link and see it appear in your list (32 seconds, no sound).
-</VideoDemo>
+![Add a computer: one row per way to add it, and a prompt for an agent on the other computer](/img/spaces/add-a-computer.png)
 
 ## Add a computer from the app
 
-You need Cua Spaces on the computer you are adding, or its install command.
+In Cua Spaces, open **Machines** and press **Add a machine**. You can also
+find it in the command palette. The sheet
+lists the ways to add one; pick the one that suits the other computer.
 
-1. In Cua Spaces, open **Computers** and press **Add a computer**. You can also
-   find it in the Getting Started checklist and the command palette.
-2. If you belong to a team, choose who the computer is for next to **Add it for**:
-   **Just me** or the team. See [Team computers](/spaces/guides/teams#team-computers).
-3. On the other computer, do one of these:
-   - Open the link.
-   - Scan the QR code with its camera.
-   - Run the install command in its terminal. Choose **macOS / Linux** or
-     **Windows (preview)** in the dialog to get the right command.
-4. If Cua Spaces is already on that computer, open **Computers** there, press
-   **Join with a code** and paste the code. The app asks before it joins.
-5. Watch the dialog. It says "Waiting for the computer..." and then "Added", and
-   the computer appears in your list.
+| Way | What to do on the other computer |
+|---|---|
+| **Sign in there** | Open `https://cua.ai/install`, install Cua Spaces and sign in with the same account. Signing in adds the computer. No code needed. |
+| **Open a link** | Open the one-time link the sheet shows. The page gives the install command for that computer, which installs Cua Spaces and adds it. |
+| **Scan a QR code** | Scan the code with that computer's camera. It opens the same link. |
+| **Run a command** | Run the command in a terminal. **macOS / Linux** and **Windows (preview)** each have their own. |
+| **Enter a code** | For a computer that already has Cua Spaces. There, open **Add a machine**, choose **Have a code? Enter it** and type the code. |
 
-The link and code work once and expire after a short time. The dialog shows how
-long is left. Press **Revoke link** to cancel one you no longer need, or **Make
-a new link** if it expired.
+You can also paste the prompt under **Or paste this into an agent on that
+computer** into an AI agent running there. It carries the same one-time code.
+
+The sheet waits for the computer and then says **Added** with its name,
+whichever way you used. The link, code, command and prompt work once and
+expire after 30 minutes. While the sheet is open they renew by themselves. The
+**⋯** menu shows how long the code has left, makes a new one, or revokes it.
+
+If you are an owner or admin of a team on the Teams plan, choose the team next
+to **For** at the bottom of the sheet. See
+[Team computers](/spaces/guides/teams#team-computers).
+
+A `cua://add/<code>` link opens **Enter a code** with the code filled in. The
+app asks before this computer joins.
 
 <Callout type="warn">
   Only use a code you made yourself. Joining adds the computer to the account
   that made the code, and that account can then reach it.
 </Callout>
 
+A computer added from this sheet, or by signing in, provides Spaces and keeps
+its screen private. Turn off **Let other machines create Spaces here** in
+**Settings** to stop it running Spaces for you, and turn on **Let other
+machines control this desktop** on its page under **Machines** to see and
+control its screen from your other machines. With both off, the machine simply
+isn't shared.
+
 ## Add a computer from a terminal
 
 If you can't use the link, set the computer up yourself:
 
 1. Install Cua Spaces on it. See [Install](/spaces/guides/install).
-2. Sign in with the same account you use here. A computer joins the account it
-   is set up with.
-3. Open **This computer**, choose how to use it, and press **Set up for access**.
+2. Sign in with the same account you use here. Signing in adds the computer to
+   that account. The installer does the same after it signs you in; add
+   `--no-host` to sign in without adding the computer.
 
 Or run this in a terminal on that computer:
 
@@ -64,7 +73,7 @@ cua host setup          # signs in to cua.ai for this command if needed
 `cua host setup` installs cua-spacesd as a background service. By default it
 joins the cua.ai relay with an outbound connection, as your account: no port
 forwarding and no token to copy. Your other devices, once
-[enrolled](#reach-it-from-your-other-devices), then see the computer as
+[enrolled](#reach-it-from-your-other-machines), then see the computer as
 `relay:<machine-id>` in `cua spaces ls` and in the app.
 
 The computer keeps only its own token. If it is not signed in, setup
@@ -81,9 +90,8 @@ and rotates the token.
 | `--relay URL` | Use a different relay (`CUA_RELAY_URL`). The default is `https://relay.cua.ai`. |
 | `--name NAME` | Display name (default: host name). |
 | `--allow ACCOUNT` | Also allow this account (id or email). Repeatable. |
-| `--runner KIND` | `auto`, `systemd`, `launchd`, `windows-task` or `process`. |
-| `--profile spare` | A spare computer: do not share its desktop, create Spaces for your devices (`--no-desktop --provide-spaces`). See [Use a spare Mac to host Spaces](#use-a-spare-mac-to-host-spaces). |
-| `--no-desktop` / `--provide-spaces` | Each of the two settings on its own. `cua host config` changes them later. |
+| `--runner KIND` | `auto`, `systemd`, `launchd`, `windows-task` or `process`. On Linux, `auto` uses systemd when it is running, otherwise `process`. |
+| `--share desktop\|spaces\|both\|none` | What this computer shares: `desktop` (this desktop only), `spaces` (create Spaces for your devices and keep its own desktop private; see [Use a spare Mac to host Spaces](#use-a-spare-mac-to-host-spaces)), `both`, or `none` (refused: there is nothing to share). Without it the desktop is shared, and a computer set up for the first time also provides Spaces; a computer set up before keeps its setting. `cua host config` changes it later. |
 
 ## What each system needs
 
@@ -91,7 +99,9 @@ and rotates the token.
 |---|---|---|
 | macOS | LaunchAgent `com.trycua.spacesd.host` in your GUI session | Grant cua-spacesd **Screen Recording** and **Accessibility** in System Settings, and [Cua Driver](/cua-driver/quickstart) its own permissions. Setup can't do it for you. |
 | Windows | Scheduled task `Cua\SpacesdHost` at logon, in your interactive session | Stay signed in and unlocked. After a restart, sign in once. |
-| Linux | systemd unit `cua-spacesd-host.service` (user unit; system unit as root) | Nothing more. |
+| Linux | systemd unit `cua-spacesd-host.service` (user unit; system unit as root). Without systemd (a container, or WSL without systemd): a plain process, and setup warns about it. | With systemd, nothing more. A plain process does not come back after a reboot or a crash: turn on systemd and run `cua host setup --runner systemd` again with the same options, or run `cua host start` after each boot. |
+
+`cua host status` shows the runner in use.
 
 On Windows the host runs in your signed-in session, so your devices reach the
 desktop only while it is signed in, unlocked and on screen:
@@ -108,7 +118,7 @@ desktop only while it is signed in, unlocked and on screen:
 
 A viewer or agent that connects in one of these states sees which one it is.
 
-## Reach it from your other devices
+## Reach it from your other machines
 
 A device reaches your computers through the cua.ai relay only after it is
 enrolled once with a second factor, so a stolen account session alone is not
@@ -138,11 +148,12 @@ cua devices audit      # who opened which machine, from which device, and when
 cua devices revoke dev_0123456789abcdef01234567
 ```
 
-In the app, **Settings > Devices** shows this device's enrollment, your devices
-with Rename and Revoke, and Recent Access (which device opened which computer,
-and when). When another device asks to join, the app shows an approval sheet:
-Approve asks for Touch ID or your login password first, and Deny revokes that
-device.
+A machine that is gone: `cua machines rm <name>` removes it from your relay directory and revokes its device.
+
+In the app, the **Machines** tab holds all of it. A machine that asks to join waits at the top
+with **Add machine** and **Not me** (Add machine asks for Touch ID or your login password first, and
+Not me refuses it), and the sidebar shows how many wait. Each machine's page has Rename, Revoke and
+its recent access (who opened it, and when), and this machine's Details say how far it is trusted.
 
 ## Share it with your team
 
@@ -201,27 +212,46 @@ steps above.
 On the spare Mac:
 
 ```bash test="cli-shape" id="cua-host-setup-spare"
-cua host setup --profile spare --name "Mac mini (spare)"
+cua host setup --share spaces --name "Mac mini (spare)"
 ```
 
-`--profile spare` is shorthand for `--no-desktop --provide-spaces`. Setup joins
+`--share spaces` shares no desktop and provides Spaces. Setup joins
 the relay the way the steps above do. It signs you in for that one command and
 keeps no account session, only the computer's own token.
 
+Your laptop then reaches the Mac over Cua's
+[end-to-end encrypted mesh](/spaces/guides/relay-security#end-to-end-encrypted-connections):
+directly when the two networks allow it (on the same LAN that is the LAN),
+through the relay as ciphertext otherwise. The relay introduces the two and
+never holds the keys.
+
+For how this computer, its device record and its Spaces fit together, see
+[Computers, devices and Spaces](/spaces/concepts/computers-devices-and-spaces).
+
 The computer has two settings, and each works on its own:
 
-| Setting | What it does | `desktop` profile (default) | `spare` profile |
+| Setting | What it does | Default | `--share spaces` |
 |---|---|---|---|
-| Share this desktop | The computer itself is a Space: its screen, input, shell and files. | on | off |
-| Provide Spaces | Your enrolled devices can create, list and delete Spaces on it. | off | on |
+| Let other machines control this desktop (`--desktop`) | The computer itself is a Space: its screen, input, shell and files. | on | off |
+| Let other machines create Spaces here (`--provide-spaces`) | Your trusted machines can create, list and delete Spaces on it. | on for a new setup | on |
 
-With **Share this desktop** off, a relayed caller reaches only the Spaces
-service. Change either setting at any time:
+A computer set up before this default keeps what it had: setting it up again
+never turns **Provide Spaces** on unless you pass `--share spaces` or `--share both`. With
+**Provide Spaces** on, your devices (and teammates you share the computer with
+as editors) can run Spaces and `cua run` jobs on it, at most 4 at once and two
+macOS VMs on a Mac. Nothing runs until a Space is created. When Provide Spaces
+turns on in the Cua Spaces app, the app asks for macOS Local Network access on
+that Mac (click **Allow** when macOS asks), which macOS Spaces your other
+devices create there need. With **Share this
+desktop** off, a relayed caller reaches only the Spaces service. Change either
+setting at any time:
 
 ```bash test="cli-shape" id="cua-host-config"
 cua host config                                    # show both settings and the Spaces it runs
 cua host config --desktop on --provide-spaces on   # share the desktop too
 cua host config --max-spaces 6                     # at most 6 Spaces at once (default 4)
+cua host config --max-memory 32 --max-disk 200     # at most 32 GB of memory and 200 GB of disk in total
+cua host config --max-run-time 480                 # a Space made here stops after 8 hours
 ```
 
 The app's **This computer** page has the same two switches, the Spaces the
@@ -231,7 +261,10 @@ computer provides, and every remote create and delete.
 
 A spare Mac mini you only reach over ssh (on your [Tailscale](https://tailscale.com)
 or your LAN) works the same way. Tailscale is only the ssh transport here:
-hosting Spaces still goes through the cua.ai relay.
+the cua.ai relay coordinates hosting Spaces, and the mesh between your laptop
+and the Mac uses the tailnet's addresses as direct paths when both are on it.
+To host on your tailnet without the relay at all, see
+[below](#over-tailscale-without-the-relay).
 
 ```bash skip="no-runner"
 ssh mini.your-tailnet.ts.net
@@ -246,7 +279,7 @@ Cua Spaces app and hosting, and `--no-onboarding` skips the automatic
 with a device code:
 
 ```bash test="cli-shape" id="cua-host-setup-spare-ssh"
-cua host setup --remote --profile spare --name "Mac mini (spare)"
+cua host setup --remote --share spaces --name "Mac mini (spare)"
 ```
 
 If the mini has no saved account session, this prints a URL and a short code
@@ -263,9 +296,24 @@ setup. An existing account session is reused.
   Privacy & Security. Setup can't grant these for you.
 </Callout>
 
+<Callout type="warn">
+  A macOS Space also needs **Local Network** access, and macOS asks for it only
+  on the mini's own screen. With nobody at the screen, the create stops within
+  seconds and says so. Allow it once from the SSH session instead (Apple
+  documents this in [TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy),
+  macOS 15.5 and later). It lets every app on that Mac reach its virtual
+  computers, and it needs a restart:
+
+  ```sh skip="no-runner"
+  sudo defaults write com.apple.network.local-network AllowedEthernetLocalNetworkAddresses -array 192.168.64.0/24
+  sudo defaults write com.apple.network.local-network AllowedWiFiLocalNetworkAddresses -array 192.168.64.0/24
+  sudo shutdown -r now
+  ```
+</Callout>
+
 ### Create Spaces on it from your laptop
 
-Your laptop must be [enrolled](#reach-it-from-your-other-devices) for your
+Your laptop must be [enrolled](#reach-it-from-your-other-machines) for your
 account. Then ask your coding agent, through the cua MCP server:
 
 > spin up 2 macos spaces on my spare mac mini
@@ -307,6 +355,17 @@ the Space leaves the relay.
 |---|---|---|
 | macOS VMs on one Mac | 2 | Apple's macOS license allows two macOS VMs per Mac, and Apple Virtualization (which Lume runs on) enforces it. |
 | Spaces at once | 4 | Set with `cua host config --max-spaces N` (0: no limit). |
+| Memory in total | none | The most memory the Spaces other machines create here may use together. Set with `cua host config --max-memory GB`. |
+| Disk in total | none | The most disk those Spaces may use together. Set with `cua host config --max-disk GB`. |
+| Running time | none | A Space made here by another machine stops after this many minutes (`cua host config --max-run-time MINUTES`); starting it again brings it back. |
+
+The limits count only the Spaces other machines create on this computer, not the
+ones you make here yourself. They apply to everyone who asks: another machine, an
+agent, or a Space that overflows from a tree of Spaces. A create past a limit is
+refused with "&lt;machine&gt; has no room for another Space", and `on="auto"` picks
+another machine or your linked cloud instead. Lowering a limit never stops a Space
+that is running: it only refuses new ones, and Settings shows "Over limit" until
+use drops below it. The same numbers are in **Settings**, under **Sharing**.
 
 A request past a limit fails with `limit_exceeded` and says which limit and what
 to do. macOS Spaces need a Mac host: a Linux or Windows host refuses them with
@@ -330,7 +389,7 @@ Every remote create, delete and refusal is a line in the computer's hash-chained
 audit log (`~/.cua/host/spaces-audit.jsonl`). `cua host status` and the app show
 it, and warn when the log does not verify.
 
-Agents follow [per-agent computer access](/spaces/guides/persistent-agents): a
+Agents follow [per-agent computer access](/spaces/guides/agent-memory-and-identity#access-to-your-computers): a
 persistent agent uses a Space on your spare Mac only after you allow it, and a
 grant on the computer does not reach the Spaces it provides.
 
@@ -338,14 +397,118 @@ grant on the computer does not reach the Spaces it provides.
 cua agent allow-computer ada relay:space-0123456789abcdef
 ```
 
+### Use all your computers
+
+Every computer signed in to your account that provides Spaces is part of one
+pool. There is nothing else to set up: sign in on each computer (the app, or
+`cua auth login` and `cua host setup --share spaces`), then ask for `auto`:
+
+```bash test="cli-shape" id="cua-spaces-create-auto"
+cua spaces create linux --on auto
+cua sb run --on auto --count 200 -- sh -c 'echo hello from $(hostname)'
+```
+
+- `--on auto` (`on="auto"` in the SDK and MCP tools, **Auto** in the app's
+  **Run on** menu) picks the least-loaded computer that can take the Space:
+  this one, or one of your computers (or one shared with you as an editor)
+  that provides Spaces. Modal takes it only when you
+  [connected Modal](/cua-sdk/guides/your-cloud) and no
+  computer has room. Without `on`, a Space or run stays on this computer.
+- A computer takes a Space while its CPU and memory are not all **reserved**
+  by the Spaces on it. Other programs keeping its CPUs busy never refuse
+  one: they only make the computer rank lower than an idle one. When every
+  computer that matches is full, the create fails with a capacity error
+  (`HostCapacity` in the SDK, exit code 8 in `cua`) that says what is
+  reserved, not "not found". Delete a Space, ask for less (`--cpus`,
+  `--memory`), or add a computer.
+- `cua sb run` runs a command in a new Space `--count` times, each deleted
+  afterwards. `cua sb runs` shows the runs and their jobs.
+- A run on your computers keeps going when your laptop sleeps: one of your
+  computers that provides Spaces coordinates it, chosen through your
+  account, and another one takes over if it goes away.
+- `cua spaces ls` and the app's sidebar show how loaded each computer is.
+  To stop new work going to a computer, turn **Provide Spaces** off on it
+  (`cua host config --provide-spaces off`); turn it on again to resume. Work
+  it had runs again on another computer.
+
+#### Keep a Space on your computers
+
+A Space you want to outlive any one computer (an agent's long-running home, a
+build machine) is created **durable**: when its computer goes away (powered
+off, crashed, taken offline) it is created again on another of your computers
+that provides Spaces, with the same name.
+
+```bash test="cli-shape" id="cua-spaces-create-durable"
+cua spaces create linux --on auto --durable --name research
+cua spaces ls
+cua spaces delete research --force
+```
+
+- `--durable` goes with `--on auto` (`durable=True` with `on="auto"` in the
+  SDK, `durable: true` in the `create_space` MCP tool). Without `--name` it
+  gets a generated one.
+- `cua spaces ls` (and `list_spaces`, with `durable` set to its name) shows
+  it like any Space, marked `(durable)`, under the computer it runs on now.
+  Use it by its name (`space="research"` in the SDK and MCP tools): the name
+  finds it wherever it is.
+- When it moves it starts fresh: the new copy is a new Space of the same
+  image and size, not a copy of the old one's disk. Keep what must survive in
+  [Cua Volume](/spaces/guides/cua-volume) or your own storage.
+- `cua spaces delete research` deletes it for good; deleting only the copy on
+  one computer would have it created again.
+
+#### What is guaranteed
+
+- **Each job has one result.** A job may run twice (a computer was cut off
+  and its job ran again elsewhere), but only one result is recorded and
+  shown. Make jobs safe to repeat.
+- **No job is lost** while one of your computers that can coordinate and one
+  that can run it are up: a job either ends with its result or says why it
+  could not run.
+- **One coordinator at a time.** The relay hands out the coordinator's
+  lease with a number that only grows and refuses writes under an old
+  number, so a computer that slept or lost its network cannot overwrite the
+  current one, whatever its clock says.
+- **Only your computers.** Work goes only to computers you own or that were
+  shared with you as an editor, that have **Provide Spaces** on, and each
+  computer checks this itself. Every placement is recorded.
+
+Execution is at least once; results are exactly once. How it works, and how
+it was checked (a model checker, simulation of the real code, and fault
+injection on real computers), is in the
+[design](https://github.com/trycua/cua/blob/main/docs/rfcs/pool-self-coordination.md).
+
+<Callout>
+The relay keeps the pool's job log, but only sealed: each job's command,
+environment, input, output and result are encrypted on your devices with
+keys only your account's enrolled devices hold, and the relay stores and
+forwards ciphertext. It reads only what it needs to keep one coordinator and
+one result per job: job ids, the kind of each change, which computer an
+attempt went to, and sizes. A device you revoke cannot read anything written
+after it left. Details are in [What the relay can see](/spaces/guides/relay-security#runs-on-all-your-machines).
+Computers added only by address (no relay) are pooled by the computer you run
+from, and their runs pause while it sleeps.
+</Callout>
+
 ### Over Tailscale without the relay
 
 A spare Mac your laptop reaches by its [Tailscale](https://tailscale.com) (or
 LAN) address can host Spaces without the cua.ai relay: no sign-in on either
-computer and no enrolled devices. Set it up on its Tailscale address:
+computer and no enrolled devices.
+
+With `--tailnet`, your tailnet (Tailscale or Headscale) also identifies who
+calls, so you and the teammates you `--allow` need no token: see
+[Use your tailnet](/spaces/guides/your-tailnet).
+
+```bash test="cli-shape" id="cua-host-setup-tailnet-spare"
+cua host setup --tailnet --share spaces --name "Mac mini (spare)"
+```
+
+Or, with the Mac's env token as the credential, set it up on its Tailscale
+address:
 
 ```bash test="cli-shape" id="cua-host-setup-direct-spare"
-cua host setup --direct 100.101.102.103:3211 --profile spare --name "Mac mini (spare)"
+cua host setup --direct 100.101.102.103:3211 --share spaces --name "Mac mini (spare)"
 ```
 
 Use the Mac's own address from `tailscale ip -4`. With `--direct 0.0.0.0:3211` it
@@ -393,17 +556,17 @@ restarts, the Mac opens the same port again.
 | Error | Meaning | Fix |
 |---|---|---|
 | `ambiguous_host` | Several of your computers fit the name. | Pick one of the listed IDs: `on="host:<id>"`. |
-| `not_found` | No computer fits the name. | Check `cua spaces ls`, or set the computer up with `--provide-spaces`. |
+| `not_found` | No computer fits the name. | Check `cua spaces ls`, or set the computer up with `--share spaces` or `--share both`. |
 | `host_capability_missing` | The computer is offline, does not provide Spaces, or cannot run that OS. | Run `cua host config --provide-spaces on` on it, or pick another computer. |
-| `limit_exceeded` | Two macOS VMs already run, or the computer is at its Space limit. | Delete one with `cua spaces delete`, or raise `--max-spaces`. |
+| `limit_exceeded` | Two macOS VMs already run, or the computer is at one of its limits (Spaces, memory or disk). | Delete one with `cua spaces delete`, or raise the limit with `cua host config`. |
 | `permission_denied` | The computer is shared with you to watch only. | Ask its owner to share it as an editor. |
 
 ## If it doesn't work
 
 | What you see | What to do |
 |---|---|
-| "That code didn't work" | A code works once and expires. Make a new link in **Add a computer**. |
-| "This device isn't enrolled yet, so it can't make a link." | Enroll this device in **Settings, Devices**, or use `cua host setup` on the other computer. |
+| "That code didn't work" | A code works once and expires. Open **Add a machine** again for a new one. |
+| "This Mac can't make codes yet." | This machine isn't trusted yet. Choose **Trust this machine** on its page in **Machines**, or use **Sign in there**. |
 | The computer never appears | On that computer, run `cua host status`. It shows the service state and any missing permission. |
 | The computer shows **Offline** | It is off, asleep or disconnected. Wake it or reconnect it, then run `cua host status` on it. |
 

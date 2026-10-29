@@ -63,17 +63,6 @@ describe("SettingsPanel account section", () => {
   });
 });
 
-describe("SettingsPanel default location", () => {
-  it("offers no default-location choice while the apps do not offer Cua Cloud", () => {
-    renderPanel({
-      defaultLocation: { value: "cloud", source: "env", env: "CUA_DEFAULT_ON", path: "/tmp/cua/config.toml" },
-      onDefaultLocation: vi.fn(),
-    });
-    expect(screen.queryByRole("radiogroup", { name: "New Spaces run on" })).toBeNull();
-    expect(screen.queryByText(/Cua Cloud/)).toBeNull();
-  });
-});
-
 describe("SettingsPanel device-flow sign-in", () => {
   /** A mock `AccountAuth` whose event handlers can be fired by the test. */
   function mockAuth() {
@@ -396,12 +385,12 @@ describe("SettingsPanel Privacy", () => {
     expect(screen.getByTitle("Set by env DO_NOT_TRACK")).toBeInTheDocument();
   });
 
-  it("lists Account, Teams, General, Privacy, AI agents and Experiments in order, with Show again", async () => {
+  it("lists Account, Teams, General, Runtimes, Privacy, AI agents and Experiments in order, with Show again", async () => {
     const onShowWelcome = vi.fn();
     renderPanel({ telemetry: fakeTelemetry(), onShowWelcome });
     await screen.findByText("Share usage data to help improve Cua");
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(titles).toEqual(["Account", "Teams", "General", "Privacy", "AI agents", "Experiments", "Language"]);
+    expect(titles).toEqual(["Account", "Teams", "General", "Runtimes", "Privacy", "AI agents", "Experiments", "Language"]);
     await userEvent.click(screen.getByRole("button", { name: "Show again" }));
     expect(onShowWelcome).toHaveBeenCalled();
   });
@@ -433,11 +422,11 @@ describe("SettingsPanel Experiments", () => {
     renderPanel({ telemetry });
     await screen.findByText("Share usage data to help improve Cua");
     const experiments = within(screen.getByRole("region", { name: "Experiments" }));
-    for (const name of ["Cua Volume", "Your cloud"]) {
-      expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
+    expect(experiments.getByRole("switch", { name: "Cua Volume" })).toHaveAttribute("aria-checked", "false");
+    // Sharing is on by default (cua.ai/pricing lists it), and so is Your cloud (a linked cloud shows under Run on).
+    for (const name of ["Sharing", "Your cloud"]) {
+      expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "true");
     }
-    // Sharing is on by default (cua.ai/pricing lists it).
-    expect(experiments.getByRole("switch", { name: "Sharing" })).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByRole("region", { name: "Storage" })).toBeNull();
     await user.click(experiments.getByRole("switch", { name: "Cua Volume" }));
     expect(await screen.findByRole("region", { name: "Storage" })).toBeInTheDocument();
@@ -448,13 +437,13 @@ describe("SettingsPanel Experiments", () => {
     });
     expect(telemetry.recordSignals).toHaveBeenCalledWith([
       { type: "experiment", action: "experiment_on", experiment: "cua_volume" },
-      { type: "experiments-on", experiments: ["cua_volume", "sharing"] },
+      { type: "experiments-on", experiments: ["cua_volume", "your_cloud", "sharing"] },
     ]);
   });
 });
 
-describe("SettingsPanel billing and Teams", () => {
-  it("hides Cua Cloud billing and opens the account app for Teams", async () => {
+describe("SettingsPanel Teams", () => {
+  it("opens the account app for Teams", async () => {
     const auth = {
       beginSignIn: vi.fn(),
       signOut: vi.fn(),
@@ -465,16 +454,8 @@ describe("SettingsPanel billing and Teams", () => {
     const props = renderPanel({
       signedInIdentity: "you@example.com",
       auth,
-      billingStatus: async () => ({
-        billingEnabled: true,
-        card: null,
-        credit: { balanceUsdCents: 742 },
-        billingUrl: "https://example.com/billing",
-      }),
     });
     expect(await screen.findByRole("region", { name: "Teams" })).toBeInTheDocument();
-    expect(screen.queryByText("$7.42 credit left")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Manage team" }));
     expect(props.onOpenExternal).toHaveBeenCalledWith("https://app.cua.ai/team");
   });
@@ -721,7 +702,7 @@ describe("SettingsPanel launch at login", () => {
     const { fakeLoginItemBridge } = await import("../native/loginItem");
     renderPanel({ loginItem: fakeLoginItemBridge("notRegistered"), serves: { providesSpaces: true, runsAgents: false } });
     expect(
-      await screen.findByText("This computer provides Spaces, which stop after a restart until you open Cua Spaces."),
+      await screen.findByText("This machine provides Spaces, which stop after a restart until you open Cua Spaces."),
     ).toBeInTheDocument();
   });
 

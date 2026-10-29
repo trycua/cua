@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { HostError } from "../adapter";
 import { createDemoAdapter } from "../adapters/demo";
@@ -8,8 +10,8 @@ import type { TelemetryView } from "../contracts/host";
 import { sanitizeSignals } from "../ops/telemetry";
 import { TelemetryForwarder, telemetryAllowed } from "../telemetry";
 import { toMachineRows } from "../adapters/webkit";
-import { machineIdOf, rowsToSpaces, toMachines } from "../derive";
-import { agentRunLines, desktopCover, SpaceDetailStore, spaceDetail } from "../space-detail";
+import { machineIdOf, machinesView, rowsToSpaces, toMachines } from "../derive";
+import { agentRunLines, desktopCover, PIP_CHANGED_EVENT, SpaceDetailStore, spaceDetail } from "../space-detail";
 import type { CoreClient } from "../core";
 import { parseDropped, sendFiles, splitDrop } from "../space-files";
 import type { MachineAccessNotice } from "../contracts/devices";
@@ -34,15 +36,19 @@ describe("usage events", () => {
         { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: -1, gpu: false },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false },
-        { type: "space-create", location: "cloud", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
+        { type: "space-create", location: "yours", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "need 52 GB" },
+        { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 1, errorSubclass: "runtime_start" },
+        { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 2, errorSubclass: "none" },
+        { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "error", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 0, errorSubclass: "/Users/ada" },
         { type: "made-up", word: "x" },
         "step",
       ]),
     ).toEqual([
       { type: "step", step: "app_launched", ok: true },
       { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
-      { type: "space-create", location: "cloud", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
+      { type: "space-create", location: "yours", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
+      { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 1, errorSubclass: "runtime_start" },
     ]);
   });
 
@@ -104,6 +110,36 @@ describe("demo host: Space detail and This machine", () => {
     demo.dispose?.();
   });
 
+  // Regression: a picture-in-picture panel closed by its own button left
+  // "Playing in a floating window" on the page until the next windows read
+  // (up to WINDOWS_REFRESH_MS), and the inline desktop came back late. The
+  // host says so at once (`stream.pipChanged`).
+  it("hears a panel the host closed by itself at once, without waiting for a windows read", () => {
+    const demo = createDemoAdapter({ latencyMs: 0 });
+    const core = { tryCall: () => null } as unknown as CoreClient;
+    const store = new SpaceDetailStore(demo, core);
+    const id = "local:design-review";
+    const say = (payload: unknown) => window.dispatchEvent(new CustomEvent("cua:event", { detail: { event: PIP_CHANGED_EVENT, payload } }));
+    say({ spaceId: id, open: ["desktop"] });
+    expect(store.get(id).open).toEqual(["desktop"]);
+    say({ spaceId: id, open: [] });
+    expect(store.get(id).open).toEqual([]);
+    // Malformed: ignored.
+    say({ spaceId: id, open: "desktop" });
+    say({ open: ["desktop"] });
+    expect(store.get(id).open).toEqual([]);
+    store.dispose();
+    say({ spaceId: id, open: ["desktop"] });
+    expect(store.get(id).open).toEqual([]);
+    demo.dispose?.();
+  });
+
+  // Drift guard: the SwiftUI host sends the event the page listens for.
+  it("listens for the event the SwiftUI host sends when its panels change", () => {
+    const swift = readFileSync(resolve(__dirname, "../../../../cua-spaces-macos/Sources/CuaSpacesMacKit/WebHost/WebUIBridge+Pages.swift"), "utf8");
+    expect(swift).toContain(`static let pipChangedEvent = "${PIP_CHANGED_EVENT}"`);
+  });
+
   it("sets this machine up, stops sharing and removes the setup", async () => {
     const demo = createDemoAdapter({ latencyMs: 0, stepMs: 0 });
     expect((await demo.call("host.action", { action: "stop-sharing" })).sharing).toBe(false);
@@ -135,20 +171,20 @@ describe("this device's access to its machines", () => {
   });
 });
 
-describe("this computer on the relay (CUA-1527)", () => {
+describe("this machine on the relay (CUA-1527)", () => {
   const HOST = "09c8b17b5a55f89bc1e376eaeabf111f";
   const wkSpace = (id: string, name: string, host?: string) => ({ space: { id, name, provider: "relay", status: "running", os: "linux", host, hostName: host ? "lg-x11" : undefined } });
   const status = { configured: true, mode: "relay", machineId: HOST, name: "lg-x11", sharing: true, serviceInstalled: true, serviceRunning: true, serviceKind: "systemd", clients: [], permissions: [] };
 
-  it("lists the machine that is set up for access once, as This computer, with its Spaces", () => {
+  it("lists the machine that is set up for access once, as This machine, with its Spaces", () => {
     const spaces = { spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST), wkSpace(`relay:${HOST}`, "lg-x11")] };
     const rows = toMachineRows(spaces as never, { devices: null, signedIn: true, host: status } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
+    expect(rows.map((r) => r.name)).toEqual(["This machine"]);
     const machines = toMachines(rows, []);
     expect(machines).toHaveLength(1);
   });
 
-  it("puts the Spaces this machine provides on This computer", () => {
+  it("puts the Spaces this machine provides on This machine", () => {
     const rows = toMachineRows({ spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST)] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
     const here = rows.find((r) => r.current)!;
     expect(machineIdOf({ id: "relay:space-16dec1e7810d08b6", provider: "relay", host: HOST }, rows)).toBe(here.id);
@@ -156,12 +192,12 @@ describe("this computer on the relay (CUA-1527)", () => {
 
   it("does not list a Space registered on the relay as a machine", () => {
     const rows = toMachineRows({ spaces: [wkSpace("relay:space-32179dffc4bd8902", "lin-local")] } as never, { devices: null, signedIn: true } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
+    expect(rows.map((r) => r.name)).toEqual(["This machine"]);
   });
 
   it("still lists another machine's Spaces under that machine", () => {
     const rows = toMachineRows({ spaces: [wkSpace("relay:space-aaaa", "job", "feedfacefeedfacefeedfacefeedface")] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This computer", "lg-x11"]);
+    expect(rows.map((r) => r.name)).toEqual(["This machine", "lg-x11"]);
   });
 });
 
@@ -273,5 +309,34 @@ describe("the Machines page's rows from the host (machines.pageRows)", () => {
       ["Not sharing", "No Spaces"],
       ["Offline", ""],
     ]);
+  });
+});
+
+describe("the Machines rows listed here for an older host (machinesView)", () => {
+  const desktop = (id: string, over: object = {}) =>
+    ({ id: `relay:${id}`, name: id, os: "macos", status: "running", provider: "relay", sdk: { features: ["desktop_stream"], reachable: true }, ...over }) as never;
+  const hosted = (id: string, n: number) => ({ id: `relay:${id}/space-${n}`, name: `s${n}`, status: "running", provider: "relay", host: id }) as never;
+  const machine = (id: string, over: object = {}) => ({ id, name: id, os: "macos", via: "relay", connection: "relay", online: true, current: false, spaceIds: [], limits: [], ...over }) as never;
+
+  /** The rows the core is asked to draw. */
+  function rowsFor(machines: never[], spaces: never[]) {
+    let rows: { id: string; spacesLabel: string }[] = [];
+    const core = {
+      tryCall: (op: string, args: { input: { rows: typeof rows } }) => {
+        if (op !== "machines.view") return null;
+        rows = args.input.rows;
+        return {};
+      },
+    } as unknown as CoreClient;
+    machinesView(core, { hostView: null, machines, spaces, host: null });
+    return Object.fromEntries(rows.map((r) => [r.id, r.spacesLabel]));
+  }
+
+  it("says a shared desktop, a desktop with Spaces, Spaces only, and a machine that stopped sharing", () => {
+    const labels = rowsFor(
+      [machine("solo"), machine("both"), machine("box"), machine("stopped", { notSharing: "stopped sharing" })],
+      [desktop("solo"), desktop("both"), hosted("both", 1), hosted("box", 1), hosted("box", 2), desktop("stopped", { sdk: { features: [], reachable: false, error: "stopped sharing" } })],
+    );
+    expect(labels).toEqual({ solo: "Desktop shared", both: "Desktop and 1 Space", box: "2 Spaces", stopped: "No Spaces" });
   });
 });

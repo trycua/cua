@@ -1,0 +1,57 @@
+{
+  "name": "create-microvm",
+  "about": "New Space > Advanced > Kind on a Mac whose runtime doctor reports Apple's Containerization ready: MicroVM is the third kind, with one plain line under Kind; chosen, it boots the Linux container image, the Runtime menu offers Automatic and Apple Containerization, and the plan sends kind microvm (what cua sandbox create --kind microvm sends). Choosing macOS greys it out (Linux images only).",
+  "now": 1800000000000,
+  "env": {
+    "defaultLocation": "local",
+    "cloudAvailable": false,
+    "localAvailable": true,
+    "localReason": null,
+    "localBackends": [
+      "docker",
+      "lume",
+      "containerization"
+    ],
+    "nameSeed": 42,
+    "maxCpus": 8,
+    "hostArch": "arm64"
+  },
+  "wizard": [
+    {
+      "type": "toggle-advanced"
+    },
+    {
+      "type": "choose-os",
+      "os": "macos"
+    },
+    {
+      "type": "choose-kind",
+      "kind": "microvm"
+    },
+    {
+      "type": "choose-os",
+      "os": "linux"
+    },
+    {
+      "type": "choose-kind",
+      "kind": "microvm"
+    },
+    {
+      "type": "set-runtime",
+      "runtime": "containerization"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "next"
+    }
+  ],
+  "createError": "Apple's container services did not start",
+  "rows": [],
+  "roster": [],
+  "query": ""
+}

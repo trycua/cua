@@ -26,6 +26,11 @@ ASSETS=()
 for p in macos-aarch64 macos-x86_64 linux-x86_64 linux-aarch64 windows-x86_64; do
   ASSETS+=("cua-spacesd-$p.tar.gz" "cua-spacesd-$p.tar.gz.sha256")
 done
+# The static headless builds the CLI and the app bundle to inject into OCI
+# images (fetch_static_spacesd.sh).
+for a in x86_64 aarch64; do
+  ASSETS+=("cua-spacesd-$a-unknown-linux-musl" "cua-spacesd-$a-unknown-linux-musl.sha256")
+done
 
 fail() {
   echo "::error title=cua-spacesd $VERSION is not published::$*"

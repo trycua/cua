@@ -780,17 +780,47 @@ pub fn paint_compiled_theme_with_tint(
     alpha: f32,
     tint: Option<[u8; 4]>,
 ) {
+    paint_compiled_theme_with_float(
+        target,
+        theme,
+        visual,
+        anchor_x,
+        anchor_y,
+        heading,
+        backing_scale,
+        alpha,
+        tint,
+        false,
+    );
+}
+
+/// [`paint_compiled_theme_with_tint`] with the resting float
+/// (`cursor.float`, on by default) of the built-in theme: a vertical bob
+/// that never tilts the arrow. Custom themes never float.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_compiled_theme_with_float(
+    target: &mut tiny_skia::Pixmap,
+    theme: &CompiledTheme,
+    visual: &CursorVisualState,
+    anchor_x: f32,
+    anchor_y: f32,
+    heading: f32,
+    backing_scale: f32,
+    alpha: f32,
+    tint: Option<[u8; 4]>,
+    float: bool,
+) {
     let scale = crate::theme::DISPLAY_SIZE * backing_scale / crate::theme::CANVAS_SIZE;
-    let (float_dx, float_dy, float_rotation) = if theme.id == crate::DEFAULT_THEME_ID {
+    let float_dy = if float && theme.id == crate::DEFAULT_THEME_ID {
         crate::theme::shared_float_motion(visual)
     } else {
-        (0.0, 0.0, 0.0)
+        0.0
     };
     let transform =
         Transform::from_translate(-f32::from(theme.hotspot[0]), -f32::from(theme.hotspot[1]))
             .post_scale(scale, scale)
-            .post_rotate((heading - std::f32::consts::FRAC_PI_4 + float_rotation).to_degrees())
-            .post_translate(anchor_x + float_dx * scale, anchor_y + float_dy * scale);
+            .post_rotate((heading - std::f32::consts::FRAC_PI_4).to_degrees())
+            .post_translate(anchor_x, anchor_y + float_dy * scale);
     let reduced = visual.reduced_motion == crate::ReducedMotion::On;
     if let Some(animation) = theme.animation_for_action(visual.resolved_action) {
         draw_layer(

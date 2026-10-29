@@ -148,10 +148,9 @@ fn press_error_may_have_acted(err: crate::ax::bindings::AXError) -> bool {
     use crate::ax::bindings::{
         kAXErrorActionUnsupported, kAXErrorAttributeUnsupported, kAXErrorFailure,
     };
-    matches!(
-        err,
-        kAXErrorFailure | kAXErrorAttributeUnsupported | kAXErrorActionUnsupported
-    )
+    err == kAXErrorFailure
+        || err == kAXErrorAttributeUnsupported
+        || err == kAXErrorActionUnsupported
 }
 
 /// Whether a toggle's value moving from `before` to `now` is what pressing it
@@ -1826,8 +1825,9 @@ fn perform_ax_click(
     let needs_webkit_delay =
         needs_web_focus_settle(ax_action, &role, || unsafe { ancestor_roles(element) });
 
-    // Show focus-rect highlight around the element (matches Swift showFocusRect).
-    // Also move the cursor to the element center so the glide animation plays.
+    // Offer the focus-rect highlight around the element (matches Swift
+    // showFocusRect); the overlay paints it only with `cursor.marks` on. Also
+    // move the cursor to the element center so the glide animation plays.
     if let Some(rect) = unsafe { element_screen_rect(element) } {
         // Drive THIS session's cursor (threaded in via `cursor_key`), matching
         // the keyed glide already played in the invoke body above. The keyed

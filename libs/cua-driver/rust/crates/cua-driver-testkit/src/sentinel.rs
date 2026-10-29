@@ -17,6 +17,7 @@ mod hyprland;
 /// fully occludes the background target.
 pub struct ForegroundSentinel {
     cursor_calibrated: bool,
+    evidence_dir: Option<std::path::PathBuf>,
     journal_path: std::path::PathBuf,
     target: TargetWindow,
     _reaper: ChildReaper,
@@ -158,6 +159,7 @@ impl ForegroundSentinel {
             .map_err(|error| format!("reset focused sentinel journal: {error}"))?;
 
         Ok(Self {
+            evidence_dir: None,
             cursor_calibrated,
             journal_path,
             target,
@@ -303,6 +305,10 @@ impl ForegroundSentinel {
         self.assert_background_posture(background_target)
     }
 
+    pub fn persist_evidence_to(&mut self, dir: &std::path::Path) {
+        self.evidence_dir = Some(dir.to_owned());
+    }
+
     pub fn target(&self) -> TargetWindow {
         self.target
     }
@@ -357,7 +363,7 @@ impl ForegroundSentinel {
         target: TargetWindow,
         action: impl FnOnce() -> R,
     ) -> Result<(R, Vec<OracleKind>), String> {
-        self.observe_target(target, true, action)
+        self.observe_target(target, true, NativeObserver::new(), action)
     }
 
     /// Observe a desktop-wide action against the foreground sentinel itself.
@@ -367,55 +373,77 @@ impl ForegroundSentinel {
         &self,
         action: impl FnOnce() -> R,
     ) -> Result<(R, Vec<OracleKind>), String> {
-        self.observe_target(self.target, false, action)
+        self.observe_target(self.target, false, NativeObserver::new(), action)
     }
 
     fn observe_target<R>(
         &self,
         target: TargetWindow,
         require_occluded_target: bool,
+        backend: impl crate::observer::ObserverBackend,
         action: impl FnOnce() -> R,
     ) -> Result<(R, Vec<OracleKind>), String> {
-        let mut observer = DesktopObserver::new(NativeObserver::new(), target);
-        let before = observer.snapshot().map_err(|error| error.to_string())?;
-        if require_occluded_target
-            && before.target_z != crate::observer::TargetZ::BackgroundOccluded
-        {
-            return Err(format!(
-                "background target was not fully occluded before dispatch: {:?}",
-                before.target_z
-            ));
-        }
-        let mut native_oracles = vec![OracleKind::Focus, OracleKind::ZOrder];
-        if self.cursor_calibrated {
-            native_oracles.push(OracleKind::Cursor);
-        }
-        let (result, delta) = observer
-            .observe(&native_oracles, action)
-            .map_err(|error| error.to_string())?;
-        if require_occluded_target
-            && delta.before.target_z != crate::observer::TargetZ::BackgroundOccluded
-        {
-            return Err(format!(
-                "background target was not fully occluded at dispatch: {:?}",
-                delta.before.target_z
-            ));
-        }
-        delta
-            .ensure_supported()
-            .map_err(|error| error.to_string())?;
+        let mut native_evidence = String::new();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut observer = DesktopObserver::new(backend, target);
+            let before = observer.snapshot().map_err(|error| error.to_string())?;
+            native_evidence = format!("{before:#?}");
+            if require_occluded_target
+                && before.target_z != crate::observer::TargetZ::BackgroundOccluded
+            {
+                return Err(format!(
+                    "background target was not fully occluded before dispatch: {:?}",
+                    before.target_z
+                ));
+            }
+            let mut native_oracles = vec![OracleKind::Focus, OracleKind::ZOrder];
+            if self.cursor_calibrated {
+                native_oracles.push(OracleKind::Cursor);
+            }
+            let (result, delta) = observer
+                .observe(&native_oracles, action)
+                .map_err(|error| error.to_string())?;
+            native_evidence = format!("{delta:#?}");
+            if require_occluded_target
+                && delta.before.target_z != crate::observer::TargetZ::BackgroundOccluded
+            {
+                return Err(format!(
+                    "background target was not fully occluded at dispatch: {:?}",
+                    delta.before.target_z
+                ));
+            }
+            delta
+                .ensure_supported()
+                .map_err(|error| error.to_string())?;
 
-        let mut passed = delta.passed().to_vec();
-        let mut violations = delta.violations().to_vec();
-        let (sentinel_passed, sentinel_violations) = self.observe();
-        passed.extend(sentinel_passed);
-        violations.extend(sentinel_violations);
-        passed.sort();
-        passed.dedup();
-        if violations.is_empty() {
-            Ok((result, passed))
-        } else {
-            Err(violations.join("; "))
+            let mut passed = delta.passed().to_vec();
+            let mut violations = delta.violations().to_vec();
+            let (sentinel_passed, sentinel_violations) = self.observe();
+            passed.extend(sentinel_passed);
+            violations.extend(sentinel_violations);
+            passed.sort();
+            passed.dedup();
+            if violations.is_empty() {
+                Ok((result, passed))
+            } else {
+                Err(violations.join("; "))
+            }
+        }));
+        if let Some(dir) = &self.evidence_dir {
+            fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+            fs::copy(&self.journal_path, dir.join("sentinel-events.jsonl"))
+                .map_err(|error| error.to_string())?;
+            match &outcome {
+                Ok(Err(error)) => native_evidence.push_str(&format!("\nERROR: {error}\n")),
+                Err(_) => native_evidence.push_str("\nERROR: action panicked\n"),
+                _ => {}
+            }
+            fs::write(dir.join("desktop-observation.txt"), native_evidence)
+                .map_err(|error| error.to_string())?;
+        }
+        match outcome {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
         }
     }
 }
@@ -876,6 +904,79 @@ fn sway_container_id(node: &serde_json::Value, title: &str) -> Option<i64> {
 #[cfg(all(test, target_os = "linux"))]
 mod sway_tests {
     use super::*;
+
+    #[test]
+    fn observation_evidence_survives_violations_and_unsupported_oracles() {
+        use crate::observer::*;
+        struct Backend(bool);
+        impl ObserverBackend for Backend {
+            fn capabilities(&self) -> ObserverCapabilities {
+                ObserverCapabilities {
+                    focus: self.0,
+                    z_order: true,
+                    cursor: true,
+                    leaked_input: true,
+                }
+            }
+            fn snapshot(&self, _: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
+                Ok(DesktopSnapshot {
+                    foreground: Some(1),
+                    input_focus: Some(1),
+                    target_z: TargetZ::BackgroundOccluded,
+                    cursor_pos: Some((2.0, 3.0)),
+                })
+            }
+            fn start_journal(&mut self) -> Result<(), ObserverError> {
+                Ok(())
+            }
+            fn drain_journal(&mut self) -> Result<DesktopJournal, ObserverError> {
+                Ok(DesktopJournal {
+                    focus_events: vec![FocusEvent {
+                        from: Some(1),
+                        to: Some(2),
+                    }],
+                    leaked_input_events: vec![],
+                })
+            }
+        }
+        for supported in [true, false] {
+            let scratch = tempfile::tempdir().unwrap();
+            let evidence = tempfile::tempdir().unwrap();
+            let journal = scratch.path().join("sentinel-events.jsonl");
+            fs::write(&journal, "{\"kind\":\"heartbeat\"}\n").unwrap();
+            let target = TargetWindow {
+                pid: 10,
+                native_id: 20,
+            };
+            let mut sentinel = ForegroundSentinel {
+                cursor_calibrated: true,
+                journal_path: journal,
+                target,
+                _reaper: ChildReaper::new(),
+                _user_data: scratch,
+                evidence_dir: None,
+            };
+            sentinel.persist_evidence_to(evidence.path());
+            let result = sentinel.observe_target(target, true, Backend(supported), || ());
+            let error = result.unwrap_err();
+            assert!(error.contains(if supported {
+                "transiently"
+            } else {
+                "does not support"
+            }));
+            drop(sentinel);
+            assert!(
+                fs::read_to_string(evidence.path().join("sentinel-events.jsonl"))
+                    .unwrap()
+                    .contains("heartbeat")
+            );
+            let native =
+                fs::read_to_string(evidence.path().join("desktop-observation.txt")).unwrap();
+            assert!(native.contains("cursor_pos"));
+            assert!(native.contains("focus_events"));
+            assert!(native.contains(&error));
+        }
+    }
 
     #[test]
     fn fullscreen_command_targets_the_holder_ancestor() {

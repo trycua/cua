@@ -51,6 +51,9 @@ pub struct Facts {
     pub runtimes_missing: Vec<String>,
     /// The daemon's own Local Network probe (macOS).
     pub local_network: Option<local_network::Report>,
+    /// A connect from the daemon to this Mac's router, for when no macOS VM
+    /// runs to test with (`local_network`'s probe says nothing then).
+    pub local_network_lan: Option<cua_create_failure::local_network::Access>,
     /// Where Spaces are written: (`name`, available bytes).
     pub disk: Option<(String, u64)>,
     /// Physical memory, and what running macOS VMs were given (bytes).
@@ -127,6 +130,37 @@ pub fn checks(f: &Facts) -> Vec<Check> {
             )
             .skip_reason("inconclusive"),
         };
+        // No VM to test with: the daemon's connect to the router says the
+        // same (a first connect also makes macOS ask, in this app's name).
+        if c.status == Status::Skip {
+            use cua_create_failure::local_network::Access;
+            match f.local_network_lan {
+                Some(Access::Blocked) => {
+                    c = Check::new(
+                        "machine.local_network",
+                        Status::Fail,
+                        format!(
+                            "Cua can't reach this Mac's local network, so it can't reach its \
+                             macOS VMs: Local Network access is off for {name}"
+                        ),
+                    )
+                    .fix(format!(
+                        "open System Settings > Privacy & Security > Local Network and turn on {name}"
+                    ))
+                    .fact("settings_url", LOCAL_NETWORK_URL);
+                }
+                Some(Access::Allowed) => {
+                    c = Check::new(
+                        "machine.local_network",
+                        Status::Pass,
+                        format!(
+                            "reached this Mac's local network: Local Network access is on for {name}"
+                        ),
+                    );
+                }
+                _ => {}
+            }
+        }
         c = c.fact("app", &name);
         if let Some(a) = app {
             c = c.fact("app_path", a.path.display());
@@ -307,7 +341,11 @@ pub async fn gather() -> Facts {
         .map(|v| (v.name, v.available));
     if os == "macos" && (f.provide_spaces || f.lume_serving) {
         let base = local_network::lume_base();
-        f.local_network = Some(local_network::report(&base).await);
+        let report = local_network::report(&base).await;
+        if !matches!(report.probe, local_network::Probe::Reached { .. }) {
+            f.local_network_lan = Some(local_network::lan_access_now().await);
+        }
+        f.local_network = Some(report);
         let client = cua_vmm::lume::LumeClient::new(&base);
         if let Ok(Ok(vms)) = tokio::time::timeout(Duration::from_secs(2), client.list()).await {
             for vm in vms.iter().filter(|v| v.status == "running") {
@@ -443,6 +481,43 @@ mod tests {
         assert!(c.message.contains("off for Cua Spaces"), "{}", c.message);
         assert_eq!(c.facts["app"], "Cua Spaces");
         assert!(c.facts["settings_url"].contains("Privacy_LocalNetwork"));
+    }
+
+    /// With no macOS VM running, the daemon's own connect to the router
+    /// decides the check: blocked fails it, allowed passes it.
+    #[test]
+    fn without_a_vm_the_daemons_lan_connect_decides_local_network() {
+        use cua_create_failure::local_network::Access;
+        let mut f = mac();
+        f.local_network = Some(local_network::Report {
+            probe: local_network::Probe::NoRunningVm,
+            app: Some(local_network::ResponsibleApp {
+                name: "Cua Spaces Local".into(),
+                path: PathBuf::from("/Applications/Cua Spaces Local.app"),
+                bundle: true,
+            }),
+            pid: 1,
+        });
+        f.local_network_lan = Some(Access::Blocked);
+        let cs = checks(&f);
+        let c = by_id(&cs, "machine.local_network");
+        assert_eq!(c.status, Status::Fail);
+        assert!(
+            c.message.contains("off for Cua Spaces Local"),
+            "{}",
+            c.message
+        );
+        assert!(c.facts["settings_url"].contains("Privacy_LocalNetwork"));
+        f.local_network_lan = Some(Access::Allowed);
+        assert_eq!(
+            by_id(&checks(&f), "machine.local_network").status,
+            Status::Pass
+        );
+        f.local_network_lan = Some(Access::Unknown);
+        assert_eq!(
+            by_id(&checks(&f), "machine.local_network").status,
+            Status::Skip
+        );
     }
 
     #[test]

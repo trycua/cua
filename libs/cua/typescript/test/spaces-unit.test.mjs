@@ -147,6 +147,9 @@ test("native CuaError variants map to stable codes", () => {
   assert.equal(toSpacesError(native("Unauthenticated")).code, "auth")
   assert.equal(toSpacesError(native("NotFound")).code, "not_found")
   assert.equal(toSpacesError(native("AmbiguousSandbox")).code, "ambiguous_sandbox")
+  // A full machine is its own typed error, never "not found".
+  assert.equal(toSpacesError(native("HostCapacity")).code, "space_command")
+  assert.equal(toSpacesError(native("HostCapacity")).cause.tag, "HostCapacity")
   assert.equal(toSpacesError(new Error("plain")).code, "protocol")
   const e = new SpacesError("usage", "u")
   assert.equal(toSpacesError(e), e)

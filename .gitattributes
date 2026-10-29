@@ -5,3 +5,8 @@
 docs/content/docs/cua-driver/reference/** text eol=lf
 scripts/docs-generators/cli-specs/** text eol=lf
 scripts/docs-generators/headers/** text eol=lf
+# The elastic solver's golden decisions are compared byte for byte with what
+# serde writes (LF); a CRLF checkout (Windows) would fail every scenario.
+libs/cua/crates/cua-cluster/testdata/elastic/** text eol=lf
+apps/cua-spaces-macos/Sources/CuaSpacesMacKit/Resources/azure-logo_azure.svg -text
+apps/cua-spaces-web/public/cloud-logos/azure-logo_azure.svg -text

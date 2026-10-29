@@ -189,19 +189,62 @@ pub async fn telemetry_sync_account() -> String {
 /// [`telemetry_sync_account`] for `session`.
 #[cfg(feature = "host")]
 pub(crate) async fn sync_account(session: &cua_auth::Session) {
-    if !t().is_enabled() {
-        return;
+    sync_account_with(t(), || analytics_id(session)).await;
+}
+
+/// How often a signed-in SDK process asks the Spaces API for the account
+/// id again ([`sync_account_if_due`]).
+#[cfg(any(feature = "host", test))]
+pub(crate) const ACCOUNT_CHECK_EVERY: Duration = Duration::from_secs(6 * 3600);
+
+/// A process that was signed in before the server offered linking links
+/// too: at most every [`ACCOUNT_CHECK_EVERY`] per machine (any Cua program
+/// asking counts), and only while signed in. Best effort, never fails.
+#[cfg(feature = "host")]
+pub(crate) async fn sync_account_if_due(session: &cua_auth::Session) {
+    if t().account_check_due(ACCOUNT_CHECK_EVERY) && matches!(session.credentials(), Ok(Some(_))) {
+        sync_account(session).await;
     }
+}
+
+/// The signed-in account's `analytics_id` from `GET /v1/me`: `Some(None)`
+/// from a server that does not offer linking (an older one, or linking off
+/// there); none when it could not be asked (signed out, offline, slow).
+#[cfg(feature = "host")]
+async fn analytics_id(session: &cua_auth::Session) -> Option<Option<String>> {
     let budget = Duration::from_secs(10);
-    let Ok(Ok(token)) = tokio::time::timeout(budget, session.access_token(false)).await else {
-        return;
-    };
-    let Ok(api) = cua_host::spaces_api::SpacesApiClient::current() else {
-        return;
-    };
-    if let Ok(Ok(me)) = tokio::time::timeout(budget, api.me(&token)).await {
-        t().offer_account(me.analytics_id.as_deref());
+    let token = tokio::time::timeout(budget, session.access_token(false))
+        .await
+        .ok()?
+        .ok()?;
+    let api = cua_host::spaces_api::SpacesApiClient::current().ok()?;
+    let me = tokio::time::timeout(budget, api.me(&token))
+        .await
+        .ok()?
+        .ok()?;
+    Some(me.analytics_id)
+}
+
+/// Asks `fetch` for the account id and hands the answer to `t`, only while
+/// usage data is on (off: nothing is asked or written). Returns the link
+/// state.
+#[cfg(any(test, feature = "host"))]
+pub(crate) async fn sync_account_with<F, Fut>(
+    t: &cua_telemetry::Telemetry,
+    fetch: F,
+) -> cua_telemetry::LinkState
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Option<Option<String>>>,
+{
+    if !t.is_enabled() {
+        return cua_telemetry::LinkState::Off;
     }
+    t.mark_account_checked();
+    if let Some(id) = fetch().await {
+        t.offer_account(id.as_deref());
+    }
+    t.link_state()
 }
 
 /// Records use of a Spaces app feature (fixed names: `space_create_local`,
@@ -504,21 +547,109 @@ pub(crate) fn teleport_outcome(e: &CuaError) -> events::TeleportOutcome {
 }
 
 /// Whether an error message is the Keyvault's `RequiresCuaApp` (its
-/// install and open links are fixed constants).
+/// install link is fixed, and its open link is the app's own: `cua://` for
+/// the released app, `cua-local://` for Cua Spaces Local).
 pub(crate) fn requires_cua_app(message: &str) -> bool {
     message.contains(cua_keyvault_links::INSTALL_URL)
-        || message.contains(cua_keyvault_links::OPEN_URL)
+        || cua_home::channel::CuaChannel::ALL
+            .iter()
+            .any(|c| message.contains(&c.keyvault_url()))
 }
 
-/// The fixed links `RequiresCuaApp` carries (cua-keyvault `embedded`).
+/// The fixed link `RequiresCuaApp` carries (cua-keyvault `embedded`).
 mod cua_keyvault_links {
     pub const INSTALL_URL: &str = "https://cua.ai/download";
-    pub const OPEN_URL: &str = "cua://keyvault";
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn link_client(
+        home: &std::path::Path,
+        off: bool,
+    ) -> (
+        cua_telemetry::Telemetry,
+        std::sync::Arc<cua_telemetry::sink::MemorySink>,
+    ) {
+        let sink = std::sync::Arc::new(cua_telemetry::sink::MemorySink::new());
+        let t = cua_telemetry::Telemetry::builder()
+            .env(move |k| match k {
+                "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                "DO_NOT_TRACK" if off => Some("1".into()),
+                _ => None,
+            })
+            .home(home)
+            .sink(sink.clone())
+            .product("spaces_app", "0.1.0")
+            .notice_mode(cua_telemetry::NoticeMode::External)
+            .foreground()
+            .build();
+        t.acknowledge_notice();
+        (t, sink)
+    }
+
+    const ACCT: &str = "acct_0123456789abcdef0123456789abcdef";
+
+    /// CUA-1881, the apps' and SDK's linking: off, nothing is asked,
+    /// written or identified; an older server without `analytics_id` links
+    /// nothing; a server that offers it links (no email, ever).
+    #[tokio::test]
+    async fn account_sync_respects_the_switch_and_older_servers() {
+        use cua_telemetry::LinkState;
+        let flush = |t: &cua_telemetry::Telemetry| {
+            t.capture(events::sandbox_deleted("local", Outcome::Ok, None));
+            t.flush(Duration::from_secs(1));
+        };
+        let identifies = |s: &cua_telemetry::sink::MemorySink| {
+            s.events()
+                .iter()
+                .filter(|e| e["event"] == "$identify")
+                .count()
+        };
+
+        let off = tempfile::tempdir().unwrap();
+        let (t, sink) = link_client(off.path(), true);
+        let state =
+            sync_account_with(&t, || async { panic!("asked while usage data is off") }).await;
+        assert_eq!(state, LinkState::Off);
+        flush(&t);
+        assert!(sink.events().is_empty());
+        assert!(
+            !off.path()
+                .join("telemetry")
+                .join(cua_telemetry::link::ACCOUNT_FILE)
+                .exists()
+        );
+
+        let old = tempfile::tempdir().unwrap();
+        let (t, sink) = link_client(old.path(), false);
+        assert_eq!(
+            sync_account_with(&t, || async { Some(None) }).await,
+            LinkState::NotOffered
+        );
+        flush(&t);
+        assert_eq!(identifies(&sink), 0);
+        assert!(
+            !t.account_check_due(ACCOUNT_CHECK_EVERY),
+            "asked: not again for a while"
+        );
+
+        let new = tempfile::tempdir().unwrap();
+        let (t, sink) = link_client(new.path(), false);
+        assert_eq!(
+            sync_account_with(&t, || async { Some(Some(ACCT.to_string())) }).await,
+            LinkState::Linked
+        );
+        flush(&t);
+        assert_eq!(identifies(&sink), 1);
+        assert!(!sink.events().iter().any(|e| e.to_string().contains('@')));
+        // Offline: nothing changes.
+        assert_eq!(
+            sync_account_with(&t, || async { None }).await,
+            LinkState::Linked
+        );
+    }
 
     #[test]
     fn create_error_kind_splits_local_runtime_failures() {
@@ -593,6 +724,18 @@ mod tests {
             teleport_outcome(&CuaError::TeleportRefused("no".into())),
             events::TeleportOutcome::ConsentDenied
         );
+    }
+
+    #[test]
+    fn requires_cua_app_knows_each_channels_open_link() {
+        // "Installed, not running" carries the app's open link: the released
+        // app's `cua://`, or Cua Spaces Local's `cua-local://`.
+        for link in ["cua://keyvault", "cua-local://keyvault"] {
+            let m = format!("Teleport needs the Cua app running: open Cua ({link}) and try again.");
+            assert!(requires_cua_app(&m), "{link}");
+        }
+        assert!(!requires_cua_app("no display"));
+        assert!(!requires_cua_app("open cua-other://keyvault"));
     }
 
     fn summary() -> StreamSummary {

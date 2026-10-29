@@ -50,7 +50,6 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
     "agents.runs": async (args) => {
       const runs = model.agents.runs(string(args, "spaceId"));
       await runs.refresh();
-      if (runs.load.kind === "ready") model.sawAgentRuns(runs.load.rows.length);
       switch (runs.load.kind) {
         case "ready":
           return encode(runs.load.rows);
@@ -67,6 +66,30 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
       const runId = string(args, "runId");
       return persistent.runEvents(space, runId, count(args, "cursor") ?? 0, count(args, "max"));
     },
+    // Start a run in a Space and reply to it: the daemon's agent_start and
+    // agent_message, answered as is (snake_case, like agents.events).
+    "agents.start": async (args) => {
+      const space = string(args, "spaceId");
+      const agent = string(args, "agent");
+      const prompt = string(args, "prompt");
+      const persistent = model.agents.persistent;
+      if (!persistent.canCallTools) throw Failure.unsupported("Starting a run needs the cua daemon");
+      const env = Array.isArray(args.envFromHost) ? args.envFromHost.filter((v): v is string => typeof v === "string") : [];
+      return persistent.startRun(space, agent, prompt, {
+        repo: optionalString(args, "repo"),
+        branch: optionalString(args, "branch"),
+        model: optionalString(args, "model"),
+        envFromHost: env,
+      });
+    },
+    "agents.message": async (args) => {
+      const space = string(args, "spaceId");
+      const runId = string(args, "runId");
+      const text = string(args, "text");
+      const persistent = model.agents.persistent;
+      if (!persistent.canCallTools) throw Failure.unsupported("Replying to a run needs the cua daemon");
+      return persistent.sendMessage(space, runId, text, args.force === true);
+    },
     "agents.pause": pauseOrResume(true),
     "agents.resume": pauseOrResume(false),
     "agents.setup": async () => {
@@ -81,6 +104,45 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
       if (args.agents === undefined || args.agents === null) await coding.configureAll();
       else await coding.act(strings(args, "agents"), false);
       return encode(coding.rows ?? []);
+    },
+    "agents.signIn": async (args) => {
+      needSetup();
+      const coding = model.agents.coding;
+      await coding.signIn(string(args, "agent"));
+      return encode(coding.rows ?? []);
+    },
+    // The one connection status the CLI and MCP also answer (CONTRACT §4), as the SDK serializes it.
+    "agents.status": async (args) => {
+      needSetup();
+      return JSON.parse(await model.agents.coding.setup!.connectionStatusJson(args.refresh === true));
+    },
+    "agents.connect": async (args) => {
+      needSetup();
+      const out = await model.agents.coding.setup!.connectJson(strings(args, "agents"), args.signIn === true, args.skills !== false, args.mcp !== false);
+      await model.agents.coding.reload();
+      return JSON.parse(out);
+    },
+    "agents.disconnect": async (args) => {
+      needSetup();
+      const setup = model.agents.coding.setup!;
+      // Some parts only (an app's page's switches), when the page says which.
+      const out =
+        typeof args.skills === "boolean" || typeof args.mcp === "boolean"
+          ? await setup.disconnectPartsJson(strings(args, "agents"), args.skills === true, args.mcp === true, args.signIn === true)
+          : await setup.disconnectJson(strings(args, "agents"), args.signIn === true);
+      await model.agents.coding.reload();
+      return JSON.parse(out);
+    },
+    // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
+    "agents.signInStart": async (args) => {
+      needSetup();
+      return JSON.parse(await model.agents.coding.setup!.deviceSignInStartJson(string(args, "agent")));
+    },
+    "agents.signInWait": async (args) => {
+      needSetup();
+      const out = await model.agents.coding.setup!.deviceSignInWaitJson(string(args, "id"));
+      await model.agents.coding.reload();
+      return JSON.parse(out);
     },
     // A persistent agent's Memory, Routines and Access: what the native
     // Agents page reads and the changes it runs, one method each.

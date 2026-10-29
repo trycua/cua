@@ -1,0 +1,99 @@
+name: "CI: cua-compat E2B SDK surface and coverage"
+
+# The E2B gateway's public contract, checked without any Space:
+#
+#   coverage   every public symbol of every claimed e2b SDK (Python and
+#              TypeScript) is mapped to a tested case or an E2B-shaped error
+#              (tests/compat/e2b/coverage.json); a symbol no row covers fails
+#   surface    each claimed SDK version reproduces its committed surface
+#              snapshot (a snapshot that no longer matches means the snapshot
+#              tool or the release changed, not the gateway)
+#   recordings the shared cases' recordings from the real E2B parse, name only
+#              cases that exist, and Python and TypeScript agree
+#
+# The SDK-moves-weekly checks (latest release against the newest snapshot) are
+# in compat-drift.yml; the wire tests (property tests, hermetic SDK runs) are
+# in ci-cua-compat.yml; the cases on real Spaces and the overhead guard are in
+# e2e-cua-compat-e2b-cases.yml (nightly).
+
+on:
+  pull_request:
+    paths:
+      - "tests/compat/e2b/**"
+      - "tests/compat/SDK_VERSIONS.json"
+      - ".github/workflows/ci-cua-compat-e2b.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tests/compat/e2b/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-compat-e2b-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: coverage matrix and recordings
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Every public symbol is mapped, every named case exists
+        run: python tests/compat/e2b/coverage.py --check
+      - name: The published matrix is current
+        run: |
+          python tests/compat/e2b/coverage.py --markdown "$RUNNER_TEMP/e2b-coverage.md" >/dev/null
+          diff -u libs/cua/crates/cua-compat/maps/e2b-coverage.md "$RUNNER_TEMP/e2b-coverage.md" \
+            || { echo "::error::maps/e2b-coverage.md is stale: python tests/compat/e2b/coverage.py --markdown libs/cua/crates/cua-compat/maps/e2b-coverage.md"; exit 1; }
+      - name: Case files are well formed and the runners agree on them
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          names = []
+          for f in sorted(pathlib.Path("tests/compat/e2b/cases").glob("*.json")):
+              d = json.loads(f.read_text())
+              names += [c["name"] for c in d["cases"]]
+              for c in d["cases"]:
+                  assert c["steps"], c["name"]
+          assert len(names) == len(set(names)), "duplicate case names"
+          print(len(names), "cases")
+          PY
+          for py in tests/compat/e2b/fixtures/cases-py-*.json; do
+            ver="${py##*cases-py-}"; ts="tests/compat/e2b/fixtures/cases-ts-$ver"
+            python tests/compat/drift/crosslang.py "$py" "$ts" --allow tests/compat/drift/crosslang-allow-e2b.json
+          done
+
+  surface:
+    name: surface snapshots (${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: ["2.42.0", "2.56.0", "2.58.0"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Python e2b reproduces its snapshot
+        run: |
+          python -m venv "$RUNNER_TEMP/py" && "$RUNNER_TEMP/py/bin/pip" install -q "e2b==${{ matrix.sdk }}"
+          "$RUNNER_TEMP/py/bin/python" tests/compat/e2b/surface.py --diff "tests/compat/e2b/fixtures/surface-${{ matrix.sdk }}.json"
+      - name: "npm e2b reproduces its snapshot (read as data, no install scripts)"
+        run: |
+          mkdir -p "$RUNNER_TEMP/ts" && cd "$RUNNER_TEMP/ts"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund --silent "e2b@${{ matrix.sdk }}" typescript@5
+          cd "$GITHUB_WORKSPACE"
+          node tests/compat/e2b/surface_ts.mjs --diff "tests/compat/e2b/fixtures/surface-ts-${{ matrix.sdk }}.json" "$RUNNER_TEMP/ts/node_modules/e2b" "$RUNNER_TEMP/ts/node_modules/typescript"

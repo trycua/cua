@@ -50,6 +50,14 @@ pub struct HostSpacesSettings {
     /// At most this many macOS VMs on this Mac (never above
     /// [`MACOS_VM_LICENSE_LIMIT`]).
     pub max_macos_vms: u32,
+    /// The provided Spaces may use at most this much memory in total, in GB
+    /// (0: no limit).
+    pub max_memory_gb: u32,
+    /// The provided Spaces may use at most this much disk in total, in GB
+    /// (0: no limit).
+    pub max_disk_gb: u32,
+    /// A provided Space may run at most this many minutes (0: no limit).
+    pub max_run_minutes: u32,
 }
 
 impl Default for HostSpacesSettings {
@@ -59,6 +67,9 @@ impl Default for HostSpacesSettings {
             provide_spaces: false,
             max_spaces: DEFAULT_MAX_SPACES,
             max_macos_vms: MACOS_VM_LICENSE_LIMIT,
+            max_memory_gb: 0,
+            max_disk_gb: 0,
+            max_run_minutes: 0,
         }
     }
 }
@@ -68,7 +79,9 @@ impl Default for HostSpacesSettings {
 #[serde(rename_all = "kebab-case")]
 pub enum HostProfile {
     /// Your own desktop, reached from your other devices (the default):
-    /// share the desktop, do not provide Spaces.
+    /// share the desktop, and provide Spaces as the machine already does
+    /// (a new relay setup provides them; see
+    /// [`crate::default_provide_spaces`]).
     #[default]
     Desktop,
     /// A spare machine that runs Spaces for you: do not share its desktop,
@@ -88,11 +101,13 @@ impl HostProfile {
         }
     }
 
-    /// `(share_desktop, provide_spaces)` of the profile.
-    pub fn settings(self) -> (bool, bool) {
+    /// `(share_desktop, provide_spaces)` of the profile. `None` leaves
+    /// providing Spaces to [`crate::default_provide_spaces`]: on for a new
+    /// relay setup, kept as it is on a machine already set up.
+    pub fn settings(self) -> (bool, Option<bool>) {
         match self {
-            Self::Desktop => (true, false),
-            Self::Spare => (false, true),
+            Self::Desktop => (true, None),
+            Self::Spare => (false, Some(true)),
         }
     }
 }
@@ -137,6 +152,67 @@ pub struct ProvidedSpace {
     /// for a Space on the relay (`relay_machine` is then set).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub direct_port: u16,
+    /// vCPUs the Space was admitted with (0: not recorded, counted as the
+    /// default Space).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub cpus: u32,
+    /// Memory (MiB) the Space was admitted with (0: not recorded).
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub memory_mb: u64,
+    /// Disk (GiB) the Space was admitted with (0: not recorded).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub disk_gb: u32,
+    /// Reached through this host's own channel (its forward listens on
+    /// loopback), not on the host's direct address.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub routed: bool,
+}
+
+/// What a Space is counted at when its record does not say: the default
+/// Space (4 GiB of memory, 16 GiB of disk).
+pub const DEFAULT_SPACE_MEMORY_MB: u64 = 4096;
+/// See [`DEFAULT_SPACE_MEMORY_MB`].
+pub const DEFAULT_SPACE_DISK_GB: u64 = 16;
+
+/// Memory (MiB) a create asking for `asked` (0: the default) is counted at.
+pub fn admitted_memory_mb(asked: u64) -> u64 {
+    if asked == 0 {
+        DEFAULT_SPACE_MEMORY_MB
+    } else {
+        asked
+    }
+}
+
+/// Disk (GiB) a create asking for `asked` (0: the default) is counted at.
+pub fn admitted_disk_gb(asked: u32) -> u64 {
+    if asked == 0 {
+        DEFAULT_SPACE_DISK_GB
+    } else {
+        u64::from(asked)
+    }
+}
+
+/// The memory (MiB) the Spaces were admitted with.
+pub fn used_memory_mb(spaces: &[ProvidedSpace]) -> u64 {
+    spaces.iter().map(|s| admitted_memory_mb(s.memory_mb)).sum()
+}
+
+/// The disk (GiB) the Spaces were admitted with.
+pub fn used_disk_gb(spaces: &[ProvidedSpace]) -> u64 {
+    spaces.iter().map(|s| admitted_disk_gb(s.disk_gb)).sum()
+}
+
+/// MiB as whole GB, rounded up (what a limit shown in GB counts).
+pub fn gb_up(mb: u64) -> u32 {
+    mb.div_ceil(1024).min(u64::from(u32::MAX)) as u32
+}
+
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
+}
+
+fn is_zero_u64(n: &u64) -> bool {
+    *n == 0
 }
 
 fn is_zero(n: &u16) -> bool {
@@ -219,6 +295,22 @@ pub fn save_provided(host_dir: &Path, all: &[ProvidedSpace]) -> Result<()> {
     let text =
         serde_json::to_string_pretty(all).map_err(|e| Error::Internal(e.to_string()))? + "\n";
     crate::host::write_secret(&provided_path(host_dir), &text)
+}
+
+/// Reads, changes with `f` and saves the provided Spaces as one step:
+/// creates and deletes running at once (a batch of forks a host makes for
+/// another machine) never lose each other's records. Serialized in this
+/// process, which is the only writer (the host's daemon).
+pub fn update_provided<R>(
+    host_dir: &Path,
+    f: impl FnOnce(&mut Vec<ProvidedSpace>) -> R,
+) -> Result<R> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut all = load_provided(host_dir)?;
+    let r = f(&mut all);
+    save_provided(host_dir, &all)?;
+    Ok(r)
 }
 
 // ------------------------------------------------------------------ audit
@@ -504,6 +596,32 @@ pub fn describe_choices(machines: &[Machine]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Records added from many threads at once are all kept.
+    #[test]
+    fn concurrent_updates_keep_every_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().to_path_buf();
+        let threads: Vec<_> = (0..16)
+            .map(|i| {
+                let d = d.clone();
+                std::thread::spawn(move || {
+                    update_provided(&d, |all| {
+                        all.push(ProvidedSpace {
+                            local_space: format!("local:s{i}"),
+                            ..Default::default()
+                        })
+                    })
+                    .unwrap()
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(load_provided(&d).unwrap().len(), 16);
+    }
+
     use super::*;
 
     fn m(id: &str, name: &str) -> Machine {
@@ -595,11 +713,13 @@ mod tests {
     fn profiles() {
         assert_eq!(
             HostProfile::parse("spare").unwrap().settings(),
-            (false, true)
+            (false, Some(true))
         );
+        // The desktop profile leaves providing Spaces to the default (on
+        // for a new setup, unchanged on a machine already set up).
         assert_eq!(
             HostProfile::parse("desktop").unwrap().settings(),
-            (true, false)
+            (true, None)
         );
         assert!(HostProfile::parse("laptop").is_err());
     }

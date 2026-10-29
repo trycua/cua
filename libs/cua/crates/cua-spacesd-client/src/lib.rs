@@ -28,17 +28,22 @@
 //!   `x-cua-env-authorization`.
 //! - Errors: `google.rpc.Status` + `cua.env.v1.ErrorInfo` → [`Error`].
 
+#[cfg(unix)]
+mod bulk;
 mod client;
 mod computer;
 mod connector;
 pub mod diagnose;
+mod egress;
 mod endpoint;
 pub mod error;
 pub mod expect;
 mod fs;
 mod http;
 pub mod manifest;
+pub mod old_host;
 mod process;
+mod record;
 mod tls;
 pub mod transport;
 pub mod tunnel;
@@ -51,18 +56,21 @@ pub use computer::{
     DESKTOP_COMPONENT, DesktopReadiness, KeySpec, MediaOptions, MediaSession, Screenshot,
     ScreenshotOptions,
 };
+pub use egress::EgressPolicy;
 pub use endpoint::{Endpoint, EndpointKind};
 pub use error::{Error, ErrorDetails, Result};
 pub use fs::{
-    DownloadOptions, DownloadResult, DownloadSink, UploadOptions, UploadResult, UploadSource,
+    DownloadOptions, DownloadResult, DownloadSink, FileAccess, RUN_AS_FEATURE, UploadOptions,
+    UploadResult, UploadSource, XATTR_FEATURE,
 };
 pub use http::{
     DEFAULT_HTTP_RESPONSE_LIMIT, DEFAULT_HTTP_TIMEOUT, HttpCall, HttpReply, MAX_HTTP_REQUEST_BYTES,
 };
 pub use process::{
-    Command, DEFAULT_PROCESS_KEEPALIVE, ExitStatus, Output, ProcessEvent, ProcessHandle,
-    ProcessRef, Replay,
+    Command, DEFAULT_PROCESS_KEEPALIVE, ExitStatus, Output, PROCESS_RUN_AS_FEATURE, ProcessEvent,
+    ProcessHandle, ProcessRef, Replay, RunAsMode,
 };
+pub use record::{RecordOptions, Recorded, ScreenRecording, find_ffmpeg};
 pub use transport::{
     BearerProvider, ChannelError, ExtraHeaders, GatewayAuth, GrpcChannel, Keepalive, StaticBearer,
     Transport, TransportPreference, set_process_principal,

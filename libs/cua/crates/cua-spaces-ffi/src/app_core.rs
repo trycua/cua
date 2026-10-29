@@ -36,6 +36,13 @@ pub fn app_status_line(count: u32) -> String {
     core::spaces::status_line(count)
 }
 
+/// The Spaces page's empty state and "Reaching N computers…" line: the
+/// first-run page only for a complete list with no Space.
+#[uniffi::export]
+pub fn app_spaces_list_view(input: AppListViewInput) -> AppListView {
+    core::spaces::list_view(input)
+}
+
 /// The ambient status dots.
 #[uniffi::export]
 pub fn app_ambient_dots(spaces: Vec<AppSpace>) -> AppAmbientDots {
@@ -500,6 +507,13 @@ pub fn app_host_state(status: cua_sdk::HostStatus) -> AppHostState {
         provide_spaces: status.provide_spaces,
         max_spaces: status.max_spaces,
         max_macos_vms: status.max_macos_vms,
+        max_memory_gb: status.max_memory_gb,
+        max_disk_gb: status.max_disk_gb,
+        max_run_minutes: status.max_run_minutes,
+        used_memory_gb: status.used_memory_gb,
+        used_disk_gb: status.used_disk_gb,
+        total_memory_gb: status.total_memory_gb,
+        total_disk_gb: status.total_disk_gb,
         provided_spaces: status
             .provided_spaces
             .into_iter()
@@ -691,6 +705,24 @@ pub fn app_cloud_connect_view(
 #[uniffi::export]
 pub fn app_cloud_connect_input_from_json(json: String) -> Result<AppCloudConnectInput> {
     from_json("cloud connect input", &json)
+}
+
+/// The clouds the Computers page draws, from a `cloud_status` result (its
+/// JSON): the Clouds group and each cloud's page come from them
+/// (`AppMachinesViewInput.clouds`). `can_approve`: the host has the approve
+/// tool (none does yet).
+#[uniffi::export]
+pub fn app_clouds_input_from_status(
+    json: String,
+    now: u64,
+    can_approve: bool,
+) -> Result<AppCloudsInput> {
+    let status: serde_json::Value = from_json("cloud status", &json)?;
+    Ok(core::cloud_page::input_from_status(
+        &status,
+        now,
+        can_approve,
+    ))
 }
 
 /// A "Connect a cloud" action from JSON (parity flows).
@@ -1150,7 +1182,34 @@ pub fn app_space_host(host: cua_sdk::SpacesHost) -> AppSpaceHost {
                 reason: l.reason,
             })
             .collect(),
+        load: host.load.map(|l| core::wizard::HostLoad {
+            millicpus_total: l.millicpus_total,
+            millicpus_free: l.millicpus_free,
+            memory_total_mb: l.memory_total_mb,
+            memory_free_mb: l.memory_free_mb,
+            spaces: l.spaces,
+            problem: l.problem,
+            kinds: l.kinds,
+        }),
     }
+}
+
+/// The one short line under a machine of yours in the sidebar ("3 running
+/// · 40% CPU", "Paused"); `None` while it is offline or reports no load.
+#[uniffi::export]
+pub fn app_host_load_text(host: AppSpaceHost) -> Option<String> {
+    core::wizard::host_load_text(&host)
+}
+
+/// Registers the external runtime providers in a `cua runtime doctor`
+/// JSON report (`LocalDoctorReport.report_json`) for the New Space wizard,
+/// and returns them: their images join the catalog and run only on this
+/// Mac. A report with none removes any registered before.
+#[uniffi::export]
+pub fn app_wizard_use_doctor_report(report_json: String) -> Vec<AppExternalRuntime> {
+    let list = core::wizard::external_runtimes_from_doctor(&report_json);
+    core::wizard::set_external_runtimes(list.clone());
+    list
 }
 
 /// The presets matching the image field's text, grouped.
@@ -1798,18 +1857,23 @@ fn default_cua_home(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf
     if let Some(h) = set("CUA_HOME") {
         return PathBuf::from(h);
     }
+    // The channel and environment come from the lookup too (`CUA_CHANNEL`,
+    // `CUA_ENV`): each has its own home, where its daemon serves the
+    // Keyvault (`~/.cua/envs/staging`, `~/.cua-local`,
+    // `~/.cua-local/envs/prod`).
+    let channel = cua_home::channel::CuaChannel::from_env_value(
+        var("CUA_CHANNEL")
+            .and_then(|v| v.into_string().ok())
+            .as_deref(),
+    );
+    let env_value = var("CUA_ENV").and_then(|v| v.into_string().ok());
+    let env = channel.env_or_fallback(env_value.as_deref());
     let base = set("HOME")
         .or_else(|| set("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_default()
-        .join(".cua");
-    // A non-production `CUA_ENV` has its own home, where its daemon serves
-    // the Keyvault (`~/.cua/envs/staging`).
-    let env = var("CUA_ENV").and_then(|v| v.into_string().ok());
-    match cua_home::env::CuaEnv::try_from_value(env.as_deref())
-        .unwrap_or_default()
-        .home_subdir()
-    {
+        .join(channel.home_dir_name());
+    match channel.home_subdir(env) {
         Some(sub) => base.join(sub),
         None => base,
     }
@@ -2137,6 +2201,25 @@ pub fn app_settings_page(input: AppSettingsInput) -> AppSettingsPage {
     core::settings::page(&input)
 }
 
+/// A runtime binary's one line in Settings, Advanced ("Docker 27.3 found",
+/// "Not a Docker or Podman binary").
+#[uniffi::export]
+pub fn app_runtime_path_verdict(check: AppRuntimePathCheck) -> AppRuntimePathVerdict {
+    core::runtimes::path_verdict(&check)
+}
+
+/// The setting a runtime row's choice changes (`runtime.<kind>` or
+/// `runtime.<kind>_path`; a `None` value unsets it), or none for any other
+/// row.
+#[uniffi::export]
+pub fn app_runtimes_choose(
+    input: Option<AppRuntimesInput>,
+    row: String,
+    option: String,
+) -> Option<AppRuntimeSettingChange> {
+    core::runtimes::choose(input.as_ref(), &row, &option)
+}
+
 /// The Settings page with Settings, Storage after General while the Cua
 /// Volume experiment is on (left out while it is off).
 #[uniffi::export]
@@ -2168,6 +2251,25 @@ pub fn app_experiments_choose(
 #[uniffi::export]
 pub fn app_experiments_from_json(json: String) -> Result<AppExperiments> {
     from_json("experiments", &json)
+}
+
+// ---- Local Network (macOS Spaces on this Mac) -----------------------------
+
+/// Whether a create needs the Local Network check (`local_network::applies`).
+#[uniffi::export]
+pub fn app_local_network_applies(
+    provider: AppSpaceProvider,
+    os: AppSpaceOs,
+    host_is_mac: bool,
+) -> bool {
+    core::local_network::applies(provider, os, host_is_mac)
+}
+
+/// What to do before a macOS Space is created on this Mac
+/// (`local_network::step`): go ahead, explain then ask, or fail.
+#[uniffi::export]
+pub fn app_local_network_step(input: AppLocalNetworkInput) -> AppLocalNetworkStep {
+    core::local_network::step(&input)
 }
 
 /// What the app does about launch at login at launch (the user's choice,
@@ -2284,10 +2386,24 @@ pub fn app_menu(input: AppMenuInput) -> Vec<AppMenuItem> {
     core::window::menu(&input)
 }
 
-/// The Spaces the user can open (the notch tab and the menu bar item).
+/// The Spaces the user can open (the open notch's tiles), on or not.
 #[uniffi::export]
 pub fn app_openable_count(spaces: Vec<AppSpace>) -> u32 {
     core::spaces::openable_count(&spaces)
+}
+
+/// The Spaces on or starting (the notch tab and the menu bar item); never
+/// This machine, a stopped Space or a failed one.
+#[uniffi::export]
+pub fn app_on_count(spaces: Vec<AppSpace>) -> u32 {
+    core::spaces::on_count(&spaces)
+}
+
+/// The menu bar item's status line for `count` Spaces on ("No Spaces
+/// running", "3 Spaces running").
+#[uniffi::export]
+pub fn app_on_status_line(count: u32) -> String {
+    core::spaces::on_status_line(count)
 }
 
 /// `volume_sync_status`'s JSON as the core takes it.
@@ -2375,6 +2491,8 @@ pub fn app_agent_setup_status(info: cua_sdk::AgentInfo) -> AppAgentSetupStatus {
         skills_installed: info.skills_installed,
         skills_outdated: info.skills_outdated,
         error: info.error,
+        sign_in: info.sign_in,
+        signed_in: info.signed_in,
     }
 }
 
@@ -2497,6 +2615,7 @@ impl AppCliInstaller {
     ) -> Arc<Self> {
         Arc::new(Self {
             inner: core::installer::CliInstaller {
+                channel: cua_home::channel::CuaChannel::Stable,
                 bundled: bundled.map(PathBuf::from),
                 bin_dir: bin_dir.into(),
                 path_env,
@@ -2545,6 +2664,8 @@ pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -
     cua_sdk::support::spawn(async {
         cua_sdk::telemetry_sync_account().await;
     });
+    // Crash reports for the core (no-op without CUA_CRASH_DSN or consent).
+    cua_crash::start_for_process("core");
     core::telemetry::start_with(t, onboarding_eligible)
 }
 
@@ -2553,7 +2674,50 @@ pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -
 /// were queued.
 #[uniffi::export]
 pub fn app_telemetry_record(signals: Vec<AppTelemetrySignal>) -> u32 {
-    core::telemetry::record(cua_telemetry::global(), &signals) as u32
+    let queued = core::telemetry::record(cua_telemetry::global(), &signals) as u32;
+    // The "Share usage data" switch may have changed: close crash reporting
+    // when consent was withdrawn.
+    cua_crash::refresh_consent();
+    queued
+}
+
+/// A Pro or Teams surface's event (`upsell_<surface>_<action>`), knowing
+/// the plan and, for the meter past a limit, its cap (`kind`): a `click`
+/// also records the upgrade link opened, the meter shown past a limit the
+/// plan limit shown.
+#[uniffi::export]
+pub fn app_telemetry_upsell(
+    surface: String,
+    action: String,
+    kind: Option<String>,
+    plan: Option<String>,
+) -> Vec<AppTelemetrySignal> {
+    core::telemetry::upsell_with(&surface, &action, kind.as_deref(), plan.as_deref())
+}
+
+/// A plan limit shown at `surface` (`action` `shown`: `app_create`,
+/// `app_connect`, `app_meter`, `app_team`, ...) or its upgrade link opened
+/// (`opened`); `kind` is the cap (none: not from a limit), `plan` the plan.
+#[uniffi::export]
+pub fn app_telemetry_plan_limit(
+    action: String,
+    surface: String,
+    kind: Option<String>,
+    plan: Option<String>,
+) -> Vec<AppTelemetrySignal> {
+    core::telemetry::plan_limit(
+        &action,
+        &surface,
+        kind.as_deref().unwrap_or_default(),
+        plan.as_deref().unwrap_or_default(),
+    )
+}
+
+/// The upgrade link `url` with `?from=<surface>` (the account app's purchase
+/// funnel reads it), its other parameters kept.
+#[uniffi::export]
+pub fn app_upgrade_link(url: String, surface: String) -> String {
+    core::telemetry::upgrade_link(&url, &surface)
 }
 
 /// The app started (`app_launched`).
@@ -2592,6 +2756,31 @@ pub fn app_telemetry_onboarding(
 #[uniffi::export]
 pub fn app_telemetry_sign_in_failed(message: Option<String>) -> Vec<AppTelemetrySignal> {
     core::telemetry::sign_in_failed(message.as_deref())
+}
+
+/// A sign-in failed for `reason` or was cancelled (none): its kind only.
+#[uniffi::export]
+pub fn app_telemetry_sign_in_failure(reason: Option<AppSignInFailure>) -> Vec<AppTelemetrySignal> {
+    core::telemetry::sign_in_failure(reason)
+}
+
+/// The sidebar's foot: every sign-in state in one place.
+#[uniffi::export]
+pub fn app_sign_in_footer(input: AppSignInFooterInput) -> AppSignInFooter {
+    core::sign_in::footer(&input)
+}
+
+/// The failed phase for a known reason, with the error's words for Details.
+#[uniffi::export]
+pub fn app_sign_in_failed(reason: AppSignInFailure, detail: Option<String>) -> AppSignInPhase {
+    core::sign_in::failed(reason, detail.as_deref())
+}
+
+/// The failed phase for an error the shell caught: the SDK error's case
+/// (`Timeout`, `Http`, ...; empty for another error) and its words.
+#[uniffi::export]
+pub fn app_sign_in_failed_from_error(variant: String, message: String) -> AppSignInPhase {
+    core::sign_in::failed_from_error(&variant, &message)
 }
 
 /// "Start using Cua Spaces".
@@ -2674,7 +2863,7 @@ pub fn app_telemetry_enroll(
     core::telemetry::enroll(&state, &action)
 }
 
-// ---- Getting started and the command palette -----------------------------
+// ---- Machines and the command palette -------------------------------------
 
 /// The getting-started checklist after `action`, and its usage events.
 #[uniffi::export]
@@ -2689,6 +2878,18 @@ pub fn app_checklist_reduce(
 #[uniffi::export]
 pub fn app_checklist_observe_from(seen: AppChecklistSeen) -> AppChecklistAction {
     core::checklist::observe_from(&seen)
+}
+
+/// Checklist state from JSON, steps as words (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_checklist_state_from_json(json: String) -> Result<AppChecklistState> {
+    from_json("checklist state", &json)
+}
+
+/// The getting-started checklist as drawn.
+#[uniffi::export]
+pub fn app_checklist_view(state: AppChecklistState) -> AppChecklistView {
+    core::checklist::view(&state)
 }
 
 /// The Machines page's rows: this machine, your machines, your devices of
@@ -2717,18 +2918,6 @@ pub fn app_machines_page_input_from_json(json: String) -> Result<AppMachinesPage
     from_json("machines page input", &json)
 }
 
-/// Checklist state from JSON, steps as words (fixtures, parity flows).
-#[uniffi::export]
-pub fn app_checklist_state_from_json(json: String) -> Result<AppChecklistState> {
-    from_json("checklist state", &json)
-}
-
-/// The getting-started checklist as drawn.
-#[uniffi::export]
-pub fn app_checklist_view(state: AppChecklistState) -> AppChecklistView {
-    core::checklist::view(&state)
-}
-
 /// The default keyboard shortcuts (the shared UI's `keybindings.json`).
 #[uniffi::export]
 pub fn app_keybindings() -> Vec<AppKeybinding> {
@@ -2740,6 +2929,112 @@ pub fn app_keybindings() -> Vec<AppKeybinding> {
 #[uniffi::export]
 pub fn app_palette_rank(entries: Vec<AppPaletteEntry>, query: String) -> Vec<u32> {
     core::palette::rank(&entries, &query)
+}
+
+// ---- The new Spaces page (CUA-2204) ----------------------------------------
+
+/// A Space's "…" and right-click menu (`spaces.menu`).
+#[uniffi::export]
+pub fn app_space_menu(input: AppSpaceMenuInput) -> Vec<AppSpaceMenuItem> {
+    core::space_menu::menu(&input)
+}
+
+/// The confirm dialog for deleting and leaving `items` (none: nothing
+/// selected).
+#[uniffi::export]
+pub fn app_bulk_confirm(items: Vec<AppBulkItem>) -> Option<AppBulkConfirmView> {
+    core::bulk_confirm::confirm(&items)
+}
+
+/// The selection bar while it runs ("Deleting 1 of 3…"); `finished`: the
+/// ids done so far. None once all are finished.
+#[uniffi::export]
+pub fn app_bulk_progress(items: Vec<AppBulkItem>, finished: Vec<String>) -> Option<String> {
+    core::bulk_confirm::progress(&items, &finished)
+}
+
+/// The toast once every result is in ("Deleted 3 Spaces. 29 GB freed.").
+#[uniffi::export]
+pub fn app_bulk_done(items: Vec<AppBulkItem>, results: Vec<AppBulkResult>) -> AppBulkDone {
+    core::bulk_confirm::done(&items, &results)
+}
+
+/// The tip for `place` now, if any.
+#[uniffi::export]
+pub fn app_tips_view(
+    place: AppTipPlace,
+    facts: AppTipFacts,
+    state: AppTipsState,
+) -> Option<AppTip> {
+    core::tips::view(place, &facts, &state)
+}
+
+/// The tips after `event` (save them in `AppSettings.tips`).
+#[uniffi::export]
+pub fn app_tips_reduce(state: AppTipsState, event: AppTipsEvent) -> AppTipsState {
+    core::tips::reduce(&state, &event)
+}
+
+/// The settings after a Settings row the core owns (`tips`, `reset-tips`);
+/// any other row leaves them as they are.
+#[uniffi::export]
+pub fn app_settings_choose(settings: AppSettings, row: String, option: String) -> AppSettings {
+    core::settings::choose(&settings, &row, &option)
+}
+
+/// The Pro banner at the sidebar's foot (Free only).
+#[uniffi::export]
+pub fn app_pro_banner(input: AppProBannerInput) -> AppProBanner {
+    core::upsell::pro_banner(&input)
+}
+
+/// The account menu (Settings, Plan, Sign out).
+#[uniffi::export]
+pub fn app_account_menu(input: AppAccountMenuInput) -> Vec<AppAccountMenuItem> {
+    core::account::menu(&input)
+}
+
+/// The app settings' defaults (a fresh install's), without reading a file.
+#[uniffi::export]
+pub fn app_settings_defaults() -> AppSettings {
+    core::settings::AppSettings::default()
+}
+
+/// A Space menu's input from JSON (parity flows).
+#[uniffi::export]
+pub fn app_space_menu_input_from_json(json: String) -> Result<AppSpaceMenuInput> {
+    from_json("space menu input", &json)
+}
+
+/// Bulk delete and leave items from JSON (parity flows).
+#[uniffi::export]
+pub fn app_bulk_items_from_json(json: String) -> Result<Vec<AppBulkItem>> {
+    from_json("bulk items", &json)
+}
+
+/// Bulk delete and leave results from JSON (the host's
+/// `spaces.deleteMany` / `spaces.leave` results, parity flows).
+#[uniffi::export]
+pub fn app_bulk_results_from_json(json: String) -> Result<Vec<AppBulkResult>> {
+    from_json("bulk results", &json)
+}
+
+/// Tip facts from JSON (parity flows).
+#[uniffi::export]
+pub fn app_tip_facts_from_json(json: String) -> Result<AppTipFacts> {
+    from_json("tip facts", &json)
+}
+
+/// A tips event from JSON (parity flows).
+#[uniffi::export]
+pub fn app_tips_event_from_json(json: String) -> Result<AppTipsEvent> {
+    from_json("tips event", &json)
+}
+
+/// The relay's usage from JSON (parity flows).
+#[uniffi::export]
+pub fn app_relay_usage_from_json(json: String) -> Result<AppRelayUsage> {
+    from_json("relay usage", &json)
 }
 
 // ---- Fixtures ----------------------------------------------------------------
@@ -2841,6 +3136,10 @@ pub(crate) fn setup_options_for_request(
     request: AppHostSetupRequest,
 ) -> Result<cua_sdk::HostSetupOptions> {
     let request = core::host::validate_setup(request).map_err(CuaError::InvalidArgument)?;
+    // The default setup lets other machines create Spaces here and keeps
+    // the desktop private. Pass what the core resolved, not the SDK's own
+    // (CLI) profile defaults, so both agree.
+    let (share_desktop, provide_spaces) = request.settings();
     Ok(cua_sdk::HostSetupOptions {
         mode: Some(request.mode),
         relay_url: request.relay_url,
@@ -2850,8 +3149,8 @@ pub(crate) fn setup_options_for_request(
         driver_bin: None,
         runner: None,
         profile: request.profile,
-        share_desktop: request.share_desktop,
-        provide_spaces: request.provide_spaces,
+        share_desktop: Some(share_desktop),
+        provide_spaces,
     })
 }
 
@@ -2905,6 +3204,36 @@ mod host_setup_tests {
         })
         .unwrap();
         assert_eq!(o.profile.as_deref(), Some("spare"));
+        assert_eq!(
+            (o.share_desktop, o.provide_spaces),
+            (Some(false), Some(true))
+        );
+        // The default setup keeps the desktop private and leaves Spaces to
+        // the host's default (cua_host::default_provide_spaces: on for a
+        // new relay setup, kept as it was on a machine set up before); a
+        // direct connection always shares the screen.
+        let o = setup_options_for_request(AppHostSetupRequest {
+            mode: "relay".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!((o.share_desktop, o.provide_spaces), (Some(false), None));
+        // The desktop choice also lets other machines control this desktop.
+        let o = setup_options_for_request(AppHostSetupRequest {
+            mode: "relay".into(),
+            profile: Some("desktop".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!((o.share_desktop, o.provide_spaces), (Some(true), None));
+        let o = setup_options_for_request(AppHostSetupRequest {
+            mode: "direct".into(),
+            direct: Some("10.0.0.2:4000".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        // Direct mode: the host's default keeps Spaces off.
+        assert_eq!((o.share_desktop, o.provide_spaces), (Some(true), None));
     }
 }
 
@@ -2960,6 +3289,41 @@ mod keyvault_home_tests {
         assert_eq!(
             home(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "staging")]),
             PathBuf::from("/srv/cua")
+        );
+    }
+
+    /// The Local channel's daemon (and so its Keyvault) lives in
+    /// `~/.cua-local` on staging and `~/.cua-local/envs/prod` on prod
+    /// (CUA-1776); `CUA_HOME` still wins.
+    #[test]
+    fn the_keyvault_follows_the_local_channel() {
+        let local = |vars: &[(&str, &str)]| {
+            let mut all = vec![("HOME", "/home/ada"), ("CUA_CHANNEL", "local")];
+            all.extend_from_slice(vars);
+            home(&all)
+        };
+        assert_eq!(local(&[]), PathBuf::from("/home/ada/.cua-local"));
+        assert_eq!(
+            local(&[("CUA_ENV", "staging")]),
+            PathBuf::from("/home/ada/.cua-local")
+        );
+        assert_eq!(
+            local(&[("CUA_ENV", "prod")]),
+            PathBuf::from("/home/ada/.cua-local/envs/prod")
+        );
+        // A mistyped environment is staging on Local, never production.
+        assert_eq!(
+            local(&[("CUA_ENV", "prd")]),
+            PathBuf::from("/home/ada/.cua-local")
+        );
+        assert_eq!(
+            local(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "prod")]),
+            PathBuf::from("/srv/cua")
+        );
+        // Stable is untouched by a Local variable elsewhere.
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("CUA_CHANNEL", "stable")]),
+            PathBuf::from("/home/ada/.cua")
         );
     }
 }
@@ -3070,6 +3434,8 @@ mod agent_detection_tests {
             skills_outdated: vec![],
             error: None,
             unverified: None,
+            sign_in: None,
+            signed_in: false,
         }
     }
 
@@ -3142,6 +3508,7 @@ mod resources_tests {
                     allocated: 87 * GIB,
                     shares_space: true,
                 }),
+                base: None,
             }],
             computers: vec![rt::ComputerResources {
                 id: "mini".into(),

@@ -1,0 +1,16 @@
+# Provider ids the pinned Hermes can resolve that no provider file lists, on purpose.
+# A new id in a newer Hermes fails the drift test until it is listed here or given a file.
+# Regenerate hermes-pin.json with tools/hermes_snapshot.py when the pin moves (see providers/README.md).
+alibaba-cn  # region variant of alibaba; needs the plan question first
+alibaba-coding-plan  # plan variant of alibaba; needs the plan question first
+alibaba-coding-plan-cn  # plan variant of alibaba; needs the plan question first
+alibaba-token-plan  # plan variant of alibaba; needs the plan question first
+alibaba-token-plan-cn  # plan variant of alibaba; needs the plan question first
+commandcode-anthropic  # second wire of commandcode, which is hidden until verified
+copilot  # GitHub Copilot is the Copilot CLI token row; Hermes no longer carries it in newer releases
+copilot-acp  # an ACP child process, not a connection
+kimi-coding-cn  # China key uses its own variable; Kimi lists the global key
+lmstudio  # LM Studio by URL is a Custom endpoint
+minimax-cn  # China variant of minimax
+openai-codex  # the ChatGPT sign-in is a method of OpenAI, scoped to Codex
+tencent-tokenplan  # plan variant of tencent-tokenhub, which is hidden until verified

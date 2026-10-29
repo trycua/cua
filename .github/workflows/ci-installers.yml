@@ -31,6 +31,7 @@ env:
 
 jobs:
   lint:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: shellcheck + shfmt + manifest unit tests
     runs-on: ubuntu-24.04
     steps:
@@ -51,6 +52,7 @@ jobs:
         run: python3 -m unittest discover -s scripts/install/tests -v
 
   installer-smoke-linux:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: installer smoke (Linux containers)
     runs-on: ubuntu-24.04
     strategy:
@@ -95,6 +97,7 @@ jobs:
           '
 
   installer-smoke-macos:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: installer smoke (macOS, temp prefix + dmg mount + pkg)
     runs-on: macos-14
     steps:
@@ -107,6 +110,7 @@ jobs:
         run: sh apps/cua-spaces/tests/installer/pkg.test.sh
 
   installer-smoke-windows:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: installer smoke (Windows, install.ps1)
     runs-on: windows-latest
     steps:

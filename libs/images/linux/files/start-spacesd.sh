@@ -82,9 +82,11 @@ else
 fi
 
 ENV_FILE="${CUA_DESKTOP_RUNTIME_DIR:-/run/cua-desktop}/desktop.env"
-for _ in $(seq 1 60); do
+# Up to 60 s, checked every 0.1 s: the desktop writes it about a second
+# after start, and every Space create waits for this daemon.
+for _ in $(seq 1 600); do
     [ -r "$ENV_FILE" ] && break
-    sleep 1
+    sleep 0.1
 done
 if [ -r "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; else export DISPLAY="${CUA_DISPLAY:-:1}"; fi
 

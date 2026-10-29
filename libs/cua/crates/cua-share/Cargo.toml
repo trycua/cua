@@ -1,0 +1,38 @@
+[package]
+name = "cua-share"
+description = "Share a link to anything you run: share records, the read-only file server and the access-checked gateway behind `cua share`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/cua-share"
+homepage = "https://cua.ai/docs/cua-sdk"
+keywords = ["cua","share","links","gateway"]
+categories = ["network-programming","web-programming::http-server"]
+
+[dependencies]
+cua-sandbox-core.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+http-body = "1"
+hex.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+httpdate = "1"
+hyper = { workspace = true, features = ["server", "client", "http1"] }
+hyper-util = { workspace = true, features = ["server", "tokio", "service"] }
+percent-encoding = "2"
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+url.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["io"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

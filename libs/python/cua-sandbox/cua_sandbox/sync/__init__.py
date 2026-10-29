@@ -18,6 +18,7 @@ from typing import Any, Iterator, Optional
 
 from cua_sandbox.image import Image
 from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
+from cua_sandbox.sandbox_pool import SandboxPool as _AsyncSandboxPool
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -70,6 +71,14 @@ class _SyncProxy:
         return f"Sync({self._async_obj!r})"
 
 
+def _unwrap_pool(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """``pool=`` given a blocking :class:`SandboxPool`: its async pool."""
+    pool = kwargs.get("pool")
+    if isinstance(pool, SandboxPool):
+        kwargs = {**kwargs, "pool": pool._pool}
+    return kwargs
+
+
 class Sandbox:
     """Blocking facade for :class:`cua_sandbox.Sandbox` factories.
 
@@ -79,7 +88,7 @@ class Sandbox:
 
     @staticmethod
     def create(image: Optional[Image] = None, **kwargs: Any) -> _SyncProxy:
-        return _SyncProxy(_run(_AsyncSandbox.create(image, **kwargs)))
+        return _SyncProxy(_run(_AsyncSandbox.create(image, **_unwrap_pool(kwargs))))
 
     @staticmethod
     def connect(name: Optional[str] = None, **kwargs: Any) -> _SyncProxy:
@@ -91,7 +100,7 @@ class Sandbox:
     @staticmethod
     @contextmanager
     def ephemeral(image: Optional[Image] = None, **kwargs: Any) -> Iterator[_SyncProxy]:
-        context = _AsyncSandbox.ephemeral(image, **kwargs)
+        context = _AsyncSandbox.ephemeral(image, **_unwrap_pool(kwargs))
         sandbox = _run(context.__aenter__())
         try:
             yield _SyncProxy(sandbox)
@@ -112,6 +121,64 @@ class Sandbox:
     @staticmethod
     def delete(name: str, **kwargs: Any) -> None:
         _run(_AsyncSandbox.delete(name, **kwargs))
+
+
+class SandboxPool:
+    """Blocking facade for :class:`cua_sandbox.SandboxPool`: the same
+    fields, with blocking ``create``, ``ephemeral``, ``refresh`` and
+    ``delete``."""
+
+    def __init__(self, pool: _AsyncSandboxPool) -> None:
+        self._pool = pool
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._pool, name)
+
+    def __repr__(self) -> str:
+        return repr(self._pool)
+
+    def create(self, name: Optional[str] = None, **kwargs: Any) -> _SyncProxy:
+        return Sandbox.create(pool=self._pool, name=name, **kwargs)
+
+    @contextmanager
+    def ephemeral(self, **kwargs: Any) -> Iterator[_SyncProxy]:
+        with Sandbox.ephemeral(pool=self._pool, **kwargs) as sb:
+            yield sb
+
+    def refresh(self) -> "SandboxPool":
+        return SandboxPool(_run(self._pool.refresh()))
+
+    def delete(self) -> bool:
+        return bool(_run(self._pool.delete()))
+
+
+def create_pool(image: Any, **kwargs: Any) -> SandboxPool:
+    """Blocking :func:`cua_sandbox.create_pool`."""
+    from cua_sandbox import sandbox_pool
+
+    return SandboxPool(_run(sandbox_pool.create_pool(image, **kwargs)))
+
+
+def get_pool(name: str) -> Optional[SandboxPool]:
+    """Blocking :func:`cua_sandbox.get_pool`."""
+    from cua_sandbox import sandbox_pool
+
+    p = _run(sandbox_pool.get_pool(name))
+    return SandboxPool(p) if p is not None else None
+
+
+def list_pools() -> list[SandboxPool]:
+    """Blocking :func:`cua_sandbox.list_pools`."""
+    from cua_sandbox import sandbox_pool
+
+    return [SandboxPool(p) for p in _run(sandbox_pool.list_pools())]
+
+
+def delete_pool(name: str) -> bool:
+    """Blocking :func:`cua_sandbox.delete_pool`."""
+    from cua_sandbox import sandbox_pool
+
+    return bool(_run(sandbox_pool.delete_pool(name)))
 
 
 @contextmanager

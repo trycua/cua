@@ -1,0 +1,37 @@
+id = "anthropic"
+name = "Anthropic"
+icon = "anthropic"
+tier = "top"
+rank = 10
+kind = "hosted"
+wire = "anthropic"
+base_url = "https://api.anthropic.com"
+default_model = "claude-sonnet-5"
+hermes_id = "anthropic"
+key_help = "Create a key at console.anthropic.com. Every app that uses Claude can use it."
+placeholder = "sk-ant-…"
+check = { path = "/v1/models?limit=1", auth = "x-api-key" }
+apps = ["t3code"]
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "ANTHROPIC_API_KEY"
+aliases = ["ANTHROPIC_AUTH_TOKEN"]
+
+[[method]]
+id = "claude-login"
+kind = "import_login"
+env = "CLAUDE_CODE_OAUTH_TOKEN"
+scope = "claude-code"
+app = "claude-code"
+label = "Use your Claude sign-in"
+help = "Copies the Claude Code sign-in found on this machine. It uses your Claude plan and only Claude Code uses it."
+
+[delivery]
+claude-code = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"]
+opencode = ["ANTHROPIC_API_KEY"]
+goose = ["ANTHROPIC_API_KEY"]
+pi = ["ANTHROPIC_API_KEY"]
+openclaw = ["ANTHROPIC_API_KEY"]
+hermes = ["ANTHROPIC_API_KEY"]

@@ -1,0 +1,43 @@
+id = "custom"
+name = "Custom endpoint"
+icon = "custom"
+tier = "top"
+rank = 900
+kind = "custom"
+aliases = ["openai compatible", "lm studio", "ollama", "vllm", "llama.cpp", "litellm", "local server", "gateway", "proxy"]
+wire = "openai-chat"
+base_url = ""
+default_model = ""
+hermes_id = "custom"
+key_help = "Any server that speaks the OpenAI chat API: LM Studio, Ollama, vLLM, a gateway or a proxy. A server on this Mac is only reachable from a Space that is allowed to reach that port."
+placeholder = "Key, if the server asks for one"
+
+[[method]]
+id = "endpoint"
+kind = "custom_endpoint"
+env = "CUSTOM_ENDPOINT_API_KEY"
+secret = "optional"
+
+[[method.field]]
+id = "base_url"
+label = "Base URL"
+kind = "url"
+placeholder = "http://host:1234/v1"
+required = true
+
+[[method.field]]
+id = "model"
+label = "Model"
+kind = "text"
+placeholder = "The model id the server serves"
+required = true
+
+[[method.field]]
+id = "wire"
+label = "API style"
+kind = "choice"
+options = ["openai-chat", "openai-responses", "anthropic"]
+required = true
+
+[delivery]
+hermes = ["CUSTOM_ENDPOINT_API_KEY"]

@@ -1,0 +1,23 @@
+id = "kimi"
+name = "Kimi (Moonshot)"
+icon = "kimi"
+tier = "top"
+rank = 70
+kind = "hosted"
+aliases = ["moonshot", "kimi code"]
+wire = "openai-chat"
+base_url = "https://api.moonshot.ai/v1"
+default_model = "kimi-k3"
+hermes_id = "kimi-coding"
+key_help = "Create a key at platform.moonshot.ai, or a Kimi Code key (sk-kimi-). Every app that uses Kimi can use it."
+placeholder = "sk-…"
+check = { path = "/models", auth = "bearer" }
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "KIMI_API_KEY"
+aliases = ["KIMI_CODING_API_KEY"]
+
+[delivery]
+hermes = ["KIMI_API_KEY"]

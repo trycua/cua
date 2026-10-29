@@ -1,0 +1,39 @@
+id = "openai"
+name = "OpenAI"
+icon = "openai"
+tier = "top"
+rank = 20
+kind = "hosted"
+wire = "openai-responses"
+also_wires = ["openai-chat"]
+base_url = "https://api.openai.com/v1"
+default_model = "gpt-5.5"
+hermes_id = "openai-api"
+key_help = "Create a key at platform.openai.com. Every app that uses OpenAI can use it."
+placeholder = "sk-…"
+check = { path = "/models", auth = "bearer" }
+apps = ["t3code"]
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "OPENAI_API_KEY"
+aliases = ["CODEX_API_KEY"]
+
+[[method]]
+id = "chatgpt-login"
+kind = "subscription_login"
+env = "CODEX_AUTH_JSON"
+scope = "openai-codex"
+app = "codex"
+flow = "device_code"
+label = "Sign in with ChatGPT"
+help = "Shows a code to enter on openai.com. It uses your ChatGPT plan and only Codex uses it."
+
+[delivery]
+openai-codex = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_AUTH_JSON"]
+opencode = ["OPENAI_API_KEY"]
+goose = ["OPENAI_API_KEY"]
+pi = ["OPENAI_API_KEY"]
+openclaw = ["OPENAI_API_KEY"]
+hermes = ["OPENAI_API_KEY"]

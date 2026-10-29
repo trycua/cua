@@ -1,0 +1,23 @@
+id = "xai"
+name = "xAI"
+icon = "xai"
+tier = "top"
+rank = 50
+kind = "hosted"
+aliases = ["grok"]
+wire = "openai-responses"
+also_wires = ["openai-chat"]
+base_url = "https://api.x.ai/v1"
+default_model = "grok-4.6"
+hermes_id = "xai"
+key_help = "Create a key at console.x.ai. Every app that uses Grok can use it."
+placeholder = "xai-…"
+check = { path = "/models", auth = "bearer" }
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "XAI_API_KEY"
+
+[delivery]
+hermes = ["XAI_API_KEY"]

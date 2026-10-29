@@ -2600,6 +2600,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-connections"
+version = "0.9.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "cua-contrib"
 version = "0.9.0"
 dependencies = [

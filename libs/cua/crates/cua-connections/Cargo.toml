@@ -1,0 +1,21 @@
+[package]
+name = "cua-connections"
+description = "The provider registry behind Settings, Connections and `cua connections`: one TOML file per provider (methods, base URLs, env names, which apps receive what), the generated tables the other crates read, the per-app delivery rules and Hermes's generated config.yaml."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# Reads the provider files (the generator and its tests); the generated tables
+# the other crates link need none of it.
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "1"
+
+[[bin]]
+name = "cua-connections-gen"
+path = "src/bin/gen.rs"

@@ -57,7 +57,7 @@ const app = (id: string) => document.querySelector<HTMLElement>(`[data-connector
 
 describe.skipIf(!wasmBuilt)("Settings, Connectors", () => {
   it("keeps Set up new apps automatically in the saved state", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
+    await mountApp("/settings/connections", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(document.querySelector("[data-connected-auto]")).not.toBeNull(), { timeout: 8000 });
     expect(connectedAppsState().auto).toBeNull();
     fireEvent.click(document.querySelector("[data-connected-auto]")!);
@@ -83,7 +83,7 @@ describe.skipIf(!wasmBuilt)("a newly installed coding app", () => {
     for (const state of [{ known: seen, off: [], auto: null }, { known: seen, off: ["hermes"], auto: true }]) {
       cleanup();
       setConnectedAppsState(state);
-      const { router } = await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
+      const { router } = await mountApp("/settings/connections", { failsCreates: false, listsGhost: false });
       await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
       await router.load();
       expect(app("hermes")!.querySelector("[data-connector-connect]")).not.toBeNull();

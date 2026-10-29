@@ -139,7 +139,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       id: `settings:${t.to}`,
       group: "Go to",
       label: `Settings: ${t.label}`,
-      keywords: t.to === "/settings/connectors" ? "preferences options connected apps coding agents" : "preferences options",
+      keywords: t.to === "/settings/connections" ? "preferences options connectors providers keys sign in connected apps coding agents" : "preferences options",
       icon: icon(SettingsIcon),
       run: () => void navigate({ to: t.to }),
     })),

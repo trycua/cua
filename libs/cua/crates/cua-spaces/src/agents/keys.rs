@@ -1207,9 +1207,10 @@ fn check_choices(
             return bad(format!("{} must be one of {}", f.label, f.options.join(", ")));
         }
     }
-    // A provider with no default model needs one chosen.
+    // A provider with no default model needs one chosen when an app is told which to use.
     if def.default_model.is_empty()
         && def.kind != registry::Kind::Custom
+        && !def.delivery_for("hermes").is_empty()
         && fields.get("model").is_none_or(|v| v.trim().is_empty())
     {
         return bad(format!("{} needs a model", def.name));

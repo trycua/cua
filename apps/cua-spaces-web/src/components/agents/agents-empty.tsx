@@ -48,7 +48,7 @@ export function AgentsEmpty() {
   const state = installed.length === 0 ? "none" : ready.length === 0 ? "setup" : "ready";
 
   // Connecting is its switch in Settings, Connectors: open it at the first app waiting for Cua.
-  const openConnectors = (agent?: string) => void navigate({ to: "/settings/connectors", search: { app: agent } });
+  const openConnectors = (agent?: string) => void navigate({ to: "/settings/connections", search: { app: agent } });
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col items-center pt-8 text-center" data-agents-empty={state}>

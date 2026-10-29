@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings → Connectors: `useAgentKeys()` over `ops/agent-keys.ts`, with every
+ * Settings → Connections: `useAgentKeys()` over `ops/agent-keys.ts`, with every
  * word and rule from the app core's `agentKeys.*` (`agent_keys.rs`): the
  * rows, the add or replace sheet, which variable names can hold a key and
  * the question before removing one.
@@ -17,13 +17,13 @@ import { isUnsupported, type DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
 import { hostOs, type HostOs } from "./host-os";
-import type { AgentKeyProvider, AgentKeysReport } from "./ops/agent-keys";
+import type { AgentKeyProvider, AgentKeysReport, KeyChoices } from "./ops/agent-keys";
 
 /* ---- The core's words ------------------------------------------------------------ */
 
 /** What the section shows (`agent_keys::AgentKeysInput`). */
 export interface AgentKeysInput {
-  keys: { provider: string; env: string; last4: string; addedMs: number; expired?: boolean; label?: string }[];
+  keys: { provider: string; env: string; last4: string; addedMs: number; expired?: boolean; label?: string; region?: string; fields?: Record<string, string> }[];
   unavailable?: string | null;
   error?: string | null;
 }
@@ -83,7 +83,16 @@ export interface AgentKeyConfirm {
 }
 
 export const agentKeysInputOf = (report: AgentKeysReport | undefined, error: Error | null): AgentKeysInput => ({
-  keys: (report?.keys ?? []).map(({ provider, env, last4, addedMs, expired, label }) => ({ provider, env, last4, addedMs, ...(expired ? { expired: true } : {}), ...(label ? { label } : {}) })),
+  keys: (report?.keys ?? []).map(({ provider, env, last4, addedMs, expired, label, region, fields }) => ({
+    provider,
+    env,
+    last4,
+    addedMs,
+    ...(expired ? { expired: true } : {}),
+    ...(label ? { label } : {}),
+    ...(region ? { region } : {}),
+    ...(fields && Object.keys(fields).length ? { fields } : {}),
+  })),
   unavailable: report?.available === false ? (report.unavailable ?? "this machine can't keep keys") : null,
   error: error ? error.message : null,
 });
@@ -218,9 +227,9 @@ export class AgentKeysStore {
   }
 
   /** Saves a key; the list after it replaces the shown one. Throws the host's words. */
-  async save(provider: AgentKeyProvider, value: string, env: string | null): Promise<void> {
+  async save(provider: AgentKeyProvider, value: string, env: string | null, choices: KeyChoices = {}): Promise<void> {
     this.epoch++;
-    const report = await this.adapter.call("agentKeys.set", { provider, value, env });
+    const report = await this.adapter.call("agentKeys.set", { provider, value, env, ...choices });
     this.epoch++;
     this.pinned = false;
     this.set({ report, error: null, sheet: null });
@@ -249,7 +258,7 @@ export class AgentKeysStore {
     this.pinned = true;
     this.loaded = true;
     const report: AgentKeysReport = {
-      keys: input.keys.map((k) => ({ ...k, provider: k.provider === "anthropic" || k.provider === "openai" ? k.provider : "other" })),
+      keys: input.keys.map((k) => ({ ...k })),
       providers: [],
       available: !input.unavailable,
       unavailable: input.unavailable ?? null,
@@ -260,7 +269,7 @@ export class AgentKeysStore {
 
 const stores = new WeakMap<DataAdapter, AgentKeysStore>();
 
-/** The adapter's one Settings → Connectors store. */
+/** The adapter's one Settings → Connections store. */
 export function agentKeysStore(adapter: DataAdapter): AgentKeysStore {
   let s = stores.get(adapter);
   if (!s) stores.set(adapter, (s = new AgentKeysStore(adapter)));
@@ -279,7 +288,7 @@ export interface AgentKeysHook extends AgentKeysState {
   /** The list after the providers were asked whether the saved keys still work. */
   check(): Promise<void>;
   /** Adds or replaces a key; `env` names an Other key. */
-  save(provider: AgentKeyProvider, value: string, env: string | null): Promise<void>;
+  save(provider: AgentKeyProvider, value: string, env: string | null, choices?: KeyChoices): Promise<void>;
   remove(env: string): Promise<void>;
   openSheet(provider: AgentKeyProvider, env?: string | null): void;
   closeSheet(): void;
@@ -321,7 +330,7 @@ export function useAgentKeys({ watch = false }: { watch?: boolean } = {}): Agent
     core: ctx.core,
     refresh: () => (store ? store.refresh() : Promise.resolve()),
     check: () => (store ? store.check() : Promise.resolve()),
-    save: (provider, value, env) => need().save(provider, value, env),
+    save: (provider, value, env, choices) => need().save(provider, value, env, choices),
     remove: (env) => need().remove(env),
     openSheet: (provider, env = null) => store?.openSheet(provider, env),
     closeSheet: () => store?.closeSheet(),

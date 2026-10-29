@@ -937,10 +937,9 @@ pub struct ConnectPlan {
     /// `agents.signInWait`): a code to show, entered on the provider's page.
     pub device: bool,
     /// Then open this provider's Connect sheet (the app has no sign-in of
-    /// its own and one provider to connect).
+    /// its own): the first provider it can use, with "Other providers" in
+    /// the sheet for the rest.
     pub provider: Option<String>,
-    /// Or open the provider choice for the app (it takes several).
-    pub picker: bool,
     /// The provider the token command signs in to (its row shows the approval too).
     pub token_provider: Option<String>,
 }
@@ -958,9 +957,7 @@ pub fn connect_plan(input: &ConnectorsInput, agent: &str) -> ConnectPlan {
     let device = !signed_in
         && app.is_some()
         && s.as_ref().is_some_and(|s| matches!(s.way, Some(Way::AppDevice(_))));
-    let nothing_to_do = signed_in || app_token || device;
-    let many = s.as_ref().is_some_and(|s| s.providers.len() > 1 && s.way.is_none());
-    let provider = if nothing_to_do || many {
+    let provider = if signed_in || app_token || device {
         None
     } else {
         s.as_ref()
@@ -973,7 +970,6 @@ pub fn connect_plan(input: &ConnectorsInput, agent: &str) -> ConnectPlan {
         app_token,
         device,
         provider,
-        picker: !nothing_to_do && many,
         token_provider: if app_token || device {
             s.as_ref()
                 .and_then(|s| s.providers.first())
@@ -1170,8 +1166,8 @@ fn way_fields(p: &reg::Provider, m: &reg::Method) -> Vec<WayField> {
             options,
         });
     }
-    // A provider with no default model asks for one.
-    if p.default_model.is_empty() && p.kind != reg::Kind::Custom {
+    // A provider with no default model asks for one when an app is told which to use.
+    if p.default_model.is_empty() && p.kind != reg::Kind::Custom && !p.delivery_for("hermes").is_empty() {
         out.push(WayField {
             id: "model".into(),
             label: "Model".into(),
@@ -1859,8 +1855,7 @@ mod tests {
                 tools: false,
                 app_token: false,
                 device: false,
-                provider: None,
-                picker: true,
+                provider: Some("anthropic".into()),
                 token_provider: None
             }
         );
@@ -2057,7 +2052,6 @@ mod tests {
                 app_token: true,
                 device: false,
                 provider: None,
-                picker: false,
                 token_provider: Some("anthropic".into())
             }
         );
@@ -2069,7 +2063,6 @@ mod tests {
                 app_token: false,
                 device: true,
                 provider: None,
-                picker: false,
                 token_provider: Some("openai".into())
             }
         );
@@ -2090,7 +2083,6 @@ mod tests {
                 app_token: false,
                 device: false,
                 provider: Some("anthropic".into()),
-                picker: false,
                 token_provider: None
             }
         );
@@ -2102,7 +2094,6 @@ mod tests {
                 app_token: false,
                 device: false,
                 provider: None,
-                picker: false,
                 token_provider: None
             }
         );
@@ -2461,7 +2452,7 @@ mod tests {
         assert_eq!(c.connect_label, "Connect Hermes");
         // The plan for Hermes asks which provider.
         let plan = connect_plan(&i, "hermes");
-        assert_eq!((plan.provider, plan.picker), (None, true));
+        assert_eq!(plan.provider.as_deref(), Some("anthropic"));
     }
 
     #[test]

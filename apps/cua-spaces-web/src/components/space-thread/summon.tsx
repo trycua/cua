@@ -274,7 +274,7 @@ export function WakeNoteView({
             </Button>
           ) : null}
           {c.openLabel ? (
-            <Button size="sm" variant="ghost" className="text-muted-foreground" render={<Link to="/settings/connectors/$app" params={{ app: c.app }} />} data-wake-open="">
+            <Button size="sm" variant="ghost" className="text-muted-foreground" render={<Link to="/settings/connections/$app" params={{ app: c.app }} />} data-wake-open="">
               {c.openLabel}
             </Button>
           ) : null}

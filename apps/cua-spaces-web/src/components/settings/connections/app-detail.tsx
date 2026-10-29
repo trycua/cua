@@ -27,7 +27,7 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
   const { hereName } = useThisAndOthers();
   const d = c.detail(agent);
   const back = (
-    <Link to="/settings/connectors" className="-ml-1 mb-4 inline-flex items-center gap-0.5 rounded-lg px-1 py-0.5 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60" data-connector-back="">
+    <Link to="/settings/connections" className="-ml-1 mb-4 inline-flex items-center gap-0.5 rounded-lg px-1 py-0.5 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60" data-connector-back="">
       <ChevronLeftIcon className="size-4" /> {d?.backLabel ?? "Connectors"}
     </Link>
   );

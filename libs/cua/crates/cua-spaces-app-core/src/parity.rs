@@ -5166,7 +5166,7 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "connectors.connectPlan",
             json!({ "input": first, "agent": a }),
         )?;
-        frames.push(json!({ "plan": a, "does": line(&[&p["tools"], &p["appToken"], &p["device"], &p["provider"], &p["picker"], &p["tokenProvider"]]) }));
+        frames.push(json!({ "plan": a, "does": line(&[&p["tools"], &p["appToken"], &p["device"], &p["provider"], &p["tokenProvider"]]) }));
     }
     for a in f["details"].as_array().into_iter().flatten() {
         let d = c(

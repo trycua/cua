@@ -131,7 +131,7 @@ describe("the Agents tab", () => {
     expect(row.querySelector('[data-harness-mark="bot"]')).toBeNull();
     const agent = row.dataset.agentsEmptyRow!.replace("connect-mac-", "");
     await click(row);
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connectors"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connections"));
     expect((router.state.location.search as { app?: string }).app).toBe(agent);
     // The row is there, and still off: opening the page did not connect it.
     const appRow = await found(`[data-connector-app="${agent}"]`);

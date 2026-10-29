@@ -3,18 +3,17 @@
 
 import { CheckIcon, ChevronRightIcon, CopyIcon, Loader2Icon, PlugIcon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link } from "@tanstack/react-router";
 
-import { useAgentKeys, type ThreadFailure } from "@/bridge";
+import { connectPlan, useAgentKeys, useBridge, type ThreadFailure } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { useConnectors } from "@/hooks/use-connectors";
 import { cn } from "@/lib/utils";
 
-/** The Connectors app page that gives a harness its sign-in. */
+/** The Connections app that gives a harness its sign-in. */
 const HARNESS_APP: Record<string, string> = { "claude-code": "claude-code", "openai-codex": "codex", hermes: "hermes" };
 const PROVIDER_APP: Record<string, string> = { anthropic: "claude-code", openai: "codex" };
 
-/** The Connectors app a failed agent's Connect opens: its own harness first, else the provider's. */
+/** The Connections app a failed agent's Connect is for: its own harness first, else the provider's. */
 export function failureApp(harness: string, provider: string | null): string | null {
   return HARNESS_APP[harness] ?? (provider ? (PROVIDER_APP[provider] ?? null) : null);
 }
@@ -51,6 +50,7 @@ export function FailureNote({
 
 function ConnectActions({ harness, provider, taskText, onRetry }: { harness: string; provider: string | null; taskText: string | null; onRetry?: (text: string) => Promise<void> }) {
   const c = useConnectors();
+  const { core } = useBridge();
   // The agent was refused its credential: Settings reads the saved list again, which says it needs a reconnect.
   const keys = useAgentKeys();
   useEffect(() => {
@@ -59,12 +59,20 @@ function ConnectActions({ harness, provider, taskText, onRetry }: { harness: str
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const app = failureApp(harness, provider);
   const row = app ? c.view?.apps.find((a) => a.agent === app) : undefined;
-  const connected = row?.state === "connected";
-  // The same word as the Connectors row: Reconnect when the saved sign-in ran out or was refused.
-  const label = row?.button?.label === "Reconnect" ? "Reconnect" : "Connect";
+  const providerRow = provider ? [...(c.view?.providers ?? []), ...(c.view?.moreProviders ?? [])].find((p) => p.id === provider) : undefined;
+  const connected = row?.state === "connected" && providerRow?.state !== "not-connected";
+  // The same word as the Connections row: Reconnect when the saved sign-in or key ran out or was refused.
+  const label = row?.button?.label === "Reconnect" || providerRow?.status === "Needs reconnect" ? "Reconnect" : "Connect";
+  // The same sheet as Settings, on the provider that refused it: an app with a sign-in of its own
+  // (Claude Code, Codex) goes through its own Connect; any other app opens the provider's sheet.
+  const connect = () => {
+    const plan = app ? connectPlan(core, c.input, app) : null;
+    if (app && plan && (plan.appToken || plan.device)) void c.connectApp(app);
+    else c.openProvider(provider ?? plan?.provider ?? null, app);
+  };
   return (
     <>
-      <Button size="sm" variant="outline" data-failure-connect="" render={app ? <Link to="/settings/connectors/$app" params={{ app }} /> : <Link to="/settings/connectors" />}>
+      <Button size="sm" variant="outline" data-failure-connect="" onClick={connect}>
         <PlugIcon /> {label}
       </Button>
       <RetryButton taskText={taskText} onRetry={onRetry} enabled={connected} />

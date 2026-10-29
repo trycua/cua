@@ -5,7 +5,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 
-import { useAgentKeys, useBridge, useKeysRecheck, type ConnectorAppRow, type ConnectorProviderRow } from "@/bridge";
+import { useAgentKeys, useBridge, useKeysRecheck, type ConnectorAppRow, type ConnectorProviderRow, type WorkChip } from "@/bridge";
 import { OtherMachineBlock, useThisAndOthers } from "@/components/agents/other-machine-block";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { KeySheet } from "@/components/agents/key-sheet";
@@ -13,6 +13,8 @@ import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { GroupedAction, GroupedRow } from "@/components/ui/grouped";
+import { Input } from "@/components/ui/input";
+import { ProviderMark } from "@/components/settings/connections/provider-mark";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
 import { useConnectors, type Connectors } from "@/hooks/use-connectors";
@@ -23,11 +25,11 @@ import { cn } from "@/lib/utils";
 const DriverSettingsCard = lazy(() => import("@/components/volume/driver-card").then((m) => ({ default: m.DriverSettingsCard })));
 
 /**
- * Settings, Connectors: Coding apps, each with Connect (Cua's
- * tools and the app's sign-in, once) and a chevron to its own page; then
- * Providers, each with Connect (the provider's sign-in where there is one
- * for this, else a key) or Sign out. Every word and state is the core's
- * (`connectors.view`).
+ * Settings, Connections: the providers (each with its state, the apps it
+ * works with and Connect, Reconnect or Disconnect), then More providers with
+ * a search; Coding apps, each with Connect (Cua's tools and the app's
+ * sign-in, once) and a chevron to its own page. Every word and state is the
+ * core's (`connectors.view`).
  */
 export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
   const c = useConnectors();
@@ -51,7 +53,7 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
   }, [Boolean(view), focusApp]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!view || c.apps.rows === null) return <div className="mb-8 h-48" aria-busy="true" />;
-  const open = (agent: string) => void navigate({ to: "/settings/connectors/$app", params: { app: agent } });
+  const open = (agent: string) => void navigate({ to: "/settings/connections/$app", params: { app: agent } });
   const confirm = keys.removing ? keys.removeConfirmOf(keys.removing) : null;
 
   return (
@@ -62,6 +64,71 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           <span className="min-w-0 flex-1">{view.notice}</span>
         </div>
       ) : null}
+
+      <SettingsGroup title={view.providersTitle} footer={view.providersFooter} data-connectors-providers="">
+        {view.providers.map((p) => (
+          <ProviderRow key={p.id} row={p} addedLabel={view.addedLabel} c={c} onOpenApp={open} />
+        ))}
+      </SettingsGroup>
+
+      <SettingsGroup title={view.moreTitle} data-connectors-more="">
+        <GroupedRow className="gap-2">
+          <Input
+            type="search"
+            data-connectors-search=""
+            aria-label={view.moreSearchLabel}
+            placeholder={view.moreSearchLabel}
+            value={c.input.query ?? ""}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => c.searchMore(e.currentTarget.value)}
+            className="h-8 flex-1"
+          />
+          {c.input.moreOpen || (c.input.query ?? "").trim() ? (
+            <Button size="sm" variant="ghost" data-connectors-more-toggle="" onClick={() => c.searchMore("", false)}>
+              Hide
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" data-connectors-more-toggle="" onClick={() => c.searchMore("", true)}>
+              Show all {view.moreCount}
+            </Button>
+          )}
+        </GroupedRow>
+        {view.moreProviders.map((p) => (
+          <ProviderRow key={p.id} row={p} addedLabel={view.addedLabel} c={c} onOpenApp={open} />
+        ))}
+        {view.moreEmpty ? (
+          <GroupedRow className="text-muted-foreground" data-connectors-more-empty="">
+            {view.moreEmpty}
+          </GroupedRow>
+        ) : null}
+        {view.others.map((r) => (
+          <GroupedRow key={r.env} data-agent-key-row={r.env}>
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-mono text-[12px]">{r.title}</div>
+              <div className="truncate text-xs text-muted-foreground">{r.detail}</div>
+            </div>
+            <span className="font-mono text-[12px] text-muted-foreground">{r.status}</span>
+            <Button size="sm" variant="outline" disabled={!view.canEdit} onClick={() => keys.openSheet("other", r.env)}>
+              {r.actionLabel}
+            </Button>
+            {r.removeLabel ? (
+              <Button size="sm" variant="ghost" disabled={!view.canEdit} onClick={() => keys.askRemove(r.env)}>
+                {r.removeLabel}
+              </Button>
+            ) : null}
+          </GroupedRow>
+        ))}
+        <SettingsRow
+          label={view.addOtherLabel}
+          description={view.otherHelp}
+          control={
+            <Button size="sm" variant="outline" disabled={!view.canEdit} onClick={() => keys.openSheet("other")} data-agent-key-add-other="">
+              Add key
+            </Button>
+          }
+        />
+      </SettingsGroup>
 
       <SettingsGroup
         title={view.appsTitle}
@@ -125,38 +192,6 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           </Button>
         </GroupedRow>
         {otherOpen ? <OtherMachineBlock /> : null}
-      </SettingsGroup>
-
-      <SettingsGroup title={view.providersTitle} footer={view.providersFooter} data-connectors-providers="">
-        {view.providers.map((p) => (
-          <ProviderRow key={p.id} row={p} addedLabel={view.addedLabel} c={c} />
-        ))}
-        {view.others.map((r) => (
-          <GroupedRow key={r.env} data-agent-key-row={r.env}>
-            <div className="min-w-0 flex-1">
-              <div className="truncate font-mono text-[12px]">{r.title}</div>
-              <div className="truncate text-xs text-muted-foreground">{r.detail}</div>
-            </div>
-            <span className="font-mono text-[12px] text-muted-foreground">{r.status}</span>
-            <Button size="sm" variant="outline" disabled={!view.canEdit} onClick={() => keys.openSheet("other", r.env)}>
-              {r.actionLabel}
-            </Button>
-            {r.removeLabel ? (
-              <Button size="sm" variant="ghost" disabled={!view.canEdit} onClick={() => keys.askRemove(r.env)}>
-                {r.removeLabel}
-              </Button>
-            ) : null}
-          </GroupedRow>
-        ))}
-        <SettingsRow
-          label={view.addOtherLabel}
-          description={view.otherHelp}
-          control={
-            <Button size="sm" variant="outline" disabled={!view.canEdit} onClick={() => keys.openSheet("other")} data-agent-key-add-other="">
-              Add key
-            </Button>
-          }
-        />
       </SettingsGroup>
 
       {keys.sheet ? <KeySheet key={`${keys.sheet.provider}:${keys.sheet.env ?? ""}`} keys={keys} provider={keys.sheet.provider} env={keys.sheet.env} /> : null}
@@ -225,30 +260,70 @@ function AppRow({ row, lit, onOpen, onConnect }: { row: ConnectorAppRow; lit: bo
   );
 }
 
-function ProviderRow({ row, addedLabel, c }: { row: ConnectorProviderRow; addedLabel: string; c: Connectors }) {
+/** How many of the apps a connection works with show as chips; the rest are a count. */
+const CHIPS_SHOWN = 4;
+
+function ProviderRow({ row, addedLabel, c, onOpenApp }: { row: ConnectorProviderRow; addedLabel: string; c: Connectors; onOpenApp: (agent: string) => void }) {
   const connected = row.state === "connected";
+  const needsReconnect = row.status === "Needs reconnect";
   return (
-    <GroupedRow data-connector-provider={row.id} data-state={row.state} className="min-h-12">
+    <GroupedRow data-connector-provider={row.id} data-state={row.state} className="min-h-14 items-start py-3">
+      <ProviderMark id={row.id} name={row.label} />
       <div className="min-w-0 flex-1">
         <div className="truncate">{row.label}</div>
-        <div className="truncate text-xs text-muted-foreground">{row.detail}</div>
+        {row.credential ? (
+          <div className="truncate text-xs text-muted-foreground" data-connector-credential="">
+            {row.credential}
+          </div>
+        ) : null}
+        {row.worksWith.length ? <WorkChips chips={row.worksWith} label={row.worksWithLabel} onOpen={onOpenApp} /> : null}
       </div>
-      <div className="flex shrink-0 flex-col items-end">
-        <span className={cn("flex items-center gap-1.5 text-[13px]", connected ? "" : row.state === "failed" ? "text-destructive" : "text-muted-foreground")} data-connector-status="">
-          {row.state === "connecting" ? <Loader2Icon className="size-3.5 animate-spin" /> : connected ? <CheckIcon className="size-3.5 text-success" /> : null}
+      <div className="flex shrink-0 flex-col items-end gap-1.5">
+        <span
+          className={cn("flex items-center gap-1.5 text-[13px]", connected ? "" : row.state === "failed" || needsReconnect ? "text-destructive" : "text-muted-foreground")}
+          data-connector-status=""
+        >
+          {row.state === "connecting" ? <Loader2Icon className="size-3.5 animate-spin" /> : connected ? <CheckIcon className="size-3.5 text-success" /> : needsReconnect ? <TriangleAlertIcon className="size-3.5" /> : null}
           {row.status}
         </span>
         {row.addedMs !== null ? <span className="text-[11px] text-muted-foreground">{addedText(addedLabel, row.addedMs)}</span> : null}
+        <Button
+          size="sm"
+          variant={connected ? "ghost" : "outline"}
+          disabled={!row.button.enabled}
+          data-connector-provider-action={row.button.id}
+          onClick={() => (row.button.id === "sign-out" ? void c.signOut(row.id) : c.openProvider(row.id))}
+        >
+          {row.button.label}
+        </Button>
       </div>
-      <Button
-        size="sm"
-        variant={connected ? "ghost" : "outline"}
-        disabled={!row.button.enabled}
-        data-connector-provider-action={row.button.id}
-        onClick={() => (row.button.id === "sign-out" ? void c.signOut(row.id) : c.openProvider(row.id))}
-      >
-        {row.button.label}
-      </Button>
     </GroupedRow>
+  );
+}
+
+/** The apps a connection works with, each a small button to that app's page. */
+function WorkChips({ chips, label, onOpen }: { chips: WorkChip[]; label: string; onOpen: (agent: string) => void }) {
+  const shown = chips.slice(0, CHIPS_SHOWN);
+  const rest = chips.length - shown.length;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1" data-connector-works-with="">
+      <span className="mr-0.5 text-xs text-muted-foreground">{label}</span>
+      {shown.map((chip) => (
+        <button
+          key={chip.agent}
+          type="button"
+          data-connector-chip={chip.agent}
+          onClick={() => onOpen(chip.agent)}
+          className="cursor-default rounded-lg bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
+          {chip.name}
+        </button>
+      ))}
+      {rest > 0 ? (
+        <span className="px-0.5 text-[11px] text-muted-foreground" title={chips.slice(CHIPS_SHOWN).map((x) => x.name).join(", ")} data-connector-chips-more="">
+          and {rest} more
+        </span>
+      ) : null}
+    </div>
   );
 }

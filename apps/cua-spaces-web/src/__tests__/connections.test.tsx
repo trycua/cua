@@ -103,7 +103,7 @@ describe.skipIf(!wasmBuilt)("the Agents page, On This Mac", () => {
     expect(row("gemini-cli")).toBeNull();
     // Connect on Hermes: opens Settings, Connectors at its row; nothing is connected on the spot.
     fireEvent.click(row("hermes")!.querySelector('[data-connection-action="connect"]')!);
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connectors"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connections"));
     expect((router.state.location.search as { app?: string }).app).toBe("hermes");
     const appRow = await waitFor(() => {
       const r = document.querySelector<HTMLElement>('[data-connector-app="hermes"]');

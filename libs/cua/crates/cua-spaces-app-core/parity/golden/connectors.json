@@ -256,9 +256,7 @@
       "title": "Connect GitHub Copilot",
       "ways": [
         {
-          "fields": [
-            "model | Model | text | true | "
-          ],
+          "fields": [],
           "way": "key | api_key | Paste an API key | Paste key | required"
         }
       ]
@@ -344,23 +342,23 @@
       "title": "Use your Claude Code sign-in"
     },
     {
-      "does": "true | true | false | - | false | anthropic",
+      "does": "true | true | false | - | anthropic",
       "plan": "claude-code"
     },
     {
-      "does": "false | false | true | - | false | openai",
+      "does": "false | false | true | - | openai",
       "plan": "codex"
     },
     {
-      "does": "false | false | false | - | true | -",
+      "does": "false | false | false | anthropic | -",
       "plan": "hermes"
     },
     {
-      "does": "false | false | false | - | false | -",
+      "does": "false | false | false | - | -",
       "plan": "vscode"
     },
     {
-      "does": "false | false | false | github | false | -",
+      "does": "false | false | false | github | -",
       "plan": "copilot-cli"
     },
     {

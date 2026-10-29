@@ -54,7 +54,7 @@ export const Route = createFileRoute("/agents/all")({
 /** Settings → Connectors, where agents get their provider keys. */
 function AgentKeysLink({ size }: { size?: "sm" }) {
   return (
-    <Button variant="outline" size={size} render={<Link to="/settings/connectors" />} data-agent-keys-link>
+    <Button variant="outline" size={size} render={<Link to="/settings/connections" />} data-agent-keys-link>
       <KeyRoundIcon /> Add a provider key
     </Button>
   );
@@ -74,7 +74,7 @@ function useNow(ms = 30_000): number {
 function ConnectedAppsLink() {
   const navigate = useNavigate();
   return (
-    <Button variant="outline" onClick={() => void navigate({ to: "/settings/connectors" as "/settings" })} data-connected-apps-link>
+    <Button variant="outline" onClick={() => void navigate({ to: "/settings/connections" as "/settings" })} data-connected-apps-link>
       <SettingsIcon /> Connectors
     </Button>
   );
@@ -166,7 +166,7 @@ function Overview({ data, onSelect, connections }: { data: AgentsData; onSelect:
       {connections.rows.length > 0 ? (
         <Block title="On This Mac" count={connections.rows.length} id="connections">
           {connections.rows.map((c) => (
-            <ConnectionListRow key={c.id} row={c} busy={connections.busy === c.id} note={connections.notes[c.id] ?? null} onAct={(a) => (a === "connect" ? void navigate({ to: "/settings/connectors", search: { app: c.id } }) : void connections.act(c.id, a))} />
+            <ConnectionListRow key={c.id} row={c} busy={connections.busy === c.id} note={connections.notes[c.id] ?? null} onAct={(a) => (a === "connect" ? void navigate({ to: "/settings/connections", search: { app: c.id } }) : void connections.act(c.id, a))} />
           ))}
         </Block>
       ) : null}

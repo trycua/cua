@@ -7,7 +7,7 @@
 //! run only as explicit per-run env (`RunOptions::env`, or on the MCP
 //! surface `env_from_host` naming known provider key variables), written
 //! 0600 inside the run and redacted from its event log. Keys saved in Cua
-//! Spaces (Settings → Connectors, [`keys`]) reach only the runs whose harness
+//! Spaces (Settings → Connections, [`keys`]) reach only the runs whose harness
 //! reads them ([`run_env`]). Moving a signed-in agent session is teleport's
 //! job, behind its consent gate.
 
@@ -217,7 +217,7 @@ pub fn capabilities() -> CapabilitiesReport {
 }
 
 /// The first of `h`'s keys this server can give a run: one saved in Cua
-/// Spaces (Settings → Connectors), or one set in this process's environment
+/// Spaces (Settings → Connections), or one set in this process's environment
 /// (`env_from_host` forwards it).
 pub fn host_key(h: &harness::Harness) -> Option<&'static str> {
     host_key_with(h, &keys::global().names())
@@ -269,7 +269,7 @@ pub fn env_from_host_with(
         if !allowed.contains(&n.as_str()) && !saved_names.contains(n) {
             return Err(Error::InvalidArgument(format!(
                 "{n} is not a provider key variable this server forwards; allowed: {} \
-                 (or a key saved in Cua Spaces → Settings → Connectors)",
+                 (or a key saved in Cua Spaces → Settings → Connections)",
                 allowed.join(", ")
             )));
         }

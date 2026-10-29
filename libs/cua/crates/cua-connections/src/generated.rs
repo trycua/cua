@@ -240,7 +240,7 @@ pub static PROVIDERS: &[Provider] = &[
         delivery: &[
             Delivery { harness: "gemini-cli", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, Entry { dest: "GOOGLE_API_KEY", src: "GOOGLE_API_KEY" }, ] },
             Delivery { harness: "google-antigravity", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, ] },
-            Delivery { harness: "goose", entries: &[Entry { dest: "GOOGLE_API_KEY", src: "GEMINI_API_KEY" }, ] },
+            Delivery { harness: "goose", entries: &[Entry { dest: "GOOGLE_API_KEY", src: "GOOGLE_API_KEY" }, Entry { dest: "GOOGLE_API_KEY", src: "GEMINI_API_KEY" }, ] },
             Delivery { harness: "hermes", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, ] },
             Delivery { harness: "opencode", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, ] },
             Delivery { harness: "pi", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, ] },

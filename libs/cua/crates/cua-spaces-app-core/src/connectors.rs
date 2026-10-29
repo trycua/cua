@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Settings, Connectors: the coding apps Cua works with and the providers
+//! Settings, Connections: the coding apps Cua works with and the providers
 //! they sign in to, with one Connect for each.
 //!
 //! - **Coding apps.** One row for every agent harness that can run in a Space
@@ -168,7 +168,7 @@ pub struct HarnessApp {
     pub name: &'static str,
 }
 
-/// The Connectors row (setup id) of `harness` (`openai-codex` is `codex`).
+/// The Connections row (setup id) of `harness` (`openai-codex` is `codex`).
 pub fn app_for_harness(harness: &str) -> Option<&'static str> {
     HARNESS_APPS
         .iter()
@@ -973,6 +973,12 @@ pub fn app_providers(agent: &str) -> Vec<String> {
             s.providers.iter().take(n).map(|p| p.id.to_string()).collect()
         })
         .unwrap_or_default()
+}
+
+/// Whether `agent` has a saved sign-in that stopped working (the provider refused it, or it ran
+/// out): it needs a reconnect, not a first connect.
+pub fn needs_reconnect(input: &ConnectorsInput, agent: &str) -> bool {
+    !app_signed_in(input, agent) && app_expired(input, agent)
 }
 
 /// Whether `agent` has a sign-in it can use in a Space now.

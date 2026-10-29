@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { agentKeyForm, agentKeysView } from "../agent-keys";
 import { testCore, wasmBuilt } from "./testCore";
 
-/** What Settings, Connectors says about where a saved key stays, per system. */
+/** What Settings, Connections says about where a saved key stays, per system. */
 const WORDS = {
   macos: {
     intro: "Agents in your Spaces need a provider key to run. Keys stay on this Mac in the Keychain, and each one is only given to the agents that use it.",
@@ -22,7 +22,7 @@ const WORDS = {
   },
 } as const;
 
-describe.skipIf(!wasmBuilt)("Settings, Connectors says where keys stay in the system's words", () => {
+describe.skipIf(!wasmBuilt)("Settings, Connections says where keys stay in the system's words", () => {
   it("has the core say it for each system, and the Mac's words by default", async () => {
     const core = await testCore();
     const input = { keys: [] };

@@ -51,7 +51,7 @@ export const Route = createFileRoute("/agents/all")({
   }),
 });
 
-/** Settings → Connectors, where agents get their provider keys. */
+/** Settings → Connections, where agents get their provider keys. */
 function AgentKeysLink({ size }: { size?: "sm" }) {
   return (
     <Button variant="outline" size={size} render={<Link to="/settings/connections" />} data-agent-keys-link>
@@ -70,7 +70,7 @@ function useNow(ms = 30_000): number {
   return now;
 }
 
-/** Settings, Connectors: where Cua is switched on for each coding app. */
+/** Settings, Connections: where Cua is switched on for each coding app. */
 function ConnectedAppsLink() {
   const navigate = useNavigate();
   return (

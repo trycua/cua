@@ -455,7 +455,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
+       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connections). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
        "hidden": false,
        "name": "sign-in",
        "repeatable": false,
@@ -729,7 +729,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
+       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connections). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
        "hidden": false,
        "name": "sign-in",
        "repeatable": false,
@@ -2424,7 +2424,7 @@
      "usage": "cua agent harnesses [OPTIONS]"
     },
     {
-     "abstract": "The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connectors). Values are read from stdin and never printed",
+     "abstract": "The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connections). Values are read from stdin and never printed",
      "after_help": "Examples:\n  cua agent keys\n  cua agent keys set anthropic\n  cua agent keys rm OPENAI_API_KEY",
      "aliases": [],
      "arguments": [],
@@ -17523,6 +17523,204 @@
    "subcommand_optional": false,
    "subcommands": [],
    "usage": "cua usage [OPTIONS]"
+  },
+  {
+   "abstract": "The AI providers connected once for every app that can use them: list, add (a key from stdin), test, remove. What Cua Spaces shows in Settings, Connections. (`cua connect` connects your coding apps to Cua.)",
+   "after_help": "Examples:\n  cua connections list\n  cua connections add deepseek\n  cua connections test\n  cua connections remove deepseek",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "connections",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "List the providers with their state (Connected, Needs reconnect, Not connected) and the apps each works with. Never prints a key",
+     "after_help": "Examples:\n  cua connections list\n  cua connections list --all\n  cua --json connections list",
+     "aliases": [],
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also list every provider that is not connected (by default: the ones up front and the ones with something saved)",
+       "hidden": false,
+       "name": "all",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "list",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections list [OPTIONS]"
+    },
+    {
+     "abstract": "Connect a provider. The key is read from stdin (pipe it in; a terminal is refused so it isn't echoed). Saving never waits on the provider: `cua connections test` asks it afterwards",
+     "after_help": "Examples:\n  cua connections add deepseek\n  cua connections add zai --region coding-global\n  cua connections add deepinfra --model meta-llama/Meta-Llama-3.1-70B-Instruct\n  cua connections add custom --base-url http://host:1234/v1 --model qwen",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The provider id (`cua connections list --all`)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "PROVIDER",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "discussion": ".\n\nThe provider is one of the ids `cua connections list --all` prints. Pipe the key in: `pbpaste | cua connections add deepseek`. Sign-ins another app made on this machine are imported with `cua connect setup <app> --sign-in`.",
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "add",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "How: `key` (an API key from stdin; the default) or `endpoint` (a custom endpoint: its base URL, model and API style; a key is optional)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "method",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "METHOD"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The plan or region, for a provider that has them (Z.AI: global, cn, coding-global, coding-cn)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "region",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "REGION"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The model to use, for a provider with no default model or to choose another",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "model",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "MODEL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "A custom endpoint's base URL",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "base-url",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "BASE_URL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "A custom endpoint's API style: openai-chat (default), openai-responses or anthropic",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "wire",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "WIRE"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections add [OPTIONS] <PROVIDER>"
+    },
+    {
+     "abstract": "Ask each provider whether its saved key still works (a read-only request on the provider's own host, bounded in time; offline is not a failure). A key the provider refuses is listed as Needs reconnect",
+     "after_help": "Examples:\n  cua connections test\n  cua connections test openrouter",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Only this provider",
+       "hidden": false,
+       "is_optional": true,
+       "name": "PROVIDER",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "test",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections test [OPTIONS] [PROVIDER]"
+    },
+    {
+     "abstract": "Disconnect a provider: remove what is saved for it",
+     "after_help": "Examples:\n  cua connections remove deepseek",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": false,
+       "name": "PROVIDER",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "remove",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections remove [OPTIONS] <PROVIDER>"
+    }
+   ],
+   "usage": "cua connections [OPTIONS] <COMMAND>"
   },
   {
    "abstract": "Move a desktop app session (tabs, profile, sign-in) into a sandbox",

@@ -282,7 +282,7 @@ function OtherMachineRow() {
  * 2 · Let your coding apps use Cua: one question, asked once. It names the
  * coding apps found on this computer; Set up adds Cua to all of them, Not now
  * moves on. Later installs are set up the same way, with a notice and Undo
- * (Settings, Connectors). Which apps there are, and what Connect does for
+ * (Settings, Connections). Which apps there are, and what Connect does for
  * each, is still the app core's (`firstRun.view`).
  */
 function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {

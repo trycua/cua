@@ -293,20 +293,22 @@ fn swift(all: &[ProviderDef]) -> String {
 pub fn docs_table(all: &[ProviderDef]) -> String {
     let mut o = String::from("| Provider | How to connect | Works with |\n| --- | --- | --- |\n");
     for p in all.iter().filter(|p| !p.hidden && !p.terms_review()) {
-        let how: Vec<&str> = p
-            .method
-            .iter()
-            .filter(|m| m.terms != "review")
-            .map(|m| match m.kind.as_str() {
-                "api_key" => "API key",
-                "import_login" => "Your sign-in on this machine",
-                "device_code" | "subscription_login" => "Plan sign-in",
-                "browser_oauth" => "Browser sign-in",
-                "adc" => "Cloud credentials",
-                "local_server" => "Server URL",
+        let mut how: Vec<&str> = vec![];
+        for m in p.method.iter().filter(|m| m.terms != "review") {
+            let word = match (m.kind.as_str(), m.flow.as_str()) {
+                ("api_key", _) => "API key",
+                ("import_login", "paste") => "A pasted Claude token",
+                ("import_login", _) => "Your sign-in on this machine",
+                ("device_code" | "subscription_login", _) => "Plan sign-in",
+                ("browser_oauth", _) => "Browser sign-in",
+                ("adc", _) => "Cloud credentials",
+                ("local_server", _) => "Server URL",
                 _ => "Base URL and key",
-            })
-            .collect();
+            };
+            if !how.contains(&word) {
+                how.push(word);
+            }
+        }
         let works = works_with_names(p, all);
         o.push_str(&format!("| {} | {} | {} |\n", p.name, how.join(", "), works.join(", ")));
     }

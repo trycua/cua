@@ -16,7 +16,7 @@ import { BY_HAND } from "@/lib/connected-apps";
 import { cn } from "@/lib/utils";
 
 /**
- * One coding app's page (Settings, Connectors, the row's chevron): Connect
+ * One coding app's page (Settings, Connections, the row's chevron): Connect
  * while it isn't, the separate switches (Cua skills, Cua tools, Keep it set
  * up), which provider it signs in with and how, Sign in or Sign out, the
  * settings file, adding Cua by hand, and Remove. The core's

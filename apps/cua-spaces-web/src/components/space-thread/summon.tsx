@@ -8,7 +8,7 @@
  * the message wakes it), and, when one can't be woken, shows why under the
  * message with Connect. Once Connect finishes the message goes again by
  * itself. Which agents, what each step is and every word are the core's
- * (`summon.*`); Connect is Settings, Connectors' (`useConnectors`).
+ * (`summon.*`); Connect is Settings, Connections' (`useConnectors`).
  *
  * The notes are this device's: they are about its own sign-ins, so they
  * aren't posted to the thread for everyone.

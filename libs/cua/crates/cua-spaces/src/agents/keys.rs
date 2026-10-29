@@ -704,7 +704,7 @@ impl AgentKeys {
             .any(|k| k.env == env && k.source.as_deref() != Some(source))
         {
             return Err(Error::InvalidArgument(format!(
-                "{env} is already in Keyvault; remove it in Settings → Connectors to copy this one"
+                "{env} is already in Keyvault; remove it in Settings → Connections to copy this one"
             )));
         }
         keys.retain(|k| k.source.as_deref() != Some(source));

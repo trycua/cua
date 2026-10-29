@@ -198,7 +198,7 @@ export class AgentKeysStore {
    * Reads the list after the providers were asked whether the saved API keys still work
    * (`agentKeys.check`: cheap, answers reused for a few minutes, never logged), so a key that was
    * revoked reads "Needs reconnect" instead of "Connected". Falls back to the plain list on a host
-   * without the check. Opening Settings, Connectors and the Agents page does this.
+   * without the check. Opening Settings, Connections and the Agents page does this.
    */
   check(): Promise<void> {
     const epoch = this.epoch;

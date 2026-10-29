@@ -5,8 +5,8 @@ description: 'Connect an AI provider once in Cua Spaces and every app that can u
 
 A connection is a provider you have signed in to or given a key for: Anthropic,
 OpenAI, OpenRouter and the rest. Connect it once in **Settings, Connections**
-and every app that can use it works, in every Space, with nothing to set up
-inside the Space.
+(called Connectors before) and every app that can use it works, in every Space,
+with nothing to set up inside the Space.
 
 ## Connect a provider
 
@@ -51,7 +51,7 @@ ChatGPT sign-in only to Codex. Other apps use an API key for the same provider.
 | Claude Code | Anthropic only: an API key or your Claude sign-in. |
 | Codex | OpenAI only: an API key or your ChatGPT sign-in. |
 | Gemini CLI, Antigravity | Google AI Studio key. |
-| OpenCode, Goose, Pi, OpenClaw | The keys of Anthropic, OpenAI, Google AI Studio (not Goose's own Google variable) and OpenRouter, and any other provider that serves the API they are pointed at, with its base URL and default model. |
+| OpenCode, Goose, Pi, OpenClaw | The keys of Anthropic, OpenAI, OpenRouter and (except OpenClaw) Google AI Studio, and for any other provider that serves the API they speak, its base URL and default model. |
 | Hermes | Any connected provider. |
 
 A key reaches a run as an environment variable of that run only, written to a
@@ -85,7 +85,7 @@ checked, and providers Cua has not run end to end yet, are not listed.
 
 | Provider | How to connect | Works with |
 | --- | --- | --- |
-| Anthropic | Your sign-in on this machine, Your sign-in on this machine, API key | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
+| Anthropic | Your sign-in on this machine, A pasted Claude token, API key | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
 | OpenAI | Plan sign-in, API key | Codex, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
 | OpenRouter | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
 | Google AI Studio | API key | Gemini CLI, Antigravity, OpenCode, Goose, Pi, Hermes |

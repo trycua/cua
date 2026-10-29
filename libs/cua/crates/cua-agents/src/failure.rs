@@ -276,6 +276,17 @@ fn refused(text: &str) -> bool {
     .any(|m| t.contains(m))
 }
 
+/// The one short word for a failed agent in a list: Needs reconnect when the provider refused a
+/// credential that was there, Not connected when there was none, Stopped for any other failure.
+/// The same words as the Connections states.
+pub fn status_word(f: &Failure) -> &'static str {
+    match f.class {
+        FailureClass::NeedsConnect if refused(&f.message) => "Needs reconnect",
+        FailureClass::NeedsConnect => "Not connected",
+        FailureClass::Error => "Stopped",
+    }
+}
+
 /// A provider's name for a person.
 fn provider_label(provider: Option<&str>) -> &'static str {
     provider
@@ -361,6 +372,16 @@ mod tests {
         }
         let f = classify("hermes", "OpenRouter rejected your API key");
         assert_eq!(plain(&f, "hermes"), "OpenRouter rejected the key Hermes used. Update it, then try again.");
+    }
+
+    #[test]
+    fn a_failed_agent_reads_with_the_connections_words() {
+        let w = |h: &str, t: &str| status_word(&classify(h, t));
+        assert_eq!(w("claude-code", "Authentication required"), "Not connected");
+        assert_eq!(w("claude-code", "API Error: 401 OAuth access token is invalid"), "Needs reconnect");
+        assert_eq!(w("hermes", "OpenRouter rejected your API key"), "Needs reconnect");
+        assert_eq!(w("hermes", "Hermes is not connected to any AI provider"), "Not connected");
+        assert_eq!(w("claude-code", "rate limited, try later"), "Stopped");
     }
 
     #[test]

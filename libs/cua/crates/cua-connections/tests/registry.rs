@@ -289,3 +289,14 @@ fn a_provider_that_is_checked_is_checked_on_its_own_host() {
     // Custom endpoints are never probed by Cua.
     assert!(provider("custom").unwrap().check.is_none());
 }
+
+#[test]
+fn goose_reads_the_google_key_from_either_saved_name() {
+    // Goose reads GOOGLE_API_KEY; the Google row saves GEMINI_API_KEY: both fill it, the pasted name first.
+    let only_gemini = deliver("goose", &saved(&[("GEMINI_API_KEY", "gem")]));
+    assert_eq!(only_gemini.get("GOOGLE_API_KEY").map(String::as_str), Some("gem"));
+    let both = deliver("goose", &saved(&[("GEMINI_API_KEY", "gem"), ("GOOGLE_API_KEY", "goog")]));
+    assert_eq!(both.get("GOOGLE_API_KEY").map(String::as_str), Some("goog"));
+    // OpenCode and Pi read GEMINI_API_KEY only.
+    assert!(deliver("opencode", &saved(&[("GOOGLE_API_KEY", "goog")])).is_empty());
+}

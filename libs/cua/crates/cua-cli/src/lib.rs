@@ -378,7 +378,7 @@ enum Command {
         subcommand,
         after_help = "Examples:
   cua connections list
-  pbpaste | cua connections add deepseek
+  cua connections add deepseek
   cua connections test
   cua connections remove deepseek"
     )]

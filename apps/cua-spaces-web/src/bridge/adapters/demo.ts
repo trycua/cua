@@ -988,7 +988,7 @@ export interface DemoState extends DemoLinksStateField, DemoTelemetryState, Demo
   agentSetup: AgentSetupRow[];
   /** Agents whose sign-in the demo "copied" to Keyvault. */
   imported: string[];
-  /** Saved keys and sign-ins (Settings, Connectors; Claude Code's Connect adds its token here). */
+  /** Saved keys and sign-ins (Settings, Connections; Claude Code's Connect adds its token here). */
   keyStore: DemoKeyStore;
   readOnlyAgents: string[];
   volume: DemoVolumeState;

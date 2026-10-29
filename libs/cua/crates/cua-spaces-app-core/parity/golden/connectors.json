@@ -378,7 +378,7 @@
     {
       "candidates": [
         "hermes | Hermes | true | In this Space",
-        "claude | Claude Code | false | Not connected yet",
+        "claude | Claude Code | false | Not connected",
         "codex | Codex | false | Starts in this Space",
         "openclaw | OpenClaw | false | Starts in this Space"
       ]

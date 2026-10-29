@@ -5029,7 +5029,7 @@ fn run_pro_banner(f: &Value, h: &dyn Host) -> Result<Value, String> {
     Ok(json!({ "flow": "pro-banner", "frames": frames }))
 }
 
-/// Settings, Connectors (redesign), summoning agents and the one agent list.
+/// Settings, Connections (redesign), summoning agents and the one agent list.
 fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
     let line = |parts: &[&Value]| {
         parts

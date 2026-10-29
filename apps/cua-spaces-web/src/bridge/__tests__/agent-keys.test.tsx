@@ -98,7 +98,7 @@ function mount(core: CoreClient) {
   return { hooks, adapter };
 }
 
-describe.skipIf(!wasmBuilt)("Settings → Connectors through the core", () => {
+describe.skipIf(!wasmBuilt)("Settings → Connections through the core", () => {
   it("adds, replaces and removes a key through the hook", async () => {
     const { hooks, adapter } = mount(await testCore());
     await waitFor(() => expect(hooks.keys.view?.rows.map((r) => r.status)).toEqual(["Not set", "•••• 3f9a"]));
@@ -136,7 +136,7 @@ describe.skipIf(!wasmBuilt)("Settings → Connectors through the core", () => {
   });
 });
 
-describe("Settings → Connectors without the core", () => {
+describe("Settings → Connections without the core", () => {
   it("draws nothing it would have to make up", () => {
     const { hooks, adapter } = mount(noCore);
     expect(hooks.keys.view).toBeNull();

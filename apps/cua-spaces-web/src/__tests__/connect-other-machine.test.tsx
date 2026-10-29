@@ -66,7 +66,7 @@ describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
     expect(q("[data-connect-others]")?.textContent).toMatch(/Not touched: .+/);
   });
 
-  it("Settings, Connectors names the machine it edits, what it leaves alone, and shows how to use it from another machine", async () => {
+  it("Settings, Connections names the machine it edits, what it leaves alone, and shows how to use it from another machine", async () => {
     await mountApp("/settings/connections", { failsCreates: false, listsGhost: false });
     const footer = await waitFor(() => {
       const f = q("[data-connectors-machine]");

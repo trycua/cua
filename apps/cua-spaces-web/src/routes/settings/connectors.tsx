@@ -3,7 +3,7 @@
 
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-/** Settings, Connectors is now Connections: an old address (a bookmark, an older link) lands there, on the same app's page when it named one. */
+/** Settings, Connections is now Connections: an old address (a bookmark, an older link) lands there, on the same app's page when it named one. */
 export const Route = createFileRoute("/settings/connectors")({
   validateSearch: (s: Record<string, unknown>): { app?: string } => ({ app: typeof s.app === "string" ? s.app : undefined }),
   beforeLoad: ({ search, location }) => {

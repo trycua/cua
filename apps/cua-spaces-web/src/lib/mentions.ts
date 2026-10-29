@@ -17,7 +17,7 @@ export interface MentionCandidate {
   kind: "agent" | "person";
   /** An agent's kind (`claude-code`), for its mark when it isn't in the Space yet. */
   harness?: string;
-  /** Under the name for an agent not in the Space yet ("Starts in this Space", "Not connected yet"). */
+  /** Under the name for an agent not in the Space yet ("Starts in this Space", "Not connected"). */
   detail?: string;
   /** Listed but not pickable (`@everyone` for someone who can't give tasks); `detail` says why. */
   disabled?: boolean;

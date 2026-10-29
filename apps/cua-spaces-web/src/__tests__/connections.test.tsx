@@ -101,7 +101,7 @@ describe.skipIf(!wasmBuilt)("the Agents page, On This Mac", () => {
     expect(row("codex")!.querySelector("[data-connection-action]")!.textContent).toBe("Sign in");
     // Not installed agents get no row.
     expect(row("gemini-cli")).toBeNull();
-    // Connect on Hermes: opens Settings, Connectors at its row; nothing is connected on the spot.
+    // Connect on Hermes: opens Settings, Connections at its row; nothing is connected on the spot.
     fireEvent.click(row("hermes")!.querySelector('[data-connection-action="connect"]')!);
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connections"));
     expect((router.state.location.search as { app?: string }).app).toBe("hermes");

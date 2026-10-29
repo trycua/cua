@@ -45,17 +45,16 @@ pub enum ConnectionsCmd {
     /// Connect a provider. The key is read from stdin (pipe it in; a
     /// terminal is refused so it isn't echoed). Saving never waits on the
     /// provider: `cua connections test` asks it afterwards.
-    #[command(
-        after_help = "Examples:
-  pbpaste | cua connections add deepseek
-  cua connections add zai --region coding-global < key.txt
-  cua connections add deepinfra --model meta-llama/Meta-Llama-3.1-70B-Instruct < key.txt
-  cua connections add custom --base-url http://host:1234/v1 --model qwen < /dev/null
-
-The provider is one of the ids `cua connections list --all` prints. Sign-ins
-another app made on this machine are imported with `cua connect setup <app>
---sign-in`."
-    )]
+    ///
+    /// The provider is one of the ids `cua connections list --all` prints.
+    /// Pipe the key in: `pbpaste | cua connections add deepseek`. Sign-ins
+    /// another app made on this machine are imported with
+    /// `cua connect setup <app> --sign-in`.
+    #[command(after_help = "Examples:
+  cua connections add deepseek
+  cua connections add zai --region coding-global
+  cua connections add deepinfra --model meta-llama/Meta-Llama-3.1-70B-Instruct
+  cua connections add custom --base-url http://host:1234/v1 --model qwen")]
     Add {
         /// The provider id (`cua connections list --all`).
         provider: String,

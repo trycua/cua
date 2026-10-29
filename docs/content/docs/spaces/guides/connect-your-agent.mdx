@@ -47,7 +47,7 @@ and Cua never reads or copies it. On another computer, sign in to Codex there
 
 An agent that Cua runs in a Space uses the provider keys saved on the computer
 that hosts the Space: the **OpenAI key** for Codex and the **Anthropic key** for
-Claude Code. Add them on **Pick your agent** or in **Settings, Connectors**. They stay
+Claude Code. Add them on **Pick your agent** or in **Settings, Connections**. They stay
 in this computer's Keychain (Credential Manager on Windows).
 
 ### Claude Code and your Claude plan
@@ -194,7 +194,7 @@ An agent can also start other agents inside a Space, as long-lived threads.
 Runs live in the guest (`~/.spaces-agents/<run_id>/`) and survive the client
 going away. Host credential files are never copied into the Space: an API
 key reaches a run only as env you name for that run (`env_from_host`), or as
-a key saved in Settings → Connectors for that harness.
+a key saved in Settings → Connections for that harness.
 
 In TypeScript a run is a thread:
 
@@ -276,7 +276,7 @@ and the Swift tab is from [Cua Bots](/spaces/examples/cua-bots).
 ## Agent keys
 
 Claude Code, Codex and the other harnesses need a provider key to run. Add it
-once in **Cua Spaces, Settings, Connectors**, and every agent you start in a Space
+once in **Cua Spaces, Settings, Connections**, and every agent you start in a Space
 gets the key it needs.
 
 - **Anthropic** (`ANTHROPIC_API_KEY`): Claude Code and other agents that use Claude.
@@ -315,7 +315,7 @@ from the daemon's environment) wins over a saved one.
 
 `agent_capabilities` counts saved keys: a harness whose key is saved reports
 `auth: ok`. A run with no key fails before anything is installed, and the error
-says to add the key in Settings, Connectors or to set it for the Cua daemon.
+says to add the key in Settings, Connections or to set it for the Cua daemon.
 
 ### Where the keys are kept
 

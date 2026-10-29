@@ -459,7 +459,7 @@ export function AgentsEmpty({ onStart, onConnect }: { onStart: () => void; onCon
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // Connecting an app is its switch in Settings, Connectors: this opens it at that app.
+  // Connecting an app is its switch in Settings, Connections: this opens it at that app.
   const connect = (agent: string) => void navigate({ to: "/settings/connections", search: { app: agent } });
   return (
     <div data-agents-empty="" className="flex min-w-0 flex-1 items-center justify-center">

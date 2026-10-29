@@ -23,12 +23,22 @@
 //!
 //! `CUA_DRIVER_KEEP_DISPLAY_AWAKE` sets the idle window in seconds (default
 //! 600); `0`, `off` or `false` turns the guard off.
+//!
+//! A display that is already off stays off under the guard, and while it is
+//! off WindowServer lists no active display: a ScreenCaptureKit display
+//! capture then completes with neither an image nor an error, which the
+//! `screencapturekit` Swift bridge traps on (SIGILL). [`wake_for_capture`]
+//! declares user activity to turn the display on before such a capture, and
+//! refuses with [`DisplayAsleep`] when it stays off. A display that comes on
+//! shows the login shield first: on an unlocked Mac the capture waits for it to
+//! drop, on a locked one it captures the lock screen.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use core_foundation::base::TCFType;
 use core_foundation::string::{CFString, CFStringRef};
+use core_graphics::display::CGDisplay;
 
 /// Environment variable that tunes or disables the guard.
 pub const KEEP_DISPLAY_AWAKE_ENV: &str = "CUA_DRIVER_KEEP_DISPLAY_AWAKE";
@@ -36,10 +46,19 @@ pub const KEEP_DISPLAY_AWAKE_ENV: &str = "CUA_DRIVER_KEEP_DISPLAY_AWAKE";
 /// How long the display stays awake after the last tool call by default.
 pub const DEFAULT_IDLE_WINDOW: Duration = Duration::from_secs(600);
 
+/// Refusal code of a display capture while the display stays off.
+pub const DISPLAY_ASLEEP: &str = "display_asleep";
+
+const WAKE_WAIT: Duration = Duration::from_secs(3);
+const WAKE_POLL: Duration = Duration::from_millis(50);
+const SHIELD_WAIT: Duration = Duration::from_millis(1500);
+const SHIELD_FADE: Duration = Duration::from_millis(500);
+
 type IOPMAssertionID = u32;
 type IOReturn = i32;
 const K_IOPM_ASSERTION_LEVEL_ON: u32 = 255;
 const K_IO_RETURN_SUCCESS: IOReturn = 0;
+const K_IOPM_USER_ACTIVE_LOCAL: u32 = 0;
 
 #[link(name = "IOKit", kind = "framework")]
 extern "C" {
@@ -49,7 +68,83 @@ extern "C" {
         assertion_name: CFStringRef,
         assertion_id: *mut IOPMAssertionID,
     ) -> IOReturn;
+    fn IOPMAssertionDeclareUserActivity(
+        assertion_name: CFStringRef,
+        user_type: u32,
+        assertion_id: *mut IOPMAssertionID,
+    ) -> IOReturn;
     fn IOPMAssertionRelease(assertion_id: IOPMAssertionID) -> IOReturn;
+}
+
+/// The main display stayed off, so there is nothing to capture.
+#[derive(Debug)]
+pub struct DisplayAsleep;
+
+impl std::fmt::Display for DisplayAsleep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{DISPLAY_ASLEEP}: the display is off and did not turn on within {} s, so \
+             there is no screen to capture; wake the Mac, then retry",
+            WAKE_WAIT.as_secs()
+        )
+    }
+}
+
+impl std::error::Error for DisplayAsleep {}
+
+/// Turn the display on for a display capture when it is off.
+///
+/// Costs two WindowServer reads when the display is on. When it is off this
+/// declares local user activity, as a key press would, waits up to
+/// [`WAKE_WAIT`] for an active display, then up to [`SHIELD_WAIT`] for an
+/// unlocked session to drop the login shield and [`SHIELD_FADE`] for the
+/// desktop to fade in.
+pub fn wake_for_capture() -> Result<(), DisplayAsleep> {
+    if !display_off() {
+        return Ok(());
+    }
+    declare_user_activity();
+    if !wait_until(|| !display_off(), WAKE_WAIT, WAKE_POLL) {
+        return Err(DisplayAsleep);
+    }
+    if wait_until(|| !crate::session::screen_locked(), SHIELD_WAIT, WAKE_POLL) {
+        std::thread::sleep(SHIELD_FADE);
+    }
+    Ok(())
+}
+
+fn wait_until(done: impl Fn() -> bool, wait: Duration, poll: Duration) -> bool {
+    let deadline = Instant::now() + wait;
+    while !done() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(poll);
+    }
+    true
+}
+
+fn display_off() -> bool {
+    !CGDisplay::active_display_count().is_ok_and(|count| count > 0) || CGDisplay::main().is_asleep()
+}
+
+fn declare_user_activity() {
+    let name = CFString::from_static_string("Cua Driver: capture the display");
+    let mut id: IOPMAssertionID = 0;
+    let status = unsafe {
+        IOPMAssertionDeclareUserActivity(
+            name.as_concrete_TypeRef(),
+            K_IOPM_USER_ACTIVE_LOCAL,
+            &mut id,
+        )
+    };
+    if status == K_IO_RETURN_SUCCESS {
+        tracing::debug!("declared user activity to wake the display");
+        unsafe { IOPMAssertionRelease(id) };
+    } else {
+        tracing::warn!("could not wake the display: IOPMAssertionDeclareUserActivity {status}");
+    }
 }
 
 /// Parse the env value into the idle window, or `None` when disabled.
@@ -209,6 +304,39 @@ mod tests {
         );
         assert_eq!(remaining(idle, idle), None);
         assert_eq!(remaining(Duration::from_secs(700), idle), None);
+    }
+
+    #[test]
+    fn a_wait_returns_as_soon_as_its_condition_holds() {
+        let polls = std::cell::Cell::new(0);
+        let held = wait_until(
+            || {
+                polls.set(polls.get() + 1);
+                polls.get() >= 4
+            },
+            Duration::from_secs(5),
+            Duration::from_millis(1),
+        );
+        assert!(held);
+        assert_eq!(polls.get(), 4);
+        assert!(wait_until(|| true, Duration::ZERO, Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn a_wait_whose_condition_never_holds_gives_up_within_the_bound() {
+        let started = Instant::now();
+        let held = wait_until(
+            || false,
+            Duration::from_millis(30),
+            Duration::from_millis(5),
+        );
+        assert!(!held);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn display_asleep_names_its_code() {
+        assert!(DisplayAsleep.to_string().starts_with(DISPLAY_ASLEEP));
     }
 
     /// Holding and releasing the real assertion works and leaves nothing

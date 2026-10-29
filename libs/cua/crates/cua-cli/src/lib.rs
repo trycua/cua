@@ -1834,12 +1834,12 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 let yes = matches!(cmd, host::SpacesCmd::Share { yes: true, .. });
                 let is_share = matches!(cmd, host::SpacesCmd::Share { .. });
                 let mut presence_asks = is_share;
-                if let Some(rt) = cua.embedded_runtime() {
-                    if !rt.spaces().has_share_consent() {
-                        rt.spaces()
-                            .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
-                        presence_asks = false;
-                    }
+                if let Some(rt) = cua.embedded_runtime()
+                    && !rt.spaces().has_share_consent()
+                {
+                    rt.spaces()
+                        .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
+                    presence_asks = false;
                 }
                 if presence_asks {
                     // The daemon, or an embedded runtime that carries the
@@ -1851,7 +1851,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 }
             }
             let res = host::run_spaces_sdk(&cua, cmd, json, out).await;
-            return res.map_err(host::explain_share_presence_failure);
+            res.map_err(host::explain_share_presence_failure)
         }
         Command::Build(a) => {
             let rest = Cli {

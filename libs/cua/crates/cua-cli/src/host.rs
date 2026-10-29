@@ -785,6 +785,40 @@ pub fn daemon_share_gate(yes: bool, terminal: bool) -> std::result::Result<(), C
     ))
 }
 
+/// Says how to confirm when a share was stopped because nobody confirmed it
+/// on this computer (CUA-2837). The confirmation is a security gate: sharing
+/// hands a desktop to another account, so no flag skips it. A cancelled,
+/// denied or timed-out prompt used to end with only "biometric authorization
+/// was cancelled".
+pub fn explain_share_presence_failure(err: CuaError) -> CuaError {
+    let msg = match &err {
+        CuaError::PermissionDenied(m) => m.clone(),
+        other => other.to_string(),
+    };
+    // A free account: "Start a team" used to lead nowhere (CUA-2791).
+    if msg.contains(cua_spaces::share::NO_TEAM) && !msg.contains("app.cua.ai") {
+        return CuaError::PermissionDenied(format!(
+            "{msg} Start Teams at {} (from 1 seat), then run `cua auth login` again.",
+            cua_host::spaces_api::BUY_TEAMS_URL
+        ));
+    }
+    if !msg.contains("user presence was not confirmed") || msg.contains("To share:") {
+        return err;
+    }
+    CuaError::PermissionDenied(format!(
+        "{msg}. To share: run the command again at this computer and confirm the prompt with \
+         {}, or share from the Cua app. A script or agent cannot confirm for you; \
+         `--yes` only says someone is there to answer.",
+        if cfg!(target_os = "macos") {
+            "Touch ID or your password"
+        } else if cfg!(target_os = "windows") {
+            "Windows Hello or your password"
+        } else {
+            "your password (the desktop's polkit prompt)"
+        }
+    ))
+}
+
 /// What the daemon asks the person at this computer for, in this OS's words
 /// (it was always "Touch ID", also on a Linux server that has none).
 pub fn share_confirm_prompt() -> &'static str {
@@ -4367,6 +4401,32 @@ mod tests {
             SpacesCmd::Share { yes, .. } => assert!(yes),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn share_presence_failure_says_how_to_confirm() {
+        let raw = CuaError::PermissionDenied(
+            "not shared: user presence was not confirmed: biometric authorization was cancelled"
+                .into(),
+        );
+        let e = explain_share_presence_failure(raw).to_string();
+        assert!(
+            e.contains("To share: run the command again at this computer"),
+            "{e}"
+        );
+        assert!(e.contains("Cua app"), "{e}");
+        // Applied twice, or to an unrelated error, it changes nothing more.
+        let again =
+            explain_share_presence_failure(CuaError::PermissionDenied(e.clone())).to_string();
+        assert_eq!(again.matches("To share:").count(), 1, "{again}");
+        let free = explain_share_presence_failure(CuaError::PermissionDenied(
+            cua_spaces::share::NO_TEAM.into(),
+        ))
+        .to_string();
+        assert!(free.contains("https://app.cua.ai/buy/teams"), "{free}");
+        assert!(free.contains("cua auth login"), "{free}");
+        let other = CuaError::NotFound("space".into());
+        assert_eq!(explain_share_presence_failure(other.clone()), other);
     }
 
     #[test]

@@ -984,6 +984,15 @@ impl Spaces {
     /// A host that is connected now is taken off with `cua host remove` on
     /// it instead.
     pub async fn relay_unregister(&self, space: &str) -> Result<bool> {
+        // A Space that is already gone here but was left on the relay (its
+        // delete could not reach the relay, CUA-2841): its machine is still
+        // remembered, so `relay-unregister local:<name>` removes it.
+        if matches!(self.resolve(space), Err(Error::NotFound(_)))
+            && let Some(machine) = self.attached().get(space).map(|a| a.machine.clone())
+        {
+            self.detach(space, &machine).await?;
+            return Ok(true);
+        }
         let id = match self.resolve(space) {
             // A bare relay machine id (`space-…`) is known once the
             // directory was listed.

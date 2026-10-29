@@ -388,7 +388,7 @@
     },
     {
      "abstract": "Install the default cua skills and configure the cua MCP server",
-     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
+     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -455,7 +455,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: Claude Code's `claude setup-token` (one browser approval) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). The agent's own sign-in files are never read or changed",
+       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
        "hidden": false,
        "name": "sign-in",
        "repeatable": false,
@@ -662,7 +662,7 @@
     },
     {
      "abstract": "Install the default cua skills and configure the cua MCP server",
-     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
+     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -729,7 +729,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: Claude Code's `claude setup-token` (one browser approval) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). The agent's own sign-in files are never read or changed",
+       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
        "hidden": false,
        "name": "sign-in",
        "repeatable": false,

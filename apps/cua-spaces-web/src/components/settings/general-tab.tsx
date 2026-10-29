@@ -2,16 +2,20 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { chooseSettings, useBridge, useLoginItem, useSession, useSettings, useTips, type GlobalShortcut, type SettingsRow as CoreRow } from "@/bridge";
+import type { HostLimitRow, HostLimits } from "@/bridge/contracts/host";
+
+import { chooseSettings, useBridge, useLoginItem, useMachines, useSession, useSettings, useThisMachine, useTips, type GlobalShortcut, type SettingsRow as CoreRow } from "@/bridge";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { CoreSettingsRow } from "@/components/settings/core-section";
+import { RepoCacheGroup } from "@/components/settings/repo-cache-group";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
-import { globalShortcutLine, showsMacShellSettings } from "@/lib/host-labels";
+import { globalShortcutLine, showsMacShellSettings, thisComputerLabel } from "@/lib/host-labels";
 import { LAUNCH_HELP, LAUNCH_LABEL } from "@/lib/settings-copy";
 import { acceleratorOf } from "@/lib/shortcut-keys";
 import { useTheme, type ThemePreference } from "@/lib/theme";
@@ -36,7 +40,7 @@ export const showCuaIn = (row: CoreRow): CoreRow => ({
 /**
  * Settings, General: the few things a person sets every day. Start at login,
  * where Cua lives (Mac), appearance, the shortcut (Mac) and usage data.
- * Everything else moved: Advanced, Connectors, Trusted devices, the Volume
+ * Everything else moved: Advanced, Connectors, the Volume
  * and Keyvault pages.
  */
 export function GeneralTab() {
@@ -123,7 +127,138 @@ export function GeneralTab() {
           />
         ) : null}
       </SettingsGroup>
+      <SharingGroup />
+      <RepoCacheGroup />
     </div>
+  );
+}
+
+/** What the switch says before this Mac is set up (the core's words once it is). */
+const SPACES_SWITCH = "Let other machines create Spaces here";
+const SPACES_HELP = "Your other machines can create Spaces here.";
+
+/**
+ * Sharing, for this Mac: "Let other machines create Spaces here", on by default. Before this Mac is set
+ * up, turning it on sets it up with the defaults (its desktop stays private; that switch is on its page
+ * under Machines). With both switches off this Mac simply is not shared, with no error.
+ */
+function SharingGroup() {
+  const { data: machines } = useMachines();
+  const { data: session } = useSession();
+  const host = useThisMachine(session?.identity ?? null);
+  const panel = machines?.find((m) => m.current && !m.device)?.panel;
+  if (!panel) return null;
+  const toggle = panel.toggles?.find((t) => t.id === "spaces");
+  const resume = panel.actions.some((a) => a.id === "resume-sharing" && a.enabled);
+  const on = panel.configured && Boolean(toggle?.on);
+  const flip = (next: boolean) => {
+    void (async () => {
+      try {
+        if (!panel.configured) {
+          if (next && !(await host.quickSetUp())) throw new Error(host.setupError?.message ?? "Couldn't set this Mac up.");
+          return;
+        }
+        if (!toggle) return;
+        await host.run(toggle.action);
+        if (next && resume) await host.run("resume-sharing");
+      } catch (e) {
+        fail("Couldn't change sharing")(e);
+      }
+    })();
+  };
+  return (
+    <SettingsGroup title="Sharing">
+      <SettingsRow
+        label={toggle?.label ?? SPACES_SWITCH}
+        description={toggle?.help ?? SPACES_HELP}
+        htmlFor="share-spaces"
+        control={<Switch id="share-spaces" data-setting-row="share-spaces" checked={on} disabled={host.busy || (panel.configured && !toggle?.enabled)} onCheckedChange={flip} />}
+      />
+      {on
+        ? (panel.limitRows ?? []).map((row) => (
+            <LimitRow
+              key={row.id}
+              row={row}
+              busy={host.busy}
+              onChange={(limits) =>
+                host.setLimits(limits).catch((e) => {
+                  fail("Couldn't change the limit")(e);
+                  throw e;
+                })
+              }
+            />
+          ))
+        : null}
+    </SettingsGroup>
+  );
+}
+
+const LIMIT_FIELD: Record<string, keyof HostLimits> = {
+  "max-spaces": "maxSpaces",
+  "max-memory": "maxMemoryGb",
+  "max-disk": "maxDiskGb",
+  "max-run": "maxRunMinutes",
+};
+
+/**
+ * One limit on the Spaces other machines create here: a number (empty is no limit), what is in use
+ * next to it, and "Over limit" when it was lowered below that (nothing is stopped; new Spaces are refused).
+ * Saved when the field is left or Enter is pressed.
+ */
+function LimitRow({ row, busy, onChange }: { row: HostLimitRow; busy: boolean; onChange: (limits: HostLimits) => Promise<unknown> }) {
+  const shown = row.value > 0 ? String(row.value) : "";
+  const [draft, setDraft] = useState(shown);
+  const latest = useRef(shown);
+  latest.current = shown;
+  useEffect(() => setDraft(shown), [shown]);
+  const field = LIMIT_FIELD[row.id];
+  if (!field) return null;
+  const save = () => {
+    const n = draft.trim() === "" ? 0 : Math.floor(Number(draft));
+    if (!Number.isFinite(n) || n < 0) return setDraft(shown);
+    if (n === row.value) return setDraft(shown);
+    // A change the host refused shows the number it still has.
+    onChange({ [field]: n }).catch(() => setDraft(latest.current));
+  };
+  const total = row.total && row.total > 0 ? `${thisComputerLabel()} has ${row.total} GB` : null;
+  return (
+    <SettingsRow
+      label={row.label}
+      htmlFor={`limit-${row.id}`}
+      description={
+        <>
+          {row.help}
+          {row.useText ? (
+            <span className="block" data-limit-use={row.id}>
+              {row.useText}
+              {row.over ? <span className="ml-1.5 font-medium text-destructive">{row.overText ?? "Over limit"}</span> : null}
+              {total ? `. ${total}` : null}
+            </span>
+          ) : null}
+        </>
+      }
+      control={
+        <span className="flex items-center gap-2">
+          <Input
+            id={`limit-${row.id}`}
+            data-setting-row={`limit-${row.id}`}
+            type="number"
+            inputMode="numeric"
+            min={0}
+            className="w-28 text-right"
+            placeholder="No limit"
+            value={draft}
+            disabled={busy}
+            onValueChange={setDraft}
+            onBlur={save}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <span className="w-12 text-[13px] text-muted-foreground">{row.unit === "Spaces" ? "Spaces" : row.unit}</span>
+        </span>
+      }
+    />
   );
 }
 

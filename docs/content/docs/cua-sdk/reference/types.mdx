@@ -48,7 +48,7 @@ Renamed members: in Kotlin, objects implement `AutoCloseable`, whose `close()` f
 
 ## All items
 
-322 items. Methods are listed on their object.
+328 items. Methods are listed on their object.
 
 The 10 items of Batched forks are listed on [its page](/cua-sdk/reference/sandbox/fork-batch#all-items).
 
@@ -261,12 +261,18 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`RelayDevice`](/cua-sdk/reference/spaces/host#relaydevice-record) | record | A client device of the account, as the relay lists it. |
 | [`RelayMachine`](/cua-sdk/reference/spaces/host#relaymachine-record) | record | A machine of the account's relay directory (`relay:<id>`). |
 | [`ReplayMode`](/cua-sdk/reference/spacesd/shell#replaymode-enum) | enum | Scrollback replay when attaching. |
+| [`repo_cache_clear`](/cua-sdk/reference/repo-cache#repo_cache_clear) | function | Deletes every repository the repo cache holds (they are copied again the next time a Space clones them). |
+| [`repo_cache_status`](/cua-sdk/reference/repo-cache#repo_cache_status) | function | The repo cache now: on or off, how much it holds of its cap, and what the last week saved. |
+| [`RepoCacheStatus`](/cua-sdk/reference/repo-cache#repocachestatus-record) | record | What the repo cache holds and what it saved, in plain words for Settings (`cache.repos` and `cache.repos_size_gb` are its settings, changed with… |
 | [`resolve_image`](/cua-sdk/reference/image#resolve_image) | function | Resolves `reference` for `backend` (`auto`, `local`, `provider`, `container`/`docker`/`gvisor`, `vm`/`qemu`/`kubevirt`, `lume`) on… |
 | [`resolve_image_with_secret`](/cua-sdk/reference/image#resolve_image_with_secret) | function | `resolve_image` for a private image: `secret` joins the head of the registry auth chain (it is read in this process and never cached or logged). |
 | [`ResolvedImage`](/cua-sdk/reference/image#resolvedimage-record) | record | A reference resolved for a backend. |
 | [`RoutineInfo`](/cua-sdk/reference/spaces/persistent-agents#routineinfo-record) | record | A routine: a recurring turn of a persistent agent, fired by the daemon. |
 | [`RuntimeCheck`](/cua-sdk/reference/cua#runtimecheck-record) | record | One doctor check (one backend). |
 | [`RuntimeCheckStatus`](/cua-sdk/reference/cua#runtimecheckstatus-enum) | enum | Status of one local runtime component. |
+| [`RuntimeDetected`](/cua-sdk/reference/runtime-kinds#runtimedetected-record) | record | A runtime installed on this machine for one kind of Space. |
+| [`RuntimeKindState`](/cua-sdk/reference/runtime-kinds#runtimekindstate-record) | record | One kind of Space's runtime, as Settings shows it. |
+| [`RuntimePathProbe`](/cua-sdk/reference/runtime-kinds#runtimepathprobe-record) | record | What a binary is, for one kind of Space (`runtime_check_path`). |
 | [`Sandbox`](/cua-sdk/reference/sandbox#sandbox) | object | A sandbox handle. |
 | [`sandbox_locations`](/cua-sdk/reference/sandbox#sandbox_locations) | function | Every location word `on=` accepts, in display order: `local`, `cloud`, then the contrib providers (`e2b`, `daytona`, `modal`, ...) and your own… |
 | [`SandboxCreateOptions`](/cua-sdk/reference/image#sandboxcreateoptions-record) | record | Options for `Sandboxes.create`. |

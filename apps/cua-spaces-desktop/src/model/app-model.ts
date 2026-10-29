@@ -13,6 +13,8 @@ import type {
   AppCliInstallPlan,
   AppCreateAction,
   AppCreatesState,
+  AppRuntimeKindInput,
+  AppRuntimesInput,
   AppCreateSpaceArgs,
   AppGpuChoice,
   AppLocalStorage,
@@ -170,6 +172,10 @@ export class AppModel {
   runningMacosVms: number | null = null;
   lumeSource: string | null = null;
   linuxSource: string | null = null;
+  /** Settings, Advanced: each kind of Space's runtime setting and what is installed for it, once read. */
+  runtimeKinds: AppRuntimeKindInput[] | null = null;
+  /** Settings, Advanced: the runtime doctor's answer, once read. */
+  runtimeDoctor: LocalRuntimes | null = null;
   /** Your machines that provide Spaces, as New Space last read them. */
   hosts: AppSpaceHost[] = [];
   /** Windows or Linux without a usable local runtime: why, and the fix New Space offers (null when one is ready). */
@@ -611,7 +617,7 @@ export class AppModel {
       // A create this app asked another computer for already has its own pending row.
       this.creatingElsewhere = (list.creating ?? []).filter((c) => !this.spaces.some((s) => s.name === c.name && (s.host === c.machineId || this.native.appCreatesIsPending(s.id))));
       // Your other computers could not be read: their rows are the last known ones.
-      this.rosterError = list.notice ? "Could not reach your other computers. Their Spaces may be out of date." : null;
+      this.rosterError = list.notice ? "Could not reach your other machines. Their Spaces may be out of date." : null;
       if (this.selectedSpaceId === null) {
         const first = this.sidebar.selectedId;
         if (first) this.selectedSpaceId = first;
@@ -637,6 +643,25 @@ export class AppModel {
   }
 
   // MARK: New Space
+
+  /** What Settings, Advanced's runtime rows are laid out from (`runtimes::section`): every kind, "Checking…" until read. */
+  runtimesInput(): AppRuntimesInput {
+    const os = process.platform === "darwin" ? this.native.AppSpaceOs.Macos : process.platform === "win32" ? this.native.AppSpaceOs.Windows : this.native.AppSpaceOs.Linux;
+    return {
+      os,
+      hostArch: this.hostArch,
+      localBackends: this.runtimeDoctor?.ready,
+      localDetails: this.runtimeDoctor?.details,
+      kinds: this.runtimeKinds ?? undefined,
+    };
+  }
+
+  /** Reads each kind's runtime setting, what is installed and the doctor (each bounded). */
+  async readRuntimes(): Promise<void> {
+    const [doctor, kinds] = await Promise.all([this.backend.localRuntimes(), this.backend.runtimeKinds()]);
+    if (doctor) this.runtimeDoctor = doctor;
+    if (kinds) this.runtimeKinds = kinds;
+  }
 
   /** What New Space knows, freshly probed; every probe runs at once and each is bounded. */
   async newSpaceEnv(): Promise<AppWizardEnv> {

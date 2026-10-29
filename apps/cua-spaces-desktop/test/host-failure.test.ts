@@ -4,7 +4,7 @@
 // A failed host setup or This machine button in words (the SwiftUI app's
 // HostSetupFailureTests): the kind from the raw error, a title and message
 // that never carry a URL or the raw error, which stays whole as Details, and
-// Sign In or Retry. On Windows and Linux the words name the computer.
+// Sign In or Retry. On Windows and Linux the words name the machine.
 import { describe, expect, it } from "vitest";
 import { classify, presentHostFailure } from "../src/model/host-failure";
 
@@ -106,15 +106,15 @@ describe("host setup failures", () => {
     expect(presentHostFailure("relay: invalid account token: ExpiredSignature", "darwin", "signedOut").actionLabel).toBe("Sign In");
   });
 
-  it("names the computer and its system on Windows and Linux", () => {
+  it("names the machine and its system on Windows and Linux", () => {
     expect(presentHostFailure("odd", "win32").title).toBe("Couldn’t set up this PC for access");
-    expect(presentHostFailure("odd", "linux").title).toBe("Couldn’t set up this computer for access");
+    expect(presentHostFailure("odd", "linux").title).toBe("Couldn’t set up this machine for access");
     const svc = presentHostFailure("schtasks /Create failed: access denied", "win32");
     expect(svc.kind).toBe("service");
     expect(svc.message).toContain("Windows didn’t start");
     expect(svc.message).toContain("Run as administrator");
     expect(svc.message).not.toContain("restart this PC");
-    expect(presentHostFailure("systemctl --user start failed", "linux").message).toContain("restart this computer");
-    expect(presentHostFailure("relay: HTTP 401", "linux").message).toBe("Your Cua account isn’t signed in on this computer. Sign in, then try again.");
+    expect(presentHostFailure("systemctl --user start failed", "linux").message).toContain("restart this machine");
+    expect(presentHostFailure("relay: HTTP 401", "linux").message).toBe("Your Cua account isn’t signed in on this machine. Sign in, then try again.");
   });
 });

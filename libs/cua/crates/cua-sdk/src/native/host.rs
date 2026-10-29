@@ -375,6 +375,15 @@ pub struct HostSettingsChange {
     /// macOS VMs at once (0 to 2, Apple's license).
     #[uniffi(default = None)]
     pub max_macos_vms: Option<u32>,
+    /// Memory the provided Spaces may use in total, in GB (0: no limit).
+    #[uniffi(default = None)]
+    pub max_memory_gb: Option<u32>,
+    /// Disk the provided Spaces may use in total, in GB (0: no limit).
+    #[uniffi(default = None)]
+    pub max_disk_gb: Option<u32>,
+    /// How long a provided Space may run, in minutes (0: no limit).
+    #[uniffi(default = None)]
+    pub max_run_minutes: Option<u32>,
 }
 
 /// A Space this machine provides to one of your devices.
@@ -481,6 +490,25 @@ pub struct HostStatus {
     /// macOS VMs at once (at most two).
     #[uniffi(default = 0)]
     pub max_macos_vms: u32,
+    /// Memory the provided Spaces may use in total, in GB (0: no limit).
+    #[uniffi(default = 0)]
+    pub max_memory_gb: u32,
+    /// Disk the provided Spaces may use in total, in GB (0: no limit).
+    #[uniffi(default = 0)]
+    pub max_disk_gb: u32,
+    /// How long a provided Space may run, in minutes (0: no limit).
+    #[uniffi(default = 0)]
+    pub max_run_minutes: u32,
+    /// What the provided Spaces were given now, in GB.
+    #[uniffi(default = 0)]
+    pub used_memory_gb: u32,
+    #[uniffi(default = 0)]
+    pub used_disk_gb: u32,
+    /// This machine's own memory and disk, in GB (0: not known).
+    #[uniffi(default = 0)]
+    pub total_memory_gb: u32,
+    #[uniffi(default = 0)]
+    pub total_disk_gb: u32,
     /// The Spaces this machine provides now.
     #[uniffi(default = [])]
     pub provided_spaces: Vec<HostProvidedSpace>,
@@ -578,6 +606,13 @@ impl From<cua_host::HostStatus> for HostStatus {
             provide_spaces: s.provide_spaces,
             max_spaces: s.max_spaces,
             max_macos_vms: s.max_macos_vms,
+            max_memory_gb: s.max_memory_gb,
+            max_disk_gb: s.max_disk_gb,
+            max_run_minutes: s.max_run_minutes,
+            used_memory_gb: s.used_memory_gb,
+            used_disk_gb: s.used_disk_gb,
+            total_memory_gb: s.total_memory_gb,
+            total_disk_gb: s.total_disk_gb,
             provided_spaces: s
                 .provided_spaces
                 .into_iter()
@@ -791,6 +826,9 @@ impl Host {
                     provide_spaces: change.provide_spaces,
                     max_spaces: change.max_spaces,
                     max_macos_vms: change.max_macos_vms,
+                    max_memory_gb: change.max_memory_gb,
+                    max_disk_gb: change.max_disk_gb,
+                    max_run_minutes: change.max_run_minutes,
                     cua_bin: None,
                 })
                 .await?

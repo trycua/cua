@@ -10,7 +10,7 @@
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
-import { ArrowUpDownIcon, CheckIcon, ChevronDownIcon, LayoutGridIcon, ListIcon, SearchIcon } from "lucide-react";
+import { ArrowUpDownIcon, CheckIcon, ChevronDownIcon, LayoutGridIcon, ListIcon, MoreHorizontalIcon, SearchIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { SpaceFilter } from "@/lib/spaces";
@@ -59,11 +59,13 @@ export interface ToolbarProps {
   onQuery: (query: string) => void;
   /** Before the menus (Select stopped). */
   lead?: ReactNode;
+  /** Desktop rows hidden from the list: the overflow's "Show hidden". */
+  hidden?: { count: number; onShow: () => void };
 }
 
 export function SpacesToolbar(p: ToolbarProps) {
-  const computers = [{ value: "", label: "All computers" }, ...p.computers];
-  const computer = computers.find((c) => c.value === (p.on ?? "")) ?? { value: p.on ?? "", label: "All computers" };
+  const computers = [{ value: "", label: "All machines" }, ...p.computers];
+  const computer = computers.find((c) => c.value === (p.on ?? "")) ?? { value: p.on ?? "", label: "All machines" };
   return (
     <div data-spaces-toolbar="" className="mb-5 flex min-h-9 flex-wrap items-center gap-x-2 gap-y-2">
       <Chips value={p.state} onChange={p.onState} />
@@ -117,8 +119,33 @@ export function SpacesToolbar(p: ToolbarProps) {
             className="h-7 w-full rounded-lg bg-tile pr-2 pl-8 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60 [&::-webkit-search-cancel-button]:hidden"
           />
         </div>
+        {p.hidden ? <Overflow hidden={p.hidden} /> : null}
       </div>
     </div>
+  );
+}
+
+/** The list's overflow: "Show hidden", while a desktop row is hidden. */
+function Overflow({ hidden }: { hidden: { count: number; onShow: () => void } }) {
+  return (
+    <MenuPrimitive.Root>
+      <MenuPrimitive.Trigger
+        aria-label="More"
+        data-toolbar-menu="overflow"
+        className="ml-1 flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-tile hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-tile data-popup-open:text-foreground"
+      >
+        <MoreHorizontalIcon className="size-4" />
+      </MenuPrimitive.Trigger>
+      <MenuPrimitive.Portal>
+        <MenuPrimitive.Positioner sideOffset={4} align="end" className="z-50 outline-none">
+          <MenuPrimitive.Popup data-toolbar-popup="overflow" className={MENU_POPUP}>
+            <MenuPrimitive.Item data-show-hidden="" onClick={hidden.onShow} className={MENU_ITEM}>
+              Show hidden
+            </MenuPrimitive.Item>
+          </MenuPrimitive.Popup>
+        </MenuPrimitive.Positioner>
+      </MenuPrimitive.Portal>
+    </MenuPrimitive.Root>
   );
 }
 

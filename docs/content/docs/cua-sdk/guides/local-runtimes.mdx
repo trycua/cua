@@ -288,3 +288,23 @@ The first match wins:
 `default.kind` and `default.runtime` (`CUA_DEFAULT_KIND`,
 `CUA_DEFAULT_RUNTIME`) work the same way, and `cua doctor` shows each default
 with its source. Switch back with `cua config unset default.on`.
+
+## Choose what runs each kind
+
+Each kind of Space has its own setting: `runtime.container`, `runtime.vm` and
+`runtime.microvm`. Each is `auto` (the default), `builtin` (Cua's own, set up
+the first time it is needed) or `system` (only what is already installed on
+this machine; nothing is downloaded). With `system`, `runtime.<kind>_path`
+names the program to use instead of the one found on `PATH`, for example
+another Docker:
+
+```bash test="cli-shape" id="cua-config-set-runtime-container"
+cua config set runtime.container system
+cua config set runtime.container_path /opt/homebrew/bin/podman
+cua config unset runtime.container_path   # back to the one found
+```
+
+The Cua app's Settings, Advanced shows the same settings, one row per kind,
+with the programs it found and a check of the path. `cua` and the daemon read
+the same values, so they use the same program. The older `runtime.linux` and
+`runtime.lume` still work: they are `runtime.container` and `runtime.vm`.

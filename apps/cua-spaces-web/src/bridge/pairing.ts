@@ -58,7 +58,7 @@ export type PlanFailureKind = "machines" | "seats" | "other";
 
 /** The cap in a plan error's text: team computers, seats, or another. */
 export function planFailureKind(raw: string): PlanFailureKind {
-  if (/machine_limit|team_machines|computers?\b/i.test(raw)) return "machines";
+  if (/machine_limit|team_machines|machines?\b/i.test(raw)) return "machines";
   if (/add_seats|\bseats?\b/i.test(raw)) return "seats";
   return "other";
 }
@@ -70,7 +70,7 @@ export function planFailure(raw: string): { text: string; upgradeUrl: string | n
   if (/feature_required/.test(raw)) {
     const what =
       feature === "team_machines"
-        ? "Team computers need the Teams plan."
+        ? "Team machines need the Teams plan."
         : feature === "team_roles"
           ? "Admin roles need the Teams plan."
           : feature === "device_approval"
@@ -79,7 +79,7 @@ export function planFailure(raw: string): { text: string; upgradeUrl: string | n
     return { text: `${what} Ask the team owner to upgrade.`, upgradeUrl: null };
   }
   if (/add_seats/.test(raw)) return { text: "Your team has no free seats. Ask the team owner to add seats.", upgradeUrl: null };
-  if (/machine_limit/.test(raw)) return { text: "Your team has as many computers as it has seats. Ask the team owner to add seats.", upgradeUrl: null };
+  if (/machine_limit/.test(raw)) return { text: "Your team has as many machines as it has seats. Ask the team owner to add seats.", upgradeUrl: null };
   return { text: raw, upgradeUrl: null };
 }
 

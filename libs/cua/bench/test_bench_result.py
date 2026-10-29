@@ -206,6 +206,46 @@ class Writing(unittest.TestCase):
             br.core("m", "ms", "p50", None, 3, {}, {})
 
 
+class RepoClone(unittest.TestCase):
+    RUN = {
+        "schema": "cua.repo-clone/v1",
+        "repos": {
+            "small": {
+                "url": "small",
+                "cases": {
+                    "off": {"failed": 0, "samples": [{"ok": True, "clone_ms": 1000.0, "total_ms": 1010.0}, {"ok": True, "clone_ms": 1200.0, "total_ms": 1210.0}], "stats": {"clone_ms": {"p50": 1100.0}, "total_ms": {"p50": 1110.0}}},
+                    "hit": {"failed": 1, "samples": [{"ok": True, "clone_ms": 300.0, "total_ms": 320.0}, {"ok": False, "error": "head"}], "stats": {"clone_ms": {"p50": 300.0}, "total_ms": {"p50": 320.0}}},
+                    "hit_lease": {"failed": 0, "samples": [{"ok": True, "clone_ms": 200.0, "total_ms": 210.0}], "stats": {"clone_ms": {"p50": 200.0}, "total_ms": {"p50": 210.0}}},
+                },
+                "canary": {"ran": True, "ok": True},
+            }
+        },
+    }
+
+    def test_the_value_is_the_first_hit_cases_clone_and_failures_are_counted_not_measured(self):
+        c, rows = br.convert_repo_clone(self.RUN)
+        self.assertEqual((c["metric"], c["value"], c["n"]), ("clone_ms", 300.0, 1))
+        self.assertEqual(c["extra"]["failed"], 1)
+        self.assertEqual(c["extra"]["small_off_clone_p50_ms"], 1100.0)
+        self.assertEqual(c["extra"]["small_canary_ok"], 1)
+        self.assertEqual(len(rows), 5)
+        self.assertEqual([r["ok"] for r in rows if r["case"] == "hit"], [True, False])
+
+    def test_no_measured_clone_is_no_result(self):
+        bad = {"repos": {"small": {"cases": {"hit": {"failed": 2, "samples": [{"ok": False}, {"ok": False}], "stats": {}}}}}}
+        with self.assertRaises(br.NoResult):
+            br.convert_repo_clone(bad)
+
+    def test_the_bench_stats_are_the_same_percentiles(self):
+        sys.path.insert(0, os.path.join(HERE, "repo-clone"))
+        import importlib
+
+        rc = importlib.import_module("bench")
+        self.assertEqual(rc.stats([1.0, 2.0, 3.0, 4.0]), {"p50": 2.5, "p95": 3.9, "min": 1.0, "max": 4.0})
+        self.assertEqual(rc.stats([]), {})
+        self.assertEqual(rc.CASES, ("off", "miss", "hit", "hit_lease"))
+
+
 class Runner(unittest.TestCase):
     def test_every_bench_has_a_converter_and_its_files(self):
         for b in cuabench.BENCHES:

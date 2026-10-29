@@ -7,13 +7,19 @@
  * thread with a cursor and long-polls for more (`thread.read` with
  * `followMs`), posts, answers approvals and lists the members.
  *
- * Folding (nothing in the log is rewritten, DESIGN §3.2):
+ * The thread reads like a chatroom (CUA-2640): one row per entry, in order,
+ * each with its author and time. Nothing nests. Folding (nothing in the log
+ * is rewritten, DESIGN §3.2):
  * - a message with `task` is a task; its state is the last `task_update`
- *   for it (`queued` until one arrives), and the replies to it nest under it;
+ *   for it (`queued` until one arrives), kept for the logic that needs it
+ *   (Retry, the unread divider) and shown nowhere on the message: the agent's
+ *   status and its reply tell how it is going;
+ * - a reply is a message like any other, in sequence; `quote` names the
+ *   message it answers, which the page shows only when that message is not
+ *   right above it;
  * - an `approval` shows its Approve / Deny until an `answer` names it;
- * - `system` entries, and task updates that carry a note, are one-line notes;
- *   a note about a task (`task_seq` on the note, or the update's task) shows
- *   inside that task, in order with its replies;
+ * - `system` entries, and task updates that carry a note, are one-line muted
+ *   notes, in sequence;
  * - the unread divider sits before the first entry after the reader's
  *   cursor as it was when the thread opened, that someone else wrote.
  */
@@ -28,6 +34,7 @@ import {
   THREAD_FOLLOW_MAX_MS,
   type AgentMember,
   type AgentRights,
+  type LiveAgent,
   type TaskState,
   type ThreadAuthor,
   type ThreadEntry,
@@ -42,17 +49,29 @@ export interface ThreadAnswer {
   note: string | null;
 }
 
+/** The message a reply answers (the page quotes it when it is not right above). */
+export interface ThreadQuote {
+  seq: number;
+  author: ThreadAuthor;
+  text: string;
+}
+
 export type ThreadItem =
-  | { type: "message"; key: string; entry: ThreadEntry }
+  | {
+      type: "message";
+      key: string;
+      entry: ThreadEntry;
+      /** The message it replies to, when it replies to one. */
+      quote: ThreadQuote | null;
+      /** What the task it answers asked, for Retry (a failed reply sends it again). */
+      taskText: string | null;
+    }
   | {
       type: "task";
       key: string;
       entry: ThreadEntry;
       state: TaskState;
       session: number | null;
-      replies: ThreadEntry[];
-      /** Notes about this task (a system note's `task`, an update's note), shown inside it in order with the replies. */
-      notes: { entry: ThreadEntry; text: string }[];
     }
   | { type: "approval"; key: string; entry: ThreadEntry; answer: ThreadAnswer | null }
   /** Someone's agent asks to join (CUA-2264): answered like an approval. */
@@ -60,13 +79,16 @@ export type ThreadItem =
   | { type: "system"; key: string; entry: ThreadEntry; text: string }
   | { type: "unread"; key: string };
 
-/** The thread's entries (in any order, duplicates allowed) as the page draws them. */
+/** The thread's entries (in any order, duplicates allowed) as the page draws them: one row each, in sequence. */
 export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: number | null; me?: string | null } = {}): ThreadItem[] {
   const sorted = dedupe(entries);
   const items: ThreadItem[] = [];
+  const bySeq = new Map<number, ThreadEntry>(sorted.map((e) => [e.seq, e]));
   const tasks = new Map<number, Extract<ThreadItem, { type: "task" }>>();
   const approvals = new Map<number, Extract<ThreadItem, { type: "approval" | "join_request" }>>();
   for (const e of sorted) {
+    // The copy of a message that tasks one more agent: the original is the row.
+    if (e.fanoutOf != null) continue;
     if (e.kind === "task_update") {
       const u = e.update;
       const task = u ? tasks.get(u.task) : undefined;
@@ -74,10 +96,7 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
         task.state = u.state;
         task.session = u.session ?? task.session;
       }
-      if (u?.note) {
-        if (task) task.notes.push({ entry: e, text: u.note });
-        else items.push({ type: "system", key: `s${e.seq}`, entry: e, text: u.note });
-      }
+      if (u?.note) items.push({ type: "system", key: `s${e.seq}`, entry: e, text: u.note });
       continue;
     }
     if (e.kind === "answer" && e.answer) {
@@ -90,20 +109,8 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
       continue;
     }
     if (e.kind === "system") {
-      const task = e.noteFor !== null ? tasks.get(e.noteFor) : undefined;
-      if (task) {
-        task.notes.push({ entry: e, text: e.text });
-        continue;
-      }
       items.push({ type: "system", key: `s${e.seq}`, entry: e, text: e.text });
       continue;
-    }
-    if (e.replyTo !== null) {
-      const parent = tasks.get(e.replyTo);
-      if (parent) {
-        parent.replies.push(e);
-        continue;
-      }
     }
     if (e.kind === "join_request" && e.joinRequest) {
       const item = { type: "join_request" as const, key: `j${e.seq}`, entry: e, answer: null };
@@ -117,13 +124,20 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
       items.push(item);
       continue;
     }
-    if (e.task) {
-      const item = { type: "task" as const, key: `t${e.seq}`, entry: e, state: "queued" as TaskState, session: e.task.session, replies: [] as ThreadEntry[], notes: [] as { entry: ThreadEntry; text: string }[] };
+    if (e.task && e.replyTo === null) {
+      const item = { type: "task" as const, key: `t${e.seq}`, entry: e, state: "queued" as TaskState, session: e.task.session };
       tasks.set(e.seq, item);
       items.push(item);
       continue;
     }
-    items.push({ type: "message", key: `m${e.seq}`, entry: e });
+    const parent = e.replyTo !== null ? bySeq.get(e.replyTo) : undefined;
+    items.push({
+      type: "message",
+      key: `m${e.seq}`,
+      entry: e,
+      quote: parent ? { seq: parent.seq, author: parent.author, text: parent.text } : null,
+      taskText: parent?.task ? parent.text : null,
+    });
   }
   const readSeq = opts.readSeq;
   if (readSeq == null) return items;
@@ -137,9 +151,7 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
 }
 
 function unreadIn(item: Exclude<ThreadItem, { type: "unread" }>, readSeq: number, me: string | null): boolean {
-  const fresh = (e: ThreadEntry) => e.seq > readSeq && e.author.id !== me;
-  if (fresh(item.entry)) return true;
-  return item.type === "task" && item.replies.some(fresh);
+  return item.entry.seq > readSeq && item.entry.author.id !== me;
 }
 
 function dedupe(entries: readonly ThreadEntry[]): ThreadEntry[] {
@@ -169,6 +181,8 @@ export interface SpaceThread {
   members: AgentMember[];
   /** Who the Space is shared with (`sharing.list`). */
   shares: ShareEntry[];
+  /** Who is at work now and at what stage ("starting", "thinking", "using Bash"): the live rows at the end of the thread. */
+  live: LiveAgent[];
   /** The reader's own author id, when known. */
   me: string | null;
   /** The reader's role (a guest reads only); null from a daemon that does not say (the owner's). */
@@ -180,13 +194,23 @@ export interface SpaceThread {
   /** Reads the page before the oldest entry shown. */
   loadEarlier(): Promise<void>;
   /** Posts `text`; `view` says what the person is looking at in the Space (the main view's window). */
-  post(text: string, view?: ThreadView | null): Promise<void>;
+  post(text: string, view?: ThreadView | null, replyTo?: number | null): Promise<ThreadEntry | null>;
   answer(approval: number, approve: boolean): Promise<void>;
   /** Changes who can task, control and approve an agent (owners and admins). */
   setRights(name: string, rights: Partial<AgentRights>): Promise<void>;
   /** Removes an agent member (its key stops at once); null where the host can't yet. The daemon refuses anyone but the owner, admins and the agent's owner. */
   removeAgent: ((name: string) => Promise<void>) | null;
 }
+
+/**
+ * Streaming text arrives as whole-text snapshots; they are drawn at most this often (ms), the latest
+ * one winning, so a fast stream does not re-render the thread for every snapshot. A stage change, an
+ * agent arriving or leaving shows at once.
+ */
+export const LIVE_COALESCE_MS = 50;
+
+/** The live rows without their streaming text: what makes a change worth drawing at once. */
+const liveShape = (agents: readonly LiveAgent[]) => agents.map((a) => `${a.agent}=${a.stage}`).join(";");
 
 const FIRST_PAGE = 100;
 const MEMBERS_POLL_MS = 5_000;
@@ -210,7 +234,34 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
   const [error, setError] = useState<string | null>(null);
   const [members, setMembers] = useState<AgentMember[]>([]);
   const [shares, setShares] = useState<ShareEntry[]>([]);
+  const [live, setLiveNow] = useState<LiveAgent[]>([]);
   const [hasMoreBefore, setHasMoreBefore] = useState(false);
+  // The snapshot waiting for its turn, and when it is drawn.
+  const livePending = useRef<LiveAgent[] | null>(null);
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveShown = useRef<LiveAgent[]>([]);
+  const setLive = useCallback((agents: LiveAgent[]) => {
+    if (liveTimer.current) {
+      clearTimeout(liveTimer.current);
+      liveTimer.current = null;
+    }
+    livePending.current = null;
+    liveShown.current = agents;
+    setLiveNow(agents);
+  }, []);
+  /** A snapshot of the live rows: drawn now when a stage changed, else within LIVE_COALESCE_MS (the latest wins). */
+  const pushLive = useCallback(
+    (agents: LiveAgent[]) => {
+      if (liveShape(agents) !== liveShape(liveShown.current)) return setLive(agents);
+      livePending.current = agents;
+      if (liveTimer.current) return;
+      liveTimer.current = setTimeout(() => {
+        liveTimer.current = null;
+        if (livePending.current) setLive(livePending.current);
+      }, LIVE_COALESCE_MS);
+    },
+    [setLive],
+  );
   const loadingEarlier = useRef(false);
   const merge = useCallback((more: readonly ThreadEntry[]) => {
     if (!more.length) return;
@@ -228,10 +279,15 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
     setError(null);
     setMembers([]);
     setShares([]);
+    setLive([]);
     setHasMoreBefore(false);
     if (!spaceId || !data) return;
     let alive = true;
     let cursor = 0;
+    // The stage key last seen: the follow also returns when it changes.
+    let liveKey = "";
+    // The same without what is said: what moves the members list.
+    let liveShapeSeen = "";
     const markRead = () => {
       if (!alive || !visible() || cursor <= 0) return;
       // Re-reads the last entry with mark_read: the daemon moves the
@@ -248,6 +304,8 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
         const first = await data.call("thread.read", { spaceId, limit: FIRST_PAGE });
         if (!alive) return;
         cursor = first.cursor;
+        liveKey = first.live.key;
+        setLive(first.live.agents);
         merge(first.entries);
         setMe(first.me);
         setRole(first.role);
@@ -266,16 +324,24 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
       }
       while (alive) {
         try {
-          const page = await data.call("thread.read", { spaceId, after: cursor, followMs: THREAD_FOLLOW_MAX_MS, markRead: visible() });
+          const page = await data.call("thread.read", { spaceId, after: cursor, followMs: THREAD_FOLLOW_MAX_MS, markRead: visible(), liveAfter: liveKey });
           if (!alive) return;
           setStatus("ready");
           setError(null);
           backoff = 1_000;
           cursor = Math.max(cursor, page.cursor);
+          // The daemon's key moves with the stages and with what is said; the members only change with a stage.
+          const keyMoved = page.live.key !== liveKey;
+          const shape = liveShape(page.live.agents);
+          const stageMoved = shape !== liveShapeSeen;
+          liveShapeSeen = shape;
+          liveKey = page.live.key;
+          // The stages ride the follow (not the members poll), so a row shows as it changes.
+          pushLive(page.live.agents);
           merge(page.entries);
-          if (page.entries.some((e) => e.kind !== "message")) membersDue.current();
+          if (page.entries.some((e) => e.kind !== "message") || stageMoved) membersDue.current();
           // A daemon that answers a follow at once (no long poll) is read every 2 s.
-          if (!page.entries.length) await sleep(2_000);
+          if (!page.entries.length && !keyMoved) await sleep(2_000);
         } catch (e) {
           if (!alive) return;
           if (isMissingThreadTool(e)) {
@@ -291,8 +357,10 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
     return () => {
       alive = false;
       document.removeEventListener("visibilitychange", onVisible);
+      if (liveTimer.current) clearTimeout(liveTimer.current);
+      liveTimer.current = null;
     };
-  }, [data, spaceId, merge]);
+  }, [data, spaceId, merge, setLive, pushLive]);
 
   // Members (`agent_members`) every few seconds, and who the Space is shared with once.
   useEffect(() => {
@@ -333,12 +401,13 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
   }, [data, spaceId, entries, hasMoreBefore, merge]);
 
   const post = useCallback(
-    async (text: string, view?: ThreadView | null) => {
-      if (!spaceId || !data || !text.trim()) return;
-      const entry = await data.call("thread.post", { spaceId, text: text.trim(), ...(view ? { view } : {}) });
+    async (text: string, view?: ThreadView | null, replyTo?: number | null) => {
+      if (!spaceId || !data || !text.trim()) return null;
+      const entry = await data.call("thread.post", { spaceId, text: text.trim(), ...(view ? { view } : {}), ...(replyTo != null ? { replyTo } : {}) });
       if (entry) merge([entry]);
       // Your own message: everything above it is read; the divider goes.
       setReadSeq(null);
+      return entry ?? null;
     },
     [data, spaceId, merge],
   );
@@ -378,6 +447,7 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
     entries,
     members,
     shares,
+    live,
     me,
     role,
     error,

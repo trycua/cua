@@ -4,7 +4,7 @@
 import { ChevronRightIcon, PanelRightCloseIcon, PanelRightOpenIcon, PictureInPicture2Icon, PlusIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import type { AgentRights, SpaceFact, StreamRow } from "@/bridge";
+import type { AgentRight, AgentRights, SpaceFact, StreamRow } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
@@ -12,10 +12,12 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 import { MemberAvatar } from "./avatar";
+import { FailureDetails } from "./failure-note";
 import { AiTag, OwnerSuffix } from "./identity";
+import { ProfileTrigger } from "./profile-card";
 import { RAIL_WINDOWS, railStreams } from "./rail";
 import { holderChoice, holdersLabel, RIGHT_ROWS, type HolderChoice } from "./rights";
-import type { Roster, RosterAgent } from "./roster";
+import type { Roster, RosterAgent, RosterPerson } from "./roster";
 
 /** Who is here right now (P2: relay presence and session states). Without
  * it no dot is drawn: P1 never guesses. */
@@ -35,20 +37,16 @@ export function MembersPanel({
   desktop,
   selected,
   onSelect,
+  streamHidden = false,
+  onToggleStream,
   onStream,
   folded,
   onFold,
-  onSetRights,
-  onRemoveAgent,
   onAddAgent,
 }: {
   roster: Roster;
   /** Opens Add an agent (absent for guests). */
   onAddAgent?: () => void;
-  /** Removes an agent member (absent: the host can't); shown only to who may. */
-  onRemoveAgent?: (name: string) => Promise<void>;
-  /** Changes an agent's rights; absent when you can't (only the owner and admins can). */
-  onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>;
   presence?: MemberPresence;
   /** The first few of the core's facts; More opens the rest. */
   facts: SpaceFact[];
@@ -61,12 +59,15 @@ export function MembersPanel({
   selected?: string | null;
   /** Shows that row in the main view. */
   onSelect?: (row: StreamRow) => void;
+  /** The stream view is hidden (only the thread shows): the selected row looks unselected. */
+  streamHidden?: boolean;
+  /** Hides the stream view, or shows it again: the selected row is the toggle. */
+  onToggleStream?: () => void;
   /** Opens that row in its own window (picture in picture where the host has it). */
   onStream: (row: StreamRow) => void;
   folded: boolean;
   onFold: (folded: boolean) => void;
 }) {
-  const [opened, setOpened] = useState<string | null>(null);
   if (folded) {
     return (
       <aside data-members-panel="folded" className="flex w-12 shrink-0 flex-col items-center gap-2.5 bg-chrome py-3">
@@ -111,11 +112,13 @@ export function MembersPanel({
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-members="">
         {roster.people.map((p) => (
-          <Row key={p.id} member={p.id} mark={<MemberAvatar kind="person" name={p.label} size={24} presence={presence?.[p.id] ?? null} />} label={p.label} caption={p.me ? "You" : null} />
+          <ProfileRow key={p.id} person={p}>
+            <Row member={p.id} mark={<MemberAvatar kind="person" name={p.label} size={24} presence={presence?.[p.id] ?? null} />} label={p.label} caption={p.me ? "You" : null} />
+          </ProfileRow>
         ))}
         {roster.agents.map((a) => (
+          <ProfileRow key={a.id} agent={a} below={a.failure ? <FailureDetails message={a.failure.message} /> : undefined}>
           <Row
-            key={a.id}
             member={a.id}
             mark={<MemberAvatar kind="agent" name={a.name} harness={a.harness} identity={a.identity} surface="chrome" size={24} dim={a.dim} presence={presence?.[a.id] ?? null} />}
             label={
@@ -128,11 +131,9 @@ export function MembersPanel({
             caption={a.caption}
             dim={a.dim}
             status={a.status}
-            open={opened === a.id}
-            onToggle={() => setOpened(opened === a.id ? null : a.id)}
-          >
-            {opened === a.id ? <AgentRightsRows agent={a} onSetRights={onSetRights} onRemove={onRemoveAgent && roster.canRemove(a) ? () => onRemoveAgent(a.name) : undefined} /> : null}
-          </Row>
+            chevron
+          />
+          </ProfileRow>
         ))}
       </ul>
       {windows.length || desktop ? (
@@ -142,7 +143,10 @@ export function MembersPanel({
             {[...(desktop ? [desktop] : []), ...railStreams(windows, selected ?? null)].map((w) => {
               const pip = w.actions.find((a) => a.id === "pip");
               const isDesktop = w.kind === "desktop";
-              const current = isDesktop ? !selected || selected === w.id : selected === w.id;
+              // The row the stream shows; while the stream is hidden it looks unselected, so the next click obviously shows it.
+              const atRow = isDesktop ? !selected || selected === w.id : selected === w.id;
+              const current = atRow && !streamHidden;
+              const toggles = atRow && Boolean(onToggleStream);
               const name = isDesktop ? "Desktop" : (appOf(w) ?? w.label);
               return (
                 <li key={w.id} className="group/stream relative">
@@ -150,8 +154,8 @@ export function MembersPanel({
                     type="button"
                     {...(isDesktop ? { "data-stream-desktop": "" } : { "data-stream-window": w.id })}
                     aria-current={current ? "true" : undefined}
-                    title={w.help}
-                    onClick={() => (onSelect ? onSelect(w) : onStream(w))}
+                    title={toggles ? (streamHidden ? "Show stream" : "Hide stream") : w.help}
+                    onClick={() => (toggles ? onToggleStream!() : onSelect ? onSelect(w) : onStream(w))}
                     className={cn(
                       "flex h-8 w-full cursor-default items-center gap-2.5 rounded-lg pr-8 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent",
                       current && "bg-accent font-medium",
@@ -245,6 +249,7 @@ function Row({
   open,
   onToggle,
   children,
+  chevron,
 }: {
   member: string;
   mark: ReactNode;
@@ -256,21 +261,29 @@ function Row({
   open?: boolean;
   onToggle?: () => void;
   children?: ReactNode;
+  /** Opens a card (the row is inside its trigger). */
+  chevron?: boolean;
 }) {
   const body = (
     <>
       {mark}
       <span className="min-w-0 flex-1">
         <span className={dim ? "block truncate text-[13px] text-muted-foreground" : "block truncate text-[13px]"}>{label}</span>
-        {caption ? <span className="block truncate text-[11px] text-muted-foreground">{caption}</span> : null}
+        {/* A failed agent says one word here ("Stopped", "Not connected"); its error is under Show details. */}
+        {caption ? (
+          <span data-member-caption="" className="block truncate text-[11px] text-muted-foreground">
+            {caption}
+          </span>
+        ) : null}
       </span>
     </>
   );
   if (!onToggle) {
     return (
-      <li data-member={member} data-member-status={status} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 py-1.5">
+      <span data-member={member} data-member-status={status} className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-accent">
         {body}
-      </li>
+        {chevron ? <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+      </span>
     );
   }
   return (
@@ -290,6 +303,38 @@ function Row({
   );
 }
 
+/** A row in "In this space" that opens its person's or agent's card. */
+function ProfileRow({ person, agent, children, below }: { person?: RosterPerson; agent?: RosterAgent; children: ReactNode; /** Under the row, outside its card trigger (a failed agent's Show details). */ below?: ReactNode }) {
+  return (
+    <li>
+      <ProfileTrigger person={person} agent={agent} side="left" className="block w-full rounded-lg data-[selected]:bg-accent" rowKey={person?.id}>
+        {children}
+      </ProfileTrigger>
+      {below ? (
+        <div data-member-details="" className="flex flex-wrap items-center gap-1 pb-1 pl-[44px]">
+          {below}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/** Who can task, stop and approve: the selects alone, for the agent card's Details. */
+export function RightsEditor({
+  agent,
+  onSetRights,
+  people,
+  labels,
+}: {
+  agent: RosterAgent;
+  onSetRights: (name: string, rights: Partial<AgentRights>) => Promise<void>;
+  people?: readonly RosterPerson[];
+  /** The rows' words, when the page has its own ("Can give it tasks"). */
+  labels?: Partial<Record<AgentRight, string>>;
+}) {
+  return <AgentRightsRows agent={agent} onSetRights={onSetRights} people={people} labels={labels} bare />;
+}
+
 const CHOICES: readonly { value: HolderChoice; label: string }[] = [
   { value: "owner", label: "Owner" },
   { value: "admins", label: "Admins" },
@@ -298,7 +343,22 @@ const CHOICES: readonly { value: HolderChoice; label: string }[] = [
 
 /** Who can task, stop and approve an agent: three plain rows under its name.
  * The owner and admins change them; everyone else reads them. */
-function AgentRightsRows({ agent, onSetRights, onRemove }: { agent: RosterAgent; onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>; onRemove?: () => Promise<void> }) {
+function AgentRightsRows({
+  agent,
+  onSetRights,
+  onRemove,
+  people = [],
+  labels,
+  bare,
+}: {
+  agent: RosterAgent;
+  onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>;
+  onRemove?: () => Promise<void>;
+  /** Specific people a right can go to (each its own choice). */
+  people?: readonly RosterPerson[];
+  labels?: Partial<Record<AgentRight, string>>;
+  bare?: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const remove = () => {
     if (!onRemove) return;
@@ -312,23 +372,34 @@ function AgentRightsRows({ agent, onSetRights, onRemove }: { agent: RosterAgent;
     );
   };
   return (
-    <div data-agent-rights={agent.name} className="mb-1 ml-9 divide-y divide-border/60 border-y border-border/60">
-      {RIGHT_ROWS.map(({ right, label }) => {
+    <div data-agent-rights={agent.name} className={bare ? "" : "mb-1 ml-9 divide-y divide-border/60 border-y border-border/60"}>
+      {RIGHT_ROWS.map(({ right, label: short }) => {
+        const label = labels?.[right] ?? short;
         const value = agent.rights[right];
         const choice = holderChoice(value);
+        // One person alone, as their name; several, as a count.
+        const named = Array.isArray(value) ? (value.length === 1 ? (people.find((p) => p.id === value[0])?.label ?? null) : null) : null;
+        const solo = Array.isArray(value) && value.length === 1 && named ? `person:${value[0]}` : null;
+        const options: { value: string; label: string }[] = [
+          ...CHOICES,
+          ...people.map((p) => ({ value: `person:${p.id}`, label: p.me ? "Only you" : `Only ${p.label}` })),
+          ...(choice === "named" && !solo ? [{ value: "named", label: holdersLabel(value) }] : []),
+        ];
+        const current = solo ?? choice;
         return (
           <div key={right} data-agent-right={right} className="flex h-8 items-center justify-between gap-3 pr-1 pl-1 text-[12.5px]">
             <span className="text-muted-foreground">{label}</span>
             {onSetRights ? (
-              <Select<HolderChoice>
+              <Select<string>
                 aria-label={`${label}: ${agent.label}`}
-                value={choice}
+                value={current}
                 disabled={busy}
-                options={choice === "named" ? [...CHOICES, { value: "named", label: holdersLabel(value) }] : CHOICES}
+                options={options}
                 onValueChange={(v) => {
-                  if (v === "named" || v === choice) return;
+                  if (v === "named" || v === current) return;
+                  const next = v.startsWith("person:") ? [v.slice("person:".length)] : v;
                   setBusy(true);
-                  onSetRights(agent.name, { [right]: v }).then(
+                  onSetRights(agent.name, { [right]: next }).then(
                     () => setBusy(false),
                     (e: unknown) => {
                       setBusy(false);

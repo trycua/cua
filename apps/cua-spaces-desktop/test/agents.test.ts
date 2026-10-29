@@ -162,7 +162,7 @@ describe.skipIf(!built)("agents", () => {
     await p.send(new A.Select({ name: "ada" }));
     expect(p.view(now).detail?.memory.map((l) => l.text)).toEqual(["hermes/MEMORY.md"]);
     await p.send(new A.AllowComputer({ machine: "relay:0123" }));
-    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This computer"]);
+    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This machine"]);
     await p.send(new A.Resume({ name: "ada" }));
     expect(daemon.calls).toContain("agent_resume");
     expect(p.view(now).rows[0]!.state).toBe("Running");
@@ -445,13 +445,17 @@ describe.skipIf(!built)("agents", () => {
     expect(model.agents.keys.view.notice).toContain("keeps credentials in a file");
     const none = makeBridge({ tools: null }).model.agents.keys;
     expect(none.view.notice).toContain("need the cua daemon");
-    expect(agentKeysInput({ keys: [{ provider: "x", env: "", last4: "1234", added_ms: 1 }], available: false }, null)).toMatchObject({ keys: [], unavailable: "this computer can't keep keys" });
+    expect(agentKeysInput({ keys: [{ provider: "x", env: "", last4: "1234", added_ms: 1 }], available: false }, null)).toMatchObject({ keys: [], unavailable: "this machine can't keep keys" });
   });
 
   it("routes agentKeys.* to the daemon, with answers that never carry a key", async () => {
     const { bridge } = makeBridge();
     const listed = (await call(bridge, "agentKeys.list")) as { keys: { env: string }[] };
     expect(listed.keys.map((k) => k.env)).toEqual(["OPENAI_API_KEY"]);
+    // The check is the daemon's `agent_keys.check` (the providers are asked there), answered like the list.
+    const checked = (await call(bridge, "agentKeys.check")) as { keys: { env: string }[] };
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.check", {}]);
+    expect(checked.keys.map((k) => k.env)).toEqual(["OPENAI_API_KEY"]);
     const set = await call(bridge, "agentKeys.set", { provider: "anthropic", value: "sk-ant-test-0000" });
     expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "anthropic", value: "sk-ant-test-0000" }]);
     expect(JSON.stringify(set)).not.toContain("sk-ant");

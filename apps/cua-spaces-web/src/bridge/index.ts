@@ -38,7 +38,7 @@ export { createAdapter, createDemoAdapter, createElectronAdapter, createTauriAda
 export { detectMode } from "./detect";
 export { loadCore, type CoreClient, type CoreParity, type CoreStatus, type ParityFlow } from "./core";
 export type { Machine, HostSetupGuide, KeyvaultAppGroup, KeyvaultViews } from "./derive";
-export { harnessName, listView, machineIdOf } from "./derive";
+export { harnessName, listView, machineIdOf, sharesDesktop } from "./derive";
 export type {
   AgentRunSummary,
   AgentState,
@@ -61,6 +61,7 @@ export {
   agentKeyForm,
   agentKeysView,
   useAgentKeys,
+  useKeysRecheck,
   type AgentKeyFormView,
   type AgentKeyRowView,
   type AgentKeysHook,
@@ -104,7 +105,6 @@ export {
   useCloudActions,
   useConnectCloud,
   useFirstSpaceOffers,
-  useMicrovmRows,
   useNewSpaceRequests,
   useNewSpaceWizard,
   useRuntimeFix,
@@ -158,8 +158,8 @@ export {
 } from "./relay-usage";
 
 export { linkEnds, needsRelaySetup, useLinks, type LinksHook } from "./links";
-export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
-export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem } from "./thread";
+export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatAttempt, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
+export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem, type ThreadQuote } from "./thread";
 export {
   DEFAULT_AGENT_RIGHTS,
   isMissingThreadTool,
@@ -170,6 +170,7 @@ export {
   type JoinCodeState,
   type JoinRequest,
   type JoinMethod,
+  type LiveAgent,
   type MemberEvent,
   type MemberIdentity,
   type MemberRef,
@@ -181,6 +182,7 @@ export {
   type ThreadAttachment,
   type ThreadAuthor,
   type ThreadEntry,
+  type ThreadFailure,
   type ThreadView,
   type ThreadPage,
   type ThreadRole,
@@ -263,3 +265,5 @@ export {
   tipsView,
 } from "./spaces-page";
 export type * from "./contracts/spaces-page";
+export * from "./connectors";
+export * from "./profile-card";

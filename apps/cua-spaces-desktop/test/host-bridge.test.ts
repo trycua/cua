@@ -203,6 +203,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["notifications.markAllRead", {}],
       ["host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } }],
       ["host.action", { action: "provide-spaces" }],
+      ["host.limits", { maxSpaces: 2 }],
       ["host.openSettings", { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" }],
       ["settings.get", {}],
       ["settings.choose", { row: "telemetry", option: "off" }],
@@ -240,6 +241,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       "storage.run": { request: { kind: "clear-cache" } } as never,
       "host.setUp": { request: { mode: "direct", direct: "0.0.0.0:3211" } } as never,
       "host.action": { action: "provide-spaces" } as never,
+      "host.limits": { maxSpaces: 2 },
       "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
       "settings.set": { key: "telemetry", value: false },
       "settings.choose": { row: "auto-connect", option: "off" },
@@ -275,6 +277,15 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(host.calls.at(-1)).toBe("configure:-:true");
     expect(await code("host.action", { action: "set-up" })).toBe("bad_args");
     expect(await code("host.setUp", { request: {} })).toBe("bad_args");
+  });
+
+  it("changes the limits on the Spaces other machines create, and refuses a bad count", async () => {
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    const r = (await call("host.limits", { maxSpaces: 2 })) as Record<string, unknown>;
+    expect(r).toMatchObject({ configured: true });
+    expect(host.calls.at(-1)).toBe("configure:-:-");
+    expect(await code("host.limits", { maxSpaces: -1 })).toBe("bad_args");
+    expect(await code("host.limits", { maxDiskGb: "lots" })).toBe("bad_args");
   });
 
   it("carries the whole state, the owner and the progress", async () => {
@@ -508,7 +519,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await model.devices.refresh();
     const notes = system.notes.filter((n) => n.id.startsWith("device-"));
     expect(notes.map((n) => n.id)).toEqual(["device-dev_work", "device-dev_old"]);
-    expect(notes[0]).toMatchObject({ route: "/settings/devices" });
+    expect(notes[0]).toMatchObject({ route: "/machines" });
     expect(notes[0]!.title.length).toBeGreaterThan(0);
     started.stop();
   });
@@ -529,7 +540,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     };
     const rows = s.page.sections.flatMap((x) => x.rows.map((r) => r.id));
     expect(rows).toEqual(expect.arrayContaining(["account", "notch", "auto-connect", "welcome", "teams", "teams-manage", "teams-billing", "telemetry", "telemetry-note", "launch-at-login"]));
-    expect(rows).toEqual(expect.arrayContaining(["macos-runtime", "linux-runtime"]));
+    // One runtime row per kind, on every system.
+    expect(rows).toEqual(expect.arrayContaining(["runtime:container", "runtime:vm", "runtime:microvm"]));
     expect(s.updateChannel).toBe("stable");
     // Another app holds ⌘⇧Space: the page says so.
     expect(s.globalShortcut).toEqual({ label: "\u2318\u21e7Space", registered: false });
@@ -597,20 +609,40 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(await code("settings.choose", { row: "experiment:classic_ui", option: "on" })).toBe("unsupported");
   });
 
-  it("New Space's \u201cUse built-in Lume\u201d and \u201cUse built-in runtime\u201d change the Runtimes rows", async () => {
-    const set: string[] = [];
-    Object.assign(backend, { setLumeSource: async (v: string) => void set.push(`lume=${v}`) });
-    backend.lumeSource = async () => "builtin";
-    Object.assign(backend, { setLinuxSource: async (v: string) => void set.push(`linux=${v}`) });
-    backend.linuxSource = async () => "builtin";
-    // The wizard's switch (`RUNTIME_SWITCH_ROW`): the same choice as Settings, Runtimes.
-    const s = (await call("settings.choose", { row: "macos-runtime", option: "builtin" })) as { page: { sections: { rows: { id: string; options: { id: string; active: boolean }[] }[] }[] } };
-    await call("settings.choose", { row: "linux-runtime", option: "builtin" });
-    expect(set).toEqual(["lume=builtin", "linux=builtin"]);
-    expect(model.lumeSource).toBe("builtin");
-    expect(model.linuxSource).toBe("builtin");
-    const row = s.page.sections.flatMap((x) => x.rows).find((r) => r.id === "macos-runtime")!;
-    expect(row.options.find((o) => o.active)?.id).toBe("builtin");
+  it("New Space's \u201cUse built-in Lume\u201d and Settings' kind rows write the per-kind runtime settings", async () => {
+    const fixture = backend as unknown as { runtimeSettings: Map<string, string> };
+    // The wizard's switch (`RUNTIME_SWITCH_ROW`): the same choice as Settings, Advanced.
+    const s = (await call("settings.choose", { row: "runtime:vm", option: "builtin" })) as { page: { sections: { rows: { id: string; label: string; value?: string; options: { id: string; active: boolean }[] }[] }[] } };
+    expect(fixture.runtimeSettings.get("runtime.vm")).toBe("builtin");
+    const rows = () => s.page.sections.flatMap((x) => x.rows);
+    expect(rows().find((r) => r.id === "runtime:vm")!.options.find((o) => o.active)?.id).toBe("builtin");
+    // Already installed: what is installed and the path in use.
+    const t = (await call("settings.choose", { row: "runtime:container", option: "system" })) as typeof s;
+    const path = t.page.sections.flatMap((x) => x.rows).find((r) => r.id === "runtime-path:container")!;
+    expect([path.label, path.value]).toEqual(["Detected", "/usr/local/bin/docker"]);
+    await call("settings.choose", { row: "runtime-path:container", option: "/opt/homebrew/bin/podman" });
+    expect(fixture.runtimeSettings.get("runtime.container_path")).toBe("/opt/homebrew/bin/podman");
+    await call("settings.choose", { row: "runtime-path:container", option: "" });
+    expect(fixture.runtimeSettings.has("runtime.container_path")).toBe(false);
+    // A typed path, checked before it is saved.
+    expect(await call("runtimes.check", { kind: "container", path: "/usr/local/bin/docker" })).toMatchObject({ tool: "docker", version: "27.3.1" });
+    // "Browse…" is the app's file panel (none in this fixture UI).
+    expect(await code("runtimes.browse", { kind: "container" })).toBe("unsupported");
+  });
+
+  it("reads, changes and clears the repo cache, and refuses what is not a number of GB", async () => {
+    const view = (await call("repoCache.get")) as { enabled: boolean; repos: number; bytes: number; capBytes: number; sizeSetting: string; summary: string; week: string };
+    expect(view).toMatchObject({ enabled: true, repos: 3, sizeSetting: "auto", summary: "Repos: 3, 1.2 GB of 5 GB" });
+    // The SDK's 64-bit sizes reach the page as numbers.
+    expect(typeof view.bytes).toBe("number");
+    expect(view.capBytes).toBe(5 * 1024 ** 3);
+    expect(await call("repoCache.set", { enabled: false })).toMatchObject({ enabled: false, sizeSetting: "auto" });
+    expect(await call("repoCache.set", { enabled: true, sizeGb: 2 })).toMatchObject({ enabled: true, sizeSetting: "2", summary: "Repos: 3, 1.2 GB of 2 GB" });
+    expect(await call("repoCache.set", { sizeGb: null })).toMatchObject({ sizeSetting: "auto" });
+    expect(await code("repoCache.set", { sizeGb: -1 })).toBe("bad_args");
+    expect(await code("repoCache.set", { sizeGb: "lots" })).toBe("bad_args");
+    expect(await code("repoCache.set", { enabled: "yes" })).toBe("bad_args");
+    expect(await call("repoCache.clear")).toMatchObject({ repos: 0, bytes: 0 });
   });
 
   it("lists the coding agents under AI agents, and a row's button sets one up", async () => {

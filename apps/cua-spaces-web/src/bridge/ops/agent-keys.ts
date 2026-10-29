@@ -38,6 +38,8 @@ export interface AgentKeyInfo {
   last4: string;
   /** When it was added (Unix ms). */
   addedMs: number;
+  /** A sign-in past its expiry: no run gets it until it is reconnected. */
+  expired?: boolean;
 }
 
 /** A provider row (`keys::Provider`). */
@@ -61,14 +63,25 @@ declare module "../protocol" {
   interface HostOperations {
     /** The stored keys (no values) and whether this machine can keep them. */
     "agentKeys.list": { args: Record<string, never>; result: AgentKeysReport };
+    /**
+     * The list, after asking each provider whether the saved API keys still work (a cheap read-only
+     * request, answers reused for a few minutes, never logged). A key the provider refuses comes back
+     * `expired`: it needs a reconnect. A sign-in token has no check that is known to accept it, so it
+     * is listed as it is.
+     */
+    "agentKeys.check": { args: Record<string, never>; result: AgentKeysReport };
     /** Adds or replaces a key; `env` names an `other` key. Answers the list after. */
     "agentKeys.set": { args: { provider: AgentKeyProvider; env?: string | null; value: string }; result: AgentKeysReport };
     /** Removes the key named `env`. Answers the list after. */
     "agentKeys.remove": { args: { env: string }; result: AgentKeysReport };
+    /** Which provider keys your login shell has set (names only; never a value). */
+    "agentKeys.shell": { args: Record<string, never>; result: { names: string[] } };
+    /** Saves the key `env` from your login shell (the value goes straight to the store). Answers the list after. */
+    "agentKeys.fromShell": { args: { env: string }; result: AgentKeysReport };
   }
 }
 
-export const AGENT_KEYS_OPERATIONS = ["agentKeys.list", "agentKeys.set", "agentKeys.remove"] as const;
+export const AGENT_KEYS_OPERATIONS = ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell"] as const;
 export type AgentKeysOp = (typeof AGENT_KEYS_OPERATIONS)[number];
 
 /** The SwiftUI host routes each under its own name. */
@@ -77,21 +90,30 @@ export const AGENT_KEYS_WEBKIT_METHODS = AGENT_KEYS_OPERATIONS;
 /** The daemon method each operation calls. */
 export const AGENT_KEYS_METHODS = {
   "agentKeys.list": "agent_keys.list",
+  "agentKeys.check": "agent_keys.check",
   "agentKeys.set": "agent_keys.set",
   "agentKeys.remove": "agent_keys.remove",
+  "agentKeys.shell": "agent_keys.shell",
+  "agentKeys.fromShell": "agent_keys.from_shell",
 } as const satisfies { [K in AgentKeysOp]: string };
 
 export const AGENT_KEYS_COVERAGE = {
   "agentKeys.list": { webkit: { methods: ["agentKeys.list"] }, tauri: ["agents_tool"] },
+  "agentKeys.check": { webkit: { methods: ["agentKeys.check"] }, tauri: ["agents_tool"] },
   "agentKeys.set": { webkit: { methods: ["agentKeys.set"] }, tauri: ["agents_tool"] },
   "agentKeys.remove": { webkit: { methods: ["agentKeys.remove"] }, tauri: ["agents_tool"] },
+  "agentKeys.shell": { webkit: { methods: ["agentKeys.shell"] }, tauri: ["agents_tool"] },
+  "agentKeys.fromShell": { webkit: { methods: ["agentKeys.fromShell"] }, tauri: ["agents_tool"] },
 } as const satisfies Record<AgentKeysOp, OpCoverage>;
 
 /** Arguments that take each operation down its usual path (the coverage test). */
 export const AGENT_KEYS_ARGS: { [K in AgentKeysOp]: OpArgs<K> } = {
   "agentKeys.list": {},
+  "agentKeys.check": {},
   "agentKeys.set": { provider: "anthropic", value: "sk-ant-test-0000" },
   "agentKeys.remove": { env: "ANTHROPIC_API_KEY" },
+  "agentKeys.shell": {},
+  "agentKeys.fromShell": { env: "ANTHROPIC_API_KEY" },
 };
 
 /* ---- The daemon's answer ---------------------------------------------------------- */
@@ -114,7 +136,7 @@ export function agentKeysFromWire(raw: unknown): AgentKeysReport {
     const env = str(r.env);
     if (!env) return [];
     const added = r.added_ms ?? r.addedMs;
-    return [{ provider: providerOf(r.provider), env, last4: str(r.last4).slice(-4), addedMs: typeof added === "number" ? added : 0 }];
+    return [{ provider: providerOf(r.provider), env, last4: str(r.last4).slice(-4), addedMs: typeof added === "number" ? added : 0, ...(r.expired === true ? { expired: true } : {}) }];
   });
   const providers = (Array.isArray(o.providers) ? o.providers : []).flatMap((p): AgentKeyProviderRow[] => {
     const r = (p ?? {}) as Record<string, unknown>;
@@ -135,7 +157,13 @@ const setArgs = ({ provider, env, value }: OpArgs<"agentKeys.set">) =>
 
 type Handlers = { [K in AgentKeysOp]: (args: OpArgs<K>) => Promise<OpResult<K>> };
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-type Request = <T>(method: "agentKeys.list" | "agentKeys.set" | "agentKeys.remove", args?: Record<string, unknown>) => Promise<T>;
+type Request = <T>(method: AgentKeysOp, args?: Record<string, unknown>) => Promise<T>;
+
+/** `agent_keys.shell`'s answer: names only. */
+const shellNamesFromWire = (raw: unknown): { names: string[] } => {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return { names: (Array.isArray(o.names) ? o.names : []).filter((n): n is string => typeof n === "string") };
+};
 
 /** Tauri: the daemon's methods through `agents_tool` (the shell allows them). */
 export function tauriAgentKeysOps(invoke: Invoke): Handlers {
@@ -143,8 +171,11 @@ export function tauriAgentKeysOps(invoke: Invoke): Handlers {
     agentKeysFromWire(await invoke<unknown>("agents_tool", { tool: AGENT_KEYS_METHODS[op], args }));
   return {
     "agentKeys.list": () => tool("agentKeys.list"),
+    "agentKeys.check": () => tool("agentKeys.check"),
     "agentKeys.set": (args) => tool("agentKeys.set", setArgs(args)),
     "agentKeys.remove": ({ env }) => tool("agentKeys.remove", { env }),
+    "agentKeys.shell": async () => shellNamesFromWire(await invoke<unknown>("agents_tool", { tool: AGENT_KEYS_METHODS["agentKeys.shell"], args: {} })),
+    "agentKeys.fromShell": ({ env }) => tool("agentKeys.fromShell", { env }),
   };
 }
 
@@ -153,7 +184,10 @@ export function webkitAgentKeysOps(request: Request): Handlers {
   const call = async (op: AgentKeysOp, args: Record<string, unknown> = {}) => agentKeysFromWire(await request<unknown>(op, args));
   return {
     "agentKeys.list": () => call("agentKeys.list"),
+    "agentKeys.check": () => call("agentKeys.check"),
     "agentKeys.set": (args) => call("agentKeys.set", setArgs(args)),
     "agentKeys.remove": ({ env }) => call("agentKeys.remove", { env }),
+    "agentKeys.shell": async () => shellNamesFromWire(await request<unknown>("agentKeys.shell", {})),
+    "agentKeys.fromShell": ({ env }) => call("agentKeys.fromShell", { env }),
   };
 }

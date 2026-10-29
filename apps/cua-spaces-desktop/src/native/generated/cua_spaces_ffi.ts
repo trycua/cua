@@ -4286,6 +4286,51 @@ export function appRowsToSpaces(rows: Array<AppSpaceRow>, nowMs: bigint): Array<
     }
 
 /**
+ * A runtime binary's one line in Settings, Advanced ("Docker 27.3 found",
+ * "Not a Docker or Podman binary").
+ */
+export function appRuntimePathVerdict(check: AppRuntimePathCheck): AppRuntimePathVerdict {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppRuntimePathVerdict.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_runtime_path_verdict(
+        FfiConverterTypeAppRuntimePathCheck.lower(check, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The setting a runtime row's choice changes (`runtime.<kind>` or
+ * `runtime.<kind>_path`; a `None` value unsets it), or none for any other
+ * row.
+ */
+export function appRuntimesChoose(input: AppRuntimesInput | undefined, row: string, option: string): AppRuntimeSettingChange | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalTypeAppRuntimeSettingChange.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_runtimes_choose(
+        FfiConverterOptionalTypeAppRuntimesInput.lower(input, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(row, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(option, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The SDK's plan-option group for a picker group.
  */
 export function appSensitiveGroupSdk(group: AppSensitiveGroup): TeleportSensitiveGroup {
@@ -8783,7 +8828,11 @@ export type AppAgentKeyInput = {
     /**
      * When it was added (Unix ms).
      */
-    addedMs: bigint
+    addedMs: bigint,
+    /**
+     * A sign-in past its expiry: not used by any run until reconnected.
+     */
+    expired: boolean
 }
 
 /**
@@ -8810,7 +8859,8 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
                 provider: FfiConverterString.read(from),
                 env: FfiConverterString.read(from),
                 last4: FfiConverterString.read(from),
-                addedMs: FfiConverterUInt64.read(from)
+                addedMs: FfiConverterUInt64.read(from),
+                expired: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -8818,12 +8868,14 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
             FfiConverterString.write(value.env, into);
             FfiConverterString.write(value.last4, into);
             FfiConverterUInt64.write(value.addedMs, into);
+            FfiConverterBool.write(value.expired, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.provider) +
              FfiConverterString.allocationSize(value.env) +
              FfiConverterString.allocationSize(value.last4) +
-             FfiConverterUInt64.allocationSize(value.addedMs);
+             FfiConverterUInt64.allocationSize(value.addedMs) +
+             FfiConverterBool.allocationSize(value.expired);
 
         }
     };
@@ -20741,6 +20793,73 @@ const FfiConverterTypeAppDetailCopy = (() => {
     return new FFIConverter();
 })();
 
+export type AppDetectedRuntime = {
+    /**
+     * `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+     */
+    tool: string,
+    /**
+     * As people know it (`Docker`, `Apple container`).
+     */
+    name: string,
+    path: string,
+    /**
+     * As its `--version` says it (`27.3.1`).
+     */
+    version?: string,
+    /**
+     * The one guest system it runs, when only one (`macOS`, `Linux`).
+     */
+    guests?: string
+}
+
+/**
+ * Generated factory for {@link AppDetectedRuntime} record objects.
+ */
+export const AppDetectedRuntime = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppDetectedRuntime, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppDetectedRuntime>,
+    });
+})();
+
+const FfiConverterTypeAppDetectedRuntime = (() => {
+    type TypeName = AppDetectedRuntime;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                tool: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                path: FfiConverterString.read(from),
+                version: FfiConverterOptionalString.read(from),
+                guests: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.tool, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.path, into);
+            FfiConverterOptionalString.write(value.version, into);
+            FfiConverterOptionalString.write(value.guests, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.tool) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.path) +
+             FfiConverterOptionalString.allocationSize(value.version) +
+             FfiConverterOptionalString.allocationSize(value.guests);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export enum AppBannerTone {
     /**
      * Informational.
@@ -26759,9 +26878,9 @@ export type AppHostSetupRequest = {
      */
     allow?: Array<string>,
     /**
-     * What the machine is for: `desktop` (share this desktop, and
-     * provide Spaces on a new relay setup; the default) or `spare` (only
-     * run Spaces for your other devices).
+     * What the machine is for: `spare` (the default: other machines
+     * create Spaces here, its desktop stays private) or `desktop` (also
+     * let other machines control this desktop).
      */
     profile?: string,
     /**
@@ -26769,10 +26888,9 @@ export type AppHostSetupRequest = {
      */
     shareDesktop?: boolean,
     /**
-     * Create Spaces for your other devices (overrides the profile).
-     * `None` with the desktop profile: on for a new relay setup; a
-     * machine set up before keeps its setting (the host decides,
-     * `cua_host::default_provide_spaces`).
+     * Let other machines create Spaces here (overrides the profile).
+     * `None`: on for a new relay setup; a machine set up before keeps
+     * its setting (the host decides, `cua_host::default_provide_spaces`).
      */
     provideSpaces?: boolean
 }
@@ -27005,6 +27123,107 @@ const FfiConverterTypeAppHostLimit = (() => {
              FfiConverterUInt32.allocationSize(value.used) +
              FfiConverterUInt32.allocationSize(value.limit) +
              FfiConverterString.allocationSize(value.reason);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppHostLimitRow = {
+    /**
+     * `max-spaces`, `max-memory`, `max-disk` or `max-run`.
+     */
+    id: string,
+    /**
+     * "Most Spaces at once".
+     */
+    label: string,
+    /**
+     * One line under it.
+     */
+    help: string,
+    /**
+     * The limit (0: no limit).
+     */
+    value: number,
+    /**
+     * What the number counts: `Spaces`, `GB` or `minutes`.
+     */
+    unit: string,
+    /**
+     * What is in use now ("2 of 4 Spaces", "12 of 32 GB"; "2 Spaces" with
+     * no limit); none for a limit that is about time.
+     */
+    useText?: string,
+    /**
+     * This machine's own total in `unit` (memory and disk), 0 when not
+     * known.
+     */
+    total: number,
+    /**
+     * Use is above the limit (it was lowered below what runs): nothing
+     * is stopped, new Spaces are refused.
+     */
+    over: boolean,
+    /**
+     * "Over limit" while `over`.
+     */
+    overText?: string
+}
+
+/**
+ * Generated factory for {@link AppHostLimitRow} record objects.
+ */
+export const AppHostLimitRow = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppHostLimitRow, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppHostLimitRow>,
+    });
+})();
+
+const FfiConverterTypeAppHostLimitRow = (() => {
+    type TypeName = AppHostLimitRow;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                label: FfiConverterString.read(from),
+                help: FfiConverterString.read(from),
+                value: FfiConverterUInt32.read(from),
+                unit: FfiConverterString.read(from),
+                useText: FfiConverterOptionalString.read(from),
+                total: FfiConverterUInt32.read(from),
+                over: FfiConverterBool.read(from),
+                overText: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.label, into);
+            FfiConverterString.write(value.help, into);
+            FfiConverterUInt32.write(value.value, into);
+            FfiConverterString.write(value.unit, into);
+            FfiConverterOptionalString.write(value.useText, into);
+            FfiConverterUInt32.write(value.total, into);
+            FfiConverterBool.write(value.over, into);
+            FfiConverterOptionalString.write(value.overText, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.label) +
+             FfiConverterString.allocationSize(value.help) +
+             FfiConverterUInt32.allocationSize(value.value) +
+             FfiConverterString.allocationSize(value.unit) +
+             FfiConverterOptionalString.allocationSize(value.useText) +
+             FfiConverterUInt32.allocationSize(value.total) +
+             FfiConverterBool.allocationSize(value.over) +
+             FfiConverterOptionalString.allocationSize(value.overText);
 
         }
     };
@@ -27368,6 +27587,11 @@ export type AppHostPanelView = {
      */
     limits?: string,
     /**
+     * The limits as number rows (Settings, Sharing), while providing
+     * Spaces: most Spaces, memory and disk in total, longest running time.
+     */
+    limitRows: Array<AppHostLimitRow>,
+    /**
      * "Spaces for your devices", while providing Spaces.
      */
     providedTitle?: string,
@@ -27464,6 +27688,7 @@ const FfiConverterTypeAppHostPanelView = (() => {
                 accessWarning: FfiConverterOptionalString.read(from),
                 toggles: FfiConverterSequenceTypeAppHostToggle.read(from),
                 limits: FfiConverterOptionalString.read(from),
+                limitRows: FfiConverterSequenceTypeAppHostLimitRow.read(from),
                 providedTitle: FfiConverterOptionalString.read(from),
                 provided: FfiConverterSequenceTypeAppHostAccessRow.read(from),
                 providedEmpty: FfiConverterOptionalString.read(from),
@@ -27498,6 +27723,7 @@ const FfiConverterTypeAppHostPanelView = (() => {
             FfiConverterOptionalString.write(value.accessWarning, into);
             FfiConverterSequenceTypeAppHostToggle.write(value.toggles, into);
             FfiConverterOptionalString.write(value.limits, into);
+            FfiConverterSequenceTypeAppHostLimitRow.write(value.limitRows, into);
             FfiConverterOptionalString.write(value.providedTitle, into);
             FfiConverterSequenceTypeAppHostAccessRow.write(value.provided, into);
             FfiConverterOptionalString.write(value.providedEmpty, into);
@@ -27531,6 +27757,7 @@ const FfiConverterTypeAppHostPanelView = (() => {
              FfiConverterOptionalString.allocationSize(value.accessWarning) +
              FfiConverterSequenceTypeAppHostToggle.allocationSize(value.toggles) +
              FfiConverterOptionalString.allocationSize(value.limits) +
+             FfiConverterSequenceTypeAppHostLimitRow.allocationSize(value.limitRows) +
              FfiConverterOptionalString.allocationSize(value.providedTitle) +
              FfiConverterSequenceTypeAppHostAccessRow.allocationSize(value.provided) +
              FfiConverterOptionalString.allocationSize(value.providedEmpty) +
@@ -27909,6 +28136,31 @@ export type AppHostState = {
      */
     maxMacosVms: number,
     /**
+     * Memory the Spaces other machines create here may use in total, in GB
+     * (0: no limit).
+     */
+    maxMemoryGb: number,
+    /**
+     * Disk the Spaces other machines create here may use in total, in GB
+     * (0: no limit).
+     */
+    maxDiskGb: number,
+    /**
+     * How long a Space created here by another machine may run, in minutes
+     * (0: no limit).
+     */
+    maxRunMinutes: number,
+    /**
+     * What those Spaces were given now, in GB.
+     */
+    usedMemoryGb: number,
+    usedDiskGb: number,
+    /**
+     * This machine's own memory and disk in GB (0: not known).
+     */
+    totalMemoryGb: number,
+    totalDiskGb: number,
+    /**
      * The Spaces this machine provides now.
      */
     providedSpaces: Array<AppHostProvidedSpace>,
@@ -27981,6 +28233,13 @@ const FfiConverterTypeAppHostState = (() => {
                 provideSpaces: FfiConverterBool.read(from),
                 maxSpaces: FfiConverterUInt32.read(from),
                 maxMacosVms: FfiConverterUInt32.read(from),
+                maxMemoryGb: FfiConverterUInt32.read(from),
+                maxDiskGb: FfiConverterUInt32.read(from),
+                maxRunMinutes: FfiConverterUInt32.read(from),
+                usedMemoryGb: FfiConverterUInt32.read(from),
+                usedDiskGb: FfiConverterUInt32.read(from),
+                totalMemoryGb: FfiConverterUInt32.read(from),
+                totalDiskGb: FfiConverterUInt32.read(from),
                 providedSpaces: FfiConverterSequenceTypeAppHostProvidedSpace.read(from),
                 spacesAudit: FfiConverterSequenceTypeAppHostSpacesAudit.read(from),
                 spacesAuditError: FfiConverterOptionalString.read(from),
@@ -28010,6 +28269,13 @@ const FfiConverterTypeAppHostState = (() => {
             FfiConverterBool.write(value.provideSpaces, into);
             FfiConverterUInt32.write(value.maxSpaces, into);
             FfiConverterUInt32.write(value.maxMacosVms, into);
+            FfiConverterUInt32.write(value.maxMemoryGb, into);
+            FfiConverterUInt32.write(value.maxDiskGb, into);
+            FfiConverterUInt32.write(value.maxRunMinutes, into);
+            FfiConverterUInt32.write(value.usedMemoryGb, into);
+            FfiConverterUInt32.write(value.usedDiskGb, into);
+            FfiConverterUInt32.write(value.totalMemoryGb, into);
+            FfiConverterUInt32.write(value.totalDiskGb, into);
             FfiConverterSequenceTypeAppHostProvidedSpace.write(value.providedSpaces, into);
             FfiConverterSequenceTypeAppHostSpacesAudit.write(value.spacesAudit, into);
             FfiConverterOptionalString.write(value.spacesAuditError, into);
@@ -28038,6 +28304,13 @@ const FfiConverterTypeAppHostState = (() => {
              FfiConverterBool.allocationSize(value.provideSpaces) +
              FfiConverterUInt32.allocationSize(value.maxSpaces) +
              FfiConverterUInt32.allocationSize(value.maxMacosVms) +
+             FfiConverterUInt32.allocationSize(value.maxMemoryGb) +
+             FfiConverterUInt32.allocationSize(value.maxDiskGb) +
+             FfiConverterUInt32.allocationSize(value.maxRunMinutes) +
+             FfiConverterUInt32.allocationSize(value.usedMemoryGb) +
+             FfiConverterUInt32.allocationSize(value.usedDiskGb) +
+             FfiConverterUInt32.allocationSize(value.totalMemoryGb) +
+             FfiConverterUInt32.allocationSize(value.totalDiskGb) +
              FfiConverterSequenceTypeAppHostProvidedSpace.allocationSize(value.providedSpaces) +
              FfiConverterSequenceTypeAppHostSpacesAudit.allocationSize(value.spacesAudit) +
              FfiConverterOptionalString.allocationSize(value.spacesAuditError) +
@@ -28748,7 +29021,7 @@ export type AppListView = {
     empty: boolean,
     /**
      * One quiet line where the Spaces go while the list is not complete
-     * ("Reaching 6 computers…"), below what is known so far.
+     * ("Reaching 6 machines…"), below what is known so far.
      */
     reachingLine?: string
 }
@@ -29857,7 +30130,8 @@ export type AppMachinesViewToggle = {
      */
     id: string,
     /**
-     * "Provide Spaces", "Share this desktop".
+     * "Let other machines create Spaces here", "Let other machines control
+     * this desktop".
      */
     label: string,
     /**
@@ -30227,7 +30501,8 @@ export type AppMachinesViewMachine = {
      */
     noticeAction?: AppHostAction,
     /**
-     * Provide Spaces, then Share this desktop.
+     * Create Spaces here, then control this desktop (This Mac: the
+     * desktop switch only).
      */
     toggles: Array<AppMachinesViewToggle>,
     /**
@@ -30659,7 +30934,7 @@ export type AppMachinesViewRelay = {
      */
     ownerEmail?: string,
     /**
-     * It creates Spaces for your devices (`None`: it did not say).
+     * It lets your other machines create Spaces (`None`: it did not say).
      */
     providesSpaces?: boolean
 }
@@ -31362,69 +31637,6 @@ const FfiConverterTypeAppMenuPreview = (() => {
              FfiConverterSequenceTypeAppMenuPreviewRow.allocationSize(value.rows) +
              FfiConverterFloat64.allocationSize(value.inset) +
              FfiConverterFloat64.allocationSize(value.fontSize);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-export type AppMicrovmInput = {
-    /**
-     * This machine's system (`macos`, `linux`, `windows`).
-     */
-    os?: AppSpaceOs,
-    /**
-     * Ready backends (none: not read yet).
-     */
-    localBackends?: Array<string>,
-    /**
-     * Why each other backend is not ready, by backend name.
-     */
-    localDetails?: Map<string, string>,
-    /**
-     * This machine's architecture (`arm64`, `amd64`).
-     */
-    hostArch?: string
-}
-
-/**
- * Generated factory for {@link AppMicrovmInput} record objects.
- */
-export const AppMicrovmInput = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<AppMicrovmInput, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<AppMicrovmInput>,
-    });
-})();
-
-const FfiConverterTypeAppMicrovmInput = (() => {
-    type TypeName = AppMicrovmInput;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                os: FfiConverterOptionalTypeAppSpaceOs.read(from),
-                localBackends: FfiConverterOptionalSequenceString.read(from),
-                localDetails: FfiConverterOptionalMapStringString.read(from),
-                hostArch: FfiConverterOptionalString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterOptionalTypeAppSpaceOs.write(value.os, into);
-            FfiConverterOptionalSequenceString.write(value.localBackends, into);
-            FfiConverterOptionalMapStringString.write(value.localDetails, into);
-            FfiConverterOptionalString.write(value.hostArch, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterOptionalTypeAppSpaceOs.allocationSize(value.os) +
-             FfiConverterOptionalSequenceString.allocationSize(value.localBackends) +
-             FfiConverterOptionalMapStringString.allocationSize(value.localDetails) +
-             FfiConverterOptionalString.allocationSize(value.hostArch);
 
         }
     };
@@ -39778,6 +39990,259 @@ const FfiConverterTypeAppRosterState = (() => {
     return new FFIConverter();
 })();
 
+export type AppRuntimePathCheck = {
+    path: string,
+    /**
+     * A file is there.
+     */
+    exists: boolean,
+    /**
+     * It can be run.
+     */
+    executable: boolean,
+    /**
+     * The tool it is, when it is one the kind takes.
+     */
+    tool?: string,
+    name?: string,
+    version?: string,
+    /**
+     * The oldest version Cua runs on.
+     */
+    minVersion?: string,
+    /**
+     * The tools the kind takes here (`Docker`, `Podman`).
+     */
+    expected: Array<string>,
+    guests?: string
+}
+
+/**
+ * Generated factory for {@link AppRuntimePathCheck} record objects.
+ */
+export const AppRuntimePathCheck = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppRuntimePathCheck, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppRuntimePathCheck>,
+    });
+})();
+
+const FfiConverterTypeAppRuntimePathCheck = (() => {
+    type TypeName = AppRuntimePathCheck;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                path: FfiConverterString.read(from),
+                exists: FfiConverterBool.read(from),
+                executable: FfiConverterBool.read(from),
+                tool: FfiConverterOptionalString.read(from),
+                name: FfiConverterOptionalString.read(from),
+                version: FfiConverterOptionalString.read(from),
+                minVersion: FfiConverterOptionalString.read(from),
+                expected: FfiConverterSequenceString.read(from),
+                guests: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.path, into);
+            FfiConverterBool.write(value.exists, into);
+            FfiConverterBool.write(value.executable, into);
+            FfiConverterOptionalString.write(value.tool, into);
+            FfiConverterOptionalString.write(value.name, into);
+            FfiConverterOptionalString.write(value.version, into);
+            FfiConverterOptionalString.write(value.minVersion, into);
+            FfiConverterSequenceString.write(value.expected, into);
+            FfiConverterOptionalString.write(value.guests, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.path) +
+             FfiConverterBool.allocationSize(value.exists) +
+             FfiConverterBool.allocationSize(value.executable) +
+             FfiConverterOptionalString.allocationSize(value.tool) +
+             FfiConverterOptionalString.allocationSize(value.name) +
+             FfiConverterOptionalString.allocationSize(value.version) +
+             FfiConverterOptionalString.allocationSize(value.minVersion) +
+             FfiConverterSequenceString.allocationSize(value.expected) +
+             FfiConverterOptionalString.allocationSize(value.guests);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppRuntimeKindInput = {
+    /**
+     * `container`, `vm` or `microvm`.
+     */
+    kind: string,
+    /**
+     * `runtime.<kind>`: `auto`, `builtin`, `system` (none: auto).
+     */
+    source?: string,
+    /**
+     * `runtime.<kind>_path`, when set.
+     */
+    path?: string,
+    /**
+     * What is installed for the kind, the one used first (none: not
+     * looked for yet).
+     */
+    detected?: Array<AppDetectedRuntime>,
+    /**
+     * The path in use, probed.
+     */
+    check?: AppRuntimePathCheck,
+    /**
+     * The tools the kind takes on this machine (`Docker`, `Podman`).
+     */
+    expected: Array<string>
+}
+
+/**
+ * Generated factory for {@link AppRuntimeKindInput} record objects.
+ */
+export const AppRuntimeKindInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppRuntimeKindInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppRuntimeKindInput>,
+    });
+})();
+
+const FfiConverterTypeAppRuntimeKindInput = (() => {
+    type TypeName = AppRuntimeKindInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                kind: FfiConverterString.read(from),
+                source: FfiConverterOptionalString.read(from),
+                path: FfiConverterOptionalString.read(from),
+                detected: FfiConverterOptionalSequenceTypeAppDetectedRuntime.read(from),
+                check: FfiConverterOptionalTypeAppRuntimePathCheck.read(from),
+                expected: FfiConverterSequenceString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.kind, into);
+            FfiConverterOptionalString.write(value.source, into);
+            FfiConverterOptionalString.write(value.path, into);
+            FfiConverterOptionalSequenceTypeAppDetectedRuntime.write(value.detected, into);
+            FfiConverterOptionalTypeAppRuntimePathCheck.write(value.check, into);
+            FfiConverterSequenceString.write(value.expected, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.kind) +
+             FfiConverterOptionalString.allocationSize(value.source) +
+             FfiConverterOptionalString.allocationSize(value.path) +
+             FfiConverterOptionalSequenceTypeAppDetectedRuntime.allocationSize(value.detected) +
+             FfiConverterOptionalTypeAppRuntimePathCheck.allocationSize(value.check) +
+             FfiConverterSequenceString.allocationSize(value.expected);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppRuntimePathVerdict = {
+    ok: boolean,
+    line: string
+}
+
+/**
+ * Generated factory for {@link AppRuntimePathVerdict} record objects.
+ */
+export const AppRuntimePathVerdict = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppRuntimePathVerdict, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppRuntimePathVerdict>,
+    });
+})();
+
+const FfiConverterTypeAppRuntimePathVerdict = (() => {
+    type TypeName = AppRuntimePathVerdict;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                ok: FfiConverterBool.read(from),
+                line: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.ok, into);
+            FfiConverterString.write(value.line, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.ok) +
+             FfiConverterString.allocationSize(value.line);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppRuntimeSettingChange = {
+    /**
+     * `runtime.container`, `runtime.vm_path`.
+     */
+    key: string,
+    value?: string
+}
+
+/**
+ * Generated factory for {@link AppRuntimeSettingChange} record objects.
+ */
+export const AppRuntimeSettingChange = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppRuntimeSettingChange, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppRuntimeSettingChange>,
+    });
+})();
+
+const FfiConverterTypeAppRuntimeSettingChange = (() => {
+    type TypeName = AppRuntimeSettingChange;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                key: FfiConverterString.read(from),
+                value: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.key, into);
+            FfiConverterOptionalString.write(value.value, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.key) +
+             FfiConverterOptionalString.allocationSize(value.value);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppRuntimeSwitch = {
     /**
      * The `cua config` setting: `runtime.lume`.
@@ -39835,6 +40300,76 @@ const FfiConverterTypeAppRuntimeSwitch = (() => {
              FfiConverterString.allocationSize(value.value) +
              FfiConverterString.allocationSize(value.label) +
              FfiConverterString.allocationSize(value.detail);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppRuntimesInput = {
+    /**
+     * This machine's system (none: not said; every option is offered).
+     */
+    os?: AppSpaceOs,
+    /**
+     * `arm64`, `amd64`.
+     */
+    hostArch?: string,
+    /**
+     * The runtime doctor's ready backends (none: not read yet).
+     */
+    localBackends?: Array<string>,
+    /**
+     * Why each other backend is not ready.
+     */
+    localDetails?: Map<string, string>,
+    /**
+     * Each kind's setting and what is installed for it (none: not read).
+     */
+    kinds?: Array<AppRuntimeKindInput>
+}
+
+/**
+ * Generated factory for {@link AppRuntimesInput} record objects.
+ */
+export const AppRuntimesInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppRuntimesInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppRuntimesInput>,
+    });
+})();
+
+const FfiConverterTypeAppRuntimesInput = (() => {
+    type TypeName = AppRuntimesInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                os: FfiConverterOptionalTypeAppSpaceOs.read(from),
+                hostArch: FfiConverterOptionalString.read(from),
+                localBackends: FfiConverterOptionalSequenceString.read(from),
+                localDetails: FfiConverterOptionalMapStringString.read(from),
+                kinds: FfiConverterOptionalSequenceTypeAppRuntimeKindInput.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalTypeAppSpaceOs.write(value.os, into);
+            FfiConverterOptionalString.write(value.hostArch, into);
+            FfiConverterOptionalSequenceString.write(value.localBackends, into);
+            FfiConverterOptionalMapStringString.write(value.localDetails, into);
+            FfiConverterOptionalSequenceTypeAppRuntimeKindInput.write(value.kinds, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalTypeAppSpaceOs.allocationSize(value.os) +
+             FfiConverterOptionalString.allocationSize(value.hostArch) +
+             FfiConverterOptionalSequenceString.allocationSize(value.localBackends) +
+             FfiConverterOptionalMapStringString.allocationSize(value.localDetails) +
+             FfiConverterOptionalSequenceTypeAppRuntimeKindInput.allocationSize(value.kinds);
 
         }
     };
@@ -41111,25 +41646,16 @@ export type AppSettingsInput = {
      */
     autoConnect?: boolean,
     /**
-     * Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
-     * `system`); none: no Runtimes section.
-     */
-    lumeSource?: string,
-    /**
-     * Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
-     * `builtin`, `system`); none: no Linux row.
-     */
-    linuxSource?: string,
-    /**
      * Overflow into your clouds when this machine is full
      * (`placement.overflow`); none: no row.
      */
     overflow?: boolean,
     /**
-     * What this machine's runtime doctor said, for Runtimes' MicroVM row
-     * (whether microVMs run here, and why not); none: no MicroVM row.
+     * Settings, Advanced's runtimes: each kind's setting, what is
+     * installed for it and whether it runs here. None: nothing read yet
+     * (the rows still show, "Checking…").
      */
-    microvm?: AppMicrovmInput,
+    runtimes?: AppRuntimesInput,
     /**
      * Settings, General's Show tips switch: tips are on
      * (`!AppSettings.tips.off`). A shell that does not say reads as on.
@@ -41175,10 +41701,8 @@ const FfiConverterTypeAppSettingsInput = (() => {
                 keyvaultSiteIcons: FfiConverterBool.read(from),
                 keyvaultProtection: FfiConverterSequenceTypeAppFact.read(from),
                 autoConnect: FfiConverterOptionalBoolean.read(from),
-                lumeSource: FfiConverterOptionalString.read(from),
-                linuxSource: FfiConverterOptionalString.read(from),
                 overflow: FfiConverterOptionalBoolean.read(from),
-                microvm: FfiConverterOptionalTypeAppMicrovmInput.read(from),
+                runtimes: FfiConverterOptionalTypeAppRuntimesInput.read(from),
                 showTips: FfiConverterBool.read(from)
             };
         }
@@ -41200,10 +41724,8 @@ const FfiConverterTypeAppSettingsInput = (() => {
             FfiConverterBool.write(value.keyvaultSiteIcons, into);
             FfiConverterSequenceTypeAppFact.write(value.keyvaultProtection, into);
             FfiConverterOptionalBoolean.write(value.autoConnect, into);
-            FfiConverterOptionalString.write(value.lumeSource, into);
-            FfiConverterOptionalString.write(value.linuxSource, into);
             FfiConverterOptionalBoolean.write(value.overflow, into);
-            FfiConverterOptionalTypeAppMicrovmInput.write(value.microvm, into);
+            FfiConverterOptionalTypeAppRuntimesInput.write(value.runtimes, into);
             FfiConverterBool.write(value.showTips, into);
         }
         allocationSize(value: TypeName): number {
@@ -41224,10 +41746,8 @@ const FfiConverterTypeAppSettingsInput = (() => {
              FfiConverterBool.allocationSize(value.keyvaultSiteIcons) +
              FfiConverterSequenceTypeAppFact.allocationSize(value.keyvaultProtection) +
              FfiConverterOptionalBoolean.allocationSize(value.autoConnect) +
-             FfiConverterOptionalString.allocationSize(value.lumeSource) +
-             FfiConverterOptionalString.allocationSize(value.linuxSource) +
              FfiConverterOptionalBoolean.allocationSize(value.overflow) +
-             FfiConverterOptionalTypeAppMicrovmInput.allocationSize(value.microvm) +
+             FfiConverterOptionalTypeAppRuntimesInput.allocationSize(value.runtimes) +
              FfiConverterBool.allocationSize(value.showTips);
 
         }
@@ -69463,6 +69983,9 @@ const FfiConverterSequenceTypeAppHostAccessRow = new FfiConverterArray(FfiConver
 // FfiConverter for Array<AppHostToggle>
 const FfiConverterSequenceTypeAppHostToggle = new FfiConverterArray(FfiConverterTypeAppHostToggle);
 
+// FfiConverter for Array<AppHostLimitRow>
+const FfiConverterSequenceTypeAppHostLimitRow = new FfiConverterArray(FfiConverterTypeAppHostLimitRow);
+
 // FfiConverter for Array<AppPermissionRow>
 const FfiConverterSequenceTypeAppPermissionRow = new FfiConverterArray(FfiConverterTypeAppPermissionRow);
 
@@ -69568,12 +70091,6 @@ const FfiConverterOptionalTypeAppCloudsInput = new FfiConverterOptional(FfiConve
 // FfiConverter for Array<AppMenuPreviewRow>
 const FfiConverterSequenceTypeAppMenuPreviewRow = new FfiConverterArray(FfiConverterTypeAppMenuPreviewRow);
 
-// FfiConverter for AppSpaceOs | undefined
-const FfiConverterOptionalTypeAppSpaceOs = new FfiConverterOptional(FfiConverterTypeAppSpaceOs);
-
-// FfiConverter for Map<string, string> | undefined
-const FfiConverterOptionalMapStringString = new FfiConverterOptional(FfiConverterMapStringString);
-
 // FfiConverter for Array<AppNotchButton>
 const FfiConverterSequenceTypeAppNotchButton = new FfiConverterArray(FfiConverterTypeAppNotchButton);
 
@@ -69606,6 +70123,9 @@ const FfiConverterOptionalTypeAppCliInstallPlan = new FfiConverterOptional(FfiCo
 
 // FfiConverter for AppOnboardingMode | undefined
 const FfiConverterOptionalTypeAppOnboardingMode = new FfiConverterOptional(FfiConverterTypeAppOnboardingMode);
+
+// FfiConverter for AppSpaceOs | undefined
+const FfiConverterOptionalTypeAppSpaceOs = new FfiConverterOptional(FfiConverterTypeAppSpaceOs);
 
 // FfiConverter for AppDriveStepRequest | undefined
 const FfiConverterOptionalTypeAppDriveStepRequest = new FfiConverterOptional(FfiConverterTypeAppDriveStepRequest);
@@ -69733,6 +70253,24 @@ const FfiConverterSequenceTypeAppReviewPassword = new FfiConverterArray(FfiConve
 // FfiConverter for AppNotice | undefined
 const FfiConverterOptionalTypeAppNotice = new FfiConverterOptional(FfiConverterTypeAppNotice);
 
+// FfiConverter for Array<AppDetectedRuntime>
+const FfiConverterSequenceTypeAppDetectedRuntime = new FfiConverterArray(FfiConverterTypeAppDetectedRuntime);
+
+// FfiConverter for Array<AppDetectedRuntime> | undefined
+const FfiConverterOptionalSequenceTypeAppDetectedRuntime = new FfiConverterOptional(FfiConverterSequenceTypeAppDetectedRuntime);
+
+// FfiConverter for AppRuntimePathCheck | undefined
+const FfiConverterOptionalTypeAppRuntimePathCheck = new FfiConverterOptional(FfiConverterTypeAppRuntimePathCheck);
+
+// FfiConverter for Map<string, string> | undefined
+const FfiConverterOptionalMapStringString = new FfiConverterOptional(FfiConverterMapStringString);
+
+// FfiConverter for Array<AppRuntimeKindInput>
+const FfiConverterSequenceTypeAppRuntimeKindInput = new FfiConverterArray(FfiConverterTypeAppRuntimeKindInput);
+
+// FfiConverter for Array<AppRuntimeKindInput> | undefined
+const FfiConverterOptionalSequenceTypeAppRuntimeKindInput = new FfiConverterOptional(FfiConverterSequenceTypeAppRuntimeKindInput);
+
 // FfiConverter for Array<AppRememberedChoice>
 const FfiConverterSequenceTypeAppRememberedChoice = new FfiConverterArray(FfiConverterTypeAppRememberedChoice);
 
@@ -69754,8 +70292,8 @@ const FfiConverterOptionalTypeAppTeamsInput = new FfiConverterOptional(FfiConver
 // FfiConverter for AppLoginItemInput | undefined
 const FfiConverterOptionalTypeAppLoginItemInput = new FfiConverterOptional(FfiConverterTypeAppLoginItemInput);
 
-// FfiConverter for AppMicrovmInput | undefined
-const FfiConverterOptionalTypeAppMicrovmInput = new FfiConverterOptional(FfiConverterTypeAppMicrovmInput);
+// FfiConverter for AppRuntimesInput | undefined
+const FfiConverterOptionalTypeAppRuntimesInput = new FfiConverterOptional(FfiConverterTypeAppRuntimesInput);
 
 // FfiConverter for Array<AppSettingsSection>
 const FfiConverterSequenceTypeAppSettingsSection = new FfiConverterArray(FfiConverterTypeAppSettingsSection);
@@ -70074,6 +70612,9 @@ const FfiConverterOptionalTypeAppRelayUsageView = new FfiConverterOptional(FfiCo
 
 // FfiConverter for Array<AppSpaceRow>
 const FfiConverterSequenceTypeAppSpaceRow = new FfiConverterArray(FfiConverterTypeAppSpaceRow);
+
+// FfiConverter for AppRuntimeSettingChange | undefined
+const FfiConverterOptionalTypeAppRuntimeSettingChange = new FfiConverterOptional(FfiConverterTypeAppRuntimeSettingChange);
 
 // FfiConverter for AppShareGate | undefined
 const FfiConverterOptionalTypeAppShareGate = new FfiConverterOptional(FfiConverterTypeAppShareGate);
@@ -70751,6 +71292,12 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_rows_to_spaces() !== 20688) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_rows_to_spaces");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_runtime_path_verdict() !== 38898) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_runtime_path_verdict");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_runtimes_choose() !== 22513) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_runtimes_choose");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_sensitive_group_sdk() !== 32734) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_sensitive_group_sdk");
     }
@@ -71401,6 +71948,7 @@ export default Object.freeze({
     FfiConverterTypeAppDetailAction,
     FfiConverterTypeAppDetailActionId,
     FfiConverterTypeAppDetailCopy,
+    FfiConverterTypeAppDetectedRuntime,
     FfiConverterTypeAppDeviceAction,
     FfiConverterTypeAppDeviceBanner,
     FfiConverterTypeAppDeviceConfirm,
@@ -71480,6 +72028,7 @@ export default Object.freeze({
     FfiConverterTypeAppHostFormState,
     FfiConverterTypeAppHostFormView,
     FfiConverterTypeAppHostLimit,
+    FfiConverterTypeAppHostLimitRow,
     FfiConverterTypeAppHostLoad,
     FfiConverterTypeAppHostPanelView,
     FfiConverterTypeAppHostPermissionInput,
@@ -71547,7 +72096,6 @@ export default Object.freeze({
     FfiConverterTypeAppMenuOption,
     FfiConverterTypeAppMenuPreview,
     FfiConverterTypeAppMenuPreviewRow,
-    FfiConverterTypeAppMicrovmInput,
     FfiConverterTypeAppModeChoice,
     FfiConverterTypeAppMsg,
     FfiConverterTypeAppNewSpaceOn,
@@ -71652,7 +72200,12 @@ export default Object.freeze({
     FfiConverterTypeAppRoutineInput,
     FfiConverterTypeAppRoutineScheduleKind,
     FfiConverterTypeAppRuntime,
+    FfiConverterTypeAppRuntimeKindInput,
+    FfiConverterTypeAppRuntimePathCheck,
+    FfiConverterTypeAppRuntimePathVerdict,
+    FfiConverterTypeAppRuntimeSettingChange,
     FfiConverterTypeAppRuntimeSwitch,
+    FfiConverterTypeAppRuntimesInput,
     FfiConverterTypeAppSandboxImage,
     FfiConverterTypeAppScreenFacts,
     FfiConverterTypeAppSendSource,

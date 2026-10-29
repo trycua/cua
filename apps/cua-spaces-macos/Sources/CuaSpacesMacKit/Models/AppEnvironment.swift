@@ -409,7 +409,7 @@ public enum AppEnvironment {
     /// The Settings page a `settings-*` start view names.
     static func settingsRoute(_ view: String) -> MainUIRoute {
         switch view {
-        case "settings-devices": return .path("/settings/devices")
+        case "settings-devices": return .path("/machines")
         case "settings-about": return .path("/settings/about")
         case "settings-experiments": return .path("/settings/experiments")
         default: return .settings
@@ -495,7 +495,7 @@ public enum AppEnvironment {
             case "device-approval", "device-enroll", "device-enroll-code":
                 // The web Devices page has the enroll and approval sheets.
                 await model.devices.refresh()
-                web(.path("/settings/devices"))
+                web(.path("/machines"))
             case "space":
                 model.select("local:aurora")
                 web(.space("local:aurora"))

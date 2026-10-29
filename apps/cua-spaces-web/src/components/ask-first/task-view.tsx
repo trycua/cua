@@ -5,7 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, EyeIcon, HandIcon, Loader2Icon, Maximize2Icon, Minimize2Icon, RotateCwIcon, Trash2Icon, TriangleAlertIcon, UserPlusIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { useAgents, useAgentTimeline, useBridge, useSession, useShareSheet, useSpaceDetail, useSpaces, type AgentTimeline, type Space } from "@/bridge";
+import { setupCard, useAgents, useAgentTimeline, useBridge, useSession, useShareSheet, useSpaceDetail, useSpaces, type AgentTimeline, type Space } from "@/bridge";
 import { Timeline } from "@/components/agents/timeline";
 import { CuaKey } from "@/components/cua-key";
 import { OsIcon } from "@/components/os-icon";
@@ -13,11 +13,12 @@ import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
+import { useConnectors } from "@/hooks/use-connectors";
 import { keepTranscript, postToSpaceThread, retryTarget, startErrorView, taskState, TASK_STATE_TEXT, taskTitle, updateAskTask, useAskTasks, type AskTask, type TaskState, type TaskWhere } from "@/lib/ask-first";
 import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
-import { agentName, AppMark, WherePicker } from "./ask-box";
+import { agentName, AppMark, TASK_AGENTS, WherePicker } from "./ask-box";
 import { StateDot, taskRun } from "./home";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
@@ -283,8 +284,20 @@ function Starting({ pending, space, name, onHost }: { pending: Space | undefined
  * Change computer right in the card, and the core's own words under
  * Details.
  */
-export function StartFailed({ error, name, host, onRetry }: { error: string; name: string; host: boolean; onRetry: (where?: TaskWhere) => void }) {
+export function StartFailed({ error, name, agent, host, onRetry }: { error: string; name: string; agent?: string; host: boolean; onRetry: (where?: TaskWhere) => void }) {
   const view = startErrorView(error, name);
+  const { core } = useBridge();
+  const connectors = useConnectors();
+  // "Connect <app>" in place of Add your key: Settings, Connectors' Connect, here; then it starts again by itself.
+  const setupId = TASK_AGENTS.find((a) => a.id === agent)?.setupId ?? agent ?? "";
+  const card = view.action === "add-key" ? setupCard(core, connectors.input, setupId, name) : null;
+  const [connecting, setConnecting] = useState(false);
+  const connect = async () => {
+    setConnecting(true);
+    const outcome = await connectors.connectApp(setupId);
+    setConnecting(false);
+    if (outcome === "connected") onRetry();
+  };
   const { kinds, spaces } = useWhereOptions();
   const [open, setOpen] = useState(false);
   const pick = useWherePick(name);
@@ -292,18 +305,19 @@ export function StartFailed({ error, name, host, onRetry }: { error: string; nam
     <CuaLine>
       <div data-ask-start-failed={view.action}>
         <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-          <TriangleAlertIcon className="size-4 text-destructive" /> {view.title}
+          <TriangleAlertIcon className="size-4 text-destructive" /> {card?.title ?? view.title}
         </div>
-        <p>{view.body}</p>
+        <p>{card?.body ?? view.body}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {view.action === "set-up-host" ? (
             <Button className="h-10 px-4" render={<Link to="/machines" />}>
-              Open Computers
+              Open Machines
             </Button>
           ) : null}
           {view.action === "add-key" ? (
-            <Button className="h-10 px-4" render={<Link to="/settings/connectors" />}>
-              Add your key
+            <Button className="h-10 px-4" disabled={connecting} onClick={() => void connect()} data-ask-connect="">
+              {connecting ? <Loader2Icon className="animate-spin" /> : null}
+              {connecting ? (card?.connectingLabel ?? "Connecting…") : (card?.connectLabel ?? `Connect ${name}`)}
             </Button>
           ) : null}
           {view.retry ? (
@@ -360,7 +374,7 @@ function ThreadFooter({
 }) {
   return (
     <div className="flex flex-col gap-5" data-ask-footer="">
-      {task.error ? <StartFailed error={task.error} name={name} host={retryTarget(task).kind === "host"} onRetry={onRetry} /> : null}
+      {task.error ? <StartFailed error={task.error} name={name} agent={task.agent} host={retryTarget(task).kind === "host"} onRetry={onRetry} /> : null}
       {state === "working" ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
           <StateDot state="working" />

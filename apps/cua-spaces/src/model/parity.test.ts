@@ -254,6 +254,7 @@ describe('app core parity flows (webview)', () => {
       'bulk-confirm',
       'tips',
       'pro-banner',
+      'connectors',
     ]);
   });
 

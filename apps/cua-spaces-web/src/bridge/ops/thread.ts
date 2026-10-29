@@ -117,6 +117,18 @@ export interface ThreadAttachment {
   mime: string | null;
 }
 
+/** What failed in an agent's turn or start, typed (`cua_agents::failure::Failure`). */
+export interface ThreadFailure {
+  /** `needs_connect`: no working credential, connect (or reconnect) one; `error`: anything else. */
+  class: "needs_connect" | "error";
+  /** For `needs_connect`: the Connectors row that fixes it (`anthropic`, `openai`). */
+  provider: string | null;
+  /** The complete error as the harness or provider said it (for Show details; never the summary). */
+  message: string;
+  /** Sending the same message again can work. */
+  retryable: boolean;
+}
+
 export interface ThreadEntry {
   seq: number;
   id: string;
@@ -146,6 +158,10 @@ export interface ThreadEntry {
   joinRequest?: JoinRequest | null;
   /** What the person was looking at in the Space as they posted (`view`): its desktop or a window. */
   view?: ThreadView | null;
+  /** On an agent's reply to a task that failed: what failed, with the complete text. `text` says it in plain words. */
+  failure?: ThreadFailure | null;
+  /** On the copy of a message that tasks one more agent when it names several (`@a @b`, `@everyone`): the entry it copies. The page draws the original only. */
+  fanoutOf?: number | null;
 }
 
 /** `thread_post`'s `view` and every entry's: the Space's desktop, or one of its windows (`cua.env.v1.ThreadView`). */
@@ -159,8 +175,28 @@ export interface ThreadView {
 /** Your role in the Space, as the owner daemon sees you: a guest reads only. */
 export type ThreadRole = "owner" | "admin" | "member" | "guest" | "agent";
 
+/** What one agent is doing now, for the thread's live row (`thread_read`'s `live`). */
+export interface LiveAgent {
+  /** The agent's handle (`@hermes-test`). */
+  agent: string;
+  /** In a few plain words: `starting`, `installing`, `thinking`, `replying` or `using Bash`. */
+  stage: string;
+  /** When its oldest open task was given (Unix ms): the working row's clock. */
+  sinceMs?: number;
+  /** What it has said so far this turn, the whole text each time, while it streams; the reply replaces it. */
+  text?: string;
+}
+
+/** Every agent with a turn on its way, and a key that changes when any stage does. */
+export interface ThreadLive {
+  key: string;
+  agents: LiveAgent[];
+}
+
 export interface ThreadPage {
   entries: ThreadEntry[];
+  /** Who is at work now. Absent from a daemon that does not say: nobody. */
+  live: ThreadLive;
   /** The last seq this page covers: the next read's `after`. */
   cursor: number;
   caughtUp: boolean;
@@ -189,11 +225,15 @@ export type AgentMemberStatus = string;
 
 export interface AgentMember {
   name: string;
+  /** What the Space calls it (`@claude`) when that is not `name` (a second Space's `claude` is stored as `claude-2`). */
+  handle?: string;
   /** Harness id (`claude-code`, `hermes`, ...). */
   harness: string;
   status: AgentMemberStatus;
   /** What it is doing, in a few words ("running e2e suite"), when it says. */
   activity: string | null;
+  /** For a failed member: what failed, typed, with the complete text. */
+  failure?: ThreadFailure | null;
   /** Sessions it runs (P2 shows each). */
   sessions: number;
   /** Its rights (null from a daemon without them: the defaults apply). */
@@ -241,6 +281,8 @@ export interface ThreadReadArgs {
   markRead?: boolean;
   /** Long-poll up to this long (0..25000 ms) for entries after `after`. */
   followMs?: number;
+  /** With `followMs`: the `live.key` last seen; the wait also ends when it changes. */
+  liveAfter?: string | null;
   /** Only your DM with this agent member (its handle, CUA-2266): paging, `unread` and `markRead` apply to the DM. */
   with?: string | null;
 }
@@ -409,6 +451,7 @@ export function threadReadArgs(a: ThreadReadArgs): Json {
   if (a.markRead) out.mark_read = true;
   if (a.followMs) out.follow_ms = Math.max(0, Math.min(THREAD_FOLLOW_MAX_MS, Math.round(a.followMs)));
   if (a.with) out.with = a.with;
+  if (a.liveAfter != null && a.followMs) out.live_after = a.liveAfter;
   return out;
 }
 
@@ -601,6 +644,20 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
     event: kind === "system" ? memberEvent(e.event) : null,
     ...(kind === "join_request" ? { joinRequest: joinRequest(e) } : {}),
     ...(e.view != null ? { view: threadViewFromTool(e.view) } : {}),
+    ...(e.failure != null ? { failure: threadFailure(e.failure) } : {}),
+    ...(num(e.fanout_of) !== null ? { fanoutOf: num(e.fanout_of) } : {}),
+  };
+}
+
+/** A typed failure (`failure` of an entry, or of a failed member's status). */
+export function threadFailure(v: unknown): ThreadFailure | null {
+  const f = obj(v);
+  if (!f) return null;
+  return {
+    class: f.class === "needs_connect" ? "needs_connect" : "error",
+    provider: str(f.provider) || null,
+    message: str(f.message),
+    retryable: f.retryable !== false,
   };
 }
 
@@ -718,7 +775,22 @@ export function threadPageFromTool(v: unknown): ThreadPage {
     me: (me ? str(me.id) : str(p.me)) || null,
     hasMoreBefore: p.has_more_before === true,
     role: ROLES.includes(p.role as ThreadRole) ? (p.role as ThreadRole) : null,
+    live: threadLiveFromTool(p.live),
   };
+}
+
+/** `live` of a `thread_read` answer: who is at work and at what stage. */
+export function threadLiveFromTool(v: unknown): ThreadLive {
+  const o = obj(v) ?? {};
+  const agents = (Array.isArray(o.agents) ? o.agents : []).flatMap((a): LiveAgent[] => {
+    const r = obj(a);
+    const agent = str(r?.agent);
+    const stage = str(r?.stage);
+    const sinceMs = typeof r?.since_ms === "number" ? r.since_ms : undefined;
+    const text = str(r?.text);
+    return agent && stage ? [{ agent, stage, ...(sinceMs ? { sinceMs } : {}), ...(text ? { text } : {}) }] : [];
+  });
+  return { key: str(o.key), agents };
 }
 
 /** `thread_post`'s answer: the entry it wrote (bare, or under `entry`). */
@@ -746,10 +818,12 @@ function agentMember(r: unknown): AgentMember[] {
   return [
     {
       name,
+      ...(str(m.handle) && str(m.handle) !== name ? { handle: str(m.handle) } : {}),
       harness: str(m.harness),
       // `status` is a word, or `{state, activity}`.
       status: (status ? str(status.state) : str(m.status)) || "idle",
       activity: (status ? str(status.activity) : str(m.activity)) || null,
+      ...(status && status.failure != null ? { failure: threadFailure(status.failure) } : {}),
       sessions: num(m.sessions) ?? 1,
       rights: rights(m.rights),
       youCan: youCan(m.you_can),

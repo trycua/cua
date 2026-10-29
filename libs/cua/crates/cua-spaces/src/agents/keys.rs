@@ -28,7 +28,86 @@ pub const SECRET_NAME: &str = "agent-keys";
 /// The app's settings methods (`SpaceService.CallSpaceTool` names). They are
 /// not contract tools: no MCP server lists or calls them, so an agent can
 /// never read or change a key.
-pub const APP_METHODS: &[&str] = &["agent_keys.list", "agent_keys.set", "agent_keys.remove"];
+pub const APP_METHODS: &[&str] = &[
+    "agent_keys.list",
+    "agent_keys.check",
+    "agent_keys.set",
+    "agent_keys.remove",
+    "agent_keys.shell",
+    "agent_keys.from_shell",
+];
+
+/// The provider keys Cua may read from your login shell, by name (Settings,
+/// Connectors: "Use ANTHROPIC_API_KEY from your shell"). Nothing else is
+/// ever read there.
+pub const SHELL_NAMES: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "COPILOT_GITHUB_TOKEN",
+];
+
+/// How long the login shell has to answer.
+const SHELL_WAIT: Duration = Duration::from_secs(5);
+
+/// The marker before the value in the shell's answer (anything a profile prints comes before it).
+const SHELL_MARK: &str = "__cua_shell_value__";
+
+/// Your login shell: `$SHELL`, else zsh.
+pub fn login_shell() -> std::path::PathBuf {
+    std::env::var_os("SHELL")
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "/bin/zsh".into())
+}
+
+/// `name`'s value in a login, interactive `shell` (the profile files your
+/// terminal reads), when it is one of [`SHELL_NAMES`] and set. The shell's
+/// stdin is closed and it is stopped after [`SHELL_WAIT`].
+pub fn shell_value(shell: &std::path::Path, name: &str) -> Option<String> {
+    if !SHELL_NAMES.contains(&name) {
+        return None;
+    }
+    let script = format!("printf '\\n{SHELL_MARK}%s' \"${{{name}-}}\"");
+    let mut child = std::process::Command::new(shell)
+        .args(["-l", "-i", "-c", &script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut out = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut s = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut out, &mut s);
+        String::from_utf8_lossy(&s).into_owned()
+    });
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if start.elapsed() < SHELL_WAIT => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let text = reader.join().ok()?;
+    let value = text.rsplit_once(SHELL_MARK)?.1.trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+/// Which of [`SHELL_NAMES`] your login shell has set (names only).
+pub fn shell_names(shell: &std::path::Path) -> Vec<String> {
+    SHELL_NAMES
+        .iter()
+        .filter(|n| shell_value(shell, n).is_some())
+        .map(|n| (*n).to_string())
+        .collect()
+}
 
 /// Whether `name` is one of [`APP_METHODS`].
 pub fn is_app_method(name: &str) -> bool {
@@ -185,6 +264,8 @@ pub struct KeyInfo {
     /// When a copied sign-in stops working (Unix ms), when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_ms: Option<u64>,
+    /// It has stopped working (`expires_ms` has passed): runs no longer get it.
+    pub expired: bool,
 }
 
 /// `agent_keys.list`: the stored keys and whether this machine can store
@@ -212,6 +293,10 @@ struct Stored {
     source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_ms: Option<u64>,
+    /// When the provider (or an agent's run) said this credential is rejected (Unix ms). Saving
+    /// the credential again replaces the entry, so a reconnect clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rejected_ms: Option<u64>,
 }
 
 impl std::fmt::Debug for Stored {
@@ -225,6 +310,16 @@ impl std::fmt::Debug for Stored {
 }
 
 impl Stored {
+    /// Past its `expires_ms` (a copied sign-in that stopped working).
+    fn expired(&self) -> bool {
+        self.expires_ms.is_some_and(|e| e <= now_ms())
+    }
+
+    /// Whether runs may be given it: not past its expiry and not rejected.
+    fn usable(&self) -> bool {
+        !self.expired() && self.rejected_ms.is_none()
+    }
+
     fn info(&self) -> KeyInfo {
         let n = self.value.chars().count();
         let last4 = if n >= 12 {
@@ -240,6 +335,8 @@ impl Stored {
             label: self.label.clone(),
             source: self.source.clone(),
             expires_ms: self.expires_ms,
+            // A rejected credential reads like an expired one: it no longer works, Reconnect.
+            expired: !self.usable(),
         }
     }
 }
@@ -250,9 +347,11 @@ struct Blob {
     keys: Vec<Stored>,
 }
 
-/// How long a read of the vault item is reused (the app and readiness
-/// checks read often; the daemon is the one writer).
-const CACHE_FOR: Duration = Duration::from_secs(30);
+/// How long a read of the vault item is reused by readiness checks and a
+/// run's env (they read in bursts). Short, because the daemon is not the one
+/// writer: the app saves the sign-ins Connect makes into the same item, and
+/// the next run must see them.
+const CACHE_FOR: Duration = Duration::from_secs(2);
 
 /// The stored agent keys of one credential store.
 pub struct AgentKeys {
@@ -360,7 +459,7 @@ impl AgentKeys {
     /// The stored keys, without their values.
     pub fn list(&self) -> Result<Vec<KeyInfo>> {
         let mut g = self.lock();
-        Ok(self.read(&mut g, false)?.iter().map(Stored::info).collect())
+        Ok(self.read(&mut g, true)?.iter().map(Stored::info).collect())
     }
 
     /// [`AgentKeys::list`] with the providers and availability.
@@ -412,6 +511,7 @@ impl AgentKeys {
             label: None,
             source: None,
             expires_ms: None,
+            rejected_ms: None,
         };
         let info = stored.info();
         keys.push(stored);
@@ -472,6 +572,7 @@ impl AgentKeys {
             label: Some(label.into()),
             source: Some(source.into()),
             expires_ms,
+            rejected_ms: None,
         };
         let info = stored.info();
         keys.push(stored);
@@ -516,7 +617,11 @@ impl AgentKeys {
     pub fn names(&self) -> Vec<String> {
         let mut g = self.lock();
         match self.read(&mut g, false) {
-            Ok(keys) => keys.into_iter().map(|k| k.env).collect(),
+            Ok(keys) => keys
+                .into_iter()
+                .filter(Stored::usable)
+                .map(|k| k.env)
+                .collect(),
             Err(e) => {
                 tracing::warn!(error = %e, "agent keys: the store can't be read");
                 vec![]
@@ -534,7 +639,9 @@ impl AgentKeys {
         match self.read(&mut g, false) {
             Ok(keys) => keys
                 .into_iter()
-                .filter(|k| names.contains(&k.env.as_str()))
+                // A sign-in past its expiry is not forwarded: the run would
+                // only be told 401 by the provider.
+                .filter(|k| names.contains(&k.env.as_str()) && k.usable())
                 .map(|k| (k.env, k.value))
                 .collect(),
             Err(e) => {
@@ -542,6 +649,209 @@ impl AgentKeys {
                 BTreeMap::new()
             }
         }
+    }
+}
+
+impl AgentKeys {
+    /// Notes that the credentials named in `envs` were rejected by their provider (a run of an
+    /// agent got an authentication failure with them): they read as needing a reconnect and no run
+    /// gets them until they are saved again. Returns the names that changed.
+    pub fn mark_rejected(&self, envs: &[&str]) -> Result<Vec<String>> {
+        self.set_rejected(envs.iter().map(|e| (*e, None)), Some(now_ms()))
+    }
+
+    /// Sets (`Some`) or clears (`None`) the rejection of each `(env, only if added at)`; a
+    /// credential saved again since (a different `added_ms`) is left alone.
+    fn set_rejected<'a>(
+        &self,
+        which: impl Iterator<Item = (&'a str, Option<u64>)>,
+        at: Option<u64>,
+    ) -> Result<Vec<String>> {
+        if self.store.is_none() {
+            return Ok(vec![]);
+        }
+        let which: Vec<(&str, Option<u64>)> = which.collect();
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        let mut changed = vec![];
+        for k in keys.iter_mut() {
+            let Some((_, added)) = which.iter().find(|(e, _)| *e == k.env) else {
+                continue;
+            };
+            if added.is_some_and(|a| a != k.added_ms) || k.rejected_ms.is_some() == at.is_some() {
+                continue;
+            }
+            k.rejected_ms = at;
+            changed.push(k.env.clone());
+        }
+        if !changed.is_empty() {
+            self.write(&mut g, keys)?;
+        }
+        Ok(changed)
+    }
+
+    /// The API keys to check against their provider: `(env, added_ms, value)`. A sign-in token
+    /// (`CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`) has no check that is known to accept it,
+    /// so it is not asked about.
+    fn checkable(&self) -> Vec<(String, u64, String)> {
+        let mut g = self.lock();
+        match self.read(&mut g, true) {
+            Ok(keys) => keys
+                .into_iter()
+                .filter(|k| endpoint_for(&k.env).is_some() && !k.expired())
+                .map(|k| (k.env, k.added_ms, k.value))
+                .collect(),
+            Err(_) => vec![],
+        }
+    }
+}
+
+/// What the provider said of a key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyCheck {
+    /// The provider accepted it.
+    Valid,
+    /// The provider refused it (HTTP 401 or 403): it does not work.
+    Rejected,
+    /// No answer worth acting on (offline, rate limited, a server error): leave it as it was.
+    Unknown,
+}
+
+/// The providers' read-only "list models" requests: free, about 100 ms, and they answer 401 for a
+/// key that does not work. Only API keys are asked about (see [`AgentKeys::checkable`]).
+#[derive(Clone, Debug)]
+pub struct CheckEndpoints {
+    pub anthropic: String,
+    pub openai: String,
+}
+
+impl Default for CheckEndpoints {
+    fn default() -> Self {
+        Self {
+            anthropic: "https://api.anthropic.com/v1/models?limit=1".into(),
+            openai: "https://api.openai.com/v1/models".into(),
+        }
+    }
+}
+
+/// Which provider's request checks `env`, if it is an API key we can check.
+fn endpoint_for(env: &str) -> Option<&'static str> {
+    match env {
+        "ANTHROPIC_API_KEY" => Some("anthropic"),
+        "OPENAI_API_KEY" => Some("openai"),
+        _ => None,
+    }
+}
+
+/// How long an answer is reused (Settings opens and the Agents page opens ask often).
+const CHECK_CACHE: Duration = Duration::from_secs(5 * 60);
+
+type CheckCache = Mutex<BTreeMap<(String, u64), (Instant, KeyCheck)>>;
+
+fn check_cache() -> &'static CheckCache {
+    static CACHE: OnceLock<CheckCache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// Asks the provider about one key. The value only goes into the request's header; nothing here
+/// logs it, and an error is reported without its text.
+async fn ask_provider(
+    client: &reqwest::Client,
+    ep: &CheckEndpoints,
+    env: &str,
+    value: &str,
+) -> KeyCheck {
+    let request = match endpoint_for(env) {
+        Some("anthropic") => client
+            .get(&ep.anthropic)
+            .header("x-api-key", value)
+            .header("anthropic-version", "2023-06-01"),
+        Some(_) => client.get(&ep.openai).bearer_auth(value),
+        None => return KeyCheck::Unknown,
+    };
+    match request.send().await {
+        Ok(r) if r.status().is_success() => KeyCheck::Valid,
+        Ok(r) if matches!(r.status().as_u16(), 401 | 403) => KeyCheck::Rejected,
+        _ => KeyCheck::Unknown,
+    }
+}
+
+impl AgentKeys {
+    /// Asks each provider whether the saved API keys still work (a cheap read-only request,
+    /// answers reused for five minutes, never logged), notes a refused key as needing a reconnect
+    /// and clears the note on one that is accepted again. Sign-in tokens are not asked about.
+    /// Never fails the caller: the list that follows says what is known.
+    pub async fn recheck(&self, ep: &CheckEndpoints) -> Result<KeysReport> {
+        let todo = self.checkable();
+        if !todo.is_empty() {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(6))
+                .build()
+                .map_err(|e| Error::Agent(e.to_string()))?;
+            let mut rejected: Vec<(String, u64)> = vec![];
+            let mut accepted: Vec<(String, u64)> = vec![];
+            for (env, added, value) in todo {
+                let cached = check_cache()
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&(env.clone(), added))
+                    .filter(|(at, _)| at.elapsed() < CHECK_CACHE)
+                    .map(|(_, c)| *c);
+                let answer = match cached {
+                    Some(c) => c,
+                    None => {
+                        let c = ask_provider(&client, ep, &env, &value).await;
+                        if c != KeyCheck::Unknown {
+                            check_cache()
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .insert((env.clone(), added), (Instant::now(), c));
+                        }
+                        c
+                    }
+                };
+                match answer {
+                    KeyCheck::Rejected => rejected.push((env, added)),
+                    KeyCheck::Valid => accepted.push((env, added)),
+                    KeyCheck::Unknown => {}
+                }
+            }
+            self.set_rejected(
+                rejected.iter().map(|(e, a)| (e.as_str(), Some(*a))),
+                Some(now_ms()),
+            )?;
+            self.set_rejected(accepted.iter().map(|(e, a)| (e.as_str(), Some(*a))), None)?;
+        }
+        self.report()
+    }
+}
+
+/// Notes that an agent run got an authentication failure: the saved credentials of `provider`
+/// that `harness` reads (and only those) read as needing a reconnect.
+pub fn mark_rejected_for_run(harness: &str, provider: &str) {
+    let Some(h) = super::harness::harness(harness) else {
+        return;
+    };
+    let envs: Vec<&str> = h
+        .keys
+        .iter()
+        .copied()
+        .filter(|k| provider_envs(provider).contains(k))
+        .collect();
+    if envs.is_empty() {
+        return;
+    }
+    if let Err(e) = global().mark_rejected(&envs) {
+        tracing::warn!(error = %e, "agent keys: could not note a rejected credential");
+    }
+}
+
+/// The variables that hold a provider's credentials (a key, a sign-in token).
+fn provider_envs(provider: &str) -> &'static [&'static str] {
+    match provider {
+        "anthropic" => &["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"],
+        "openai" => &["OPENAI_API_KEY", "CODEX_AUTH_JSON"],
+        _ => &[],
     }
 }
 
@@ -585,28 +895,68 @@ struct RemoveArgs {
     env: String,
 }
 
+#[derive(Serialize)]
+struct ShellReport {
+    /// The provider keys your login shell has set (names; never a value).
+    names: Vec<String>,
+}
+
 /// Runs one of [`APP_METHODS`] against `keys`; every answer is the
-/// [`KeysReport`] after the change. `None` for any other name.
+/// [`KeysReport`] after the change, except `agent_keys.shell` (which names
+/// your login shell has set). `None` for any other name. `shell` is the
+/// login shell `agent_keys.shell` and `agent_keys.from_shell` read.
 pub fn app_call(
     keys: &AgentKeys,
     name: &str,
     args: serde_json::Value,
-) -> Option<Result<KeysReport>> {
+    shell: &std::path::Path,
+) -> Option<Result<serde_json::Value>> {
     let args = if args.is_null() {
         serde_json::json!({})
     } else {
         args
     };
+    let report = |r: Result<KeysReport>| {
+        r.and_then(|r| serde_json::to_value(r).map_err(|e| Error::Agent(e.to_string())))
+    };
     Some(match name {
-        "agent_keys.list" => keys.report(),
-        "agent_keys.set" => serde_json::from_value::<SetArgs>(args)
-            .map_err(|e| Error::InvalidArgument(format!("agent_keys.set: {}", redact_serde(&e))))
-            .and_then(|a| keys.set(&a.provider, a.env.as_deref(), &a.value))
-            .and_then(|_| keys.report()),
-        "agent_keys.remove" => serde_json::from_value::<RemoveArgs>(args)
-            .map_err(|e| Error::InvalidArgument(format!("agent_keys.remove: {e}")))
-            .and_then(|a| keys.remove(&a.env))
-            .and_then(|_| keys.report()),
+        // The check needs the network: `app_tool_async` does it; a synchronous caller gets the list.
+        "agent_keys.list" | "agent_keys.check" => report(keys.report()),
+        "agent_keys.set" => report(
+            serde_json::from_value::<SetArgs>(args)
+                .map_err(|e| {
+                    Error::InvalidArgument(format!("agent_keys.set: {}", redact_serde(&e)))
+                })
+                .and_then(|a| keys.set(&a.provider, a.env.as_deref(), &a.value))
+                .and_then(|_| keys.report()),
+        ),
+        "agent_keys.remove" => report(
+            serde_json::from_value::<RemoveArgs>(args)
+                .map_err(|e| Error::InvalidArgument(format!("agent_keys.remove: {e}")))
+                .and_then(|a| keys.remove(&a.env))
+                .and_then(|_| keys.report()),
+        ),
+        "agent_keys.shell" => serde_json::to_value(ShellReport {
+            names: shell_names(shell),
+        })
+        .map_err(|e| Error::Agent(e.to_string())),
+        // The value goes straight from your shell into the store; it is never answered.
+        "agent_keys.from_shell" => report(
+            serde_json::from_value::<RemoveArgs>(args)
+                .map_err(|e| Error::InvalidArgument(format!("agent_keys.from_shell: {e}")))
+                .and_then(|a| {
+                    let value = shell_value(shell, &a.env).ok_or_else(|| {
+                        Error::InvalidArgument(format!("{} isn't set in your shell", a.env))
+                    })?;
+                    let provider = provider_of(&a.env);
+                    keys.set(
+                        provider,
+                        (provider == "other").then_some(a.env.as_str()),
+                        &value,
+                    )
+                })
+                .and_then(|_| keys.report()),
+        ),
         _ => return None,
     })
 }
@@ -616,8 +966,27 @@ pub fn app_call(
 /// that is not one of [`APP_METHODS`].
 #[cfg(feature = "mcp")]
 pub fn app_tool(name: &str, args: serde_json::Value) -> Option<crate::mcp::ToolOutcome> {
-    app_call(global(), name, args).map(|r| match r {
+    app_call(global(), name, args, &login_shell()).map(|r| match r {
         Ok(report) => crate::mcp::ToolOutcome::json(&report),
+        Err(e) => crate::mcp::ToolOutcome::error(&e),
+    })
+}
+
+/// [`app_tool`] for a caller that can wait: `agent_keys.check` asks the providers whether the saved
+/// API keys still work, then answers like `agent_keys.list`.
+#[cfg(feature = "mcp")]
+pub async fn app_tool_async(
+    name: &str,
+    args: serde_json::Value,
+) -> Option<crate::mcp::ToolOutcome> {
+    if name != "agent_keys.check" {
+        return app_tool(name, args);
+    }
+    Some(match global().recheck(&CheckEndpoints::default()).await {
+        Ok(report) => match serde_json::to_value(report) {
+            Ok(v) => crate::mcp::ToolOutcome::json(&v),
+            Err(e) => crate::mcp::ToolOutcome::error(&Error::Agent(e.to_string())),
+        },
         Err(e) => crate::mcp::ToolOutcome::error(&e),
     })
 }
@@ -691,6 +1060,219 @@ mod tests {
     }
 
     #[test]
+    fn a_sign_in_the_app_saves_shows_in_the_daemons_next_list_and_run() {
+        // The daemon reads the list (and warms its cache) before Connect.
+        let (daemon, dir) = temp_keys();
+        assert!(daemon.list().unwrap().is_empty());
+        assert!(daemon.names().is_empty());
+        // The app saves the sign-in Connect made into the same item.
+        let app = AgentKeys::new(cua_auth::Store::TestKeychain(dir.clone()));
+        app.import(
+            "codex",
+            "CODEX_AUTH_JSON",
+            "Codex · ChatGPT sign-in",
+            "{\"tokens\":{}}",
+            None,
+        )
+        .unwrap();
+        // Settings' next read sees it right away.
+        let listed = daemon.list().unwrap();
+        assert_eq!(
+            listed.iter().map(|k| k.env.as_str()).collect::<Vec<_>>(),
+            ["CODEX_AUTH_JSON"]
+        );
+        // And a run started a moment later gets it.
+        std::thread::sleep(CACHE_FOR + Duration::from_millis(50));
+        assert!(
+            daemon
+                .values(&["CODEX_AUTH_JSON"])
+                .contains_key("CODEX_AUTH_JSON")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// An expired sign-in is listed as expired, and no run gets it.
+    #[test]
+    fn an_expired_sign_in_reaches_no_run() {
+        let (keys, dir) = temp_keys();
+        let long_ago = now_ms() - 1_000;
+        keys.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude Code · Claude sign-in",
+            "sk-ant-oat01-test",
+            Some(long_ago),
+        )
+        .unwrap();
+        let listed = keys.list().unwrap();
+        assert!(listed[0].expired && listed[0].expires_ms == Some(long_ago));
+        assert!(keys.names().is_empty());
+        assert!(keys.values(&["CLAUDE_CODE_OAUTH_TOKEN"]).is_empty());
+        // One that has time left still goes.
+        keys.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude Code · Claude sign-in",
+            "sk-ant-oat01-test",
+            Some(now_ms() + 3_600_000),
+        )
+        .unwrap();
+        assert!(!keys.list().unwrap()[0].expired);
+        assert_eq!(keys.names(), ["CLAUDE_CODE_OAUTH_TOKEN"]);
+        assert_eq!(keys.values(&["CLAUDE_CODE_OAUTH_TOKEN"]).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A tiny local provider: answers 200 to the key `good`, 401 to anything else, 500 to `flaky`;
+    /// counts the requests it got.
+    async fn provider() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1/models", listener.local_addr().unwrap());
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = hits.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buf = vec![0u8; 4096];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+                let status = if req.contains("good") {
+                    "200 OK"
+                } else if req.contains("flaky") {
+                    "500 Internal Server Error"
+                } else {
+                    "401 Unauthorized"
+                };
+                let _ = sock
+                    .write_all(
+                        format!("HTTP/1.1 {status}\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}")
+                            .as_bytes(),
+                    )
+                    .await;
+            }
+        });
+        (url, hits)
+    }
+
+    /// A key the provider refuses reads as needing a reconnect and reaches no run; one it accepts
+    /// stays; a key saved again clears the note; sign-in tokens are not asked about; the answer is
+    /// reused, never logged and never returned.
+    #[tokio::test]
+    async fn a_saved_key_the_provider_refuses_needs_a_reconnect() {
+        let (keys, dir) = temp_keys();
+        let (url, hits) = provider().await;
+        let ep = CheckEndpoints {
+            anthropic: url.clone(),
+            openai: url,
+        };
+        keys.set("anthropic", None, "sk-ant-stale-0000-abcd")
+            .unwrap();
+        keys.set("openai", None, "sk-good-1111-wxyz").unwrap();
+        keys.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude sign-in",
+            "sk-ant-oat01-whatever",
+            None,
+        )
+        .unwrap();
+        let report = keys.recheck(&ep).await.unwrap();
+        let by = |env: &str| report.keys.iter().find(|k| k.env == env).unwrap().expired;
+        assert!(by("ANTHROPIC_API_KEY"), "the refused key needs a reconnect");
+        assert!(!by("OPENAI_API_KEY"));
+        // The sign-in token is not asked about: no request for it, and it stays as it was.
+        assert!(!by("CLAUDE_CODE_OAUTH_TOKEN"));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // The refused key reaches no run; the others do.
+        assert_eq!(keys.names(), ["CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY"]);
+        assert!(keys.values(&["ANTHROPIC_API_KEY"]).is_empty());
+        // Opened again a moment later: the answers are reused.
+        keys.recheck(&ep).await.unwrap();
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // The report never carries a value.
+        let text = serde_json::to_string(&report).unwrap();
+        assert!(
+            !text.contains("sk-ant-stale") && !text.contains("sk-good"),
+            "{text}"
+        );
+        // Reconnecting (saving it again) clears the note.
+        keys.set("anthropic", None, "sk-good-2222-abcd").unwrap();
+        assert!(!keys.list().unwrap().iter().any(|k| k.expired));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A provider that cannot answer is no reason to flag a key.
+    #[tokio::test]
+    async fn an_unreachable_provider_flags_nothing() {
+        let (keys, dir) = temp_keys();
+        let (url, _) = provider().await;
+        let ep = CheckEndpoints {
+            anthropic: url.clone(),
+            openai: url,
+        };
+        keys.set("openai", None, "sk-flaky-3333-wxyz").unwrap();
+        assert!(!keys.recheck(&ep).await.unwrap().keys[0].expired);
+        let offline = CheckEndpoints {
+            anthropic: "http://127.0.0.1:1/x".into(),
+            openai: "http://127.0.0.1:1/x".into(),
+        };
+        keys.set("anthropic", None, "sk-ant-offline-4444").unwrap();
+        assert!(
+            !keys
+                .recheck(&offline)
+                .await
+                .unwrap()
+                .keys
+                .iter()
+                .any(|k| k.expired)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A run's authentication failure marks only the credentials its harness reads, for its provider.
+    #[test]
+    fn a_run_that_fails_to_authenticate_marks_what_it_was_given() {
+        let (keys, dir) = temp_keys();
+        keys.set("anthropic", None, "sk-ant-api-0000-abcd").unwrap();
+        keys.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude sign-in",
+            "sk-ant-oat01-whatever",
+            None,
+        )
+        .unwrap();
+        keys.set("openai", None, "sk-openai-1111-wxyz").unwrap();
+        // Hermes read the API key (not the sign-in token), and said Anthropic refused it.
+        let h = super::super::harness::harness("hermes").unwrap();
+        let envs: Vec<&str> = h
+            .keys
+            .iter()
+            .copied()
+            .filter(|k| provider_envs("anthropic").contains(k))
+            .collect();
+        assert!(envs.contains(&"ANTHROPIC_API_KEY"));
+        keys.mark_rejected(&envs).unwrap();
+        let expired = |env: &str| {
+            keys.list()
+                .unwrap()
+                .iter()
+                .find(|k| k.env == env)
+                .unwrap()
+                .expired
+        };
+        assert!(expired("ANTHROPIC_API_KEY"));
+        assert!(!expired("OPENAI_API_KEY"));
+        // Noting it twice changes nothing more.
+        assert!(keys.mark_rejected(&envs).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_short_key_shows_no_characters() {
         let (keys, dir) = temp_keys();
         assert_eq!(keys.set("openai", None, "short").unwrap().last4, "");
@@ -755,6 +1337,70 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // The fake login shell is a /bin/sh script: unix only.
+    #[cfg(unix)]
+    #[test]
+    fn a_key_from_your_shell_is_saved_and_only_its_name_is_answered() {
+        let (keys, dir) = temp_keys();
+        // A login shell whose profile prints noise and exports one key; it runs the command it is given.
+        let shell = dir.join("fake-shell");
+        std::fs::write(
+            &shell,
+            "#!/bin/sh\necho 'welcome to your shell'\nANTHROPIC_API_KEY=sk-ant-from-shell-0000-wxyz; export ANTHROPIC_API_KEY\nshift 3\nexec /bin/sh -c \"$1\"\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let names = app_call(&keys, "agent_keys.shell", serde_json::json!({}), &shell)
+            .unwrap()
+            .unwrap();
+        assert_eq!(names, serde_json::json!({"names": ["ANTHROPIC_API_KEY"]}));
+        let r = app_call(
+            &keys,
+            "agent_keys.from_shell",
+            serde_json::json!({"env": "ANTHROPIC_API_KEY"}),
+            &shell,
+        )
+        .unwrap()
+        .unwrap();
+        let text = serde_json::to_string(&r).unwrap();
+        assert!(
+            text.contains("wxyz") && !text.contains("sk-ant-from-shell"),
+            "{text}"
+        );
+        assert_eq!(
+            keys.values(&["ANTHROPIC_API_KEY"])
+                .get("ANTHROPIC_API_KEY")
+                .map(String::as_str),
+            Some("sk-ant-from-shell-0000-wxyz")
+        );
+        // Not set there, or not a provider key Cua reads: refused.
+        assert!(
+            app_call(
+                &keys,
+                "agent_keys.from_shell",
+                serde_json::json!({"env": "OPENAI_API_KEY"}),
+                &shell
+            )
+            .unwrap()
+            .is_err()
+        );
+        assert!(
+            app_call(
+                &keys,
+                "agent_keys.from_shell",
+                serde_json::json!({"env": "HOME"}),
+                &shell
+            )
+            .unwrap()
+            .is_err()
+        );
+        assert_eq!(shell_value(&shell, "PATH"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn app_methods_answer_the_report_without_values() {
         let (keys, dir) = temp_keys();
@@ -762,16 +1408,18 @@ mod tests {
             &keys,
             "agent_keys.set",
             serde_json::json!({"provider": "openai", "value": "sk-test-0000-1234"}),
+            std::path::Path::new("/nonexistent-shell"),
         )
         .unwrap()
         .unwrap();
-        assert_eq!(r.keys.len(), 1);
+        assert_eq!(r["keys"].as_array().unwrap().len(), 1);
         assert!(!serde_json::to_string(&r).unwrap().contains("sk-test-0000"));
         // A malformed call does not echo what it was given.
         let e = app_call(
             &keys,
             "agent_keys.set",
             serde_json::json!({"provider": "openai", "value": 12345678}),
+            std::path::Path::new("/nonexistent-shell"),
         )
         .unwrap()
         .unwrap_err();
@@ -780,11 +1428,20 @@ mod tests {
             &keys,
             "agent_keys.remove",
             serde_json::json!({"env": "OPENAI_API_KEY"}),
+            std::path::Path::new("/nonexistent-shell"),
         )
         .unwrap()
         .unwrap();
-        assert!(r.keys.is_empty());
-        assert!(app_call(&keys, "agent_start", serde_json::json!({})).is_none());
+        assert!(r["keys"].as_array().unwrap().is_empty());
+        assert!(
+            app_call(
+                &keys,
+                "agent_start",
+                serde_json::json!({}),
+                std::path::Path::new("/nonexistent-shell")
+            )
+            .is_none()
+        );
         for m in APP_METHODS {
             assert!(
                 cua_spaces_contract::tool(m).is_none(),

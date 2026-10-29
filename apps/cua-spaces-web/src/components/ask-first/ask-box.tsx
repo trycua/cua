@@ -5,7 +5,7 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { ArrowUpIcon, CheckIcon, ChevronDownIcon, LaptopIcon, MonitorIcon } from "lucide-react";
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 
-import type { Space, SpaceOs } from "@/bridge";
+import { firstMessage, useBridge, type Space, type SpaceOs } from "@/bridge";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { OsIcon } from "@/components/os-icon";
 import type { NewKind, TaskWhere } from "@/lib/ask-first";
@@ -27,8 +27,10 @@ export const agentName = (id: string) => TASK_AGENTS.find((a) => a.id === id)?.n
 
 const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows: "Windows", unknown: "" };
 
-export function whereLabel(where: TaskWhere): string {
-  return where.kind === "new" ? `A new ${OS_WORD[where.os]} computer · this Mac` : where.kind === "this-mac" ? "This Mac" : where.space.name;
+/** Where it runs is a Space: "New Space", then quieter "Linux on This Mac". */
+export function whereSpaceLabel(where: TaskWhere): { title: string; detail: string | null } {
+  if (where.kind === "new") return { title: "New Space", detail: `${OS_WORD[where.os]} on This Mac` };
+  return { title: where.kind === "this-mac" ? "This Mac" : where.space.name, detail: null };
 }
 
 export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) {
@@ -139,6 +141,9 @@ export function AskBox({
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
   const ready = text.trim().length > 0 && !busy;
+  // The agent reads as the @mention the thread will show, and where as a Space.
+  const { core } = useBridge();
+  const handle = firstMessage(core, { members: [], people: [], canAdd: true, connectors: { apps: [], keys: { keys: [] }, shellKeys: [], auto: false, off: [], busy: [], failures: [] } }, agent, "")?.handle ?? null;
   const agentNote = (id: string) => (id === mostUsed ? "You use it most" : installed.has(id) ? "On this Mac" : "Runs on the new computer with your saved key");
   return (
     <div data-ask-box="" className="rounded-2xl border bg-card shadow-xs dark:bg-white/[0.03]">
@@ -163,7 +168,13 @@ export function AskBox({
           trigger={
             <button type="button" className={pickerButton} data-picker="who">
               <AppMark agent={agent} size={24} />
-              <span>{agentName(agent)}</span>
+              {handle ? (
+                <span data-ask-mention={handle} className="font-medium text-brand-strong">
+                  @{handle}
+                </span>
+              ) : (
+                <span>{agentName(agent)}</span>
+              )}
               <ChevronDownIcon className="size-4 text-muted-foreground" />
             </button>
           }
@@ -173,7 +184,7 @@ export function AskBox({
             <PickerRow key={a.id} icon={<AppMark agent={a.id} size={28} />} title={a.name} note={agentNote(a.id)} selected={a.id === agent} onSelect={() => onAgent(a.id)} />
           ))}
         </Picker>
-        <span className="px-1 text-[14px] text-muted-foreground">on</span>
+        <span className="px-1 text-[14px] text-muted-foreground">in</span>
         <WherePicker
           where={where}
           onWhere={onWhere}
@@ -190,7 +201,10 @@ export function AskBox({
               ) : (
                 <MonitorIcon className="size-4 text-muted-foreground" />
               )}
-              <span className="max-w-72 truncate">{whereLabel(where)}</span>
+              <span className="max-w-80 truncate" data-ask-where="">
+                {whereSpaceLabel(where).title}
+                {whereSpaceLabel(where).detail ? <span className="ml-1.5 text-muted-foreground">{whereSpaceLabel(where).detail}</span> : null}
+              </span>
               <ChevronDownIcon className="size-4 text-muted-foreground" />
             </button>
           }

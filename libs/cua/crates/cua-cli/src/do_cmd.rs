@@ -31,14 +31,25 @@ const LEGACY_PROVIDERS: &[&str] = &[
     "direct",
     "sandbox",
 ];
-/// Default host spacesd (`CUA_HOST_ENV_URL`): this machine, on the
-/// channel's port (3211, or 3221 for `cua-local`).
+/// Default host spacesd (`CUA_HOST_ENV_URL`): this machine, on the port
+/// `cua host setup` chose (when another macOS user's host held the
+/// channel's), else the channel's (3211, or 3221 for `cua-local`).
 pub fn default_host_env_url() -> String {
-    host_env_url_on(cua_home::channel::CuaChannel::current())
+    let config = cua_host::Host::new(cua_home::cua_home())
+        .config()
+        .ok()
+        .flatten();
+    host_env_url_on(cua_home::channel::CuaChannel::current(), config.as_ref())
 }
 
-fn host_env_url_on(channel: cua_home::channel::CuaChannel) -> String {
-    format!("http://127.0.0.1:{}", channel.ports().tcp)
+fn host_env_url_on(
+    channel: cua_home::channel::CuaChannel,
+    config: Option<&cua_host::HostConfig>,
+) -> String {
+    let port = config
+        .map_or(channel.ports(), |c| c.service_ports(channel))
+        .tcp;
+    format!("http://127.0.0.1:{port}")
 }
 
 #[derive(Args, Debug)]
@@ -1295,8 +1306,27 @@ mod tests {
     /// port: `cua-local`'s is not Stable's 3211.
     #[test]
     fn the_host_target_is_this_machines_spacesd_on_the_channels_port() {
-        assert_eq!(host_env_url_on(CuaChannel::Stable), "http://127.0.0.1:3211");
-        assert_eq!(host_env_url_on(CuaChannel::Local), "http://127.0.0.1:3221");
+        assert_eq!(
+            host_env_url_on(CuaChannel::Stable, None),
+            "http://127.0.0.1:3211"
+        );
+        assert_eq!(
+            host_env_url_on(CuaChannel::Local, None),
+            "http://127.0.0.1:3221"
+        );
+        // A host set up beside another user's keeps the port setup chose.
+        let moved = cua_host::HostConfig {
+            port: Some(3231),
+            ..Default::default()
+        };
+        assert_eq!(
+            host_env_url_on(CuaChannel::Stable, Some(&moved)),
+            "http://127.0.0.1:3231"
+        );
+        assert_eq!(
+            host_env_url_on(CuaChannel::Stable, Some(&cua_host::HostConfig::default())),
+            "http://127.0.0.1:3211"
+        );
     }
 
     /// Stable's ports are the ones cua-spacesd binds with no flag, so a

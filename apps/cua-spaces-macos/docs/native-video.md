@@ -35,11 +35,13 @@ The page keeps one reporter, with one set of observers and one animation frame. 
 
 - **`rect`** is the video area inside the slot's border, in CSS px from the web view's top left.
 - **`clip`** is the part of `rect` that the viewport and every clipping ancestor leave visible. For example, a tile scrolled halfway under the page's top edge is cut there.
-- **`occluded`** is true when page UI covers the slot, and the host hides the video. Two checks feed it:
-  - an element matching `[role=dialog|alertdialog]` overlaps the slot;
+- **`occluded`** is true when page UI covers a Space tile, and the host hides the video. Two checks feed it:
+  - an element matching `[role=dialog|alertdialog]` overlaps the slot (a dialog-role popup that marks itself a hole, such as the profile card, doesn't count);
   - something else is on top at one of 9 sample points (a dialog's backdrop, for example).
 
   The sample points sit inside the rounded corners. Transparent click catchers (`[data-base-ui-inert]`, which Base UI puts under an open menu or popover) paint nothing and are looked through, and floating UI that gets a hole doesn't count.
+
+  **The Space viewer is never occluded by page UI** (CUA-2641): menus, popovers, the profile card, tooltips, toasts and dialogs are holes over it, and a dialog's dimmed backdrop (`[data-window-dim]`) is looked through. While a modal dialog is open the page reports the viewer `interactive: false`: the video keeps playing, gives the keyboard back to the page and takes no clicks, so the dialog's own backdrop and Escape work.
 - **`holes`** are the rects of floating UI over the slot, cut to `clip`: `[role=menu|listbox|tooltip]`, `[data-video-occluder]` (toasts, popovers) and `[data-video-hole]` (the viewer's own key bar, inside the slot). The host masks the video out there, so the menu shows and the rest of the desktop keeps playing, and clicks there go to the page. Hiding the whole video for a menu turned it black while the menu was open.
 - **`visible`** is false when the page is hidden or the slot is clipped away entirely.
 
@@ -176,7 +178,7 @@ A live E2E should check:
    - Type: keys arrive, including ⌘C and ⌘V inside the Space.
    - Control+Option pressed and released alone: the key bar over the viewer goes.
    - Scroll: the page scrolls before you click, and the Space scrolls after.
-3. **Covering.** Open the command palette (⌘K) and the Stop dialog over the viewer. The video hides while each is open, keys go to the dialog, and the video comes back after. Open the header's "⋯" menu and show a toast: the video stays live, with only the part under the menu or toast cut out.
+3. **Covering.** Open the command palette (⌘K) and the Stop dialog over the viewer: the video stays live with only the dialog's own rectangle cut out, keys go to the dialog, a click on the dimmed area closes it instead of reaching the Space, and the viewer takes the keyboard again after. On the Spaces grid a dialog still hides the tiles under it. Open the header's "⋯" menu, a name's profile card and Share, and show a toast: the video stays live, with only the part under each cut out.
 4. **Picture in picture.** Pop the desktop out from the header, then close the panel (its own button or the header's): the inline desktop is live again at once, with no "Connecting…" and no error.
 5. **Failure.** Stop a Space while its viewer is open. You should see the stopped state, not a frozen frame. Then delete a Space with an open tile.
 6. **Hidden window.** Minimize the window, then restore it. The streams pause, then come back. A desktop popped out to picture in picture keeps playing in its panel.

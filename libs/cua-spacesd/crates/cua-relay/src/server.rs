@@ -71,6 +71,11 @@ pub struct RelayConfig {
     pub tokens: Vec<String>,
     /// Maximum machines connected per registration token.
     pub max_machines_per_token: usize,
+    /// Machine joins admitted per second once the burst is used; the rest are
+    /// refused with 503 and a `Retry-After`. 0: no limit. See [`crate::join_limit`].
+    pub join_rate_per_sec: f64,
+    /// Machine joins admitted at once.
+    pub join_burst: u32,
     /// Maximum concurrent client streams per machine.
     pub max_streams_per_machine: u32,
     /// A machine without a heartbeat for this long is dropped.
@@ -171,6 +176,8 @@ impl Default for RelayConfig {
         Self {
             tokens: Vec::new(),
             max_machines_per_token: 16,
+            join_rate_per_sec: crate::join_limit::DEFAULT_JOIN_RATE_PER_SEC,
+            join_burst: crate::join_limit::DEFAULT_JOIN_BURST,
             // Down from an earlier 1000 (S7): yamux's own per-connection
             // cap (machine_max_streams) is now the smaller crate::mux::
             // MAX_STREAMS, so this app-level check (which answers with a
@@ -384,6 +391,8 @@ pub struct Relay {
     pub(crate) meter: Arc<Meter>,
     /// Connection outcome counters (`cua_relay_connections_total`).
     pub(crate) conns: Arc<crate::conn_metrics::ConnMetrics>,
+    /// Admission control for machine joins (a reconnect storm after a restart).
+    join_limiter: Arc<Mutex<crate::join_limit::JoinLimiter>>,
     /// When this relay started (the reconnect grace counts from it).
     started: Instant,
     /// Share links: browser sign-in state and public-link rate limits.
@@ -502,6 +511,11 @@ impl Relay {
         } = crate::hosted::open(&config, &storage)?;
         #[cfg(not(feature = "hosted"))]
         let (meter, teams, org) = crate::free::open();
+        let join_limiter = Arc::new(Mutex::new(crate::join_limit::JoinLimiter::new(
+            config.join_rate_per_sec,
+            config.join_burst,
+            Instant::now(),
+        )));
         let relay = Self {
             config: Arc::new(config),
             machines: Arc::default(),
@@ -521,6 +535,7 @@ impl Relay {
             storage,
             meter,
             conns: Arc::default(),
+            join_limiter,
             started: Instant::now(),
             share: Arc::default(),
         };
@@ -1183,6 +1198,28 @@ async fn machine_connect_inner(
     else {
         return text(StatusCode::BAD_REQUEST, "missing or invalid computer id");
     };
+    // A reconnect storm (every machine back at once after a restart) is let
+    // in at a steady rate; the rest are told when to come back.
+    let admitted = relay
+        .join_limiter
+        .lock()
+        .expect("join limiter")
+        .admit(Instant::now());
+    if let Err(wait) = admitted {
+        let unit = {
+            use rand::Rng as _;
+            rand::thread_rng().gen::<f64>()
+        };
+        let secs = crate::join_limit::retry_after_secs(wait, Duration::from_secs(5), unit);
+        let mut response = text(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the relay is busy; try again shortly",
+        );
+        if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+            response.headers_mut().insert(header::RETRY_AFTER, v);
+        }
+        return response;
+    }
     let registrant = if let Some(index) = relay.token_index(&headers) {
         if relay.directory.get(&id).is_some() {
             return text(
@@ -1279,12 +1316,36 @@ async fn machine_connect_inner(
                 user_cuts: Mutex::default(),
                 clients: Mutex::default(),
             });
-            if let Some(old) = relay
-                .machines
-                .lock()
-                .expect("machines")
-                .insert(id.clone(), machine.clone())
-            {
+            // The limit was checked before the upgrade, and joins that arrive together all
+            // pass it. Settle it here, where the machine is added: the oldest sessions of a
+            // token keep their places, a newer one over the limit is dropped (it retries).
+            let (replaced, over_limit) = {
+                let mut machines = relay.machines.lock().expect("machines");
+                let mut replaced = machines.insert(id.clone(), machine.clone());
+                let over_limit = matches!(machine.registrant, Registrant::Static(_)) && {
+                    let mut same: Vec<u64> = machines
+                        .values()
+                        .filter(|m| m.registrant == machine.registrant)
+                        .map(|m| m.generation)
+                        .collect();
+                    same.sort_unstable();
+                    same.iter().position(|g| *g == generation).unwrap_or(0)
+                        >= relay.config.max_machines_per_token
+                };
+                if over_limit {
+                    machines.remove(&id);
+                    if let Some(old) = replaced.take() {
+                        machines.insert(id.clone(), old);
+                    }
+                }
+                (replaced, over_limit)
+            };
+            if over_limit {
+                tracing::info!(machine = %id, "computer limit for this token reached");
+                driver.abort();
+                return;
+            }
+            if let Some(old) = replaced {
                 tracing::info!(machine = %id, "replacing previous session");
                 old.cut_clients();
                 old.abort.abort();

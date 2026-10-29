@@ -25,7 +25,7 @@ import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Kbd, Shortcut } from "@/components/ui/kbd";
 import { toast, toastError } from "@/components/ui/toast";
 import { filterCommands, type PaletteCommand } from "@/lib/commands";
-import { machineName, osLabel, paletteKeywords, realSpaces, spaceState } from "@/lib/spaces";
+import { machineName, orderSpaces, osLabel, paletteKeywords, realSpaces, spaceState } from "@/lib/spaces";
 import { bindingFor } from "@/lib/keybindings";
 import { SETTINGS_TABS } from "@/lib/settings-tabs";
 import { useTheme } from "@/lib/theme";
@@ -134,7 +134,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       icon: icon(n.icon),
       run: () => void navigate({ to: n.to }),
     })),
-    // Each Settings tab, so Cmd+K finds "Connectors" or "Trusted devices" by name.
+    // Each Settings tab, so Cmd+K finds "Connectors" or "Advanced" by name.
     ...SETTINGS_TABS.filter((t) => t.to !== "/settings").map((t) => ({
       id: `settings:${t.to}`,
       group: "Go to",
@@ -144,7 +144,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       run: () => void navigate({ to: t.to }),
     })),
     { id: "nav:onboarding", group: "Go to", label: "Onboarding", keywords: "welcome setup", icon: icon(SparklesIcon), run: () => void navigate({ to: "/onboarding" }) },
-    ...realSpaces(spaces).flatMap((s): Command[] => {
+    ...orderSpaces(realSpaces(spaces)).flatMap((s): Command[] => {
       const state = spaceState(s);
       const meta = { group: "Spaces", hint: osLabel(s), keywords: paletteKeywords(s, state, machineName(machines, s)), icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" /> };
       const out: Command[] = [{ ...meta, id: `space:open:${s.id}`, label: `Open ${s.name}`, run: () => openSpace(s.id) }];

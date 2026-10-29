@@ -24,7 +24,7 @@ async function mount(creating: { current: CreatingElsewhere[] }, noSpaces = fals
   return mountApp("/spaces", { failsCreates: false, listsGhost: false, demo: { noSpaces }, creatingElsewhere: () => creating.current });
 }
 
-describe("a Space another computer is creating", { timeout: 30_000 }, () => {
+describe("a Space another machine is creating", { timeout: 30_000 }, () => {
   it("shows under that computer's name with how far it got, and goes once it is done", async () => {
     const creating = { current: [...DEMO_CREATING_ELSEWHERE] };
     const { emit } = await mount(creating);
@@ -46,7 +46,7 @@ describe("a Space another computer is creating", { timeout: 30_000 }, () => {
     await waitFor(() => expect(tile()).toBeNull(), WAIT);
   });
 
-  it("is not the empty home when this computer has no Space yet", async () => {
+  it("is not the empty home when this machine has no Space yet", async () => {
     await mount({ current: [...DEMO_CREATING_ELSEWHERE] }, true);
     await waitFor(() => expect(tile()).not.toBeNull(), WAIT);
     expect(document.querySelector("[data-empty-home]")).toBeNull();
@@ -58,6 +58,6 @@ describe("creatingElsewhereLine", () => {
   it("says what, where and how far in plain words", () => {
     expect(creatingElsewhereLine({ os: "macos", machineName: "Mac mini", percent: 40 })).toBe("Creating macOS on Mac mini… 40%");
     expect(creatingElsewhereLine({ os: "linux", machineName: "Studio", percent: 99.6 })).toBe("Creating Linux on Studio… 100%");
-    expect(creatingElsewhereLine({ os: "", machineName: " ", percent: -3 })).toBe("Creating a Space on another computer… 0%");
+    expect(creatingElsewhereLine({ os: "", machineName: " ", percent: -3 })).toBe("Creating a Space on another machine… 0%");
   });
 });

@@ -1008,11 +1008,31 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
     func detect()  -> [AgentInfo]
 
     /**
+     * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+     * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+     * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+     */
+    func deviceSignInStartJson(agent: String) async throws  -> String
+
+    /**
+     * Waits for a device sign-in to be approved and saves it into Keyvault on
+     * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+     */
+    func deviceSignInWaitJson(id: String) async throws  -> String
+
+    /**
      * Disconnect: what Connect did, undone (the previous config entry back
      * from Cua's record, the skills, and with `sign_in` the copy in
      * Keyvault). JSON `{outcomes, removed_sign_ins}`.
      */
     func disconnectJson(agents: [String], signIn: Bool) async throws  -> String
+
+    /**
+     * Disconnect of some parts only (an app's page's switches): Cua's skills
+     * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+     * `{outcomes, removed_sign_ins}`.
+     */
+    func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws  -> String
 
     /**
      * Installs `skills` (empty: all bundled) for `agents`. Folders cua did
@@ -1201,6 +1221,49 @@ open func detect() -> [AgentInfo]  {
 }
 
     /**
+     * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+     * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+     * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+     */
+open func deviceSignInStartJson(agent: String)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(agent)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Waits for a device sign-in to be approved and saves it into Keyvault on
+     * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+     */
+open func deviceSignInWaitJson(id: String)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Disconnect: what Connect did, undone (the previous config entry back
      * from Cua's record, the skills, and with `sign_in` the copy in
      * Keyvault). JSON `{outcomes, removed_sign_ins}`.
@@ -1212,6 +1275,28 @@ open func disconnectJson(agents: [String], signIn: Bool)async throws  -> String 
                 uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(
                     self.uniffiCloneHandle(),
                     FfiConverterSequenceString.lower(agents),FfiConverterBool.lower(signIn)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Disconnect of some parts only (an app's page's switches): Cua's skills
+     * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+     * `{outcomes, removed_sign_ins}`.
+     */
+open func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceString.lower(agents),FfiConverterBool.lower(skills),FfiConverterBool.lower(mcp),FfiConverterBool.lower(signIn)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -4480,6 +4565,22 @@ public protocol LocalProtocol: AnyObject, Sendable {
     func pushImage(reference: String, destination: String) async throws  -> String
 
     /**
+     * What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+     * runnable, which runtime and its version. Settings checks a typed path
+     * with it before it is saved (`runtime.<kind>_path`).
+     */
+    func runtimeCheckPath(kind: String, path: String) async throws  -> RuntimePathProbe
+
+    /**
+     * Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+     * setting (`runtime.<kind>`), the runtimes installed on this machine
+     * for it and what the path in use is. Read-only: runs each runtime's
+     * `--version`, nothing else; probed in this process (the daemon runs
+     * on the same host).
+     */
+    func runtimeKinds() async throws  -> [RuntimeKindState]
+
+    /**
      * Provisions `components` (`qemu`, `lume`; `runsc` reports its plan).
      * Empty = everything provisionable. `dry_run` only reports.
      */
@@ -4631,6 +4732,52 @@ open func pushImage(reference: String, destination: String)async throws  -> Stri
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+     * runnable, which runtime and its version. Settings checks a typed path
+     * with it before it is saved (`runtime.<kind>_path`).
+     */
+open func runtimeCheckPath(kind: String, path: String)async throws  -> RuntimePathProbe  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_local_runtime_check_path(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(kind),FfiConverterString.lower(path)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRuntimePathProbe_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+     * setting (`runtime.<kind>`), the runtimes installed on this machine
+     * for it and what the path in use is. Read-only: runs each runtime's
+     * `--version`, nothing else; probed in this process (the daemon runs
+     * on the same host).
+     */
+open func runtimeKinds()async throws  -> [RuntimeKindState]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_local_runtime_kinds(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeRuntimeKindState.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -22453,8 +22600,9 @@ public func FfiConverterTypeComputerResources_lower(_ value: ComputerResources) 
  */
 public struct ConfigEntry: Equatable, Hashable {
     /**
-     * `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
-     * `runtime.linux` or `telemetry.enabled`.
+     * `default.on`, `default.kind`, `default.runtime`, `runtime.container`,
+     * `runtime.vm`, `runtime.microvm` (and their `_path`) or
+     * `telemetry.enabled`.
      */
     public var key: String
     /**
@@ -22487,8 +22635,9 @@ public struct ConfigEntry: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
-         * `runtime.linux` or `telemetry.enabled`.
+         * `default.on`, `default.kind`, `default.runtime`, `runtime.container`,
+         * `runtime.vm`, `runtime.microvm` (and their `_path`) or
+         * `telemetry.enabled`.
          */key: String,
         /**
          * The effective value.
@@ -28409,6 +28558,18 @@ public struct HostSettingsChange: Equatable, Hashable {
      * macOS VMs at once (0 to 2, Apple's license).
      */
     public var maxMacosVms: UInt32?
+    /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxMemoryGb: UInt32?
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxDiskGb: UInt32?
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    public var maxRunMinutes: UInt32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -28424,11 +28585,23 @@ public struct HostSettingsChange: Equatable, Hashable {
          */maxSpaces: UInt32? = nil,
         /**
          * macOS VMs at once (0 to 2, Apple's license).
-         */maxMacosVms: UInt32? = nil) {
+         */maxMacosVms: UInt32? = nil,
+        /**
+         * Memory the provided Spaces may use in total, in GB (0: no limit).
+         */maxMemoryGb: UInt32? = nil,
+        /**
+         * Disk the provided Spaces may use in total, in GB (0: no limit).
+         */maxDiskGb: UInt32? = nil,
+        /**
+         * How long a provided Space may run, in minutes (0: no limit).
+         */maxRunMinutes: UInt32? = nil) {
         self.shareDesktop = shareDesktop
         self.provideSpaces = provideSpaces
         self.maxSpaces = maxSpaces
         self.maxMacosVms = maxMacosVms
+        self.maxMemoryGb = maxMemoryGb
+        self.maxDiskGb = maxDiskGb
+        self.maxRunMinutes = maxRunMinutes
     }
 
 
@@ -28450,7 +28623,10 @@ public struct FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer {
                 shareDesktop: FfiConverterOptionBool.read(from: &buf),
                 provideSpaces: FfiConverterOptionBool.read(from: &buf),
                 maxSpaces: FfiConverterOptionUInt32.read(from: &buf),
-                maxMacosVms: FfiConverterOptionUInt32.read(from: &buf)
+                maxMacosVms: FfiConverterOptionUInt32.read(from: &buf),
+                maxMemoryGb: FfiConverterOptionUInt32.read(from: &buf),
+                maxDiskGb: FfiConverterOptionUInt32.read(from: &buf),
+                maxRunMinutes: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
 
@@ -28459,6 +28635,9 @@ public struct FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.provideSpaces, into: &buf)
         FfiConverterOptionUInt32.write(value.maxSpaces, into: &buf)
         FfiConverterOptionUInt32.write(value.maxMacosVms, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxMemoryGb, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxDiskGb, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxRunMinutes, into: &buf)
     }
 }
 
@@ -28829,6 +29008,28 @@ public struct HostStatus: Equatable, Hashable {
      */
     public var maxMacosVms: UInt32
     /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxMemoryGb: UInt32
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxDiskGb: UInt32
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    public var maxRunMinutes: UInt32
+    /**
+     * What the provided Spaces were given now, in GB.
+     */
+    public var usedMemoryGb: UInt32
+    public var usedDiskGb: UInt32
+    /**
+     * This machine's own memory and disk, in GB (0: not known).
+     */
+    public var totalMemoryGb: UInt32
+    public var totalDiskGb: UInt32
+    /**
      * The Spaces this machine provides now.
      */
     public var providedSpaces: [HostProvidedSpace]
@@ -28934,6 +29135,21 @@ public struct HostStatus: Equatable, Hashable {
          * macOS VMs at once (at most two).
          */maxMacosVms: UInt32 = UInt32(0),
         /**
+         * Memory the provided Spaces may use in total, in GB (0: no limit).
+         */maxMemoryGb: UInt32 = UInt32(0),
+        /**
+         * Disk the provided Spaces may use in total, in GB (0: no limit).
+         */maxDiskGb: UInt32 = UInt32(0),
+        /**
+         * How long a provided Space may run, in minutes (0: no limit).
+         */maxRunMinutes: UInt32 = UInt32(0),
+        /**
+         * What the provided Spaces were given now, in GB.
+         */usedMemoryGb: UInt32 = UInt32(0), usedDiskGb: UInt32 = UInt32(0),
+        /**
+         * This machine's own memory and disk, in GB (0: not known).
+         */totalMemoryGb: UInt32 = UInt32(0), totalDiskGb: UInt32 = UInt32(0),
+        /**
          * The Spaces this machine provides now.
          */providedSpaces: [HostProvidedSpace] = [],
         /**
@@ -28981,6 +29197,13 @@ public struct HostStatus: Equatable, Hashable {
         self.provideSpaces = provideSpaces
         self.maxSpaces = maxSpaces
         self.maxMacosVms = maxMacosVms
+        self.maxMemoryGb = maxMemoryGb
+        self.maxDiskGb = maxDiskGb
+        self.maxRunMinutes = maxRunMinutes
+        self.usedMemoryGb = usedMemoryGb
+        self.usedDiskGb = usedDiskGb
+        self.totalMemoryGb = totalMemoryGb
+        self.totalDiskGb = totalDiskGb
         self.providedSpaces = providedSpaces
         self.spacesAudit = spacesAudit
         self.spacesAuditError = spacesAuditError
@@ -29029,6 +29252,13 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
                 provideSpaces: FfiConverterBool.read(from: &buf),
                 maxSpaces: FfiConverterUInt32.read(from: &buf),
                 maxMacosVms: FfiConverterUInt32.read(from: &buf),
+                maxMemoryGb: FfiConverterUInt32.read(from: &buf),
+                maxDiskGb: FfiConverterUInt32.read(from: &buf),
+                maxRunMinutes: FfiConverterUInt32.read(from: &buf),
+                usedMemoryGb: FfiConverterUInt32.read(from: &buf),
+                usedDiskGb: FfiConverterUInt32.read(from: &buf),
+                totalMemoryGb: FfiConverterUInt32.read(from: &buf),
+                totalDiskGb: FfiConverterUInt32.read(from: &buf),
                 providedSpaces: FfiConverterSequenceTypeHostProvidedSpace.read(from: &buf),
                 spacesAudit: FfiConverterSequenceTypeHostSpacesAuditRecord.read(from: &buf),
                 spacesAuditError: FfiConverterOptionString.read(from: &buf),
@@ -29063,6 +29293,13 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
         FfiConverterBool.write(value.provideSpaces, into: &buf)
         FfiConverterUInt32.write(value.maxSpaces, into: &buf)
         FfiConverterUInt32.write(value.maxMacosVms, into: &buf)
+        FfiConverterUInt32.write(value.maxMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.maxDiskGb, into: &buf)
+        FfiConverterUInt32.write(value.maxRunMinutes, into: &buf)
+        FfiConverterUInt32.write(value.usedMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.usedDiskGb, into: &buf)
+        FfiConverterUInt32.write(value.totalMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.totalDiskGb, into: &buf)
         FfiConverterSequenceTypeHostProvidedSpace.write(value.providedSpaces, into: &buf)
         FfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spacesAudit, into: &buf)
         FfiConverterOptionString.write(value.spacesAuditError, into: &buf)
@@ -33519,6 +33756,157 @@ public func FfiConverterTypeRelayMachine_lower(_ value: RelayMachine) -> RustBuf
 
 
 /**
+ * What the repo cache holds and what it saved, in plain words for
+ * Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+ * changed with [`config_set`]).
+ */
+public struct RepoCacheStatus: Equatable, Hashable {
+    /**
+     * The cache is on (`cache.repos`).
+     */
+    public var enabled: Bool
+    /**
+     * Repositories held.
+     */
+    public var repos: UInt32
+    /**
+     * What they take on disk.
+     */
+    public var bytes: UInt64
+    /**
+     * The size cap in force.
+     */
+    public var capBytes: UInt64
+    /**
+     * The size setting: `auto`, or the number of GB.
+     */
+    public var sizeSetting: String
+    /**
+     * `Repos: 3, 1.2 GB of 5 GB`.
+     */
+    public var summary: String
+    /**
+     * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+     */
+    public var week: String
+    /**
+     * Clones served from the cache in the last week.
+     */
+    public var hits: UInt32
+    /**
+     * Clones that downloaded in the last week.
+     */
+    public var misses: UInt32
+    /**
+     * Seconds the hits saved.
+     */
+    public var secondsSaved: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The cache is on (`cache.repos`).
+         */enabled: Bool,
+        /**
+         * Repositories held.
+         */repos: UInt32,
+        /**
+         * What they take on disk.
+         */bytes: UInt64,
+        /**
+         * The size cap in force.
+         */capBytes: UInt64,
+        /**
+         * The size setting: `auto`, or the number of GB.
+         */sizeSetting: String,
+        /**
+         * `Repos: 3, 1.2 GB of 5 GB`.
+         */summary: String,
+        /**
+         * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+         */week: String,
+        /**
+         * Clones served from the cache in the last week.
+         */hits: UInt32,
+        /**
+         * Clones that downloaded in the last week.
+         */misses: UInt32,
+        /**
+         * Seconds the hits saved.
+         */secondsSaved: UInt64) {
+        self.enabled = enabled
+        self.repos = repos
+        self.bytes = bytes
+        self.capBytes = capBytes
+        self.sizeSetting = sizeSetting
+        self.summary = summary
+        self.week = week
+        self.hits = hits
+        self.misses = misses
+        self.secondsSaved = secondsSaved
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RepoCacheStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRepoCacheStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RepoCacheStatus {
+        return
+            try RepoCacheStatus(
+                enabled: FfiConverterBool.read(from: &buf),
+                repos: FfiConverterUInt32.read(from: &buf),
+                bytes: FfiConverterUInt64.read(from: &buf),
+                capBytes: FfiConverterUInt64.read(from: &buf),
+                sizeSetting: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                week: FfiConverterString.read(from: &buf),
+                hits: FfiConverterUInt32.read(from: &buf),
+                misses: FfiConverterUInt32.read(from: &buf),
+                secondsSaved: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RepoCacheStatus, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterUInt32.write(value.repos, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+        FfiConverterUInt64.write(value.capBytes, into: &buf)
+        FfiConverterString.write(value.sizeSetting, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterString.write(value.week, into: &buf)
+        FfiConverterUInt32.write(value.hits, into: &buf)
+        FfiConverterUInt32.write(value.misses, into: &buf)
+        FfiConverterUInt64.write(value.secondsSaved, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRepoCacheStatus_lift(_ buf: RustBuffer) throws -> RepoCacheStatus {
+    return try FfiConverterTypeRepoCacheStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRepoCacheStatus_lower(_ value: RepoCacheStatus) -> RustBuffer {
+    return FfiConverterTypeRepoCacheStatus.lower(value)
+}
+
+
+/**
  * A reference resolved for a backend.
  */
 public struct ResolvedImage: Equatable, Hashable {
@@ -34073,6 +34461,323 @@ public func FfiConverterTypeRuntimeCheck_lift(_ buf: RustBuffer) throws -> Runti
 #endif
 public func FfiConverterTypeRuntimeCheck_lower(_ value: RuntimeCheck) -> RustBuffer {
     return FfiConverterTypeRuntimeCheck.lower(value)
+}
+
+
+/**
+ * A runtime installed on this machine for one kind of Space.
+ */
+public struct RuntimeDetected: Equatable, Hashable {
+    /**
+     * `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+     */
+    public var tool: String
+    /**
+     * As people know it (`Docker`, `Apple container`).
+     */
+    public var name: String
+    public var path: String
+    /**
+     * As `--version` says it (`27.3.1`).
+     */
+    public var version: String?
+    /**
+     * The guest system it runs, when only one (`macOS`, `Linux`).
+     */
+    public var guests: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+         */tool: String,
+        /**
+         * As people know it (`Docker`, `Apple container`).
+         */name: String, path: String,
+        /**
+         * As `--version` says it (`27.3.1`).
+         */version: String?,
+        /**
+         * The guest system it runs, when only one (`macOS`, `Linux`).
+         */guests: String?) {
+        self.tool = tool
+        self.name = name
+        self.path = path
+        self.version = version
+        self.guests = guests
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RuntimeDetected: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRuntimeDetected: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RuntimeDetected {
+        return
+            try RuntimeDetected(
+                tool: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                path: FfiConverterString.read(from: &buf),
+                version: FfiConverterOptionString.read(from: &buf),
+                guests: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RuntimeDetected, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.tool, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterOptionString.write(value.version, into: &buf)
+        FfiConverterOptionString.write(value.guests, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeDetected_lift(_ buf: RustBuffer) throws -> RuntimeDetected {
+    return try FfiConverterTypeRuntimeDetected.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeDetected_lower(_ value: RuntimeDetected) -> RustBuffer {
+    return FfiConverterTypeRuntimeDetected.lower(value)
+}
+
+
+/**
+ * One kind of Space's runtime, as Settings shows it.
+ */
+public struct RuntimeKindState: Equatable, Hashable {
+    /**
+     * `container`, `vm` or `microvm`.
+     */
+    public var kind: String
+    /**
+     * `runtime.<kind>`: `auto`, `builtin` or `system`.
+     */
+    public var source: String
+    /**
+     * `runtime.<kind>_path`, when set.
+     */
+    public var path: String?
+    /**
+     * What is installed here for the kind, the one used first.
+     */
+    public var detected: [RuntimeDetected]
+    /**
+     * The path in use (the custom one, else the first detected), probed.
+     */
+    public var check: RuntimePathProbe?
+    /**
+     * The names of the tools the kind takes here (`Docker`, `Podman`).
+     */
+    public var expected: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `container`, `vm` or `microvm`.
+         */kind: String,
+        /**
+         * `runtime.<kind>`: `auto`, `builtin` or `system`.
+         */source: String,
+        /**
+         * `runtime.<kind>_path`, when set.
+         */path: String?,
+        /**
+         * What is installed here for the kind, the one used first.
+         */detected: [RuntimeDetected],
+        /**
+         * The path in use (the custom one, else the first detected), probed.
+         */check: RuntimePathProbe?,
+        /**
+         * The names of the tools the kind takes here (`Docker`, `Podman`).
+         */expected: [String]) {
+        self.kind = kind
+        self.source = source
+        self.path = path
+        self.detected = detected
+        self.check = check
+        self.expected = expected
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RuntimeKindState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRuntimeKindState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RuntimeKindState {
+        return
+            try RuntimeKindState(
+                kind: FfiConverterString.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                path: FfiConverterOptionString.read(from: &buf),
+                detected: FfiConverterSequenceTypeRuntimeDetected.read(from: &buf),
+                check: FfiConverterOptionTypeRuntimePathProbe.read(from: &buf),
+                expected: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RuntimeKindState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterOptionString.write(value.path, into: &buf)
+        FfiConverterSequenceTypeRuntimeDetected.write(value.detected, into: &buf)
+        FfiConverterOptionTypeRuntimePathProbe.write(value.check, into: &buf)
+        FfiConverterSequenceString.write(value.expected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeKindState_lift(_ buf: RustBuffer) throws -> RuntimeKindState {
+    return try FfiConverterTypeRuntimeKindState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeKindState_lower(_ value: RuntimeKindState) -> RustBuffer {
+    return FfiConverterTypeRuntimeKindState.lower(value)
+}
+
+
+/**
+ * What a binary is, for one kind of Space (`runtime_check_path`).
+ */
+public struct RuntimePathProbe: Equatable, Hashable {
+    public var path: String
+    /**
+     * A file is there.
+     */
+    public var exists: Bool
+    /**
+     * It can be run.
+     */
+    public var executable: Bool
+    /**
+     * The tool it is, when it is one the kind takes.
+     */
+    public var tool: String?
+    public var name: String?
+    public var version: String?
+    /**
+     * The oldest version cua runs on.
+     */
+    public var minVersion: String?
+    /**
+     * The names of the tools the kind takes here (`Docker`, `Podman`).
+     */
+    public var expected: [String]
+    public var guests: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: String,
+        /**
+         * A file is there.
+         */exists: Bool,
+        /**
+         * It can be run.
+         */executable: Bool,
+        /**
+         * The tool it is, when it is one the kind takes.
+         */tool: String?, name: String?, version: String?,
+        /**
+         * The oldest version cua runs on.
+         */minVersion: String?,
+        /**
+         * The names of the tools the kind takes here (`Docker`, `Podman`).
+         */expected: [String], guests: String?) {
+        self.path = path
+        self.exists = exists
+        self.executable = executable
+        self.tool = tool
+        self.name = name
+        self.version = version
+        self.minVersion = minVersion
+        self.expected = expected
+        self.guests = guests
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RuntimePathProbe: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRuntimePathProbe: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RuntimePathProbe {
+        return
+            try RuntimePathProbe(
+                path: FfiConverterString.read(from: &buf),
+                exists: FfiConverterBool.read(from: &buf),
+                executable: FfiConverterBool.read(from: &buf),
+                tool: FfiConverterOptionString.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                version: FfiConverterOptionString.read(from: &buf),
+                minVersion: FfiConverterOptionString.read(from: &buf),
+                expected: FfiConverterSequenceString.read(from: &buf),
+                guests: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RuntimePathProbe, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterBool.write(value.exists, into: &buf)
+        FfiConverterBool.write(value.executable, into: &buf)
+        FfiConverterOptionString.write(value.tool, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.version, into: &buf)
+        FfiConverterOptionString.write(value.minVersion, into: &buf)
+        FfiConverterSequenceString.write(value.expected, into: &buf)
+        FfiConverterOptionString.write(value.guests, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimePathProbe_lift(_ buf: RustBuffer) throws -> RuntimePathProbe {
+    return try FfiConverterTypeRuntimePathProbe.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimePathProbe_lower(_ value: RuntimePathProbe) -> RustBuffer {
+    return FfiConverterTypeRuntimePathProbe.lower(value)
 }
 
 
@@ -46712,6 +47417,30 @@ fileprivate struct FfiConverterOptionTypePtySize: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeRuntimePathProbe: FfiConverterRustBuffer {
+    typealias SwiftType = RuntimePathProbe?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRuntimePathProbe.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRuntimePathProbe.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeScreenshotOptions: FfiConverterRustBuffer {
     typealias SwiftType = ScreenshotOptions?
 
@@ -49114,6 +49843,56 @@ fileprivate struct FfiConverterSequenceTypeRuntimeCheck: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeRuntimeDetected: FfiConverterRustBuffer {
+    typealias SwiftType = [RuntimeDetected]
+
+    public static func write(_ value: [RuntimeDetected], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRuntimeDetected.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RuntimeDetected] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RuntimeDetected]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRuntimeDetected.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRuntimeKindState: FfiConverterRustBuffer {
+    typealias SwiftType = [RuntimeKindState]
+
+    public static func write(_ value: [RuntimeKindState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRuntimeKindState.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RuntimeKindState] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RuntimeKindState]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRuntimeKindState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSandboxInfo: FfiConverterRustBuffer {
     typealias SwiftType = [SandboxInfo]
 
@@ -50031,6 +50810,26 @@ public func locations() -> [LocationInfo]  {
 })
 }
 /**
+ * Deletes every repository the repo cache holds (they are copied again the
+ * next time a Space clones them). Returns the cache after.
+ */
+public func repoCacheClear()throws  -> RepoCacheStatus  {
+    return try  FfiConverterTypeRepoCacheStatus_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_func_repo_cache_clear($0
+    )
+})
+}
+/**
+ * The repo cache now: on or off, how much it holds of its cap, and what
+ * the last week saved.
+ */
+public func repoCacheStatus()throws  -> RepoCacheStatus  {
+    return try  FfiConverterTypeRepoCacheStatus_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_func_repo_cache_status($0
+    )
+})
+}
+/**
  * The canonical image for `os` (`linux`, `windows`, `macos`) and
  * `version` (`None` = default: `ghcr.io/trycua/linux:24.04`,
  * `ghcr.io/trycua/windows:2022`, `ghcr.io/trycua/macos:26`; macOS accepts
@@ -50576,6 +51375,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_locations() != 62174) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_func_repo_cache_clear() != 39088) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_repo_cache_status() != 20147) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_func_canonical_image() != 8955) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -50711,7 +51516,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_agentsetup_detect() != 59369) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json() != 18365) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json() != 39143) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json() != 14363) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json() != 37278) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_install_skills() != 40049) {
@@ -50976,6 +51790,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_local_push_image() != 29472) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_local_runtime_check_path() != 59009) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_local_runtime_kinds() != 34595) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_local_setup() != 57791) {

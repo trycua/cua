@@ -539,6 +539,10 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_qualify_sandbox_ref() != 59566:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_repo_cache_clear() != 39088:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_repo_cache_status() != 20147:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_resolve_image() != 56346:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_resolve_image_with_secret() != 48984:
@@ -617,7 +621,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_detect() != 59369:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json() != 18365:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json() != 39143:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json() != 14363:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json() != 37278:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_install_skills() != 40049:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -780,6 +790,10 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_local_pull_image() != 50917:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_local_push_image() != 29472:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_local_runtime_check_path() != 59009:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_local_runtime_kinds() != 34595:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_local_setup() != 57791:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2369,6 +2383,14 @@ _UniffiLib.uniffi_cua_sdk_fn_func_qualify_sandbox_ref.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_qualify_sandbox_ref.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_sdk_fn_func_resolve_image.argtypes = (
     _UniffiRustBuffer,
     _UniffiRustBuffer,
@@ -2563,12 +2585,30 @@ _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_detect.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_detect.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_json.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
     ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_json.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.c_int8,
+    ctypes.c_int8,
+    ctypes.c_int8,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_install_skills.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -2993,6 +3033,16 @@ _UniffiLib.uniffi_cua_sdk_fn_method_local_push_image.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_local_push_image.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_check_path.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_check_path.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_kinds.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_kinds.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_local_setup.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4925,6 +4975,12 @@ _UniffiLib.uniffi_cua_sdk_checksum_func_presence_text_color.restype = ctypes.c_u
 _UniffiLib.uniffi_cua_sdk_checksum_func_qualify_sandbox_ref.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_qualify_sandbox_ref.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_clear.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_clear.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_status.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_status.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_resolve_image.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_resolve_image.restype = ctypes.c_uint16
@@ -5042,9 +5098,18 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json.rest
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_detect.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_detect.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_install_skills.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_install_skills.restype = ctypes.c_uint16
@@ -5288,6 +5353,12 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_local_pull_image.restype = ctypes.c_ui
 _UniffiLib.uniffi_cua_sdk_checksum_method_local_push_image.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_local_push_image.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_local_runtime_check_path.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_local_runtime_check_path.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_local_runtime_kinds.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_local_runtime_kinds.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_local_setup.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_local_setup.restype = ctypes.c_uint16
@@ -17140,7 +17211,7 @@ class HostSettingsChange:
     """
     A change to this machine's Spaces settings (`None` keeps a value).
 """
-    def __init__(self, *, share_desktop:typing.Optional[bool] = _DEFAULT, provide_spaces:typing.Optional[bool] = _DEFAULT, max_spaces:typing.Optional[int] = _DEFAULT, max_macos_vms:typing.Optional[int] = _DEFAULT):
+    def __init__(self, *, share_desktop:typing.Optional[bool] = _DEFAULT, provide_spaces:typing.Optional[bool] = _DEFAULT, max_spaces:typing.Optional[int] = _DEFAULT, max_macos_vms:typing.Optional[int] = _DEFAULT, max_memory_gb:typing.Optional[int] = _DEFAULT, max_disk_gb:typing.Optional[int] = _DEFAULT, max_run_minutes:typing.Optional[int] = _DEFAULT):
         if share_desktop is _DEFAULT:
             self.share_desktop = None
         else:
@@ -17157,12 +17228,24 @@ class HostSettingsChange:
             self.max_macos_vms = None
         else:
             self.max_macos_vms = max_macos_vms
+        if max_memory_gb is _DEFAULT:
+            self.max_memory_gb = None
+        else:
+            self.max_memory_gb = max_memory_gb
+        if max_disk_gb is _DEFAULT:
+            self.max_disk_gb = None
+        else:
+            self.max_disk_gb = max_disk_gb
+        if max_run_minutes is _DEFAULT:
+            self.max_run_minutes = None
+        else:
+            self.max_run_minutes = max_run_minutes
 
 
 
 
     def __str__(self):
-        return "HostSettingsChange(share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={})".format(self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms)
+        return "HostSettingsChange(share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, max_memory_gb={}, max_disk_gb={}, max_run_minutes={})".format(self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.max_memory_gb, self.max_disk_gb, self.max_run_minutes)
     def __eq__(self, other):
         if self.share_desktop != other.share_desktop:
             return False
@@ -17171,6 +17254,12 @@ class HostSettingsChange:
         if self.max_spaces != other.max_spaces:
             return False
         if self.max_macos_vms != other.max_macos_vms:
+            return False
+        if self.max_memory_gb != other.max_memory_gb:
+            return False
+        if self.max_disk_gb != other.max_disk_gb:
+            return False
+        if self.max_run_minutes != other.max_run_minutes:
             return False
         return True
 
@@ -17182,6 +17271,9 @@ class _UniffiFfiConverterTypeHostSettingsChange(_UniffiConverterRustBuffer):
             provide_spaces=_UniffiFfiConverterOptionalBoolean.read(buf),
             max_spaces=_UniffiFfiConverterOptionalUInt32.read(buf),
             max_macos_vms=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_memory_gb=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_disk_gb=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_run_minutes=_UniffiFfiConverterOptionalUInt32.read(buf),
         )
 
     @staticmethod
@@ -17190,6 +17282,9 @@ class _UniffiFfiConverterTypeHostSettingsChange(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.check_lower(value.provide_spaces)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_spaces)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_macos_vms)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_memory_gb)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_disk_gb)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_run_minutes)
 
     @staticmethod
     def write(value, buf):
@@ -17197,6 +17292,9 @@ class _UniffiFfiConverterTypeHostSettingsChange(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.write(value.provide_spaces, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_spaces, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_macos_vms, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_memory_gb, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_disk_gb, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_run_minutes, buf)
 
 @dataclass
 class HostSetupOptions:
@@ -17449,7 +17547,7 @@ class HostStatus:
     """
     Host status.
 """
-    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False):
+    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, max_memory_gb:int = 0, max_disk_gb:int = 0, max_run_minutes:int = 0, used_memory_gb:int = 0, used_disk_gb:int = 0, total_memory_gb:int = 0, total_disk_gb:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False):
         self.configured = configured
         self.mode = mode
         self.relay_url = relay_url
@@ -17478,6 +17576,13 @@ class HostStatus:
         self.provide_spaces = provide_spaces
         self.max_spaces = max_spaces
         self.max_macos_vms = max_macos_vms
+        self.max_memory_gb = max_memory_gb
+        self.max_disk_gb = max_disk_gb
+        self.max_run_minutes = max_run_minutes
+        self.used_memory_gb = used_memory_gb
+        self.used_disk_gb = used_disk_gb
+        self.total_memory_gb = total_memory_gb
+        self.total_disk_gb = total_disk_gb
         if provided_spaces is _DEFAULT:
             self.provided_spaces = []
         else:
@@ -17506,7 +17611,7 @@ class HostStatus:
 
 
     def __str__(self):
-        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service)
+        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, max_memory_gb={}, max_disk_gb={}, max_run_minutes={}, used_memory_gb={}, used_disk_gb={}, total_memory_gb={}, total_disk_gb={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.max_memory_gb, self.max_disk_gb, self.max_run_minutes, self.used_memory_gb, self.used_disk_gb, self.total_memory_gb, self.total_disk_gb, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service)
     def __eq__(self, other):
         if self.configured != other.configured:
             return False
@@ -17552,6 +17657,20 @@ class HostStatus:
             return False
         if self.max_macos_vms != other.max_macos_vms:
             return False
+        if self.max_memory_gb != other.max_memory_gb:
+            return False
+        if self.max_disk_gb != other.max_disk_gb:
+            return False
+        if self.max_run_minutes != other.max_run_minutes:
+            return False
+        if self.used_memory_gb != other.used_memory_gb:
+            return False
+        if self.used_disk_gb != other.used_disk_gb:
+            return False
+        if self.total_memory_gb != other.total_memory_gb:
+            return False
+        if self.total_disk_gb != other.total_disk_gb:
+            return False
         if self.provided_spaces != other.provided_spaces:
             return False
         if self.spaces_audit != other.spaces_audit:
@@ -17596,6 +17715,13 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
             provide_spaces=_UniffiFfiConverterBoolean.read(buf),
             max_spaces=_UniffiFfiConverterUInt32.read(buf),
             max_macos_vms=_UniffiFfiConverterUInt32.read(buf),
+            max_memory_gb=_UniffiFfiConverterUInt32.read(buf),
+            max_disk_gb=_UniffiFfiConverterUInt32.read(buf),
+            max_run_minutes=_UniffiFfiConverterUInt32.read(buf),
+            used_memory_gb=_UniffiFfiConverterUInt32.read(buf),
+            used_disk_gb=_UniffiFfiConverterUInt32.read(buf),
+            total_memory_gb=_UniffiFfiConverterUInt32.read(buf),
+            total_disk_gb=_UniffiFfiConverterUInt32.read(buf),
             provided_spaces=_UniffiFfiConverterSequenceTypeHostProvidedSpace.read(buf),
             spaces_audit=_UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.read(buf),
             spaces_audit_error=_UniffiFfiConverterOptionalString.read(buf),
@@ -17630,6 +17756,13 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.check_lower(value.provide_spaces)
         _UniffiFfiConverterUInt32.check_lower(value.max_spaces)
         _UniffiFfiConverterUInt32.check_lower(value.max_macos_vms)
+        _UniffiFfiConverterUInt32.check_lower(value.max_memory_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.max_disk_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.max_run_minutes)
+        _UniffiFfiConverterUInt32.check_lower(value.used_memory_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.used_disk_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.total_memory_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.total_disk_gb)
         _UniffiFfiConverterSequenceTypeHostProvidedSpace.check_lower(value.provided_spaces)
         _UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.check_lower(value.spaces_audit)
         _UniffiFfiConverterOptionalString.check_lower(value.spaces_audit_error)
@@ -17663,6 +17796,13 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.provide_spaces, buf)
         _UniffiFfiConverterUInt32.write(value.max_spaces, buf)
         _UniffiFfiConverterUInt32.write(value.max_macos_vms, buf)
+        _UniffiFfiConverterUInt32.write(value.max_memory_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.max_disk_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.max_run_minutes, buf)
+        _UniffiFfiConverterUInt32.write(value.used_memory_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.used_disk_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.total_memory_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.total_disk_gb, buf)
         _UniffiFfiConverterSequenceTypeHostProvidedSpace.write(value.provided_spaces, buf)
         _UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spaces_audit, buf)
         _UniffiFfiConverterOptionalString.write(value.spaces_audit_error, buf)
@@ -20791,6 +20931,95 @@ class _UniffiFfiConverterTypeReadinessProbe(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.service, buf)
 
 @dataclass
+class RepoCacheStatus:
+    """
+    What the repo cache holds and what it saved, in plain words for
+    Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+    changed with [`config_set`]).
+"""
+    def __init__(self, *, enabled:bool, repos:int, bytes:int, cap_bytes:int, size_setting:str, summary:str, week:str, hits:int, misses:int, seconds_saved:int):
+        self.enabled = enabled
+        self.repos = repos
+        self.bytes = bytes
+        self.cap_bytes = cap_bytes
+        self.size_setting = size_setting
+        self.summary = summary
+        self.week = week
+        self.hits = hits
+        self.misses = misses
+        self.seconds_saved = seconds_saved
+
+
+
+
+    def __str__(self):
+        return "RepoCacheStatus(enabled={}, repos={}, bytes={}, cap_bytes={}, size_setting={}, summary={}, week={}, hits={}, misses={}, seconds_saved={})".format(self.enabled, self.repos, self.bytes, self.cap_bytes, self.size_setting, self.summary, self.week, self.hits, self.misses, self.seconds_saved)
+    def __eq__(self, other):
+        if self.enabled != other.enabled:
+            return False
+        if self.repos != other.repos:
+            return False
+        if self.bytes != other.bytes:
+            return False
+        if self.cap_bytes != other.cap_bytes:
+            return False
+        if self.size_setting != other.size_setting:
+            return False
+        if self.summary != other.summary:
+            return False
+        if self.week != other.week:
+            return False
+        if self.hits != other.hits:
+            return False
+        if self.misses != other.misses:
+            return False
+        if self.seconds_saved != other.seconds_saved:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeRepoCacheStatus(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return RepoCacheStatus(
+            enabled=_UniffiFfiConverterBoolean.read(buf),
+            repos=_UniffiFfiConverterUInt32.read(buf),
+            bytes=_UniffiFfiConverterUInt64.read(buf),
+            cap_bytes=_UniffiFfiConverterUInt64.read(buf),
+            size_setting=_UniffiFfiConverterString.read(buf),
+            summary=_UniffiFfiConverterString.read(buf),
+            week=_UniffiFfiConverterString.read(buf),
+            hits=_UniffiFfiConverterUInt32.read(buf),
+            misses=_UniffiFfiConverterUInt32.read(buf),
+            seconds_saved=_UniffiFfiConverterUInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBoolean.check_lower(value.enabled)
+        _UniffiFfiConverterUInt32.check_lower(value.repos)
+        _UniffiFfiConverterUInt64.check_lower(value.bytes)
+        _UniffiFfiConverterUInt64.check_lower(value.cap_bytes)
+        _UniffiFfiConverterString.check_lower(value.size_setting)
+        _UniffiFfiConverterString.check_lower(value.summary)
+        _UniffiFfiConverterString.check_lower(value.week)
+        _UniffiFfiConverterUInt32.check_lower(value.hits)
+        _UniffiFfiConverterUInt32.check_lower(value.misses)
+        _UniffiFfiConverterUInt64.check_lower(value.seconds_saved)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBoolean.write(value.enabled, buf)
+        _UniffiFfiConverterUInt32.write(value.repos, buf)
+        _UniffiFfiConverterUInt64.write(value.bytes, buf)
+        _UniffiFfiConverterUInt64.write(value.cap_bytes, buf)
+        _UniffiFfiConverterString.write(value.size_setting, buf)
+        _UniffiFfiConverterString.write(value.summary, buf)
+        _UniffiFfiConverterString.write(value.week, buf)
+        _UniffiFfiConverterUInt32.write(value.hits, buf)
+        _UniffiFfiConverterUInt32.write(value.misses, buf)
+        _UniffiFfiConverterUInt64.write(value.seconds_saved, buf)
+
+@dataclass
 class ResolvedImage:
     """
     A reference resolved for a backend.
@@ -21363,6 +21592,255 @@ class _UniffiFfiConverterTypeRoutineInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.last_fired_at, buf)
         _UniffiFfiConverterOptionalString.write(value.last_outcome, buf)
         _UniffiFfiConverterOptionalString.write(value.last_run_id, buf)
+
+@dataclass
+class RuntimeDetected:
+    """
+    A runtime installed on this machine for one kind of Space.
+"""
+    def __init__(self, *, tool:str, name:str, path:str, version:typing.Optional[str], guests:typing.Optional[str]):
+        self.tool = tool
+        self.name = name
+        self.path = path
+        self.version = version
+        self.guests = guests
+
+
+
+
+    def __str__(self):
+        return "RuntimeDetected(tool={}, name={}, path={}, version={}, guests={})".format(self.tool, self.name, self.path, self.version, self.guests)
+    def __eq__(self, other):
+        if self.tool != other.tool:
+            return False
+        if self.name != other.name:
+            return False
+        if self.path != other.path:
+            return False
+        if self.version != other.version:
+            return False
+        if self.guests != other.guests:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeRuntimeDetected(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return RuntimeDetected(
+            tool=_UniffiFfiConverterString.read(buf),
+            name=_UniffiFfiConverterString.read(buf),
+            path=_UniffiFfiConverterString.read(buf),
+            version=_UniffiFfiConverterOptionalString.read(buf),
+            guests=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.tool)
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.path)
+        _UniffiFfiConverterOptionalString.check_lower(value.version)
+        _UniffiFfiConverterOptionalString.check_lower(value.guests)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.tool, buf)
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.path, buf)
+        _UniffiFfiConverterOptionalString.write(value.version, buf)
+        _UniffiFfiConverterOptionalString.write(value.guests, buf)
+
+class _UniffiFfiConverterSequenceTypeRuntimeDetected(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeRuntimeDetected.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeRuntimeDetected.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeRuntimeDetected.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class RuntimePathProbe:
+    """
+    What a binary is, for one kind of Space (`runtime_check_path`).
+"""
+    def __init__(self, *, path:str, exists:bool, executable:bool, tool:typing.Optional[str], name:typing.Optional[str], version:typing.Optional[str], min_version:typing.Optional[str], expected:typing.List[str], guests:typing.Optional[str]):
+        self.path = path
+        self.exists = exists
+        self.executable = executable
+        self.tool = tool
+        self.name = name
+        self.version = version
+        self.min_version = min_version
+        self.expected = expected
+        self.guests = guests
+
+
+
+
+    def __str__(self):
+        return "RuntimePathProbe(path={}, exists={}, executable={}, tool={}, name={}, version={}, min_version={}, expected={}, guests={})".format(self.path, self.exists, self.executable, self.tool, self.name, self.version, self.min_version, self.expected, self.guests)
+    def __eq__(self, other):
+        if self.path != other.path:
+            return False
+        if self.exists != other.exists:
+            return False
+        if self.executable != other.executable:
+            return False
+        if self.tool != other.tool:
+            return False
+        if self.name != other.name:
+            return False
+        if self.version != other.version:
+            return False
+        if self.min_version != other.min_version:
+            return False
+        if self.expected != other.expected:
+            return False
+        if self.guests != other.guests:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeRuntimePathProbe(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return RuntimePathProbe(
+            path=_UniffiFfiConverterString.read(buf),
+            exists=_UniffiFfiConverterBoolean.read(buf),
+            executable=_UniffiFfiConverterBoolean.read(buf),
+            tool=_UniffiFfiConverterOptionalString.read(buf),
+            name=_UniffiFfiConverterOptionalString.read(buf),
+            version=_UniffiFfiConverterOptionalString.read(buf),
+            min_version=_UniffiFfiConverterOptionalString.read(buf),
+            expected=_UniffiFfiConverterSequenceString.read(buf),
+            guests=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.path)
+        _UniffiFfiConverterBoolean.check_lower(value.exists)
+        _UniffiFfiConverterBoolean.check_lower(value.executable)
+        _UniffiFfiConverterOptionalString.check_lower(value.tool)
+        _UniffiFfiConverterOptionalString.check_lower(value.name)
+        _UniffiFfiConverterOptionalString.check_lower(value.version)
+        _UniffiFfiConverterOptionalString.check_lower(value.min_version)
+        _UniffiFfiConverterSequenceString.check_lower(value.expected)
+        _UniffiFfiConverterOptionalString.check_lower(value.guests)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.path, buf)
+        _UniffiFfiConverterBoolean.write(value.exists, buf)
+        _UniffiFfiConverterBoolean.write(value.executable, buf)
+        _UniffiFfiConverterOptionalString.write(value.tool, buf)
+        _UniffiFfiConverterOptionalString.write(value.name, buf)
+        _UniffiFfiConverterOptionalString.write(value.version, buf)
+        _UniffiFfiConverterOptionalString.write(value.min_version, buf)
+        _UniffiFfiConverterSequenceString.write(value.expected, buf)
+        _UniffiFfiConverterOptionalString.write(value.guests, buf)
+
+class _UniffiFfiConverterOptionalTypeRuntimePathProbe(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeRuntimePathProbe.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeRuntimePathProbe.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeRuntimePathProbe.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class RuntimeKindState:
+    """
+    One kind of Space's runtime, as Settings shows it.
+"""
+    def __init__(self, *, kind:str, source:str, path:typing.Optional[str], detected:typing.List[RuntimeDetected], check:typing.Optional[RuntimePathProbe], expected:typing.List[str]):
+        self.kind = kind
+        self.source = source
+        self.path = path
+        self.detected = detected
+        self.check = check
+        self.expected = expected
+
+
+
+
+    def __str__(self):
+        return "RuntimeKindState(kind={}, source={}, path={}, detected={}, check={}, expected={})".format(self.kind, self.source, self.path, self.detected, self.check, self.expected)
+    def __eq__(self, other):
+        if self.kind != other.kind:
+            return False
+        if self.source != other.source:
+            return False
+        if self.path != other.path:
+            return False
+        if self.detected != other.detected:
+            return False
+        if self.check != other.check:
+            return False
+        if self.expected != other.expected:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeRuntimeKindState(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return RuntimeKindState(
+            kind=_UniffiFfiConverterString.read(buf),
+            source=_UniffiFfiConverterString.read(buf),
+            path=_UniffiFfiConverterOptionalString.read(buf),
+            detected=_UniffiFfiConverterSequenceTypeRuntimeDetected.read(buf),
+            check=_UniffiFfiConverterOptionalTypeRuntimePathProbe.read(buf),
+            expected=_UniffiFfiConverterSequenceString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.kind)
+        _UniffiFfiConverterString.check_lower(value.source)
+        _UniffiFfiConverterOptionalString.check_lower(value.path)
+        _UniffiFfiConverterSequenceTypeRuntimeDetected.check_lower(value.detected)
+        _UniffiFfiConverterOptionalTypeRuntimePathProbe.check_lower(value.check)
+        _UniffiFfiConverterSequenceString.check_lower(value.expected)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.kind, buf)
+        _UniffiFfiConverterString.write(value.source, buf)
+        _UniffiFfiConverterOptionalString.write(value.path, buf)
+        _UniffiFfiConverterSequenceTypeRuntimeDetected.write(value.detected, buf)
+        _UniffiFfiConverterOptionalTypeRuntimePathProbe.write(value.check, buf)
+        _UniffiFfiConverterSequenceString.write(value.expected, buf)
 
 class _UniffiFfiConverterSequenceTypeReadinessProbe(_UniffiConverterRustBuffer):
     @classmethod
@@ -29511,11 +29989,31 @@ class AgentSetupProtocol(typing.Protocol):
         Every supported agent, installed or not (read-only).
 """
         raise NotImplementedError
+    async def device_sign_in_start_json(self, agent: str) -> str:
+        """
+        Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+        --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+        link and the code, then wait with [`Self::device_sign_in_wait_json`].
+"""
+        raise NotImplementedError
+    async def device_sign_in_wait_json(self, id: str) -> str:
+        """
+        Waits for a device sign-in to be approved and saves it into Keyvault on
+        This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+"""
+        raise NotImplementedError
     async def disconnect_json(self, agents: typing.List[str],sign_in: bool) -> str:
         """
         Disconnect: what Connect did, undone (the previous config entry back
         from Cua's record, the skills, and with `sign_in` the copy in
         Keyvault). JSON `{outcomes, removed_sign_ins}`.
+"""
+        raise NotImplementedError
+    async def disconnect_parts_json(self, agents: typing.List[str],skills: bool,mcp: bool,sign_in: bool) -> str:
+        """
+        Disconnect of some parts only (an app's page's switches): Cua's skills
+        and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+        `{outcomes, removed_sign_ins}`.
 """
         raise NotImplementedError
     async def install_skills(self, agents: typing.List[str],skills: typing.List[str],force: bool) -> typing.List[AgentSetupOutcome]:
@@ -29709,6 +30207,49 @@ class AgentSetup(AgentSetupProtocol):
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
+    async def device_sign_in_start_json(self, agent: str) -> str:
+        """
+        Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+        --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+        link and the code, then wait with [`Self::device_sign_in_wait_json`].
+"""
+
+        _UniffiFfiConverterString.check_lower(agent)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(agent),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def device_sign_in_wait_json(self, id: str) -> str:
+        """
+        Waits for a device sign-in to be approved and saves it into Keyvault on
+        This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+"""
+
+        _UniffiFfiConverterString.check_lower(id)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(id),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def disconnect_json(self, agents: typing.List[str],sign_in: bool) -> str:
         """
         Disconnect: what Connect did, undone (the previous config entry back
@@ -29728,6 +30269,37 @@ class AgentSetup(AgentSetupProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def disconnect_parts_json(self, agents: typing.List[str],skills: bool,mcp: bool,sign_in: bool) -> str:
+        """
+        Disconnect of some parts only (an app's page's switches): Cua's skills
+        and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+        `{outcomes, removed_sign_ins}`.
+"""
+
+        _UniffiFfiConverterSequenceString.check_lower(agents)
+
+        _UniffiFfiConverterBoolean.check_lower(skills)
+
+        _UniffiFfiConverterBoolean.check_lower(mcp)
+
+        _UniffiFfiConverterBoolean.check_lower(sign_in)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterSequenceString.lower(agents),
+            _UniffiFfiConverterBoolean.lower(skills),
+            _UniffiFfiConverterBoolean.lower(mcp),
+            _UniffiFfiConverterBoolean.lower(sign_in),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -31603,6 +32175,29 @@ class _UniffiFfiConverterTypeBuildListener:
     def write(cls, value: BuildListener, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+class _UniffiFfiConverterSequenceTypeRuntimeKindState(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeRuntimeKindState.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeRuntimeKindState.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeRuntimeKindState.read(buf) for i in range(count)
+        ]
+
 class _UniffiFfiConverterSequenceTypeSetupStep(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -31655,6 +32250,22 @@ class LocalProtocol(typing.Protocol):
         """
         Copies an image (host architecture) to `destination`; returns the
         pushed manifest digest.
+"""
+        raise NotImplementedError
+    async def runtime_check_path(self, kind: str,path: str) -> RuntimePathProbe:
+        """
+        What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+        runnable, which runtime and its version. Settings checks a typed path
+        with it before it is saved (`runtime.<kind>_path`).
+"""
+        raise NotImplementedError
+    async def runtime_kinds(self, ) -> typing.List[RuntimeKindState]:
+        """
+        Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+        setting (`runtime.<kind>`), the runtimes installed on this machine
+        for it and what the path in use is. Read-only: runs each runtime's
+        `--version`, nothing else; probed in this process (the daemon runs
+        on the same host).
 """
         raise NotImplementedError
     async def setup(self, components: typing.List[str],dry_run: bool) -> typing.List[SetupStep]:
@@ -31791,6 +32402,52 @@ class Local(LocalProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_local_push_image(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def runtime_check_path(self, kind: str,path: str) -> RuntimePathProbe:
+        """
+        What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+        runnable, which runtime and its version. Settings checks a typed path
+        with it before it is saved (`runtime.<kind>_path`).
+"""
+
+        _UniffiFfiConverterString.check_lower(kind)
+
+        _UniffiFfiConverterString.check_lower(path)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(kind),
+            _UniffiFfiConverterString.lower(path),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeRuntimePathProbe.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_check_path(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def runtime_kinds(self, ) -> typing.List[RuntimeKindState]:
+        """
+        Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+        setting (`runtime.<kind>`), the runtimes installed on this machine
+        for it and what the path in use is. Read-only: runs each runtime's
+        `--version`, nothing else; probed in this process (the daemon runs
+        on the same host).
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeRuntimeKindState.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_kinds(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -46231,6 +46888,36 @@ def qualify_sandbox_ref(name: str,local: typing.Union[object, typing.Optional[bo
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def repo_cache_clear() -> RepoCacheStatus:
+    """
+    Deletes every repository the repo cache holds (they are copied again the
+    next time a Space clones them). Returns the cache after.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeRepoCacheStatus.lift
+    _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def repo_cache_status() -> RepoCacheStatus:
+    """
+    The repo cache now: on or off, how much it holds of its cap, and what
+    the last week saved.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeRepoCacheStatus.lift
+    _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def resolve_image(reference: str,backend: str,arch: typing.Optional[str]) -> ResolvedImage:
     """
     Resolves `reference` for `backend` (`auto`, `local`, `provider`,
@@ -46853,12 +47540,16 @@ __all__ = [
     "PtySize",
     "PublicUrl",
     "ReadinessProbe",
+    "RepoCacheStatus",
     "ResolvedImage",
     "SharedBase",
     "SpaceResources",
     "ResourcesSnapshot",
     "ResourcesUpdate",
     "RoutineInfo",
+    "RuntimeDetected",
+    "RuntimePathProbe",
+    "RuntimeKindState",
     "SandboxCreateOptions",
     "SandboxInfo",
     "SandboxListing",
@@ -46961,6 +47652,8 @@ __all__ = [
     "presence_now_ms",
     "presence_text_color",
     "qualify_sandbox_ref",
+    "repo_cache_clear",
+    "repo_cache_status",
     "resolve_image",
     "resolve_image_with_secret",
     "sandbox_locations",

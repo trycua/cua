@@ -81,11 +81,16 @@ extension WebUIBridge {
         // Settings, Connectors: the daemon's agent_keys methods (the key travels
         // once, in agentKeys.set's arguments; answers never carry one).
         case "agentKeys.list": return try await model.agentKeys.call("agent_keys.list")
+        // The providers are asked whether the saved API keys still work (answers cached for minutes).
+        case "agentKeys.check": return try await model.agentKeys.call("agent_keys.check")
         case "agentKeys.set":
             var keyArgs: [String: Any] = ["provider": try string(args, "provider"), "value": try string(args, "value")]
             if let env = args["env"] as? String, !env.isEmpty { keyArgs["env"] = env }
             return try await model.agentKeys.call("agent_keys.set", keyArgs)
         case "agentKeys.remove": return try await model.agentKeys.call("agent_keys.remove", ["env": try string(args, "env")])
+        // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
+        case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
+        case "agentKeys.fromShell": return try await model.agentKeys.call("agent_keys.from_shell", ["env": try string(args, "env")])
 
         // Cua Volume
         case "volume.overview": return try await volumeOverview()
@@ -329,6 +334,19 @@ extension WebUIBridge {
             await model.host.run(id)
             if let failure = model.host.actionFailure { throw Self.hostFailure(failure) }
             return hostStatus()
+        case "host.limits":
+            guard model.host.host != nil else { throw Failure.unsupported("This Mac can't be set up for access in this build") }
+            func count(_ key: String) throws -> UInt32? {
+                guard let v = args[key], !(v is NSNull) else { return nil }
+                guard let n = (v as? NSNumber)?.doubleValue, n >= 0, n <= 1_000_000, n == n.rounded() else {
+                    throw Failure.badArgs("\(key): a whole number, 0 or more")
+                }
+                return UInt32(n)
+            }
+            await model.host.setLimits(maxSpaces: try count("maxSpaces"), maxMemoryGb: try count("maxMemoryGb"),
+                                       maxDiskGb: try count("maxDiskGb"), maxRunMinutes: try count("maxRunMinutes"))
+            if let failure = model.host.actionFailure { throw Self.hostFailure(failure) }
+            return hostStatus()
         case "host.openSettings":
             let url = try string(args, "url")
             guard url.hasPrefix("x-apple.systempreferences:"), let u = URL(string: url) else {
@@ -408,7 +426,11 @@ extension WebUIBridge {
             if let before = args["before"] as? NSNumber { out["before"] = before }
             if let limit = args["limit"] as? NSNumber { out["limit"] = limit }
             if args["markRead"] as? Bool == true { out["mark_read"] = true }
-            if let follow = (args["followMs"] as? NSNumber)?.intValue, follow > 0 { out["follow_ms"] = min(follow, 25_000) }
+            if let follow = (args["followMs"] as? NSNumber)?.intValue, follow > 0 {
+                out["follow_ms"] = min(follow, 25_000)
+                // The stage key last seen: the wait also ends when an agent's stage changes.
+                if let live = args["liveAfter"] as? String { out["live_after"] = live }
+            }
             // The Agents tab's DM with one agent member (CUA-2266).
             if let with = args["with"] as? String, !with.isEmpty { out["with"] = with }
             return ("thread_read", out)

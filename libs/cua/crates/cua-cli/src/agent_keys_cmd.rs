@@ -6,6 +6,7 @@
 //! pbpaste | cua agent keys set anthropic  # the key comes from stdin, never argv
 //! cua agent keys set other --env MISTRAL_API_KEY < key.txt
 //! cua agent keys rm ANTHROPIC_API_KEY
+//! cua agent keys check                    # ask each provider whether the saved keys still work
 //! ```
 //!
 //! These are the daemon's app methods (`agent_keys.*`), not MCP tools: no
@@ -37,6 +38,13 @@ pub enum KeysCmd {
         #[arg(long)]
         env: Option<String>,
     },
+    /// Ask each provider whether the saved API keys still work (a cheap
+    /// read-only request; nothing is sent that is not a key's own request).
+    /// A key the provider refuses is listed as needing a reconnect, and runs
+    /// are not given it until it is saved again.
+    #[command(after_help = "Examples:
+  cua agent keys check")]
+    Check,
     /// Remove the key a run gets as ENV.
     #[command(after_help = "Examples:
   cua agent keys rm ANTHROPIC_API_KEY")]
@@ -72,6 +80,7 @@ pub async fn run(
 ) -> Result<i32, CuaError> {
     let (method, args) = match cmd.unwrap_or(KeysCmd::Ls) {
         KeysCmd::Ls => ("agent_keys.list", serde_json::json!({})),
+        KeysCmd::Check => ("agent_keys.check", serde_json::json!({})),
         KeysCmd::Set { provider, env } => {
             let value = read_key(&mut std::io::stdin(), std::io::stdin().is_terminal())?;
             let mut a = serde_json::json!({ "provider": provider, "value": value });
@@ -126,10 +135,18 @@ fn lines(report: &serde_json::Value) -> Vec<String> {
             "{:<10} {:<24} {}",
             k["provider"].as_str().unwrap_or(""),
             k["env"].as_str().unwrap_or(""),
-            if last4.is_empty() {
-                "saved".to_string()
-            } else {
-                format!("****{last4}")
+            {
+                let shown = if last4.is_empty() {
+                    "saved".to_string()
+                } else {
+                    format!("****{last4}")
+                };
+                // A key the provider refused (or that expired) no longer works.
+                if k["expired"] == true {
+                    format!("{shown}  needs reconnect")
+                } else {
+                    shown
+                }
             }
         ));
     }
@@ -159,5 +176,11 @@ mod tests {
         );
         let r = serde_json::json!({"keys": [], "available": false, "unavailable": "no Keychain"});
         assert!(lines(&r)[0].contains("no Keychain"));
+        // A key the provider refused says so.
+        let r = serde_json::json!({"keys": [{"provider": "openai", "env": "OPENAI_API_KEY", "last4": "9z9z", "added_ms": 1, "expired": true}], "available": true});
+        assert_eq!(
+            lines(&r),
+            vec!["openai     OPENAI_API_KEY           ****9z9z  needs reconnect"]
+        );
     }
 }

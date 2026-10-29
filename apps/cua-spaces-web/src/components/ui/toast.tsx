@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Toast } from "@base-ui/react/toast";
-import { CircleAlertIcon, CircleCheckIcon, InfoIcon, XIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckIcon, CircleAlertIcon, CircleCheckIcon, CopyIcon, InfoIcon, XIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { CuaKey } from "@/components/cua-key";
 
@@ -83,6 +83,25 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Copies an error toast's complete text. */
+function CopyError({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      data-toast-copy=""
+      className="mt-1.5 -ml-1 flex items-center gap-1 rounded-lg px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+      onClick={() => {
+        void navigator.clipboard?.writeText(text).catch(() => undefined);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      }}
+    >
+      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />} {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
 function ToastList() {
   const { toasts } = Toast.useToastManager();
   return toasts.map((t) => {
@@ -101,7 +120,9 @@ function ToastList() {
         )}
         <Toast.Content className="min-w-0 flex-1">
           <Toast.Title className="text-[13px] font-medium" />
-          <Toast.Description className="text-xs text-muted-foreground" />
+          {/* An error is never cut: the whole text wraps (scrolls when very long), selects and copies. */}
+          <Toast.Description className="max-h-40 overflow-y-auto text-xs break-words whitespace-pre-wrap text-muted-foreground select-text" />
+          {t.type === "error" && typeof t.description === "string" && t.description ? <CopyError text={t.description} /> : null}
           {(t.data as { action?: ToastAction } | undefined)?.action ? (
             <button
               type="button"

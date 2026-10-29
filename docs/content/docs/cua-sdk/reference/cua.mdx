@@ -1034,7 +1034,7 @@ Returned by [`config_get`](#config_get), [`config_list`](#config_list), [`config
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `key` | `String` |  | `default.on`, `default.kind`, `default.runtime`, `runtime.lume`, `runtime.linux` or `telemetry.enabled`. |
+| `key` | `String` |  | `default.on`, `default.kind`, `default.runtime`, `runtime.container`, `runtime.vm`, `runtime.microvm` (and their `_path`) or `telemetry.enabled`. |
 | `value` | `String` |  | The effective value. |
 | `source` | `String` |  | `env`, `config` or `default`. |
 | `from` | `String` |  | Where exactly: `env CUA_DEFAULT_ON`, `config /home/me/.cua/config.toml` or `default`. |
@@ -1224,6 +1224,8 @@ Returned by [`Cua.local`](#cua).
 | [`push_image`](#localpush_image) | Copies an image (host architecture) to `destination`; returns the pushed manifest digest. |
 | [`setup`](#localsetup) | Provisions `components` (`qemu`, `lume`; `runsc` reports its plan). |
 | [`storage`](#localstorage) | Free space where local Spaces are written (Lume's VM storage, the cua home for QEMU, the container engine's data disk) and which catalog images are already pulled. |
+| [`runtime_check_path`](/cua-sdk/reference/runtime-kinds#localruntime_check_path) | What `path` is for `kind` (`container`, `vm`, `microvm`): there, runnable, which runtime and its version. |
+| [`runtime_kinds`](/cua-sdk/reference/runtime-kinds#localruntime_kinds) | Each kind of Space (`container`, `vm`, `microvm`) with its runtime setting (`runtime.<kind>`), the runtimes installed on this machine for it and what the path in use is. |
 
 ### `Local.build_image`
 

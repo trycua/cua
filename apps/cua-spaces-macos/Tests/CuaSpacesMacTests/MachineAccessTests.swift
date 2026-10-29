@@ -149,9 +149,9 @@ struct MachineAccessTests {
 
     @Test func notEnrolledPendingAndExpiredListMachinesWithConnectGreyedOut() async throws {
         for (e, kind, status) in [
-            (MachinesFixture.Enrollment.never, AppEnrollmentKind.needsEnrollment, "Not enrolled"),
-            (.pending, .waiting, "Waiting for approval"),
-            (.expired, .due, "Re-verification due"),
+            (MachinesFixture.Enrollment.never, AppEnrollmentKind.needsEnrollment, "Not trusted yet"),
+            (.pending, .waiting, "Waiting to be added"),
+            (.expired, .due, "Needs a quick check"),
         ] {
             let m = await MachinesFixture.model(rows: MachinesFixture.rows(reachable: false), enrollment: e)
             let notice = try #require(m.devices.accessNotice)
@@ -245,7 +245,7 @@ struct MachineAccessTests {
                                                 enrollment: .enrolled, hostSetUp: true, hostStatus: status)
             #expect(m.sidebar.thisMachine != nil)
             let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" },
-                                    "no My computers for \(features) \(String(describing: error))")
+                                    "no My machines for \(features) \(String(describing: error))")
             #expect(mine.rows.map(\.id) == [other])
         }
     }

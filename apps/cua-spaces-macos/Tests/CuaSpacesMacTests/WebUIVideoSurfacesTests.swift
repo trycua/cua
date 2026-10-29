@@ -648,6 +648,36 @@ struct WebUIVideoSurfacesTests {
         s.removeAll()
     }
 
+    /// CUA-2641: a modal dialog over the viewer no longer hides the stream.
+    /// The page reports the viewer non-interactive instead: the video stays
+    /// shown and live, but it gives back the keyboard and takes no clicks
+    /// (the dialog's backdrop and Escape work), and takes both again after.
+    @Test func aModalDialogOverTheViewerKeepsItLiveButTakesItsKeysAndClicks() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.handle(message([entry("v", space: "a")]))
+        await settle { host.phases("v").contains("live") }
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == "v")
+        let view = try #require(s.surfaces["v"]?.view)
+        // The dialog opens: not occluded, not interactive, one hole where its popup is.
+        var modal = entry("v", space: "a", interactive: false)
+        modal["holes"] = [["x": 100, "y": 60, "width": 200, "height": 120]]
+        s.handle(message([modal]))
+        #expect(!view.isHidden)
+        #expect(host.phases("v").last == "live")
+        #expect(s.focusedId == nil)
+        #expect(view.layer?.mask != nil)
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == nil)
+        // Closed: the viewer takes the keyboard again.
+        s.handle(message([entry("v", space: "a")]))
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == "v")
+        s.removeAll()
+    }
+
     @Test func theHarnessAddsRunningFixtureSpaces() {
         #expect(FixtureSpacesBackend.rows(environment: [:]).count == FixtureSpacesBackend.sample.count)
         let rows = FixtureSpacesBackend.rows(environment: ["CUA_SPACES_FIXTURE_SPACES": "3"])

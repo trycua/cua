@@ -14,7 +14,6 @@ const TABS = [
   ["Account", "/settings"],
   ["General", "/settings/general"],
   ["Connectors", "/settings/connectors"],
-  ["Trusted devices", "/settings/devices"],
   ["Advanced", "/settings/advanced"],
   ["About", "/settings/about"],
 ] as const;

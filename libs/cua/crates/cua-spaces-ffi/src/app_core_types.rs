@@ -522,7 +522,7 @@ pub struct AppListView {
     /// not empty yet (an app update restarting the daemon must not show it).
     pub empty: bool,
     /// One quiet line where the Spaces go while the list is not complete
-    /// ("Reaching 6 computers…"), below what is known so far.
+    /// ("Reaching 6 machines…"), below what is known so far.
     pub reaching_line: Option<String>,
 }
 
@@ -6669,6 +6669,8 @@ pub struct AppAgentKeyInput {
     pub last4: String,
     /// When it was added (Unix ms).
     pub added_ms: u64,
+    /// A sign-in past its expiry: not used by any run until reconnected.
+    pub expired: bool,
 }
 
 /// What the section shows.
@@ -6889,6 +6891,94 @@ pub struct AppExperiments {
     pub web_ui: bool,
 }
 
+/// A runtime the host found for one kind (the SDK's `RuntimeDetected`).
+pub type AppDetectedRuntime = core::runtimes::DetectedRuntime;
+#[uniffi::remote(Record)]
+pub struct AppDetectedRuntime {
+    /// `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+    pub tool: String,
+    /// As people know it (`Docker`, `Apple container`).
+    pub name: String,
+    pub path: String,
+    /// As its `--version` says it (`27.3.1`).
+    pub version: Option<String>,
+    /// The one guest system it runs, when only one (`macOS`, `Linux`).
+    pub guests: Option<String>,
+}
+
+/// What a binary is for one kind (the SDK's `RuntimePathProbe`).
+pub type AppRuntimePathCheck = core::runtimes::RuntimePathCheck;
+#[uniffi::remote(Record)]
+pub struct AppRuntimePathCheck {
+    pub path: String,
+    /// A file is there.
+    pub exists: bool,
+    /// It can be run.
+    pub executable: bool,
+    /// The tool it is, when it is one the kind takes.
+    pub tool: Option<String>,
+    pub name: Option<String>,
+    pub version: Option<String>,
+    /// The oldest version Cua runs on.
+    pub min_version: Option<String>,
+    /// The tools the kind takes here (`Docker`, `Podman`).
+    pub expected: Vec<String>,
+    pub guests: Option<String>,
+}
+
+/// One kind as the host read it (the SDK's `RuntimeKindState`).
+pub type AppRuntimeKindInput = core::runtimes::RuntimeKindInput;
+#[uniffi::remote(Record)]
+pub struct AppRuntimeKindInput {
+    /// `container`, `vm` or `microvm`.
+    pub kind: String,
+    /// `runtime.<kind>`: `auto`, `builtin`, `system` (none: auto).
+    pub source: Option<String>,
+    /// `runtime.<kind>_path`, when set.
+    pub path: Option<String>,
+    /// What is installed for the kind, the one used first (none: not
+    /// looked for yet).
+    pub detected: Option<Vec<AppDetectedRuntime>>,
+    /// The path in use, probed.
+    pub check: Option<AppRuntimePathCheck>,
+    /// The tools the kind takes on this machine (`Docker`, `Podman`).
+    pub expected: Vec<String>,
+}
+
+/// What Settings knows about this machine's runtimes.
+pub type AppRuntimesInput = core::runtimes::RuntimesInput;
+#[uniffi::remote(Record)]
+pub struct AppRuntimesInput {
+    /// This machine's system (none: not said; every option is offered).
+    pub os: Option<AppSpaceOs>,
+    /// `arm64`, `amd64`.
+    pub host_arch: Option<String>,
+    /// The runtime doctor's ready backends (none: not read yet).
+    pub local_backends: Option<Vec<String>>,
+    /// Why each other backend is not ready.
+    pub local_details: Option<std::collections::HashMap<String, String>>,
+    /// Each kind's setting and what is installed for it (none: not read).
+    pub kinds: Option<Vec<AppRuntimeKindInput>>,
+}
+
+/// A path's one line: whether it can be used, and what it is.
+pub type AppRuntimePathVerdict = core::runtimes::RuntimePathVerdict;
+#[uniffi::remote(Record)]
+pub struct AppRuntimePathVerdict {
+    pub ok: bool,
+    pub line: String,
+}
+
+/// What a row in the section changes: the setting and its new value
+/// (`None`: unset it, back to the default or the detected path).
+pub type AppRuntimeSettingChange = core::runtimes::RuntimeSettingChange;
+#[uniffi::remote(Record)]
+pub struct AppRuntimeSettingChange {
+    /// `runtime.container`, `runtime.vm_path`.
+    pub key: String,
+    pub value: Option<String>,
+}
+
 /// Notch island or glass.
 pub type AppSwitcherTheme = core::settings::SwitcherTheme;
 #[uniffi::remote(Enum)]
@@ -7017,21 +7107,6 @@ pub struct AppTelemetryInput {
     pub notice_shown: bool,
 }
 
-/// This machine's runtime doctor, for Settings, Advanced, Runtimes'
-/// MicroVM row (the same facts New Space's MicroVM tile follows).
-pub type AppMicrovmInput = core::settings::MicrovmInput;
-#[uniffi::remote(Record)]
-pub struct AppMicrovmInput {
-    /// This machine's system (`macos`, `linux`, `windows`).
-    pub os: Option<AppSpaceOs>,
-    /// Ready backends (none: not read yet).
-    pub local_backends: Option<Vec<String>>,
-    /// Why each other backend is not ready, by backend name.
-    pub local_details: Option<std::collections::HashMap<String, String>>,
-    /// This machine's architecture (`arm64`, `amd64`).
-    pub host_arch: Option<String>,
-}
-
 /// What the Settings page shows.
 pub type AppSettingsInput = core::settings::SettingsInput;
 #[uniffi::remote(Record)]
@@ -7078,18 +7153,13 @@ pub struct AppSettingsInput {
     /// "Connect to the desktop automatically" (none: no row; a shell
     /// without the preview cover leaves it out).
     pub auto_connect: Option<bool>,
-    /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
-    /// `system`); none: no Runtimes section.
-    pub lume_source: Option<String>,
-    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
-    /// `builtin`, `system`); none: no Linux row.
-    pub linux_source: Option<String>,
     /// Overflow into your clouds when this machine is full
     /// (`placement.overflow`); none: no row.
     pub overflow: Option<bool>,
-    /// What this machine's runtime doctor said, for Runtimes' MicroVM row
-    /// (whether microVMs run here, and why not); none: no MicroVM row.
-    pub microvm: Option<AppMicrovmInput>,
+    /// Settings, Advanced's runtimes: each kind's setting, what is
+    /// installed for it and whether it runs here. None: nothing read yet
+    /// (the rows still show, "Checking…").
+    pub runtimes: Option<AppRuntimesInput>,
     /// Settings, General's Show tips switch: tips are on
     /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
     pub show_tips: bool,
@@ -7395,6 +7465,8 @@ pub struct AppMenuInput {
 }
 
 /// The parts of the host status the summary reads (`cua-host`'s status).
+/// The summary is about this machine's own desktop (its row in the Spaces
+/// list), so `sharing` is on only while the desktop is shared.
 pub type AppHostSummaryInput = core::host::HostSummaryInput;
 #[uniffi::remote(Record)]
 pub struct AppHostSummaryInput {
@@ -7430,16 +7502,15 @@ pub struct AppHostSetupRequest {
     pub name: Option<String>,
     /// Accounts (ids or emails) allowed besides the owner.
     pub allow: Option<Vec<String>>,
-    /// What the machine is for: `desktop` (share this desktop, and
-    /// provide Spaces on a new relay setup; the default) or `spare` (only
-    /// run Spaces for your other devices).
+    /// What the machine is for: `spare` (the default: other machines
+    /// create Spaces here, its desktop stays private) or `desktop` (also
+    /// let other machines control this desktop).
     pub profile: Option<String>,
     /// Share this machine's own desktop (overrides the profile).
     pub share_desktop: Option<bool>,
-    /// Create Spaces for your other devices (overrides the profile).
-    /// `None` with the desktop profile: on for a new relay setup; a
-    /// machine set up before keeps its setting (the host decides,
-    /// `cua_host::default_provide_spaces`).
+    /// Let other machines create Spaces here (overrides the profile).
+    /// `None`: on for a new relay setup; a machine set up before keeps
+    /// its setting (the host decides, `cua_host::default_provide_spaces`).
     pub provide_spaces: Option<bool>,
 }
 
@@ -7568,6 +7639,21 @@ pub struct AppHostState {
     pub max_spaces: u32,
     /// macOS VMs at once (at most two; 0 off a Mac).
     pub max_macos_vms: u32,
+    /// Memory the Spaces other machines create here may use in total, in GB
+    /// (0: no limit).
+    pub max_memory_gb: u32,
+    /// Disk the Spaces other machines create here may use in total, in GB
+    /// (0: no limit).
+    pub max_disk_gb: u32,
+    /// How long a Space created here by another machine may run, in minutes
+    /// (0: no limit).
+    pub max_run_minutes: u32,
+    /// What those Spaces were given now, in GB.
+    pub used_memory_gb: u32,
+    pub used_disk_gb: u32,
+    /// This machine's own memory and disk in GB (0: not known).
+    pub total_memory_gb: u32,
+    pub total_disk_gb: u32,
     /// The Spaces this machine provides now.
     pub provided_spaces: Vec<AppHostProvidedSpace>,
     /// Remote creates, deletes and refusals, and settings changes, newest
@@ -7645,6 +7731,34 @@ pub struct AppHostSettingChange {
     pub share_desktop: Option<bool>,
     /// Provide Spaces.
     pub provide_spaces: Option<bool>,
+}
+
+/// One limit on the Spaces other machines create here, drawn as a number
+/// row under the switch (Settings, Sharing).
+pub type AppHostLimitRow = core::host::HostLimitRow;
+#[uniffi::remote(Record)]
+pub struct AppHostLimitRow {
+    /// `max-spaces`, `max-memory`, `max-disk` or `max-run`.
+    pub id: String,
+    /// "Most Spaces at once".
+    pub label: String,
+    /// One line under it.
+    pub help: String,
+    /// The limit (0: no limit).
+    pub value: u32,
+    /// What the number counts: `Spaces`, `GB` or `minutes`.
+    pub unit: String,
+    /// What is in use now ("2 of 4 Spaces", "12 of 32 GB"; "2 Spaces" with
+    /// no limit); none for a limit that is about time.
+    pub use_text: Option<String>,
+    /// This machine's own total in `unit` (memory and disk), 0 when not
+    /// known.
+    pub total: u32,
+    /// Use is above the limit (it was lowered below what runs): nothing
+    /// is stopped, new Spaces are refused.
+    pub over: bool,
+    /// "Over limit" while `over`.
+    pub over_text: Option<String>,
 }
 
 /// One of the two settings, drawn as a switch.
@@ -7778,6 +7892,9 @@ pub struct AppHostPanelView {
     /// The limits, one line ("Up to 4 Spaces \u{b7} 2 macOS VMs"), while
     /// providing Spaces.
     pub limits: Option<String>,
+    /// The limits as number rows (Settings, Sharing), while providing
+    /// Spaces: most Spaces, memory and disk in total, longest running time.
+    pub limit_rows: Vec<AppHostLimitRow>,
     /// "Spaces for your devices", while providing Spaces.
     pub provided_title: Option<String>,
     /// One row per Space this machine provides.
@@ -10273,7 +10390,7 @@ pub struct AppMachinesViewRelay {
     pub team: Option<String>,
     /// Its owner's email, when the relay says.
     pub owner_email: Option<String>,
-    /// It creates Spaces for your devices (`None`: it did not say).
+    /// It lets your other machines create Spaces (`None`: it did not say).
     pub provides_spaces: Option<bool>,
 }
 
@@ -10324,7 +10441,8 @@ pub type AppMachinesViewToggle = core::machines_view::MachinesViewToggle;
 pub struct AppMachinesViewToggle {
     /// `spaces` or `desktop`.
     pub id: String,
-    /// "Provide Spaces", "Share this desktop".
+    /// "Let other machines create Spaces here", "Let other machines control
+    /// this desktop".
     pub label: String,
     /// One line under it.
     pub help: String,
@@ -10479,7 +10597,8 @@ pub struct AppMachinesViewMachine {
     pub notice: Option<String>,
     /// The notice's button (Sign In).
     pub notice_action: Option<AppHostAction>,
-    /// Provide Spaces, then Share this desktop.
+    /// Create Spaces here, then control this desktop (This Mac: the
+    /// desktop switch only).
     pub toggles: Vec<AppMachinesViewToggle>,
     /// Under read-only switches: where they change.
     pub toggles_note: Option<String>,

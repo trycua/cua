@@ -34,6 +34,7 @@ description: "Agents in a Space, connecting your AI agents, the stdio MCP server
 | [`cua agent keys`](#cua-agent-keys) | The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connectors). |
 | [`cua agent keys ls`](#cua-agent-keys-ls) | List the saved keys (never their values). |
 | [`cua agent keys set`](#cua-agent-keys-set) | Add or replace a key, read from stdin. |
+| [`cua agent keys check`](#cua-agent-keys-check) | Ask each provider whether the saved API keys still work (a cheap read-only request; nothing is sent that is not a key's own request). |
 | [`cua agent keys rm`](#cua-agent-keys-rm) | Remove the key a run gets as ENV. |
 | [`cua agent create`](#cua-agent-create) | Deprecated alias of `add`. |
 | [`cua agent persistent`](#cua-agent-persistent) | Deprecated alias of `ls` (without a sandbox). |
@@ -565,6 +566,20 @@ cua agent keys set anthropic
 cua agent keys set other --env GEMINI_API_KEY
 ```
 
+#### `cua agent keys check`
+
+Ask each provider whether the saved API keys still work (a cheap read-only request; nothing is sent that is not a key's own request). A key the provider refuses is listed as needing a reconnect, and runs are not given it until it is saved again.
+
+```text output
+cua agent keys check [OPTIONS]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-keys-check"
+cua agent keys check
+```
+
 #### `cua agent keys rm`
 
 Remove the key a run gets as ENV.
@@ -1053,7 +1068,7 @@ cua connect setup [OPTIONS]
 | <span id="cua-connect-setup--yes"></span>`--yes` | `-y` | boolean | `false` | Answer yes to every prompt. |
 | <span id="cua-connect-setup--force"></span>`--force` |  | boolean | `false` | Replace skill folders cua did not write (the old one is backed up). |
 | <span id="cua-connect-setup--cua-driver"></span>`--cua-driver` |  | boolean | `false` | Set up background computer-use instead: the cua-driver skill and the cua-driver MCP server (`cua-driver mcp`). --mcp-command then names the cua-driver binary. |
-| <span id="cua-connect-setup--sign-in"></span>`--sign-in` |  | boolean | `false` | Also copy each agent's sign-in to Keyvault on This Mac, so its runs in your Spaces use it: Codex's ChatGPT sign-in (`~/.codex/auth.json`), Claude Code's `claude setup-token` (one browser approval), Hermes' provider key (`~/.hermes/.env`). The agent's own sign-in is never changed. |
+| <span id="cua-connect-setup--sign-in"></span>`--sign-in` |  | boolean | `false` | Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: Claude Code's `claude setup-token` (one browser approval) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). The agent's own sign-in files are never read or changed. |
 
 **Examples**
 
@@ -1178,7 +1193,7 @@ cua agents setup [OPTIONS]
 | <span id="cua-agents-setup--yes"></span>`--yes` | `-y` | boolean | `false` | Answer yes to every prompt. |
 | <span id="cua-agents-setup--force"></span>`--force` |  | boolean | `false` | Replace skill folders cua did not write (the old one is backed up). |
 | <span id="cua-agents-setup--cua-driver"></span>`--cua-driver` |  | boolean | `false` | Set up background computer-use instead: the cua-driver skill and the cua-driver MCP server (`cua-driver mcp`). --mcp-command then names the cua-driver binary. |
-| <span id="cua-agents-setup--sign-in"></span>`--sign-in` |  | boolean | `false` | Also copy each agent's sign-in to Keyvault on This Mac, so its runs in your Spaces use it: Codex's ChatGPT sign-in (`~/.codex/auth.json`), Claude Code's `claude setup-token` (one browser approval), Hermes' provider key (`~/.hermes/.env`). The agent's own sign-in is never changed. |
+| <span id="cua-agents-setup--sign-in"></span>`--sign-in` |  | boolean | `false` | Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: Claude Code's `claude setup-token` (one browser approval) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). The agent's own sign-in files are never read or changed. |
 
 **Examples**
 

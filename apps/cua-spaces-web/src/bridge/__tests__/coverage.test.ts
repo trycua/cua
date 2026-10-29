@@ -71,6 +71,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.status": { refresh: true },
   "agents.connect": { agents: ["codex"], signIn: true },
   "agents.disconnect": { agents: ["codex"], signIn: true },
+  "agents.signInStart": { agent: "codex" },
+  "agents.signInWait": { id: "codex-1" },
   ...AGENT_DETAIL_ARGS,
   ...NEW_SPACE_ARGS,
   ...AGENT_KEYS_ARGS,
@@ -113,6 +115,11 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "loginItem.get": {},
   "loginItem.set": { on: true },
   "loginItem.openSettings": {},
+  "runtimes.check": { kind: "container", path: "/usr/local/bin/docker" },
+  "runtimes.browse": { kind: "container" },
+  "repoCache.get": {},
+  "repoCache.set": { enabled: true, sizeGb: 2 },
+  "repoCache.clear": {},
   "devices.get": {},
   "devices.enroll": {},
   "devices.checkEnrolled": {},
@@ -143,6 +150,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
   "host.action": { action: "stop-sharing" },
+  "host.limits": { maxSpaces: 6 },
   "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
   "startup.get": {},
   "startup.act": { action: "allowAccess" },
@@ -199,6 +207,7 @@ function webkitResult(method: string): unknown {
     case "host.setUp":
     case "host.joinWithCode":
     case "host.action":
+    case "host.limits":
       return { configured: false, sharing: false, serviceInstalled: false, serviceRunning: false, serviceKind: "process", clients: [], permissions: [], shareDesktop: true, provideSpaces: false, maxSpaces: 0 };
     case "keyvault.approve":
       return { id: "grant-1", requestId: "req-1", items: [] };

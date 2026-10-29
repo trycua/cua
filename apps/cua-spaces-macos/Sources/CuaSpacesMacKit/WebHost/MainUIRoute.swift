@@ -111,11 +111,11 @@ struct MainUIRouter {
     }
 
     /// The page a click on one of the app's notifications opens: a Space that
-    /// came up (its page), a device asking to join (Settings, Devices, with
-    /// its approval), an agent's answer or request (Agents), else Spaces.
+    /// came up (its page), a machine asking to be added (Machines, where
+    /// it waits with Add machine and Not me), an agent's answer or request (Agents), else Spaces.
     static func route(forNotification id: String) -> MainUIRoute {
         if let spaceId = SpaceReadyNote.spaceId(fromIdentifier: id) { return .space(spaceId) }
-        if id.hasPrefix("device-") { return .path("/settings/devices") }
+        if id.hasPrefix("device-") { return .path("/machines") }
         if id.hasPrefix("agent-") { return .agents }
         return .home
     }

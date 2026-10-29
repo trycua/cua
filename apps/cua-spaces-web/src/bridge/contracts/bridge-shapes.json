@@ -195,6 +195,9 @@
               },
               "addedMs": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -254,6 +257,9 @@
         "name": {
           "type": "string"
         },
+        "handle": {
+          "type": "string"
+        },
         "harness": {
           "type": "string"
         },
@@ -264,6 +270,38 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "failure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "class": {
+              "enum": [
+                "needs_connect",
+                "error"
+              ]
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "class",
+            "provider",
+            "message",
+            "retryable"
           ]
         },
         "sessions": {
@@ -1792,6 +1830,27 @@
           "type": "number"
         },
         "maxMacosVms": {
+          "type": "number"
+        },
+        "maxMemoryGb": {
+          "type": "number"
+        },
+        "maxDiskGb": {
+          "type": "number"
+        },
+        "maxRunMinutes": {
+          "type": "number"
+        },
+        "usedMemoryGb": {
+          "type": "number"
+        },
+        "usedDiskGb": {
+          "type": "number"
+        },
+        "totalMemoryGb": {
+          "type": "number"
+        },
+        "totalDiskGb": {
           "type": "number"
         },
         "recentAccess": {
@@ -3874,6 +3933,53 @@
         "targetEpoch"
       ]
     },
+    "RepoCacheView": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "repos": {
+          "type": "number"
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "capBytes": {
+          "type": "number"
+        },
+        "sizeSetting": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "week": {
+          "type": "string"
+        },
+        "hits": {
+          "type": "number"
+        },
+        "misses": {
+          "type": "number"
+        },
+        "secondsSaved": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "enabled",
+        "repos",
+        "bytes",
+        "capBytes",
+        "sizeSetting",
+        "summary",
+        "week",
+        "hits",
+        "misses",
+        "secondsSaved"
+      ]
+    },
     "RuntimeFix": {
       "type": "object",
       "properties": {
@@ -3910,6 +4016,181 @@
         "busy",
         "termsUrl"
       ]
+    },
+    "RuntimePathCheck": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "exists": {
+          "type": "boolean"
+        },
+        "executable": {
+          "type": "boolean"
+        },
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "minVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "guests": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "exists",
+        "executable",
+        "expected"
+      ]
+    },
+    "RuntimesInput": {
+      "type": "object",
+      "properties": {
+        "os": {
+          "enum": [
+            "macos",
+            "windows",
+            "linux",
+            "unknown",
+            null
+          ]
+        },
+        "hostArch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "localBackends": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "localDetails": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kinds": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "detected": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "tool": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "guests": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "tool",
+                    "name",
+                    "path"
+                  ]
+                }
+              },
+              "check": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RuntimePathCheck"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        }
+      }
     },
     "SessionSnapshot": {
       "type": "object",
@@ -4186,19 +4467,23 @@
         "hostSettings": {
           "type": "object",
           "properties": {
-            "lumeSource": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "linuxSource": {
-              "type": [
-                "string",
-                "null"
+            "runtimes": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuntimesInput"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "autoConnect": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "overflow": {
               "type": [
                 "boolean",
                 "null"
@@ -5320,6 +5605,44 @@
             "title",
             "windowId"
           ]
+        },
+        "failure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "class": {
+              "enum": [
+                "needs_connect",
+                "error"
+              ]
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "class",
+            "provider",
+            "message",
+            "retryable"
+          ]
+        },
+        "fanoutOf": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -6005,6 +6328,48 @@
             "null"
           ]
         },
+        "maxMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxRunMinutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usedMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usedDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "totalMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "totalDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "recentAccess": {
           "type": [
             "array",
@@ -6582,6 +6947,16 @@
             "off",
             "done"
           ]
+        },
+        "runtimes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimesInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -6874,6 +7249,12 @@
     "about.set": {
       "$ref": "#/$defs/AboutInput"
     },
+    "agentKeys.check": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agentKeys.fromShell": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
     "agentKeys.list": {
       "$ref": "#/$defs/AgentKeysReport"
     },
@@ -6882,6 +7263,20 @@
     },
     "agentKeys.set": {
       "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agentKeys.shell": {
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "names"
+      ]
     },
     "agents.addRoutine": {
       "type": "null"
@@ -7197,6 +7592,38 @@
         "$ref": "#/$defs/AgentSetupRow"
       }
     },
+    "agents.signInStart": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "code"
+      ]
+    },
+    "agents.signInWait": {
+      "type": "object",
+      "properties": {
+        "imported": {},
+        "refused": {},
+        "line": {}
+      },
+      "required": [
+        "imported",
+        "refused",
+        "line"
+      ]
+    },
     "agents.start": {
       "type": "object",
       "properties": {
@@ -7478,6 +7905,9 @@
       "$ref": "#/$defs/HostStatus"
     },
     "host.joinWithCode": {
+      "$ref": "#/$defs/HostStatus"
+    },
+    "host.limits": {
       "$ref": "#/$defs/HostStatus"
     },
     "host.openSettings": {
@@ -7882,6 +8312,15 @@
         "upgradeUrl"
       ]
     },
+    "repoCache.clear": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.get": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.set": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
     "resources.get": {
       "type": [
         "object",
@@ -7921,6 +8360,23 @@
         "computers",
         "warning"
       ]
+    },
+    "runtimes.browse": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "runtimes.check": {
+      "$ref": "#/$defs/RuntimePathCheck"
     },
     "session.completeOnboarding": {
       "type": "null"
@@ -8693,6 +9149,42 @@
             "$ref": "#/$defs/ThreadEntry"
           }
         },
+        "live": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "stage": {
+                    "type": "string"
+                  },
+                  "sinceMs": {
+                    "type": "number"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent",
+                  "stage"
+                ]
+              }
+            }
+          },
+          "required": [
+            "key",
+            "agents"
+          ]
+        },
         "cursor": {
           "type": "number"
         },
@@ -8730,6 +9222,7 @@
       },
       "required": [
         "entries",
+        "live",
         "cursor",
         "caughtUp",
         "unread",
@@ -8814,6 +9307,144 @@
     "about.set": {
       "$ref": "#/$defs/AboutInput"
     },
+    "agentKeys.check": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agentKeys.fromShell": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
     "agentKeys.list": {
       "type": "object",
       "properties": {
@@ -8833,6 +9464,9 @@
               },
               "added_ms": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -8899,6 +9533,9 @@
               },
               "added_ms": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -8965,6 +9602,9 @@
               },
               "added_ms": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -9010,6 +9650,20 @@
         "keys",
         "providers",
         "available"
+      ]
+    },
+    "agentKeys.shell": {
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "names"
       ]
     },
     "agents.addRoutine": {
@@ -9321,6 +9975,38 @@
       "items": {
         "$ref": "#/$defs/AgentSetupRow"
       }
+    },
+    "agents.signInStart": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "code"
+      ]
+    },
+    "agents.signInWait": {
+      "type": "object",
+      "properties": {
+        "imported": {},
+        "refused": {},
+        "line": {}
+      },
+      "required": [
+        "imported",
+        "refused",
+        "line"
+      ]
     },
     "agents.start": {
       "type": "object",
@@ -9637,6 +10323,16 @@
       ]
     },
     "host.joinWithCode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "host.limits": {
       "anyOf": [
         {
           "$ref": "#/$defs/WkHostState"
@@ -10023,6 +10719,15 @@
         "upgradeUrl"
       ]
     },
+    "repoCache.clear": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.get": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.set": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
     "resources.get": {
       "type": [
         "object",
@@ -10062,6 +10767,23 @@
         "computers",
         "warning"
       ]
+    },
+    "runtimes.browse": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "runtimes.check": {
+      "$ref": "#/$defs/RuntimePathCheck"
     },
     "session.get": {
       "$ref": "#/$defs/WkSession"

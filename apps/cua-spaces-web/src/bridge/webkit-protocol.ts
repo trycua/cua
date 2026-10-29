@@ -30,7 +30,7 @@
  */
 
 import type { MachineAccessNotice } from "./contracts/devices";
-import type { MachinePageRow, MachinesView } from "./contracts/host";
+import type { MachinePageRow, MachinesView, RuntimesInput } from "./contracts/host";
 import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
@@ -78,6 +78,8 @@ export const WEBKIT_METHODS = [
   "agents.status",
   "agents.connect",
   "agents.disconnect",
+  "agents.signInStart",
+  "agents.signInWait",
   ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
@@ -124,6 +126,11 @@ export const WEBKIT_METHODS = [
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
+  "runtimes.check",
+  "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -154,6 +161,7 @@ export const WEBKIT_METHODS = [
   "host.setUp",
   "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
   "settings.get",
   "settings.choose",
@@ -372,6 +380,8 @@ export interface WkSettings {
   cli?: { name: string; installed: boolean } | null;
   /** `AppSettings.tips`; absent: an older host that keeps none. Saved with `settings.update`. */
   tips?: { off: boolean; done: string[] };
+  /** Settings, Advanced's runtimes as the host read them (`runtimes::RuntimesInput`); absent: not read. */
+  runtimes?: RuntimesInput | null;
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */
@@ -405,6 +415,13 @@ export interface WkHostState {
   provideSpaces: boolean;
   maxSpaces: number;
   maxMacosVms?: number | null;
+  maxMemoryGb?: number | null;
+  maxDiskGb?: number | null;
+  maxRunMinutes?: number | null;
+  usedMemoryGb?: number | null;
+  usedDiskGb?: number | null;
+  totalMemoryGb?: number | null;
+  totalDiskGb?: number | null;
   recentAccess?: { atMs: number; via: string; who: string; what: string }[] | null;
   accessLogError?: string | null;
   providedSpaces?: import("./contracts/host").HostProvidedSpace[] | null;

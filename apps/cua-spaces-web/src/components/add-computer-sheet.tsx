@@ -62,7 +62,7 @@ export const METHODS: readonly { view: Exclude<AddView, "pick" | "enter">; label
 ];
 
 const TITLES: Record<AddView, string> = {
-  pick: "Add a computer",
+  pick: "Add a machine",
   signin: "Sign in there",
   link: "Open a link",
   qr: "Scan a QR code",
@@ -78,7 +78,7 @@ const TITLES: Record<AddView, string> = {
  * add link for the code.
  */
 export function agentPrompt(code: string, url: string | null = null): string {
-  return `Add this computer to my Cua Spaces: ${url ?? `https://cua.ai/add/${code}`}`;
+  return `Add this machine to my Cua Spaces: ${url ?? `https://cua.ai/add/${code}`}`;
 }
 
 /**
@@ -181,7 +181,7 @@ export function AddComputerSheet({
     // The hook's functions are new on every render.
   }, [waiting, newComputerPollMs]);
 
-  const added = pairing.phase === "used" ? (usedName ?? arrived?.name ?? "the computer") : (arrived?.name ?? null);
+  const added = pairing.phase === "used" ? (usedName ?? arrived?.name ?? "the machine") : (arrived?.name ?? null);
   const forTeam = chosenTeam && pairing.phase === "used" ? teamName(chosenTeam) : null;
 
   const close = () => onOpenChange(false);
@@ -254,7 +254,7 @@ function computerIds(list: readonly Machine[]): Set<string> {
 
 /** "This Mac" on a Mac, else "This computer". */
 function thisComputerName(list: readonly Machine[]): string {
-  return list.find((m) => m.current)?.os === "macos" ? "This Mac" : "This computer";
+  return list.find((m) => m.current)?.os === "macos" ? "This Mac" : "This machine";
 }
 
 /* ---- The first page: the methods -------------------------------------------------- */
@@ -263,8 +263,8 @@ function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boole
   const code = pairing.code?.code ?? null;
   return (
     <>
-      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Any Mac, Linux or Windows computer you own can run Spaces for you.</DialogDescription>
-      <nav aria-label="Ways to add a computer" className="mt-3" data-add-methods="">
+      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Any Mac, Linux or Windows machine you own can run Spaces for you.</DialogDescription>
+      <nav aria-label="Ways to add a machine" className="mt-3" data-add-methods="">
         <GroupedSection>
           {METHODS.map((m) => {
             const off = m.code && noCode;
@@ -298,7 +298,7 @@ function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boole
         <div className="mt-5" data-add-prompt="">
           <div className="flex items-center justify-between">
             <label htmlFor="add-agent-prompt" className="text-[13px] font-medium">
-              Or paste this into an agent on that computer
+              Or paste this into an agent on that machine
             </label>
             <CopyButton text={code ? agentPrompt(code, pairing.code?.url ?? null) : ""} label="Copy prompt" disabled={!code || pairing.phase !== "ready"} />
           </div>
@@ -322,7 +322,7 @@ function SignInThere({ identity, done }: { identity: string | null; done: boolea
   return (
     <div data-add-signin="">
       <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-        On the other computer, open this link, install Cua Spaces and sign in{identity ? ` as ${identity}` : " with this account"}. It shows up here.
+        On the other machine, open this link, install Cua Spaces and sign in{identity ? ` as ${identity}` : " with this account"}. It shows up here.
       </DialogDescription>
       <CopyLine text={INSTALL_URL} label="Copy link" dim={done} />
     </div>
@@ -343,7 +343,7 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
           ? "Your Cua relay can't make codes yet. Use Sign in there instead."
           : pairing.error
             ? `${pairing.error.message} Use Sign in there instead.`
-            : "This computer can't make a code. Use Sign in there instead."}
+            : "This machine can't make a code. Use Sign in there instead."}
       </p>
     );
   }
@@ -358,7 +358,7 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
   if (view === "link") {
     return (
       <div data-add-link="">
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Open this link on the other computer. It shows the command that installs Cua Spaces and adds the computer here.</DialogDescription>
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Open this link on the other machine. It shows the command that installs Cua Spaces and adds the machine here.</DialogDescription>
         {code.url ? <CopyLine text={code.url} label="Copy link" dim={dim} /> : null}
       </div>
     );
@@ -366,7 +366,7 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
   if (view === "qr") {
     return (
       <div data-add-qr="">
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Scan it with the other computer's camera to open the same one-time link.</DialogDescription>
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Scan it with the other machine's camera to open the same one-time link.</DialogDescription>
         {code.url ? (
           <div className={cn("mt-4 flex justify-center", dim && "opacity-45")}>
             <QrCode text={code.url} size={208} />
@@ -379,8 +379,8 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
     const command = shell === "sh" ? code.installSh : code.installPowershell;
     return (
       <div data-add-command="">
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Run this on the other computer. It installs Cua Spaces and adds the computer here.</DialogDescription>
-        <Segmented className="mt-3" aria-label="The other computer's system" value={shell} options={SHELLS} onValueChange={setShell} disabled={done} />
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Run this on the other machine. It installs Cua Spaces and adds the machine here.</DialogDescription>
+        <Segmented className="mt-3" aria-label="The other machine's system" value={shell} options={SHELLS} onValueChange={setShell} disabled={done} />
         {command ? <CopyLine text={command} label="Copy command" mono dim={dim} /> : null}
       </div>
     );
@@ -388,7 +388,7 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
   // Enter a code: for a computer that already has Cua Spaces.
   return (
     <div data-add-code="">
-      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">On the computer that has Cua Spaces, choose Add a computer, then Have a code? Enter it, and type:</DialogDescription>
+      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">On the machine that has Cua Spaces, choose Add a machine, then Have a code? Enter it, and type:</DialogDescription>
       <div className={cn("mt-4 flex items-center justify-between gap-4", dim && "opacity-45")} data-pairing-code="">
         <code className="font-mono text-[28px] font-medium tracking-[0.08em] tabular-nums">{code.code}</code>
         <CopyButton text={code.code ?? ""} label="Copy code" disabled={dim} />
@@ -447,7 +447,7 @@ function Footer({
     ? null
     : limit === "seats" || /no free seats/.test(failedText)
       ? "seats"
-      : limit === "machines" || /as many computers as it has seats/.test(failedText)
+      : limit === "machines" || /as many machines as it has seats/.test(failedText)
         ? "machines"
         : null;
   const asCard = cards && cardReason !== null;
@@ -547,7 +547,7 @@ function Footer({
         </Status>
       ) : (
         <Status kind="wait" data={{ "data-pairing-waiting": "" }}>
-          {view === "signin" ? "Waiting for a new computer…" : "Waiting for the computer…"}
+          {view === "signin" ? "Waiting for a new machine…" : "Waiting for the machine…"}
         </Status>
       )}
       {usesCode && pairing.code && pairing.phase === "ready" ? (
@@ -629,7 +629,7 @@ function EnterCode({
           Enter a code
         </DialogTitle>
         <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-          From Add a computer on your other device. This computer joins that account. Only use a code you made or got from someone you trust.
+          From Add a machine on your other device. This machine joins that account. Only use a code you made or got from someone you trust.
         </DialogDescription>
         {relay ? (
           <p className="mt-2 text-xs text-muted-foreground" data-join-relay="">
@@ -658,7 +658,7 @@ function EnterCode({
         {joined ? (
           <>
             <Status kind="ok" data={{ "data-join-joined": "" }}>
-              Added this computer
+              Added this machine
             </Status>
             <Button type="button" onClick={onDone}>
               Done
@@ -667,7 +667,7 @@ function EnterCode({
         ) : busy ? (
           <>
             <Status kind="wait" data={{ "data-join-busy": "" }}>
-              Setting this computer up…
+              Setting this machine up…
             </Status>
             <Button type="button" variant="secondary" disabled>
               Cancel
@@ -680,7 +680,7 @@ function EnterCode({
             </Button>
             <span className="flex-1" />
             <Button type="submit" disabled={!ready} data-join-submit="">
-              Add this computer
+              Add this machine
             </Button>
           </>
         )}

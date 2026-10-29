@@ -34,8 +34,8 @@ pub use motion::{
 };
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
 pub use render_map::{
-    keyed_config, seed_position, CursorMap, MsgOutcome, RenderEntry, RenderMap, ScreenFrame,
-    DEFAULT_CURSOR_KEY, SEED_OFFSET,
+    keyed_config, seed_position, CursorMap, CursorThemeState, MsgOutcome, RenderEntry, RenderMap,
+    ScreenFrame, DEFAULT_CURSOR_KEY, SEED_OFFSET,
 };
 pub use render_state::{
     paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,

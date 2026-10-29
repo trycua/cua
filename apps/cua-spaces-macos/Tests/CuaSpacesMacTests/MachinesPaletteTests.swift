@@ -78,6 +78,51 @@ struct MachinesPaletteTests {
         #expect(answer?.map { $0["spacesLabel"] as? String } == rows.map(\.spacesLabel))
     }
 
+    /// A machine sharing only its own desktop reads "Desktop shared", not "No Spaces".
+    @Test func aMachineSharingOnlyItsDesktopReadsDesktopShared() throws {
+        let input = try appMachinesPageInputFromJson(json: """
+        {"hostOs": "macos", "now": 1800000000, "spaces": [
+          {"id": "relay:solo", "name": "solo", "os": "macos", "status": "running", "detail": "",
+           "lastUsedAt": 0, "scene": "linux-terminal", "provider": "relay",
+           "sdk": {"features": ["desktop_stream"], "spacesdVersion": "", "reachable": true}}
+        ], "devices": [], "hostnames": {}, "presence": {}}
+        """)
+        let row = appMachinesPageRows(input: input)[1]
+        #expect(row.spaces == 0)
+        #expect(row.spacesLabel == "Desktop shared")
+    }
+
+    /// A machine sharing its desktop and providing a Space reads "Desktop and 1 Space".
+    @Test func aMachineSharingItsDesktopAndSpacesReadsDesktopAndCount() throws {
+        let input = try appMachinesPageInputFromJson(json: """
+        {"hostOs": "macos", "now": 1800000000, "spaces": [
+          {"id": "relay:both", "name": "both", "os": "macos", "status": "running", "detail": "",
+           "lastUsedAt": 0, "scene": "linux-terminal", "provider": "relay",
+           "sdk": {"features": ["desktop_stream"], "spacesdVersion": "", "reachable": true}},
+          {"id": "relay:both/space-1", "name": "s1", "os": "linux", "status": "running", "detail": "",
+           "lastUsedAt": 0, "scene": "linux-terminal", "provider": "relay", "host": "both"}
+        ], "devices": [], "hostnames": {}, "presence": {}}
+        """)
+        let row = appMachinesPageRows(input: input)[1]
+        #expect(row.spaces == 1)
+        #expect(row.spacesLabel == "Desktop and 1 Space")
+    }
+
+    /// A machine providing only Spaces reads the plain count.
+    @Test func aMachineProvidingOnlySpacesReadsTheCount() throws {
+        let input = try appMachinesPageInputFromJson(json: """
+        {"hostOs": "macos", "now": 1800000000, "spaces": [
+          {"id": "relay:box/space-1", "name": "s1", "os": "linux", "status": "running", "detail": "",
+           "lastUsedAt": 0, "scene": "linux-terminal", "provider": "relay", "host": "box"},
+          {"id": "relay:box/space-2", "name": "s2", "os": "linux", "status": "running", "detail": "",
+           "lastUsedAt": 0, "scene": "linux-terminal", "provider": "relay", "host": "box"}
+        ], "devices": [], "hostnames": {}, "presence": {}}
+        """)
+        let row = appMachinesPageRows(input: input)[1]
+        #expect(row.spaces == 2)
+        #expect(row.spacesLabel == "2 Spaces")
+    }
+
     @Test func navigationKeysAreTheSharedOnes() {
         #expect(SharedShortcuts.shortcut("commandPalette.toggle") == KeyboardShortcut("k", modifiers: .command))
         #expect(SharedShortcuts.shortcut("nav.machines") == KeyboardShortcut("2", modifiers: .command))
@@ -95,11 +140,11 @@ struct MachinesPaletteTests {
     @Test func thePaletteRanksWithTheCore() {
         let entries = [
             AppPaletteEntry(group: "Actions", label: "New Space", hint: nil, keywords: "create add"),
-            AppPaletteEntry(group: "Go to", label: "Computers", hint: nil, keywords: "page"),
+            AppPaletteEntry(group: "Go to", label: "Machines", hint: nil, keywords: "page"),
             AppPaletteEntry(group: "Spaces", label: "Stop builder", hint: "Running", keywords: nil),
         ]
         #expect(appPaletteRank(entries: entries, query: "") == [0, 1, 2])
-        #expect(appPaletteRank(entries: entries, query: "comp") == [1])
+        #expect(appPaletteRank(entries: entries, query: "mach") == [1])
         #expect(appPaletteRank(entries: entries, query: "stop run") == [2])
     }
 }

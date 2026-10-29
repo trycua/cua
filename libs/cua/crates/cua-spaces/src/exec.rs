@@ -106,6 +106,9 @@ impl Space {
 
     /// Runs `command` in the Space's shell and collects its output.
     pub async fn bash(&self, command: &str, timeout: Duration) -> Result<BashOutput> {
+        // A clone of a public repository is learned (the repo cache); what
+        // the command does is not changed.
+        crate::repo_cache::observe_command(self, command);
         let out = self
             .spacesd()?
             .run(self.shell_command(command).timeout(timeout))

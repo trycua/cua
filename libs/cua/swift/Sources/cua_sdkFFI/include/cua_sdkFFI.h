@@ -393,9 +393,24 @@ RustBuffer uniffi_cua_sdk_fn_method_agentsetup_connection_status_json(uint64_t p
 RustBuffer uniffi_cua_sdk_fn_method_agentsetup_detect(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DEVICE_SIGN_IN_START_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DEVICE_SIGN_IN_START_JSON
+uint64_t uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(uint64_t ptr, RustBuffer agent
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DEVICE_SIGN_IN_WAIT_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DEVICE_SIGN_IN_WAIT_JSON
+uint64_t uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(uint64_t ptr, RustBuffer id
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DISCONNECT_JSON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DISCONNECT_JSON
 uint64_t uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(uint64_t ptr, RustBuffer agents, int8_t sign_in
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DISCONNECT_PARTS_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DISCONNECT_PARTS_JSON
+uint64_t uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(uint64_t ptr, RustBuffer agents, int8_t skills, int8_t mcp, int8_t sign_in
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_INSTALL_SKILLS
@@ -967,6 +982,16 @@ uint64_t uniffi_cua_sdk_fn_method_local_pull_image(uint64_t ptr, RustBuffer refe
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_PUSH_IMAGE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_PUSH_IMAGE
 uint64_t uniffi_cua_sdk_fn_method_local_push_image(uint64_t ptr, RustBuffer reference, RustBuffer destination
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_CHECK_PATH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_CHECK_PATH
+uint64_t uniffi_cua_sdk_fn_method_local_runtime_check_path(uint64_t ptr, RustBuffer kind, RustBuffer path
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_KINDS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_KINDS
+uint64_t uniffi_cua_sdk_fn_method_local_runtime_kinds(uint64_t ptr
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_SETUP
@@ -3035,6 +3060,18 @@ RustBuffer uniffi_cua_sdk_fn_func_locations(RustCallStatus *_Nonnull out_status
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_CLEAR
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_CLEAR
+RustBuffer uniffi_cua_sdk_fn_func_repo_cache_clear(RustCallStatus *_Nonnull out_status
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_STATUS
+RustBuffer uniffi_cua_sdk_fn_func_repo_cache_status(RustCallStatus *_Nonnull out_status
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_CANONICAL_IMAGE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_CANONICAL_IMAGE
 RustBuffer uniffi_cua_sdk_fn_func_canonical_image(RustBuffer os, RustBuffer version, RustCallStatus *_Nonnull out_status
@@ -3595,6 +3632,18 @@ uint16_t uniffi_cua_sdk_checksum_func_locations(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_CLEAR
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_CLEAR
+uint16_t uniffi_cua_sdk_checksum_func_repo_cache_clear(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_STATUS
+uint16_t uniffi_cua_sdk_checksum_func_repo_cache_status(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_CANONICAL_IMAGE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_CANONICAL_IMAGE
 uint16_t uniffi_cua_sdk_checksum_func_canonical_image(void
@@ -3865,9 +3914,27 @@ uint16_t uniffi_cua_sdk_checksum_method_agentsetup_detect(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DEVICE_SIGN_IN_START_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DEVICE_SIGN_IN_START_JSON
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DEVICE_SIGN_IN_WAIT_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DEVICE_SIGN_IN_WAIT_JSON
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DISCONNECT_JSON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DISCONNECT_JSON
 uint16_t uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DISCONNECT_PARTS_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DISCONNECT_PARTS_JSON
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json(void
 
 );
 #endif
@@ -4396,6 +4463,18 @@ uint16_t uniffi_cua_sdk_checksum_method_local_pull_image(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_PUSH_IMAGE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_PUSH_IMAGE
 uint16_t uniffi_cua_sdk_checksum_method_local_push_image(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_CHECK_PATH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_CHECK_PATH
+uint16_t uniffi_cua_sdk_checksum_method_local_runtime_check_path(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_KINDS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_KINDS
+uint16_t uniffi_cua_sdk_checksum_method_local_runtime_kinds(void
 
 );
 #endif

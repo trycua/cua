@@ -6,11 +6,13 @@ import { describe, expect, it } from "vitest";
 import type { ComputerResources, SpaceResources } from "@/bridge";
 import { DEMO_DISK_FREE, demoDiskWarning, demoResources } from "@/bridge/adapters/demo/resources";
 import { demoSpaceRows } from "@/bridge/adapters/demo-data";
-import { diskParts, extraSpacesLine, hostMeters, lowDiskWarning, onHostLine, size, sizeOf, spaceMeters, updatedAgo } from "./resources";
+import { diskFit, extraSpacesLine, hostMeters, knownSize, lowDiskWarning, onHostLine, size, sizeOf, spaceMeters, spacePanel, systemName, updatedAgo } from "./resources";
 
-const GB = 1_000_000_000;
+/** GiB: sizes read the way macOS shows memory ("4 GB of 36 GB"). */
+const GB = 1024 ** 3;
+const MB = 1024 ** 2;
 
-const host = (free: number, total = 1000 * GB): ComputerResources => ({
+const host = (free: number, total = 1024 * GB): ComputerResources => ({
   id: "this-mac",
   name: "",
   online: true,
@@ -40,6 +42,7 @@ const space = (over: Partial<SpaceResources> = {}): SpaceResources => ({
   diskAllocated: 80 * GB,
   usage: { cpuCount: 4, cpuPercent: 22, loadAverage1m: 1, memoryUsed: 3.1 * GB, memoryTotal: 8 * GB, memoryLimited: true, diskUsed: 34 * GB, diskTotal: 80 * GB, diskLimited: true },
   diskOnHost: { bytes: 19 * GB, allocated: 34 * GB, sharesSpace: true },
+  base: null,
   ...over,
 });
 
@@ -48,10 +51,29 @@ describe("sizes", () => {
     expect(size(41 * GB)).toBe("41 GB");
     expect(size(3.1 * GB)).toBe("3.1 GB");
     expect(size(8 * GB)).toBe("8 GB");
-    expect(size(1000 * GB)).toBe("1 TB");
-    expect(size(1500 * GB)).toBe("1.5 TB");
+    expect(size(1024 * GB)).toBe("1 TB");
+    expect(size(1536 * GB)).toBe("1.5 TB");
     expect(sizeOf(3.1 * GB, 8 * GB)).toBe("3.1 of 8 GB");
-    expect(sizeOf(800 * GB, 1000 * GB)).toBe("800 GB of 1 TB");
+    expect(sizeOf(800 * GB, 1024 * GB)).toBe("800 GB of 1 TB");
+  });
+
+  it("uses one convention, the way macOS shows memory: 4 GiB is 4 GB, never 4.3", () => {
+    expect(size(4 * GB)).toBe("4 GB");
+    expect(size(36 * GB)).toBe("36 GB");
+    // A 2 TB (decimal) disk, in the same binary units.
+    expect(size(2e12)).toBe("1.8 TB");
+  });
+
+  it("never says 0 GB for something", () => {
+    expect(size(500 * MB)).toBe("500 MB");
+    expect(size(249_856)).toBe("244 KB");
+    expect(size(0)).toBe("0 KB");
+    expect(sizeOf(717 * MB, 4 * GB)).toBe("717 MB of 4 GB");
+  });
+
+  it("a sentinel is no size", () => {
+    for (const v of [2 ** 63 - 1, 9223372036854771712, 2 ** 64 - 1, -1, 0, Number.NaN, null, undefined]) expect(knownSize(v)).toBeNull();
+    expect(knownSize(80 * GB)).toBe(80 * GB);
   });
 });
 
@@ -106,13 +128,13 @@ describe("meters", () => {
     expect(onHostLine(space({ diskOnHost: null }))).toBeNull();
   });
 
-  it("splits the disk into your files, each Space, and free", () => {
-    const parts = diskParts(host(41 * GB), [{ name: "macOS 1", bytes: 19 * GB }, { name: "Linux 1", bytes: 6 * GB }]);
-    expect(parts.own).toBe(934 * GB);
-    expect(parts.free).toBe(41 * GB);
+  it("names a base by its system", () => {
+    expect(systemName("Ubuntu 24.04.5 LTS")).toBe("Ubuntu 24.04");
+    expect(systemName("macOS 26.5.2 (25F84)")).toBe("macOS 26.5");
+    expect(systemName(undefined)).toBeNull();
   });
 
-  it("says how old another computer's summary is", () => {
+  it("says how old another machine's summary is", () => {
     expect(updatedAgo(0, 30_000)).toBe("just now");
     expect(updatedAgo(0, 2 * 60_000)).toBe("2 min ago");
     expect(updatedAgo(0, 3 * 3_600_000)).toBe("3 hours ago");
@@ -146,5 +168,82 @@ describe("the demo host's numbers", () => {
   it("give a Space on an offline computer no size", () => {
     const rows = [...demoSpaceRows(0), { ...demoSpaceRows(0)[2]!, id: "relay:studio-pc/render", host: "studio-pc" }];
     expect(demoResources(rows, 0).spaces.some((s) => s.id === "relay:studio-pc/render")).toBe(false);
+  });
+});
+
+/** The owner's Mac: 18 cores, 36 GiB of memory, a 2 TB disk nearly full. */
+const ownersMac = (): ComputerResources => ({
+  ...host(5.6e9, 2e12),
+  cpuCount: 18,
+  memoryTotal: 36 * GB,
+  warning: { level: "critical", free: 5.6e9, total: 2e12, threshold: 5 * GB },
+});
+
+/** pipbox: an Ubuntu container under gVisor, whose root has no size of its own. */
+const pipbox = (diskTotal: number | null): SpaceResources => ({
+  id: "local:pipbox",
+  powerState: "running",
+  cpuAllocated: 2,
+  memoryAllocated: 4 * GB,
+  diskAllocated: 0,
+  usage: { cpuCount: 2, cpuPercent: 13, loadAverage1m: 0, memoryUsed: 717 * MB, memoryTotal: 4 * GB, memoryLimited: true, diskUsed: 249_856, diskTotal, diskLimited: false },
+  diskOnHost: { bytes: 249_856, allocated: 249_856, sharesSpace: false },
+  base: { key: "sha256:9ac0", image: "ghcr.io/trycua/linux:24.04", bytes: 4.41e9, sharedWith: 1 },
+});
+
+describe("a Space's resources dialog (the core's stand-in)", () => {
+  const view = (s: SpaceResources, spaces = [s]) => spacePanel({ space: s, name: "pipbox", host: ownersMac(), computer: "this Mac", spaces, baseName: "Ubuntu 24.04" });
+
+  it("no sentinel ever reaches it: i64::MAX, u64::MAX, -1, 0", () => {
+    for (const sentinel of [2 ** 63 - 1, 9223372036854771712, 2 ** 64 - 1, -1, 0, null]) {
+      const v = view(pipbox(sentinel));
+      expect(v.cards.map((c) => [c.label, c.value, c.given])).toEqual([
+        ["Processor", "13% busy", "Given 2 of this Mac’s 18 cores"],
+        ["Memory", "717 MB of 4 GB", "Given 4 GB of this Mac’s 36 GB"],
+        ["Space for files", "244 KB", null],
+      ]);
+      expect(v.cards[2]!.fraction).toBeNull();
+      expect(JSON.stringify(v)).not.toMatch(/9223372|PB|Busy means|Uses about|Updates every/);
+    }
+  });
+
+  it("how it fits adds up, the base counted once", () => {
+    const fit = view(pipbox(null)).fit!;
+    expect(fit.total).toBe("1.8 TB");
+    expect(fit.parts.map((p) => `${p.label} · ${p.value}${p.detail ? `, ${p.detail}` : ""}`)).toEqual([
+      "Your own files and apps · 1.8 TB",
+      "pipbox · 244 KB",
+      "Ubuntu 24.04 image · 4.1 GB, only this Space uses it",
+      "Free · 5.2 GB",
+    ]);
+    expect(fit.parts.reduce((n, p) => n + p.bytes, 0)).toBe(2e12);
+    expect(fit.parts.reduce((n, p) => n + p.fraction, 0)).toBeCloseTo(1, 9);
+    expect(fit.warning?.critical).toBe(true);
+  });
+
+  it("copy-on-write: two Spaces on one image count it once and say so", () => {
+    const base = { key: "sha256:9ac0", image: "ghcr.io/trycua/linux:24.04", bytes: 4.41e9, sharedWith: 2 };
+    const me = { ...pipbox(null), base };
+    const twin: SpaceResources = { ...me, id: "local:twin", diskOnHost: { bytes: 2 * GB, allocated: 2 * GB, sharesSpace: false } };
+    const fit = diskFit(ownersMac(), me, "pipbox", [me, twin], "Ubuntu 24.04");
+    expect(fit.parts.filter((p) => p.kind === "base").map((p) => p.detail)).toEqual(["shared by 2 Spaces"]);
+    expect(fit.parts.find((p) => p.kind === "otherSpaces")?.value).toBe("2 GB");
+    expect(fit.parts.reduce((n, p) => n + p.bytes, 0)).toBe(2e12);
+  });
+
+  it("not copy-on-write: only its own data", () => {
+    const me = { ...space(), base: null };
+    const fit = diskFit(host(41 * GB), me, "macOS 1", [me], null);
+    expect(fit.parts.some((p) => p.kind === "base")).toBe(false);
+    expect(fit.parts.find((p) => p.kind === "thisSpace")?.value).toBe("19 GB");
+  });
+
+  it("what can't be told apart is said plainly, never guessed", () => {
+    const me = space({ diskOnHost: { bytes: null, allocated: 40 * GB, sharesSpace: true }, base: { key: "m", image: "ghcr.io/trycua/macos:26", bytes: null, sharedWith: 1 } });
+    const fit = diskFit(host(41 * GB), me, "macOS 1", [me], null);
+    expect(fit.note).toBe("Can’t tell macOS 1’s own data apart from the image it shares.");
+    expect(fit.parts.some((p) => p.kind === "thisSpace" || p.kind === "base")).toBe(false);
+    const files = spacePanel({ space: me, name: "macOS 1", host: null, computer: "this Mac", spaces: [me], baseName: null }).cards[2]!;
+    expect(files.value).toBe("Up to 80 GB");
   });
 });

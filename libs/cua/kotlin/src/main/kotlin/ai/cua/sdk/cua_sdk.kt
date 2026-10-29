@@ -829,6 +829,10 @@ external fun uniffi_cua_sdk_checksum_func_config_unset(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_locations(
 ): Short
+external fun uniffi_cua_sdk_checksum_func_repo_cache_clear(
+): Short
+external fun uniffi_cua_sdk_checksum_func_repo_cache_status(
+): Short
 external fun uniffi_cua_sdk_checksum_func_canonical_image(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_canonical_image_tier(
@@ -919,7 +923,13 @@ external fun uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_agentsetup_detect(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json(
+): Short
+external fun uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json(
+): Short
 external fun uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json(
+): Short
+external fun uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_agentsetup_install_skills(
 ): Short
@@ -1096,6 +1106,10 @@ external fun uniffi_cua_sdk_checksum_method_local_doctor(
 external fun uniffi_cua_sdk_checksum_method_local_pull_image(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_local_push_image(
+): Short
+external fun uniffi_cua_sdk_checksum_method_local_runtime_check_path(
+): Short
+external fun uniffi_cua_sdk_checksum_method_local_runtime_kinds(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_local_setup(
 ): Short
@@ -1826,7 +1840,13 @@ external fun uniffi_cua_sdk_fn_method_agentsetup_connection_status_json(`ptr`: L
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_agentsetup_detect(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(`ptr`: Long,`agent`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(`ptr`: Long,`id`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(`ptr`: Long,`agents`: RustBuffer.ByValue,`signIn`: Byte,
+): Long
+external fun uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(`ptr`: Long,`agents`: RustBuffer.ByValue,`skills`: Byte,`mcp`: Byte,`signIn`: Byte,
 ): Long
 external fun uniffi_cua_sdk_fn_method_agentsetup_install_skills(`ptr`: Long,`agents`: RustBuffer.ByValue,`skills`: RustBuffer.ByValue,`force`: Byte,
 ): Long
@@ -2055,6 +2075,10 @@ external fun uniffi_cua_sdk_fn_method_local_doctor(`ptr`: Long,
 external fun uniffi_cua_sdk_fn_method_local_pull_image(`ptr`: Long,`reference`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_local_push_image(`ptr`: Long,`reference`: RustBuffer.ByValue,`destination`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_local_runtime_check_path(`ptr`: Long,`kind`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_local_runtime_kinds(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_local_setup(`ptr`: Long,`components`: RustBuffer.ByValue,`dryRun`: Byte,
 ): Long
@@ -2880,6 +2904,10 @@ external fun uniffi_cua_sdk_fn_func_config_unset(`key`: RustBuffer.ByValue,uniff
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_locations(uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cua_sdk_fn_func_repo_cache_clear(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cua_sdk_fn_func_repo_cache_status(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_canonical_image(`os`: RustBuffer.ByValue,`version`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_canonical_image_tier(`os`: RustBuffer.ByValue,`version`: RustBuffer.ByValue,`tier`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -3120,6 +3148,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_func_locations() != 62174.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_func_repo_cache_clear() != 39088.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_func_repo_cache_status() != 20147.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_func_canonical_image() != 8955.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -3246,7 +3280,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 32481.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692.toShort()) {
@@ -3255,7 +3289,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_detect() != 59369.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json() != 18365.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json() != 39143.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json() != 14363.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json() != 37278.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_install_skills() != 40049.toShort()) {
@@ -3520,6 +3563,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_local_push_image() != 29472.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_local_runtime_check_path() != 59009.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_local_runtime_kinds() != 34595.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_local_setup() != 57791.toShort()) {
@@ -5688,8 +5737,9 @@ public interface AgentSetupInterface {
     /**
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
-     * agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-     * for its one browser approval). JSON: one result per agent.
+     * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+     * sign-in it already has, read from where Claude Code keeps it). JSON:
+     * one result per agent.
      */
     suspend fun `connectJson`(`agents`: List<kotlin.String>, `server`: AgentMcpServer?, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean): kotlin.String
 
@@ -5708,11 +5758,31 @@ public interface AgentSetupInterface {
     fun `detect`(): List<AgentInfo>
 
     /**
+     * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+     * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+     * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+     */
+    suspend fun `deviceSignInStartJson`(`agent`: kotlin.String): kotlin.String
+
+    /**
+     * Waits for a device sign-in to be approved and saves it into Keyvault on
+     * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+     */
+    suspend fun `deviceSignInWaitJson`(`id`: kotlin.String): kotlin.String
+
+    /**
      * Disconnect: what Connect did, undone (the previous config entry back
      * from Cua's record, the skills, and with `sign_in` the copy in
      * Keyvault). JSON `{outcomes, removed_sign_ins}`.
      */
     suspend fun `disconnectJson`(`agents`: List<kotlin.String>, `signIn`: kotlin.Boolean): kotlin.String
+
+    /**
+     * Disconnect of some parts only (an app's page's switches): Cua's skills
+     * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+     * `{outcomes, removed_sign_ins}`.
+     */
+    suspend fun `disconnectPartsJson`(`agents`: List<kotlin.String>, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean): kotlin.String
 
     /**
      * Installs `skills` (empty: all bundled) for `agents`. Folders cua did
@@ -5902,8 +5972,9 @@ open class AgentSetup: Disposable, AutoCloseable, AgentSetupInterface
     /**
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
-     * agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-     * for its one browser approval). JSON: one result per agent.
+     * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+     * sign-in it already has, read from where Claude Code keeps it). JSON:
+     * one result per agent.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -5963,6 +6034,57 @@ open class AgentSetup: Disposable, AutoCloseable, AgentSetupInterface
 
 
     /**
+     * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+     * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+     * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deviceSignInStartJson`(`agent`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(
+                uniffiHandle,
+                FfiConverterString.lower(`agent`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Waits for a device sign-in to be approved and saves it into Keyvault on
+     * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deviceSignInWaitJson`(`id`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(
+                uniffiHandle,
+                FfiConverterString.lower(`id`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Disconnect: what Connect did, undone (the previous config entry back
      * from Cua's record, the skills, and with `sign_in` the copy in
      * Keyvault). JSON `{outcomes, removed_sign_ins}`.
@@ -5975,6 +6097,32 @@ open class AgentSetup: Disposable, AutoCloseable, AgentSetupInterface
             UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(
                 uniffiHandle,
                 FfiConverterSequenceString.lower(`agents`),FfiConverterBoolean.lower(`signIn`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Disconnect of some parts only (an app's page's switches): Cua's skills
+     * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+     * `{outcomes, removed_sign_ins}`.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `disconnectPartsJson`(`agents`: List<kotlin.String>, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(
+                uniffiHandle,
+                FfiConverterSequenceString.lower(`agents`),FfiConverterBoolean.lower(`skills`),FfiConverterBoolean.lower(`mcp`),FfiConverterBoolean.lower(`signIn`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -11019,6 +11167,22 @@ public interface LocalInterface {
     suspend fun `pushImage`(`reference`: kotlin.String, `destination`: kotlin.String): kotlin.String
 
     /**
+     * What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+     * runnable, which runtime and its version. Settings checks a typed path
+     * with it before it is saved (`runtime.<kind>_path`).
+     */
+    suspend fun `runtimeCheckPath`(`kind`: kotlin.String, `path`: kotlin.String): RuntimePathProbe
+
+    /**
+     * Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+     * setting (`runtime.<kind>`), the runtimes installed on this machine
+     * for it and what the path in use is. Read-only: runs each runtime's
+     * `--version`, nothing else; probed in this process (the daemon runs
+     * on the same host).
+     */
+    suspend fun `runtimeKinds`(): List<RuntimeKindState>
+
+    /**
      * Provisions `components` (`qemu`, `lume`; `runsc` reports its plan).
      * Empty = everything provisionable. `dry_run` only reports.
      */
@@ -11230,6 +11394,60 @@ open class Local: Disposable, AutoCloseable, LocalInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+     * runnable, which runtime and its version. Settings checks a typed path
+     * with it before it is saved (`runtime.<kind>_path`).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `runtimeCheckPath`(`kind`: kotlin.String, `path`: kotlin.String) : RuntimePathProbe {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_check_path(
+                uniffiHandle,
+                FfiConverterString.lower(`kind`),FfiConverterString.lower(`path`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeRuntimePathProbe.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+     * setting (`runtime.<kind>`), the runtimes installed on this machine
+     * for it and what the path in use is. Read-only: runs each runtime's
+     * `--version`, nothing else; probed in this process (the daemon runs
+     * on the same host).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `runtimeKinds`() : List<RuntimeKindState> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_kinds(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeRuntimeKindState.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -31901,8 +32119,9 @@ public object FfiConverterTypeComputerResources: FfiConverterRustBuffer<Computer
  */
 data class ConfigEntry (
     /**
-     * `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
-     * `runtime.linux` or `telemetry.enabled`.
+     * `default.on`, `default.kind`, `default.runtime`, `runtime.container`,
+     * `runtime.vm`, `runtime.microvm` (and their `_path`) or
+     * `telemetry.enabled`.
      */
     var `key`: kotlin.String
     ,
@@ -35973,9 +36192,10 @@ data class GuestUsage (
     var `diskUsed`: kotlin.ULong
     ,
     /**
-     * Disk size, bytes.
+     * Disk size, bytes; absent when the guest's file system has no size
+     * of its own (gVisor's root overlay) or did not say. Never a sentinel.
      */
-    var `diskTotal`: kotlin.ULong
+    var `diskTotal`: kotlin.ULong?
     ,
     /**
      * `disk_total` is the guest's own disk.
@@ -36004,7 +36224,7 @@ public object FfiConverterTypeGuestUsage: FfiConverterRustBuffer<GuestUsage> {
             FfiConverterULong.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterULong.read(buf),
-            FfiConverterULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
             FfiConverterBoolean.read(buf),
         )
     }
@@ -36017,7 +36237,7 @@ public object FfiConverterTypeGuestUsage: FfiConverterRustBuffer<GuestUsage> {
             FfiConverterULong.allocationSize(value.`memoryTotal`) +
             FfiConverterBoolean.allocationSize(value.`memoryLimited`) +
             FfiConverterULong.allocationSize(value.`diskUsed`) +
-            FfiConverterULong.allocationSize(value.`diskTotal`) +
+            FfiConverterOptionalULong.allocationSize(value.`diskTotal`) +
             FfiConverterBoolean.allocationSize(value.`diskLimited`)
     )
 
@@ -36029,7 +36249,7 @@ public object FfiConverterTypeGuestUsage: FfiConverterRustBuffer<GuestUsage> {
             FfiConverterULong.write(value.`memoryTotal`, buf)
             FfiConverterBoolean.write(value.`memoryLimited`, buf)
             FfiConverterULong.write(value.`diskUsed`, buf)
-            FfiConverterULong.write(value.`diskTotal`, buf)
+            FfiConverterOptionalULong.write(value.`diskTotal`, buf)
             FfiConverterBoolean.write(value.`diskLimited`, buf)
     }
 }
@@ -36401,6 +36621,21 @@ data class HostSettingsChange (
      * macOS VMs at once (0 to 2, Apple's license).
      */
     var `maxMacosVms`: kotlin.UInt? = null
+    ,
+    /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    var `maxMemoryGb`: kotlin.UInt? = null
+    ,
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    var `maxDiskGb`: kotlin.UInt? = null
+    ,
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    var `maxRunMinutes`: kotlin.UInt? = null
 
 ){
 
@@ -36421,6 +36656,9 @@ public object FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer<HostSet
             FfiConverterOptionalBoolean.read(buf),
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
         )
     }
 
@@ -36428,7 +36666,10 @@ public object FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer<HostSet
             FfiConverterOptionalBoolean.allocationSize(value.`shareDesktop`) +
             FfiConverterOptionalBoolean.allocationSize(value.`provideSpaces`) +
             FfiConverterOptionalUInt.allocationSize(value.`maxSpaces`) +
-            FfiConverterOptionalUInt.allocationSize(value.`maxMacosVms`)
+            FfiConverterOptionalUInt.allocationSize(value.`maxMacosVms`) +
+            FfiConverterOptionalUInt.allocationSize(value.`maxMemoryGb`) +
+            FfiConverterOptionalUInt.allocationSize(value.`maxDiskGb`) +
+            FfiConverterOptionalUInt.allocationSize(value.`maxRunMinutes`)
     )
 
     override fun write(value: HostSettingsChange, buf: ByteBuffer) {
@@ -36436,6 +36677,9 @@ public object FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer<HostSet
             FfiConverterOptionalBoolean.write(value.`provideSpaces`, buf)
             FfiConverterOptionalUInt.write(value.`maxSpaces`, buf)
             FfiConverterOptionalUInt.write(value.`maxMacosVms`, buf)
+            FfiConverterOptionalUInt.write(value.`maxMemoryGb`, buf)
+            FfiConverterOptionalUInt.write(value.`maxDiskGb`, buf)
+            FfiConverterOptionalUInt.write(value.`maxRunMinutes`, buf)
     }
 }
 
@@ -36744,6 +36988,35 @@ data class HostStatus (
     var `maxMacosVms`: kotlin.UInt = 0u
     ,
     /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    var `maxMemoryGb`: kotlin.UInt = 0u
+    ,
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    var `maxDiskGb`: kotlin.UInt = 0u
+    ,
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    var `maxRunMinutes`: kotlin.UInt = 0u
+    ,
+    /**
+     * What the provided Spaces were given now, in GB.
+     */
+    var `usedMemoryGb`: kotlin.UInt = 0u
+    ,
+    var `usedDiskGb`: kotlin.UInt = 0u
+    ,
+    /**
+     * This machine's own memory and disk, in GB (0: not known).
+     */
+    var `totalMemoryGb`: kotlin.UInt = 0u
+    ,
+    var `totalDiskGb`: kotlin.UInt = 0u
+    ,
+    /**
      * The Spaces this machine provides now.
      */
     var `providedSpaces`: List<HostProvidedSpace> = listOf()
@@ -36822,6 +37095,13 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterBoolean.read(buf),
             FfiConverterUInt.read(buf),
             FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
             FfiConverterSequenceTypeHostProvidedSpace.read(buf),
             FfiConverterSequenceTypeHostSpacesAuditRecord.read(buf),
             FfiConverterOptionalString.read(buf),
@@ -36856,6 +37136,13 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterBoolean.allocationSize(value.`provideSpaces`) +
             FfiConverterUInt.allocationSize(value.`maxSpaces`) +
             FfiConverterUInt.allocationSize(value.`maxMacosVms`) +
+            FfiConverterUInt.allocationSize(value.`maxMemoryGb`) +
+            FfiConverterUInt.allocationSize(value.`maxDiskGb`) +
+            FfiConverterUInt.allocationSize(value.`maxRunMinutes`) +
+            FfiConverterUInt.allocationSize(value.`usedMemoryGb`) +
+            FfiConverterUInt.allocationSize(value.`usedDiskGb`) +
+            FfiConverterUInt.allocationSize(value.`totalMemoryGb`) +
+            FfiConverterUInt.allocationSize(value.`totalDiskGb`) +
             FfiConverterSequenceTypeHostProvidedSpace.allocationSize(value.`providedSpaces`) +
             FfiConverterSequenceTypeHostSpacesAuditRecord.allocationSize(value.`spacesAudit`) +
             FfiConverterOptionalString.allocationSize(value.`spacesAuditError`) +
@@ -36889,6 +37176,13 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterBoolean.write(value.`provideSpaces`, buf)
             FfiConverterUInt.write(value.`maxSpaces`, buf)
             FfiConverterUInt.write(value.`maxMacosVms`, buf)
+            FfiConverterUInt.write(value.`maxMemoryGb`, buf)
+            FfiConverterUInt.write(value.`maxDiskGb`, buf)
+            FfiConverterUInt.write(value.`maxRunMinutes`, buf)
+            FfiConverterUInt.write(value.`usedMemoryGb`, buf)
+            FfiConverterUInt.write(value.`usedDiskGb`, buf)
+            FfiConverterUInt.write(value.`totalMemoryGb`, buf)
+            FfiConverterUInt.write(value.`totalDiskGb`, buf)
             FfiConverterSequenceTypeHostProvidedSpace.write(value.`providedSpaces`, buf)
             FfiConverterSequenceTypeHostSpacesAuditRecord.write(value.`spacesAudit`, buf)
             FfiConverterOptionalString.write(value.`spacesAuditError`, buf)
@@ -40130,6 +40424,119 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
 
 
 /**
+ * What the repo cache holds and what it saved, in plain words for
+ * Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+ * changed with [`config_set`]).
+ */
+data class RepoCacheStatus (
+    /**
+     * The cache is on (`cache.repos`).
+     */
+    var `enabled`: kotlin.Boolean
+    ,
+    /**
+     * Repositories held.
+     */
+    var `repos`: kotlin.UInt
+    ,
+    /**
+     * What they take on disk.
+     */
+    var `bytes`: kotlin.ULong
+    ,
+    /**
+     * The size cap in force.
+     */
+    var `capBytes`: kotlin.ULong
+    ,
+    /**
+     * The size setting: `auto`, or the number of GB.
+     */
+    var `sizeSetting`: kotlin.String
+    ,
+    /**
+     * `Repos: 3, 1.2 GB of 5 GB`.
+     */
+    var `summary`: kotlin.String
+    ,
+    /**
+     * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+     */
+    var `week`: kotlin.String
+    ,
+    /**
+     * Clones served from the cache in the last week.
+     */
+    var `hits`: kotlin.UInt
+    ,
+    /**
+     * Clones that downloaded in the last week.
+     */
+    var `misses`: kotlin.UInt
+    ,
+    /**
+     * Seconds the hits saved.
+     */
+    var `secondsSaved`: kotlin.ULong
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRepoCacheStatus: FfiConverterRustBuffer<RepoCacheStatus> {
+    override fun read(buf: ByteBuffer): RepoCacheStatus {
+        return RepoCacheStatus(
+            FfiConverterBoolean.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RepoCacheStatus) = (
+            FfiConverterBoolean.allocationSize(value.`enabled`) +
+            FfiConverterUInt.allocationSize(value.`repos`) +
+            FfiConverterULong.allocationSize(value.`bytes`) +
+            FfiConverterULong.allocationSize(value.`capBytes`) +
+            FfiConverterString.allocationSize(value.`sizeSetting`) +
+            FfiConverterString.allocationSize(value.`summary`) +
+            FfiConverterString.allocationSize(value.`week`) +
+            FfiConverterUInt.allocationSize(value.`hits`) +
+            FfiConverterUInt.allocationSize(value.`misses`) +
+            FfiConverterULong.allocationSize(value.`secondsSaved`)
+    )
+
+    override fun write(value: RepoCacheStatus, buf: ByteBuffer) {
+            FfiConverterBoolean.write(value.`enabled`, buf)
+            FfiConverterUInt.write(value.`repos`, buf)
+            FfiConverterULong.write(value.`bytes`, buf)
+            FfiConverterULong.write(value.`capBytes`, buf)
+            FfiConverterString.write(value.`sizeSetting`, buf)
+            FfiConverterString.write(value.`summary`, buf)
+            FfiConverterString.write(value.`week`, buf)
+            FfiConverterUInt.write(value.`hits`, buf)
+            FfiConverterUInt.write(value.`misses`, buf)
+            FfiConverterULong.write(value.`secondsSaved`, buf)
+    }
+}
+
+
+
+/**
  * A reference resolved for a backend.
  */
 data class ResolvedImage (
@@ -40544,6 +40951,244 @@ public object FfiConverterTypeRuntimeCheck: FfiConverterRustBuffer<RuntimeCheck>
             FfiConverterTypeRuntimeCheckStatus.write(value.`status`, buf)
             FfiConverterOptionalString.write(value.`version`, buf)
             FfiConverterString.write(value.`detail`, buf)
+    }
+}
+
+
+
+/**
+ * A runtime installed on this machine for one kind of Space.
+ */
+data class RuntimeDetected (
+    /**
+     * `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+     */
+    var `tool`: kotlin.String
+    ,
+    /**
+     * As people know it (`Docker`, `Apple container`).
+     */
+    var `name`: kotlin.String
+    ,
+    var `path`: kotlin.String
+    ,
+    /**
+     * As `--version` says it (`27.3.1`).
+     */
+    var `version`: kotlin.String?
+    ,
+    /**
+     * The guest system it runs, when only one (`macOS`, `Linux`).
+     */
+    var `guests`: kotlin.String?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRuntimeDetected: FfiConverterRustBuffer<RuntimeDetected> {
+    override fun read(buf: ByteBuffer): RuntimeDetected {
+        return RuntimeDetected(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RuntimeDetected) = (
+            FfiConverterString.allocationSize(value.`tool`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterOptionalString.allocationSize(value.`version`) +
+            FfiConverterOptionalString.allocationSize(value.`guests`)
+    )
+
+    override fun write(value: RuntimeDetected, buf: ByteBuffer) {
+            FfiConverterString.write(value.`tool`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterOptionalString.write(value.`version`, buf)
+            FfiConverterOptionalString.write(value.`guests`, buf)
+    }
+}
+
+
+
+/**
+ * One kind of Space's runtime, as Settings shows it.
+ */
+data class RuntimeKindState (
+    /**
+     * `container`, `vm` or `microvm`.
+     */
+    var `kind`: kotlin.String
+    ,
+    /**
+     * `runtime.<kind>`: `auto`, `builtin` or `system`.
+     */
+    var `source`: kotlin.String
+    ,
+    /**
+     * `runtime.<kind>_path`, when set.
+     */
+    var `path`: kotlin.String?
+    ,
+    /**
+     * What is installed here for the kind, the one used first.
+     */
+    var `detected`: List<RuntimeDetected>
+    ,
+    /**
+     * The path in use (the custom one, else the first detected), probed.
+     */
+    var `check`: RuntimePathProbe?
+    ,
+    /**
+     * The names of the tools the kind takes here (`Docker`, `Podman`).
+     */
+    var `expected`: List<kotlin.String>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRuntimeKindState: FfiConverterRustBuffer<RuntimeKindState> {
+    override fun read(buf: ByteBuffer): RuntimeKindState {
+        return RuntimeKindState(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceTypeRuntimeDetected.read(buf),
+            FfiConverterOptionalTypeRuntimePathProbe.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RuntimeKindState) = (
+            FfiConverterString.allocationSize(value.`kind`) +
+            FfiConverterString.allocationSize(value.`source`) +
+            FfiConverterOptionalString.allocationSize(value.`path`) +
+            FfiConverterSequenceTypeRuntimeDetected.allocationSize(value.`detected`) +
+            FfiConverterOptionalTypeRuntimePathProbe.allocationSize(value.`check`) +
+            FfiConverterSequenceString.allocationSize(value.`expected`)
+    )
+
+    override fun write(value: RuntimeKindState, buf: ByteBuffer) {
+            FfiConverterString.write(value.`kind`, buf)
+            FfiConverterString.write(value.`source`, buf)
+            FfiConverterOptionalString.write(value.`path`, buf)
+            FfiConverterSequenceTypeRuntimeDetected.write(value.`detected`, buf)
+            FfiConverterOptionalTypeRuntimePathProbe.write(value.`check`, buf)
+            FfiConverterSequenceString.write(value.`expected`, buf)
+    }
+}
+
+
+
+/**
+ * What a binary is, for one kind of Space (`runtime_check_path`).
+ */
+data class RuntimePathProbe (
+    var `path`: kotlin.String
+    ,
+    /**
+     * A file is there.
+     */
+    var `exists`: kotlin.Boolean
+    ,
+    /**
+     * It can be run.
+     */
+    var `executable`: kotlin.Boolean
+    ,
+    /**
+     * The tool it is, when it is one the kind takes.
+     */
+    var `tool`: kotlin.String?
+    ,
+    var `name`: kotlin.String?
+    ,
+    var `version`: kotlin.String?
+    ,
+    /**
+     * The oldest version cua runs on.
+     */
+    var `minVersion`: kotlin.String?
+    ,
+    /**
+     * The names of the tools the kind takes here (`Docker`, `Podman`).
+     */
+    var `expected`: List<kotlin.String>
+    ,
+    var `guests`: kotlin.String?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRuntimePathProbe: FfiConverterRustBuffer<RuntimePathProbe> {
+    override fun read(buf: ByteBuffer): RuntimePathProbe {
+        return RuntimePathProbe(
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RuntimePathProbe) = (
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterBoolean.allocationSize(value.`exists`) +
+            FfiConverterBoolean.allocationSize(value.`executable`) +
+            FfiConverterOptionalString.allocationSize(value.`tool`) +
+            FfiConverterOptionalString.allocationSize(value.`name`) +
+            FfiConverterOptionalString.allocationSize(value.`version`) +
+            FfiConverterOptionalString.allocationSize(value.`minVersion`) +
+            FfiConverterSequenceString.allocationSize(value.`expected`) +
+            FfiConverterOptionalString.allocationSize(value.`guests`)
+    )
+
+    override fun write(value: RuntimePathProbe, buf: ByteBuffer) {
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterBoolean.write(value.`exists`, buf)
+            FfiConverterBoolean.write(value.`executable`, buf)
+            FfiConverterOptionalString.write(value.`tool`, buf)
+            FfiConverterOptionalString.write(value.`name`, buf)
+            FfiConverterOptionalString.write(value.`version`, buf)
+            FfiConverterOptionalString.write(value.`minVersion`, buf)
+            FfiConverterSequenceString.write(value.`expected`, buf)
+            FfiConverterOptionalString.write(value.`guests`, buf)
     }
 }
 
@@ -41677,6 +42322,71 @@ public object FfiConverterTypeShareCheck: FfiConverterRustBuffer<ShareCheck> {
             FfiConverterUInt.write(value.`status`, buf)
             FfiConverterString.write(value.`via`, buf)
             FfiConverterString.write(value.`detail`, buf)
+    }
+}
+
+
+
+/**
+ * A base image several Spaces share copy-on-write (a container image's
+ * layers, the image a VM disk was cloned from).
+ */
+data class SharedBase (
+    /**
+     * Which base: Spaces with the same key share the same blocks.
+     */
+    var `key`: kotlin.String
+    ,
+    /**
+     * The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+     */
+    var `image`: kotlin.String
+    ,
+    /**
+     * What it takes on this computer, once for all its Spaces; absent when
+     * the runtime cannot tell it apart from the Spaces' own data.
+     */
+    var `bytes`: kotlin.ULong?
+    ,
+    /**
+     * Local Spaces that use it, this one included.
+     */
+    var `sharedWith`: kotlin.UInt
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSharedBase: FfiConverterRustBuffer<SharedBase> {
+    override fun read(buf: ByteBuffer): SharedBase {
+        return SharedBase(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SharedBase) = (
+            FfiConverterString.allocationSize(value.`key`) +
+            FfiConverterString.allocationSize(value.`image`) +
+            FfiConverterOptionalULong.allocationSize(value.`bytes`) +
+            FfiConverterUInt.allocationSize(value.`sharedWith`)
+    )
+
+    override fun write(value: SharedBase, buf: ByteBuffer) {
+            FfiConverterString.write(value.`key`, buf)
+            FfiConverterString.write(value.`image`, buf)
+            FfiConverterOptionalULong.write(value.`bytes`, buf)
+            FfiConverterUInt.write(value.`sharedWith`, buf)
     }
 }
 
@@ -43753,9 +44463,17 @@ data class SpaceResources (
     var `usage`: GuestUsage?
     ,
     /**
-     * What it costs this Mac; absent for a container.
+     * What it costs this Mac: its own data only, never the base it
+     * shares; absent when there is nothing to measure.
      */
     var `diskOnHost`: DiskOnHost?
+    ,
+    /**
+     * The base image it is a copy-on-write copy of, counted once for all
+     * the Spaces that share it; absent when it has none or the runtime
+     * cannot tell it apart.
+     */
+    var `base`: SharedBase?
 
 ){
 
@@ -43779,6 +44497,7 @@ public object FfiConverterTypeSpaceResources: FfiConverterRustBuffer<SpaceResour
             FfiConverterULong.read(buf),
             FfiConverterOptionalTypeGuestUsage.read(buf),
             FfiConverterOptionalTypeDiskOnHost.read(buf),
+            FfiConverterOptionalTypeSharedBase.read(buf),
         )
     }
 
@@ -43789,7 +44508,8 @@ public object FfiConverterTypeSpaceResources: FfiConverterRustBuffer<SpaceResour
             FfiConverterULong.allocationSize(value.`memoryAllocated`) +
             FfiConverterULong.allocationSize(value.`diskAllocated`) +
             FfiConverterOptionalTypeGuestUsage.allocationSize(value.`usage`) +
-            FfiConverterOptionalTypeDiskOnHost.allocationSize(value.`diskOnHost`)
+            FfiConverterOptionalTypeDiskOnHost.allocationSize(value.`diskOnHost`) +
+            FfiConverterOptionalTypeSharedBase.allocationSize(value.`base`)
     )
 
     override fun write(value: SpaceResources, buf: ByteBuffer) {
@@ -43800,6 +44520,7 @@ public object FfiConverterTypeSpaceResources: FfiConverterRustBuffer<SpaceResour
             FfiConverterULong.write(value.`diskAllocated`, buf)
             FfiConverterOptionalTypeGuestUsage.write(value.`usage`, buf)
             FfiConverterOptionalTypeDiskOnHost.write(value.`diskOnHost`, buf)
+            FfiConverterOptionalTypeSharedBase.write(value.`base`, buf)
     }
 }
 
@@ -50641,6 +51362,38 @@ public object FfiConverterOptionalTypePtySize: FfiConverterRustBuffer<PtySize?> 
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeRuntimePathProbe: FfiConverterRustBuffer<RuntimePathProbe?> {
+    override fun read(buf: ByteBuffer): RuntimePathProbe? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeRuntimePathProbe.read(buf)
+    }
+
+    override fun allocationSize(value: RuntimePathProbe?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeRuntimePathProbe.allocationSize(value)
+        }
+    }
+
+    override fun write(value: RuntimePathProbe?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeRuntimePathProbe.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeScreenshotOptions: FfiConverterRustBuffer<ScreenshotOptions?> {
     override fun read(buf: ByteBuffer): ScreenshotOptions? {
         if (buf.get().toInt() == 0) {
@@ -50663,6 +51416,38 @@ public object FfiConverterOptionalTypeScreenshotOptions: FfiConverterRustBuffer<
         } else {
             buf.put(1)
             FfiConverterTypeScreenshotOptions.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeSharedBase: FfiConverterRustBuffer<SharedBase?> {
+    override fun read(buf: ByteBuffer): SharedBase? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeSharedBase.read(buf)
+    }
+
+    override fun allocationSize(value: SharedBase?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeSharedBase.allocationSize(value)
+        }
+    }
+
+    override fun write(value: SharedBase?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeSharedBase.write(value, buf)
         }
     }
 }
@@ -53417,6 +54202,62 @@ public object FfiConverterSequenceTypeRuntimeCheck: FfiConverterRustBuffer<List<
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeRuntimeDetected: FfiConverterRustBuffer<List<RuntimeDetected>> {
+    override fun read(buf: ByteBuffer): List<RuntimeDetected> {
+        val len = buf.getInt()
+        return List<RuntimeDetected>(len) {
+            FfiConverterTypeRuntimeDetected.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RuntimeDetected>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRuntimeDetected.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<RuntimeDetected>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRuntimeDetected.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRuntimeKindState: FfiConverterRustBuffer<List<RuntimeKindState>> {
+    override fun read(buf: ByteBuffer): List<RuntimeKindState> {
+        val len = buf.getInt()
+        return List<RuntimeKindState>(len) {
+            FfiConverterTypeRuntimeKindState.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RuntimeKindState>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRuntimeKindState.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<RuntimeKindState>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRuntimeKindState.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeSandboxInfo: FfiConverterRustBuffer<List<SandboxInfo>> {
     override fun read(buf: ByteBuffer): List<SandboxInfo> {
         val len = buf.getInt()
@@ -54458,6 +55299,36 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
             return FfiConverterSequenceTypeLocationInfo.lift(
     uniffiRustCall() { _status ->
     UniffiLib.uniffi_cua_sdk_fn_func_locations(
+
+        _status)
+}
+    )
+    }
+
+
+        /**
+         * Deletes every repository the repo cache holds (they are copied again the
+         * next time a Space clones them). Returns the cache after.
+         */
+    @Throws(CuaException::class) fun `repoCacheClear`(): RepoCacheStatus {
+            return FfiConverterTypeRepoCacheStatus.lift(
+    uniffiRustCallWithError(CuaException) { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear(
+
+        _status)
+}
+    )
+    }
+
+
+        /**
+         * The repo cache now: on or off, how much it holds of its cap, and what
+         * the last week saved.
+         */
+    @Throws(CuaException::class) fun `repoCacheStatus`(): RepoCacheStatus {
+            return FfiConverterTypeRepoCacheStatus.lift(
+    uniffiRustCallWithError(CuaException) { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status(
 
         _status)
 }

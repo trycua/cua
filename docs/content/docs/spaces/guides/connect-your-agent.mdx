@@ -47,8 +47,47 @@ and Cua never reads or copies it. On another computer, sign in to Codex there
 
 An agent that Cua runs in a Space uses the provider keys saved on the computer
 that hosts the Space: the **OpenAI key** for Codex and the **Anthropic key** for
-Claude Code. Add them on **Pick your agent** or in **Settings, Connectors**. They stay
+Claude Code. Add them on **Pick your agent** or in **Settings, Connections**. They stay
 in this computer's Keychain (Credential Manager on Windows).
+
+### Claude Code and your Claude plan
+
+If you already use Claude Code on this computer, Cua can run it in your Spaces
+with the same Claude plan. Press **Connect** next to Claude Code in **Settings,
+Connectors**. Before it reads anything, Cua says what it will do and waits for
+you to press **Use my sign-in**:
+
+1. Cua reads the sign-in Claude Code already keeps on this computer. On a Mac
+   that is the Keychain item "Claude Code-credentials", and macOS asks you to
+   allow it. On Linux and Windows, and when Claude Code keeps it in a file, it
+   is `.credentials.json` in Claude Code's folder (`~/.claude`, or the folder
+   `CLAUDE_CONFIG_DIR` names). Who you are comes from Claude Code's
+   `.claude.json`, which holds no tokens.
+2. Cua keeps the access token in its own Keychain item, never your refresh
+   token, and changes nothing about Claude Code's own sign-in. You stay signed
+   in to Claude Code.
+3. Each Claude Code run in a Space gets that access token as
+   `CLAUDE_CODE_OAUTH_TOKEN`. Only Claude Code gets it: Hermes and the other
+   agents never do, and a Space has no refresh token to spend.
+
+The row then reads **Signed in as you@example.com (Claude Max)**, the same
+words on the Claude Code page, the Anthropic row and the card an agent shows
+when it can't start.
+
+An access token lasts a few hours. A refresh token works only once, so if Cua
+refreshed it too, your own Claude Code would be signed out. Cua never refreshes.
+When its copy is about to run out, the next run reads the newer one Claude Code
+has refreshed on its own. If Claude Code hasn't run for a while, Cua asks Claude
+Code to refresh its own sign-in (one short request through `claude -p`, at most
+every five minutes). Only when there is nothing newer does the row read **Needs
+reconnect**, with **Reconnect**: open Claude Code once, or run `claude auth
+login`, then press Reconnect.
+
+If Claude Code isn't signed in on this computer, Cua offers the ways on in this
+order: sign in with Claude Code (`claude auth login` in Terminal, then try
+again), paste a token made with `claude setup-token` (a long-lived token for
+people who prefer one), or use an Anthropic API key. Sign out removes Cua's copy
+and never touches Claude Code.
 
 To connect an agent later, or to remove one, open **Settings, AI agents**:
 
@@ -155,7 +194,7 @@ An agent can also start other agents inside a Space, as long-lived threads.
 Runs live in the guest (`~/.spaces-agents/<run_id>/`) and survive the client
 going away. Host credential files are never copied into the Space: an API
 key reaches a run only as env you name for that run (`env_from_host`), or as
-a key saved in Settings → Connectors for that harness.
+a key saved in Settings → Connections for that harness.
 
 In TypeScript a run is a thread:
 
@@ -237,7 +276,7 @@ and the Swift tab is from [Cua Bots](/spaces/examples/cua-bots).
 ## Agent keys
 
 Claude Code, Codex and the other harnesses need a provider key to run. Add it
-once in **Cua Spaces, Settings, Connectors**, and every agent you start in a Space
+once in **Cua Spaces, Settings, Connections**, and every agent you start in a Space
 gets the key it needs.
 
 - **Anthropic** (`ANTHROPIC_API_KEY`): Claude Code and other agents that use Claude.
@@ -276,7 +315,7 @@ from the daemon's environment) wins over a saved one.
 
 `agent_capabilities` counts saved keys: a harness whose key is saved reports
 `auth: ok`. A run with no key fails before anything is installed, and the error
-says to add the key in Settings, Connectors or to set it for the Cua daemon.
+says to add the key in Settings, Connections or to set it for the Cua daemon.
 
 ### Where the keys are kept
 
@@ -312,7 +351,7 @@ as the macOS Keychain.
 | The agent has no `cua` tools | Run `cua agents status`. Then start a new session in the agent. In Hermes, run `/reload-mcp`. |
 | "The Cua daemon isn't running. Start Cua, or run `cua daemon start`." | Open Cua Spaces, or run `cua daemon start`. |
 | Your agent is not in the app's list | Run `cua agents detect` to see every supported agent, or add the server by hand as shown above. |
-| The agent can't reach a Space on another computer | Sign in on this computer, and make sure the device is enrolled. See [Add a computer](/spaces/guides/add-a-computer#reach-it-from-your-other-devices). |
+| The agent can't reach a Space on another computer | Sign in on this computer, and make sure the device is enrolled. See [Add a computer](/spaces/guides/add-a-computer#reach-it-from-your-other-machines). |
 
 ## Next
 

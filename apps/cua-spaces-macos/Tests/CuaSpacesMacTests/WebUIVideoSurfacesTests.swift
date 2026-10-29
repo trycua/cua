@@ -648,6 +648,36 @@ struct WebUIVideoSurfacesTests {
         s.removeAll()
     }
 
+    /// A modal dialog over the viewer (the page's dimmed layer is up): the page reports the
+    /// viewer occluded and non-interactive, so the native video is not drawn over the dialog
+    /// or the dimmed page, takes no clicks, and gives the keyboard back; the stream keeps
+    /// running, and the video, the pointer and the keys come back when the dialog closes.
+    /// (A popover or menu over it is still a hole: `aMenuOverTheViewerCutsAHoleAndTheVideoStaysLive`.)
+    @Test func aModalDialogOverTheViewerHidesItAndTakesItsKeysAndClicks() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.handle(message([entry("v", space: "a")]))
+        await settle { host.phases("v").contains("live") }
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == "v")
+        let view = try #require(s.surfaces["v"]?.view)
+        // The dialog opens: occluded, not interactive, no holes (the whole video is hidden).
+        s.handle(message([entry("v", space: "a", interactive: false, occluded: true)]))
+        #expect(view.isHidden)
+        #expect(s.focusedId == nil)
+        #expect(view.layer?.mask == nil)
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == nil)
+        // Closed: it is drawn again and takes the keyboard again, still live.
+        s.handle(message([entry("v", space: "a")]))
+        #expect(!view.isHidden)
+        #expect(host.phases("v").last == "live")
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == "v")
+        s.removeAll()
+    }
+
     @Test func theHarnessAddsRunningFixtureSpaces() {
         #expect(FixtureSpacesBackend.rows(environment: [:]).count == FixtureSpacesBackend.sample.count)
         let rows = FixtureSpacesBackend.rows(environment: ["CUA_SPACES_FIXTURE_SPACES": "3"])

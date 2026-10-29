@@ -9,16 +9,19 @@
 //!
 //! [`METHODS`] lists every method; `dispatch_covers_every_method` checks it.
 
+use crate::agent_list;
 use crate::keyvault::{approval, browse, vault, view as kv};
 use crate::model::*;
+use crate::profile_card;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
     CoreError, about, account, agent_keys, agents, bulk_confirm, checklist, cloud_connect,
-    cloud_page, cloud_sheet, devices, diagnostics, drive_mount_preview, drive_page, drive_settings,
-    driver_preview, experiments, host, local_network, login_item, machines, notch, notifications,
-    nudges, onboarding, onboarding_preview, palette, paths, persistent, presence, relay_usage,
-    resources, settings, share, sign_in, space_menu, telemetry, tips, upsell, window, wizard,
+    cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview, drive_page,
+    drive_settings, driver_preview, experiments, host, local_network, login_item, machines, notch,
+    notifications, nudges, onboarding, onboarding_preview, palette, paths, persistent, presence,
+    relay_usage, resources, runtimes, settings, share, sign_in, space_menu, summon, telemetry,
+    tips, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -186,11 +189,29 @@ pub const METHODS: &[&str] = &[
     "settings.defaults",
     "settings.formatHotkey",
     "settings.page",
+    "settings.runtimePathVerdict",
+    "settings.runtimeChoose",
     "loginItem.launchPlan",
     "agentKeys.view",
     "agentKeys.form",
     "agentKeys.removeConfirm",
     "agentKeys.nameProblem",
+    "connectors.view",
+    "connectors.connectPlan",
+    "connectors.providerSheet",
+    "connectors.providerPicker",
+    "connectors.importSheet",
+    "connectors.appDetail",
+    "connectors.setupCard",
+    "summon.candidates",
+    "summon.plan",
+    "summon.failed",
+    "summon.firstMessage",
+    "summon.parseMentions",
+    "summon.queuedNote",
+    "profileCard.person",
+    "agentList.view",
+    "profileCard.agent",
     "about.view",
     "diagnostics.createReport",
     "diagnostics.reportMailto",
@@ -201,6 +222,7 @@ pub const METHODS: &[&str] = &[
     "about.allowedChannels",
     "notch.layout",
     "notch.tiles",
+    "notch.togglePin",
     "notch.initial",
     "notch.reduce",
     "notch.view",
@@ -247,6 +269,7 @@ pub const METHODS: &[&str] = &[
     "machines.merge",
     "machines.pageRows",
     "machines.view",
+    "machines.account",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -577,6 +600,9 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "resources.view" => out(resources::view(&a.get("snapshot")?, a.get("nowMs")?)),
         "resources.thisMac" => out(resources::this_mac_view(&a.get("computer")?)),
         "resources.space" => out(resources::space_view(&a.get("space")?)),
+        // A Space's resources dialog: its three cards and how it fits on
+        // its computer, each base image counted once.
+        "resources.spacePanel" => out(resources::space_panel(&a.get("input")?)),
         "resources.computer" => out(resources::computer_view(
             &a.get("computer")?,
             a.get("nowMs")?,
@@ -966,6 +992,62 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("input")?,
             &a.get::<String>("env")?,
         )),
+        "connectors.view" => out(connectors::view_on(
+            &a.get("input")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "connectors.connectPlan" => out(connectors::connect_plan(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+        )),
+        "connectors.providerSheet" => out(connectors::provider_sheet_on(
+            &a.get("input")?,
+            &a.get::<String>("provider")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+            a.get::<Option<String>>("forApp")?.as_deref(),
+        )),
+        "connectors.providerPicker" => out(connectors::provider_picker(
+            &a.get("input")?,
+            a.get::<Option<String>>("forApp")?.as_deref(),
+            &a.get::<Option<String>>("query")?.unwrap_or_default(),
+            a.get::<Option<bool>>("expanded")?.unwrap_or(false),
+        )),
+        "connectors.importSheet" => out(connectors::import_sheet_on(
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "connectors.appDetail" => out(connectors::app_detail(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+        )),
+        "connectors.setupCard" => out(connectors::setup_card_for(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+            &a.get::<String>("name")?,
+            a.get::<Option<String>>("provider")?.as_deref(),
+        )),
+        "summon.candidates" => out(summon::candidates(&a.get("input")?)),
+        "summon.plan" => out(summon::plan(&a.get("input")?, &a.get::<String>("text")?)),
+        "summon.failed" => out(summon::failed(
+            &a.get("input")?,
+            &a.get::<String>("harness")?,
+            &a.get::<String>("handle")?,
+            &a.get::<String>("error")?,
+        )),
+        "summon.firstMessage" => out(summon::first_message(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+            &a.get::<String>("prompt")?,
+        )),
+        "agentList.view" => out(agent_list::view(&a.get("input")?)),
+        "profileCard.person" => out(profile_card::person(&a.get("input")?)),
+        "profileCard.agent" => out(profile_card::agent(&a.get("input")?)),
+        "summon.queuedNote" => out(summon::queued_note(
+            a.get::<Option<bool>>("creating")?.unwrap_or(false),
+        )),
+        "summon.parseMentions" => out(summon::parse_mentions(&a.get::<String>("text")?)),
         "agentKeys.nameProblem" => out(agent_keys::name_problem(&a.get::<String>("name")?)),
         "about.view" => out(about::view(&a.get::<about::AboutInput>("input")?)),
         "diagnostics.createReport" => out(diagnostics::create_report(&a.get("input")?)),
@@ -996,6 +1078,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<settings::SettingsInput>>("input")?
                 .unwrap_or_default(),
         )),
+        "settings.runtimePathVerdict" => out(runtimes::path_verdict(&a.get("check")?)),
+        "settings.runtimeChoose" => out(runtimes::choose(
+            a.get::<Option<runtimes::RuntimesInput>>("input")?.as_ref(),
+            &a.get::<String>("row")?,
+            &a.get::<String>("option")?,
+        )),
         "settings.withStorage" => out(settings::with_storage(
             &a.get("page")?,
             &a.get("storage")?,
@@ -1016,9 +1104,15 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("screen")?,
             a.get::<Option<bool>>("prompt")?.unwrap_or(false),
         )),
-        "notch.tiles" => out(notch::tiles(
+        "notch.tiles" => out(notch::tiles_pinned(
             &a.get::<Vec<Space>>("spaces")?,
             a.get::<Option<String>>("targeted")?.as_deref(),
+            "",
+            &a.get::<Option<Vec<String>>>("pinned")?.unwrap_or_default(),
+        )),
+        "notch.togglePin" => out(notch::toggle_pin(
+            &a.get::<Option<Vec<String>>>("pinned")?.unwrap_or_default(),
+            &a.get::<String>("id")?,
         )),
         "notch.initial" => out(notch::NotchState::default()),
         "notch.reduce" => out(notch::reduce(&a.get("state")?, &a.get("event")?)),
@@ -1094,6 +1188,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "machines.view" => out(crate::machines_view::view(
             &a.get::<Option<crate::machines_view::MachinesViewInput>>("input")?
                 .unwrap_or_default(),
+        )),
+        "machines.account" => out(crate::machines_account::view(
+            &a.get::<Option<devices::DevicesInput>>("input")?
+                .unwrap_or_default(),
+            a.get::<Option<u64>>("now")?.unwrap_or(0),
+            a.get::<Option<String>>("readError")?.as_deref(),
         )),
         "devices.view" => out(devices::devices_view(
             &a.get::<Option<devices::DevicesInput>>("input")?
@@ -1652,7 +1752,7 @@ mod tests {
                 .contains("on this PC in Windows Credential Manager,")
         );
         let linux = intro(json!({ "input": input, "hostOs": "linux" }));
-        assert!(linux.contains("on this computer,") && !linux.contains("Keychain"));
+        assert!(linux.contains("on this machine,") && !linux.contains("Keychain"));
         let help = |os: Value| {
             call_value(
                 "agentKeys.form",
@@ -1670,7 +1770,7 @@ mod tests {
         assert!(help(json!("windows")).contains("in Windows Credential Manager on this PC"));
         assert_eq!(
             help(json!("linux")),
-            "It's saved on this computer and won't be shown again."
+            "It's saved on this machine and won't be shown again."
         );
     }
 

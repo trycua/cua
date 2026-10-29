@@ -34,6 +34,10 @@
 //! | [`experiments`] | Settings, Experiments: one switch per feature still being built, and what each hides while off |
 //! | [`login_item`] | launch at login: the Settings toggle, the first run's Done checkbox, when the app turns it on |
 //! | [`agent_keys`] | Settings, Agents: the provider keys agents get (rows, the add or replace sheet, names refused, the remove question) |
+//! | [`connectors`] | Settings, Connections: coding apps with Connect, their pages, Providers, the provider sheet, a task's setup card |
+//! | [`summon`] | @mentioning agents in a Space: the composer's picker, what sending does, why an agent can't be woken, Ask first's first message |
+//! | [`profile_card`] | the card a person or an agent opens to in a Space: access, presence, who runs an agent and on what, its status, Details |
+//! | [`agent_list`] | every agent you work with as one list (agents in Spaces and this device's unfinished runs): the Agents page and Home draw it |
 //! | [`about`] | Settings, About: name, version, links, the update controls; the refresh after an update |
 //! | [`notch`] | notch geometry, notch mode and tiles |
 //! | [`window`] | the main window's chrome (account line, New Space, empty state) and the menu bar item's menu |
@@ -59,6 +63,7 @@
 pub mod about;
 pub mod account;
 pub mod agent_keys;
+pub mod agent_list;
 pub mod agent_prompts;
 pub mod agents;
 pub mod bulk_confirm;
@@ -67,6 +72,7 @@ pub mod cloud_connect;
 pub mod cloud_page;
 pub mod cloud_sheet;
 pub mod connection;
+pub mod connectors;
 pub mod devices;
 pub mod diagnostics;
 pub mod dispatch;
@@ -83,6 +89,7 @@ pub mod keyvault;
 pub mod local_network;
 pub mod login_item;
 pub mod machines;
+pub mod machines_account;
 pub mod machines_health;
 pub mod machines_view;
 pub mod message;
@@ -97,13 +104,16 @@ pub mod parity;
 pub mod paths;
 pub mod persistent;
 pub mod presence;
+pub mod profile_card;
 pub mod relay_usage;
 pub mod resources;
+pub mod runtimes;
 pub mod settings;
 pub mod share;
 pub mod sign_in;
 pub mod space_menu;
 pub mod spaces;
+pub mod summon;
 pub mod teams;
 pub mod telemetry;
 pub mod teleport;

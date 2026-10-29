@@ -326,7 +326,7 @@ export interface MachinesViewMachine {
 
 /** A group of the list (`machines_view::MachinesViewGroup`). */
 export interface MachinesViewGroup {
-  /** `yours`, `old` or `team`. */
+  /** `yours`, `devices`, `old` or `team`. */
   id: string;
   title: string;
   collapsed: boolean;
@@ -486,6 +486,18 @@ export interface HostStatus {
   provideSpaces?: boolean;
   maxSpaces?: number;
   maxMacosVms?: number;
+  /** Memory the Spaces other machines create here may use in total, in GB (0: no limit). */
+  maxMemoryGb?: number;
+  /** Disk they may use in total, in GB (0: no limit). */
+  maxDiskGb?: number;
+  /** How long such a Space may run, in minutes (0: no limit). */
+  maxRunMinutes?: number;
+  /** What those Spaces were given now, in GB. */
+  usedMemoryGb?: number;
+  usedDiskGb?: number;
+  /** This machine's own memory and disk, in GB (0: not known). */
+  totalMemoryGb?: number;
+  totalDiskGb?: number;
   recentAccess?: HostAccess[];
   accessLogError?: string | null;
   providedSpaces?: HostProvidedSpace[];
@@ -538,6 +550,34 @@ export type HostActionId =
   | "provide-spaces"
   | "stop-providing-spaces"
   | "sign-in";
+
+/** One limit on the Spaces other machines create here (`host::HostLimitRow`). */
+export interface HostLimitRow {
+  /** `max-spaces`, `max-memory`, `max-disk` or `max-run`. */
+  id: "max-spaces" | "max-memory" | "max-disk" | "max-run" | string;
+  label: string;
+  help: string;
+  /** The limit; 0 is no limit. */
+  value: number;
+  /** `Spaces`, `GB` or `minutes`. */
+  unit: string;
+  /** "2 of 4 Spaces", "12 of 32 GB"; absent for a limit about time. */
+  useText?: string | null;
+  /** This machine's own total in `unit` (memory, disk); 0 when not known. */
+  total?: number;
+  /** In use above the limit: nothing stops, new Spaces are refused. */
+  over?: boolean;
+  /** "Over limit" while `over`. */
+  overText?: string | null;
+}
+
+/** A change to the limits (`host.limits`); a missing field keeps its value, 0 is no limit. */
+export interface HostLimits {
+  maxSpaces?: number;
+  maxMemoryGb?: number;
+  maxDiskGb?: number;
+  maxRunMinutes?: number;
+}
 
 /** One of the two sharing settings (`host::HostToggle`). */
 export interface HostToggle {
@@ -602,6 +642,8 @@ export interface HostPanelView {
   accessWarning?: string | null;
   toggles?: HostToggle[];
   limits?: string | null;
+  /** The limits as number rows (Settings, Sharing), while this machine lets others create Spaces. */
+  limitRows?: HostLimitRow[];
   providedTitle?: string | null;
   provided?: HostAccessRow[];
   providedEmpty?: string | null;
@@ -740,10 +782,12 @@ export interface SettingsInput {
   keyvaultProtection?: { label: string; value: string }[];
   /** "Connect to the desktop automatically" (none: no row). */
   autoConnect?: boolean | null;
-  /** Which Lume macOS Spaces run on (none: no Runtimes section). */
-  lumeSource?: string | null;
-  /** Which engine local Linux Spaces run on (none: no Linux row). */
-  linuxSource?: string | null;
+  /** Overflow into your clouds when this machine is full (`placement.overflow`; none: no row). */
+  overflow?: boolean | null;
+  /** Settings, Advanced's runtimes: each kind's setting, what is installed
+   * for it and whether it runs here (`runtimes::RuntimesInput`). None: not
+   * read yet (the rows still show, "Checking…"). */
+  runtimes?: RuntimesInput | null;
   /** The coding agents (Settings, AI agents; none while detecting). */
   agents?: AgentSetupRow[] | null;
   /** "Configure all detected agents" is running. */
@@ -797,4 +841,62 @@ export interface SettingsSection {
 export interface SettingsPage {
   title: string;
   sections: SettingsSection[];
+}
+
+/** A runtime the host found for one kind (`runtimes::DetectedRuntime`). */
+export interface DetectedRuntime {
+  /** `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`. */
+  tool: string;
+  /** As people know it (`Docker`, `Apple container`). */
+  name: string;
+  path: string;
+  version?: string | null;
+  /** The one guest system it runs, when only one (`macOS`, `Linux`). */
+  guests?: string | null;
+}
+
+/** What a binary is for one kind (`runtimes::RuntimePathCheck`; the host's `runtimes.check`). */
+export interface RuntimePathCheck {
+  path: string;
+  exists: boolean;
+  executable: boolean;
+  tool?: string | null;
+  name?: string | null;
+  version?: string | null;
+  minVersion?: string | null;
+  /** The tools the kind takes here (`Docker`, `Podman`). */
+  expected: string[];
+  guests?: string | null;
+}
+
+/** One kind as the host read it (`runtimes::RuntimeKindInput`). */
+export interface RuntimeKindInput {
+  /** `container`, `vm`, `microvm`. */
+  kind: string;
+  /** `runtime.<kind>`: `auto`, `builtin`, `system`. */
+  source?: string | null;
+  /** `runtime.<kind>_path`, when set. */
+  path?: string | null;
+  /** What is installed for the kind, the one used first (null: not looked for yet). */
+  detected?: DetectedRuntime[] | null;
+  /** The path in use, probed. */
+  check?: RuntimePathCheck | null;
+  /** The tools the kind takes here. */
+  expected?: string[];
+}
+
+/** What Settings knows about this machine's runtimes (`runtimes::RuntimesInput`). */
+export interface RuntimesInput {
+  os?: "macos" | "windows" | "linux" | "unknown" | null;
+  hostArch?: string | null;
+  /** The runtime doctor's ready backends (null: not read yet). */
+  localBackends?: string[] | null;
+  localDetails?: Record<string, string> | null;
+  kinds?: RuntimeKindInput[] | null;
+}
+
+/** A path's one line (`settings.runtimePathVerdict`). */
+export interface RuntimePathVerdict {
+  ok: boolean;
+  line: string;
 }

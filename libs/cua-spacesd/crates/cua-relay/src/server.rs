@@ -71,12 +71,23 @@ pub struct RelayConfig {
     pub tokens: Vec<String>,
     /// Maximum machines connected per registration token.
     pub max_machines_per_token: usize,
+    /// Machine joins admitted per second once the burst is used; the rest are
+    /// refused with 503 and a `Retry-After`. 0: no limit. See [`crate::join_limit`].
+    pub join_rate_per_sec: f64,
+    /// Machine joins admitted at once.
+    pub join_burst: u32,
     /// Maximum concurrent client streams per machine.
     pub max_streams_per_machine: u32,
     /// A machine without a heartbeat for this long is dropped.
     pub machine_idle_timeout: Duration,
     /// Host-mode domain: `<id>.<domain>` routes to machine `<id>`.
     pub host_domain: Option<String>,
+    /// With a host domain, keep forwarding `/m/<id>/…` on the main origin
+    /// (for clients that build path-mode URLs), except that a browser
+    /// opening a path-mode share link is redirected to the share's own
+    /// origin (see [`legacy_share_redirect`]). Off: a host domain turns
+    /// path mode off (S6).
+    pub keep_path_mode: bool,
     /// Token for `/relay/v1/machines`.
     pub admin_token: Option<String>,
     /// Refuse client requests that carry no spacesd credential
@@ -165,6 +176,8 @@ impl Default for RelayConfig {
         Self {
             tokens: Vec::new(),
             max_machines_per_token: 16,
+            join_rate_per_sec: crate::join_limit::DEFAULT_JOIN_RATE_PER_SEC,
+            join_burst: crate::join_limit::DEFAULT_JOIN_BURST,
             // Down from an earlier 1000 (S7): yamux's own per-connection
             // cap (machine_max_streams) is now the smaller crate::mux::
             // MAX_STREAMS, so this app-level check (which answers with a
@@ -172,6 +185,7 @@ impl Default for RelayConfig {
             max_streams_per_machine: crate::mux::MAX_STREAMS as u32,
             machine_idle_timeout: Duration::from_secs(90),
             host_domain: None,
+            keep_path_mode: false,
             admin_token: None,
             require_client_credentials: true,
             oidc: None,
@@ -377,6 +391,8 @@ pub struct Relay {
     pub(crate) meter: Arc<Meter>,
     /// Connection outcome counters (`cua_relay_connections_total`).
     pub(crate) conns: Arc<crate::conn_metrics::ConnMetrics>,
+    /// Admission control for machine joins (a reconnect storm after a restart).
+    join_limiter: Arc<Mutex<crate::join_limit::JoinLimiter>>,
     /// When this relay started (the reconnect grace counts from it).
     started: Instant,
     /// Share links: browser sign-in state and public-link rate limits.
@@ -495,6 +511,11 @@ impl Relay {
         } = crate::hosted::open(&config, &storage)?;
         #[cfg(not(feature = "hosted"))]
         let (meter, teams, org) = crate::free::open();
+        let join_limiter = Arc::new(Mutex::new(crate::join_limit::JoinLimiter::new(
+            config.join_rate_per_sec,
+            config.join_burst,
+            Instant::now(),
+        )));
         let relay = Self {
             config: Arc::new(config),
             machines: Arc::default(),
@@ -514,6 +535,7 @@ impl Relay {
             storage,
             meter,
             conns: Arc::default(),
+            join_limiter,
             started: Instant::now(),
             share: Arc::default(),
         };
@@ -1176,6 +1198,28 @@ async fn machine_connect_inner(
     else {
         return text(StatusCode::BAD_REQUEST, "missing or invalid computer id");
     };
+    // A reconnect storm (every machine back at once after a restart) is let
+    // in at a steady rate; the rest are told when to come back.
+    let admitted = relay
+        .join_limiter
+        .lock()
+        .expect("join limiter")
+        .admit(Instant::now());
+    if let Err(wait) = admitted {
+        let unit = {
+            use rand::Rng as _;
+            rand::thread_rng().gen::<f64>()
+        };
+        let secs = crate::join_limit::retry_after_secs(wait, Duration::from_secs(5), unit);
+        let mut response = text(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the relay is busy; try again shortly",
+        );
+        if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+            response.headers_mut().insert(header::RETRY_AFTER, v);
+        }
+        return response;
+    }
     let registrant = if let Some(index) = relay.token_index(&headers) {
         if relay.directory.get(&id).is_some() {
             return text(
@@ -1272,12 +1316,36 @@ async fn machine_connect_inner(
                 user_cuts: Mutex::default(),
                 clients: Mutex::default(),
             });
-            if let Some(old) = relay
-                .machines
-                .lock()
-                .expect("machines")
-                .insert(id.clone(), machine.clone())
-            {
+            // The limit was checked before the upgrade, and joins that arrive together all
+            // pass it. Settle it here, where the machine is added: the oldest sessions of a
+            // token keep their places, a newer one over the limit is dropped (it retries).
+            let (replaced, over_limit) = {
+                let mut machines = relay.machines.lock().expect("machines");
+                let mut replaced = machines.insert(id.clone(), machine.clone());
+                let over_limit = matches!(machine.registrant, Registrant::Static(_)) && {
+                    let mut same: Vec<u64> = machines
+                        .values()
+                        .filter(|m| m.registrant == machine.registrant)
+                        .map(|m| m.generation)
+                        .collect();
+                    same.sort_unstable();
+                    same.iter().position(|g| *g == generation).unwrap_or(0)
+                        >= relay.config.max_machines_per_token
+                };
+                if over_limit {
+                    machines.remove(&id);
+                    if let Some(old) = replaced.take() {
+                        machines.insert(id.clone(), old);
+                    }
+                }
+                (replaced, over_limit)
+            };
+            if over_limit {
+                tracing::info!(machine = %id, "computer limit for this token reached");
+                driver.abort();
+                return;
+            }
+            if let Some(old) = replaced {
                 tracing::info!(machine = %id, "replacing previous session");
                 old.cut_clients();
                 old.abort.abort();
@@ -1477,7 +1545,7 @@ fn route_ex(relay: &Relay, uri: &Uri, headers: &HeaderMap) -> Option<Routed> {
         )
     };
     if let Some(rest) = path.strip_prefix("/m/") {
-        if domain.is_some() {
+        if domain.is_some() && !relay.config.keep_path_mode {
             return None;
         }
         let (id, tail) = match rest.find('/') {
@@ -1521,6 +1589,43 @@ fn route_ex(relay: &Relay, uri: &Uri, headers: &HeaderMap) -> Option<Routed> {
         prefix: String::new(),
         share,
     })
+}
+
+/// Where a browser that opened a path-mode share link
+/// (`<relay>/m/<id>/share/<key>/…`, `…/share/pub/<token>/…`) on a relay that
+/// now has a host domain and keeps path mode should go instead: the same
+/// path on the share's own origin, `<s|p><key>-<id prefix>.<domain>`.
+///
+/// Only requests without an account credential header are redirected (a
+/// browser never sends one; a tool that does keeps getting path mode), and
+/// only when the label is well formed, so anything else is routed as before.
+fn legacy_share_redirect(relay: &Relay, uri: &Uri, headers: &HeaderMap) -> Option<String> {
+    let domain = relay.config.host_domain.as_deref()?;
+    if !relay.config.keep_path_mode
+        || headers.contains_key(header::AUTHORIZATION)
+        || headers.contains_key("x-cua-env-authorization")
+    {
+        return None;
+    }
+    let rest = uri.path().strip_prefix("/m/")?;
+    let (id, tail) = rest.split_once('/')?;
+    let tail = format!("/{tail}");
+    let (kind, sid) = crate::share_web::share_of_path(&tail)?;
+    let (letter, base) = match kind {
+        crate::share_web::ShareKind::Public => ('p', format!("/share/pub/{sid}")),
+        crate::share_web::ShareKind::Private => ('s', format!("/share/{sid}")),
+    };
+    let id_prefix: String = id.chars().take(16).collect();
+    let label = format!("{letter}{sid}-{id_prefix}");
+    crate::share_web::parse_label(&label)?;
+    let path = tail.strip_prefix(&base)?;
+    let path = if path.is_empty() { "/" } else { path };
+    if !path.starts_with('/') {
+        return None;
+    }
+    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+    let scheme = relay.share_scheme(headers);
+    Some(format!("{scheme}://{label}.{domain}{path}{query}"))
 }
 
 /// The address a request came from, for the public-share rate limit: the
@@ -2041,6 +2146,21 @@ async fn proxy(state: State<Relay>, request: Request) -> Response {
 }
 
 async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Response {
+    if let Some(location) = legacy_share_redirect(&relay, request.uri(), request.headers()) {
+        let mut response = Response::new(axum::body::Body::empty());
+        *response.status_mut() = StatusCode::PERMANENT_REDIRECT;
+        if let Ok(v) = HeaderValue::from_str(&location) {
+            response.headers_mut().insert(header::LOCATION, v);
+        }
+        response.headers_mut().insert(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        );
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::Uncounted);
+        return response;
+    }
     let Some(Routed {
         id,
         forwarded,
@@ -2714,6 +2834,96 @@ mod tests {
             Some(("abc123".into(), "/files?sig=x".into(), String::new()))
         );
         assert_eq!(route(&relay(None), &"/files".parse().unwrap(), &host), None);
+    }
+
+    fn kept(domain: &str) -> Relay {
+        Relay::new(RelayConfig {
+            host_domain: Some(domain.into()),
+            keep_path_mode: true,
+            public_url: Some("https://relay.example".into()),
+            ..RelayConfig::default()
+        })
+    }
+
+    #[test]
+    fn keep_path_mode_forwards_both_modes() {
+        let r = kept("m.share.example");
+        let h = HeaderMap::new();
+        assert_eq!(
+            route(
+                &r,
+                &"/m/abc123/cua.env.v1.SystemService/Health".parse().unwrap(),
+                &h
+            ),
+            Some((
+                "abc123".into(),
+                "/cua.env.v1.SystemService/Health".into(),
+                "/m/abc123".into()
+            ))
+        );
+        let mut host = HeaderMap::new();
+        host.insert(header::HOST, "abc123.m.share.example".parse().unwrap());
+        assert_eq!(
+            route(&r, &"/files".parse().unwrap(), &host),
+            Some(("abc123".into(), "/files".into(), String::new()))
+        );
+        assert_eq!(
+            r.machine_url(&h, "abc123"),
+            "https://abc123.m.share.example"
+        );
+    }
+
+    #[test]
+    fn browsers_on_old_share_links_go_to_the_share_origin() {
+        const ID: &str = "0123456789abcdef0123456789abcdef";
+        let r = kept("m.share.example");
+        let h = HeaderMap::new();
+        let token = "a".repeat(40);
+        let go = |r: &Relay, path: &str, h: &HeaderMap| {
+            legacy_share_redirect(r, &path.parse().unwrap(), h)
+        };
+        assert_eq!(
+            go(&r, &format!("/m/{ID}/share/pub/{token}/app/x.js?v=1"), &h).as_deref(),
+            Some(
+                format!("https://p{token}-0123456789abcdef.m.share.example/app/x.js?v=1").as_str()
+            )
+        );
+        assert_eq!(
+            go(&r, &format!("/m/{ID}/share/pub/{token}"), &h).as_deref(),
+            Some(format!("https://p{token}-0123456789abcdef.m.share.example/").as_str())
+        );
+        assert_eq!(
+            go(&r, &format!("/m/{ID}/share/aaaa1111bbbb2222/"), &h).as_deref(),
+            Some("https://saaaa1111bbbb2222-0123456789abcdef.m.share.example/")
+        );
+        // A tool with an account token keeps path mode.
+        let mut bearer = HeaderMap::new();
+        bearer.insert(header::AUTHORIZATION, "Bearer t".parse().unwrap());
+        assert_eq!(
+            go(&r, &format!("/m/{ID}/share/aaaa1111bbbb2222/"), &bearer),
+            None
+        );
+        // Not a share, a malformed share id, a non-hex machine id: routed as before.
+        assert_eq!(go(&r, &format!("/m/{ID}/files"), &h), None);
+        assert_eq!(go(&r, &format!("/m/{ID}/share/nothex/"), &h), None);
+        assert_eq!(
+            go(&r, "/m/my-machine-name/share/aaaa1111bbbb2222/", &h),
+            None
+        );
+        // Without keep_path_mode (or without a host domain) nothing redirects.
+        let strict = relay(Some("m.share.example"));
+        assert_eq!(
+            go(&strict, &format!("/m/{ID}/share/aaaa1111bbbb2222/"), &h),
+            None
+        );
+        assert_eq!(
+            go(
+                &relay(None),
+                &format!("/m/{ID}/share/aaaa1111bbbb2222/"),
+                &h
+            ),
+            None
+        );
     }
 
     #[test]

@@ -36,6 +36,10 @@ import type {
   SpacePowerReport,
   TelemetryView,
   CrashReportingConfig,
+  DetectedRuntime,
+  RuntimeKindInput,
+  RuntimePathCheck,
+  RuntimesInput,
 } from "./host";
 import type { KeyvaultOverview, KvGrant } from "./keyvault";
 import type {
@@ -53,7 +57,7 @@ import type {
   WizardEnv,
 } from "./new-space";
 import type { NotificationInput } from "./notifications";
-import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
+import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, RepoCacheView, StorageInput, UpdateState } from "./settings";
 import type { ShareEntry, ShareRemoval } from "./share";
 import type { BulkResult } from "./spaces-page";
 import type { CreateFix, CreatingElsewhere, SpaceAccess, SpaceProgress, SpaceRow, SpaceSharingFacts } from "./spaces";
@@ -64,12 +68,12 @@ import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
-import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
+import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SharedBase, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import type { TipsState } from "./spaces-page";
 import type { ShareLink } from "../ops/links";
 import type { CliInstallPlan } from "./first-run";
-import type { AgentMember, JoinCode, JoinCodeRow, MemberIdentity, ThreadAttachment, ThreadAuthor, ThreadEntry, ThreadPage } from "../ops/thread";
+import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, MemberIdentity, ThreadAttachment, ThreadAuthor, ThreadEntry, ThreadFailure, ThreadLive, ThreadPage } from "../ops/thread";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
@@ -241,6 +245,13 @@ const HostStatusShape = ref(
     provideSpaces: opt(bool),
     maxSpaces: opt(num),
     maxMacosVms: opt(num),
+    maxMemoryGb: opt(num),
+    maxDiskGb: opt(num),
+    maxRunMinutes: opt(num),
+    usedMemoryGb: opt(num),
+    usedDiskGb: opt(num),
+    totalMemoryGb: opt(num),
+    totalDiskGb: opt(num),
     recentAccess: opt(list(object({ atMs: num, via: str, who: str, what: str }))),
     accessLogError: optNull(str),
     providedSpaces: opt(list(any)),
@@ -318,6 +329,45 @@ const SessionShape = ref(
 /** `AppSettings.tips` (`tips::TipsState`). */
 const TipsStateShape = obj<TipsState>()({ off: bool, done: strings });
 
+const RuntimePathCheckShape = ref(
+  "RuntimePathCheck",
+  obj<RuntimePathCheck>()({
+    path: str,
+    exists: bool,
+    executable: bool,
+    tool: optNull(str),
+    name: optNull(str),
+    version: optNull(str),
+    minVersion: optNull(str),
+    expected: strings,
+    guests: optNull(str),
+  }),
+);
+
+const RuntimesInputShape = ref(
+  "RuntimesInput",
+  obj<RuntimesInput>()({
+    os: optNull(os),
+    hostArch: optNull(str),
+    localBackends: optNull(strings),
+    localDetails: optNull(any),
+    kinds: optNull(
+      list(
+        obj<RuntimeKindInput>()({
+          kind: str,
+          source: optNull(str),
+          path: optNull(str),
+          detected: optNull(
+            list(obj<DetectedRuntime>()({ tool: str, name: str, path: str, version: optNull(str), guests: optNull(str) })),
+          ),
+          check: optNull(RuntimePathCheckShape),
+          expected: opt(strings),
+        }),
+      ),
+    ),
+  }),
+);
+
 const SettingsShape = ref(
   "SettingsSnapshot",
   obj<SettingsSnapshot>()({
@@ -331,6 +381,7 @@ const SettingsShape = ref(
       updateChannel: nullable(oneOf("stable", "beta")),
       autoConnect: opt(bool),
       tips: opt(TipsStateShape),
+      notchPinned: opt(strings),
     }),
     defaultLocation: nullable(obj<DefaultLocation>()({ value: str, source: oneOf("env", "config", "default"), env: opt(str), path: str })),
     telemetry: nullable(
@@ -338,9 +389,9 @@ const SettingsShape = ref(
     ),
     hostSettings: opt(
       obj<HostSettings>()({
-        lumeSource: optNull(str),
-        linuxSource: optNull(str),
+        runtimes: optNull(RuntimesInputShape),
         autoConnect: optNull(bool),
+        overflow: optNull(bool),
         keyvaultAutoWipe: optNull(bool),
         keyvaultUnlockPrompt: optNull(bool),
         keyvaultSiteIcons: optNull(bool),
@@ -356,6 +407,22 @@ const SettingsShape = ref(
 const ExperimentsShape = ref(
   "Experiments",
   obj<Experiments>()({ cuaVolume: opt(bool), yourCloud: opt(bool), sharing: opt(bool), webUi: opt(bool) }),
+);
+
+const RepoCacheShape = ref(
+  "RepoCacheView",
+  obj<RepoCacheView>()({
+    enabled: bool,
+    repos: num,
+    bytes: num,
+    capBytes: num,
+    sizeSetting: str,
+    summary: str,
+    week: str,
+    hits: num,
+    misses: num,
+    secondsSaved: num,
+  }),
 );
 
 const AboutShape = ref(
@@ -500,8 +567,8 @@ const NotificationShape = ref(
 const AgentKeysShape = ref(
   "AgentKeysReport",
   obj<AgentKeysReport>()({
-    keys: list(object({ provider: oneOf("anthropic", "openai", "other"), env: str, last4: str, addedMs: num })),
-    providers: list(object({ id: oneOf("anthropic", "openai", "other"), label: str, env: str })),
+    keys: list(object({ provider: str, env: str, last4: str, addedMs: num, expired: opt(bool), label: opt(str), region: opt(str), fields: opt(dict(str)) })),
+    providers: list(object({ id: str, label: str, env: str })),
     available: bool,
     unavailable: nullable(str),
   }),
@@ -805,6 +872,8 @@ const ConnectResultsShape = list(
   ),
 );
 const DisconnectShape = object({ removed_sign_ins: list(str) });
+const SignInStartShape = object({ id: str, url: str, code: str });
+const SignInWaitShape = object({ imported: any, refused: any, line: any });
 const AgentDetailShape = ref(
   "AgentDetailInput",
   obj<AgentDetailInput>()({
@@ -886,6 +955,7 @@ const MemberIdentityShape = ref(
 
 /** One Space thread entry as the page reads it (`ops/thread.ts`, DESIGN §3.2). */
 const taskState = oneOf("queued", "claimed", "working", "done", "failed");
+const ThreadFailureShape = obj<ThreadFailure>()({ class: oneOf("needs_connect", "error"), provider: nullable(str), message: str, retryable: bool });
 const ThreadEntryShape = ref(
   "ThreadEntry",
   obj<ThreadEntry>()({
@@ -911,6 +981,8 @@ const ThreadEntryShape = ref(
       ),
     ),
     view: opt(nullable(object({ kind: oneOf("desktop", "window"), app: nullable(str), title: nullable(str), windowId: nullable(str) }))),
+    failure: opt(nullable(ThreadFailureShape)),
+    fanoutOf: opt(nullable(num)),
   }),
 );
 
@@ -928,6 +1000,7 @@ const JoinCodeRowShape = obj<JoinCodeRow>()({
 });
 const ThreadPageShape = obj<ThreadPage>()({
   entries: list(ThreadEntryShape),
+  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str, sinceMs: opt(num), text: opt(str) })) }),
   cursor: num,
   caughtUp: bool,
   unread: num,
@@ -941,9 +1014,11 @@ const AgentMemberShape = ref(
   "AgentMember",
   obj<AgentMember>()({
     name: str,
+    handle: opt(str),
     harness: str,
     status: str,
     activity: nullable(str),
+    failure: opt(nullable(ThreadFailureShape)),
     sessions: num,
     rights: nullable(object({ task: rightHolders, control: rightHolders, approve: rightHolders })),
     youCan: nullable(object({ task: bool, control: bool, approve: bool })),
@@ -1187,6 +1262,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.status": ConnectionReportShape,
   "agents.connect": ConnectResultsShape,
   "agents.disconnect": DisconnectShape,
+  "agents.signInStart": SignInStartShape,
+  "agents.signInWait": SignInWaitShape,
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
   "agents.restoreFile": nul,
@@ -1266,8 +1343,11 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "sharing.ackRemovals": nul,
 
   "agentKeys.list": AgentKeysShape,
+  "agentKeys.check": AgentKeysShape,
   "agentKeys.set": AgentKeysShape,
   "agentKeys.remove": AgentKeysShape,
+  "agentKeys.shell": object({ names: list(str) }),
+  "agentKeys.fromShell": AgentKeysShape,
 
   "volume.overview": VolumeShape,
   "volume.storage": nullable(DriveStorageShape),
@@ -1326,11 +1406,12 @@ export const OP_SHAPES: Record<OpName, Schema> = {
                 memoryTotal: num,
                 memoryLimited: bool,
                 diskUsed: num,
-                diskTotal: num,
+                diskTotal: nullable(num),
                 diskLimited: bool,
               }),
             ),
             diskOnHost: nullable(obj<DiskOnHost>()({ bytes: nullable(num), allocated: num, sharesSpace: bool })),
+            base: opt(nullable(obj<SharedBase>()({ key: str, image: str, bytes: nullable(num), sharedWith: num }))),
           }),
         ),
       ),
@@ -1376,6 +1457,11 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "loginItem.get": LoginItemShape,
   "loginItem.set": LoginItemShape,
   "loginItem.openSettings": nul,
+  "runtimes.check": RuntimePathCheckShape,
+  "runtimes.browse": object({ path: nullable(str) }),
+  "repoCache.get": RepoCacheShape,
+  "repoCache.set": RepoCacheShape,
+  "repoCache.clear": RepoCacheShape,
   "devices.get": DevicesShape,
   "devices.enroll": obj<EnrollResult>()({ enrolled: bool, code: nullable(str) }),
   "devices.checkEnrolled": bool,
@@ -1409,6 +1495,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "host.setUp": HostStatusShape,
   "host.joinWithCode": HostStatusShape,
   "host.action": HostStatusShape,
+  "host.limits": HostStatusShape,
   "host.openSettings": nul,
   "startup.get": StartupShape,
   "startup.act": StartupShape,
@@ -1437,6 +1524,13 @@ const WkHostShape = ref(
     provideSpaces: bool,
     maxSpaces: num,
     maxMacosVms: optNull(num),
+    maxMemoryGb: optNull(num),
+    maxDiskGb: optNull(num),
+    maxRunMinutes: optNull(num),
+    usedMemoryGb: optNull(num),
+    usedDiskGb: optNull(num),
+    totalMemoryGb: optNull(num),
+    totalDiskGb: optNull(num),
     recentAccess: optNull(list(object({ atMs: num, via: str, who: str, what: str }))),
     accessLogError: optNull(str),
     providedSpaces: optNull(list(any)),
@@ -1532,6 +1626,8 @@ const WkSettingsShape = ref(
     accountUrl: optNull(str),
     cli: optNull(object({ name: str, installed: bool })),
     tips: opt(TipsStateShape),
+    notchPinned: opt(strings),
+    runtimes: optNull(RuntimesInputShape),
   }),
 );
 
@@ -1568,7 +1664,7 @@ const WkMachinesShape = ref(
 
 /** The daemon's `agent_keys.*` answer, which `agentKeysFromWire` reads. */
 const AgentKeysWire = object({
-  keys: list(object({ provider: str, env: str, last4: str, added_ms: num })),
+  keys: list(object({ provider: str, env: str, last4: str, added_ms: num, expired: opt(bool), label: opt(str), region: opt(str), fields: opt(dict(str)) })),
   providers: list(object({ id: str, env: str, label: opt(str) })),
   available: bool,
   unavailable: optNull(str),
@@ -1659,6 +1755,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "host.setUp": nullable(WkHostShape),
   "host.joinWithCode": nullable(WkHostShape),
   "host.action": nullable(WkHostShape),
+  "host.limits": nullable(WkHostShape),
   "agents.list": OP_SHAPES["agents.list"],
   "agents.runs": OP_SHAPES["agents.runs"],
   "agents.events": OP_SHAPES["agents.events"],
@@ -1672,6 +1769,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.status": ConnectionReportShape,
   "agents.connect": ConnectResultsShape,
   "agents.disconnect": DisconnectShape,
+  "agents.signInStart": SignInStartShape,
+  "agents.signInWait": SignInWaitShape,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
@@ -1682,8 +1781,11 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.allowComputer": nul,
   "agents.revokeComputer": nul,
   "agentKeys.list": AgentKeysWire,
+  "agentKeys.check": AgentKeysWire,
   "agentKeys.set": AgentKeysWire,
   "agentKeys.remove": AgentKeysWire,
+  "agentKeys.shell": object({ names: list(str) }),
+  "agentKeys.fromShell": AgentKeysWire,
   "clouds.status": nullable(OP_SHAPES["clouds.status"]),
   "clouds.test": OP_SHAPES["clouds.test"],
   "clouds.connect": OP_SHAPES["clouds.connect"],
@@ -1723,6 +1825,11 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "loginItem.get": LoginItemShape,
   "loginItem.set": LoginItemShape,
   "loginItem.openSettings": nul,
+  "runtimes.check": RuntimePathCheckShape,
+  "runtimes.browse": object({ path: nullable(str) }),
+  "repoCache.get": RepoCacheShape,
+  "repoCache.set": RepoCacheShape,
+  "repoCache.clear": RepoCacheShape,
   "devices.get": DevicesShape,
   "devices.enroll": OP_SHAPES["devices.enroll"],
   "devices.checkEnrolled": bool,

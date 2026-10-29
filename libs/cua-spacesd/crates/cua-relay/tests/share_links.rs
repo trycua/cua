@@ -143,6 +143,7 @@ struct Opts {
     web: bool,
     limits: ShareLimits,
     trusted_proxies: &'static str,
+    keep_path_mode: bool,
 }
 
 impl Default for Opts {
@@ -152,6 +153,7 @@ impl Default for Opts {
             web: true,
             limits: ShareLimits::default(),
             trusted_proxies: "",
+            keep_path_mode: false,
         }
     }
 }
@@ -186,6 +188,7 @@ impl Env {
             device_enrollment: false,
             state_file: Some(state.path().join("machines.json")),
             host_domain: o.host_mode.then(|| DOMAIN.to_owned()),
+            keep_path_mode: o.keep_path_mode,
             public_url: Some(base.clone()),
             share_web: o.web.then(|| ShareWebConfig {
                 client_id: "share-web".into(),
@@ -781,6 +784,78 @@ async fn path_mode_serves_shares_but_never_renders_their_html() {
         .await
         .unwrap();
     assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn kept_path_mode_sends_browsers_on_old_links_to_the_share_origin() {
+    let env = Env::start(Opts {
+        web: false,
+        keep_path_mode: true,
+        ..Opts::default()
+    })
+    .await;
+    let m = &env.machine;
+    // An old public link opened by a browser: the same path on its own origin.
+    let r = env
+        .http
+        .get(format!("{}/m/{m}/share/pub/{TOKEN}/report/?v=2", env.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::PERMANENT_REDIRECT);
+    let host = env.public_host(TOKEN);
+    assert_eq!(
+        r.headers()[header::LOCATION],
+        format!("http://{host}/report/?v=2").as_str()
+    );
+    let r = env.get(&host, "/report/?v=2").send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let seen: Value = r.json().await.unwrap();
+    assert_eq!(seen["uri"], format!("/share/pub/{TOKEN}/report/?v=2"));
+    // An old private link: the same, to the private share origin.
+    let r = env
+        .http
+        .get(format!("{}/m/{m}/share/{SID}/", env.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::PERMANENT_REDIRECT);
+    let location = r.headers()[header::LOCATION].to_str().unwrap().to_owned();
+    assert!(
+        location.starts_with(&format!("http://s{SID}-{}", &m[..16])),
+        "{location}"
+    );
+    // A tool with the account's token keeps path mode.
+    let r = env
+        .http
+        .get(format!("{}/m/{m}/share/{SID}/x", env.base))
+        .bearer_auth(env.token("ada"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let seen: Value = r.json().await.unwrap();
+    assert_eq!(seen["uri"], format!("/share/{SID}/x"));
+    // Path mode for everything else is still forwarded (and still gated).
+    let r = env
+        .http
+        .get(format!("{}/m/{m}/files?path=/etc/passwd", env.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+    // The directory lists the machine on its own origin.
+    let r: Value = env
+        .http
+        .get(format!("{}/v1/machines/{m}", env.base))
+        .bearer_auth(env.token("ada"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["url"], format!("http://{m}.{DOMAIN}"), "{r}");
 }
 
 #[tokio::test]

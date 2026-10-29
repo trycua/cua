@@ -293,6 +293,9 @@ impl McpServer {
             .map(|t| {
                 let mut schema = t.input_schema.clone();
                 cua_sandbox_core::external::annotate_runtime_schema(&mut schema, &providers);
+                if crate::extension::MEMBER_TOOLS.contains(&t.name) {
+                    add_member_property(&mut schema);
+                }
                 json!({
                     "name": t.name,
                     "description": t.mcp_description(),
@@ -513,6 +516,23 @@ fn member_refusal(name: &str) -> Option<ToolOutcome> {
             format!("{name}: an agent connected to a Space reaches only that Space's thread"),
         ))
     })
+}
+
+/// Lets an agent that joined with `thread_join_redeem` (and so holds a member
+/// key) act as that member through these tools: `_member` is taken out of the
+/// arguments before the tool runs ([`crate::extension::MEMBER_CREDENTIAL`]).
+fn add_member_property(schema: &mut Value) {
+    if let Some(props) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        props.insert(
+            crate::extension::MEMBER_CREDENTIAL.to_string(),
+            json!({
+                "type": "object",
+                "description": "Only for an agent that joined a Space with thread_join_redeem: its member credential from that result (`member_credential`: member_id and key). With it the call posts and reads as the agent, not as the person who signed in. Never show or store it elsewhere.",
+                "properties": {"member_id": {"type": "string"}, "key": {"type": "string"}},
+                "required": ["member_id", "key"],
+            }),
+        );
+    }
 }
 
 #[cfg(test)]

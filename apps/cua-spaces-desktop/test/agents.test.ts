@@ -162,7 +162,7 @@ describe.skipIf(!built)("agents", () => {
     await p.send(new A.Select({ name: "ada" }));
     expect(p.view(now).detail?.memory.map((l) => l.text)).toEqual(["hermes/MEMORY.md"]);
     await p.send(new A.AllowComputer({ machine: "relay:0123" }));
-    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This computer"]);
+    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This machine"]);
     await p.send(new A.Resume({ name: "ada" }));
     expect(daemon.calls).toContain("agent_resume");
     expect(p.view(now).rows[0]!.state).toBe("Running");
@@ -445,22 +445,36 @@ describe.skipIf(!built)("agents", () => {
     expect(model.agents.keys.view.notice).toContain("keeps credentials in a file");
     const none = makeBridge({ tools: null }).model.agents.keys;
     expect(none.view.notice).toContain("need the cua daemon");
-    expect(agentKeysInput({ keys: [{ provider: "x", env: "", last4: "1234", added_ms: 1 }], available: false }, null)).toMatchObject({ keys: [], unavailable: "this computer can't keep keys" });
+    expect(agentKeysInput({ keys: [{ provider: "x", env: "", last4: "1234", added_ms: 1 }], available: false }, null)).toMatchObject({ keys: [], unavailable: "this machine can't keep keys" });
   });
 
   it("routes agentKeys.* to the daemon, with answers that never carry a key", async () => {
     const { bridge } = makeBridge();
     const listed = (await call(bridge, "agentKeys.list")) as { keys: { env: string }[] };
     expect(listed.keys.map((k) => k.env)).toEqual(["OPENAI_API_KEY"]);
+    // The check is the daemon's `agent_keys.check` (the providers are asked there), answered like the list.
+    const checked = (await call(bridge, "agentKeys.check")) as { keys: { env: string }[] };
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.check", {}]);
+    expect(checked.keys.map((k) => k.env)).toEqual(["OPENAI_API_KEY"]);
     const set = await call(bridge, "agentKeys.set", { provider: "anthropic", value: "sk-ant-test-0000" });
     expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "anthropic", value: "sk-ant-test-0000" }]);
     expect(JSON.stringify(set)).not.toContain("sk-ant");
     await call(bridge, "agentKeys.set", { provider: "other", env: "MISTRAL_API_KEY", value: "mk-0000-9z9z" });
     expect(keys.calls.at(-1)![1]).toEqual({ provider: "other", value: "mk-0000-9z9z", env: "MISTRAL_API_KEY" });
+    // A plan, and a custom endpoint's non-secret fields (its key may be empty), reach the daemon as given.
+    await call(bridge, "agentKeys.set", { provider: "zai", value: "zk-0000-9z9z", region: "coding-global" });
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "zai", value: "zk-0000-9z9z", region: "coding-global" }]);
+    const fields = { base_url: "http://127.0.0.1:1234/v1", model: "qwen", wire: "openai-chat" };
+    const custom = await call(bridge, "agentKeys.set", { provider: "custom", fields });
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "custom", value: "", fields }]);
+    expect(JSON.stringify(custom)).toContain("http://127.0.0.1:1234/v1");
     const removed = await call(bridge, "agentKeys.remove", { env: "ANTHROPIC_API_KEY" });
     expect(keys.calls.at(-1)).toEqual(["agent_keys.remove", { env: "ANTHROPIC_API_KEY" }]);
     for (const [m, a] of [["agentKeys.list", listed], ["agentKeys.set", set], ["agentKeys.remove", removed]] as const) expect(shapeProblems(m, a)).toEqual([]);
-    expect(await code(bridge, "agentKeys.set", { provider: "anthropic" })).toBe("bad_args");
+    // A connection may have no key (a custom endpoint): the bridge forwards an empty value and the daemon decides; a provider is always required.
+    await call(bridge, "agentKeys.set", { provider: "anthropic" });
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "anthropic", value: "" }]);
+    expect(await code(bridge, "agentKeys.set", { value: "sk-ant-test-0000" })).toBe("bad_args");
     expect(await code(bridge, "agentKeys.remove", {})).toBe("bad_args");
   });
 

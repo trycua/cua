@@ -22,8 +22,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [],
           "canAdd": false,
           "error": null,
@@ -40,7 +40,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -58,8 +58,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -83,7 +83,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -101,8 +101,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -126,7 +126,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -144,8 +144,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -177,7 +177,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -195,8 +195,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -228,7 +228,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -246,8 +246,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -271,7 +271,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -289,8 +289,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -314,7 +314,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -332,8 +332,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -357,7 +357,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -375,8 +375,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -400,7 +400,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -418,8 +418,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -443,7 +443,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -461,8 +461,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -486,7 +486,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -504,8 +504,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -529,7 +529,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -547,8 +547,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -572,7 +572,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -590,8 +590,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -615,7 +615,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -633,8 +633,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -659,7 +659,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -677,8 +677,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -703,7 +703,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -721,8 +721,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -747,7 +747,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -765,8 +765,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -791,7 +791,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -809,8 +809,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -835,7 +835,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -853,8 +853,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -879,7 +879,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": "not confirmed: you declined",
@@ -897,8 +897,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -923,7 +923,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -941,9 +941,9 @@
         "busy": false,
         "detail": {
           "access": [
-            "This computer |  | Revoke | - | -"
+            "This machine |  | Revoke | - | -"
           ],
-          "accessEmpty": "This agent cannot use your computers.",
+          "accessEmpty": "This agent cannot use your machines.",
           "allowThisMachine": null,
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
@@ -969,7 +969,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -987,9 +987,9 @@
         "busy": true,
         "detail": {
           "access": [
-            "This computer |  | Revoke | - | -"
+            "This machine |  | Revoke | - | -"
           ],
-          "accessEmpty": "This agent cannot use your computers.",
+          "accessEmpty": "This agent cannot use your machines.",
           "allowThisMachine": null,
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
@@ -1015,7 +1015,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -1033,8 +1033,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -1059,7 +1059,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -1077,8 +1077,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -1103,7 +1103,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -1121,8 +1121,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -1147,7 +1147,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved just now",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
@@ -1165,8 +1165,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -1191,7 +1191,7 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved just now",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,

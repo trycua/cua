@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { Machine, SpaceOs } from "@/bridge";
+import { machineSpacesLabel } from "@/bridge/derive";
 import { OS_NAME } from "@/components/os-icon";
 import { plural } from "@/lib/plural";
 import { relativeTime } from "@/lib/utils";
@@ -26,15 +27,19 @@ export const CONNECTION_LABEL: Record<"relay" | "direct", string> = {
   direct: "Direct",
 };
 
-/** How other devices reach it, in words. */
+/** A row that is only a signed-in machine (`machines_view::DEVICE_LINE`). */
+export const DEVICE_LINE = "Signed in, not sharing";
+
+/** How other machines reach it, in words. */
 export function connectionLabel(m: Pick<Machine, "connection" | "current"> & Pick<Partial<Machine>, "device">): string {
   if (m.connection) return CONNECTION_LABEL[m.connection];
-  return m.current || m.device ? "Not set up for access" : "Unknown";
+  if (m.device) return DEVICE_LINE;
+  return m.current ? "Not set up for access" : "Unknown";
 }
 
 /** The list row's second line: OS, then how it is reached. */
 export function machineSubtitle(m: Pick<Machine, "os" | "connection" | "current" | "model"> & Pick<Partial<Machine>, "device">): string {
-  return [m.model ?? osName(m), connectionLabel(m)].join(" · ");
+  return [m.model ?? osName(m), connectionLabel(m)].join(", ");
 }
 
 /** The core's word for a machine its owner stopped sharing
@@ -63,15 +68,15 @@ export function presenceWord(m: Pick<Machine, "online" | "notSharing" | "status"
 
 /** "1 Space", "3 Spaces", "No Spaces". */
 export function spaceCount(n: number): string {
-  if (n === 0) return "No Spaces";
-  return `${n} ${n === 1 ? "Space" : "Spaces"}`;
+  return machineSpacesLabel(false, n);
 }
 
 /** The row's Spaces count: the core's (`machines::spaces_label`, the same
  * the SwiftUI Machines list shows), else `n` counted here. Empty for a
- * device of its own (it runs no Spaces). */
-export function spacesLabel(m: Pick<Machine, "spacesLabel">, n: number): string {
-  return m.spacesLabel ?? spaceCount(n);
+ * device of its own (it runs no Spaces). `desktop`: the machine shares its
+ * own desktop ("Desktop shared", "Desktop and 2 Spaces"). */
+export function spacesLabel(m: Pick<Machine, "spacesLabel">, n: number, desktop = false): string {
+  return m.spacesLabel ?? machineSpacesLabel(desktop, n);
 }
 
 /** The selected machine: the chosen one if it is still listed, else the first. */
@@ -81,5 +86,5 @@ export function selectedMachine<T extends Pick<Machine, "id">>(machines: readonl
 
 /** The Machines header: "1 machine, 1 online", "3 machines, 2 online". */
 export function machinesSummary(total: number, online: number): string {
-  return `${plural(total, "computer")}, ${online} online`;
+  return `${plural(total, "machine")}, ${online} online`;
 }

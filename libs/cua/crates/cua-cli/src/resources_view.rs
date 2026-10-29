@@ -312,6 +312,7 @@ mod tests {
                     allocated: 87 * GIB,
                     shares_space: true,
                 }),
+                base: None,
             }],
             computers: vec![ComputerResources {
                 id: "mini1234".into(),

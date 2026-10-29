@@ -693,6 +693,7 @@ function startAgent() {
   });
   child = c;
   save({ agentPid: c.pid ?? null });
+  emit("agent_spawned", { pid: c.pid ?? null });
   const gone = new Promise((resolve) => {
     let done = false;
     const fin = (v) => {
@@ -1107,7 +1108,9 @@ async function drive(a) {
         // retries: one error, the turn ends, the supervisor notifies once.
         emit("error", { message: rejected.message, data: { errorKind: "authentication_failed", status: rejected.status, source: "key_check" } });
         endTurn("error");
-        if (durable) finish(EXIT_PERMANENT, "authentication failed");
+        // A run whose credential is rejected is over: the next message starts
+        // a fresh run with whatever credential the person has connected by then.
+        finish(durable ? EXIT_PERMANENT : 1, withAuthHint(rejected.message, null));
         return;
       }
       let res;
@@ -1123,6 +1126,10 @@ async function drive(a) {
           throw new AgentFailure(`prompt failed: ${e?.message ?? e}`, isAuthError(e));
         }
         endTurn("error");
+        // Same for a credential the agent says it could not authenticate: the
+        // run ends as failed (its error kept) instead of idling for up to
+        // 30 minutes with a credential that does not work.
+        if (isAuthError(e)) finish(1, redact(withAuthHint(e?.message ?? String(e), e)));
         return;
       }
       if (stale()) return;
@@ -1181,6 +1188,7 @@ async function drive(a) {
 }
 
 async function main() {
+  emit("runner_started", {});
   if (durable) {
     emit("driver_start", {
       session: durable.session,

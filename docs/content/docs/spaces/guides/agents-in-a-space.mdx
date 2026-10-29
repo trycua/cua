@@ -74,6 +74,43 @@ last run is idle, the message is a follow-up in the same session; if it has
 none, a new run starts with its memory restored. A message sent while a turn is
 running is refused, never interrupts it, and the reply says why.
 
+## Talk to agents in the thread
+
+In a Space's thread in Cua Spaces you do not have to type an @ every time. An
+@name still works anywhere in a message, and it is always what the agent is
+woken by, so the message you post always names who it is for.
+
+To answer an agent, hover or focus its message and press the Reply button, or
+press R while you are on the message. Cua Spaces puts `@name` at the start of
+the box once and puts the cursor in it, and your message is posted as a reply
+to that message. Selecting its text and clicking its links work as before.
+`Command+Shift+A` (`Ctrl+Shift+A` elsewhere) replies to the latest agent
+message. On a narrow window the Reply button is always visible.
+
+After you talk to an agent, a small chip with its name and an X sits in the
+box, and the next message goes to it until you @ someone else or press the X.
+Cua Spaces adds the `@name` when you send, and says so quietly the first time.
+Which agent is kept for each Space on your computer, so it is still there after
+a reload.
+
+When you have not said who, the message goes to the one agent in the Space, or
+to the last agent you talked to when there are several. A message with no
+agent to go to is a plain message to the people in the Space, as before.
+`@everyone` gives the task to every agent in the Space you are allowed to task;
+if your role cannot give tasks it is shown disabled, with the reason. A reply to
+an agent's message with no @ counts as talking to that agent.
+
+If the agent is not connected or has failed, its chip says so in words such as
+"Claude Code needs to be connected". The message is still sent, and the Connect
+card appears under it as usual.
+
+Agents do not chat among themselves without being asked. An agent wakes another
+agent only by naming it with an @, a chain of those stops after three agent to
+agent messages from your last message, and a Space allows twenty such wakes a
+minute. When a limit is reached the message is still posted, but wakes no one,
+and the thread says "Paused agent to agent messages for a moment". Any message
+from you starts a new chain.
+
 ## Check back
 
 | To see | CLI | MCP |
@@ -139,8 +176,11 @@ A harness needs a provider key. Save it once in **Cua Spaces, Settings,
 Agents** (or `cua agent keys set`), and each run gets the keys its harness
 reads, written 0600 inside the run and redacted from its log; see
 [Agent keys](/spaces/guides/connect-your-agent#agent-keys). Credential files on
-your computer, such as `~/.claude/.credentials.json` or Codex's ChatGPT
-sign-in, are never copied into a Space. A harness can use a sign-in that is
+your computer are never copied into a Space. The one exception is Claude Code's
+own sign-in, which you choose to import: Cua reads it once you agree and gives
+Claude Code runs the access token only, never the refresh token (see
+[Claude Code and your Claude plan](/spaces/guides/connect-your-agent#claude-code-and-your-claude-plan)).
+Codex's ChatGPT sign-in is never copied: Codex signs in with its own code. A harness can use a sign-in that is
 already inside the Space, for example one you moved there with
 [Teleport an app](/spaces/guides/teleport-an-app), which asks you first.
 

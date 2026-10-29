@@ -2263,7 +2263,7 @@ struct ParityTests {
         }
     }
 
-    /// Settings → Connectors (`run_agent_keys`): the section for each input, the
+    /// Settings → Connections (`run_agent_keys`): the section for each input, the
     /// add or replace sheet, the Remove question and the variable names.
     func runAgentKeys(_ f: [String: Any]) throws -> [Any] {
         var frames: [Any] = []
@@ -2481,6 +2481,7 @@ struct ParityTests {
         case .rename: "rename"
         case .delete: "delete"
         case .leave: "leave"
+        case .pin: "pin"
         }
     }
 

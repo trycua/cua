@@ -12,10 +12,8 @@ import { Button } from "@/components/ui/button";
 import { GroupedSection, SectionHeading } from "@/components/ui/grouped";
 import { cn } from "@/lib/utils";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
-import { useFlag } from "@/bridge/flags";
-import { LegacyVolumePage } from "@/legacy/routes/volume/index";
 
-export const Route = createFileRoute("/volume/")({ component: VolumePageSwitch });
+export const Route = createFileRoute("/volume/")({ component: VolumePage });
 
 /**
  * Volume, as the SwiftUI app's `DrivePageView` lays it out: Open in Finder
@@ -214,9 +212,4 @@ function Conflict({ conflict: c, busy, onOpen, onResolve }: { conflict: Conflict
       </Button>
     </div>
   );
-}
-
-/** The redesign behind `spaces_redesign` (Settings → Advanced → Labs); off, the page as it was. */
-function VolumePageSwitch() {
-  return useFlag("spaces_redesign") ? <VolumePage /> : <LegacyVolumePage />;
 }

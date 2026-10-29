@@ -74,12 +74,14 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
         "agents.setup", "agents.configure", "agents.signIn",
         "agents.status", "agents.connect", "agents.disconnect",
+        // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
+        "agents.signInStart", "agents.signInWait",
         // Start a run in a Space and reply to it (the daemon's agent_start, agent_message).
         "agents.start", "agents.message",
         // A persistent agent's Memory, Routines and Access (`PersistentModel`).
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
-        "agentKeys.list", "agentKeys.set", "agentKeys.remove",
+        "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell",
         // New Space's address form and Connect a cloud, Teleport and Share,
         // Cua Volume, Settings and Notifications, a Space's detail and This
         // machine (WebUIBridge+Pages.swift).
@@ -100,8 +102,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
         "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
-        "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
+        "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings",
         "settings.get", "settings.choose", "settings.update",
+        // Settings, Advanced's runtime rows (WebUIBridge+Runtimes.swift).
+        "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear",
         "keyvault.get", "keyvault.lock", "keyvault.unlock",
         "keyvault.unlockVault", "keyvault.setup", "keyvault.setDisabled",
         "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
@@ -180,6 +184,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var offeredPaths: Set<String> = []
     /// "Send file…"'s picker (a test sets its own).
     var pickFiles: @MainActor () -> [URL]? = WebUIBridge.openPanel
+    /// Settings, Advanced's "Browse…" for a kind's program (a test sets its own).
+    var pickRuntime: @MainActor (String) async -> URL? = { WebUIBridge.runtimePanel($0) }
     /// The "<Space> is ready" notification of a create the onboarding
     /// started (a test sets its own).
     var notifySpaceReady: @MainActor (SpaceReadyNote) -> Void = { SpaceReadyNotifier.shared.post($0) }
@@ -341,7 +347,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
              "agents.setup", "agents.configure", "agents.signIn",
-             "agents.status", "agents.connect", "agents.disconnect", "agents.start", "agents.message":
+             "agents.status", "agents.connect", "agents.disconnect", "agents.start", "agents.message",
+             "agents.signInStart", "agents.signInWait":
             return try await agents(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
@@ -354,9 +361,25 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "settings.get":
             model.refreshTelemetry()
+            // Settings, Advanced's runtime choices and overflow come from the
+            // config file; read them here (nothing else does before New Space).
+            // What is installed and the doctor are read in the background:
+            // the rows say "Checking…" until `settings.changed`.
+            if model.servicesIn {
+                await model.loadRuntimeSettings()
+                model.refreshRuntimesIfStale()
+            }
             return settings()
+        case "runtimes.check", "runtimes.browse":
+            return try await runtimes(method, args)
+        case "repoCache.get", "repoCache.set", "repoCache.clear":
+            return try await repoCache(method, args)
         case "settings.choose":
-            let row = try string(args, "row"), option = try string(args, "option")
+            let row = try string(args, "row")
+            // An empty option only for a runtime path ("Reset to detected").
+            guard let option = args["option"] as? String, !option.isEmpty || row.hasPrefix("runtime-path:") else {
+                throw Failure.badArgs("option: string")
+            }
             if row == "update-channel" {
                 // Settings → About's channel (saved in `AppSettings`).
                 guard model.updates.updater != nil else { throw Failure.unsupported("Updates are off in this build") }
@@ -584,8 +607,13 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "accountUrl": appAccountAppUrl(),
             // The CLI this app installs and whether it is here (WebUIBridge+Cli.swift).
             "cli": cliSetting(),
+            // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`):
+            // the page's core lays out every kind's row from them.
+            "runtimes": BridgeValue.encode(model.runtimesInput),
             // The app core's own settings the page reads and saves (`settings.update`).
             "tips": ["off": model.settings.tips.off, "done": model.settings.tips.done] as [String: Any],
+            // The Spaces and machine desktops pinned to the notch, in pin order.
+            "notchPinned": model.settings.notchPinned,
         ]
     }
 
@@ -816,7 +844,29 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "agents.disconnect":
             guard let setup = model.agentSetup else { throw Failure.unsupported("Agent setup is not available in this build") }
             do {
-                let out = try await setup.disconnectJson(agents: try strings(args, "agents"), signIn: (args["signIn"] as? Bool) ?? false)
+                let agents = try strings(args, "agents")
+                let signIn = (args["signIn"] as? Bool) ?? false
+                // Some parts only (an app's page's switches), when the page says which.
+                let out: String
+                if args["skills"] is Bool || args["mcp"] is Bool {
+                    out = try await setup.disconnectPartsJson(agents: agents, skills: (args["skills"] as? Bool) ?? false,
+                                                              mcp: (args["mcp"] as? Bool) ?? false, signIn: signIn)
+                } else {
+                    out = try await setup.disconnectJson(agents: agents, signIn: signIn)
+                }
+                await model.reloadAgents()
+                return try json(out)
+            } catch let f as Failure { throw f }
+            catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }
+        case "agents.signInStart":
+            guard let setup = model.agentSetup else { throw Failure.unsupported("Agent setup is not available in this build") }
+            do { return try json(try await setup.deviceSignInStartJson(agent: try string(args, "agent"))) }
+            catch let f as Failure { throw f }
+            catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }
+        case "agents.signInWait":
+            guard let setup = model.agentSetup else { throw Failure.unsupported("Agent setup is not available in this build") }
+            do {
+                let out = try await setup.deviceSignInWaitJson(id: try string(args, "id"))
                 await model.reloadAgents()
                 return try json(out)
             } catch let f as Failure { throw f }
@@ -1143,16 +1193,23 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     // MARK: - The core's own settings
 
     /// `settings.update`: each key given is saved as is (`tips`:
-    /// `{off, done}`).
+    /// `{off, done}`; `notchPinned`: the pinned ids in pin order).
     func updateSettings(_ args: [String: Any]) throws {
         var next = model.settings
         if let raw = args["tips"] {
             guard let t = raw as? [String: Any] else { throw Failure.badArgs("tips: {off, done}") }
             next.tips = AppTipsState(off: t["off"] as? Bool ?? false, done: t["done"] as? [String] ?? [])
         }
+        if let raw = args["notchPinned"] {
+            guard let ids = raw as? [String] else { throw Failure.badArgs("notchPinned: string[]") }
+            next.notchPinned = ids
+        }
         guard next != model.settings else { return }
+        let pinned = next.notchPinned
         model.settings = next
         model.saveSettings()
+        // The notch lists the pinned first at once.
+        model.notch.setPinned(pinned)
     }
 
     // MARK: - Events
@@ -1169,7 +1226,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         follow("session.changed") { [model] in
             _ = (model.identity, model.signIn, model.cloudConfigured, model.onboarding.completed)
         }
-        follow("settings.changed") { [model] in _ = model.settings }
+        // The runtime choices too: New Space's probe and its "Use built-in"
+        // switch read and change them.
+        follow("settings.changed") { [model] in
+            _ = (model.settings, model.lumeSource, model.linuxSource, model.placementOverflow,
+                 model.runtimeKinds, model.runtimeDoctor?.ready, model.runtimeDoctor?.details)
+        }
         // These views are rewritten on every read, so the event goes out
         // only when what the page shows differs.
         followChanges("machines.changed") { [weak self] in

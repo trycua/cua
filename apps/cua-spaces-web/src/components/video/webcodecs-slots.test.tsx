@@ -10,6 +10,7 @@ import { BridgeProvider } from "@/bridge";
 import type { MachineAccessNotice } from "@/bridge/contracts/devices";
 import type { CuaDesktopBridge } from "@/bridge/detect";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
+import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { ToastProvider } from "@/components/ui/toast";
 import type { SlotStatus } from "@/lib/video-slots";
 
@@ -125,7 +126,7 @@ describe("WebCodecsSlots", () => {
   });
 
   it("says there is no video here when the shell can't stream, and opens no session", async () => {
-    const { desktop } = fakeDesktop(() => ({ ok: false, error: { message: "Live video needs cua on this computer.", code: "unsupported" } }));
+    const { desktop } = fakeDesktop(() => ({ ok: false, error: { message: "Live video needs cua on this machine.", code: "unsupported" } }));
     const { last } = slotIn(desktop);
     await flush();
     expect(last()).toEqual({ phase: "failed", reason: NO_VIDEO_HERE, opening: true, focused: false });
@@ -348,6 +349,63 @@ describe("<StreamSurface> in the Electron shell", () => {
     await waitFor(() => expect(container.querySelector('[data-video-focus="space"]')?.textContent).toContain("Ctrl+Shift+F12"));
   });
 
+  // The owner's report (a live desktop in the Space, the "Connect Anthropic" dialog opened from the Connect card): the
+  // stream drew over the dialog and kept the pointer. At the shared overlay level, any modal dialog (the dimmed layer
+  // our Dialog and AlertDialog draw) puts every stream below it and takes the pointer and keys from it; closing gives
+  // both back.
+  it("is below and deaf to the page while any modal dialog is open, and takes input again when it closes", async () => {
+    const { desktop } = fakeDesktop();
+    electron(desktop);
+    const Page = ({ open }: { open: boolean }) => (
+      <BridgeProvider adapter={createDemoAdapter({ latencyMs: 1 })} core={noCore}>
+        <StreamSurface spaceId="local:a" os="linux" canStream previewText="Not reachable" />
+        <Dialog open={open}>
+          <DialogPopup data-test-dialog="">
+            <DialogTitle>Connect Anthropic</DialogTitle>
+          </DialogPopup>
+        </Dialog>
+      </BridgeProvider>
+    );
+    const view = render(<Page open={false} />);
+    await waitFor(() => expect(sessions).toHaveLength(1));
+    act(() => sessions[0]!.options.onFrame?.(1280, 800));
+    const canvas = await waitFor(() => {
+      const c = view.container.querySelector<HTMLCanvasElement>('canvas[data-webcodecs="full"]');
+      expect(c).toBeTruthy();
+      return c!;
+    });
+    // The desktop has the keyboard and the pointer.
+    act(() => canvas.focus());
+    expect(document.activeElement).toBe(canvas);
+    expect(canvas.style.pointerEvents).toBe("");
+
+    view.rerender(<Page open />);
+    const dim = await waitFor(() => {
+      const d = document.querySelector<HTMLElement>("[data-window-dim]");
+      expect(d).toBeTruthy();
+      return d!;
+    });
+    // Below the overlay: nothing inside the stream surface is stacked as high as the dialog's dimmed layer and popup.
+    const z = (el: Element) => Number(/\bz-(\d+)\b/.exec(el.getAttribute("class") ?? "")?.[1] ?? el.getAttribute("style")?.match(/z-index:\s*(\d+)/)?.[1] ?? 0);
+    const surface = view.container.querySelector('[data-stream-surface="local:a"]')!;
+    const inside = Math.max(z(surface), ...[...surface.querySelectorAll("*")].map(z));
+    expect(z(dim)).toBeGreaterThan(inside);
+    expect(z(document.querySelector("[data-test-dialog]")!)).toBeGreaterThan(inside);
+    // Non-interactive: the stream takes no pointer, and the keyboard is back with the page.
+    await waitFor(() => expect(canvas.style.pointerEvents).toBe("none"));
+    expect(document.activeElement).not.toBe(canvas);
+
+    // Closed: pointer and keys are the stream's again, no stuck state.
+    view.rerender(<Page open={false} />);
+    await waitFor(() => expect(document.querySelector("[data-window-dim]")).toBeNull());
+    await waitFor(() => expect(canvas.style.pointerEvents).toBe(""));
+    act(() => canvas.focus());
+    expect(document.activeElement).toBe(canvas);
+    // And a stream mounted while a dialog is open starts deaf too.
+    view.rerender(<Page open />);
+    await waitFor(() => expect(canvas.style.pointerEvents).toBe("none"));
+  });
+
   // The SwiftUI app's ProviderFailureTests: the stream fails to open twice, then opens.
   describe.each([false, true])("when opening fails (auto-connect %s)", (autoConnect) => {
     it("offers Try again, says why once per attempt, never asks again by itself, then attempts media", async () => {
@@ -422,7 +480,7 @@ describe("<StreamSurface> in the Electron shell", () => {
   });
 
   // The SwiftUI app's DetailApprovalTests: the open detail follows this device's approval.
-  const NOTICE: MachineAccessNotice = { kind: "needs-enrollment", status: "Not enrolled", text: "Enroll this Mac to connect to your other computers.", actionLabel: "Enroll This Mac…" };
+  const NOTICE: MachineAccessNotice = { kind: "needs-enrollment", status: "Not enrolled", text: "Enroll this Mac to connect to your other machines.", actionLabel: "Enroll This Mac…" };
   const withAccess = () => {
     const adapter = createDemoAdapter({ latencyMs: 1 });
     const ui = (access: MachineAccessNotice | null) => (
@@ -482,7 +540,7 @@ describe("<StreamSurface> in the Electron shell", () => {
   });
 
   it("keeps the plain placeholder when the shell has no video (no cua, sample data)", async () => {
-    electron(fakeDesktop(() => ({ ok: false, error: { message: "Live video needs cua on this computer.", code: "unsupported" } })).desktop);
+    electron(fakeDesktop(() => ({ ok: false, error: { message: "Live video needs cua on this machine.", code: "unsupported" } })).desktop);
     const { container, findByText, queryByText } = mount();
     expect(await findByText("The desktop opens in its own window.")).toBeTruthy();
     expect(container.querySelector('[data-stream-state="placeholder"]')).toBeTruthy();

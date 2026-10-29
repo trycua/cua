@@ -1396,6 +1396,11 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_notch_reduce(RustBuffer state, Rust
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_notch_tile_at(RustBuffer layout, RustBuffer tiles, int8_t row, double x, double y, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_NOTCH_TOGGLE_PIN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_NOTCH_TOGGLE_PIN
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_notch_toggle_pin(RustBuffer pinned, RustBuffer id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_NOTCH_VIEW
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_NOTCH_VIEW
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_notch_view(RustBuffer state, RustBuffer spaces, RustCallStatus *_Nonnull out_status
@@ -1695,6 +1700,16 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_roster_reduce(RustBuffer state, Rus
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_ROWS_TO_SPACES
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_ROWS_TO_SPACES
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_rows_to_spaces(RustBuffer rows, int64_t now_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_RUNTIME_PATH_VERDICT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_RUNTIME_PATH_VERDICT
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_runtime_path_verdict(RustBuffer check, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_RUNTIMES_CHOOSE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_RUNTIMES_CHOOSE
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_runtimes_choose(RustBuffer input, RustBuffer row, RustBuffer option, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SENSITIVE_GROUP_SDK
@@ -3510,6 +3525,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_notch_tile_at(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_NOTCH_TOGGLE_PIN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_NOTCH_TOGGLE_PIN
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_notch_toggle_pin(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_NOTCH_VIEW
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_NOTCH_VIEW
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_notch_view(void
@@ -3867,6 +3888,18 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_roster_reduce(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_ROWS_TO_SPACES
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_ROWS_TO_SPACES
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_rows_to_spaces(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_RUNTIME_PATH_VERDICT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_RUNTIME_PATH_VERDICT
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_runtime_path_verdict(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_RUNTIMES_CHOOSE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_RUNTIMES_CHOOSE
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_runtimes_choose(void
 
 );
 #endif

@@ -1021,6 +1021,18 @@ Returned by [`Space.hotspot_status`](#spacehotspot_status), [`Space.start_hotspo
 | `bytes_in` / `bytesIn` | `u64` |  | Bytes into the guest. |
 | `served_here` / `servedHere` | `bool` |  | Served by the process that owns the Spaces runtime. |
 
+## `SharedBase` record
+
+A base image several Spaces share copy-on-write (a container image's
+layers, the image a VM disk was cloned from).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `key` | `String` |  | Which base: Spaces with the same key share the same blocks. |
+| `image` | `String` |  | The image reference it came from (`ghcr.io/trycua/linux:24.04`). |
+| `bytes` | `Option<u64>` |  | What it takes on this computer, once for all its Spaces; absent when the runtime cannot tell it apart from the Spaces' own data. |
+| `shared_with` / `sharedWith` | `u32` |  | Local Spaces that use it, this one included. |
+
 ## `SiteLoginOptions` record
 
 Options for `Space.request_site_login`.

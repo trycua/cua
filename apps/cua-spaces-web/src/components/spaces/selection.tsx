@@ -19,6 +19,7 @@ import type { SpaceItem } from "./model";
 
 /** It can be ticked: yours to delete, or someone else's to leave; not while it goes. */
 export function selectable(item: SpaceItem): boolean {
+  if (item.desktop) return false;
   if (item.state === "deleting" || item.state === "creating") return false;
   return item.mine ? item.access.canDelete && canDelete(item.space) : item.access.canLeave;
 }
@@ -117,8 +118,24 @@ export function useSelection(shown: readonly SpaceItem[], paused: boolean): Sele
 }
 
 /** A tile's or row's checkbox. Over a picture it sits on a dark scrim; in the list it is plain. */
-export function SelectBox({ item, selection, onPicture = false, className }: { item: SpaceItem; selection: Selection; onPicture?: boolean; className?: string }) {
-  const on = selection.has(item.space.id);
+export function SelectBox({
+  item,
+  selection,
+  picked,
+  onPicture = false,
+  className,
+}: {
+  item: SpaceItem;
+  selection: Selection;
+  /** Whether it is picked, when the caller already knows (a memoized grid
+   * tile passes it: its `selection` stays the same object across picks). */
+  picked?: boolean;
+  onPicture?: boolean;
+  className?: string;
+}) {
+  // A machine's desktop is not a Space to delete: no checkbox (an empty cell keeps the columns).
+  if (item.desktop) return <span className="block size-4" aria-hidden />;
+  const on = picked ?? selection.has(item.space.id);
   const can = selectable(item);
   const why = can || on ? null : unselectableReason(item);
   return (

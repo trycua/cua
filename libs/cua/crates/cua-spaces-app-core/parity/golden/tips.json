@@ -121,7 +121,7 @@
         ],
         "code": "cua create --on auto",
         "openIn": null,
-        "tip": "on-auto (sidebar): New Spaces can go to whichever computer has room."
+        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
       },
       "state": "off=false done=try-agent,power",
       "step": "powered from a tile",
@@ -157,7 +157,7 @@
         ],
         "code": "cua create --on auto",
         "openIn": null,
-        "tip": "on-auto (sidebar): New Spaces can go to whichever computer has room."
+        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
       },
       "state": "off=false done=try-agent,power,bulk-select",
       "step": "a bulk delete",
@@ -193,7 +193,7 @@
         ],
         "code": "cua create --on auto",
         "openIn": null,
-        "tip": "on-auto (sidebar): New Spaces can go to whichever computer has room."
+        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
       },
       "state": "off=false done=try-agent,power,bulk-select,share",
       "step": "share closed for now",
@@ -273,7 +273,7 @@
         ],
         "code": "cua create --on auto",
         "openIn": null,
-        "tip": "on-auto (sidebar): New Spaces can go to whichever computer has room."
+        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
       },
       "state": "off=false done=",
       "step": "back on, on a page with no tip",
@@ -287,7 +287,7 @@
         ],
         "code": "cua create --on auto",
         "openIn": null,
-        "tip": "on-auto (sidebar): New Spaces can go to whichever computer has room."
+        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
       }
     },
     {

@@ -91,6 +91,7 @@ pub mod prewarm;
 pub mod registry;
 pub mod relay;
 pub mod rename;
+mod repo_cache;
 pub mod resources;
 pub mod route;
 pub mod routines;

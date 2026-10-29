@@ -184,7 +184,7 @@ pub struct ImportedSignIn {
     pub source: String,
     /// The variable a run in a Space gets it as.
     pub env: String,
-    /// "Codex · ChatGPT sign-in".
+    /// "ChatGPT sign-in for Codex".
     pub label: String,
     /// When it stops working (Unix ms), when known.
     pub expires_ms: Option<u64>,
@@ -199,6 +199,11 @@ pub struct SignInCopy {
     pub label: String,
     pub value: String,
     pub expires_ms: Option<u64>,
+    /// How it was made: `claude-login-keychain` or `claude-login-file` (read
+    /// from Claude Code's own sign-in), `device-code` (Codex), `token` (a
+    /// pasted `claude setup-token`). Fixed words; the telemetry and the
+    /// freshness check at run start read it.
+    pub origin: Option<String>,
 }
 
 impl std::fmt::Debug for SignInCopy {
@@ -209,6 +214,7 @@ impl std::fmt::Debug for SignInCopy {
             .field("label", &self.label)
             .field("value", &"<redacted>")
             .field("expires_ms", &self.expires_ms)
+            .field("origin", &self.origin)
             .finish()
     }
 }
@@ -285,7 +291,7 @@ pub fn parse_version(out: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn base_command(env: &HostEnv, program: &Path) -> Command {
+pub(crate) fn base_command(env: &HostEnv, program: &Path) -> Command {
     let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
@@ -826,9 +832,9 @@ impl AgentSetup {
         r.connected_at = crate::state::now();
     }
 
-    /// Copies `agent`'s sign-in into `vault` (Claude Code waits up to
-    /// `wait` for its one browser approval). The agent's own sign-in is
-    /// never changed.
+    /// Copies `agent`'s sign-in into `vault` (Claude Code's is the sign-in it
+    /// already has; `wait` is how long Claude Code may take to refresh it).
+    /// The agent's own sign-in is never changed.
     pub fn import_sign_in(
         &self,
         agent: &str,
@@ -838,11 +844,21 @@ impl AgentSetup {
         let a = registry::find(agent)
             .ok_or_else(|| signin::CopyRefusal::Failed(signin::unknown(agent).to_string()))?;
         let copy = signin::read_copy(&self.env, a.id, wait)?;
-        let saved = vault.save(&copy).map_err(|e| {
-            signin::CopyRefusal::Failed(format!("Connected. Sign-in not copied: {e}"))
-        })?;
+        self.save_sign_in(a.id, &copy, vault)
+    }
+
+    /// Saves a sign-in made for `agent` into `vault` and notes it.
+    fn save_sign_in(
+        &self,
+        agent: &str,
+        copy: &SignInCopy,
+        vault: &dyn SignInVault,
+    ) -> std::result::Result<ImportedSignIn, signin::CopyRefusal> {
+        let saved = vault
+            .save(copy)
+            .map_err(|e| signin::CopyRefusal::Failed(format!("Couldn't save the sign-in: {e}")))?;
         if let Ok(mut state) = State::load(&self.state_path) {
-            let r = state.connections.entry(a.id.to_string()).or_default();
+            let r = state.connections.entry(agent.to_string()).or_default();
             r.sign_in = Some(crate::state::SignInRecord {
                 env: saved.env.clone(),
                 label: saved.label.clone(),
@@ -852,6 +868,48 @@ impl AgentSetup {
         }
         invalidate();
         Ok(saved)
+    }
+
+    /// Starts `agent`'s device-code sign-in (Codex: `codex login
+    /// --device-auth`) in a folder Cua owns, next to its state; the link and
+    /// code to show. Your own sign-in is never read or changed.
+    pub fn start_device_sign_in(
+        &self,
+        agent: &str,
+    ) -> std::result::Result<signin::DeviceSignIn, signin::CopyRefusal> {
+        let dir = self
+            .state_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("agent-sign-ins")
+            .join(agent);
+        signin::start_device_sign_in(&self.env, &dir, agent)
+    }
+
+    /// Waits for a device sign-in to be approved and saves it into `vault`.
+    pub fn finish_device_sign_in(
+        &self,
+        login: signin::DeviceSignIn,
+        vault: &dyn SignInVault,
+        wait: Duration,
+    ) -> std::result::Result<ImportedSignIn, signin::CopyRefusal> {
+        let copy = login.wait(wait)?;
+        let agent = copy.source.clone();
+        self.save_sign_in(&agent, &copy, vault)
+    }
+
+    /// The whole device sign-in for `agent`: start it, `show` the link and
+    /// code, wait (up to `wait`) for the approval, save it into `vault`.
+    pub fn device_sign_in(
+        &self,
+        agent: &str,
+        vault: &dyn SignInVault,
+        wait: Duration,
+        show: ShowDeviceSignIn<'_>,
+    ) -> std::result::Result<ImportedSignIn, signin::CopyRefusal> {
+        let login = self.start_device_sign_in(agent)?;
+        show(agent, &login);
+        self.finish_device_sign_in(login, vault, wait)
     }
 
     /// Deletes the copies of `agent`'s sign-in from `vault`; the variables
@@ -884,6 +942,25 @@ impl AgentSetup {
         vault: Option<&dyn SignInVault>,
         wait: Duration,
     ) -> crate::Result<Vec<ConnectResult>> {
+        self.connect_with(agents, server, parts, vault, wait, None)
+    }
+
+    /// [`Self::connect`], and an agent that signs in with a code (Codex)
+    /// does so here: its device sign-in starts in a folder Cua owns,
+    /// `show` gets the link and the code to enter, and the sign-in made for
+    /// Cua is saved once it's approved. Without `show` such
+    /// an agent's sign-in is left for the app's Connect, as before. The
+    /// device sign-in waits up to [`signin::DEVICE_SIGN_IN_WAIT`]. The CLI's
+    /// `connect setup --sign-in` and the app take this same path.
+    pub fn connect_with(
+        &self,
+        agents: &[String],
+        server: &McpServer,
+        parts: ConnectParts,
+        vault: Option<&dyn SignInVault>,
+        wait: Duration,
+        mut show: Option<ShowDeviceSignIn<'_>>,
+    ) -> crate::Result<Vec<ConnectResult>> {
         let mut out = Vec::new();
         for id in agents {
             let a = registry::find(id).ok_or_else(|| signin::unknown(id))?;
@@ -905,11 +982,14 @@ impl AgentSetup {
                 None => SignInResult {
                     imported: None,
                     refused: Some("failed".into()),
-                    line: Some(
-                        "Connected. Sign-in not copied: Keyvault isn't available here.".into(),
-                    ),
+                    line: Some("Couldn't save the sign-in: Keyvault isn't available here.".into()),
                 },
-                Some(v) => match self.import_sign_in(a.id, v, wait) {
+                Some(v) => match match show.as_deref_mut() {
+                    Some(show) if signin::signs_in_with_a_code(a.id) => {
+                        self.device_sign_in(a.id, v, signin::DEVICE_SIGN_IN_WAIT, show)
+                    }
+                    _ => self.import_sign_in(a.id, v, wait),
+                } {
                     Ok(i) => SignInResult {
                         imported: Some(i),
                         refused: None,
@@ -959,6 +1039,10 @@ impl AgentSetup {
         Ok((outcomes, removed))
     }
 }
+
+/// Shows a device sign-in's link and code (`agent`, the sign-in) while it
+/// waits for the approval.
+pub type ShowDeviceSignIn<'a> = &'a mut dyn FnMut(&str, &signin::DeviceSignIn);
 
 /// The name rows show ("Codex", not the registry's "OpenAI Codex").
 pub fn display_name(a: &registry::AgentSpec) -> &'static str {

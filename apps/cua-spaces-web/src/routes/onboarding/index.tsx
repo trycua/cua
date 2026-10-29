@@ -5,8 +5,9 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useAgentKeys, useBridge, useFirstRun, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
+import { useAgentKeys, useBridge, useFirstRun, useSpaces, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
 import { readSavedOnboarding } from "@/bridge/onboarding";
+import { AddAgentSheet } from "@/components/add-agent/add-agent-sheet";
 import { APP_MARKS, AppMarkImage } from "@/components/agents/harness-mark";
 import { CuaLogo } from "@/components/cua-logo";
 import { OsIcon } from "@/components/os-icon";
@@ -254,10 +255,34 @@ const HEADLINE_APPS = [
 ];
 
 /**
+ * "An agent on another machine": the other choice beside the coding apps found here. It opens the
+ * join sheet for this machine's own Space: one line to paste into whichever agent runs elsewhere.
+ * Not offered before the machine has a Space to join.
+ */
+function OtherMachineRow() {
+  const { data: spaces } = useSpaces();
+  const [open, setOpen] = useState(false);
+  const space = spaces?.find((s) => s.id === "this-mac") ?? spaces?.find((s) => s.provider === "local");
+  if (!space) return null;
+  return (
+    <div className="flex min-h-12 items-center gap-3 py-2" data-first-run-other-machine="">
+      <div className="min-w-0 flex-1">
+        <div className="text-[14px]">An agent on another machine</div>
+        <div className="text-[13px] text-muted-foreground">Copy one line to paste into it.</div>
+      </div>
+      <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => setOpen(true)} data-first-run-other-machine-open="">
+        Connect it
+      </Button>
+      <AddAgentSheet open={open} onOpenChange={setOpen} space={{ id: space.id, name: space.name }} role={null} initialStage="connect" />
+    </div>
+  );
+}
+
+/**
  * 2 · Let your coding apps use Cua: one question, asked once. It names the
  * coding apps found on this computer; Set up adds Cua to all of them, Not now
  * moves on. Later installs are set up the same way, with a notice and Undo
- * (Settings, Connectors). Which apps there are, and what Connect does for
+ * (Settings, Connections). Which apps there are, and what Connect does for
  * each, is still the app core's (`firstRun.view`).
  */
 function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
@@ -354,6 +379,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
                 </div>
               );
             })}
+            <OtherMachineRow />
           </Rows>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Primary label="Check again" onClick={() => void fr.act("recheck")} data-first-run-recheck="" />
@@ -420,6 +446,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
               </div>
             );
           })}
+          <OtherMachineRow />
         </Rows>
         <div className="mt-8 flex flex-wrap items-center gap-3">
           {all || failed.length ? (

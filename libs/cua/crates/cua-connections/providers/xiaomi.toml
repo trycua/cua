@@ -1,0 +1,21 @@
+id = "xiaomi"
+name = "Xiaomi MiMo"
+icon = "xiaomi"
+tier = "more"
+rank = 250
+kind = "hosted"
+aliases = ["mimo"]
+wire = "openai-chat"
+base_url = "https://api.xiaomimimo.com/v1"
+base_url_env = "XIAOMI_BASE_URL"
+default_model = "mimo-v2.5-pro"
+hermes_id = "xiaomi"
+key_help = "Create a key at platform.xiaomimimo.com."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "XIAOMI_API_KEY"
+
+[delivery]
+hermes = ["XIAOMI_API_KEY"]

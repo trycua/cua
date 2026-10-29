@@ -1,0 +1,25 @@
+[package]
+name = "cua-repo-cache"
+description = "A transparent, size-bounded cache of public git repositories owned by the cua daemon: bare mirrors on this machine's disk, a read-only mount and a git remote helper that give a Space's plain `git clone` the mirror's objects, with the remote's tip always checked."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cua-home.workspace = true
+cua-telemetry.workspace = true
+hex.workspace = true
+libc = "0.2"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "process", "rt", "sync", "time", "macros"] }
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }

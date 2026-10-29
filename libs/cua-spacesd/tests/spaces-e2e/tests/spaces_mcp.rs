@@ -111,7 +111,23 @@ async fn stdio_speaks_mcp_and_publishes_the_contract() {
     assert_eq!(tools.len(), manifest.len());
     for (got, want) in tools.iter().zip(&manifest) {
         assert_eq!(got["name"], want.name);
-        assert_eq!(got["inputSchema"], want.input_schema, "{}", want.name);
+        // The tools an agent connected to a Space may call also take its member
+        // credential as `_member` (after `thread_join_redeem`); everything
+        // else is the contract's schema.
+        let mut schema = got["inputSchema"].clone();
+        if cua_spaces::extension::MEMBER_TOOLS.contains(&want.name) {
+            let member = schema["properties"]
+                .as_object_mut()
+                .and_then(|p| p.remove("_member"))
+                .unwrap_or_else(|| panic!("{} takes _member", want.name));
+            assert_eq!(
+                member["required"],
+                json!(["member_id", "key"]),
+                "{}",
+                want.name
+            );
+        }
+        assert_eq!(schema, want.input_schema, "{}", want.name);
         assert_eq!(
             got["annotations"]["readOnlyHint"],
             want.annotations.read_only

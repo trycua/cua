@@ -27,6 +27,7 @@ import type {
   CancelOutcome,
   CreateProgress,
   TelemetryView,
+  RuntimesInput,
 } from "./contracts/host";
 import type { AgentEventsPage, AgentMessageSent, AgentSetupRow, AgentStarted, AgentStartRequest, ConnectionReport, ConnectResult, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { KeyvaultOverview, KvGrant, KvItem } from "./contracts/keyvault";
@@ -89,6 +90,10 @@ export interface SettingsValues {
   /** Tips (`AppSettings.tips`): off, and the ones done. Absent where the
    * host keeps no core settings (the page keeps them for this session). */
   tips?: TipsState;
+  /** The Spaces and machine desktops pinned to the notch (`AppSettings.notch_pinned`),
+   * in pin order. Absent where the host keeps no core settings (the page keeps them
+   * for this session). */
+  notchPinned?: string[];
 }
 
 export type UpdateChannel = "stable" | "beta";
@@ -143,12 +148,12 @@ export interface GlobalShortcut {
 
 /** `settings::SettingsInput`'s host-only fields: the core lays out their rows. */
 export interface HostSettings {
-  /** Which Lume macOS Spaces run on (`auto`, `builtin`, `system`). */
-  lumeSource?: string | null;
-  /** Which engine local Linux Spaces run on (`auto`, `builtin`, `system`). */
-  linuxSource?: string | null;
+  /** Settings, Advanced's runtimes, as the host read them (`runtimes::RuntimesInput`). */
+  runtimes?: RuntimesInput | null;
   /** "Connect to the desktop automatically". */
   autoConnect?: boolean | null;
+  /** New Spaces overflow into your linked cloud when this machine is full (`placement.overflow`). */
+  overflow?: boolean | null;
   /** The Keyvault wipes access from Spaces automatically. */
   keyvaultAutoWipe?: boolean | null;
   /** The Keyvault explains unattended access before allowing it (off after "Never ask again"). */
@@ -264,7 +269,8 @@ export interface HostOperations
   "settings.get": { args: Record<string, never>; result: SettingsSnapshot };
   "settings.set": { args: { key: SettingKey; value: SettingsValues[SettingKey] }; result: SettingsSnapshot };
   /** Picks an option on one of the host's own rows (`SettingsSnapshot.hostSettings`:
-   * `macos-runtime`, `linux-runtime`, `auto-connect`, `keyvault-auto-wipe`),
+   * `runtime:<kind>`, `runtime-detected:<kind>`, `runtime-path:<kind>`,
+   * `auto-connect`, `keyvault-auto-wipe`),
    * as the core's Settings page names them. The SwiftUI host also takes
    * `welcome` (General's "Show again": its welcome window). */
   "settings.choose": { args: { row: string; option: string }; result: SettingsSnapshot };
@@ -310,7 +316,11 @@ export interface HostOperations
   /** Connect and Reconnect: Cua's tools and, with `signIn`, the agent's sign-in copied to Keyvault on This Mac (`cua connect setup --sign-in`). */
   "agents.connect": { args: { agents: string[]; signIn: boolean; skills?: boolean; mcp?: boolean }; result: ConnectResult[] };
   /** Disconnect: Cua's entry out of the agent's config (the previous one back) and, with `signIn`, the copy in Keyvault (`cua connect remove --sign-in`). */
-  "agents.disconnect": { args: { agents: string[]; signIn: boolean }; result: { removed_sign_ins: string[] } };
+  "agents.disconnect": { args: { agents: string[]; signIn: boolean; skills?: boolean; mcp?: boolean }; result: { removed_sign_ins: string[] } };
+  /** Starts an agent's device-code sign-in made for Cua (Codex: `codex login --device-auth` in a folder Cua owns): the link and the code to show. */
+  "agents.signInStart": { args: { agent: string }; result: { id: string; url: string; code: string } };
+  /** Waits for that sign-in to be approved and saves it in Keyvault on This Mac (as Connect's `sign_in`). */
+  "agents.signInWait": { args: { id: string }; result: { imported: { source: string; env: string; label: string; expires_ms: number | null; added_ms: number } | null; refused: string | null; line: string | null } };
 }
 
 export type OpName = keyof HostOperations;
@@ -358,6 +368,8 @@ export const OPERATIONS = [
   "agents.status",
   "agents.connect",
   "agents.disconnect",
+  "agents.signInStart",
+  "agents.signInWait",
   ...AGENT_DETAIL_OPERATIONS,
   ...NEW_SPACE_OPERATIONS,
   ...TELEPORT_OPERATIONS,
@@ -391,6 +403,7 @@ export const OPERATIONS = [
   "host.setUp",
   "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
   ...STARTUP_OPERATIONS,
 ] as const satisfies readonly OpName[];

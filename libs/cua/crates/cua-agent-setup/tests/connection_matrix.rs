@@ -23,6 +23,7 @@ use std::{
 #[derive(Default)]
 struct FakeVault {
     items: Mutex<Vec<(ImportedSignIn, String)>>,
+    origins: Mutex<Vec<(String, Option<String>)>>,
 }
 
 impl SignInVault for FakeVault {
@@ -46,6 +47,9 @@ impl SignInVault for FakeVault {
         let mut g = self.items.lock().unwrap();
         g.retain(|(x, _)| x.source != c.source);
         g.push((i.clone(), c.value.clone()));
+        let mut o = self.origins.lock().unwrap();
+        o.retain(|(s, _)| *s != c.source);
+        o.push((c.source.clone(), c.origin.clone()));
         Ok(i)
     }
     fn remove(&self, source: &str) -> Result<Vec<String>, String> {
@@ -61,6 +65,15 @@ impl SignInVault for FakeVault {
 }
 
 impl FakeVault {
+    fn origin(&self, source: &str) -> Option<String> {
+        self.origins
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(s, _)| s == source)
+            .and_then(|(_, o)| o.clone())
+    }
+
     fn value(&self, source: &str) -> Option<String> {
         self.items
             .lock()
@@ -101,12 +114,32 @@ fn agent_script(version_line: &str, extra: &str) -> String {
     )
 }
 
+/// Codex's device-code login: the link and code in color, then the sign-in in `$CODEX_HOME`.
+const CODEX_EXTRA: &str = r#"  login)
+    if [ "$2" = "--device-auth" ]; then
+      printf '1. Open this link\n   \033[94mhttps://auth.openai.com/codex/device\033[0m\n2. Enter this one-time code\n   \033[94mABCD-12345\033[0m\n'
+      sleep 0.3
+      [ -f "$HOME/.fake-codex-cancel" ] && exit 1
+      printf '{"auth_mode":"chatgpt","tokens":{"refresh_token":"rt-for-cua"}}' > "$CODEX_HOME/auth.json"
+      exit 0
+    fi ;;
+"#;
+
+/// A real access token is about 108 characters.
+const CLAUDE_ACCESS: &str = "sk-ant-oat01-FAKEaccess_0123456789abcdef_ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz_0123456789_QQQQ";
+const CLAUDE_REFRESH: &str = "sk-ant-ort01-FAKErefresh-token-that-cua-must-never-keep";
+
+fn claude_credentials(access: &str, expires_ms: u64) -> String {
+    serde_json::json!({"claudeAiOauth": {
+        "accessToken": access, "refreshToken": CLAUDE_REFRESH, "expiresAt": expires_ms,
+        "scopes": ["user:inference"], "subscriptionType": "max"
+    }})
+    .to_string()
+}
+
 const CLAUDE_EXTRA: &str = r#"  auth)
     if [ -f "$HOME/.fake-claude-signed-in" ]; then echo '{"authMethod":"claude.ai"}'; exit 0; fi
     echo '{"authMethod":"none"}'; exit 1 ;;
-  setup-token)
-    if [ -f "$HOME/.fake-claude-cancel" ]; then echo "Login cancelled"; exit 1; fi
-    printf 'Your OAuth token:\r\n\r\n  sk-ant-oat01-FAKEtoken_0123456789abcdef\r\n' ; exit 0 ;;
 "#;
 
 impl World {
@@ -147,7 +180,10 @@ impl World {
 
     fn install(&self, id: &str, version: &str) {
         match id {
-            "codex" => self.script("codex", &agent_script(&format!("codex-cli {version}"), "")),
+            "codex" => self.script(
+                "codex",
+                &agent_script(&format!("codex-cli {version}"), CODEX_EXTRA),
+            ),
             "claude-code" => self.script(
                 "claude",
                 &agent_script(&format!("{version} (Claude Code)"), CLAUDE_EXTRA),
@@ -180,6 +216,16 @@ impl World {
             }
             "claude-code" => {
                 self.write(".fake-claude-signed-in", "1");
+                // The login Claude Code keeps (its credentials file; the
+                // fake Keychain is none): an access token and a refresh token.
+                self.write(
+                    ".claude/.credentials.json",
+                    &claude_credentials(CLAUDE_ACCESS, 4_102_444_800_000),
+                );
+                self.write(
+                    ".claude.json",
+                    r#"{"oauthAccount":{"emailAddress":"ada@example.com"}}"#,
+                );
             }
             "hermes" => {
                 self.write(".hermes/.env", "OPENROUTER_API_KEY=sk-or-v1-fake\n");
@@ -192,6 +238,16 @@ impl World {
         }
     }
 
+    /// Codex's sign-in made for Cua (its device-code login, approved at once by the fake).
+    fn device_sign_in(&self) {
+        let mut env = self.env.clone();
+        env.run_agent_clis = true;
+        let s = AgentSetup::new(env);
+        let login = s.start_device_sign_in("codex").unwrap();
+        s.finish_device_sign_in(login, &self.vault, Duration::from_secs(10))
+            .unwrap();
+    }
+
     fn setup(&self) -> AgentSetup {
         AgentSetup::new(self.env.clone())
     }
@@ -202,8 +258,8 @@ impl World {
 
     fn connect(&self, id: &str, sign_in: bool) {
         let mut env = self.env.clone();
-        // Claude's setup-token is a CLI run; Claude's own config writer is
-        // not (the fake has no `mcp add-json`).
+        // The sign-in import reads files only; Claude's own config writer is
+        // a CLI run the fake has no `mcp add-json` for.
         env.run_agent_clis = id == "claude-code" && sign_in;
         let s = AgentSetup::new(env);
         let parts = ConnectParts {
@@ -365,7 +421,8 @@ fn installed_signed_in_or_not_connected_or_not() {
         }
         assert_eq!(r.previous_version.as_deref(), Some("1.2.3"));
         let expect_import = match id {
-            "hermes" | "claude-code" | "codex" => ImportState::Missing,
+            // Hermes uses Settings' provider connections; it makes no sign-in of its own.
+            "claude-code" | "codex" => ImportState::Missing,
             _ => ImportState::Unsupported,
         };
         assert_eq!(r.signin_import, expect_import, "{id}");
@@ -394,23 +451,84 @@ fn connected_but_not_signed_in_says_so_and_offers_sign_in_where_cua_can_start_it
     assert_eq!(r.signed_in, SignedInState::Unknown);
 }
 
+/// A credentials file that is not a whole login is never saved, and the line
+/// says what happened in plain words, never "Connected" next to "not copied".
 #[test]
-fn sign_ins_are_copied_to_keyvault_and_their_expiry_is_seen() {
-    // Codex: its auth.json, as is.
+fn a_cut_off_login_is_refused_with_a_plain_line_and_a_whole_one_is_saved() {
+    let w = World::new();
+    w.install("claude-code", "2.4.1");
+    w.sign_in("claude-code");
+    w.write(
+        ".claude/.credentials.json",
+        &claude_credentials("sk-ant-oat01-FAKEtoken_0123456789", 4_102_444_800_000),
+    );
+    let mut env = w.env.clone();
+    env.run_agent_clis = true;
+    let r = AgentSetup::new(env)
+        .connect(
+            &["claude-code".into()],
+            &w.server(),
+            ConnectParts {
+                skills: false,
+                mcp: false,
+                sign_in: true,
+            },
+            Some(&w.vault),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+    let s = r[0].sign_in.as_ref().unwrap();
+    assert_eq!(
+        s.line.as_deref(),
+        Some("Claude Code's credentials file isn't one Cua can read.")
+    );
+    assert!(!s.line.as_ref().unwrap().contains("Connected"));
+    assert_eq!(w.vault.value("claude-code"), None);
+    // The whole token (about 108 characters) is saved with no network involved.
+    w.sign_in("claude-code");
+    w.connect("claude-code", true);
+    assert_eq!(
+        w.vault.value("claude-code").unwrap().len(),
+        CLAUDE_ACCESS.len()
+    );
+}
+
+#[test]
+fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
+    // Codex: its own device-code login in a folder Cua owns; your auth.json is never read.
     let w = World::new();
     w.install("codex", "0.61.0");
     w.sign_in("codex");
-    w.connect("codex", true);
-    let r = check(&w, "codex", ConnectionState::Connected, None);
-    assert!(r.signin_imported);
-    assert_eq!(r.signin_import, ImportState::Ok);
-    assert_eq!(r.sign_in.as_deref(), Some("ChatGPT sign-in"));
+    let own = std::fs::read_to_string(w.home.join(".codex/auth.json")).unwrap();
+    w.connect("codex", false);
+    let mut env = w.env.clone();
+    env.run_agent_clis = true;
+    let s = AgentSetup::new(env);
+    let login = s.start_device_sign_in("codex").unwrap();
+    assert_eq!(login.url, "https://auth.openai.com/codex/device");
+    assert_eq!(login.code, "ABCD-12345");
+    let saved = s
+        .finish_device_sign_in(login, &w.vault, Duration::from_secs(10))
+        .unwrap();
+    assert_eq!(saved.env, "CODEX_AUTH_JSON");
+    assert_eq!(saved.label, "ChatGPT sign-in for Codex");
     let v: serde_json::Value = serde_json::from_str(&w.vault.value("codex").unwrap()).unwrap();
-    assert_eq!(v["tokens"]["refresh_token"], "rt-1");
-    let items = w.vault.imported().unwrap();
-    assert_eq!(items[0].label, "Codex · ChatGPT sign-in");
-    assert_eq!(items[0].env, "CODEX_AUTH_JSON");
-    // The copy expired: Reconnect copies it again.
+    assert_eq!(v["tokens"]["refresh_token"], "rt-for-cua");
+    // Your own sign-in is untouched, and Cua's folder is gone.
+    assert_eq!(
+        std::fs::read_to_string(w.home.join(".codex/auth.json")).unwrap(),
+        own
+    );
+    assert!(
+        !s.state_path()
+            .parent()
+            .unwrap()
+            .join("agent-sign-ins/codex")
+            .exists()
+    );
+    let r = check(&w, "codex", ConnectionState::Connected, None);
+    assert_eq!(r.signin_import, ImportState::Ok);
+    // Its expiry is seen: the row asks to reconnect.
     w.vault.expire("codex");
     let r = check(
         &w,
@@ -419,30 +537,75 @@ fn sign_ins_are_copied_to_keyvault_and_their_expiry_is_seen() {
         Some(ProblemAction::Reconnect),
     );
     assert_eq!(r.signin_import, ImportState::Expired);
-    w.connect("codex", true);
-    check(&w, "codex", ConnectionState::Connected, None);
+    // Connect alone never copies Codex's own file.
+    let r = w
+        .setup()
+        .connect(
+            &["codex".into()],
+            &w.server(),
+            ConnectParts::ALL,
+            Some(&FakeVault::default()),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+    assert_eq!(
+        r[0].sign_in.as_ref().unwrap().refused.as_deref(),
+        Some("not_yet")
+    );
 
-    // Claude Code: the token `claude setup-token` prints.
+    // A code never entered: cancelled, nothing saved, the folder gone.
+    let w2 = World::new();
+    w2.install("codex", "0.61.0");
+    w2.write(".fake-codex-cancel", "1");
+    let mut env = w2.env.clone();
+    env.run_agent_clis = true;
+    let s2 = AgentSetup::new(env);
+    let login = s2.start_device_sign_in("codex").unwrap();
+    let err = s2
+        .finish_device_sign_in(login, &w2.vault, Duration::from_secs(10))
+        .unwrap_err();
+    assert_eq!(err.kind(), "cancelled");
+    assert!(w2.vault.value("codex").is_none());
+    assert!(
+        !s2.state_path()
+            .parent()
+            .unwrap()
+            .join("agent-sign-ins/codex")
+            .exists()
+    );
+
+    // Claude Code: the sign-in it already has is imported (its access token
+    // only; its own files are read and left as they are).
     let w = World::new();
     w.install("claude-code", "2.4.1");
     w.sign_in("claude-code");
+    let own = std::fs::read_to_string(w.home.join(".claude/.credentials.json")).unwrap();
     w.connect("claude-code", true);
     let r = check(&w, "claude-code", ConnectionState::Connected, None);
     assert_eq!(r.signin_import, ImportState::Ok);
+    assert_eq!(w.vault.value("claude-code").as_deref(), Some(CLAUDE_ACCESS));
     assert_eq!(
-        w.vault.value("claude-code").as_deref(),
-        Some("sk-ant-oat01-FAKEtoken_0123456789abcdef")
+        w.vault.origin("claude-code").as_deref(),
+        Some("claude-login-file")
+    );
+    let saved = w.vault.imported().unwrap().pop().unwrap();
+    assert_eq!(saved.label, "Signed in as ada@example.com (Claude Max)");
+    assert_eq!(saved.expires_ms, Some(4_102_444_800_000));
+    // The refresh token is never kept anywhere Cua writes, and Claude Code's file is untouched.
+    assert!(!format!("{:?}", w.vault.value("claude-code")).contains("ort01"));
+    assert_eq!(
+        std::fs::read_to_string(w.home.join(".claude/.credentials.json")).unwrap(),
+        own
     );
 
-    // Hermes: the provider key its config uses.
+    // Hermes: its .env is never copied; it uses the providers connected in Settings.
     let w = World::new();
     w.install("hermes", "0.22.5");
     w.sign_in("hermes");
     w.connect("hermes", true);
-    let r = check(&w, "hermes", ConnectionState::Connected, None);
-    assert_eq!(r.signin_import, ImportState::Ok);
+    let r = w.row("hermes");
     assert_eq!(r.sign_in.as_deref(), Some("OpenRouter key"));
-    assert_eq!(w.vault.value("hermes").as_deref(), Some("sk-or-v1-fake"));
+    assert!(w.vault.value("hermes").is_none());
 }
 
 #[test]
@@ -462,15 +625,15 @@ fn a_refused_sign_in_copy_leaves_the_tools_connected_with_one_line() {
         .unwrap();
     assert!(r[0].tools_ok);
     let s = r[0].sign_in.as_ref().unwrap();
-    assert_eq!(s.refused.as_deref(), Some("not_signed_in"));
-    assert_eq!(
-        s.line.as_deref(),
-        Some("No ChatGPT sign-in on This Mac yet.")
+    assert_eq!(s.refused.as_deref(), Some("not_yet"));
+    assert!(
+        s.line
+            .as_deref()
+            .unwrap()
+            .contains("Codex signs in with a code")
     );
-    // Claude's browser approval cancelled.
+    // Claude Code not signed in: nothing to import, one plain line, Retry after signing in.
     w.install("claude-code", "2.4.1");
-    w.sign_in("claude-code");
-    w.write(".fake-claude-cancel", "1");
     let mut env = w.env.clone();
     env.run_agent_clis = true;
     let r = AgentSetup::new(env)
@@ -487,13 +650,37 @@ fn a_refused_sign_in_copy_leaves_the_tools_connected_with_one_line() {
         )
         .unwrap();
     let s = r[0].sign_in.as_ref().unwrap();
-    assert_eq!(s.refused.as_deref(), Some("cancelled"), "{s:?}");
+    assert_eq!(s.refused.as_deref(), Some("not_signed_in"), "{s:?}");
     assert!(
         s.line
             .as_ref()
             .unwrap()
-            .starts_with("Connected. Sign-in not copied")
+            .starts_with("Claude Code isn't signed in on This Mac")
     );
+    // A login that has run out (and no `claude` to refresh it here) asks to sign in again.
+    w.write(
+        ".claude/.credentials.json",
+        &claude_credentials(CLAUDE_ACCESS, 1_000),
+    );
+    let mut env = w.env.clone();
+    env.run_agent_clis = true;
+    let r = AgentSetup::new(env)
+        .connect(
+            &["claude-code".into()],
+            &w.server(),
+            ConnectParts {
+                mcp: false,
+                skills: false,
+                sign_in: true,
+            },
+            Some(&w.vault),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+    let s = r[0].sign_in.as_ref().unwrap();
+    assert_eq!(s.refused.as_deref(), Some("not_signed_in"), "{s:?}");
+    assert!(s.line.as_ref().unwrap().contains("has run out"));
+    assert_eq!(w.vault.value("claude-code"), None);
     // Hermes on an OAuth provider: not yet.
     w.install("hermes", "0.22.5");
     w.write(".hermes/config.yaml", "model:\n  provider: nous\n");
@@ -511,10 +698,8 @@ fn a_refused_sign_in_copy_leaves_the_tools_connected_with_one_line() {
             Duration::from_secs(5),
         )
         .unwrap();
-    assert_eq!(
-        r[0].sign_in.as_ref().unwrap().refused.as_deref(),
-        Some("not_yet")
-    );
+    // Hermes makes no sign-in of its own.
+    assert!(r[0].sign_in.is_none());
     assert!(w.vault.value("hermes").is_none());
     // A config Cua can't write: the row names the file.
     w.install("cursor", "1.0.0");
@@ -686,7 +871,8 @@ fn uninstalled_after_connecting_offers_disconnect_which_undoes_both() {
         ".codex/config.toml",
         "# mine\n[mcp_servers.cua]\ncommand = \"/opt/mine/wrapper\"\nargs = [\"serve\"]\n",
     );
-    w.connect("codex", true);
+    w.connect("codex", false);
+    w.device_sign_in();
     w.uninstall("codex");
     let r = check(
         &w,

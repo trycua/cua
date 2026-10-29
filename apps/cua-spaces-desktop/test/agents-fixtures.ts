@@ -91,13 +91,21 @@ export class FakeAgentKeysTools {
     this.calls.push([tool, args]);
     switch (tool) {
       case "agent_keys.list":
+      case "agent_keys.check":
         break;
       case "agent_keys.set": {
         const provider = String(args.provider ?? "");
         const env = provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "openai" ? "OPENAI_API_KEY" : String(args.env ?? "");
         const value = String(args.value ?? "");
         this.keys = this.keys.filter((k) => k.env !== env);
-        this.keys.push({ provider, env, last4: value.slice(-4), added_ms: 1_790_000_100_000 });
+        this.keys.push({
+          provider,
+          env,
+          last4: value.slice(-4),
+          added_ms: 1_790_000_100_000,
+          ...(typeof args.region === "string" ? { region: args.region } : {}),
+          ...(args.fields && typeof args.fields === "object" ? { fields: args.fields } : {}),
+        });
         break;
       }
       case "agent_keys.remove":
@@ -190,6 +198,22 @@ export class FixtureAgentSetup implements AgentSetupRunning {
     return JSON.stringify({ outcomes: [], removed_sign_ins: [] });
   }
 
+  async disconnectPartsJson(agents: string[], skills: boolean, mcp: boolean, _signIn: boolean) {
+    this.calls.push(`disconnect-parts:${agents.join(",")}:${skills}:${mcp}`);
+    return JSON.stringify({ outcomes: [], removed_sign_ins: [] });
+  }
+
+  /** Codex's device code, approved at once (no browser in a fixture). */
+  async deviceSignInStartJson(agent: string) {
+    this.calls.push(`device-start:${agent}`);
+    return JSON.stringify({ id: `${agent}-1`, url: "https://auth.openai.com/codex/device", code: "ABCD-12345" });
+  }
+
+  async deviceSignInWaitJson(id: string) {
+    this.calls.push(`device-wait:${id}`);
+    return JSON.stringify({ imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Codex · ChatGPT sign-in", expires_ms: null, added_ms: 1 }, refused: null, line: null });
+  }
+
   /** The sign-in finishes at once (no browser in a fixture). */
   async signIn(agent: string) {
     this.calls.push(`sign-in:${agent}`);
@@ -213,6 +237,6 @@ export const AGENT_METHODS = [
   "agents.list", "agents.runs", "agents.events", "agents.start", "agents.message", "agents.pause", "agents.resume", "agents.setup", "agents.configure", "agents.signIn", "agents.setupDriver",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine", "agents.removeRoutine",
   "agents.allowComputer", "agents.revokeComputer",
-  "agents.status", "agents.connect", "agents.disconnect",
-  "agentKeys.list", "agentKeys.set", "agentKeys.remove",
+  "agents.status", "agents.connect", "agents.disconnect", "agents.signInStart", "agents.signInWait",
+  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell",
 ];

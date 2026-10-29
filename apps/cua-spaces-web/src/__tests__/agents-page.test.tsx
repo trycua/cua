@@ -61,7 +61,7 @@ describe.skipIf(!wasmBuilt)("Agents page", () => {
       return b!;
     }, { timeout: 8000 });
     fireEvent.click(setup);
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connectors"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connections"));
     expect(router.state.location.search).toHaveProperty("app");
     // Nothing was connected on the way.
     expect(document.querySelector('[data-agents-empty="ready"]')).toBeNull();

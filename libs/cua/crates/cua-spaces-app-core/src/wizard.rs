@@ -1303,7 +1303,7 @@ fn microvm_support(
             Some(h) if h.online && host_runs_microvm(h) => Ok(vec![]),
             Some(h) => Err(MicrovmBlock::Why(host_microvm_why(h))),
             None => Err(MicrovmBlock::Why(
-                "needs a computer that runs microVMs".into(),
+                "needs a machine that runs microVMs".into(),
             )),
         },
         Location::Auto => {
@@ -1311,7 +1311,7 @@ fn microvm_support(
                 Ok(vec![])
             } else {
                 Err(MicrovmBlock::Why(
-                    "needs one of your computers to run microVMs".into(),
+                    "needs one of your machines to run microVMs".into(),
                 ))
             }
         }
@@ -1496,12 +1496,12 @@ fn runtime_switch(image: &SandboxImage, env: &WizardEnv) -> Option<RuntimeSwitch
 /// The one line under "Run on" when nothing can run the Space here and
 /// none of your machines is listed: how another Mac of yours joins.
 pub const OTHER_MAC_HINT: &str = "To use another Mac, open Cua Spaces on it, choose Set up for \
-     access and turn on Spaces for your devices. It then shows up here.";
+     access and turn on Spaces for your machines. It then shows up here.";
 
 /// [`OTHER_MAC_HINT`] on Windows and Linux, where the other machine may be
 /// any computer.
 pub const OTHER_COMPUTER_HINT: &str = "To use another computer, open Cua Spaces on it, choose \
-     Set up for access and turn on Spaces for your devices. It then shows up here.";
+     Set up for access and turn on Spaces for your machines. It then shows up here.";
 
 /// The line under "Run on" naming how another machine joins, in the words
 /// of the system the app runs on.
@@ -3728,8 +3728,8 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         },
         Location::Host => host_why
             .clone()
-            .unwrap_or_else(|| "Choose a computer.".to_string()),
-        Location::Auto => "None of your computers can take it now.".to_string(),
+            .unwrap_or_else(|| "Choose a machine.".to_string()),
+        Location::Auto => "None of your machines can take it now.".to_string(),
         Location::Local if runtime_switch.is_some() => match image.local {
             Some(LocalEngine::Container) => {
                 format!(
@@ -4191,13 +4191,13 @@ pub struct FirstSpaceOffer {
 
 /// What the offers say while this machine's runtimes or free space are not
 /// read yet: a VM that may not fit or run here is not offered until they are.
-pub const OFFER_NOT_CHECKED: &str = "Still checking this computer.";
+pub const OFFER_NOT_CHECKED: &str = "Still checking this machine.";
 
 /// Why a macOS VM can't run on a host of this architecture, or none.
 pub const MACOS_NEEDS_APPLE_SILICON: &str = "macOS Spaces need a Mac with Apple silicon.";
 
 /// `arm64` or `amd64` for an architecture name (`aarch64`, `x86_64`, `x64`).
-fn arch_word(arch: Option<&str>) -> Option<&'static str> {
+pub(crate) fn arch_word(arch: Option<&str>) -> Option<&'static str> {
     match arch?.to_ascii_lowercase().as_str() {
         "arm64" | "aarch64" => Some("arm64"),
         "amd64" | "x86_64" | "x64" => Some("amd64"),
@@ -5242,7 +5242,7 @@ mod tests {
         assert_eq!(placement_options(&s, &e)[0].label, "This Mac");
         for (os, here, lower) in [
             (SpaceOs::Windows, "This PC", "this PC"),
-            (SpaceOs::Linux, "This computer", "this computer"),
+            (SpaceOs::Linux, "This machine", "this machine"),
         ] {
             let local = &placement_options_on(&s, &e, os)[0];
             assert_eq!(local.label, here);

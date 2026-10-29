@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings tabs keep their place: some are long (Connectors: the page
+ * Settings tabs keep their place: some are long (Connections: the page
  * scrolls), the others are short (it doesn't). The page's scrollbar must not take width
  * from the column on one tab and not the other, or the tab bar and content
  * jump sideways when you switch.
@@ -13,13 +13,12 @@ import { expect, test } from "./host";
 const TABS = [
   ["Account", "/settings"],
   ["General", "/settings/general"],
-  ["Connectors", "/settings/connectors"],
-  ["Trusted devices", "/settings/devices"],
+  ["Connections", "/settings/connections"],
   ["Advanced", "/settings/advanced"],
   ["About", "/settings/about"],
 ] as const;
 
-// A window that fits the short tabs but not Connectors; a Settings tab bar and heading to measure.
+// A window that fits the short tabs but not Connections; a Settings tab bar and heading to measure.
 test.use({
   viewport: { width: 1100, height: 900 },
   // Headless Chromium hides scrollbars by default; a Mac window with a mouse

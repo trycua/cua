@@ -54,10 +54,11 @@ TYPES = [
     ("login_item.rs", "login_item", ["LoginItemStatus", "LoginItemInput", "LoginItemPlan"]),
     ("local_network.rs", "local_network", ["LocalNetworkAccess", "LocalNetworkInput", "LocalNetworkStepKind", "LocalNetworkStep"]),
     ("experiments.rs", "experiments", ["Experiments"]),
-    ("settings.rs", "settings", ["SwitcherTheme", "AppSettings", "KeyCombo", "SignInPhase", "TelemetryInput", "MicrovmInput", "SettingsInput", "SettingsRowKind", "SettingsOption", "SettingsRow", "SettingsSection", "SettingsPage"]),
+    ("runtimes.rs", "runtimes", ["DetectedRuntime", "RuntimePathCheck", "RuntimeKindInput", "RuntimesInput", "RuntimePathVerdict", "RuntimeSettingChange"]),
+    ("settings.rs", "settings", ["SwitcherTheme", "AppSettings", "KeyCombo", "SignInPhase", "TelemetryInput", "SettingsInput", "SettingsRowKind", "SettingsOption", "SettingsRow", "SettingsSection", "SettingsPage"]),
     ("sign_in.rs", "sign_in", ["SignInFailure", "SignInFooterState", "SignInFooterInput", "SignInToast", "SignInFooter"]),
     ("window.rs", "window", ["ChromeInput", "MainChrome", "MenuItemId", "MenuItem", "MenuInput"]),
-    ("host.rs", "host", ["HostSummaryInput", "HostSetupRequest", "HostClient", "HostAccess", "HostPermissionInput", "HostProvidedSpace", "HostSpacesAudit", "HostState", "HostAccount", "HostAccountStep", "HostActionId", "HostSettingChange", "HostToggle", "HostConfirm", "HostAction", "HostAccessRow", "PermissionRow", "HostSetupChoice", "HostPanelView", "HostFormState", "HostFormAction", "HostFormChoice", "HostFormField", "HostFormView"]),
+    ("host.rs", "host", ["HostSummaryInput", "HostSetupRequest", "HostClient", "HostAccess", "HostPermissionInput", "HostProvidedSpace", "HostSpacesAudit", "HostState", "HostAccount", "HostAccountStep", "HostActionId", "HostSettingChange", "HostLimitRow", "HostToggle", "HostConfirm", "HostAction", "HostAccessRow", "PermissionRow", "HostSetupChoice", "HostPanelView", "HostFormState", "HostFormAction", "HostFormChoice", "HostFormField", "HostFormView"]),
     ("installer.rs", "installer", ["InstallMethod", "CliInstallPlan", "CliInstallRequest"]),
     ("agents.rs", "agents", ["AgentStatus", "SpaceAgentRun", "AgentSetupStatus", "AgentSettingsRow", "AgentSetupOutcomeInput", "AgentSetupSummary"]),
     ("devices.rs", "devices", ["DeviceInput", "MachineInput", "AuditInput", "DevicesInput", "BannerTone", "DeviceAction", "DeviceBanner", "DeviceConfirm", "UnconfirmedMachine", "DeviceRow", "ApprovalPrompt", "ActivityRow", "EnrollmentKind", "MachineAccessNotice", "ThisDevice", "DevicesLabels", "DevicesView", "EnrollMethod", "EnrollPhase", "EnrollState", "EnrollAction", "EnrollOption", "EnrollView", "ApproveSheetState", "ApproveSheetAction", "ApproveRequest", "ApproveSheetView"]),
@@ -80,7 +81,7 @@ TYPES = [
     ("tips.rs", "tips", ["TipsState", "TipPlace", "TipFacts", "TipActionKind", "TipAction", "TipLink", "Tip", "TipsEvent"]),
     ("upsell.rs", "upsell", ["ProBannerInput", "ProBanner"]),
     ("account.rs", "account", ["AccountMenuInput", "AccountMenuItemId", "AccountMenuItem"]),
-    ("resources.rs", "resources", ["DiskLevel", "DiskWarning", "ComputerResources", "GuestUsage", "DiskOnHost", "SpaceResources", "ResourcesSnapshot", "ResourceTone", "ResourceRow", "WarningView", "ThisMacView", "SpaceResourcesView", "ComputerView", "ResourcesView"]),
+    ("resources.rs", "resources", ["DiskLevel", "DiskWarning", "ComputerResources", "GuestUsage", "DiskOnHost", "SharedBase", "SpaceResources", "ResourcesSnapshot", "ResourceTone", "ResourceRow", "WarningView", "ThisMacView", "SpaceResourcesView", "ComputerView", "ResourcesView"]),
 ]
 
 # FFI names that read better than the plain prefix.

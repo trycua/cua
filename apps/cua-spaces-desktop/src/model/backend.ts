@@ -10,6 +10,8 @@ import type {
   AppCreateSpaceArgs,
   AppGpuChoice,
   AppRuntime,
+  AppRuntimeKindInput,
+  AppRuntimePathCheck,
   AppSpaceAgentRun,
   AppSpaceHost,
   AppSpaceKind,
@@ -34,6 +36,7 @@ import type {
   SpaceLike,
   SpacePresenceLike,
   PresenceIdentity,
+  RepoCacheStatus,
   ResourcesSnapshot,
   TeleportLike,
 } from "../native/generated/index";
@@ -161,6 +164,18 @@ export interface SpacesBackend {
   setLumeSource(value: string): Promise<void>;
   linuxSource(): Promise<string | null>;
   setLinuxSource(value: string): Promise<void>;
+  /** Each kind of Space's runtime setting and what is installed for it (`runtime_kinds`); null when unknown. */
+  runtimeKinds(): Promise<AppRuntimeKindInput[] | null>;
+  /** What `path` is for `kind` (`container`, `vm`, `microvm`). */
+  runtimeCheckPath(kind: string, path: string): Promise<AppRuntimePathCheck>;
+  /** Writes a runtime setting (`runtime.container`, `runtime.vm_path`), or unsets it (null). */
+  setRuntimeSetting(key: string, value: string | null): Promise<void>;
+  /** The repo cache: on or off, what it holds and saved (`repo_cache_status`); null when unknown. */
+  repoCacheStatus(): Promise<RepoCacheStatus | null>;
+  /** Turns the repo cache on or off and sets its size in GB (null: automatic); a missing field keeps its value. */
+  setRepoCache(change: { enabled?: boolean; sizeGb?: number | null }): Promise<RepoCacheStatus | null>;
+  /** Deletes every repository the repo cache holds. */
+  clearRepoCache(): Promise<RepoCacheStatus | null>;
   localStorage(): Promise<LocalStorage | null>;
   /** A Cua account is signed in (or client credentials are set). */
   loggedIn(): Promise<boolean>;
@@ -576,6 +591,42 @@ export class LiveSpacesBackend implements SpacesBackend {
 
   async setLinuxSource(value: string): Promise<void> {
     this.native.configSet("runtime.linux", value);
+  }
+
+  async runtimeKinds(): Promise<AppRuntimeKindInput[] | null> {
+    const kinds = await bounded(PROBE_SECONDS, () => this.cua.local().runtimeKinds());
+    return kinds?.map((k) => ({ kind: k.kind, source: k.source, path: k.path, detected: k.detected, check: k.check, expected: k.expected })) ?? null;
+  }
+
+  async runtimeCheckPath(kind: string, path: string): Promise<AppRuntimePathCheck> {
+    return this.cua.local().runtimeCheckPath(kind, path);
+  }
+
+  async setRuntimeSetting(key: string, value: string | null): Promise<void> {
+    if (value === null) this.native.configUnset(key);
+    else this.native.configSet(key, value);
+  }
+
+  async repoCacheStatus(): Promise<RepoCacheStatus | null> {
+    try {
+      return this.native.repoCacheStatus();
+    } catch {
+      return null;
+    }
+  }
+
+  async setRepoCache(change: { enabled?: boolean; sizeGb?: number | null }): Promise<RepoCacheStatus | null> {
+    if (change.enabled !== undefined) this.native.configSet("cache.repos", change.enabled ? "on" : "off");
+    if (change.sizeGb !== undefined) this.native.configSet("cache.repos_size_gb", change.sizeGb === null ? "auto" : String(change.sizeGb));
+    return this.repoCacheStatus();
+  }
+
+  async clearRepoCache(): Promise<RepoCacheStatus | null> {
+    try {
+      return this.native.repoCacheClear();
+    } catch {
+      return null;
+    }
   }
 
   async localStorage(): Promise<LocalStorage | null> {

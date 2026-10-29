@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Settings, Connectors: each coding app on this computer with one
+// Settings, Connections: each coding app on this computer with one
 // switch (`agents.setup`, `agents.connect` and `agents.disconnect`),
 // "Set up new apps automatically", and the sync that sets up a newly
 // installed app with a notice and Undo.
 
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
@@ -53,66 +53,11 @@ describe("configured agents without binary evidence", () => {
   });
 });
 
-const app = (id: string) => document.querySelector<HTMLElement>(`[data-connected-app="${id}"]`);
-const switchOf = (id: string) => within(app(id)!).getByRole("switch");
+const app = (id: string) => document.querySelector<HTMLElement>(`[data-connector-app="${id}"]`);
 
-describe.skipIf(!wasmBuilt)("Settings, Connectors", () => {
-  it("lists the coding apps on this computer with one switch each, file paths only under Advanced", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
-    await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
-    expect(within(app("claude-code")!).getByText("Claude Code")).toBeTruthy();
-    expect(switchOf("claude-code").getAttribute("aria-checked")).toBe("true");
-    expect(switchOf("hermes").getAttribute("aria-checked")).toBe("false");
-    // No file paths, skill counts or "Not installed" rows until Show all.
-    expect(document.body.textContent).not.toMatch(/\.claude\.json|Not installed|skills/);
-    expect(document.querySelector('[data-connected-missing="gemini-cli"]')).toBeNull();
-    fireEvent.click(document.querySelector("[data-connected-show-all]")!);
-    await waitFor(() => expect(document.querySelector('[data-connected-missing="gemini-cli"]')).not.toBeNull());
-    // Rows stay icon, name and switch; paths and Add it by hand wait in a closed Advanced.
-    expect(app("claude-code")!.textContent).not.toContain(".claude.json");
-    const advanced = document.querySelector<HTMLDetailsElement>("[data-connected-advanced]")!;
-    expect(advanced.open).toBe(false);
-    expect(advanced.querySelector('[data-connected-file="claude-code"]')!.textContent).toContain("~/.claude.json");
-    expect(advanced.querySelector("[data-connected-by-hand]")).not.toBeNull();
-  });
-
-  it("switches one app on and off, remembers an app turned off, and offers Undo", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
-    await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
-    fireEvent.click(switchOf("hermes"));
-    await waitFor(() => expect(switchOf("hermes").getAttribute("aria-checked")).toBe("true"));
-    fireEvent.click(switchOf("hermes"));
-    await waitFor(() => expect(switchOf("hermes").getAttribute("aria-checked")).toBe("false"));
-    expect(connectedAppsState().off).toContain("hermes");
-    // The notice says what happened and how to take it back.
-    const undo = await screen.findByRole("button", { name: "Undo" });
-    expect(document.body.textContent).toContain("Hermes turned off");
-    expect(document.body.textContent).toContain("Cua took itself out of Hermes's settings");
-    fireEvent.click(undo);
-    await waitFor(() => expect(switchOf("hermes").getAttribute("aria-checked")).toBe("true"));
-    expect(connectedAppsState().off).not.toContain("hermes");
-  });
-
-  it("says why a setup failed in plain words, and offers Try again and the file to edit by hand", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false, demo: { agentsReadOnly: ["hermes"] } });
-    await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
-    fireEvent.click(switchOf("hermes"));
-    const failure = await waitFor(() => {
-      const f = document.querySelector<HTMLElement>('[data-connected-failure="hermes"]');
-      expect(f).not.toBeNull();
-      return f!;
-    });
-    expect(failure.textContent).toContain("Couldn't set up Hermes. Cua can't change this file because it is read-only or belongs to another user.");
-    expect(document.body.textContent).not.toMatch(/os error/);
-    expect(switchOf("hermes").getAttribute("aria-checked")).toBe("false");
-    expect(within(failure).getByRole("button", { name: "Try again" })).toBeTruthy();
-    fireEvent.click(within(failure).getByRole("button", { name: "Add it by hand" }));
-    expect(failure.textContent).toContain("mcp_servers:");
-    expect(failure.textContent).toContain("Paste this into the file, then restart Hermes.");
-  });
-
+describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
   it("keeps Set up new apps automatically in the saved state", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
+    await mountApp("/settings/connections", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(document.querySelector("[data-connected-auto]")).not.toBeNull(), { timeout: 8000 });
     expect(connectedAppsState().auto).toBeNull();
     fireEvent.click(document.querySelector("[data-connected-auto]")!);
@@ -138,10 +83,10 @@ describe.skipIf(!wasmBuilt)("a newly installed coding app", () => {
     for (const state of [{ known: seen, off: [], auto: null }, { known: seen, off: ["hermes"], auto: true }]) {
       cleanup();
       setConnectedAppsState(state);
-      const { router } = await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
+      const { router } = await mountApp("/settings/connections", { failsCreates: false, listsGhost: false });
       await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
       await router.load();
-      expect(switchOf("hermes").getAttribute("aria-checked")).toBe("false");
+      expect(app("hermes")!.querySelector("[data-connector-connect]")).not.toBeNull();
       expect(document.body.textContent).not.toContain("can now use Cua");
     }
   });

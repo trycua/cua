@@ -696,7 +696,7 @@ fn settings_of(c: &CloudInput) -> Vec<CloudSettingRow> {
         rows.push(CloudSettingRow {
             id: "access".into(),
             label: "Access".into(),
-            help: "The AWS CLI's sign-in on this computer".into(),
+            help: "The AWS CLI's sign-in on this machine".into(),
             value: String::new(),
         });
     }
@@ -819,7 +819,7 @@ fn page(c: &CloudInput, input: &CloudsInput) -> CloudPage {
             id: "budget".into(),
             level: "warn".into(),
             text: format!(
-                "This month's {} budget is used. New Spaces go to your computers, or wait until {}.",
+                "This month's {} budget is used. New Spaces go to your machines, or wait until {}.",
                 money(c.budget_cents.unwrap_or(0)),
                 resets_on(input.now)
             ),
@@ -1001,7 +1001,7 @@ fn page(c: &CloudInput, input: &CloudsInput) -> CloudPage {
         lock: if state == State::TokenRefused {
             format!("Refused by {name}")
         } else {
-            "Sealed to your devices".into()
+            "Sealed to your machines".into()
         },
         note: "Only your own devices can open it. Cua's servers keep a sealed copy they can't read. Agents use it through Cua; they never see it.".into(),
         holders_label: if c.holders.is_empty() { String::new() } else { "Can open it".into() },
@@ -1405,7 +1405,7 @@ mod tests {
         assert!(p.issues.is_empty());
         assert_eq!(p.status, "Connected");
         let access = p.settings.iter().find(|r| r.id == "access").unwrap();
-        assert_eq!(access.help, "The AWS CLI's sign-in on this computer");
+        assert_eq!(access.help, "The AWS CLI's sign-in on this machine");
         // An OIDC link, or a CLI link with no suggestion, offers nothing.
         assert!(view(&input(aws())).pages[0].switch_auth.is_none());
         c.suggest_auth.clear();
@@ -1419,7 +1419,7 @@ mod tests {
         let mut c = aws();
         c.status = "failed".into();
         c.issue =
-            "AWS was disconnected on another device; 2 machines this computer made may still run."
+            "AWS was disconnected on another device; 2 machines this machine made may still run."
                 .into();
         let v = view(&input(c));
         let p = v.pages[0].clone();

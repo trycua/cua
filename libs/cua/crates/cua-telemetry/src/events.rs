@@ -708,6 +708,36 @@ pub fn agent_run_started(
         )
 }
 
+/// `cua_agent_join_phase`: an agent joining a Space reached `phase`
+/// (one of [`schema::JOIN_PHASES`]) `ms_since_post` after the message that
+/// woke it. `run` is the salted hash of the run (see
+/// [`crate::Telemetry::agent_join_phase`]); `tool` is the installed tool for
+/// `install_done`; `failure` a fixed word for a `failed` phase.
+#[allow(clippy::too_many_arguments)]
+pub fn agent_join_phase(
+    phase: &str,
+    harness_id: &str,
+    runtime_id: &str,
+    cold: bool,
+    ms_since_post: u64,
+    run: &str,
+    tool: &str,
+    failure: &str,
+) -> Option<Event> {
+    let phase = schema::JOIN_PHASES.iter().copied().find(|p| *p == phase)?;
+    Some(
+        Event::new(event::AGENT_JOIN_PHASE)
+            .s("phase", phase)
+            .s("harness", harness(harness_id))
+            .s("runtime", pick(schema::JOIN_RUNTIMES, runtime_id, "other"))
+            .b("cold", cold)
+            .n("ms_since_post", ms_since_post.min(3_600_000))
+            .owned("run", run.to_string())
+            .s("tool", pick(schema::JOIN_TOOLS, tool, "other"))
+            .s("failure", pick(schema::JOIN_FAILURES, failure, "other")),
+    )
+}
+
 /// `cua_agent_run_completed`: a run's first turn ended (or the run failed,
 /// crashed or was stopped first).
 pub fn agent_run_completed(
@@ -1442,10 +1472,73 @@ pub fn space_tool_group(tool: &str) -> Option<&'static str> {
 }
 
 /// `cua_agent_signin_imported`: Connect copied `harness`'s sign-in into
-/// Keyvault on This Mac (only that it happened, and for which agent).
-pub fn agent_signin_imported(harness: &str) -> Event {
+/// Keyvault on This Mac (only that it happened, for which agent, and how:
+/// `origin` is the copy's origin, `claude-login-keychain` and so on).
+pub fn agent_signin_imported(harness: &str, origin: Option<&str>) -> Event {
+    let via = match origin {
+        Some("claude-login-keychain") => "claude_login_keychain",
+        Some("claude-login-file") => "claude_login_file",
+        Some("device-code") => "device_code",
+        Some("token") => "token",
+        _ => "other",
+    };
     Event::new(event::AGENT_SIGNIN_IMPORTED)
         .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
+        .s("via", via)
+}
+
+/// `cua_agent_signin_refused`: Connect could not copy `harness`'s sign-in;
+/// `kind` is the refusal kind (`not_signed_in`, `cancelled`, `not_yet`,
+/// `failed`). Never the line, the error or the account.
+pub fn agent_signin_refused(harness: &str, kind: &str) -> Event {
+    Event::new(event::AGENT_SIGNIN_REFUSED)
+        .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
+        .s("reason", pick(schema::SIGNIN_REFUSALS, kind, "other"))
+}
+
+/// `cua_repo_cache`: what the repo cache did for one clone. Only fixed words
+/// and numbers: `outcome` is `hit`, `miss` or `fallback`, `source` `local` or
+/// `network`, `reason` one of [`schema::REPO_CACHE_REASONS`].
+pub fn repo_cache(
+    outcome: &str,
+    source: &str,
+    bytes_saved: u64,
+    seconds_saved: u64,
+    reason: &str,
+) -> Option<Event> {
+    let outcome = schema::REPO_CACHE_OUTCOMES
+        .iter()
+        .copied()
+        .find(|o| *o == outcome)?;
+    Some(
+        Event::new(event::REPO_CACHE)
+            .s("outcome", outcome)
+            .s(
+                "source",
+                pick(schema::REPO_CACHE_SOURCES, source, "network"),
+            )
+            .n("bytes_saved", bytes_saved.min(1_000_000_000_000))
+            .n("seconds_saved", seconds_saved.min(86_400))
+            .s("reason", pick(schema::REPO_CACHE_REASONS, reason, "other")),
+    )
+}
+
+/// `cua_connection_changed`: a provider was connected, reconnected, removed or
+/// checked. Only fixed words leave: the registry's provider id, the kind of
+/// method, the action and the outcome; never a key, a URL, an account or an
+/// error text.
+pub fn connection_changed(provider: &str, method: &str, action: &str, outcome: &str) -> Event {
+    Event::new(event::CONNECTION_CHANGED)
+        .s(
+            "provider",
+            pick(schema::CONNECTION_PROVIDERS, provider, "other"),
+        )
+        .s("method", pick(schema::CONNECTION_METHODS, method, "other"))
+        .s("action", pick(schema::CONNECTION_ACTIONS, action, "check"))
+        .s(
+            "outcome",
+            pick(schema::CONNECTION_OUTCOMES, outcome, "failed"),
+        )
 }
 
 /// `cua_agent_used_space`: an agent's tool call reached a Space and worked.

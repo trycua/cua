@@ -16,7 +16,8 @@ import type { ComputerResources, DiskWarning, ResourcesSnapshot, SpaceResources 
 import type { DemoContext, DemoHandlers } from "./context";
 import { DEMO_MACHINES } from "../demo-data";
 
-const GB = 1_000_000_000;
+/** GiB, labelled "GB" the way macOS labels memory (the core's convention). */
+const GB = 1024 ** 3;
 const GIB = 1024 ** 3;
 
 export interface DemoResourcesState {
@@ -45,7 +46,14 @@ const running = (row: SpaceRow) => row.powerState === "running" || (row.powerSta
 /** What each demo Space was given (cores, GB of memory, GB of disk at most) and takes on its host. */
 const ALLOCATION: Record<string, { cores: number; memory: number; disk: number; onHost: number; inside: number; shared: boolean }> = {
   "local:design-review": { cores: 4, memory: 8, disk: 80, onHost: 19, inside: 34, shared: true },
-  "local:agent-sandbox": { cores: 2, memory: 4, disk: 40, onHost: 6, inside: 6, shared: false },
+  // A container: no disk size of its own (gVisor's root overlay).
+  "local:agent-sandbox": { cores: 2, memory: 4, disk: 0, onHost: 6, inside: 6, shared: false },
+};
+
+/** The base image each demo Space is a copy-on-write copy of. */
+const BASES: Record<string, NonNullable<SpaceResources["base"]>> = {
+  "local:design-review": { key: "demo-macos-26", image: "ghcr.io/trycua/macos:26", bytes: 25 * GB, sharedWith: 1 },
+  "local:agent-sandbox": { key: "demo-linux-24.04", image: "ghcr.io/trycua/linux:24.04", bytes: 4.1 * GB, sharedWith: 1 },
 };
 
 function spaceResources(row: SpaceRow, now: number, index: number): SpaceResources {
@@ -67,11 +75,12 @@ function spaceResources(row: SpaceRow, now: number, index: number): SpaceResourc
           memoryTotal: a.memory * GB,
           memoryLimited: true,
           diskUsed: a.inside * GB,
-          diskTotal: a.disk * GB,
-          diskLimited: true,
+          diskTotal: a.disk ? a.disk * GB : null,
+          diskLimited: a.disk > 0,
         }
       : null,
     diskOnHost: { bytes: a.onHost * GB, allocated: (a.shared ? a.inside : a.onHost) * GB, sharesSpace: a.shared },
+    base: BASES[row.id] ?? null,
   };
 }
 
@@ -119,7 +128,7 @@ export function demoResources(rows: readonly SpaceRow[], now: number, diskFree: 
     loadAverage1m: (cpuPercent / 100) * 12,
     memoryTotal: 64 * GB,
     memoryUsed: Math.round(drift(now, 41, 1.5) * GB),
-    diskTotal: 1000 * GB,
+    diskTotal: 1024 * GB,
     diskFree,
     spacesCount: spaces.length,
     spacesRunning: on.length,

@@ -739,6 +739,78 @@ pub const JOIN_TOOLS: &[&str] = &[
 /// Agents whose sign-in Connect copies into Keyvault on This Mac
 /// (`cua-agent-setup` ids), or `other`.
 pub const SIGNIN_HARNESSES: &[&str] = &["hermes", "claude-code", "codex", "other"];
+/// How a copied sign-in was made: read from Claude Code's own sign-in (its
+/// Keychain item or its credentials file), a device code, a pasted token.
+pub const SIGNIN_VIAS: &[&str] = &[
+    "claude_login_keychain",
+    "claude_login_file",
+    "device_code",
+    "token",
+    "other",
+];
+/// Why Connect did not copy a sign-in (`cua-agent-setup`'s refusal kinds).
+pub const SIGNIN_REFUSALS: &[&str] = &["not_signed_in", "cancelled", "not_yet", "failed", "other"];
+/// The providers of the Connections registry (`cua-connections`), or `other`.
+/// A test holds this equal to the registry's ids.
+pub const CONNECTION_PROVIDERS: &[&str] = &[
+    "actual",
+    "ai-gateway",
+    "alibaba",
+    "anthropic",
+    "arcee",
+    "azure-foundry",
+    "bedrock",
+    "commandcode",
+    "custom",
+    "deepinfra",
+    "deepseek",
+    "fireworks",
+    "github",
+    "gmi",
+    "google",
+    "huggingface",
+    "kilocode",
+    "kimi",
+    "meta-ai",
+    "minimax",
+    "minimax-oauth",
+    "nebius-token-factory",
+    "nous",
+    "novita",
+    "nvidia",
+    "ollama-cloud",
+    "openai",
+    "opencode-go",
+    "opencode-zen",
+    "openrouter",
+    "qwen-oauth",
+    "router",
+    "stepfun",
+    "tencent-tokenhub",
+    "upstage",
+    "vertex",
+    "xai",
+    "xai-oauth",
+    "xiaomi",
+    "zai",
+    "other",
+];
+/// The kinds of way to connect a provider (the registry's closed set), or `other`.
+pub const CONNECTION_METHODS: &[&str] = &[
+    "api_key",
+    "import_login",
+    "device_code",
+    "browser_oauth",
+    "subscription_login",
+    "adc",
+    "local_server",
+    "custom_endpoint",
+    "other",
+];
+/// What was done to a connection.
+pub const CONNECTION_ACTIONS: &[&str] = &["connect", "reconnect", "remove", "check"];
+/// How it ended; `needs_reconnect` is a check that found the provider refusing the key.
+pub const CONNECTION_OUTCOMES: &[&str] = &["ok", "failed", "cancelled", "needs_reconnect"];
 /// Where an agent run was started from: a Spaces tool call (the MCP
 /// `agent_start`, the SDKs' `Space.agent_start`, the Spaces app), the
 /// `cua agent` CLI, the SDKs' sandbox `Agents.run`, a persistent agent's
@@ -975,6 +1047,8 @@ pub mod event {
     pub const INSTALLER_STEP: &str = "cua_installer_step";
     pub const AGENT_USED_SPACE: &str = "cua_agent_used_space";
     pub const AGENT_SIGNIN_IMPORTED: &str = "cua_agent_signin_imported";
+    pub const AGENT_SIGNIN_REFUSED: &str = "cua_agent_signin_refused";
+    pub const CONNECTION_CHANGED: &str = "cua_connection_changed";
     pub const PLAN_LIMIT_SHOWN: &str = "cua_plan_limit_shown";
     pub const UPGRADE_LINK_OPENED: &str = "cua_upgrade_link_opened";
 }
@@ -1271,16 +1345,73 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::AGENT_SIGNIN_IMPORTED,
+        version: 2,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: ALL,
+        props: &[
+            p(
+                "harness",
+                Kind::Enum(SIGNIN_HARNESSES),
+                "The agent whose sign-in Connect copied into Keyvault on This Mac. Never the sign-in, the account or the provider.",
+            ),
+            p(
+                "via",
+                Kind::Enum(SIGNIN_VIAS),
+                "How it was made: read from Claude Code's own sign-in (Keychain or file), a device code, or a pasted token. Never the account.",
+            ),
+        ],
+        purpose: "One-click Connect: how often an agent's sign-in is copied, per agent and way.",
+    },
+    EventSpec {
+        name: event::AGENT_SIGNIN_REFUSED,
         version: 1,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: ALL,
-        props: &[p(
-            "harness",
-            Kind::Enum(SIGNIN_HARNESSES),
-            "The agent whose sign-in Connect copied into Keyvault on This Mac. Never the sign-in, the account or the provider.",
-        )],
-        purpose: "One-click Connect: how often an agent's sign-in is copied, per agent.",
+        props: &[
+            p(
+                "harness",
+                Kind::Enum(SIGNIN_HARNESSES),
+                "The agent whose sign-in Connect could not copy.",
+            ),
+            p(
+                "reason",
+                Kind::Enum(SIGNIN_REFUSALS),
+                "Why: not signed in, cancelled, not supported yet, or failed. Never the error text or the account.",
+            ),
+        ],
+        purpose: "One-click Connect: how often importing a sign-in fails, and why, so the import can be made to work for more people.",
+    },
+    EventSpec {
+        name: event::CONNECTION_CHANGED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: ALL,
+        props: &[
+            p(
+                "provider",
+                Kind::Enum(CONNECTION_PROVIDERS),
+                "The provider, by its id in the Connections registry (a fixed list), or other.",
+            ),
+            p(
+                "method",
+                Kind::Enum(CONNECTION_METHODS),
+                "The kind of way it was connected: an API key, an imported sign-in, a custom endpoint and so on.",
+            ),
+            p(
+                "action",
+                Kind::Enum(CONNECTION_ACTIONS),
+                "Connected, reconnected, removed or checked.",
+            ),
+            p(
+                "outcome",
+                Kind::Enum(CONNECTION_OUTCOMES),
+                "How it ended, or needs_reconnect when a check found the provider refusing the key. Never a key, a URL, an account or error text.",
+            ),
+        ],
+        purpose: "Which providers people connect and how, how often a connect fails, and how often a saved key stops working, so the providers and methods that matter get the work.",
     },
     EventSpec {
         name: event::AGENT_RUN_STARTED,

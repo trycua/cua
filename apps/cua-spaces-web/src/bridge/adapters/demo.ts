@@ -77,6 +77,11 @@ export interface DemoOptions {
   signedInMachines?: boolean;
   /** Saved credentials the provider refuses (`?demo=rejected-key`: the OpenAI key): a check marks them as needing a reconnect. */
   rejectedKeys?: string[];
+  /** Claude Code's sign-in on this Mac: imported already (`?demo=claude-signed-in`), imported and run out (`?demo=claude-expired`),
+   * or none to import (`?demo=claude-none`: Connect finds nothing and offers the ways on). Default: there is one, not imported yet. */
+  claudeLogin?: "signed-in" | "expired" | "none";
+  /** Which connections are saved: `none` (`?demo=no-keys`, an empty Connections list) or `several` (`?demo=connections`: Anthropic, OpenRouter, a custom endpoint and a DeepSeek key the provider refuses). Default: an OpenAI key. */
+  keys?: "none" | "several";
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
@@ -168,6 +173,7 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
  * `?demo=agents-readonly` (Cua can't write Hermes's config),
+ * `?demo=claude-signed-in` / `claude-expired` / `claude-none` (Claude Code's sign-in imported, run out, or not there to import),
  * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`, `?demo=update-error`,
  * `?demo=clouds` (AWS and Hetzner connected; `clouds-budget`, `clouds-untrusted`,
  * `clouds-token`, `clouds-approval`: one thing wrong with one of them;
@@ -224,6 +230,8 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     noVault: flags.has("novault"),
     ...(flags.has("signed-in-machines") ? { signedInMachines: true } : {}),
     ...(flags.has("rejected-key") ? { rejectedKeys: ["OPENAI_API_KEY"] } : {}),
+    ...(flags.has("no-keys") ? { keys: "none" as const } : flags.has("connections") ? { keys: "several" as const, rejectedKeys: ["DEEPSEEK_API_KEY"] } : {}),
+    ...(flags.has("claude-expired") ? { claudeLogin: "expired" as const } : flags.has("claude-signed-in") ? { claudeLogin: "signed-in" as const } : flags.has("claude-none") ? { claudeLogin: "none" as const } : {}),
     noSpaces: flags.has("empty"),
     ...(() => {
       const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
@@ -336,7 +344,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
     imported: [],
-    keyStore: demoKeyStore(now, options.rejectedKeys ?? []),
+    keyStore: demoKeyStore(now, options.rejectedKeys ?? [], options.claudeLogin, options.keys),
     readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
@@ -815,12 +823,14 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
               : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
           : r,
       );
-      // Claude Code's own token command: one browser approval, then its token is saved with the keys.
-      if (signIn && agents.includes("claude-code")) {
-        await wait(step * 14);
+      // Claude Code's own sign-in, read from where Claude Code keeps it (macOS asks to allow it), then its
+      // access token is saved with the keys. `?demo=claude-none`: there is nothing to read.
+      const claudeFound = options.claudeLogin !== "none";
+      if (signIn && agents.includes("claude-code") && claudeFound) {
+        await wait(step * 6);
         state.keyStore.keys = [
           ...state.keyStore.keys.filter((k) => k.env !== "CLAUDE_CODE_OAUTH_TOKEN"),
-          { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now() },
+          { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now(), label: "Signed in as ada@example.com (Claude Max)" },
         ];
         emit({ type: "agents.changed" });
       }
@@ -829,7 +839,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         if (row && state.readOnlyAgents.includes(agent)) {
           return { agent, tools_ok: false, tools_line: `Couldn't add Cua to ${row.mcpConfig ?? agent}: Permission denied (os error 13)`, sign_in: null };
         }
-        const copyable = agent === "hermes" || agent === "claude-code" || (agent === "codex" && Boolean(row?.signedIn));
+        const copyable = agent === "hermes" || (agent === "claude-code" && claudeFound) || (agent === "codex" && Boolean(row?.signedIn));
         if (signIn && copyable && !state.imported.includes(agent)) state.imported = [...state.imported, agent];
         return {
           agent,
@@ -839,7 +849,9 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
             ? null
             : copyable
               ? { imported: { source: agent, env: "", label: "", expires_ms: null, added_ms: now() }, refused: null, line: null }
-              : { imported: null, refused: "not_signed_in", line: "No ChatGPT sign-in on This Mac yet." },
+              : agent === "claude-code"
+                ? { imported: null, refused: "not_signed_in", line: "Claude Code isn't signed in on This Mac. Run `claude auth login` in Terminal, then try again." }
+                : { imported: null, refused: "not_signed_in", line: "No ChatGPT sign-in on This Mac yet." },
         };
       });
     },
@@ -853,7 +865,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       await wait(step * 20);
       state.keyStore.keys = [...state.keyStore.keys.filter((k) => k.env !== "CODEX_AUTH_JSON"), { provider: "other", env: "CODEX_AUTH_JSON", last4: "", addedMs: now() }];
       emit({ type: "agents.changed" });
-      return { imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Codex · ChatGPT sign-in", expires_ms: null, added_ms: now() }, refused: null, line: null };
+      return { imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Signed in with ChatGPT", expires_ms: null, added_ms: now() }, refused: null, line: null };
     },
     "agents.disconnect": async ({ agents, signIn, skills, mcp }) => {
       await wait(step);
@@ -979,7 +991,7 @@ export interface DemoState extends DemoLinksStateField, DemoTelemetryState, Demo
   agentSetup: AgentSetupRow[];
   /** Agents whose sign-in the demo "copied" to Keyvault. */
   imported: string[];
-  /** Saved keys and sign-ins (Settings, Connectors; Claude Code's Connect adds its token here). */
+  /** Saved keys and sign-ins (Settings, Connections; Claude Code's Connect adds its token here). */
   keyStore: DemoKeyStore;
   readOnlyAgents: string[];
   volume: DemoVolumeState;

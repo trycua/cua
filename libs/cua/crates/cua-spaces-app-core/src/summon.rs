@@ -28,7 +28,7 @@ struct Startable {
     harness: &'static str,
     handle: &'static str,
     label: &'static str,
-    /// The setup id its sign-in is checked under (Settings, Connectors).
+    /// The setup id its sign-in is checked under (Settings, Connections).
     app: &'static str,
 }
 
@@ -130,7 +130,7 @@ pub struct SummonInput {
     pub people: Vec<String>,
     /// Agents can be added to this Space (`thread.agentAdd` there, and you may post).
     pub can_add: bool,
-    /// Coding apps and saved sign-ins (Settings, Connectors).
+    /// Coding apps and saved sign-ins (Settings, Connections).
     pub connectors: ConnectorsInput,
 }
 
@@ -198,10 +198,13 @@ pub fn candidates(input: &SummonInput) -> Vec<SummonCandidate> {
                 label: s.label.into(),
                 harness: s.harness.into(),
                 member: false,
+                // The Connections words: a sign-in that stopped working needs a reconnect.
                 detail: if ready {
                     "Starts in this Space".into()
+                } else if connectors::needs_reconnect(&input.connectors, s.app) {
+                    "Needs reconnect".into()
                 } else {
-                    "Not connected yet".into()
+                    "Not connected".into()
                 },
             });
         }
@@ -220,7 +223,7 @@ pub struct CantWake {
     pub harness: String,
     /// The agent's name ("Claude Code").
     pub name: String,
-    /// The setup id Connect runs for (Settings, Connectors).
+    /// The setup id Connect runs for (Settings, Connections).
     pub app: String,
     /// "Claude Code isn't connected yet".
     pub text: String,
@@ -229,7 +232,7 @@ pub struct CantWake {
     pub connect_label: Option<String>,
     /// While Connect runs.
     pub connecting_label: String,
-    /// The app's page in Settings, Connectors ("Claude Code settings").
+    /// The app's page in Settings, Connections ("Claude Code settings").
     pub open_label: Option<String>,
     /// Once connected: the message goes again.
     pub retry_label: String,
@@ -259,6 +262,10 @@ fn cant_wake(
             format!("{name} isn't connected yet"),
             if providers.is_empty() {
                 format!("Connect {name} so it can work in your Spaces.")
+            } else if providers.len() > 3 {
+                format!(
+                    "It needs a connected provider to work in your Spaces. Your message is saved: it goes again once {name} is connected."
+                )
             } else {
                 format!(
                     "It needs a sign-in to {} to work in your Spaces. Your message is saved: it goes again once {name} is connected.",
@@ -295,7 +302,7 @@ fn cant_wake(
         detail,
         connect_label: connect.then(|| format!("Connect {name}")),
         connecting_label: if plan.app_token {
-            "Approve in your browser…".into()
+            "Reading your Claude Code sign-in…".into()
         } else if plan.device {
             "Enter the code in your browser…".into()
         } else {
@@ -496,6 +503,9 @@ mod tests {
                             last4: "abcd".into(),
                             added_ms: 1,
                             expired: false,
+                            label: None,
+                            region: None,
+                            fields: Default::default(),
                         })
                         .collect(),
                     ..Default::default()
@@ -524,7 +534,7 @@ mod tests {
         let rest: Vec<_> = c[1..].iter().map(|c| c.handle.as_str()).collect();
         assert_eq!(rest, ["claude", "codex", "openclaw"]);
         assert_eq!(c[1].label, "Claude Code");
-        assert_eq!(c[1].detail, "Not connected yet");
+        assert_eq!(c[1].detail, "Not connected");
         let c = candidates(&input(&["CLAUDE_CODE_OAUTH_TOKEN"]));
         assert_eq!(c[1].detail, "Starts in this Space");
         // A Space that can't add agents offers only its members.
@@ -575,17 +585,17 @@ mod tests {
         assert_eq!(c.connect_label.as_deref(), Some("Connect Claude Code"));
         assert_eq!(c.open_label.as_deref(), Some("Claude Code settings"));
         assert_eq!(c.retry_label, "Send again");
-        assert_eq!(c.connecting_label, "Approve in your browser…");
+        assert_eq!(c.connecting_label, "Reading your Claude Code sign-in…");
         assert!(c.detail.contains("sign-in to Anthropic"));
 
         // A member runs on its owner's keys: woken, never checked against this device's.
         let p = plan(&input(&[]), "@hermes go");
         assert_eq!(p.steps[0].action, "wake");
-        // A new Hermes needs Anthropic or OpenAI.
+        // A new Hermes needs a connected provider.
         let mut i = input(&[]);
         i.members.clear();
         let c = plan(&i, "@hermes go").steps[0].cant_wake.clone().unwrap();
-        assert!(c.detail.contains("Anthropic or OpenAI"));
+        assert!(c.detail.contains("a connected provider"));
 
         // Codex isn't on This Mac: no settings page to open; Connect still asks for a key.
         let c = plan(&input(&[]), "@codex go").steps[0]

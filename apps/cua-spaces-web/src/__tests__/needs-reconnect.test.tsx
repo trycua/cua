@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// "Connected" must mean valid (CUA-2680): opening Settings, Connectors or the Agents page asks the
+// "Connected" must mean valid (CUA-2680): opening Settings, Connections or the Agents page asks the
 // providers whether the saved sign-ins and keys still work; a refused one reads "Needs reconnect" with
 // a Reconnect button, on its provider row and on the apps that read it. Reconnecting clears it.
 
@@ -38,16 +38,16 @@ function host(calls: string[], rejected: string[] = []) {
 }
 
 describe.skipIf(!wasmBuilt)("a saved sign-in the provider refuses", () => {
-  it("is re-checked when Settings, Connectors opens, and reads Needs reconnect with Reconnect", async () => {
+  it("is re-checked when Settings, Connections opens, and reads Needs reconnect with Reconnect", async () => {
     const calls: string[] = [];
-    await mountApp("/settings/connectors", host(calls, ["OPENAI_API_KEY"]));
+    await mountApp("/settings/connections", host(calls, ["OPENAI_API_KEY"]));
     await waitFor(() => expect(q("[data-connector-provider=openai]")?.textContent).toContain("Needs reconnect"));
     expect(calls).toContain("agentKeys.check");
     const row = q("[data-connector-provider=openai]")!;
     expect(row.dataset.state).toBe("not-connected");
     expect(row.querySelector("[data-connector-provider-action]")?.textContent).toBe("Reconnect");
-    // Not "Connected", and no Sign out for a credential that does not work.
-    expect(row.textContent).not.toContain("Sign out");
+    // Not "Connected", and no Disconnect for a credential that does not work.
+    expect(row.textContent).not.toContain("Disconnect");
     expect(row.querySelector("[data-connector-status]")?.textContent).not.toContain("Connected");
   });
 
@@ -59,7 +59,7 @@ describe.skipIf(!wasmBuilt)("a saved sign-in the provider refuses", () => {
 
   it("a key the provider accepts stays Connected", async () => {
     const calls: string[] = [];
-    await mountApp("/settings/connectors", host(calls));
+    await mountApp("/settings/connections", host(calls));
     await waitFor(() => expect(calls).toContain("agentKeys.check"));
     await waitFor(() => expect(q("[data-connector-provider=openai]")?.dataset.state).toBe("connected"));
     expect(q("[data-connector-provider=openai]")!.textContent).not.toContain("Needs reconnect");
@@ -67,7 +67,7 @@ describe.skipIf(!wasmBuilt)("a saved sign-in the provider refuses", () => {
 
   it("Reconnect saves the key again and the row is Connected", async () => {
     const calls: string[] = [];
-    await mountApp("/settings/connectors", host(calls, ["OPENAI_API_KEY"]));
+    await mountApp("/settings/connections", host(calls, ["OPENAI_API_KEY"]));
     await waitFor(() => expect(q("[data-connector-provider=openai]")?.textContent).toContain("Needs reconnect"));
     await click(q("[data-connector-provider=openai] [data-connector-provider-action]")!);
     await found("[data-provider-sheet=openai]");

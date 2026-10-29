@@ -6671,6 +6671,13 @@ pub struct AppAgentKeyInput {
     pub added_ms: u64,
     /// A sign-in past its expiry: not used by any run until reconnected.
     pub expired: bool,
+    /// A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+    pub label: Option<String>,
+    /// The plan or region chosen for it (Z.AI), when the provider has them.
+    pub region: Option<String>,
+    /// Non-secret values saved with it: a custom endpoint's `base_url`, `model`
+    /// and `wire`, or a `model`. Never the key.
+    pub fields: std::collections::HashMap<String, String>,
 }
 
 /// What the section shows.

@@ -50,7 +50,7 @@ function fakeTarget() {
   return { target, doc, fire: (t: string) => [...(on[t] ?? [])].forEach((l) => l()), count: () => Object.values(on).reduce((n, s) => n + s.size, 0) };
 }
 
-describe("Settings, Connectors keeps its list fresh", () => {
+describe("Settings, Connections keeps its list fresh", () => {
   it("reads when watching starts, on focus, on a visible document and on agents.changed", async () => {
     const h = loggedDemo();
     const store = new AgentKeysStore(h.adapter);

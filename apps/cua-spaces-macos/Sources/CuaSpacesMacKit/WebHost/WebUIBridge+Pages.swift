@@ -78,19 +78,26 @@ extension WebUIBridge {
             if model.identity != nil { try await model.teamsReader?.ackShareRemovals() }
             return NSNull()
 
-        // Settings, Connectors: the daemon's agent_keys methods (the key travels
+        // Settings, Connections: the daemon's agent_keys methods (the key travels
         // once, in agentKeys.set's arguments; answers never carry one).
         case "agentKeys.list": return try await model.agentKeys.call("agent_keys.list")
         // The providers are asked whether the saved API keys still work (answers cached for minutes).
         case "agentKeys.check": return try await model.agentKeys.call("agent_keys.check")
         case "agentKeys.set":
-            var keyArgs: [String: Any] = ["provider": try string(args, "provider"), "value": try string(args, "value")]
+            // A custom endpoint may have no key: `value` is then empty.
+            var keyArgs: [String: Any] = ["provider": try string(args, "provider"), "value": (args["value"] as? String) ?? ""]
             if let env = args["env"] as? String, !env.isEmpty { keyArgs["env"] = env }
+            if let region = args["region"] as? String, !region.isEmpty { keyArgs["region"] = region }
+            if let fields = args["fields"] as? [String: String], !fields.isEmpty { keyArgs["fields"] = fields }
             return try await model.agentKeys.call("agent_keys.set", keyArgs)
         case "agentKeys.remove": return try await model.agentKeys.call("agent_keys.remove", ["env": try string(args, "env")])
         // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
         case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
-        case "agentKeys.fromShell": return try await model.agentKeys.call("agent_keys.from_shell", ["env": try string(args, "env")])
+        case "agentKeys.fromShell":
+            var shellArgs: [String: Any] = ["env": try string(args, "env")]
+            if let region = args["region"] as? String, !region.isEmpty { shellArgs["region"] = region }
+            if let fields = args["fields"] as? [String: String], !fields.isEmpty { shellArgs["fields"] = fields }
+            return try await model.agentKeys.call("agent_keys.from_shell", shellArgs)
 
         // Cua Volume
         case "volume.overview": return try await volumeOverview()

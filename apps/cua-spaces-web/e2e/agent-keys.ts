@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Screen checks for the `agent-keys` flow (Settings, Connectors, Providers): each section,
+ * Screen checks for the `agent-keys` flow (Settings, Connections, Providers): each section,
  * sheet and Remove question the replay reached goes on the real screen
  * through `window.__cuaParity.showAgentKeys`, and the screen must show the
  * core's words. Then a key is added and removed for real on the demo host,
@@ -32,13 +32,13 @@ const TYPED = "sk-ant-test-0000";
 
 export async function checkAgentKeys(page: Page, checkpoints: ParityCheckpoint[]): Promise<number> {
   let checked = 0;
-  await page.goto("/settings/connectors?bridge=demo&parity");
+  await page.goto("/settings/connections?bridge=demo&parity");
   await page.waitForFunction(() => window.__cuaParity !== undefined);
   expect(await page.evaluate(() => window.__cuaParity!.coreStatus), "the wasm core loaded").toBe("ready");
 
   for (const { input, view } of unique(checkpoints, "agent-keys")) {
     await page.evaluate((i) => window.__cuaParity!.showAgentKeys(i), input);
-    const step = `Settings, Connectors with ${input.keys.map((k) => k.env).join(", ") || "no keys"}${view.notice ? " (notice)" : ""}`;
+    const step = `Settings, Connections with ${input.keys.map((k) => k.env).join(", ") || "no keys"}${view.notice ? " (notice)" : ""}`;
     // The Providers group draws the core's view of the same keys: the add button follows canEdit.
     await expect(page.locator("[data-connectors-providers]"), step).toBeVisible();
     if (view.canEdit) await expect(page.locator("[data-agent-key-add-other]"), step).toBeEnabled();
@@ -90,7 +90,7 @@ export async function checkAgentKeys(page: Page, checkpoints: ParityCheckpoint[]
   }
 
   // For real on the demo host: add another company's key, then remove it.
-  await page.goto("/settings/connectors?bridge=demo");
+  await page.goto("/settings/connections?bridge=demo");
   await page.locator("[data-agent-key-add-other]").click();
   const sheet = page.locator("[data-agent-key-sheet]");
   await expect(sheet.locator("[data-agent-key-save]")).toBeDisabled();

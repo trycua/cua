@@ -373,6 +373,12 @@ export class AgentKeysModel {
   }
 }
 
+/** A record of strings (a connection's non-secret fields), else empty. */
+function stringMap(v: unknown): Map<string, string> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return new Map();
+  return new Map(Object.entries(v as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"));
+}
+
 /** The core's input for `agent_keys.list`'s answer (never a value). */
 export function agentKeysInput(report: Json | null, error: string | null): AppAgentKeysInput {
   const keys = arr(report ?? {}, "keys")
@@ -382,6 +388,9 @@ export function agentKeysInput(report: Json | null, error: string | null): AppAg
       last4: typeof k.last4 === "string" ? k.last4 : "",
       addedMs: BigInt(typeof k.added_ms === "number" && k.added_ms >= 0 ? Math.floor(k.added_ms) : 0),
       expired: k.expired === true,
+      label: typeof k.label === "string" && k.label ? k.label : undefined,
+      region: typeof k.region === "string" && k.region ? k.region : undefined,
+      fields: stringMap(k.fields),
     }))
     .filter((k) => k.env !== "");
   const unavailable = report?.available === false ? (typeof report.unavailable === "string" ? report.unavailable : "this machine can't keep keys") : undefined;

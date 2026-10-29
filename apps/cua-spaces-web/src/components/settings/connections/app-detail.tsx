@@ -16,7 +16,7 @@ import { BY_HAND } from "@/lib/connected-apps";
 import { cn } from "@/lib/utils";
 
 /**
- * One coding app's page (Settings, Connectors, the row's chevron): Connect
+ * One coding app's page (Settings, Connections, the row's chevron): Connect
  * while it isn't, the separate switches (Cua skills, Cua tools, Keep it set
  * up), which provider it signs in with and how, Sign in or Sign out, the
  * settings file, adding Cua by hand, and Remove. The core's
@@ -27,7 +27,7 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
   const { hereName } = useThisAndOthers();
   const d = c.detail(agent);
   const back = (
-    <Link to="/settings/connectors" className="-ml-1 mb-4 inline-flex items-center gap-0.5 rounded-lg px-1 py-0.5 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60" data-connector-back="">
+    <Link to="/settings/connections" className="-ml-1 mb-4 inline-flex items-center gap-0.5 rounded-lg px-1 py-0.5 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60" data-connector-back="">
       <ChevronLeftIcon className="size-4" /> {d?.backLabel ?? "Connectors"}
     </Link>
   );

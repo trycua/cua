@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings → Connectors and summoning agents in a Space: the
+ * Settings → Connections and summoning agents in a Space: the
  * app core's `connectors.*` and `summon.*` (`connectors.rs`, `summon.rs`)
  * over what the host already answers (`agents.setup`, `agentKeys.list`).
  * Every word, state and rule is the core's; this file only shapes inputs
@@ -16,7 +16,7 @@ import type { AgentKeysInput, AgentKeyRowView } from "./agent-keys";
 
 type Json = Record<string, unknown>;
 
-/* ---- Connectors ---------------------------------------------------------------- */
+/* ---- Connections --------------------------------------------------------------- */
 
 export interface ConnectorAppInput {
   agent: string;
@@ -36,6 +36,10 @@ export interface ConnectorsInput {
   off: string[];
   busy: { id: string; step: "connecting" | "signing-in" | "signing-out" }[];
   failures: { id: string; line: string }[];
+  /** What is typed in the search of More providers. */
+  query?: string;
+  /** More providers is open (a search opens it too). */
+  moreOpen?: boolean;
 }
 
 export interface ConnectorButton {
@@ -54,12 +58,26 @@ export interface ConnectorAppRow {
   openLabel: string;
 }
 
+/** An app a connection works with: a chip that opens the app's page. */
+export interface WorkChip {
+  /** The app's setup id (`claude-code`, `codex`, `hermes`). */
+  agent: string;
+  name: string;
+}
+
 export interface ConnectorProviderRow {
   id: string;
   label: string;
+  /** The icon's key (the page draws a mark of the initial when it has none). */
+  icon: string;
+  tier: "top" | "more";
   state: "connected" | "not-connected" | "connecting" | "failed";
+  /** "Connected", "Needs reconnect", "Not connected", what is happening, or why it failed. */
   status: string;
-  detail: string;
+  /** What is saved, when connected ("API key •••• 3f9a"). */
+  credential: string | null;
+  worksWith: WorkChip[];
+  worksWithLabel: string;
   button: ConnectorButton;
   addedMs: number | null;
   signOutEnvs: string[];
@@ -76,7 +94,14 @@ export interface ConnectorsView {
   auto: boolean;
   providersTitle: string;
   providersFooter: string;
+  /** Up front, then any other that is connected or needs reconnecting. */
   providers: ConnectorProviderRow[];
+  moreTitle: string;
+  moreSearchLabel: string;
+  /** The searchable list (empty while More providers is closed). */
+  moreProviders: ConnectorProviderRow[];
+  moreCount: number;
+  moreEmpty: string | null;
   others: AgentKeyRowView[];
   addOtherLabel: string;
   otherHelp: string;
@@ -85,38 +110,100 @@ export interface ConnectorsView {
   addedLabel: string;
 }
 
+/** The words around importing Claude Code's sign-in (`connectors.importSheet`). */
+export interface ImportSheetView {
+  title: string;
+  lede: string;
+  /** What is read, what is kept, where it goes. */
+  points: string[];
+  confirmLabel: string;
+  cancelLabel: string;
+  readingLabel: string;
+  notFoundTitle: string;
+  notFoundLede: string;
+  /** In order: sign in with Claude Code, paste a token, use an API key. */
+  options: { id: "login" | "token" | "key"; label: string; help: string; command: string | null; button: string }[];
+}
+
 export interface ConnectPlan {
   tools: boolean;
   appToken: boolean;
   device: boolean;
+  /** Open this provider's sheet: the first the app can use, with "Other providers" in it. */
   provider: string | null;
   tokenProvider: string | null;
 }
 
+export interface FieldOption {
+  id: string;
+  label: string;
+}
+
+/** One field a way asks for besides the key: `region` is the plan or region, the others are `fields`. */
+export interface WayField {
+  id: string;
+  label: string;
+  kind: "text" | "url" | "choice";
+  placeholder: string;
+  required: boolean;
+  options: FieldOption[];
+  value: string;
+}
+
 export interface ProviderWay {
-  id: "app-token" | "app-device" | "key" | "shell";
+  id: "app-token" | "app-device" | "token" | "key" | "endpoint" | "shell";
+  /** The method kind from the provider file. */
+  kind: string;
+  method: string;
   label: string;
   help: string;
   button: string;
   app: string | null;
   env: string | null;
+  /** `required` (a key or token is pasted), `optional` or `none`. */
+  secret: "required" | "optional" | "none";
+  fields: WayField[];
 }
 
 export interface ProviderSheetView {
   provider: string;
+  icon: string;
   title: string;
+  /** "Works with Claude Code, Hermes and OpenCode." */
   lede: string;
+  worksWith: WorkChip[];
   ways: ProviderWay[];
   cancelLabel: string;
   keyLabel: string;
   keyPlaceholder: string;
   keyHelp: string;
+  tokenLabel: string;
+  tokenPlaceholder: string;
   saveLabel: string;
-  keyProvider: "anthropic" | "openai" | "other";
-  keyEnv: string | null;
-  /** "Or choose another provider", when opened for an app that signs in with more than one. */
-  othersLabel: string | null;
-  others: { provider: string; label: string }[];
+  /** Read before saving (a server on this machine). */
+  note: string | null;
+  /** "Other providers": opens the provider choice. */
+  switchLabel: string;
+}
+
+export interface ProviderChoice {
+  provider: string;
+  label: string;
+  icon: string;
+  tier: "top" | "more";
+  state: "connected" | "not-connected" | "connecting" | "failed";
+  status: string;
+}
+
+export interface ProviderPickerView {
+  title: string;
+  lede: string;
+  searchLabel: string;
+  items: ProviderChoice[];
+  moreLabel: string | null;
+  moreCount: number;
+  empty: string | null;
+  cancelLabel: string;
 }
 
 export interface ConnectorToggle {
@@ -177,6 +264,8 @@ export function connectorsInputOf(
     off: extra.off ?? [],
     busy: extra.busy ?? [],
     failures: extra.failures ?? [],
+    query: extra.query ?? "",
+    moreOpen: extra.moreOpen ?? false,
   };
 }
 
@@ -189,11 +278,18 @@ export const connectPlan = (core: CoreClient, input: ConnectorsInput, agent: str
 export const providerSheet = (core: CoreClient, input: ConnectorsInput, provider: string, os: HostOs = hostOs(), forApp: string | null = null): ProviderSheetView | null =>
   core.tryCall<ProviderSheetView | null>("connectors.providerSheet", { input: input as unknown as Json, provider, hostOs: os, forApp }) ?? null;
 
+export const importSheet = (core: CoreClient, os: HostOs = hostOs()): ImportSheetView | null =>
+  core.tryCall<ImportSheetView>("connectors.importSheet", { hostOs: os }) ?? null;
+
+export const providerPicker = (core: CoreClient, input: ConnectorsInput, forApp: string | null = null, query = "", expanded = false): ProviderPickerView | null =>
+  core.tryCall<ProviderPickerView>("connectors.providerPicker", { input: input as unknown as Json, forApp, query, expanded }) ?? null;
+
 export const appDetail = (core: CoreClient, input: ConnectorsInput, agent: string): AppDetailView | null =>
   core.tryCall<AppDetailView | null>("connectors.appDetail", { input: input as unknown as Json, agent }) ?? null;
 
-export const setupCard = (core: CoreClient, input: ConnectorsInput, agent: string, name: string): SetupCardView | null =>
-  core.tryCall<SetupCardView>("connectors.setupCard", { input: input as unknown as Json, agent, name }) ?? null;
+/** The card for an app that isn't connected; `provider` is the one a run said refused it, when it did. */
+export const setupCard = (core: CoreClient, input: ConnectorsInput, agent: string, name: string, provider: string | null = null): SetupCardView | null =>
+  core.tryCall<SetupCardView>("connectors.setupCard", { input: input as unknown as Json, agent, name, provider }) ?? null;
 
 /* ---- Summoning agents in a Space ---------------------------------------------------- */
 

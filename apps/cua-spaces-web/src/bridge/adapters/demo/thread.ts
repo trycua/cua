@@ -372,7 +372,7 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
       message: 'Internal error: Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}',
     });
     const hey = asked("@hermes hey", "hermes", min(1));
-    failed(hey, min(1), HERMES, "I can't reach Claude yet. Connect Claude, then try again.", {
+    failed(hey, min(1), HERMES, "Hermes needs a connected provider. Connect one, then try again. Your Claude subscription sign-in only works in Claude Code.", {
       class: "needs_connect",
       provider: "anthropic",
       retryable: true,

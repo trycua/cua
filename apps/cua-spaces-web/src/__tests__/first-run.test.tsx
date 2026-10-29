@@ -316,7 +316,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(heading()).toBe("Your machines, shared by your team and its agents.");
   });
 
-  it("shows no sign-ins or keys: those live in Settings, Connectors", async () => {
+  it("shows no sign-ins or keys: those live in Settings, Connections", async () => {
     writeFirstRun({ step: "connect" });
     await mount({ agents: (rows) => rows.map((r) => ({ ...r, installed: r.agent === "codex", configured: r.agent === "codex" })) });
     await waitFor(() => expect(heading()).toBe("OpenAI Codex can use Cua."));

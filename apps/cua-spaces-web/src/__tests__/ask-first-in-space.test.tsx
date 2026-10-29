@@ -76,6 +76,11 @@ describe.skipIf(!wasmBuilt)("Ask first in the Space (both flags)", () => {
     await act(async () => {
       fireEvent.click(q("[data-wake-connect]")!);
     });
+    // Reading Claude Code's sign-in asks first; once you agree the message goes again by itself.
+    expect(calls.filter((c) => c.op === "agents.connect")).toEqual([]);
+    await act(async () => {
+      fireEvent.click(await found("[data-import-confirm]"));
+    });
     await waitFor(() => expect(q("[data-wake-note=claude]")!.dataset.state).toBe("retried"), { timeout: 15000 });
     expect(calls.filter((c) => c.op === "agents.connect").map((c) => c.args)).toEqual([{ agents: ["claude-code"], signIn: true }]);
     await waitFor(() => expect(calls.some((c) => c.op === "thread.agentAdd" && c.args.harness === "claude-code")).toBe(true));
@@ -102,6 +107,9 @@ describe.skipIf(!wasmBuilt)("Send again when the agent can't join", () => {
     await found("[data-wake-connect]", 15000);
     await act(async () => {
       fireEvent.click(q("[data-wake-connect]")!);
+    });
+    await act(async () => {
+      fireEvent.click(await found("[data-import-confirm]"));
     });
     await waitFor(() => expect(q("[data-wake-note=claude]")!.textContent).toContain("this Space is full"), { timeout: 15000 });
     expect(q("[data-wake-note=claude]")!.dataset.state).not.toBe("retried");

@@ -279,7 +279,7 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
             </Button>
           ) : null}
           {v.settingsLabel && v.app ? (
-            <Button size="sm" variant="ghost" data-card-settings="" render={<Link to="/settings/connectors/$app" params={{ app: v.app }} />}>
+            <Button size="sm" variant="ghost" data-card-settings="" render={<Link to="/settings/connections/$app" params={{ app: v.app }} />}>
               {v.settingsLabel}
             </Button>
           ) : null}

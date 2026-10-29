@@ -34,7 +34,7 @@
 //! | [`experiments`] | Settings, Experiments: one switch per feature still being built, and what each hides while off |
 //! | [`login_item`] | launch at login: the Settings toggle, the first run's Done checkbox, when the app turns it on |
 //! | [`agent_keys`] | Settings, Agents: the provider keys agents get (rows, the add or replace sheet, names refused, the remove question) |
-//! | [`connectors`] | Settings, Connectors: coding apps with Connect, their pages, Providers, the provider sheet, a task's setup card |
+//! | [`connectors`] | Settings, Connections: coding apps with Connect, their pages, Providers, the provider sheet, a task's setup card |
 //! | [`summon`] | @mentioning agents in a Space: the composer's picker, what sending does, why an agent can't be woken, Ask first's first message |
 //! | [`profile_card`] | the card a person or an agent opens to in a Space: access, presence, who runs an agent and on what, its status, Details |
 //! | [`agent_list`] | every agent you work with as one list (agents in Spaces and this device's unfinished runs): the Agents page and Home draw it |

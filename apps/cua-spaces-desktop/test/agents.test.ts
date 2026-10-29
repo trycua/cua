@@ -461,10 +461,20 @@ describe.skipIf(!built)("agents", () => {
     expect(JSON.stringify(set)).not.toContain("sk-ant");
     await call(bridge, "agentKeys.set", { provider: "other", env: "MISTRAL_API_KEY", value: "mk-0000-9z9z" });
     expect(keys.calls.at(-1)![1]).toEqual({ provider: "other", value: "mk-0000-9z9z", env: "MISTRAL_API_KEY" });
+    // A plan, and a custom endpoint's non-secret fields (its key may be empty), reach the daemon as given.
+    await call(bridge, "agentKeys.set", { provider: "zai", value: "zk-0000-9z9z", region: "coding-global" });
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "zai", value: "zk-0000-9z9z", region: "coding-global" }]);
+    const fields = { base_url: "http://127.0.0.1:1234/v1", model: "qwen", wire: "openai-chat" };
+    const custom = await call(bridge, "agentKeys.set", { provider: "custom", fields });
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "custom", value: "", fields }]);
+    expect(JSON.stringify(custom)).toContain("http://127.0.0.1:1234/v1");
     const removed = await call(bridge, "agentKeys.remove", { env: "ANTHROPIC_API_KEY" });
     expect(keys.calls.at(-1)).toEqual(["agent_keys.remove", { env: "ANTHROPIC_API_KEY" }]);
     for (const [m, a] of [["agentKeys.list", listed], ["agentKeys.set", set], ["agentKeys.remove", removed]] as const) expect(shapeProblems(m, a)).toEqual([]);
-    expect(await code(bridge, "agentKeys.set", { provider: "anthropic" })).toBe("bad_args");
+    // A connection may have no key (a custom endpoint): the bridge forwards an empty value and the daemon decides; a provider is always required.
+    await call(bridge, "agentKeys.set", { provider: "anthropic" });
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "anthropic", value: "" }]);
+    expect(await code(bridge, "agentKeys.set", { value: "sk-ant-test-0000" })).toBe("bad_args");
     expect(await code(bridge, "agentKeys.remove", {})).toBe("bad_args");
   });
 

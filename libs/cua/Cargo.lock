@@ -2343,6 +2343,7 @@ version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "cua-agent-setup",
+ "cua-connections",
  "cua-proto",
  "cua-spacesd-client",
  "flate2",
@@ -2597,6 +2598,15 @@ dependencies = [
  "tower",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "cua-connections"
+version = "0.9.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -3197,6 +3207,7 @@ dependencies = [
  "cua-agent-setup",
  "cua-agents",
  "cua-auth",
+ "cua-connections",
  "cua-create-failure",
  "cua-home",
  "cua-keyvault",
@@ -3457,6 +3468,7 @@ dependencies = [
 name = "cua-telemetry"
 version = "0.9.0"
 dependencies = [
+ "cua-connections",
  "hex",
  "rand 0.9.5",
  "serde",

@@ -181,11 +181,7 @@
             "type": "object",
             "properties": {
               "provider": {
-                "enum": [
-                  "anthropic",
-                  "openai",
-                  "other"
-                ]
+                "type": "string"
               },
               "env": {
                 "type": "string"
@@ -198,6 +194,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -214,11 +222,7 @@
             "type": "object",
             "properties": {
               "id": {
-                "enum": [
-                  "anthropic",
-                  "openai",
-                  "other"
-                ]
+                "type": "string"
               },
               "label": {
                 "type": "string"
@@ -9329,6 +9333,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -9398,6 +9414,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -9467,6 +9495,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -9536,6 +9576,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -9605,6 +9657,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [

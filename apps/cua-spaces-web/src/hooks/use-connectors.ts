@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Connect, as Settings → Connectors, an app's page, a Space's
+ * Connect, as Settings → Connections, an app's page, a Space's
  * "isn't connected yet" note and Ask first share it: one place that knows
  * which connects are running, what failed, and which provider sheet is
  * open. The steps and words are the core's (`connectors.*`); the host
@@ -10,10 +10,11 @@
  *
  * - Cua's tools in an app: `agents.connect {signIn: false}` (and
  *   Background computer use, best effort);
- * - the app's own token command (`claude setup-token`, one browser
- *   approval): `agents.connect {signIn: true}`, only where the core's plan
- *   says so. Other apps never get `signIn: true` here, so Cua doesn't read
- *   their own sign-in files;
+ * - importing the sign-in Claude Code already has on this machine:
+ *   `agents.connect {signIn: true}`, only where the core's plan says so and
+ *   only after the person agrees in the import sheet (what is read, kept and
+ *   sent, in the core's words). Other apps never get `signIn: true` here, so
+ *   Cua doesn't read their own sign-in files;
  * - a pasted key: `agentKeys.set`; Sign out: `agentKeys.remove`.
  */
 
@@ -25,12 +26,15 @@ import {
   connectorsInputOf,
   connectorsView,
   connectPlan,
+  providerPicker,
   providerSheet,
   useAgentKeys,
   useBridge,
   type AppDetailView,
   type ConnectorsInput,
   type ConnectorsView,
+  type KeyChoices,
+  type ProviderPickerView,
   type ProviderSheetView,
   type ProviderWay,
 } from "@/bridge";
@@ -42,15 +46,20 @@ type Step = ConnectorsInput["busy"][number]["step"];
 interface ConnectState {
   busy: ConnectorsInput["busy"];
   failures: ConnectorsInput["failures"];
-  /** The provider sheet open now, and what opened it (an app's Connect continues there). */
-  sheet: { provider: string; forApp: string | null } | null;
+  /** The provider sheet open now (`provider: null`: the provider choice), and what opened it (an app's Connect continues there). */
+  sheet: { provider: string | null; forApp: string | null; way?: "token" | "key"; query: string; expanded: boolean } | null;
+  /** What is typed in the search of More providers on the page, and whether it is open. */
+  query: string;
+  moreOpen: boolean;
   /** Provider keys your login shell has set (names), read when a sheet opens. */
   shellKeys: string[];
   /** A device-code sign-in waiting for its code to be entered. */
   device: { app: string; provider: string; url: string; code: string } | null;
+  /** Importing an app's own sign-in: asking first, reading, or nothing found. */
+  importing: { app: string; phase: "consent" | "reading" | "not-found"; line: string | null } | null;
 }
 
-const useConnectState = create<ConnectState>(() => ({ busy: [], failures: [], sheet: null, shellKeys: [], device: null }));
+const useConnectState = create<ConnectState>(() => ({ busy: [], failures: [], sheet: null, query: "", moreOpen: false, shellKeys: [], device: null, importing: null }));
 const set = useConnectState.setState;
 
 const start = (id: string, step: Step) =>
@@ -59,7 +68,27 @@ const stop = (id: string) => set((s) => ({ busy: s.busy.filter((b) => b.id !== i
 const fail = (id: string, line: string) => set((s) => ({ failures: [...s.failures.filter((f) => f.id !== id), { id, line }] }));
 
 /** Whether a provider sheet is open (cheap: the host mounts the sheet only then). */
-export const useProviderSheetOpen = () => useConnectState((s) => s.sheet !== null || s.device !== null);
+export const useProviderSheetOpen = () => useConnectState((s) => s.sheet !== null || s.device !== null || s.importing !== null);
+
+/** The sign-in import in progress (asking, reading, or nothing found), for its sheet. */
+export const useImporting = () => useConnectState((s) => s.importing);
+
+/** What a Connect that opened the import sheet is waiting for: it settles once the sheet is done with. */
+let pendingImport: ((outcome: "connected" | "sheet") => void) | null = null;
+const settleImport = (outcome: "connected" | "sheet") => {
+  const done = pendingImport;
+  pendingImport = null;
+  done?.(outcome);
+};
+
+/** Closes the import sheet without a sign-in: the Connect that opened it is left waiting on a sheet. */
+export const closeImport = () => {
+  set({ importing: null });
+  settleImport("sheet");
+};
+
+/** The way a provider sheet opens on (from "nothing found"), when it was sent to one. */
+export const useSheetWay = () => useConnectState((s) => s.sheet?.way ?? null);
 
 /** The device-code sign-in waiting now (its code and page), for its sheet. */
 export const useDeviceSignIn = () => useConnectState((s) => s.device);
@@ -67,7 +96,8 @@ export const closeDeviceSignIn = () => set({ device: null });
 
 /** Tests start clean. */
 export function resetConnectState(): void {
-  set({ busy: [], failures: [], sheet: null, shellKeys: [], device: null });
+  pendingImport = null;
+  set({ busy: [], failures: [], sheet: null, query: "", moreOpen: false, shellKeys: [], device: null, importing: null });
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -82,14 +112,23 @@ export interface Connectors {
   detail(agent: string): AppDetailView | null;
   /** The provider sheet open now. */
   sheet: ProviderSheetView | null;
-  /** The app it was opened for (its other providers are offered in it). */
+  /** The provider choice open now (the sheet's "Other providers", or an app that takes several). */
+  picker: ProviderPickerView | null;
+  /** The app it was opened for (the choice lists the providers it can use). */
   sheetApp: string | null;
   /** One Connect for an app: Cua's tools, then its sign-in (its token command, or the provider's sheet). */
   connectApp(agent: string): Promise<ConnectOutcome>;
-  openProvider(provider: string, forApp?: string | null): void;
+  /** Opens a provider's sheet (`null`: the provider choice). */
+  openProvider(provider: string | null, forApp?: string | null, way?: "token" | "key"): void;
+  /** Searches the provider choice, or lists all of it. */
+  searchPicker(query: string, expanded?: boolean): void;
+  /** Searches More providers on the page, or opens or closes it. */
+  searchMore(query: string, open?: boolean): void;
+  /** Reads the sign-in the app already has, once the person agreed in the import sheet. */
+  confirmImport(): Promise<boolean>;
   closeProvider(): void;
-  /** Runs one of the sheet's ways (`key` with the pasted value). */
-  runWay(way: ProviderWay, value?: string): Promise<boolean>;
+  /** Runs one of the sheet's ways: a pasted `value` for a key, token or endpoint, with its `choices` (a plan, a model, a URL). */
+  runWay(way: ProviderWay, value?: string, choices?: KeyChoices): Promise<boolean>;
   signOut(provider: string): Promise<void>;
   /** An app page's switch: Cua's skills, its MCP server, or keeping it set up. */
   setToggle(agent: string, id: "skills" | "mcp" | "auto", on: boolean): Promise<void>;
@@ -104,9 +143,18 @@ export function useConnectors(): Connectors {
   const keys = useAgentKeys({ watch: true });
   const app = useConnectedAppsState();
   const st = useConnectState();
-  const input = connectorsInputOf(apps.rows, keys.input, { auto: app.auto === true, off: app.off, busy: st.busy, failures: st.failures, shellKeys: st.shellKeys });
+  const input = connectorsInputOf(apps.rows, keys.input, {
+    auto: app.auto === true,
+    off: app.off,
+    busy: st.busy,
+    failures: st.failures,
+    shellKeys: st.shellKeys,
+    query: st.query,
+    moreOpen: st.moreOpen,
+  });
   const view = connectorsView(core, input);
-  const sheet = st.sheet ? providerSheet(core, input, st.sheet.provider, undefined, st.sheet.forApp) : null;
+  const sheet = st.sheet?.provider ? providerSheet(core, input, st.sheet.provider, undefined, st.sheet.forApp) : null;
+  const picker = st.sheet && !st.sheet.provider ? providerPicker(core, input, st.sheet.forApp, st.sheet.query, st.sheet.expanded) : null;
 
   const reload = useCallback(async () => {
     await Promise.all([apps.reload(), keys.refresh()]);
@@ -147,6 +195,15 @@ export function useConnectors(): Connectors {
       const id = `app:${agent}`;
       const plan = connectPlan(core, input, agent);
       if (!plan) return "failed";
+      // Importing an app's own sign-in reads its files: ask first, in plain words.
+      if (plan.appToken) {
+        settleImport("sheet");
+        set({ importing: { app: agent, phase: "consent", line: null }, failures: useConnectState.getState().failures.filter((f) => f.id !== id) });
+        // Done when the person has agreed and it has read, or has left the sheet.
+        return new Promise<ConnectOutcome>((resolve) => {
+          pendingImport = resolve;
+        });
+      }
       try {
         if (plan.device) {
           if (plan.tools) {
@@ -157,24 +214,19 @@ export function useConnectors(): Connectors {
           }
           return (await runDevice(agent, plan.tokenProvider ?? "openai")) ? "connected" : "failed";
         }
-        if (plan.tools || plan.appToken) {
-          start(id, plan.appToken ? "signing-in" : "connecting");
-          if (plan.tokenProvider) start(`provider:${plan.tokenProvider}`, "signing-in");
-          const [result] = await data.call("agents.connect", { agents: [agent], signIn: plan.appToken });
-          if (plan.tools) await data.call("agents.setupDriver", { agents: [agent] }).catch(() => undefined);
+        if (plan.tools) {
+          start(id, "connecting");
+          const [result] = await data.call("agents.connect", { agents: [agent], signIn: false });
+          await data.call("agents.setupDriver", { agents: [agent] }).catch(() => undefined);
           setConnectedAppsState(withSwitch(connectedAppsState(), agent, true));
           await reload();
-          if (result && plan.tools && !result.tools_ok) {
+          if (result && !result.tools_ok) {
             fail(id, result.tools_line ?? "Couldn't add Cua to it.");
-            return "failed";
-          }
-          if (plan.appToken && !result?.sign_in?.imported) {
-            fail(id, result?.sign_in?.line ?? "The sign-in didn't finish. Try again.");
             return "failed";
           }
         }
         if (plan.provider) {
-          set({ sheet: { provider: plan.provider, forApp: agent } });
+          set({ sheet: { provider: plan.provider, forApp: agent, query: "", expanded: false } });
           return "sheet";
         }
         return "connected";
@@ -189,31 +241,74 @@ export function useConnectors(): Connectors {
     [core, data, input, reload, runDevice],
   );
 
+  /**
+   * The import itself, after the person agreed: Cua's tools and the sign-in Claude Code already
+   * has (`agents.connect {signIn: true}`). macOS may ask to allow reading it. Nothing found
+   * (or refused, or cut off) leaves the sheet open on what to do next, never an error banner.
+   */
+  const confirmImport = useCallback(async (): Promise<boolean> => {
+    const open = useConnectState.getState().importing;
+    if (!data || !open) return false;
+    const agent = open.app;
+    const id = `app:${agent}`;
+    const plan = connectPlan(core, input, agent);
+    const provider = plan?.tokenProvider ?? "anthropic";
+    set({ importing: { app: agent, phase: "reading", line: null } });
+    start(id, "signing-in");
+    start(`provider:${provider}`, "signing-in");
+    try {
+      const [result] = await data.call("agents.connect", { agents: [agent], signIn: true });
+      if (plan?.tools) await data.call("agents.setupDriver", { agents: [agent] }).catch(() => undefined);
+      setConnectedAppsState(withSwitch(connectedAppsState(), agent, true));
+      await reload();
+      if (result && plan?.tools && !result.tools_ok) {
+        set({ importing: null });
+        fail(id, result.tools_line ?? "Couldn't add Cua to it.");
+        return false;
+      }
+      if (!result?.sign_in?.imported) {
+        set({ importing: { app: agent, phase: "not-found", line: result?.sign_in?.line ?? null } });
+        return false;
+      }
+      set({ importing: null });
+      settleImport("connected");
+      return true;
+    } catch (e) {
+      set({ importing: { app: agent, phase: "not-found", line: message(e) } });
+      return false;
+    } finally {
+      stop(id);
+      stop(`provider:${provider}`);
+    }
+  }, [core, data, input, reload]);
+
   const runWay = useCallback(
-    async (way: ProviderWay, value?: string): Promise<boolean> => {
+    async (way: ProviderWay, value?: string, choices: KeyChoices = {}): Promise<boolean> => {
       const open = useConnectState.getState().sheet;
-      if (!data || !open || !sheet) return false;
+      if (!data || !open?.provider || !sheet) return false;
       const id = `provider:${open.provider}`;
       try {
         if (way.id === "app-token" && way.app) {
-          set({ sheet: null });
-          start(id, "signing-in");
-          const [r] = await data.call("agents.connect", { agents: [way.app], signIn: true });
-          if (!r?.sign_in?.imported) {
-            fail(id, r?.sign_in?.line ?? "The sign-in didn't finish. Try again.");
-            return false;
-          }
+          // Reads another app's sign-in: ask first (the import sheet), then read.
+          set({ sheet: null, importing: { app: way.app, phase: "consent", line: null } });
+          return true;
         } else if (way.id === "app-device" && way.app) {
           set({ sheet: null });
           return await runDevice(way.app, open.provider);
         } else if (way.id === "shell" && way.env) {
           start(id, "connecting");
-          await data.call("agentKeys.fromShell", { env: way.env });
+          await data.call("agentKeys.fromShell", { env: way.env, ...choices });
           await keys.refresh();
           set({ sheet: null });
-        } else if (way.id === "key" && value?.trim()) {
+        } else if (way.id === "token" && value?.trim()) {
+          // A token from `claude setup-token`: the daemon saves it as the sign-in it is, not as a key.
           start(id, "connecting");
-          await keys.save(sheet.keyProvider, value.trim(), sheet.keyEnv);
+          await keys.save(open.provider, value.trim(), null);
+          set({ sheet: null });
+        } else if ((way.id === "key" && value?.trim()) || (way.id === "endpoint" && (value?.trim() || way.secret === "optional"))) {
+          // Saving never waits on the provider: the check runs later, in the background.
+          start(id, "connecting");
+          await keys.save(open.provider, (value ?? "").trim(), null, choices);
           set({ sheet: null });
         } else {
           return false;
@@ -295,10 +390,12 @@ export function useConnectors(): Connectors {
     view,
     detail: (agent) => appDetail(core, input, agent),
     sheet,
+    picker,
     sheetApp: st.sheet?.forApp ?? null,
     connectApp,
-    openProvider: (provider, forApp = null) => {
-      set({ sheet: { provider, forApp } });
+    confirmImport,
+    openProvider: (provider, forApp = null, way) => {
+      set({ sheet: { provider, forApp, ...(way ? { way } : {}), query: "", expanded: false } });
       // Which keys your shell has (names only), for "Use … from your shell".
       void data
         ?.call("agentKeys.shell", {})
@@ -306,6 +403,8 @@ export function useConnectors(): Connectors {
         .catch(() => set({ shellKeys: [] }));
     },
     closeProvider: () => set({ sheet: null }),
+    searchPicker: (query, expanded = false) => set((s) => (s.sheet ? { sheet: { ...s.sheet, query, expanded: expanded || s.sheet.expanded } } : {})),
+    searchMore: (query, open) => set((s) => ({ query, moreOpen: open ?? (s.moreOpen || query.trim() !== "") })),
     runWay,
     signOut,
     setToggle,

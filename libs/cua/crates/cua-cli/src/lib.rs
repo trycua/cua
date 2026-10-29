@@ -39,6 +39,7 @@ mod cloud_cmd;
 mod compat_cmd;
 mod computer;
 mod config_cmd;
+mod connections_cmd;
 mod devices_cmd;
 mod do_cmd;
 mod doctor;
@@ -370,6 +371,18 @@ enum Command {
         #[arg(long, hide = true)]
         relay: Option<String>,
     },
+    /// The AI providers connected once for every app that can use them: list,
+    /// add (a key from stdin), test, remove. What Cua Spaces shows in
+    /// Settings, Connections. (`cua connect` connects your coding apps to Cua.)
+    #[command(
+        subcommand,
+        after_help = "Examples:
+  cua connections list
+  cua connections add deepseek
+  cua connections test
+  cua connections remove deepseek"
+    )]
+    Connections(connections_cmd::ConnectionsCmd),
     /// Move a desktop app session (tabs, profile, sign-in) into a sandbox.
     #[command(subcommand)]
     Teleport(teleport::TeleportCmd),
@@ -1914,6 +1927,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         cli.command,
         Command::Sandbox(_)
             | Command::Agent(_)
+            | Command::Connections(_)
             | Command::Do(_)
             | Command::DoHostConsent
             | Command::Mcp { .. }
@@ -1955,6 +1969,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             return extension::viewer(cua.clone(), &listen, no_open, out).await;
         }
         Command::Agent(cmd) => return agent_cmd::run(&cua, cmd, json, out).await,
+        Command::Connections(cmd) => return connections_cmd::run(&cua, cmd, json, out).await,
         Command::Volume(cmd) => return drive_cmd::run(&cua, cmd, json, out).await,
         Command::Teleport(cmd @ teleport::TeleportCmd::Push(_)) => {
             return extension::teleport(Some(&cua), cmd, json, out).await;

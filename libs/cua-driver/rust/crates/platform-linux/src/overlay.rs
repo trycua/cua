@@ -573,16 +573,17 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
             delivery,
             target,
         } if semantic => {
-            // The GNOME helper paints its own single-cursor badge. Under the
-            // minimal badge it gets only foreground moments; under `off`, no
-            // chips at all.
+            // The GNOME helper paints its own single-cursor badge. Only the
+            // verbose badge shows delivery and target chips there.
             let (delivery, target) = match cursor_overlay::badge_mode::active() {
                 cursor_overlay::BadgeMode::Verbose => (*delivery, *target),
-                cursor_overlay::BadgeMode::Minimal => (
-                    delivery.filter(|value| *value == cursor_overlay::DeliveryModifier::Foreground),
-                    None,
-                ),
-                cursor_overlay::BadgeMode::Off => (None, None),
+                cursor_overlay::BadgeMode::Minimal | cursor_overlay::BadgeMode::Off => (None, None),
+            };
+            // Its action marks are opt-in too (`cursor.marks`).
+            let action = if cursor_overlay::cursor_options::active().marks {
+                *action
+            } else {
+                cursor_overlay::CursorAction::Idle
             };
             crate::wayland::shell_helper::set_cursor_state(
                 action.as_str(),

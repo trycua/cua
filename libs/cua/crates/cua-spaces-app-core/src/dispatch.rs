@@ -199,6 +199,8 @@ pub const METHODS: &[&str] = &[
     "connectors.view",
     "connectors.connectPlan",
     "connectors.providerSheet",
+    "connectors.providerPicker",
+    "connectors.importSheet",
     "connectors.appDetail",
     "connectors.setupCard",
     "summon.candidates",
@@ -1005,14 +1007,25 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 .unwrap_or(SpaceOs::Macos),
             a.get::<Option<String>>("forApp")?.as_deref(),
         )),
+        "connectors.providerPicker" => out(connectors::provider_picker(
+            &a.get("input")?,
+            a.get::<Option<String>>("forApp")?.as_deref(),
+            &a.get::<Option<String>>("query")?.unwrap_or_default(),
+            a.get::<Option<bool>>("expanded")?.unwrap_or(false),
+        )),
+        "connectors.importSheet" => out(connectors::import_sheet_on(
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "connectors.appDetail" => out(connectors::app_detail(
             &a.get("input")?,
             &a.get::<String>("agent")?,
         )),
-        "connectors.setupCard" => out(connectors::setup_card(
+        "connectors.setupCard" => out(connectors::setup_card_for(
             &a.get("input")?,
             &a.get::<String>("agent")?,
             &a.get::<String>("name")?,
+            a.get::<Option<String>>("provider")?.as_deref(),
         )),
         "summon.candidates" => out(summon::candidates(&a.get("input")?)),
         "summon.plan" => out(summon::plan(&a.get("input")?, &a.get::<String>("text")?)),

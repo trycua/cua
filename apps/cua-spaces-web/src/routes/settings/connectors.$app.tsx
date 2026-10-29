@@ -3,14 +3,5 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 
-import { ConnectorAppPage } from "@/components/settings/connectors/app-detail";
-
-/** One coding app's page under Connectors. */
-export const Route = createFileRoute("/settings/connectors/$app")({
-  component: AppPage,
-});
-
-function AppPage() {
-  const { app } = Route.useParams();
-  return <ConnectorAppPage agent={app} />;
-}
+/** An old app address under Connectors: the parent route (`connectors.tsx`) sends it to the same app under Connections. */
+export const Route = createFileRoute("/settings/connectors/$app")({});

@@ -639,7 +639,7 @@ impl Persistent {
         for k in &spec.env_from_host {
             if !allowed.contains(&k.as_str()) && !saved.contains(k) {
                 return Err(Error::invalid(format!(
-                    "{k} is not a provider key variable (or a key saved in Cua Spaces → Settings → Connectors)"
+                    "{k} is not a provider key variable (or a key saved in Cua Spaces → Settings → Connections)"
                 )));
             }
         }

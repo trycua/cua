@@ -65,7 +65,7 @@ pub struct ListAttempt {
     /// Not connected: the thread's own words ("Claude Code isn't connected yet") and Connect's.
     pub note: Option<String>,
     pub connect_label: Option<String>,
-    /// The Connectors app Connect runs for.
+    /// The Connections app Connect runs for.
     pub app: Option<String>,
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Settings, Connectors: each coding app on this computer with one
+// Settings, Connections: each coding app on this computer with one
 // switch (`agents.setup`, `agents.connect` and `agents.disconnect`),
 // "Set up new apps automatically", and the sync that sets up a newly
 // installed app with a notice and Undo.
@@ -55,9 +55,9 @@ describe("configured agents without binary evidence", () => {
 
 const app = (id: string) => document.querySelector<HTMLElement>(`[data-connector-app="${id}"]`);
 
-describe.skipIf(!wasmBuilt)("Settings, Connectors", () => {
+describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
   it("keeps Set up new apps automatically in the saved state", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
+    await mountApp("/settings/connections", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(document.querySelector("[data-connected-auto]")).not.toBeNull(), { timeout: 8000 });
     expect(connectedAppsState().auto).toBeNull();
     fireEvent.click(document.querySelector("[data-connected-auto]")!);
@@ -83,7 +83,7 @@ describe.skipIf(!wasmBuilt)("a newly installed coding app", () => {
     for (const state of [{ known: seen, off: [], auto: null }, { known: seen, off: ["hermes"], auto: true }]) {
       cleanup();
       setConnectedAppsState(state);
-      const { router } = await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
+      const { router } = await mountApp("/settings/connections", { failsCreates: false, listsGhost: false });
       await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
       await router.load();
       expect(app("hermes")!.querySelector("[data-connector-connect]")).not.toBeNull();

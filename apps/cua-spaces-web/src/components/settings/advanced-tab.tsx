@@ -133,6 +133,7 @@ function thisMacAskRow(asks: boolean): CoreRow {
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
   const askFirst = useFlag("spaces_ask_first_home");
+  const driver = useFlag("spaces_embedded_driver");
   const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
@@ -144,6 +145,11 @@ function Labs() {
         row={flagRow("spaces_ask_first_home", "Try the new Home", askFirst)}
         description="Home asks what you want done, then does it on a fresh computer you can watch. On this device only."
         onChoose={(_, option) => setFlagOverride("spaces_ask_first_home", option === "on")}
+      />
+      <CoreSettingsRow
+        row={flagRow("spaces_embedded_driver", "Cua Driver in Cua Spaces", driver)}
+        description="A Cua Driver page, its first-run step and “Agents can use this Mac” in the top bar. Needs a Cua Spaces that runs Cua Driver itself. On this device only."
+        onChoose={(_, option) => setFlagOverride("spaces_embedded_driver", option === "on")}
       />
       {askFirst ? (
         <CoreSettingsRow

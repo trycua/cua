@@ -57,6 +57,7 @@ import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailStat
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
 import { demoLinksHandlers, demoLinksState, type DemoLinksState } from "./demo/links";
 import { demoResourcesHandlers, demoResourcesState, type DemoResourcesState } from "./demo/resources";
+import { demoDriverHandlers, demoDriverState, type DemoDriverState } from "./demo/driver";
 import { demoRelayUsageHandlers, demoRelayUsageNamed, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
@@ -357,6 +358,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoNewSpaceState(Boolean(options.macHost), options.clouds ?? null),
     ...demoKeyvaultSetupState(!options.noVault),
     ...demoKeyvaultManageState(),
+    ...demoDriverState(now(), options.onboarded === false),
   };
 
   if (state.platform.os !== "macos") state.host = { ...state.host, name: demoMachine(state.platform).name };
@@ -928,6 +930,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoKeyvaultSetupHandlers(ctx),
     ...demoKeyvaultManageHandlers(ctx, overview),
     ...demoStartupHandlers(ctx),
+    ...demoDriverHandlers(ctx),
     ...unsupportedStreamOps("demo"),
     ...unsupportedChecklistOps("demo"),
     ...unsupportedPresenceOps("demo"),
@@ -963,7 +966,7 @@ interface DemoLinksStateField {
   links: DemoLinksState;
 }
 
-export interface DemoState extends DemoLinksStateField, DemoTelemetryState, DemoRelayUsageState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
+export interface DemoState extends DemoDriverState, DemoLinksStateField, DemoTelemetryState, DemoRelayUsageState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
   rows: SpaceRow[];
   items: KvItem[];
   keyvaultLocked: boolean;

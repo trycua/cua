@@ -68,6 +68,7 @@ import type { GithubAccount, GithubHost, GithubReport, GithubSourceRow } from ".
 import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { DriverActivity, DriverApp, DriverLiveTest, DriverMachine, DriverPermission, DriverStatus, DriverUpdate } from "../ops/driver";
 import type { RiskyRequest } from "../ops/nudges";
 import type { PastMessage, PastThread, RecentThread } from "../ops/agent-threads";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SharedBase, SpaceResources } from "../ops/resources";
@@ -92,6 +93,24 @@ const os = oneOf("macos", "windows", "linux", "unknown");
 const RecentThreadShape = ref(
   "RecentThread",
   obj<RecentThread>()({ agent: oneOf("claude-code", "openai-codex", "hermes"), id: str, title: str, cwd: nullable(str), lastActiveMs: num, resume: strings }),
+);
+const DriverLiveTestShape = ref("DriverLiveTest", obj<DriverLiveTest>()({ passed: bool, atMs: num, failure: nullable(str), tookMs: optNull(num) }));
+const DriverStatusShape = ref(
+  "DriverStatus",
+    obj<DriverStatus>()({
+    machineId: str,
+    machineName: str,
+    thisMachine: bool,
+    state: oneOf("ready", "starting", "stopped", "paused", "needs-permission", "failed"),
+    version: nullable(str),
+    update: nullable(obj<DriverUpdate>()({ version: str, note: nullable(str) })),
+    lastTest: nullable(DriverLiveTestShape),
+    lastError: nullable(str),
+    permissions: list(obj<DriverPermission>()({ id: oneOf("screen", "accessibility"), granted: bool, settingsUrl: nullable(str) })),
+    apps: nullable(list(obj<DriverApp>()({ id: str, name: str, on: bool, own: bool, bringsOwn: bool }))),
+    activity: list(obj<DriverActivity>()({ app: str, target: str })),
+    canPause: bool,
+  }),
 );
 
 /* ---- Spaces and machines --------------------------------------------------- */
@@ -1538,6 +1557,25 @@ export const OP_SHAPES: Record<OpName, Schema> = {
     earlierOmitted: num,
   }),
   "nudges.answer": nul,
+  "driver.status": nullable(DriverStatusShape),
+  "driver.setup": nullable(DriverStatusShape),
+  "driver.list": list(
+    obj<DriverMachine>()({
+      machineId: str,
+      name: str,
+      os: oneOf("macos", "windows", "linux"),
+      thisMachine: bool,
+      state: oneOf("ready", "starting", "stopped", "paused", "needs-permission", "failed"),
+      version: nullable(str),
+      update: nullable(str),
+    }),
+  ),
+  "driver.config": dict(any),
+  "driver.setConfig": dict(any),
+  "driver.test": DriverLiveTestShape,
+  "driver.pause": nul,
+  "driver.setApp": nul,
+  "driver.update": nul,
   "relay.usage": nullable(
     obj<RelayUsage>()({
       metered: bool,
@@ -1997,6 +2035,12 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.signInStart": SignInStartShape,
   "agents.signInWait": SignInWaitShape,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
+  "driver.status": OP_SHAPES["driver.status"],
+  "driver.list": OP_SHAPES["driver.list"],
+  "driver.test": OP_SHAPES["driver.test"],
+  "driver.pause": OP_SHAPES["driver.pause"],
+  "driver.setup": OP_SHAPES["driver.setup"],
+  "driver.setApp": OP_SHAPES["driver.setApp"],
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
   "agents.restoreFile": nul,
@@ -2156,6 +2200,8 @@ export const WEBKIT_UNSHAPED: Partial<Record<WebkitMethod, string>> = {
   "thread.settings": THREAD_TOOL_JSON,
   "agents.recentThreads": AGENT_THREADS_TOOL_JSON,
   "agents.threadHistory": AGENT_THREADS_TOOL_JSON,
+  "driver.config": "the driver's get_config JSON as-is; bridge/driver.ts reads only the keys it knows",
+  "driver.setConfig": "the driver's get_config JSON as-is, after the change",
 };
 
 /** The exported document (`bridge-shapes.json`): `ops` and `webkit` map

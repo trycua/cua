@@ -72,6 +72,7 @@ import type { LinkCreate, ShareLink, ShareSettings } from "../ops/links";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { cloudApproveWebkitOps } from "../ops/cloud-approve";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
+import { webkitDriverOps } from "../ops/driver";
 import type { CliInstallPlan } from "../contracts/first-run";
 import type { BulkResult } from "../contracts/spaces-page";
 import type { CreatingElsewhere, ListStatus, SpaceAccess, SpaceRow, SpaceSharingFacts } from "../contracts/spaces";
@@ -817,6 +818,8 @@ export function createWebkitAdapter(
     ...(electron
       ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
       : unsupportedRuntimeFixOps("webkit")),
+    // Cua Driver inside Cua Spaces: the Mac app's embedded driver (ops/driver.ts).
+    ...webkitDriverOps(request),
   };
 
   const onEvent = (detail: WebkitEventDetail) => {

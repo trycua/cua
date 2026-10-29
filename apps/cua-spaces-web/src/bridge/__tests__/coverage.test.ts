@@ -28,6 +28,7 @@ import { PRESENCE_ARGS } from "../ops/presence";
 import { CLOUD_APPROVE_ARGS } from "../ops/cloud-approve";
 import { AGENT_THREADS_ARGS } from "../ops/agent-threads";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
+import { DRIVER_ARGS } from "../ops/driver";
 import type { HostWindow } from "../detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "../electron-channels";
 import { OPERATIONS, type OpArgs, type OpName } from "../protocol";
@@ -179,6 +180,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...CLOUD_APPROVE_ARGS,
   ...AGENT_THREADS_ARGS,
   ...RUNTIME_FIX_ARGS,
+  ...DRIVER_ARGS,
 };
 
 const unsupportedOn = (op: OpName, host: "webkit" | "tauri") =>

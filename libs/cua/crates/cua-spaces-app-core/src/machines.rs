@@ -464,7 +464,7 @@ fn shares_own_desktop(spaces: &[Space], space_id: Option<&str>, current: bool, l
 
 /// A Space's error says its machine refused because its owner stopped
 /// sharing it (the web UI's `STOPPED_SHARING_ERROR`).
-fn says_stopped_sharing(space: &Space) -> bool {
+pub(crate) fn says_stopped_sharing(space: &Space) -> bool {
     space
         .sdk
         .as_ref()

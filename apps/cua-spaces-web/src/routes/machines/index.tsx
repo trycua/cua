@@ -30,6 +30,7 @@ import { UpsellPrompt } from "@/components/upsell-prompt";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { RestartDialog, useUpdateIndicator } from "@/components/shell/update-indicator";
+import { MachineRowMenu } from "@/components/spaces/space-menu";
 import { ThisMachineExtras } from "@/components/this-machine";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -597,23 +598,26 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
           <h3 className="mt-7 mb-2 text-xs font-semibold text-muted-foreground">{m.spacesTitle}</h3>
           <div className="border-y" data-machine-spaces>
             {rows.map((s, i) => (
-              <Link
-                key={s.id}
-                to="/spaces/$spaceId"
-                params={{ spaceId: s.id }}
-                title={`Open ${s.name}`}
-                data-space-row={s.id}
-                className={cn("flex items-center gap-2.5 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50", i > 0 && "border-t")}
-              >
-                <span className="truncate font-mono text-xs">{s.name}</span>
-                {s.label ? <span className="shrink-0 rounded bg-muted px-1.5 text-2xs text-muted-foreground">{s.label}</span> : null}
-                {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
-                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                  <StatusDot online={s.running} className="size-[7px]" />
-                  {s.status}
-                </span>
-                <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
-              </Link>
+              <div key={s.id} className={cn("group/row relative", i > 0 && "border-t")}>
+                <Link
+                  to="/spaces/$spaceId"
+                  params={{ spaceId: s.id }}
+                  title={`Open ${s.name}`}
+                  data-space-row={s.id}
+                  className="flex items-center gap-2.5 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50"
+                >
+                  <span className="truncate font-mono text-xs">{s.name}</span>
+                  {s.label ? <span className="shrink-0 rounded bg-muted px-1.5 text-2xs text-muted-foreground">{s.label}</span> : null}
+                  {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
+                  <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <StatusDot online={s.running} className="size-[7px]" />
+                    {s.status}
+                  </span>
+                  <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60 group-hover/row:invisible group-focus-within/row:invisible" />
+                </Link>
+                {/* Not This Mac's own desktop: it is never a notch tile. */}
+                {m.current && s.id === m.desktop?.id ? null : <MachineRowMenu id={s.id} name={s.name} />}
+              </div>
             ))}
             {m.spacesEmpty ? <p className={cn("py-3.5 text-xs text-muted-foreground", rows.length > 0 && "border-t")}>{m.spacesEmpty}</p> : null}
             <div className="border-t py-2.5">

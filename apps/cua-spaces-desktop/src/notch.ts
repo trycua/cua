@@ -47,6 +47,8 @@ export interface Notch {
   setSpaces(spaces: readonly unknown[]): void;
   /** Live Keyvault sign-ins: the core's sharing label less dismissed copies, and the Space ids that carry the key. */
   setKeyvault(label: string | null | undefined, signedIn?: string[]): void;
+  /** The Spaces and desktops pinned to the notch, in pin order (`AppSettings.notchPinned`). */
+  setPinned(ids: readonly string[]): void;
   /** The hotspot, or a transfer (bytes; both unknown while one starts). */
   setActivity(hotspot: boolean, transfer?: { sent?: number | bigint; total?: number | bigint } | null): void;
   /** The "Spaces tab in the notch" setting (`!settings.menuBar`). */
@@ -169,6 +171,7 @@ export function startNotch(host: NotchHost, options: StartNotchOptions): Notch {
   return {
     setSpaces: (spaces) => model.setSpaces(spaces),
     setKeyvault: (label, signedIn) => model.setKeyvault(label, signedIn),
+    setPinned: (ids) => model.setPinned(ids),
     setActivity: (hotspot, transfer) => model.setActivity(hotspot, transfer),
     setShown: (shown) => model.setShown(shown),
     recheckPermission: () => model.recheckPermission(),

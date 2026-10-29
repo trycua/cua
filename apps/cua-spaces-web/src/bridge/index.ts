@@ -135,6 +135,7 @@ export { displayPairingCode, normalizePairingCode, pairingLinkRelay } from "./pa
 export { BUY_PRO_URL, BUY_TEAMS_URL, expiresInText, FINISHING_SETUP, PAIRING_POLL_MS, pairingUnsupported, planFailure, usePairingCode, type PairingHook, type PairingPhase } from "./pairing";
 export { READY_STARTUP, type StartupAction, type StartupPhase, type StartupState } from "./ops/startup";
 export { NO_TIPS, sendTipsEvent, tipsState, useTips, type TipsHook } from "./tips";
+export { useNotchPins, type NotchPins } from "./notch-pins";
 export {
   CHECKLIST_STEPS,
   useChecklist,

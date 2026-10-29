@@ -530,7 +530,7 @@ describe.skipIf(!built)("Teleport and the Keyvault on the app core", () => {
     it("feeds the notch the sign-ins live in a Space, and Dismiss hides them there and nowhere else", async () => {
       await setUp(parityOverview(native, withCopy));
       const sent: [string | null | undefined, string[] | undefined][] = [];
-      const stop = feedNotch({ setSpaces: () => {}, setShown: () => {}, setKeyvault: (label, signedIn) => void sent.push([label, signedIn]), setActivity: () => {} }, model);
+      const stop = feedNotch({ setSpaces: () => {}, setShown: () => {}, setKeyvault: (label, signedIn) => void sent.push([label, signedIn]), setPinned: () => {}, setActivity: () => {} }, model);
       expect(sent.at(-1)![0]).toBe(model.keyvault.sharingLabel);
       expect(sent.at(-1)![1]).toContain("local:aurora");
       await call("keyvault.dismiss", { imports: ["imp-1"] });

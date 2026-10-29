@@ -90,6 +90,10 @@ export interface SettingsValues {
   /** Tips (`AppSettings.tips`): off, and the ones done. Absent where the
    * host keeps no core settings (the page keeps them for this session). */
   tips?: TipsState;
+  /** The Spaces and machine desktops pinned to the notch (`AppSettings.notch_pinned`),
+   * in pin order. Absent where the host keeps no core settings (the page keeps them
+   * for this session). */
+  notchPinned?: string[];
 }
 
 export type UpdateChannel = "stable" | "beta";

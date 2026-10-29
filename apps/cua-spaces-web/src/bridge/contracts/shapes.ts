@@ -381,6 +381,7 @@ const SettingsShape = ref(
       updateChannel: nullable(oneOf("stable", "beta")),
       autoConnect: opt(bool),
       tips: opt(TipsStateShape),
+      notchPinned: opt(strings),
     }),
     defaultLocation: nullable(obj<DefaultLocation>()({ value: str, source: oneOf("env", "config", "default"), env: opt(str), path: str })),
     telemetry: nullable(
@@ -1625,6 +1626,7 @@ const WkSettingsShape = ref(
     accountUrl: optNull(str),
     cli: optNull(object({ name: str, installed: bool })),
     tips: opt(TipsStateShape),
+    notchPinned: opt(strings),
     runtimes: optNull(RuntimesInputShape),
   }),
 );

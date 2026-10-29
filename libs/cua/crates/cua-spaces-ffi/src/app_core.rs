@@ -1522,6 +1522,13 @@ pub fn app_notch_view(state: AppNotchState, spaces: Vec<AppSpace>) -> AppNotchVi
     core::notch::view(&state, &spaces)
 }
 
+/// `pinned` (the notch's pins, in pin order) with `id` pinned or, when it
+/// already is, unpinned: Pin to notch and Unpin from notch.
+#[uniffi::export]
+pub fn app_notch_toggle_pin(pinned: Vec<String>, id: String) -> Vec<String> {
+    core::notch::toggle_pin(&pinned, &id)
+}
+
 /// The springs and delays every shell animates with.
 #[uniffi::export]
 pub fn app_notch_motion() -> AppNotchMotion {

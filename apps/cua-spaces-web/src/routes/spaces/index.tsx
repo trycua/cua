@@ -11,7 +11,7 @@ import { useFirstSpaceMilestones } from "@/components/first-run-guide";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { ComputerWarnings } from "@/components/resources/computer-resources";
 import { useListedSpaces } from "@/components/spaces/listed";
-import { desktopOf, type SpaceItem } from "@/components/spaces/model";
+import { desktopOf, hasHideButton, hasMenu, type SpaceItem } from "@/components/spaces/model";
 import { BulkConfirmDialog, useBulkRemove } from "@/components/spaces/bulk-remove";
 import { SpaceList } from "@/components/spaces/space-list";
 import { SpaceContextMenu, SpaceMoreMenu, type MenuActions } from "@/components/spaces/space-menu";
@@ -348,8 +348,8 @@ const GridTile = memo(function GridTile({
               className="opacity-0 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100 group-data-[picking]/grid:opacity-100"
             />
           }
-          hide={item.desktop ? () => actions.hide?.(item) : undefined}
-          more={item.desktop ? undefined : <SpaceMoreMenu item={item} actions={actions} />}
+          hide={hasHideButton(item) ? () => actions.hide?.(item) : undefined}
+          more={hasMenu(item) ? <SpaceMoreMenu item={item} actions={actions} /> : undefined}
         />
       </SpaceContextMenu>
     </li>

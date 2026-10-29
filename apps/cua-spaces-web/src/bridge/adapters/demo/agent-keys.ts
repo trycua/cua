@@ -33,13 +33,15 @@ const SEVERAL = (now: () => number): AgentKeyInfo[] => [
   { provider: "custom", env: "CUSTOM_ENDPOINT_API_KEY", last4: "", addedMs: now() - DAY, fields: { base_url: "http://192.168.1.20:1234/v1", model: "qwen3-coder", wire: "openai-chat" } },
 ];
 
-export const demoKeyStore = (now: () => number, rejected: string[] = [], claude?: "signed-in" | "expired" | "none", keys?: "none" | "several"): DemoKeyStore => ({
+export const demoKeyStore = (now: () => number, rejected: string[] = [], claude?: "signed-in" | "expired" | "none", keys?: "none" | "several", chatgpt?: boolean): DemoKeyStore => ({
   keys: [
     ...(keys === "none" ? [] : keys === "several" ? SEVERAL(now) : [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: now() - 6 * DAY }]),
     // The sign-in imported from Claude Code (`?demo=claude-signed-in`), or one that ran out (`?demo=claude-expired`).
     ...(claude === "signed-in" || claude === "expired"
       ? [{ provider: "other" as const, env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now() - 26 * 3600_000, label: "Signed in as ada@example.com (Claude Max)", ...(claude === "expired" ? { expired: true } : {}) }]
       : []),
+    // The ChatGPT sign-in made for Codex (`?demo=chatgpt-signed-in`): Codex's alone, never an API key.
+    ...(chatgpt ? [{ provider: "other" as const, env: "CODEX_AUTH_JSON", last4: "", addedMs: now() - 3 * 3600_000, label: "Signed in with ChatGPT" }] : []),
   ],
   rejected,
 });

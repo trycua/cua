@@ -12,10 +12,10 @@ const MARK_OF: Record<string, string> = {
 };
 
 /** A provider in a small tile: its maker's mark where there is one, else a neutral tile with its initial. */
-export function ProviderMark({ id, name, large }: { id: string; name: string; large?: boolean }) {
+export function ProviderMark({ id, name, large, plain }: { id: string; name: string; large?: boolean; plain?: boolean }) {
   return (
     <span data-provider-mark={id} className="contents">
-      <HarnessMark agent={MARK_OF[id] ?? `provider:${id}`} name={name} large={large} />
+      <HarnessMark agent={MARK_OF[id] ?? `provider:${id}`} name={name} large={large} plain={plain} />
     </span>
   );
 }

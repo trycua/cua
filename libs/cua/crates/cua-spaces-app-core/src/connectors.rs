@@ -363,6 +363,38 @@ fn endpoint_connected(input: &ConnectorsInput, p: &reg::Provider, harness: &str)
             && k.fields.get("model").is_some_and(|v| !v.is_empty()))
 }
 
+/// Whether `app` can use what is saved for `p` now: a credential it reads
+/// (the harness's `reads`), or an endpoint it is pointed at.
+///
+/// A provider being connected is not the same: a Claude or ChatGPT sign-in
+/// connects Anthropic or OpenAI, but Hermes reads only their API keys.
+fn provider_usable_by(input: &ConnectorsInput, p: &reg::Provider, app: &str) -> bool {
+    let Some(a) = app_sign_in(app) else {
+        return provider_credential(input, p).is_some();
+    };
+    if a.reads.is_empty() {
+        return provider_credential(input, p).is_some();
+    }
+    let harness = harness_of_app(app).unwrap_or_default();
+    let envs = provider_envs(p);
+    a.reads
+        .iter()
+        .any(|k| envs.contains(k) && input.key(k).is_some_and(|k| !k.expired))
+        || endpoint_connected(input, p, harness)
+}
+
+/// What is saved for `p` that `app` reads has stopped working.
+fn provider_expired_for(input: &ConnectorsInput, p: &reg::Provider, app: &str) -> bool {
+    let Some(a) = app_sign_in(app).filter(|a| !a.reads.is_empty()) else {
+        return provider_expired(input, p);
+    };
+    let envs = provider_envs(p);
+    !provider_usable_by(input, p, app)
+        && a.reads
+            .iter()
+            .any(|k| envs.contains(k) && input.key(k).is_some_and(|k| k.expired))
+}
+
 /// The app's sign-in is in place: one of its providers is connected, or it
 /// signs in on its own.
 ///
@@ -1109,6 +1141,10 @@ pub struct ProviderSheetView {
     pub note: Option<String>,
     /// "Other providers": opens the provider choice (for the app, when opened for one).
     pub switch_label: String,
+    /// When opened for an app that cannot use this provider's sign-in, one plain sentence
+    /// saying why only a key is offered ("Hermes uses an API key. Your Claude sign-in is used
+    /// by Claude Code.").
+    pub only_key_note: Option<String>,
 }
 
 /// One provider in a choice.
@@ -1340,6 +1376,28 @@ pub fn provider_sheet_on(
             )
         )
     };
+    // An app's own sign-in is that app's alone: say so when this app is shown only the key.
+    let only_key_note = for_app.and_then(|a| {
+        let owner = p
+            .offered()
+            .find(|m| {
+                matches!(
+                    m.kind,
+                    reg::MethodKind::ImportLogin | reg::MethodKind::SubscriptionLogin
+                ) && !m.app.is_empty()
+                    && m.app != a
+            })?;
+        let who = input.row_app(a)?.name;
+        let owner_name = input.row_app(owner.app)?.name;
+        let signin = match p.id {
+            "anthropic" => "Claude",
+            "openai" => "ChatGPT",
+            _ => p.name,
+        };
+        Some(format!(
+            "{who} uses an API key. Your {signin} sign-in is used by {owner_name}."
+        ))
+    });
     let this = os.this_machine_lower();
     let place = vault(os).map(|v| format!("in {v} ")).unwrap_or_default();
     Some(ProviderSheetView {
@@ -1362,6 +1420,7 @@ pub fn provider_sheet_on(
             )
         }),
         switch_label: "Other providers".into(),
+        only_key_note,
     })
 }
 
@@ -1380,13 +1439,30 @@ pub fn provider_picker(
     };
     let choice = |p: &reg::Provider| {
         let row = provider_row(input, p, true);
+        let (state, status) = match for_app {
+            // Busy and failed rows say what happened; the rest is whether THIS app can use it.
+            Some(app) if row.state != "connecting" && row.state != "failed" => {
+                if provider_usable_by(input, p, app) {
+                    ("connected".to_string(), "Connected".to_string())
+                } else if provider_expired_for(input, p, app) {
+                    ("not-connected".to_string(), "Needs reconnect".to_string())
+                } else if provider_credential(input, p).is_some() {
+                    // Saved for another app (a Claude or ChatGPT sign-in): not usable here.
+                    let name = input.row_app(app).map(|a| a.name).unwrap_or_default();
+                    ("not-connected".to_string(), format!("{name} needs an API key"))
+                } else {
+                    ("not-connected".to_string(), "Not connected".to_string())
+                }
+            }
+            _ => (row.state, row.status),
+        };
         ProviderChoice {
             provider: p.id.into(),
             label: p.name.into(),
             icon: p.icon.into(),
             tier: row.tier,
-            state: row.state,
-            status: row.status,
+            state,
+            status,
         }
     };
     let searching = !query.trim().is_empty();
@@ -1619,12 +1695,15 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
         let p = s
             .providers
             .iter()
-            .find(|p| provider_connected(input, p.id))
+            .find(|p| provider_usable_by(input, p, agent))
             .or(s.providers.first())
             .copied();
         let pid = p.map(|p| p.id).unwrap_or_default();
         let prow = p.map(|p| provider_row(input, p, can_edit));
-        let connected = prow.as_ref().is_some_and(|r| r.state == "connected");
+        let usable = p.is_some_and(|p| provider_usable_by(input, p, agent));
+        let connected = usable && prow.as_ref().is_some_and(|r| r.state == "connected");
+        // Saved for another app (a Claude or ChatGPT sign-in), not one this app reads.
+        let other_only = !usable && prow.as_ref().is_some_and(|r| r.state == "connected");
         let names: Vec<&str> = s.providers.iter().map(|p| p.name).collect();
         let names = if names.len() > 3 && s.way.is_none() {
             "a connected provider".to_string()
@@ -1633,10 +1712,13 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
         };
         ConnectorSignIn {
             title: format!("Signs in with {names}"),
-            status: prow
-                .as_ref()
-                .map(|r| r.credential.clone().unwrap_or_else(|| r.status.clone()))
-                .unwrap_or_default(),
+            status: if other_only {
+                "Needs an API key".to_string()
+            } else {
+                prow.as_ref()
+                    .map(|r| r.credential.clone().unwrap_or_else(|| r.status.clone()))
+                    .unwrap_or_default()
+            },
             connected,
             way: way_text(agent).into(),
             provider: pid.into(),
@@ -2037,6 +2119,104 @@ mod tests {
         let mut a = input();
         a.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
         assert!(app_signed_in(&a, "hermes") && app_signed_in(&a, "claude-code"));
+    }
+
+    fn state_in_picker(i: &ConnectorsInput, app: &str, provider: &str) -> (String, String) {
+        let c = provider_picker(i, Some(app), "", true)
+            .items
+            .into_iter()
+            .find(|c| c.provider == provider)
+            .unwrap();
+        (c.state, c.status)
+    }
+
+    #[test]
+    fn a_picker_opened_for_an_app_shows_whether_that_app_can_use_the_credential() {
+        // A Claude sign-in and a ChatGPT sign-in are saved; no API keys.
+        let mut i = input();
+        i.apps.push(app("hermes", "Hermes", false));
+        i.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+        i.keys.keys.push(key("CODEX_AUTH_JSON", "BBBB"));
+        // The Connections list still says Anthropic and OpenAI are connected (a sign-in is saved)...
+        let v = view(&i);
+        assert_eq!(
+            v.providers.iter().find(|p| p.id == "anthropic").unwrap().state,
+            "connected"
+        );
+        // ...but Hermes reads only API keys, so its picker must not.
+        for p in ["anthropic", "openai"] {
+            let (state, status) = state_in_picker(&i, "hermes", p);
+            assert_eq!(state, "not-connected", "{p}");
+            assert_eq!(status, "Hermes needs an API key", "{p}");
+        }
+        // The same sign-ins are Claude Code's and Codex's.
+        assert_eq!(state_in_picker(&i, "claude-code", "anthropic").0, "connected");
+        assert_eq!(state_in_picker(&i, "codex", "openai").0, "connected");
+        // Nothing saved at all: plainly not connected.
+        assert_eq!(
+            state_in_picker(&input(), "hermes", "anthropic"),
+            ("not-connected".into(), "Not connected".into())
+        );
+        // An API key is what Hermes reads.
+        i.keys.keys.push(key("ANTHROPIC_API_KEY", "CCCC"));
+        assert_eq!(
+            state_in_picker(&i, "hermes", "anthropic"),
+            ("connected".into(), "Connected".into())
+        );
+        // An expired API key needs a reconnect; Claude Code's expired sign-in is not Hermes' to reconnect.
+        let mut e = input();
+        let mut k = key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA");
+        k.expired = true;
+        e.keys.keys.push(k);
+        assert_eq!(state_in_picker(&e, "hermes", "anthropic").1, "Not connected");
+        assert_eq!(state_in_picker(&e, "claude-code", "anthropic").1, "Needs reconnect");
+        let mut x = input();
+        let mut k = key("ANTHROPIC_API_KEY", "AAAA");
+        k.expired = true;
+        x.keys.keys.push(k);
+        assert_eq!(state_in_picker(&x, "hermes", "anthropic").1, "Needs reconnect");
+    }
+
+    #[test]
+    fn hermes_page_and_card_need_a_key_it_reads_not_a_sign_in() {
+        let mut i = input();
+        i.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+        i.keys.keys.push(key("CODEX_AUTH_JSON", "BBBB"));
+        let d = app_detail(&i, "hermes").unwrap();
+        let s = d.sign_in.unwrap();
+        assert!(!s.connected, "{s:?}");
+        assert_ne!(s.status, "Connected");
+        assert!(!signed_in(&i, "hermes"));
+        i.keys.keys.push(key("OPENAI_API_KEY", "CCCC"));
+        assert!(signed_in(&i, "hermes"));
+        assert!(app_detail(&i, "hermes").unwrap().sign_in.unwrap().connected);
+    }
+
+    #[test]
+    fn a_sheet_opened_for_hermes_says_why_only_a_key_is_offered() {
+        let mut i = input();
+        i.apps.push(app("hermes", "Hermes", false));
+        let a = provider_sheet_on(&i, "anthropic", SpaceOs::Macos, Some("hermes")).unwrap();
+        assert_eq!(
+            a.ways.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(),
+            ["key"]
+        );
+        assert_eq!(
+            a.only_key_note.as_deref(),
+            Some("Hermes uses an API key. Your Claude sign-in is used by Claude Code.")
+        );
+        let o = provider_sheet_on(&i, "openai", SpaceOs::Macos, Some("hermes")).unwrap();
+        assert_eq!(
+            o.only_key_note.as_deref(),
+            Some("Hermes uses an API key. Your ChatGPT sign-in is used by OpenAI Codex.")
+        );
+        // Claude Code's own sheet and the Connections list have nothing to explain; nor does a key-only provider.
+        assert!(provider_sheet_on(&i, "anthropic", SpaceOs::Macos, Some("claude-code")).unwrap().only_key_note.is_none());
+        assert!(provider_sheet(&i, "anthropic").unwrap().only_key_note.is_none());
+        assert!(provider_sheet_on(&i, "openrouter", SpaceOs::Macos, Some("hermes")).unwrap().only_key_note.is_none());
+        // No middle dot, no "devices".
+        let all = format!("{a:?}{o:?}");
+        assert!(!all.contains('\u{b7}') && !all.to_lowercase().contains("device"));
     }
 
     #[test]

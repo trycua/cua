@@ -184,6 +184,8 @@ export interface ProviderSheetView {
   note: string | null;
   /** "Other providers": opens the provider choice. */
   switchLabel: string;
+  /** Why only a key is offered, when this app can't use the provider's sign-in. */
+  onlyKeyNote: string | null;
 }
 
 export interface ProviderChoice {

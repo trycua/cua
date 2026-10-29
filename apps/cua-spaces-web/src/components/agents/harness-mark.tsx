@@ -69,8 +69,10 @@ export function AppMarkImage({ agent, className }: { agent: string; className?: 
 }
 
 /** A coding app's logo in a small tile; a neutral initial tile when there is no logo. */
-export function HarnessMark({ agent, name, large }: { agent: string; name: string; large?: boolean }) {
+export function HarnessMark({ agent, name, large, plain }: { agent: string; name: string; large?: boolean; plain?: boolean }) {
   const has = agent in APP_MARKS;
+  // In a header: just the logo, no tile (a tile reads as something to pick).
+  if (plain) return has ? <AppMarkImage agent={agent} className="size-5 shrink-0" /> : null;
   return (
     <span
       className={cn(

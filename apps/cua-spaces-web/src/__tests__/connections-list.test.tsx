@@ -228,4 +228,32 @@ describe.skipIf(!wasmBuilt)("the Connect card in a Space thread", () => {
     // Nothing was written or run for the sign-in itself.
     expect(calls.filter((c) => c.op === "agents.connect")).toEqual([]);
   });
+  it("Hermes' picker and sheet tell the truth when only Claude and ChatGPT sign-ins are saved", async () => {
+    await mountApp(path, host([], { threadAuthFailed: true, keys: "none", claudeLogin: "signed-in", chatgptLogin: true }));
+    const card = await waitFor(
+      () => {
+        const r = reply("Hermes needs a connected provider");
+        expect(r).toBeTruthy();
+        return r as HTMLElement;
+      },
+      { timeout: 5000 },
+    );
+    await click(card.querySelector("[data-failure-connect]")!);
+    const sheet = await found("[data-provider-sheet=anthropic]");
+    // Only a key, and one plain sentence on why.
+    expect(qa("[data-provider-way]").map((w) => w.dataset.providerWay)).toEqual(["key"]);
+    expect(q("[data-provider-only-key]")!.textContent).toBe("Hermes uses an API key. Your Claude sign-in is used by Claude Code.");
+    // The header is a header: a title and a small works-with line, no tile like the option rows have.
+    const header = sheet.querySelector("[data-provider-sheet-header]")!;
+    expect(header.querySelector("[data-harness-mark]")).toBeNull();
+    expect(header.querySelector("[data-provider-works-with]")!.textContent).toMatch(/^Works with /);
+    expect(sheet.textContent).not.toContain("\u00b7");
+    await click(q("[data-provider-switch]")!);
+    await found("[data-provider-picker]");
+    for (const id of ["anthropic", "openai"]) {
+      const row = await found(`[data-provider-choice=${id}]`);
+      expect(row.textContent).toContain("Hermes needs an API key");
+      expect(row.textContent).not.toContain("Connected");
+    }
+  });
 });

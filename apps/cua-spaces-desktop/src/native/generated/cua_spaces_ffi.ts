@@ -8832,7 +8832,11 @@ export type AppAgentKeyInput = {
     /**
      * A sign-in past its expiry: not used by any run until reconnected.
      */
-    expired: boolean
+    expired: boolean,
+    /**
+     * A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+     */
+    label?: string
 }
 
 /**
@@ -8860,7 +8864,8 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
                 env: FfiConverterString.read(from),
                 last4: FfiConverterString.read(from),
                 addedMs: FfiConverterUInt64.read(from),
-                expired: FfiConverterBool.read(from)
+                expired: FfiConverterBool.read(from),
+                label: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -8869,13 +8874,15 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
             FfiConverterString.write(value.last4, into);
             FfiConverterUInt64.write(value.addedMs, into);
             FfiConverterBool.write(value.expired, into);
+            FfiConverterOptionalString.write(value.label, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.provider) +
              FfiConverterString.allocationSize(value.env) +
              FfiConverterString.allocationSize(value.last4) +
              FfiConverterUInt64.allocationSize(value.addedMs) +
-             FfiConverterBool.allocationSize(value.expired);
+             FfiConverterBool.allocationSize(value.expired) +
+             FfiConverterOptionalString.allocationSize(value.label);
 
         }
     };
@@ -27129,6 +27136,107 @@ const FfiConverterTypeAppHostLimit = (() => {
     return new FFIConverter();
 })();
 
+export type AppHostLimitRow = {
+    /**
+     * `max-spaces`, `max-memory`, `max-disk` or `max-run`.
+     */
+    id: string,
+    /**
+     * "Most Spaces at once".
+     */
+    label: string,
+    /**
+     * One line under it.
+     */
+    help: string,
+    /**
+     * The limit (0: no limit).
+     */
+    value: number,
+    /**
+     * What the number counts: `Spaces`, `GB` or `minutes`.
+     */
+    unit: string,
+    /**
+     * What is in use now ("2 of 4 Spaces", "12 of 32 GB"; "2 Spaces" with
+     * no limit); none for a limit that is about time.
+     */
+    useText?: string,
+    /**
+     * This machine's own total in `unit` (memory and disk), 0 when not
+     * known.
+     */
+    total: number,
+    /**
+     * Use is above the limit (it was lowered below what runs): nothing
+     * is stopped, new Spaces are refused.
+     */
+    over: boolean,
+    /**
+     * "Over limit" while `over`.
+     */
+    overText?: string
+}
+
+/**
+ * Generated factory for {@link AppHostLimitRow} record objects.
+ */
+export const AppHostLimitRow = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppHostLimitRow, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppHostLimitRow>,
+    });
+})();
+
+const FfiConverterTypeAppHostLimitRow = (() => {
+    type TypeName = AppHostLimitRow;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                label: FfiConverterString.read(from),
+                help: FfiConverterString.read(from),
+                value: FfiConverterUInt32.read(from),
+                unit: FfiConverterString.read(from),
+                useText: FfiConverterOptionalString.read(from),
+                total: FfiConverterUInt32.read(from),
+                over: FfiConverterBool.read(from),
+                overText: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.label, into);
+            FfiConverterString.write(value.help, into);
+            FfiConverterUInt32.write(value.value, into);
+            FfiConverterString.write(value.unit, into);
+            FfiConverterOptionalString.write(value.useText, into);
+            FfiConverterUInt32.write(value.total, into);
+            FfiConverterBool.write(value.over, into);
+            FfiConverterOptionalString.write(value.overText, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.label) +
+             FfiConverterString.allocationSize(value.help) +
+             FfiConverterUInt32.allocationSize(value.value) +
+             FfiConverterString.allocationSize(value.unit) +
+             FfiConverterOptionalString.allocationSize(value.useText) +
+             FfiConverterUInt32.allocationSize(value.total) +
+             FfiConverterBool.allocationSize(value.over) +
+             FfiConverterOptionalString.allocationSize(value.overText);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppHostLoad = {
     /**
      * CPU it offers, in thousandths.
@@ -27486,6 +27594,11 @@ export type AppHostPanelView = {
      */
     limits?: string,
     /**
+     * The limits as number rows (Settings, Sharing), while providing
+     * Spaces: most Spaces, memory and disk in total, longest running time.
+     */
+    limitRows: Array<AppHostLimitRow>,
+    /**
      * "Spaces for your devices", while providing Spaces.
      */
     providedTitle?: string,
@@ -27582,6 +27695,7 @@ const FfiConverterTypeAppHostPanelView = (() => {
                 accessWarning: FfiConverterOptionalString.read(from),
                 toggles: FfiConverterSequenceTypeAppHostToggle.read(from),
                 limits: FfiConverterOptionalString.read(from),
+                limitRows: FfiConverterSequenceTypeAppHostLimitRow.read(from),
                 providedTitle: FfiConverterOptionalString.read(from),
                 provided: FfiConverterSequenceTypeAppHostAccessRow.read(from),
                 providedEmpty: FfiConverterOptionalString.read(from),
@@ -27616,6 +27730,7 @@ const FfiConverterTypeAppHostPanelView = (() => {
             FfiConverterOptionalString.write(value.accessWarning, into);
             FfiConverterSequenceTypeAppHostToggle.write(value.toggles, into);
             FfiConverterOptionalString.write(value.limits, into);
+            FfiConverterSequenceTypeAppHostLimitRow.write(value.limitRows, into);
             FfiConverterOptionalString.write(value.providedTitle, into);
             FfiConverterSequenceTypeAppHostAccessRow.write(value.provided, into);
             FfiConverterOptionalString.write(value.providedEmpty, into);
@@ -27649,6 +27764,7 @@ const FfiConverterTypeAppHostPanelView = (() => {
              FfiConverterOptionalString.allocationSize(value.accessWarning) +
              FfiConverterSequenceTypeAppHostToggle.allocationSize(value.toggles) +
              FfiConverterOptionalString.allocationSize(value.limits) +
+             FfiConverterSequenceTypeAppHostLimitRow.allocationSize(value.limitRows) +
              FfiConverterOptionalString.allocationSize(value.providedTitle) +
              FfiConverterSequenceTypeAppHostAccessRow.allocationSize(value.provided) +
              FfiConverterOptionalString.allocationSize(value.providedEmpty) +
@@ -28027,6 +28143,31 @@ export type AppHostState = {
      */
     maxMacosVms: number,
     /**
+     * Memory the Spaces other machines create here may use in total, in GB
+     * (0: no limit).
+     */
+    maxMemoryGb: number,
+    /**
+     * Disk the Spaces other machines create here may use in total, in GB
+     * (0: no limit).
+     */
+    maxDiskGb: number,
+    /**
+     * How long a Space created here by another machine may run, in minutes
+     * (0: no limit).
+     */
+    maxRunMinutes: number,
+    /**
+     * What those Spaces were given now, in GB.
+     */
+    usedMemoryGb: number,
+    usedDiskGb: number,
+    /**
+     * This machine's own memory and disk in GB (0: not known).
+     */
+    totalMemoryGb: number,
+    totalDiskGb: number,
+    /**
      * The Spaces this machine provides now.
      */
     providedSpaces: Array<AppHostProvidedSpace>,
@@ -28099,6 +28240,13 @@ const FfiConverterTypeAppHostState = (() => {
                 provideSpaces: FfiConverterBool.read(from),
                 maxSpaces: FfiConverterUInt32.read(from),
                 maxMacosVms: FfiConverterUInt32.read(from),
+                maxMemoryGb: FfiConverterUInt32.read(from),
+                maxDiskGb: FfiConverterUInt32.read(from),
+                maxRunMinutes: FfiConverterUInt32.read(from),
+                usedMemoryGb: FfiConverterUInt32.read(from),
+                usedDiskGb: FfiConverterUInt32.read(from),
+                totalMemoryGb: FfiConverterUInt32.read(from),
+                totalDiskGb: FfiConverterUInt32.read(from),
                 providedSpaces: FfiConverterSequenceTypeAppHostProvidedSpace.read(from),
                 spacesAudit: FfiConverterSequenceTypeAppHostSpacesAudit.read(from),
                 spacesAuditError: FfiConverterOptionalString.read(from),
@@ -28128,6 +28276,13 @@ const FfiConverterTypeAppHostState = (() => {
             FfiConverterBool.write(value.provideSpaces, into);
             FfiConverterUInt32.write(value.maxSpaces, into);
             FfiConverterUInt32.write(value.maxMacosVms, into);
+            FfiConverterUInt32.write(value.maxMemoryGb, into);
+            FfiConverterUInt32.write(value.maxDiskGb, into);
+            FfiConverterUInt32.write(value.maxRunMinutes, into);
+            FfiConverterUInt32.write(value.usedMemoryGb, into);
+            FfiConverterUInt32.write(value.usedDiskGb, into);
+            FfiConverterUInt32.write(value.totalMemoryGb, into);
+            FfiConverterUInt32.write(value.totalDiskGb, into);
             FfiConverterSequenceTypeAppHostProvidedSpace.write(value.providedSpaces, into);
             FfiConverterSequenceTypeAppHostSpacesAudit.write(value.spacesAudit, into);
             FfiConverterOptionalString.write(value.spacesAuditError, into);
@@ -28156,6 +28311,13 @@ const FfiConverterTypeAppHostState = (() => {
              FfiConverterBool.allocationSize(value.provideSpaces) +
              FfiConverterUInt32.allocationSize(value.maxSpaces) +
              FfiConverterUInt32.allocationSize(value.maxMacosVms) +
+             FfiConverterUInt32.allocationSize(value.maxMemoryGb) +
+             FfiConverterUInt32.allocationSize(value.maxDiskGb) +
+             FfiConverterUInt32.allocationSize(value.maxRunMinutes) +
+             FfiConverterUInt32.allocationSize(value.usedMemoryGb) +
+             FfiConverterUInt32.allocationSize(value.usedDiskGb) +
+             FfiConverterUInt32.allocationSize(value.totalMemoryGb) +
+             FfiConverterUInt32.allocationSize(value.totalDiskGb) +
              FfiConverterSequenceTypeAppHostProvidedSpace.allocationSize(value.providedSpaces) +
              FfiConverterSequenceTypeAppHostSpacesAudit.allocationSize(value.spacesAudit) +
              FfiConverterOptionalString.allocationSize(value.spacesAuditError) +
@@ -69828,6 +69990,9 @@ const FfiConverterSequenceTypeAppHostAccessRow = new FfiConverterArray(FfiConver
 // FfiConverter for Array<AppHostToggle>
 const FfiConverterSequenceTypeAppHostToggle = new FfiConverterArray(FfiConverterTypeAppHostToggle);
 
+// FfiConverter for Array<AppHostLimitRow>
+const FfiConverterSequenceTypeAppHostLimitRow = new FfiConverterArray(FfiConverterTypeAppHostLimitRow);
+
 // FfiConverter for Array<AppPermissionRow>
 const FfiConverterSequenceTypeAppPermissionRow = new FfiConverterArray(FfiConverterTypeAppPermissionRow);
 
@@ -71870,6 +72035,7 @@ export default Object.freeze({
     FfiConverterTypeAppHostFormState,
     FfiConverterTypeAppHostFormView,
     FfiConverterTypeAppHostLimit,
+    FfiConverterTypeAppHostLimitRow,
     FfiConverterTypeAppHostLoad,
     FfiConverterTypeAppHostPanelView,
     FfiConverterTypeAppHostPermissionInput,

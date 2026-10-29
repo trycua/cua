@@ -203,6 +203,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["notifications.markAllRead", {}],
       ["host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } }],
       ["host.action", { action: "provide-spaces" }],
+      ["host.limits", { maxSpaces: 2 }],
       ["host.openSettings", { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" }],
       ["settings.get", {}],
       ["settings.choose", { row: "telemetry", option: "off" }],
@@ -240,6 +241,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       "storage.run": { request: { kind: "clear-cache" } } as never,
       "host.setUp": { request: { mode: "direct", direct: "0.0.0.0:3211" } } as never,
       "host.action": { action: "provide-spaces" } as never,
+      "host.limits": { maxSpaces: 2 },
       "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
       "settings.set": { key: "telemetry", value: false },
       "settings.choose": { row: "auto-connect", option: "off" },
@@ -275,6 +277,15 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(host.calls.at(-1)).toBe("configure:-:true");
     expect(await code("host.action", { action: "set-up" })).toBe("bad_args");
     expect(await code("host.setUp", { request: {} })).toBe("bad_args");
+  });
+
+  it("changes the limits on the Spaces other machines create, and refuses a bad count", async () => {
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    const r = (await call("host.limits", { maxSpaces: 2 })) as Record<string, unknown>;
+    expect(r).toMatchObject({ configured: true });
+    expect(host.calls.at(-1)).toBe("configure:-:-");
+    expect(await code("host.limits", { maxSpaces: -1 })).toBe("bad_args");
+    expect(await code("host.limits", { maxDiskGb: "lots" })).toBe("bad_args");
   });
 
   it("carries the whole state, the owner and the progress", async () => {
@@ -617,6 +628,21 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(await call("runtimes.check", { kind: "container", path: "/usr/local/bin/docker" })).toMatchObject({ tool: "docker", version: "27.3.1" });
     // "Browse…" is the app's file panel (none in this fixture UI).
     expect(await code("runtimes.browse", { kind: "container" })).toBe("unsupported");
+  });
+
+  it("reads, changes and clears the repo cache, and refuses what is not a number of GB", async () => {
+    const view = (await call("repoCache.get")) as { enabled: boolean; repos: number; bytes: number; capBytes: number; sizeSetting: string; summary: string; week: string };
+    expect(view).toMatchObject({ enabled: true, repos: 3, sizeSetting: "auto", summary: "Repos: 3, 1.2 GB of 5 GB" });
+    // The SDK's 64-bit sizes reach the page as numbers.
+    expect(typeof view.bytes).toBe("number");
+    expect(view.capBytes).toBe(5 * 1024 ** 3);
+    expect(await call("repoCache.set", { enabled: false })).toMatchObject({ enabled: false, sizeSetting: "auto" });
+    expect(await call("repoCache.set", { enabled: true, sizeGb: 2 })).toMatchObject({ enabled: true, sizeSetting: "2", summary: "Repos: 3, 1.2 GB of 2 GB" });
+    expect(await call("repoCache.set", { sizeGb: null })).toMatchObject({ sizeSetting: "auto" });
+    expect(await code("repoCache.set", { sizeGb: -1 })).toBe("bad_args");
+    expect(await code("repoCache.set", { sizeGb: "lots" })).toBe("bad_args");
+    expect(await code("repoCache.set", { enabled: "yes" })).toBe("bad_args");
+    expect(await call("repoCache.clear")).toMatchObject({ repos: 0, bytes: 0 });
   });
 
   it("lists the coding agents under AI agents, and a row's button sets one up", async () => {

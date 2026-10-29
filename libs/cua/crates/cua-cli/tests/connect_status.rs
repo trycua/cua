@@ -230,7 +230,7 @@ async fn cli_mcp_and_app_report_the_same_connection_in_every_state() {
     // Codex signs in with its own device-code login, made for Cua; your own
     // `~/.codex/auth.json` is never read.
     assert_eq!(
-        codex["sign_in"]["imported"]["label"], "Codex · ChatGPT sign-in",
+        codex["sign_in"]["imported"]["label"], "ChatGPT sign-in for Codex",
         "{res}"
     );
     assert!(

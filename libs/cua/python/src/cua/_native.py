@@ -539,6 +539,10 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_qualify_sandbox_ref() != 59566:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_repo_cache_clear() != 39088:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_repo_cache_status() != 20147:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_resolve_image() != 56346:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_resolve_image_with_secret() != 48984:
@@ -611,7 +615,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 32481:
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2379,6 +2383,14 @@ _UniffiLib.uniffi_cua_sdk_fn_func_qualify_sandbox_ref.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_qualify_sandbox_ref.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_sdk_fn_func_resolve_image.argtypes = (
     _UniffiRustBuffer,
     _UniffiRustBuffer,
@@ -4963,6 +4975,12 @@ _UniffiLib.uniffi_cua_sdk_checksum_func_presence_text_color.restype = ctypes.c_u
 _UniffiLib.uniffi_cua_sdk_checksum_func_qualify_sandbox_ref.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_qualify_sandbox_ref.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_clear.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_clear.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_status.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_repo_cache_status.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_resolve_image.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_resolve_image.restype = ctypes.c_uint16
@@ -17193,7 +17211,7 @@ class HostSettingsChange:
     """
     A change to this machine's Spaces settings (`None` keeps a value).
 """
-    def __init__(self, *, share_desktop:typing.Optional[bool] = _DEFAULT, provide_spaces:typing.Optional[bool] = _DEFAULT, max_spaces:typing.Optional[int] = _DEFAULT, max_macos_vms:typing.Optional[int] = _DEFAULT):
+    def __init__(self, *, share_desktop:typing.Optional[bool] = _DEFAULT, provide_spaces:typing.Optional[bool] = _DEFAULT, max_spaces:typing.Optional[int] = _DEFAULT, max_macos_vms:typing.Optional[int] = _DEFAULT, max_memory_gb:typing.Optional[int] = _DEFAULT, max_disk_gb:typing.Optional[int] = _DEFAULT, max_run_minutes:typing.Optional[int] = _DEFAULT):
         if share_desktop is _DEFAULT:
             self.share_desktop = None
         else:
@@ -17210,12 +17228,24 @@ class HostSettingsChange:
             self.max_macos_vms = None
         else:
             self.max_macos_vms = max_macos_vms
+        if max_memory_gb is _DEFAULT:
+            self.max_memory_gb = None
+        else:
+            self.max_memory_gb = max_memory_gb
+        if max_disk_gb is _DEFAULT:
+            self.max_disk_gb = None
+        else:
+            self.max_disk_gb = max_disk_gb
+        if max_run_minutes is _DEFAULT:
+            self.max_run_minutes = None
+        else:
+            self.max_run_minutes = max_run_minutes
 
 
 
 
     def __str__(self):
-        return "HostSettingsChange(share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={})".format(self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms)
+        return "HostSettingsChange(share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, max_memory_gb={}, max_disk_gb={}, max_run_minutes={})".format(self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.max_memory_gb, self.max_disk_gb, self.max_run_minutes)
     def __eq__(self, other):
         if self.share_desktop != other.share_desktop:
             return False
@@ -17224,6 +17254,12 @@ class HostSettingsChange:
         if self.max_spaces != other.max_spaces:
             return False
         if self.max_macos_vms != other.max_macos_vms:
+            return False
+        if self.max_memory_gb != other.max_memory_gb:
+            return False
+        if self.max_disk_gb != other.max_disk_gb:
+            return False
+        if self.max_run_minutes != other.max_run_minutes:
             return False
         return True
 
@@ -17235,6 +17271,9 @@ class _UniffiFfiConverterTypeHostSettingsChange(_UniffiConverterRustBuffer):
             provide_spaces=_UniffiFfiConverterOptionalBoolean.read(buf),
             max_spaces=_UniffiFfiConverterOptionalUInt32.read(buf),
             max_macos_vms=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_memory_gb=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_disk_gb=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_run_minutes=_UniffiFfiConverterOptionalUInt32.read(buf),
         )
 
     @staticmethod
@@ -17243,6 +17282,9 @@ class _UniffiFfiConverterTypeHostSettingsChange(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.check_lower(value.provide_spaces)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_spaces)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_macos_vms)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_memory_gb)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_disk_gb)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_run_minutes)
 
     @staticmethod
     def write(value, buf):
@@ -17250,6 +17292,9 @@ class _UniffiFfiConverterTypeHostSettingsChange(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.write(value.provide_spaces, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_spaces, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_macos_vms, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_memory_gb, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_disk_gb, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_run_minutes, buf)
 
 @dataclass
 class HostSetupOptions:
@@ -17502,7 +17547,7 @@ class HostStatus:
     """
     Host status.
 """
-    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False):
+    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, max_memory_gb:int = 0, max_disk_gb:int = 0, max_run_minutes:int = 0, used_memory_gb:int = 0, used_disk_gb:int = 0, total_memory_gb:int = 0, total_disk_gb:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False):
         self.configured = configured
         self.mode = mode
         self.relay_url = relay_url
@@ -17531,6 +17576,13 @@ class HostStatus:
         self.provide_spaces = provide_spaces
         self.max_spaces = max_spaces
         self.max_macos_vms = max_macos_vms
+        self.max_memory_gb = max_memory_gb
+        self.max_disk_gb = max_disk_gb
+        self.max_run_minutes = max_run_minutes
+        self.used_memory_gb = used_memory_gb
+        self.used_disk_gb = used_disk_gb
+        self.total_memory_gb = total_memory_gb
+        self.total_disk_gb = total_disk_gb
         if provided_spaces is _DEFAULT:
             self.provided_spaces = []
         else:
@@ -17559,7 +17611,7 @@ class HostStatus:
 
 
     def __str__(self):
-        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service)
+        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, max_memory_gb={}, max_disk_gb={}, max_run_minutes={}, used_memory_gb={}, used_disk_gb={}, total_memory_gb={}, total_disk_gb={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.max_memory_gb, self.max_disk_gb, self.max_run_minutes, self.used_memory_gb, self.used_disk_gb, self.total_memory_gb, self.total_disk_gb, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service)
     def __eq__(self, other):
         if self.configured != other.configured:
             return False
@@ -17605,6 +17657,20 @@ class HostStatus:
             return False
         if self.max_macos_vms != other.max_macos_vms:
             return False
+        if self.max_memory_gb != other.max_memory_gb:
+            return False
+        if self.max_disk_gb != other.max_disk_gb:
+            return False
+        if self.max_run_minutes != other.max_run_minutes:
+            return False
+        if self.used_memory_gb != other.used_memory_gb:
+            return False
+        if self.used_disk_gb != other.used_disk_gb:
+            return False
+        if self.total_memory_gb != other.total_memory_gb:
+            return False
+        if self.total_disk_gb != other.total_disk_gb:
+            return False
         if self.provided_spaces != other.provided_spaces:
             return False
         if self.spaces_audit != other.spaces_audit:
@@ -17649,6 +17715,13 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
             provide_spaces=_UniffiFfiConverterBoolean.read(buf),
             max_spaces=_UniffiFfiConverterUInt32.read(buf),
             max_macos_vms=_UniffiFfiConverterUInt32.read(buf),
+            max_memory_gb=_UniffiFfiConverterUInt32.read(buf),
+            max_disk_gb=_UniffiFfiConverterUInt32.read(buf),
+            max_run_minutes=_UniffiFfiConverterUInt32.read(buf),
+            used_memory_gb=_UniffiFfiConverterUInt32.read(buf),
+            used_disk_gb=_UniffiFfiConverterUInt32.read(buf),
+            total_memory_gb=_UniffiFfiConverterUInt32.read(buf),
+            total_disk_gb=_UniffiFfiConverterUInt32.read(buf),
             provided_spaces=_UniffiFfiConverterSequenceTypeHostProvidedSpace.read(buf),
             spaces_audit=_UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.read(buf),
             spaces_audit_error=_UniffiFfiConverterOptionalString.read(buf),
@@ -17683,6 +17756,13 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.check_lower(value.provide_spaces)
         _UniffiFfiConverterUInt32.check_lower(value.max_spaces)
         _UniffiFfiConverterUInt32.check_lower(value.max_macos_vms)
+        _UniffiFfiConverterUInt32.check_lower(value.max_memory_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.max_disk_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.max_run_minutes)
+        _UniffiFfiConverterUInt32.check_lower(value.used_memory_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.used_disk_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.total_memory_gb)
+        _UniffiFfiConverterUInt32.check_lower(value.total_disk_gb)
         _UniffiFfiConverterSequenceTypeHostProvidedSpace.check_lower(value.provided_spaces)
         _UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.check_lower(value.spaces_audit)
         _UniffiFfiConverterOptionalString.check_lower(value.spaces_audit_error)
@@ -17716,6 +17796,13 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.provide_spaces, buf)
         _UniffiFfiConverterUInt32.write(value.max_spaces, buf)
         _UniffiFfiConverterUInt32.write(value.max_macos_vms, buf)
+        _UniffiFfiConverterUInt32.write(value.max_memory_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.max_disk_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.max_run_minutes, buf)
+        _UniffiFfiConverterUInt32.write(value.used_memory_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.used_disk_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.total_memory_gb, buf)
+        _UniffiFfiConverterUInt32.write(value.total_disk_gb, buf)
         _UniffiFfiConverterSequenceTypeHostProvidedSpace.write(value.provided_spaces, buf)
         _UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spaces_audit, buf)
         _UniffiFfiConverterOptionalString.write(value.spaces_audit_error, buf)
@@ -20842,6 +20929,95 @@ class _UniffiFfiConverterTypeReadinessProbe(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.http_path, buf)
         _UniffiFfiConverterOptionalUInt16.write(value.http_status, buf)
         _UniffiFfiConverterOptionalString.write(value.service, buf)
+
+@dataclass
+class RepoCacheStatus:
+    """
+    What the repo cache holds and what it saved, in plain words for
+    Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+    changed with [`config_set`]).
+"""
+    def __init__(self, *, enabled:bool, repos:int, bytes:int, cap_bytes:int, size_setting:str, summary:str, week:str, hits:int, misses:int, seconds_saved:int):
+        self.enabled = enabled
+        self.repos = repos
+        self.bytes = bytes
+        self.cap_bytes = cap_bytes
+        self.size_setting = size_setting
+        self.summary = summary
+        self.week = week
+        self.hits = hits
+        self.misses = misses
+        self.seconds_saved = seconds_saved
+
+
+
+
+    def __str__(self):
+        return "RepoCacheStatus(enabled={}, repos={}, bytes={}, cap_bytes={}, size_setting={}, summary={}, week={}, hits={}, misses={}, seconds_saved={})".format(self.enabled, self.repos, self.bytes, self.cap_bytes, self.size_setting, self.summary, self.week, self.hits, self.misses, self.seconds_saved)
+    def __eq__(self, other):
+        if self.enabled != other.enabled:
+            return False
+        if self.repos != other.repos:
+            return False
+        if self.bytes != other.bytes:
+            return False
+        if self.cap_bytes != other.cap_bytes:
+            return False
+        if self.size_setting != other.size_setting:
+            return False
+        if self.summary != other.summary:
+            return False
+        if self.week != other.week:
+            return False
+        if self.hits != other.hits:
+            return False
+        if self.misses != other.misses:
+            return False
+        if self.seconds_saved != other.seconds_saved:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeRepoCacheStatus(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return RepoCacheStatus(
+            enabled=_UniffiFfiConverterBoolean.read(buf),
+            repos=_UniffiFfiConverterUInt32.read(buf),
+            bytes=_UniffiFfiConverterUInt64.read(buf),
+            cap_bytes=_UniffiFfiConverterUInt64.read(buf),
+            size_setting=_UniffiFfiConverterString.read(buf),
+            summary=_UniffiFfiConverterString.read(buf),
+            week=_UniffiFfiConverterString.read(buf),
+            hits=_UniffiFfiConverterUInt32.read(buf),
+            misses=_UniffiFfiConverterUInt32.read(buf),
+            seconds_saved=_UniffiFfiConverterUInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBoolean.check_lower(value.enabled)
+        _UniffiFfiConverterUInt32.check_lower(value.repos)
+        _UniffiFfiConverterUInt64.check_lower(value.bytes)
+        _UniffiFfiConverterUInt64.check_lower(value.cap_bytes)
+        _UniffiFfiConverterString.check_lower(value.size_setting)
+        _UniffiFfiConverterString.check_lower(value.summary)
+        _UniffiFfiConverterString.check_lower(value.week)
+        _UniffiFfiConverterUInt32.check_lower(value.hits)
+        _UniffiFfiConverterUInt32.check_lower(value.misses)
+        _UniffiFfiConverterUInt64.check_lower(value.seconds_saved)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBoolean.write(value.enabled, buf)
+        _UniffiFfiConverterUInt32.write(value.repos, buf)
+        _UniffiFfiConverterUInt64.write(value.bytes, buf)
+        _UniffiFfiConverterUInt64.write(value.cap_bytes, buf)
+        _UniffiFfiConverterString.write(value.size_setting, buf)
+        _UniffiFfiConverterString.write(value.summary, buf)
+        _UniffiFfiConverterString.write(value.week, buf)
+        _UniffiFfiConverterUInt32.write(value.hits, buf)
+        _UniffiFfiConverterUInt32.write(value.misses, buf)
+        _UniffiFfiConverterUInt64.write(value.seconds_saved, buf)
 
 @dataclass
 class ResolvedImage:
@@ -29795,8 +29971,9 @@ class AgentSetupProtocol(typing.Protocol):
         """
         Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
         (`server`, default this channel's cua), and with `sign_in` the
-        agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-        for its one browser approval). JSON: one result per agent.
+        agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+        sign-in it already has, read from where Claude Code keeps it). JSON:
+        one result per agent.
 """
         raise NotImplementedError
     def connection_status_json(self, expected: typing.Optional[AgentMcpServer],refresh: bool) -> str:
@@ -29960,8 +30137,9 @@ class AgentSetup(AgentSetupProtocol):
         """
         Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
         (`server`, default this channel's cua), and with `sign_in` the
-        agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-        for its one browser approval). JSON: one result per agent.
+        agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+        sign-in it already has, read from where Claude Code keeps it). JSON:
+        one result per agent.
 """
 
         _UniffiFfiConverterSequenceString.check_lower(agents)
@@ -46712,6 +46890,36 @@ def qualify_sandbox_ref(name: str,local: typing.Union[object, typing.Optional[bo
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def repo_cache_clear() -> RepoCacheStatus:
+    """
+    Deletes every repository the repo cache holds (they are copied again the
+    next time a Space clones them). Returns the cache after.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeRepoCacheStatus.lift
+    _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def repo_cache_status() -> RepoCacheStatus:
+    """
+    The repo cache now: on or off, how much it holds of its cap, and what
+    the last week saved.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeRepoCacheStatus.lift
+    _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def resolve_image(reference: str,backend: str,arch: typing.Optional[str]) -> ResolvedImage:
     """
     Resolves `reference` for `backend` (`auto`, `local`, `provider`,
@@ -47334,6 +47542,7 @@ __all__ = [
     "PtySize",
     "PublicUrl",
     "ReadinessProbe",
+    "RepoCacheStatus",
     "ResolvedImage",
     "SharedBase",
     "SpaceResources",
@@ -47445,6 +47654,8 @@ __all__ = [
     "presence_now_ms",
     "presence_text_color",
     "qualify_sandbox_ref",
+    "repo_cache_clear",
+    "repo_cache_status",
     "resolve_image",
     "resolve_image_with_secret",
     "sandbox_locations",

@@ -11,6 +11,31 @@ import Foundation
 /// The platform side of Spaces: the cua SDK calls the app makes. Every
 /// decision about what they mean (names, status, grouping, what is allowed)
 /// is the app core's; this only moves data.
+/// What the repo cache holds and saved, in the plain words Settings shows
+/// (the SDK's `repo_cache_status`; never a repository name).
+public struct RepoCacheState: Equatable, Sendable {
+    public var enabled: Bool
+    public var repos: UInt32
+    public var bytes: UInt64
+    public var capBytes: UInt64
+    /// `auto`, or the number of GB.
+    public var sizeSetting: String
+    /// `Repos: 3, 1.2 GB of 5 GB`.
+    public var summary: String
+    /// `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+    public var week: String
+    public var hits: UInt32
+    public var misses: UInt32
+    public var secondsSaved: UInt64
+
+    public init(enabled: Bool, repos: UInt32, bytes: UInt64, capBytes: UInt64, sizeSetting: String,
+                summary: String, week: String, hits: UInt32, misses: UInt32, secondsSaved: UInt64) {
+        self.enabled = enabled; self.repos = repos; self.bytes = bytes; self.capBytes = capBytes
+        self.sizeSetting = sizeSetting; self.summary = summary; self.week = week
+        self.hits = hits; self.misses = misses; self.secondsSaved = secondsSaved
+    }
+}
+
 public protocol SpacesBackend: AnyObject, Sendable {
     /// The registry, one row per Space, with a bounded reachability probe.
     func rows() async throws -> [AppSpaceRow]
@@ -96,6 +121,14 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// Writes a runtime setting (`runtime.container`, `runtime.vm_path`), or
     /// unsets it (`nil`).
     func setRuntimeSetting(key: String, value: String?) async throws
+    /// The repo cache (Settings, General): on or off, what it holds and what
+    /// the last week saved; `nil` when this backend has none.
+    func repoCacheStatus() async -> RepoCacheState?
+    /// Turns the repo cache on or off (`cache.repos`) and sets its size
+    /// (`cache.repos_size_gb`: `auto` or a number of GB); `nil` keeps a value.
+    func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState?
+    /// Deletes every repository the repo cache holds.
+    func clearRepoCache() async throws -> RepoCacheState?
     /// Free space where local Spaces are written and which images are
     /// pulled (`local().storage()`), when known.
     func localStorage() async -> LocalStorage?
@@ -284,6 +317,9 @@ public extension SpacesBackend {
         throw FixtureError(message: "Runtimes can't be checked here")
     }
     func setRuntimeSetting(key: String, value: String?) async throws {}
+    func repoCacheStatus() async -> RepoCacheState? { nil }
+    func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? { nil }
+    func clearRepoCache() async throws -> RepoCacheState? { nil }
 }
 
 /// The wizard's GPU choices from the SDK's `gpu_support`: the first option
@@ -621,6 +657,26 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func setRuntimeSetting(key: String, value: String?) async throws {
         if let value { _ = try configSet(key: key, value: value) } else { _ = try configUnset(key: key) }
+    }
+
+    static func repoCache(_ s: RepoCacheStatus) -> RepoCacheState {
+        RepoCacheState(enabled: s.enabled, repos: s.repos, bytes: s.bytes, capBytes: s.capBytes,
+                       sizeSetting: s.sizeSetting, summary: s.summary, week: s.week,
+                       hits: s.hits, misses: s.misses, secondsSaved: s.secondsSaved)
+    }
+
+    public func repoCacheStatus() async -> RepoCacheState? {
+        (try? CuaSDK.repoCacheStatus()).map(Self.repoCache)
+    }
+
+    public func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? {
+        if let enabled { _ = try configSet(key: "cache.repos", value: enabled ? "on" : "off") }
+        if let size { _ = try configSet(key: "cache.repos_size_gb", value: size) }
+        return await repoCacheStatus()
+    }
+
+    public func clearRepoCache() async throws -> RepoCacheState? {
+        Self.repoCache(try CuaSDK.repoCacheClear())
     }
 
     /// The SDK's kind as the app core's Settings input takes it.
@@ -1308,6 +1364,34 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
     public func setRuntimeSetting(key: String, value: String?) async throws {
         await MainActor.run { fixtureRuntimeSettings[key] = value }
+    }
+    /// The fixture Mac's repo cache.
+    public var fixtureRepoCache = RepoCacheState(
+        enabled: true, repos: 3, bytes: 1_288_490_189, capBytes: 5 << 30, sizeSetting: "auto",
+        summary: "Repos: 3, 1.2 GB of 5 GB",
+        week: "Last week: 80% of clones came from the cache, about 2 minutes saved",
+        hits: 8, misses: 2, secondsSaved: 125)
+    public func repoCacheStatus() async -> RepoCacheState? { await MainActor.run { fixtureRepoCache } }
+    public func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? {
+        await MainActor.run {
+            if let enabled { fixtureRepoCache.enabled = enabled }
+            if let size {
+                fixtureRepoCache.sizeSetting = size
+                let gb = size == "auto" ? 5.0 : (Double(size) ?? 5.0)
+                fixtureRepoCache.capBytes = UInt64(gb * 1024 * 1024 * 1024)
+                fixtureRepoCache.summary = "Repos: \(fixtureRepoCache.repos), 1.2 GB of \(size == "auto" ? "5" : size) GB"
+            }
+            return fixtureRepoCache
+        }
+    }
+    public func clearRepoCache() async throws -> RepoCacheState? {
+        await MainActor.run {
+            fixtureRepoCache.repos = 0
+            fixtureRepoCache.bytes = 0
+            fixtureRepoCache.summary = "Repos: 0, 0 MB of 5 GB"
+            fixtureRepoCache.week = "No clones yet this week"
+            return fixtureRepoCache
+        }
     }
     func fixtureCheck(kind: String, path: String) -> AppRuntimePathCheck {
         let known = (fixtureInstalled[kind] ?? []).first { $0.path == path }

@@ -1,13 +1,33 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { SendHorizontalIcon } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { SendHorizontalIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from "react";
 
-import { activeMention, insertMention, matchMentions, mentionSegments, type MentionCandidate } from "@/lib/mentions";
+import { activeMention, insertMention, matchMentions, mentionedHandles, mentionSegments, startsWithMention, type MentionCandidate } from "@/lib/mentions";
 import { cn } from "@/lib/utils";
 
 import { MemberAvatar } from "./avatar";
+
+/** The composer, for the thread's Reply button. */
+export interface ComposerHandle {
+  /** Puts `@handle ` at the start (once) and focuses the box, caret after what was already written. */
+  reply(handle: string): void;
+  focus(): void;
+}
+
+/** Who the next message goes to without an @ typed: shown as a chip with an X. */
+export interface ComposerAddressee {
+  handles: string[];
+  /** How the chip names a handle (`Claude Code`). */
+  label: (handle: string) => string;
+  /** Why the agent can't take it yet, in words ("Claude Code needs to be connected"), or null. */
+  problem: (handle: string) => string | null;
+  /** The chip's X. */
+  onRemove: (handle: string) => void;
+  /** Every handle an agent answers to: an @ of one of them in the text means the chip is not used. */
+  agentHandles: ReadonlySet<string>;
+}
 
 /**
  * The thread's message box. Enter sends, Shift+Enter is a new line. `@`
@@ -26,6 +46,8 @@ export function Composer({
   disabledReason,
   footer,
   className,
+  addressee,
+  composerRef,
 }: {
   placeholder: string;
   candidates: readonly MentionCandidate[];
@@ -39,6 +61,9 @@ export function Composer({
   /** A row inside the box, beside Send (the Agents tab's "In <Space> · Members see it"). */
   footer?: ReactNode;
   className?: string;
+  /** Who a message goes to when it names no agent (the sticky chip). */
+  addressee?: ComposerAddressee;
+  composerRef?: Ref<ComposerHandle>;
 }) {
   const off = disabled || !!disabledReason;
   const [text, setText] = useState("");
@@ -50,6 +75,28 @@ export function Composer({
   const area = useRef<HTMLTextAreaElement | null>(null);
   const layer = useRef<HTMLDivElement | null>(null);
   const nextCaret = useRef<number | null>(null);
+
+  useImperativeHandle(
+    composerRef,
+    () => ({
+      focus: () => area.current?.focus(),
+      reply: (handle) => {
+        const el = area.current;
+        if (!el) return;
+        const cur = el.value;
+        // Once: a box already addressed to them keeps its text.
+        const next = startsWithMention(cur, handle) ? cur : `@${handle} ${cur.replace(/^\s+/, "")}`;
+        const end = next.length;
+        nextCaret.current = end;
+        setText(next);
+        setCaret(end);
+        setError(null);
+        el.focus();
+        el.setSelectionRange(Math.min(end, el.value.length), Math.min(end, el.value.length));
+      },
+    }),
+    [],
+  );
 
   const mention = activeMention(text, caret);
   const matches = mention && closedAt !== mention.start ? matchMentions(mention.query, candidates) : [];
@@ -70,13 +117,16 @@ export function Composer({
   }, [text]);
 
   const pick = (c: MentionCandidate) => {
-    if (!mention) return;
+    if (!mention || c.disabled) return;
     const next = insertMention(text, mention.start, caret, c.handle);
     nextCaret.current = next.caret;
     setText(next.text);
     setCaret(next.caret);
     setPicked(0);
   };
+
+  // Typing an @ of an agent replaces the chip for this message.
+  const chips = addressee && !mentionedHandles(text, addressee.agentHandles).some((h) => addressee.agentHandles.has(h)) ? addressee.handles : [];
 
   const send = () => {
     const t = text.trim();
@@ -118,6 +168,12 @@ export function Composer({
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
+      return;
+    }
+    // Backspace in an empty box takes the last chip off, like a recipient field.
+    if (e.key === "Backspace" && !text && chips.length && addressee) {
+      e.preventDefault();
+      addressee.onRemove(chips[chips.length - 1]!);
     }
   };
 
@@ -141,13 +197,14 @@ export function Composer({
               key={`${c.kind}:${c.handle}`}
               role="option"
               aria-selected={i === index}
+              aria-disabled={c.disabled || undefined}
               data-mention-option={c.handle}
               onMouseDown={(e) => {
                 e.preventDefault();
                 pick(c);
               }}
               onMouseEnter={() => setPicked(i)}
-              className={cn("flex h-9 cursor-default items-center gap-2.5 rounded-lg px-2 text-[13px]", i === index && "bg-accent")}
+              className={cn("flex h-9 cursor-default items-center gap-2.5 rounded-lg px-2 text-[13px]", i === index && "bg-accent", c.disabled && "opacity-60")}
             >
               <MemberAvatar kind={c.kind} name={c.label} harness={c.kind === "agent" ? (c.harness ?? agentHarness(c.handle)) : ""} size={24} />
               <span className="min-w-0 flex-1 truncate">{c.label}</span>
@@ -159,7 +216,38 @@ export function Composer({
         </div>
       ) : null}
       <div className={cn("relative flex gap-2 rounded-lg bg-muted py-1.5 pr-1.5 pl-3 focus-within:ring-2 focus-within:ring-ring/50", footer ? "flex-col" : "items-end")}>
-        <div className="relative min-w-0 flex-1">
+        <div className="min-w-0 flex-1">
+          {chips.length && addressee ? (
+            <div role="group" aria-label={`Talking to ${chips.map(addressee.label).join(", ")}`} data-addressee="" className="flex flex-wrap items-center gap-1.5 pt-1">
+              {chips.map((h) => {
+                const problem = addressee.problem(h);
+                return (
+                  <span
+                    key={h}
+                    data-addressee-chip={h}
+                    data-addressee-problem={problem ? "" : undefined}
+                    className={cn("inline-flex h-6 max-w-full items-center gap-1 rounded-lg bg-background pr-0.5 pl-2 text-xs text-foreground")}
+                  >
+                    {problem ? <TriangleAlertIcon aria-hidden className="size-3 shrink-0 text-warning" /> : null}
+                    <span className="min-w-0 truncate">{problem ?? `Talking to ${addressee.label(h)}`}</span>
+                    <button
+                      type="button"
+                      data-addressee-remove={h}
+                      aria-label={`Stop talking to ${addressee.label(h)}`}
+                      onClick={() => {
+                        addressee.onRemove(h);
+                        area.current?.focus();
+                      }}
+                      className="inline-flex size-5 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                    >
+                      <XIcon className="size-3" />
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          ) : null}
+          <div className="relative">
           {/* What you typed, with mentions as chips; the textarea above it draws only the caret. */}
           <div ref={layer} aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden py-1.5 text-[13px] leading-5 break-words whitespace-pre-wrap text-foreground">
             {mentionSegments(text, handles).map((s, i) =>
@@ -194,6 +282,7 @@ export function Composer({
               disabledReason && "disabled:opacity-100",
             )}
           />
+          </div>
         </div>
         {disabledReason ? null : footer ? (
           <div className="flex items-center gap-2" data-composer-footer="">

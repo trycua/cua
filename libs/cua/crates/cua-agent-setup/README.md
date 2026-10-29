@@ -48,9 +48,32 @@ answering an MCP `initialize`; and the sign-in Connect copied to Keyvault
 on This Mac (a `SignInVault`: the Keychain-backed agent keys in the app and
 CLI, a fake in tests). Every broken state is `attention` with one line and
 one action. `connect` / `disconnect` are Connect and Disconnect: the
-backup-aware config edit plus the sign-in copy (Codex's `auth.json`, Claude
-Code's `claude setup-token`, Hermes' `.env` key), and both undone.
+backup-aware config edit plus the sign-in copy (Codex's device-code sign-in,
+the access token of the sign-in Claude Code already has, Hermes' `.env` key),
+and both undone.
 `tests/connection_matrix.rs` runs every state against fake harness homes.
+
+## Claude Code's sign-in
+
+`claude_login.rs` finds the sign-in Claude Code already has and Connect copies
+its access token (never the refresh token) into Keyvault:
+
+- the tokens: the macOS Keychain item `Claude Code-credentials` (with
+  `CLAUDE_CONFIG_DIR` the service is `Claude Code-credentials-<8 hex of
+  sha256(dir)>`, and `CLAUDE_SECURESTORAGE_CONFIG_DIR` overrides which dir is
+  hashed), else `<config dir>/.credentials.json` (`CLAUDE_CONFIG_DIR` or
+  `~/.claude`); when both exist the later expiry wins;
+- who it is: `oauthAccount.emailAddress` in the global config
+  (`<config dir>/.config.json` when Claude Code still uses that legacy file,
+  else `$CLAUDE_CONFIG_DIR/.claude.json` or `~/.claude.json`). That file holds
+  no tokens;
+- the Keychain sits behind the `Keychain` trait: the real one is
+  `/usr/bin/security`, and it refuses in a test process; tests use a fake and
+  an isolated home.
+
+A refresh token works once, so Cua never refreshes: when its copy runs out it
+reads Claude Code's newer one, and asks Claude Code itself to refresh (a
+one-line `claude -p`) when there is none.
 
 ## Agents
 

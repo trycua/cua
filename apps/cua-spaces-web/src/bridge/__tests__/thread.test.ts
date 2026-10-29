@@ -185,6 +185,21 @@ describe("folding the thread", () => {
     expect((items[2] as Extract<(typeof items)[number], { type: "message" }>).quote).toBeNull();
   });
 
+  it("draws a message that tasks several agents once, and reads its copy's marker from the tools' JSON", () => {
+    seq = 0;
+    const first = entry({ text: "@claude @hermes review", task: { to: "claude", session: null } });
+    const copy = entry({ text: "@claude @hermes review", task: { to: "hermes", session: null }, fanoutOf: first.seq });
+    const reply = entry({ author: { kind: "agent", id: "agent:hermes", name: "hermes" }, replyTo: copy.seq, text: "Looks good" });
+    const items = foldThread([first, copy, update(copy.seq, "working"), reply]);
+    expect(items.map((i) => i.type)).toEqual(["task", "message"]);
+    expect((items[1] as Extract<(typeof items)[number], { type: "message" }>).entry.text).toBe("Looks good");
+    const page = threadPageFromTool({
+      entries: [{ seq: 3, kind: "message", author: { kind: "person", id: "a", name: "A" }, text: "x", task: { to: "hermes" }, fanout_of: 2 }, { seq: 2, kind: "message", author: { kind: "person", id: "a", name: "A" }, text: "x" }],
+    });
+    expect(page.entries.find((e) => e.seq === 3)?.fanoutOf).toBe(2);
+    expect(page.entries.find((e) => e.seq === 2)?.fanoutOf).toBeUndefined();
+  });
+
   it("keeps a task queued until it is picked up, and shows a failure", () => {
     seq = 0;
     const queued = entry({ task: { to: "claude", session: null } });

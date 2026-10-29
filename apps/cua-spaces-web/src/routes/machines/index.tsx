@@ -509,6 +509,9 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
   // A switch is read-only on another machine: dimmed when it can't be
   // reached at all (offline), plain with a note when it is.
   const dim = (t: MachinesViewToggle) => !t.editable && !m.togglesNote;
+  // Another machine's Space limit, read-only: its host reports it with its other limits.
+  const spaceLimit = !m.current ? row?.limits?.find((l) => l.resource === "spaces" && l.limit > 0)?.limit : undefined;
+  const helpOf = (t: MachinesViewToggle) => (t.id === "spaces" && t.on && spaceLimit ? `Spaces can be created here (up to ${spaceLimit})` : t.help);
 
   // Its shared desktop first, then its Spaces, all drawn as Space rows.
   const rows: { id: string; name: string; os: string; status: string; running: boolean; label?: string }[] = [...(m.desktop ? [m.desktop] : []), ...m.spaces];
@@ -565,7 +568,9 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
               <div className="text-[13px] font-medium" id={`toggle-${t.id}`}>
                 {t.label}
               </div>
-              <div className="mt-px text-xs text-muted-foreground">{t.help}</div>
+              <div className="mt-px text-xs text-muted-foreground" data-machine-toggle-help={t.id}>
+                {helpOf(t)}
+              </div>
             </div>
             <Switch
               checked={t.on}

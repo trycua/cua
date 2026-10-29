@@ -67,6 +67,10 @@ if launchArgs.first == "preflight-permissions" {
 // `CUA_ENV=staging`: this process and the daemon use the staging home (a
 // Local build already settled its three variables above).
 TargetEnvironment.pin()
+// Where the browser's sign-in page says to go back to (the SDK reads it). Set
+// here, once, before any other thread runs: changing the environment later
+// races the threads that read it (CUA-2705).
+setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
 
 // Teleport, the Cua Volume, persistent agents and the Keyvault for every
 // runtime the SDK builds in this process (the Cua Spaces extensions).

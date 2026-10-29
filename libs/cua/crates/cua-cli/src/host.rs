@@ -192,7 +192,13 @@ pub enum HostCmd {
   cua host config
   # Stop sharing this desktop; keep providing Spaces
   cua host config --desktop off --provide-spaces on
-  cua host config --max-spaces 6")]
+  cua host config --max-spaces 6
+  # Give the Spaces other machines create here at most 32 GB of memory and
+  # 200 GB of disk in total, and stop each after 8 hours (0: no limit)
+  cua host config --max-memory 32 --max-disk 200 --max-run-time 480
+  # Keep no copies of public git repositories on this machine, or at most 2 GB
+  cua host config --repo-cache off
+  cua host config --repo-cache on --repo-cache-size 2")]
     Config {
         /// Share this computer's own desktop: on | off.
         #[arg(long, value_parser = ["on", "off"])]
@@ -206,7 +212,33 @@ pub enum HostCmd {
         /// macOS VMs at once, 0 to 2 (Apple's license allows two per Mac).
         #[arg(long)]
         max_macos_vms: Option<u32>,
+        /// Memory in GB the Spaces other machines create here may use in
+        /// total (0: no limit).
+        #[arg(long, value_name = "GB")]
+        max_memory: Option<u32>,
+        /// Disk in GB the Spaces other machines create here may use in
+        /// total (0: no limit).
+        #[arg(long, value_name = "GB")]
+        max_disk: Option<u32>,
+        /// Minutes a Space created here by another machine may run before
+        /// it is stopped (0: no limit).
+        #[arg(long, value_name = "MINUTES")]
+        max_run_time: Option<u32>,
+        /// The repo cache: on | off. It keeps verified copies of public git
+        /// repositories on this machine so a repeat `git clone` in a Space
+        /// starts from one (never private repositories, never anything off
+        /// this machine's disk).
+        #[arg(long, value_parser = ["on", "off"])]
+        repo_cache: Option<String>,
+        /// The most disk the repo cache may use, in GB (`auto`: the smaller
+        /// of 5 GB and a tenth of the free disk). The least recently used
+        /// repositories go first.
+        #[arg(long, value_name = "GB")]
+        repo_cache_size: Option<String>,
     },
+    /// What the repo cache holds, and empty it.
+    #[command(subcommand)]
+    Cache(HostCacheCmd),
     /// Show whether this computer is set up, the service, and who is
     /// connected.
     #[command(after_help = "Examples:
@@ -2021,6 +2053,38 @@ fn render_settings(s: &HostStatus, out: &mut dyn Write) {
                 }
             ),
         );
+        let gb = |used: u32, max: u32, total: u32| {
+            let of = if total > 0 {
+                format!(" (this machine has {total} GB)")
+            } else {
+                String::new()
+            };
+            if max == 0 {
+                format!("{used} GB in use, no limit{of}")
+            } else {
+                format!("{used} of {max} GB{of}")
+            }
+        };
+        line(
+            out,
+            format!(
+                "  memory for those Spaces: {}",
+                gb(s.used_memory_gb, s.max_memory_gb, s.total_memory_gb)
+            ),
+        );
+        line(
+            out,
+            format!(
+                "  disk for those Spaces: {}",
+                gb(s.used_disk_gb, s.max_disk_gb, s.total_disk_gb)
+            ),
+        );
+        if s.max_run_minutes > 0 {
+            line(
+                out,
+                format!("  each Space stops after {} minutes", s.max_run_minutes),
+            );
+        }
     } else {
         line(out, "  provides Spaces: off");
     }
@@ -2152,6 +2216,30 @@ pub async fn run_host(
         RunnerKind::detect(),
     )
     .await
+}
+
+/// `cua host cache`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum HostCacheCmd {
+    /// What the repo cache holds: repositories, size and what the last week
+    /// saved.
+    #[command(after_help = "Examples:
+  cua host cache status")]
+    Status,
+    /// Copy one public repository into the cache now, instead of when a Space
+    /// first clones it (or bring a copy up to date). A repository that needs
+    /// a sign-in is never cached.
+    #[command(after_help = "Examples:
+  cua host cache fill https://github.com/vitejs/vite")]
+    Fill {
+        /// The repository's `https` address.
+        url: String,
+    },
+    /// Delete every repository the cache holds. They are copied again the
+    /// next time a Space clones them.
+    #[command(after_help = "Examples:
+  cua host cache clear")]
+    Clear,
 }
 
 /// [`run_host`] with an explicit stderr stream (warnings under `--json`) and
@@ -2469,15 +2557,36 @@ pub async fn run_host_to(
             provide_spaces,
             max_spaces,
             max_macos_vms,
+            max_memory,
+            max_disk,
+            max_run_time,
+            repo_cache,
+            repo_cache_size,
         } => {
             let on = |v: Option<String>| v.map(|v| v == "on");
+            let repo_flags = repo_cache.is_some() || repo_cache_size.is_some();
+            if repo_flags {
+                crate::repo_cache_cmd::set(
+                    home,
+                    repo_cache.as_deref(),
+                    repo_cache_size.as_deref(),
+                )?;
+            }
             let change = cua_host::HostSettingsChange {
                 share_desktop: on(desktop),
                 provide_spaces: on(provide_spaces),
                 max_spaces,
                 max_macos_vms,
+                max_memory_gb: max_memory,
+                max_disk_gb: max_disk,
+                max_run_minutes: max_run_time,
                 cua_bin: None,
             };
+            if repo_flags && change == cua_host::HostSettingsChange::default() {
+                // Only the repo cache changed: that needs no host setup.
+                crate::repo_cache_cmd::status(home, json, out);
+                return Ok(0);
+            }
             let s = if change == cua_host::HostSettingsChange::default() {
                 host.status().await.map_err(host_err)?
             } else {
@@ -2490,9 +2599,19 @@ pub async fn run_host_to(
                 return Ok(1);
             } else {
                 render_settings(&s, out);
+                for l in crate::repo_cache_cmd::lines(&crate::repo_cache_cmd::cache_for(home)) {
+                    line(out, l);
+                }
                 render_provided(&s, now_ms(), out);
             }
         }
+        HostCmd::Cache(cmd) => match cmd {
+            HostCacheCmd::Status => crate::repo_cache_cmd::status(home, json, out),
+            HostCacheCmd::Clear => crate::repo_cache_cmd::clear(home, json, out),
+            HostCacheCmd::Fill { url } => {
+                return crate::repo_cache_cmd::fill(home, &url, json, out).await;
+            }
+        },
         HostCmd::Stop => emit(&host.stop_sharing().await.map_err(host_err)?, json, out)?,
         HostCmd::Start => emit(&host.start_sharing().await.map_err(host_err)?, json, out)?,
         HostCmd::Share {

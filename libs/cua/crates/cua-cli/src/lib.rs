@@ -56,6 +56,7 @@ pub mod onboard;
 mod persistent_cmd;
 pub mod prewarm;
 mod providers;
+mod repo_cache_cmd;
 mod resources_view;
 mod risky;
 mod runs;

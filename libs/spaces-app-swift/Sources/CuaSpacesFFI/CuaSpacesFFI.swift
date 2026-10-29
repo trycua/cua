@@ -4435,6 +4435,10 @@ public struct AppAgentKeyInput: Equatable, Hashable {
      * A sign-in past its expiry: not used by any run until reconnected.
      */
     public var expired: Bool
+    /**
+     * A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+     */
+    public var label: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4453,12 +4457,16 @@ public struct AppAgentKeyInput: Equatable, Hashable {
          */addedMs: UInt64,
         /**
          * A sign-in past its expiry: not used by any run until reconnected.
-         */expired: Bool) {
+         */expired: Bool,
+        /**
+         * A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+         */label: String?) {
         self.provider = provider
         self.env = env
         self.last4 = last4
         self.addedMs = addedMs
         self.expired = expired
+        self.label = label
     }
 
 
@@ -4481,7 +4489,8 @@ public struct FfiConverterTypeAppAgentKeyInput: FfiConverterRustBuffer {
                 env: FfiConverterString.read(from: &buf),
                 last4: FfiConverterString.read(from: &buf),
                 addedMs: FfiConverterUInt64.read(from: &buf),
-                expired: FfiConverterBool.read(from: &buf)
+                expired: FfiConverterBool.read(from: &buf),
+                label: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -4491,6 +4500,7 @@ public struct FfiConverterTypeAppAgentKeyInput: FfiConverterRustBuffer {
         FfiConverterString.write(value.last4, into: &buf)
         FfiConverterUInt64.write(value.addedMs, into: &buf)
         FfiConverterBool.write(value.expired, into: &buf)
+        FfiConverterOptionString.write(value.label, into: &buf)
     }
 }
 
@@ -19230,6 +19240,148 @@ public func FfiConverterTypeAppHostLimit_lower(_ value: AppHostLimit) -> RustBuf
 }
 
 
+public struct AppHostLimitRow: Equatable, Hashable {
+    /**
+     * `max-spaces`, `max-memory`, `max-disk` or `max-run`.
+     */
+    public var id: String
+    /**
+     * "Most Spaces at once".
+     */
+    public var label: String
+    /**
+     * One line under it.
+     */
+    public var help: String
+    /**
+     * The limit (0: no limit).
+     */
+    public var value: UInt32
+    /**
+     * What the number counts: `Spaces`, `GB` or `minutes`.
+     */
+    public var unit: String
+    /**
+     * What is in use now ("2 of 4 Spaces", "12 of 32 GB"; "2 Spaces" with
+     * no limit); none for a limit that is about time.
+     */
+    public var useText: String?
+    /**
+     * This machine's own total in `unit` (memory and disk), 0 when not
+     * known.
+     */
+    public var total: UInt32
+    /**
+     * Use is above the limit (it was lowered below what runs): nothing
+     * is stopped, new Spaces are refused.
+     */
+    public var over: Bool
+    /**
+     * "Over limit" while `over`.
+     */
+    public var overText: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `max-spaces`, `max-memory`, `max-disk` or `max-run`.
+         */id: String,
+        /**
+         * "Most Spaces at once".
+         */label: String,
+        /**
+         * One line under it.
+         */help: String,
+        /**
+         * The limit (0: no limit).
+         */value: UInt32,
+        /**
+         * What the number counts: `Spaces`, `GB` or `minutes`.
+         */unit: String,
+        /**
+         * What is in use now ("2 of 4 Spaces", "12 of 32 GB"; "2 Spaces" with
+         * no limit); none for a limit that is about time.
+         */useText: String?,
+        /**
+         * This machine's own total in `unit` (memory and disk), 0 when not
+         * known.
+         */total: UInt32,
+        /**
+         * Use is above the limit (it was lowered below what runs): nothing
+         * is stopped, new Spaces are refused.
+         */over: Bool,
+        /**
+         * "Over limit" while `over`.
+         */overText: String?) {
+        self.id = id
+        self.label = label
+        self.help = help
+        self.value = value
+        self.unit = unit
+        self.useText = useText
+        self.total = total
+        self.over = over
+        self.overText = overText
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppHostLimitRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppHostLimitRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppHostLimitRow {
+        return
+            try AppHostLimitRow(
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                help: FfiConverterString.read(from: &buf),
+                value: FfiConverterUInt32.read(from: &buf),
+                unit: FfiConverterString.read(from: &buf),
+                useText: FfiConverterOptionString.read(from: &buf),
+                total: FfiConverterUInt32.read(from: &buf),
+                over: FfiConverterBool.read(from: &buf),
+                overText: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppHostLimitRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.help, into: &buf)
+        FfiConverterUInt32.write(value.value, into: &buf)
+        FfiConverterString.write(value.unit, into: &buf)
+        FfiConverterOptionString.write(value.useText, into: &buf)
+        FfiConverterUInt32.write(value.total, into: &buf)
+        FfiConverterBool.write(value.over, into: &buf)
+        FfiConverterOptionString.write(value.overText, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppHostLimitRow_lift(_ buf: RustBuffer) throws -> AppHostLimitRow {
+    return try FfiConverterTypeAppHostLimitRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppHostLimitRow_lower(_ value: AppHostLimitRow) -> RustBuffer {
+    return FfiConverterTypeAppHostLimitRow.lower(value)
+}
+
+
 public struct AppHostLoad: Equatable, Hashable {
     /**
      * CPU it offers, in thousandths.
@@ -19423,6 +19575,11 @@ public struct AppHostPanelView: Equatable, Hashable {
      */
     public var limits: String?
     /**
+     * The limits as number rows (Settings, Sharing), while providing
+     * Spaces: most Spaces, memory and disk in total, longest running time.
+     */
+    public var limitRows: [AppHostLimitRow]
+    /**
      * "Spaces for your devices", while providing Spaces.
      */
     public var providedTitle: String?
@@ -19540,6 +19697,10 @@ public struct AppHostPanelView: Equatable, Hashable {
          * providing Spaces.
          */limits: String?,
         /**
+         * The limits as number rows (Settings, Sharing), while providing
+         * Spaces: most Spaces, memory and disk in total, longest running time.
+         */limitRows: [AppHostLimitRow],
+        /**
          * "Spaces for your devices", while providing Spaces.
          */providedTitle: String?,
         /**
@@ -19599,6 +19760,7 @@ public struct AppHostPanelView: Equatable, Hashable {
         self.accessWarning = accessWarning
         self.toggles = toggles
         self.limits = limits
+        self.limitRows = limitRows
         self.providedTitle = providedTitle
         self.provided = provided
         self.providedEmpty = providedEmpty
@@ -19648,6 +19810,7 @@ public struct FfiConverterTypeAppHostPanelView: FfiConverterRustBuffer {
                 accessWarning: FfiConverterOptionString.read(from: &buf),
                 toggles: FfiConverterSequenceTypeAppHostToggle.read(from: &buf),
                 limits: FfiConverterOptionString.read(from: &buf),
+                limitRows: FfiConverterSequenceTypeAppHostLimitRow.read(from: &buf),
                 providedTitle: FfiConverterOptionString.read(from: &buf),
                 provided: FfiConverterSequenceTypeAppHostAccessRow.read(from: &buf),
                 providedEmpty: FfiConverterOptionString.read(from: &buf),
@@ -19683,6 +19846,7 @@ public struct FfiConverterTypeAppHostPanelView: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.accessWarning, into: &buf)
         FfiConverterSequenceTypeAppHostToggle.write(value.toggles, into: &buf)
         FfiConverterOptionString.write(value.limits, into: &buf)
+        FfiConverterSequenceTypeAppHostLimitRow.write(value.limitRows, into: &buf)
         FfiConverterOptionString.write(value.providedTitle, into: &buf)
         FfiConverterSequenceTypeAppHostAccessRow.write(value.provided, into: &buf)
         FfiConverterOptionString.write(value.providedEmpty, into: &buf)
@@ -20388,6 +20552,31 @@ public struct AppHostState: Equatable, Hashable {
      */
     public var maxMacosVms: UInt32
     /**
+     * Memory the Spaces other machines create here may use in total, in GB
+     * (0: no limit).
+     */
+    public var maxMemoryGb: UInt32
+    /**
+     * Disk the Spaces other machines create here may use in total, in GB
+     * (0: no limit).
+     */
+    public var maxDiskGb: UInt32
+    /**
+     * How long a Space created here by another machine may run, in minutes
+     * (0: no limit).
+     */
+    public var maxRunMinutes: UInt32
+    /**
+     * What those Spaces were given now, in GB.
+     */
+    public var usedMemoryGb: UInt32
+    public var usedDiskGb: UInt32
+    /**
+     * This machine's own memory and disk in GB (0: not known).
+     */
+    public var totalMemoryGb: UInt32
+    public var totalDiskGb: UInt32
+    /**
      * The Spaces this machine provides now.
      */
     public var providedSpaces: [AppHostProvidedSpace]
@@ -20480,6 +20669,24 @@ public struct AppHostState: Equatable, Hashable {
          * macOS VMs at once (at most two; 0 off a Mac).
          */maxMacosVms: UInt32,
         /**
+         * Memory the Spaces other machines create here may use in total, in GB
+         * (0: no limit).
+         */maxMemoryGb: UInt32,
+        /**
+         * Disk the Spaces other machines create here may use in total, in GB
+         * (0: no limit).
+         */maxDiskGb: UInt32,
+        /**
+         * How long a Space created here by another machine may run, in minutes
+         * (0: no limit).
+         */maxRunMinutes: UInt32,
+        /**
+         * What those Spaces were given now, in GB.
+         */usedMemoryGb: UInt32, usedDiskGb: UInt32,
+        /**
+         * This machine's own memory and disk in GB (0: not known).
+         */totalMemoryGb: UInt32, totalDiskGb: UInt32,
+        /**
          * The Spaces this machine provides now.
          */providedSpaces: [AppHostProvidedSpace],
         /**
@@ -20522,6 +20729,13 @@ public struct AppHostState: Equatable, Hashable {
         self.provideSpaces = provideSpaces
         self.maxSpaces = maxSpaces
         self.maxMacosVms = maxMacosVms
+        self.maxMemoryGb = maxMemoryGb
+        self.maxDiskGb = maxDiskGb
+        self.maxRunMinutes = maxRunMinutes
+        self.usedMemoryGb = usedMemoryGb
+        self.usedDiskGb = usedDiskGb
+        self.totalMemoryGb = totalMemoryGb
+        self.totalDiskGb = totalDiskGb
         self.providedSpaces = providedSpaces
         self.spacesAudit = spacesAudit
         self.spacesAuditError = spacesAuditError
@@ -20566,6 +20780,13 @@ public struct FfiConverterTypeAppHostState: FfiConverterRustBuffer {
                 provideSpaces: FfiConverterBool.read(from: &buf),
                 maxSpaces: FfiConverterUInt32.read(from: &buf),
                 maxMacosVms: FfiConverterUInt32.read(from: &buf),
+                maxMemoryGb: FfiConverterUInt32.read(from: &buf),
+                maxDiskGb: FfiConverterUInt32.read(from: &buf),
+                maxRunMinutes: FfiConverterUInt32.read(from: &buf),
+                usedMemoryGb: FfiConverterUInt32.read(from: &buf),
+                usedDiskGb: FfiConverterUInt32.read(from: &buf),
+                totalMemoryGb: FfiConverterUInt32.read(from: &buf),
+                totalDiskGb: FfiConverterUInt32.read(from: &buf),
                 providedSpaces: FfiConverterSequenceTypeAppHostProvidedSpace.read(from: &buf),
                 spacesAudit: FfiConverterSequenceTypeAppHostSpacesAudit.read(from: &buf),
                 spacesAuditError: FfiConverterOptionString.read(from: &buf),
@@ -20596,6 +20817,13 @@ public struct FfiConverterTypeAppHostState: FfiConverterRustBuffer {
         FfiConverterBool.write(value.provideSpaces, into: &buf)
         FfiConverterUInt32.write(value.maxSpaces, into: &buf)
         FfiConverterUInt32.write(value.maxMacosVms, into: &buf)
+        FfiConverterUInt32.write(value.maxMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.maxDiskGb, into: &buf)
+        FfiConverterUInt32.write(value.maxRunMinutes, into: &buf)
+        FfiConverterUInt32.write(value.usedMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.usedDiskGb, into: &buf)
+        FfiConverterUInt32.write(value.totalMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.totalDiskGb, into: &buf)
         FfiConverterSequenceTypeAppHostProvidedSpace.write(value.providedSpaces, into: &buf)
         FfiConverterSequenceTypeAppHostSpacesAudit.write(value.spacesAudit, into: &buf)
         FfiConverterOptionString.write(value.spacesAuditError, into: &buf)
@@ -74269,6 +74497,31 @@ fileprivate struct FfiConverterSequenceTypeAppHostLimit: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppHostLimit.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppHostLimitRow: FfiConverterRustBuffer {
+    typealias SwiftType = [AppHostLimitRow]
+
+    public static func write(_ value: [AppHostLimitRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppHostLimitRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppHostLimitRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppHostLimitRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppHostLimitRow.read(from: &buf))
         }
         return seq
     }

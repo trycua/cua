@@ -295,7 +295,7 @@ fn cant_wake(
         detail,
         connect_label: connect.then(|| format!("Connect {name}")),
         connecting_label: if plan.app_token {
-            "Approve in your browser…".into()
+            "Reading your Claude Code sign-in…".into()
         } else if plan.device {
             "Enter the code in your browser…".into()
         } else {
@@ -496,6 +496,7 @@ mod tests {
                             last4: "abcd".into(),
                             added_ms: 1,
                             expired: false,
+                            label: None,
                         })
                         .collect(),
                     ..Default::default()
@@ -575,7 +576,7 @@ mod tests {
         assert_eq!(c.connect_label.as_deref(), Some("Connect Claude Code"));
         assert_eq!(c.open_label.as_deref(), Some("Claude Code settings"));
         assert_eq!(c.retry_label, "Send again");
-        assert_eq!(c.connecting_label, "Approve in your browser…");
+        assert_eq!(c.connecting_label, "Reading your Claude Code sign-in…");
         assert!(c.detail.contains("sign-in to Anthropic"));
 
         // A member runs on its owner's keys: woken, never checked against this device's.

@@ -118,6 +118,14 @@ const AUTH_TEXTS: &[AuthText] = &[
         provider: None,
         reply: true,
     },
+    // Hermes' sign-in variant of the same sentence ("Anthropic rejected your sign-in, so the
+    // model can't be reached"), from `agent/turn_failure_copy.py`.
+    AuthText {
+        harness: "hermes",
+        marker: "rejected your sign-in",
+        provider: None,
+        reply: true,
+    },
     AuthText {
         harness: "hermes",
         marker: "hermes setup",
@@ -230,6 +238,7 @@ fn refused(text: &str) -> bool {
     let t = text.to_ascii_lowercase();
     [
         "rejected your api key",
+        "rejected your sign-in",
         "invalid x-api-key",
         "invalid api key",
         "incorrect api key",

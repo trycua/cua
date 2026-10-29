@@ -129,6 +129,12 @@ struct BridgeContractTests {
         }
         func cloudTool(_ tool: String, _ args: [String: Any]) async throws -> Any { try await inner.cloudTool(tool, args) }
 
+        func repoCacheStatus() async -> RepoCacheState? { await inner.repoCacheStatus() }
+        func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? {
+            try await inner.setRepoCache(enabled: enabled, size: size)
+        }
+        func clearRepoCache() async throws -> RepoCacheState? { try await inner.clearRepoCache() }
+
         func rows() async throws -> [AppSpaceRow] { try await inner.rows() }
         func create(_ args: AppCreateSpaceArgs, createId: String,
                     progress: @escaping @Sendable (SpaceCreateProgress) -> Void) async throws -> String {
@@ -277,6 +283,7 @@ struct BridgeContractTests {
             ("spaces.sendFiles", ["spaceId": space, "paths": ["/tmp/cua-contract-notes.txt"]]),
             ("settings.get", [:]), ("settings.choose", ["row": "telemetry", "option": "off"]),
             ("runtimes.check", ["kind": "container", "path": "/usr/local/bin/docker"]), ("runtimes.browse", ["kind": "container"]),
+            ("repoCache.get", [:]), ("repoCache.set", ["enabled": true, "sizeGb": 2]), ("repoCache.clear", [:]),
             ("settings.update", ["tips": ["off": false, "done": ["try-agent"]]]),
             ("keyvault.get", [:]),
             ("keyvault.lock", ["ids": ["kv-1"]]),
@@ -303,7 +310,7 @@ struct BridgeContractTests {
         "spaces.deleteMany": "removes fixture Spaces the later cases use; BulkDeleteTests covers it",
         "spaces.leave": "changes the fixture list the later cases use; BulkDeleteTests covers it",
         "spaces.add": "needs a running cua-spacesd at the address",
-        "host.setUp": "installs the host service", "host.action": "changes the host service",
+        "host.setUp": "installs the host service", "host.action": "changes the host service", "host.limits": "changes the host settings (HostBridgeTests covers hostLimitsChangeThroughTheHostModel)",
         "host.openSettings": "opens System Settings",
         "host.joinWithCode": "runs the bundled cua; JoinWithCodeTests covers the arguments and bad args",
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",

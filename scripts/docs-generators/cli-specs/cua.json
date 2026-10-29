@@ -388,7 +388,7 @@
     },
     {
      "abstract": "Install the default cua skills and configure the cua MCP server",
-     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
+     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -455,7 +455,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: Claude Code's `claude setup-token` (one browser approval) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). The agent's own sign-in files are never read or changed",
+       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
        "hidden": false,
        "name": "sign-in",
        "repeatable": false,
@@ -662,7 +662,7 @@
     },
     {
      "abstract": "Install the default cua skills and configure the cua MCP server",
-     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
+     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -729,7 +729,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: Claude Code's `claude setup-token` (one browser approval) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). The agent's own sign-in files are never read or changed",
+       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connectors). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
        "hidden": false,
        "name": "sign-in",
        "repeatable": false,
@@ -13405,7 +13405,7 @@
     },
     {
      "abstract": "Show or change what this computer shares: its own desktop, and whether it creates Spaces for your other devices",
-     "after_help": "Examples:\n  cua host config\n  # Stop sharing this desktop; keep providing Spaces\n  cua host config --desktop off --provide-spaces on\n  cua host config --max-spaces 6",
+     "after_help": "Examples:\n  cua host config\n  # Stop sharing this desktop; keep providing Spaces\n  cua host config --desktop off --provide-spaces on\n  cua host config --max-spaces 6\n  # Give the Spaces other machines create here at most 32 GB of memory and\n  # 200 GB of disk in total, and stop each after 8 hours (0: no limit)\n  cua host config --max-memory 32 --max-disk 200 --max-run-time 480\n  # Keep no copies of public git repositories on this machine, or at most 2 GB\n  cua host config --repo-cache off\n  cua host config --repo-cache on --repo-cache-size 2",
      "aliases": [],
      "arguments": [],
      "flags": [],
@@ -13482,11 +13482,161 @@
        "takes_value": true,
        "type": "integer",
        "value_name": "MAX_MACOS_VMS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Memory in GB the Spaces other machines create here may use in total (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-memory",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "GB"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Disk in GB the Spaces other machines create here may use in total (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-disk",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "GB"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Minutes a Space created here by another machine may run before it is stopped (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-run-time",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "MINUTES"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The repo cache: on | off. It keeps verified copies of public git repositories on this machine so a repeat `git clone` in a Space starts from one (never private repositories, never anything off this machine's disk)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "repo-cache",
+       "possible_values": [
+        "on",
+        "off"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "on | off",
+       "value_name": "REPO_CACHE"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The most disk the repo cache may use, in GB (`auto`: the smaller of 5 GB and a tenth of the free disk). The least recently used repositories go first",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "repo-cache-size",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "GB"
       }
      ],
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua host config [OPTIONS]"
+    },
+    {
+     "abstract": "What the repo cache holds, and empty it",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "cache",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [
+      {
+       "abstract": "What the repo cache holds: repositories, size and what the last week saved",
+       "after_help": "Examples:\n  cua host cache status",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "status",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache status [OPTIONS]"
+      },
+      {
+       "abstract": "Copy one public repository into the cache now, instead of when a Space first clones it (or bring a copy up to date). A repository that needs a sign-in is never cached",
+       "after_help": "Examples:\n  cua host cache fill https://github.com/vitejs/vite",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "The repository's `https` address",
+         "hidden": false,
+         "is_optional": false,
+         "name": "URL",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "fill",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache fill [OPTIONS] <URL>"
+      },
+      {
+       "abstract": "Delete every repository the cache holds. They are copied again the next time a Space clones them",
+       "after_help": "Examples:\n  cua host cache clear",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "clear",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache clear [OPTIONS]"
+      }
+     ],
+     "usage": "cua host cache [OPTIONS] <COMMAND>"
     },
     {
      "abstract": "Show whether this computer is set up, the service, and who is connected",

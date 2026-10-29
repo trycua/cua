@@ -77,6 +77,9 @@ export const WEBKIT_PAGE_OPS = [
   "loginItem.openSettings",
   "runtimes.check",
   "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -104,6 +107,7 @@ export const WEBKIT_PAGE_OPS = [
   "host.setUp",
   "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
 ] as const satisfies readonly OpName[];
 
@@ -260,6 +264,9 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "runtimes.check": call("runtimes.check"),
     // The file panel waits for the person: no timeout.
     "runtimes.browse": async (args) => (await request("runtimes.browse", { ...args }, null)) as { path: string | null },
+    "repoCache.get": call("repoCache.get"),
+    "repoCache.set": call("repoCache.set"),
+    "repoCache.clear": call("repoCache.clear"),
     "devices.get": call("devices.get"),
     "devices.enroll": call("devices.enroll"),
     "devices.checkEnrolled": async () => Boolean(await request("devices.checkEnrolled")),
@@ -301,6 +308,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "host.setUp": host("host.setUp"),
     "host.joinWithCode": ({ code, relay }) => request("host.joinWithCode", { code, relay: relay ?? null }),
     "host.action": host("host.action"),
+    "host.limits": host("host.limits"),
     "host.openSettings": async ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");
       await request("host.openSettings", { url });

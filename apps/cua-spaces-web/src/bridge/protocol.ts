@@ -399,6 +399,7 @@ export const OPERATIONS = [
   "host.setUp",
   "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
   ...STARTUP_OPERATIONS,
 ] as const satisfies readonly OpName[];

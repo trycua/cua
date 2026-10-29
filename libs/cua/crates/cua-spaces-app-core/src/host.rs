@@ -492,6 +492,28 @@ pub struct HostState {
     /// macOS VMs at once (at most two; 0 off a Mac).
     #[serde(default)]
     pub max_macos_vms: u32,
+    /// Memory the Spaces other machines create here may use in total, in GB
+    /// (0: no limit).
+    #[serde(default)]
+    pub max_memory_gb: u32,
+    /// Disk the Spaces other machines create here may use in total, in GB
+    /// (0: no limit).
+    #[serde(default)]
+    pub max_disk_gb: u32,
+    /// How long a Space created here by another machine may run, in minutes
+    /// (0: no limit).
+    #[serde(default)]
+    pub max_run_minutes: u32,
+    /// What those Spaces were given now, in GB.
+    #[serde(default)]
+    pub used_memory_gb: u32,
+    #[serde(default)]
+    pub used_disk_gb: u32,
+    /// This machine's own memory and disk in GB (0: not known).
+    #[serde(default)]
+    pub total_memory_gb: u32,
+    #[serde(default)]
+    pub total_disk_gb: u32,
     /// The Spaces this machine provides now.
     #[serde(default)]
     pub provided_spaces: Vec<HostProvidedSpace>,
@@ -711,6 +733,38 @@ pub fn setting_change(id: HostActionId) -> Option<HostSettingChange> {
         share_desktop,
         provide_spaces,
     })
+}
+
+/// One limit on the Spaces other machines create here, drawn as a number
+/// row under the switch (Settings, Sharing).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostLimitRow {
+    /// `max-spaces`, `max-memory`, `max-disk` or `max-run`.
+    pub id: String,
+    /// "Most Spaces at once".
+    pub label: String,
+    /// One line under it.
+    pub help: String,
+    /// The limit (0: no limit).
+    pub value: u32,
+    /// What the number counts: `Spaces`, `GB` or `minutes`.
+    pub unit: String,
+    /// What is in use now ("2 of 4 Spaces", "12 of 32 GB"; "2 Spaces" with
+    /// no limit); none for a limit that is about time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_text: Option<String>,
+    /// This machine's own total in `unit` (memory and disk), 0 when not
+    /// known.
+    #[serde(default)]
+    pub total: u32,
+    /// Use is above the limit (it was lowered below what runs): nothing
+    /// is stopped, new Spaces are refused.
+    #[serde(default)]
+    pub over: bool,
+    /// "Over limit" while `over`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub over_text: Option<String>,
 }
 
 /// One of the two settings, drawn as a switch.
@@ -1033,6 +1087,10 @@ pub struct HostPanelView {
     /// providing Spaces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<String>,
+    /// The limits as number rows (Settings, Sharing), while providing
+    /// Spaces: most Spaces, memory and disk in total, longest running time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limit_rows: Vec<HostLimitRow>,
     /// "Spaces for your devices", while providing Spaces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provided_title: Option<String>,
@@ -1161,6 +1219,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         access_warning: None,
         toggles: vec![],
         limits: None,
+        limit_rows: vec![],
         provided_title: None,
         provided: vec![],
         provided_empty: None,
@@ -1322,6 +1381,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
     ];
     if s.provide_spaces {
         v.limits = Some(limits_line(s.max_spaces, s.max_macos_vms));
+        v.limit_rows = limit_rows(s);
         v.provided_title = Some("Spaces from your other machines".into());
         v.provided = provided_rows(&s.provided_spaces);
         v.provided_empty = s.provided_spaces.is_empty().then(|| "None yet".into());
@@ -1430,6 +1490,86 @@ pub const NOTHING_TO_SHARE_HELP: &str = "Turn on one of the two switches to shar
 pub const OTHER_ACCOUNT_NOTICE: &str = "This Mac was set up with another Cua \
 account, so sharing is paused. Share it with the account you are signed in to \
 now; its name and settings stay.";
+
+/// The limit rows: most Spaces, memory and disk in total, longest running
+/// time, each with what is in use now and "Over limit" when a limit was
+/// lowered below it. No limit is `0`.
+pub fn limit_rows(s: &HostState) -> Vec<HostLimitRow> {
+    let over = |used: u32, limit: u32| limit > 0 && used > limit;
+    let use_line = |used: u32, limit: u32, unit: &str| -> String {
+        let spaces = unit == "Spaces";
+        if limit == 0 {
+            if spaces && used == 1 {
+                "1 Space".to_string()
+            } else {
+                format!("{used} {unit}")
+            }
+        } else if spaces && limit == 1 {
+            format!("{used} of 1 Space")
+        } else {
+            format!("{used} of {limit} {unit}")
+        }
+    };
+    let row = |id: &str,
+               label: &str,
+               help: &str,
+               value: u32,
+               unit: &str,
+               used: Option<u32>,
+               total: u32| {
+        let o = used.is_some_and(|u| over(u, value));
+        HostLimitRow {
+            id: id.into(),
+            label: label.into(),
+            help: help.into(),
+            value,
+            unit: unit.into(),
+            use_text: used.map(|u| use_line(u, value, unit)),
+            total,
+            over: o,
+            over_text: o.then(|| "Over limit".into()),
+        }
+    };
+    let spaces_used = u32::try_from(s.provided_spaces.len()).unwrap_or(u32::MAX);
+    vec![
+        row(
+            "max-spaces",
+            "Most Spaces at once",
+            "Spaces other machines create here. Yours don\u{2019}t count.",
+            s.max_spaces,
+            "Spaces",
+            Some(spaces_used),
+            0,
+        ),
+        row(
+            "max-memory",
+            "Most memory in total",
+            "What the Spaces other machines create here may use together.",
+            s.max_memory_gb,
+            "GB",
+            Some(s.used_memory_gb),
+            s.total_memory_gb,
+        ),
+        row(
+            "max-disk",
+            "Most disk in total",
+            "What the Spaces other machines create here may use together.",
+            s.max_disk_gb,
+            "GB",
+            Some(s.used_disk_gb),
+            s.total_disk_gb,
+        ),
+        row(
+            "max-run",
+            "Longest a Space may run",
+            "A Space made here by another machine stops after this long. Empty: no limit.",
+            s.max_run_minutes,
+            "minutes",
+            None,
+            0,
+        ),
+    ]
+}
 
 /// "Up to 4 Spaces · 2 macOS VMs". The macOS part is for a Mac: a shell on
 /// another system drops it (the web UI's `limitsFor`).
@@ -2486,6 +2626,50 @@ mod tests {
         );
         assert_eq!(s.error.as_deref(), Some("bad thing"));
         assert!(!s.busy);
+    }
+
+    #[test]
+    fn the_limits_show_use_next_to_each_limit_and_over_limit_when_lowered() {
+        let mut s = host(true, true);
+        s.max_spaces = 4;
+        s.provided_spaces = vec![HostProvidedSpace::default(), HostProvidedSpace::default()];
+        s.max_memory_gb = 32;
+        s.used_memory_gb = 12;
+        s.total_memory_gb = 64;
+        s.total_disk_gb = 500;
+        let rows = limit_rows(&s);
+        let by = |id: &str| rows.iter().find(|r| r.id == id).unwrap().clone();
+        assert_eq!(by("max-spaces").use_text.as_deref(), Some("2 of 4 Spaces"));
+        assert_eq!(by("max-memory").use_text.as_deref(), Some("12 of 32 GB"));
+        assert_eq!((by("max-memory").total, by("max-disk").total), (64, 500));
+        // No limit: the use alone, no "of".
+        assert_eq!(by("max-disk").value, 0);
+        assert_eq!(by("max-disk").use_text.as_deref(), Some("0 GB"));
+        assert_eq!(by("max-run").use_text, None);
+        assert!(rows.iter().all(|r| !r.over && r.over_text.is_none()));
+        // Lowered below what runs: nothing stops, the row says so.
+        s.max_spaces = 1;
+        s.max_memory_gb = 8;
+        let rows = limit_rows(&s);
+        let r = rows.iter().find(|r| r.id == "max-spaces").unwrap();
+        assert!(r.over && r.over_text.as_deref() == Some("Over limit"));
+        assert_eq!(r.use_text.as_deref(), Some("2 of 1 Space"));
+        assert!(rows.iter().find(|r| r.id == "max-memory").unwrap().over);
+        // Equal is full, not over.
+        s.max_spaces = 2;
+        assert!(
+            !limit_rows(&s)
+                .iter()
+                .find(|r| r.id == "max-spaces")
+                .unwrap()
+                .over
+        );
+        // Never a middle dot or "device" wording in what the page shows.
+        let all: String = limit_rows(&s)
+            .iter()
+            .flat_map(|r| [r.label.clone(), r.help.clone(), r.unit.clone()])
+            .collect();
+        assert!(!all.contains('\u{b7}') && !all.contains("device"));
     }
 
     fn host(desktop: bool, provide: bool) -> HostState {

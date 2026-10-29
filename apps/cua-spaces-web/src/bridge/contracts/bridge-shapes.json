@@ -198,6 +198,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -1830,6 +1833,27 @@
           "type": "number"
         },
         "maxMacosVms": {
+          "type": "number"
+        },
+        "maxMemoryGb": {
+          "type": "number"
+        },
+        "maxDiskGb": {
+          "type": "number"
+        },
+        "maxRunMinutes": {
+          "type": "number"
+        },
+        "usedMemoryGb": {
+          "type": "number"
+        },
+        "usedDiskGb": {
+          "type": "number"
+        },
+        "totalMemoryGb": {
+          "type": "number"
+        },
+        "totalDiskGb": {
           "type": "number"
         },
         "recentAccess": {
@@ -3912,6 +3936,53 @@
         "targetEpoch"
       ]
     },
+    "RepoCacheView": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "repos": {
+          "type": "number"
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "capBytes": {
+          "type": "number"
+        },
+        "sizeSetting": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "week": {
+          "type": "string"
+        },
+        "hits": {
+          "type": "number"
+        },
+        "misses": {
+          "type": "number"
+        },
+        "secondsSaved": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "enabled",
+        "repos",
+        "bytes",
+        "capBytes",
+        "sizeSetting",
+        "summary",
+        "week",
+        "hits",
+        "misses",
+        "secondsSaved"
+      ]
+    },
     "RuntimeFix": {
       "type": "object",
       "properties": {
@@ -5569,6 +5640,12 @@
             "message",
             "retryable"
           ]
+        },
+        "fanoutOf": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -6249,6 +6326,48 @@
           "type": "number"
         },
         "maxMacosVms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxRunMinutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usedMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usedDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "totalMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "totalDiskGb": {
           "type": [
             "number",
             "null"
@@ -7791,6 +7910,9 @@
     "host.joinWithCode": {
       "$ref": "#/$defs/HostStatus"
     },
+    "host.limits": {
+      "$ref": "#/$defs/HostStatus"
+    },
     "host.openSettings": {
       "type": "null"
     },
@@ -8192,6 +8314,15 @@
         "reasons",
         "upgradeUrl"
       ]
+    },
+    "repoCache.clear": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.get": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.set": {
+      "$ref": "#/$defs/RepoCacheView"
     },
     "resources.get": {
       "type": [
@@ -9201,6 +9332,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -9270,6 +9404,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -9339,6 +9476,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -9408,6 +9548,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -9477,6 +9620,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -10204,6 +10350,16 @@
         }
       ]
     },
+    "host.limits": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "host.openSettings": {
       "type": "null"
     },
@@ -10580,6 +10736,15 @@
         "reasons",
         "upgradeUrl"
       ]
+    },
+    "repoCache.clear": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.get": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.set": {
+      "$ref": "#/$defs/RepoCacheView"
     },
     "resources.get": {
       "type": [

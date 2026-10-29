@@ -216,3 +216,31 @@ export type StorageAction =
 
 /** The Storage section, as `storage.section` returns it (id `storage`). */
 export type StorageSection = SettingsSection;
+
+/** What the repo cache holds and saved (`cua_sdk::RepoCacheStatus`; words and numbers only, never a repository name). */
+export interface RepoCacheView {
+  /** The cache is on (`cache.repos`). */
+  enabled: boolean;
+  /** Repositories held. */
+  repos: number;
+  /** What they take on disk, in bytes. */
+  bytes: number;
+  /** The size cap in force, in bytes. */
+  capBytes: number;
+  /** The size setting: `auto`, or a number of GB. */
+  sizeSetting: string;
+  /** `Repos: 3, 1.2 GB of 5 GB`. */
+  summary: string;
+  /** `Last week: 80% of clones came from the cache, about 2 minutes saved`. */
+  week: string;
+  hits: number;
+  misses: number;
+  secondsSaved: number;
+}
+
+/** A change to the repo cache (`repoCache.set`); a missing field keeps its value. */
+export interface RepoCacheChange {
+  enabled?: boolean;
+  /** GB; null: automatic (the smaller of 5 GB and a tenth of the free disk). */
+  sizeGb?: number | null;
+}

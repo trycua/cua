@@ -102,10 +102,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
         "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
-        "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
+        "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings",
         "settings.get", "settings.choose", "settings.update",
         // Settings, Advanced's runtime rows (WebUIBridge+Runtimes.swift).
-        "runtimes.check", "runtimes.browse",
+        "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear",
         "keyvault.get", "keyvault.lock", "keyvault.unlock",
         "keyvault.unlockVault", "keyvault.setup", "keyvault.setDisabled",
         "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
@@ -372,6 +372,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return settings()
         case "runtimes.check", "runtimes.browse":
             return try await runtimes(method, args)
+        case "repoCache.get", "repoCache.set", "repoCache.clear":
+            return try await repoCache(method, args)
         case "settings.choose":
             let row = try string(args, "row")
             // An empty option only for a runtime path ("Reset to detected").

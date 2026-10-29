@@ -432,6 +432,7 @@ function SpaceDetailPage() {
         <ThisMacCall
           spaceName={space.name}
           shared={!isUnsharedDesktop(space)}
+          live={thread}
           identity={session?.signedIn ? (session.account.identity ?? null) : null}
           facts={detail.facts}
           more={sections}

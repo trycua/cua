@@ -201,6 +201,12 @@ jobs:
         working-directory: apps/cua-spaces-macos
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-mac --format log --rerun-failed -- scripts/test.sh
+      # The bundled Cua Driver is checked against the size and SHA-256
+      # committed in cua-driver.release.json and the Cua team's signature;
+      # a mismatched, incomplete or unsigned download is refused.
+      - name: fetch-cua-driver.sh refuses a download that isn't the pinned release
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/fetch-cua-driver-test.sh
       # install-local.sh and uninstall-local.sh against a fake HOME and a fake
       # build: a Stable install stays byte-identical, a wrong bundle id is
       # refused. Needs no build, certificate or network.

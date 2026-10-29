@@ -9,7 +9,7 @@
 // runtimes, launch at login, usage data, the update channel, the
 // experiments, Welcome's "Show again", the coding agents (`model.agents`)
 // and the Keyvault's switches (`model.keyvault`).
-import type { AppLoginItemStatus, AppSettingsInput, AppTeamInput, AppTelemetryInput } from "../native/generated/index";
+import type { AppLoginItemStatus, AppSettingsInput, AppTeamInput, AppTelemetryInput, RepoCacheStatus } from "../native/generated/index";
 import type { AppModel } from "../model/app-model";
 import { words } from "../model/errors";
 import { bounded } from "../model/time";
@@ -20,6 +20,23 @@ import { Failure, type Handlers } from "./host";
 import { hostParts, type HostParts } from "./host-parts";
 import { encode } from "./value";
 import { cliSetting } from "./cli";
+
+/** The repo cache as the page reads it (`RepoCacheView`); the SDK's numbers are 64-bit. */
+function repoCacheView(s: RepoCacheStatus | null) {
+  if (!s) throw Failure.unsupported("The repo cache is not available in this build");
+  return {
+    enabled: s.enabled,
+    repos: s.repos,
+    bytes: Number(s.bytes),
+    capBytes: Number(s.capBytes),
+    sizeSetting: s.sizeSetting,
+    summary: s.summary,
+    week: s.week,
+    hits: s.hits,
+    misses: s.misses,
+    secondsSaved: Number(s.secondsSaved),
+  };
+}
 
 function telemetryInput(model: AppModel): AppTelemetryInput | undefined {
   try {
@@ -299,6 +316,26 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       if (!ctx.ui.chooseProgram) throw Failure.unsupported("This build has no file picker");
       return { path: (await ctx.ui.chooseProgram(caller.window)) ?? null };
     },
+    // Settings, General: the repo cache (the daemon's; the page shows its words).
+    "repoCache.get": async () => repoCacheView(await model.backend.repoCacheStatus()),
+    "repoCache.set": async (args) => {
+      const change: { enabled?: boolean; sizeGb?: number | null } = {};
+      if (args.enabled !== undefined) {
+        if (typeof args.enabled !== "boolean") throw Failure.badArgs("enabled: true or false");
+        change.enabled = args.enabled;
+      }
+      if (args.sizeGb !== undefined) {
+        const g = args.sizeGb;
+        if (g !== null && (typeof g !== "number" || !Number.isFinite(g) || g < 0 || g > 100_000)) throw Failure.badArgs("sizeGb: a number of GB, 0 or more, or null for automatic");
+        change.sizeGb = g;
+      }
+      try {
+        return repoCacheView(await model.backend.setRepoCache(change));
+      } catch (error) {
+        throw Failure.failed(words(error));
+      }
+    },
+    "repoCache.clear": async () => repoCacheView(await model.backend.clearRepoCache()),
     // The page's tips (`AppSettings.tips`), saved as given.
     "settings.update": (args) => {
       save(settingsUpdate(args));

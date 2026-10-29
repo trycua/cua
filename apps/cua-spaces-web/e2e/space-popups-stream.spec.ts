@@ -13,8 +13,9 @@
  * stream "running", and checks the last report for the viewer: still
  * visible, not occluded, the same size as before, with a hole where the
  * popup is (so the host cuts the video out there and keeps the rest playing),
- * and, under a modal dialog, non-interactive (the dialog takes the keys and
- * clicks).
+ * and, under a modal dialog (the dimmed layer), hidden and non-interactive:
+ * the native layer cannot sit under the dialog, so the host draws nothing and
+ * takes no pointer or keys until it closes (CUA-2758).
  */
 
 import type { Page } from "@playwright/test";
@@ -89,13 +90,15 @@ test("every popup on a Space's page leaves the stream drawn, the same size, with
     expect(box, name).not.toBeNull();
     const now = await viewer(page);
     const over = overlaps(box, before.rect);
-    if (over) {
+    if (over && !modal) {
       await expect
         .poll(async () => ((await viewer(page)).holes ?? []).some((h) => overlaps(h, box)), { message: `${name}: a hole where the popup is`, timeout: 5_000 })
         .toBe(true);
     }
     const drawn = await viewer(page);
-    expect(drawn.occluded, `${name}: not hidden`).toBe(false);
+    // A modal dialog hides the video (no hole, nothing drawn over its edge); anything else leaves it drawn.
+    await expect.poll(async () => (await viewer(page)).occluded, { message: `${name}: ${modal ? "hidden under a modal dialog" : "not hidden"}`, timeout: 5_000 }).toBe(modal);
+    if (modal) expect((await viewer(page)).holes ?? [], `${name}: no hole to leak through`).toEqual([]);
     expect(drawn.visible, `${name}: still visible`).toBe(true);
     expect({ w: drawn.rect.width, h: drawn.rect.height }, `${name}: not resized`).toEqual({ w: before.rect.width, h: before.rect.height });
     expect({ x: drawn.rect.x, y: drawn.rect.y }, `${name}: not moved`).toEqual({ x: before.rect.x, y: before.rect.y });

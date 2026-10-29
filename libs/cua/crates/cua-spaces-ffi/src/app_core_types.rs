@@ -6671,6 +6671,8 @@ pub struct AppAgentKeyInput {
     pub added_ms: u64,
     /// A sign-in past its expiry: not used by any run until reconnected.
     pub expired: bool,
+    /// A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+    pub label: Option<String>,
 }
 
 /// What the section shows.
@@ -7639,6 +7641,21 @@ pub struct AppHostState {
     pub max_spaces: u32,
     /// macOS VMs at once (at most two; 0 off a Mac).
     pub max_macos_vms: u32,
+    /// Memory the Spaces other machines create here may use in total, in GB
+    /// (0: no limit).
+    pub max_memory_gb: u32,
+    /// Disk the Spaces other machines create here may use in total, in GB
+    /// (0: no limit).
+    pub max_disk_gb: u32,
+    /// How long a Space created here by another machine may run, in minutes
+    /// (0: no limit).
+    pub max_run_minutes: u32,
+    /// What those Spaces were given now, in GB.
+    pub used_memory_gb: u32,
+    pub used_disk_gb: u32,
+    /// This machine's own memory and disk in GB (0: not known).
+    pub total_memory_gb: u32,
+    pub total_disk_gb: u32,
     /// The Spaces this machine provides now.
     pub provided_spaces: Vec<AppHostProvidedSpace>,
     /// Remote creates, deletes and refusals, and settings changes, newest
@@ -7716,6 +7733,34 @@ pub struct AppHostSettingChange {
     pub share_desktop: Option<bool>,
     /// Provide Spaces.
     pub provide_spaces: Option<bool>,
+}
+
+/// One limit on the Spaces other machines create here, drawn as a number
+/// row under the switch (Settings, Sharing).
+pub type AppHostLimitRow = core::host::HostLimitRow;
+#[uniffi::remote(Record)]
+pub struct AppHostLimitRow {
+    /// `max-spaces`, `max-memory`, `max-disk` or `max-run`.
+    pub id: String,
+    /// "Most Spaces at once".
+    pub label: String,
+    /// One line under it.
+    pub help: String,
+    /// The limit (0: no limit).
+    pub value: u32,
+    /// What the number counts: `Spaces`, `GB` or `minutes`.
+    pub unit: String,
+    /// What is in use now ("2 of 4 Spaces", "12 of 32 GB"; "2 Spaces" with
+    /// no limit); none for a limit that is about time.
+    pub use_text: Option<String>,
+    /// This machine's own total in `unit` (memory and disk), 0 when not
+    /// known.
+    pub total: u32,
+    /// Use is above the limit (it was lowered below what runs): nothing
+    /// is stopped, new Spaces are refused.
+    pub over: bool,
+    /// "Over limit" while `over`.
+    pub over_text: Option<String>,
 }
 
 /// One of the two settings, drawn as a switch.
@@ -7849,6 +7894,9 @@ pub struct AppHostPanelView {
     /// The limits, one line ("Up to 4 Spaces \u{b7} 2 macOS VMs"), while
     /// providing Spaces.
     pub limits: Option<String>,
+    /// The limits as number rows (Settings, Sharing), while providing
+    /// Spaces: most Spaces, memory and disk in total, longest running time.
+    pub limit_rows: Vec<AppHostLimitRow>,
     /// "Spaces for your devices", while providing Spaces.
     pub provided_title: Option<String>,
     /// One row per Space this machine provides.

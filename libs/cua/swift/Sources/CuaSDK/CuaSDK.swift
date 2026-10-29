@@ -988,8 +988,9 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
     /**
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
-     * agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-     * for its one browser approval). JSON: one result per agent.
+     * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+     * sign-in it already has, read from where Claude Code keeps it). JSON:
+     * one result per agent.
      */
     func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool) async throws  -> String
 
@@ -1172,8 +1173,9 @@ open func configureMcp(agents: [String], server: AgentMcpServer?)async throws  -
     /**
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
-     * agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-     * for its one browser approval). JSON: one result per agent.
+     * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+     * sign-in it already has, read from where Claude Code keeps it). JSON:
+     * one result per agent.
      */
 open func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool)async throws  -> String  {
     return
@@ -28558,6 +28560,18 @@ public struct HostSettingsChange: Equatable, Hashable {
      * macOS VMs at once (0 to 2, Apple's license).
      */
     public var maxMacosVms: UInt32?
+    /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxMemoryGb: UInt32?
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxDiskGb: UInt32?
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    public var maxRunMinutes: UInt32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -28573,11 +28587,23 @@ public struct HostSettingsChange: Equatable, Hashable {
          */maxSpaces: UInt32? = nil,
         /**
          * macOS VMs at once (0 to 2, Apple's license).
-         */maxMacosVms: UInt32? = nil) {
+         */maxMacosVms: UInt32? = nil,
+        /**
+         * Memory the provided Spaces may use in total, in GB (0: no limit).
+         */maxMemoryGb: UInt32? = nil,
+        /**
+         * Disk the provided Spaces may use in total, in GB (0: no limit).
+         */maxDiskGb: UInt32? = nil,
+        /**
+         * How long a provided Space may run, in minutes (0: no limit).
+         */maxRunMinutes: UInt32? = nil) {
         self.shareDesktop = shareDesktop
         self.provideSpaces = provideSpaces
         self.maxSpaces = maxSpaces
         self.maxMacosVms = maxMacosVms
+        self.maxMemoryGb = maxMemoryGb
+        self.maxDiskGb = maxDiskGb
+        self.maxRunMinutes = maxRunMinutes
     }
 
 
@@ -28599,7 +28625,10 @@ public struct FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer {
                 shareDesktop: FfiConverterOptionBool.read(from: &buf),
                 provideSpaces: FfiConverterOptionBool.read(from: &buf),
                 maxSpaces: FfiConverterOptionUInt32.read(from: &buf),
-                maxMacosVms: FfiConverterOptionUInt32.read(from: &buf)
+                maxMacosVms: FfiConverterOptionUInt32.read(from: &buf),
+                maxMemoryGb: FfiConverterOptionUInt32.read(from: &buf),
+                maxDiskGb: FfiConverterOptionUInt32.read(from: &buf),
+                maxRunMinutes: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
 
@@ -28608,6 +28637,9 @@ public struct FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.provideSpaces, into: &buf)
         FfiConverterOptionUInt32.write(value.maxSpaces, into: &buf)
         FfiConverterOptionUInt32.write(value.maxMacosVms, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxMemoryGb, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxDiskGb, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxRunMinutes, into: &buf)
     }
 }
 
@@ -28978,6 +29010,28 @@ public struct HostStatus: Equatable, Hashable {
      */
     public var maxMacosVms: UInt32
     /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxMemoryGb: UInt32
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxDiskGb: UInt32
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    public var maxRunMinutes: UInt32
+    /**
+     * What the provided Spaces were given now, in GB.
+     */
+    public var usedMemoryGb: UInt32
+    public var usedDiskGb: UInt32
+    /**
+     * This machine's own memory and disk, in GB (0: not known).
+     */
+    public var totalMemoryGb: UInt32
+    public var totalDiskGb: UInt32
+    /**
      * The Spaces this machine provides now.
      */
     public var providedSpaces: [HostProvidedSpace]
@@ -29083,6 +29137,21 @@ public struct HostStatus: Equatable, Hashable {
          * macOS VMs at once (at most two).
          */maxMacosVms: UInt32 = UInt32(0),
         /**
+         * Memory the provided Spaces may use in total, in GB (0: no limit).
+         */maxMemoryGb: UInt32 = UInt32(0),
+        /**
+         * Disk the provided Spaces may use in total, in GB (0: no limit).
+         */maxDiskGb: UInt32 = UInt32(0),
+        /**
+         * How long a provided Space may run, in minutes (0: no limit).
+         */maxRunMinutes: UInt32 = UInt32(0),
+        /**
+         * What the provided Spaces were given now, in GB.
+         */usedMemoryGb: UInt32 = UInt32(0), usedDiskGb: UInt32 = UInt32(0),
+        /**
+         * This machine's own memory and disk, in GB (0: not known).
+         */totalMemoryGb: UInt32 = UInt32(0), totalDiskGb: UInt32 = UInt32(0),
+        /**
          * The Spaces this machine provides now.
          */providedSpaces: [HostProvidedSpace] = [],
         /**
@@ -29130,6 +29199,13 @@ public struct HostStatus: Equatable, Hashable {
         self.provideSpaces = provideSpaces
         self.maxSpaces = maxSpaces
         self.maxMacosVms = maxMacosVms
+        self.maxMemoryGb = maxMemoryGb
+        self.maxDiskGb = maxDiskGb
+        self.maxRunMinutes = maxRunMinutes
+        self.usedMemoryGb = usedMemoryGb
+        self.usedDiskGb = usedDiskGb
+        self.totalMemoryGb = totalMemoryGb
+        self.totalDiskGb = totalDiskGb
         self.providedSpaces = providedSpaces
         self.spacesAudit = spacesAudit
         self.spacesAuditError = spacesAuditError
@@ -29178,6 +29254,13 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
                 provideSpaces: FfiConverterBool.read(from: &buf),
                 maxSpaces: FfiConverterUInt32.read(from: &buf),
                 maxMacosVms: FfiConverterUInt32.read(from: &buf),
+                maxMemoryGb: FfiConverterUInt32.read(from: &buf),
+                maxDiskGb: FfiConverterUInt32.read(from: &buf),
+                maxRunMinutes: FfiConverterUInt32.read(from: &buf),
+                usedMemoryGb: FfiConverterUInt32.read(from: &buf),
+                usedDiskGb: FfiConverterUInt32.read(from: &buf),
+                totalMemoryGb: FfiConverterUInt32.read(from: &buf),
+                totalDiskGb: FfiConverterUInt32.read(from: &buf),
                 providedSpaces: FfiConverterSequenceTypeHostProvidedSpace.read(from: &buf),
                 spacesAudit: FfiConverterSequenceTypeHostSpacesAuditRecord.read(from: &buf),
                 spacesAuditError: FfiConverterOptionString.read(from: &buf),
@@ -29212,6 +29295,13 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
         FfiConverterBool.write(value.provideSpaces, into: &buf)
         FfiConverterUInt32.write(value.maxSpaces, into: &buf)
         FfiConverterUInt32.write(value.maxMacosVms, into: &buf)
+        FfiConverterUInt32.write(value.maxMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.maxDiskGb, into: &buf)
+        FfiConverterUInt32.write(value.maxRunMinutes, into: &buf)
+        FfiConverterUInt32.write(value.usedMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.usedDiskGb, into: &buf)
+        FfiConverterUInt32.write(value.totalMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.totalDiskGb, into: &buf)
         FfiConverterSequenceTypeHostProvidedSpace.write(value.providedSpaces, into: &buf)
         FfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spacesAudit, into: &buf)
         FfiConverterOptionString.write(value.spacesAuditError, into: &buf)
@@ -33664,6 +33754,157 @@ public func FfiConverterTypeRelayMachine_lift(_ buf: RustBuffer) throws -> Relay
 #endif
 public func FfiConverterTypeRelayMachine_lower(_ value: RelayMachine) -> RustBuffer {
     return FfiConverterTypeRelayMachine.lower(value)
+}
+
+
+/**
+ * What the repo cache holds and what it saved, in plain words for
+ * Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+ * changed with [`config_set`]).
+ */
+public struct RepoCacheStatus: Equatable, Hashable {
+    /**
+     * The cache is on (`cache.repos`).
+     */
+    public var enabled: Bool
+    /**
+     * Repositories held.
+     */
+    public var repos: UInt32
+    /**
+     * What they take on disk.
+     */
+    public var bytes: UInt64
+    /**
+     * The size cap in force.
+     */
+    public var capBytes: UInt64
+    /**
+     * The size setting: `auto`, or the number of GB.
+     */
+    public var sizeSetting: String
+    /**
+     * `Repos: 3, 1.2 GB of 5 GB`.
+     */
+    public var summary: String
+    /**
+     * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+     */
+    public var week: String
+    /**
+     * Clones served from the cache in the last week.
+     */
+    public var hits: UInt32
+    /**
+     * Clones that downloaded in the last week.
+     */
+    public var misses: UInt32
+    /**
+     * Seconds the hits saved.
+     */
+    public var secondsSaved: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The cache is on (`cache.repos`).
+         */enabled: Bool,
+        /**
+         * Repositories held.
+         */repos: UInt32,
+        /**
+         * What they take on disk.
+         */bytes: UInt64,
+        /**
+         * The size cap in force.
+         */capBytes: UInt64,
+        /**
+         * The size setting: `auto`, or the number of GB.
+         */sizeSetting: String,
+        /**
+         * `Repos: 3, 1.2 GB of 5 GB`.
+         */summary: String,
+        /**
+         * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+         */week: String,
+        /**
+         * Clones served from the cache in the last week.
+         */hits: UInt32,
+        /**
+         * Clones that downloaded in the last week.
+         */misses: UInt32,
+        /**
+         * Seconds the hits saved.
+         */secondsSaved: UInt64) {
+        self.enabled = enabled
+        self.repos = repos
+        self.bytes = bytes
+        self.capBytes = capBytes
+        self.sizeSetting = sizeSetting
+        self.summary = summary
+        self.week = week
+        self.hits = hits
+        self.misses = misses
+        self.secondsSaved = secondsSaved
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RepoCacheStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRepoCacheStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RepoCacheStatus {
+        return
+            try RepoCacheStatus(
+                enabled: FfiConverterBool.read(from: &buf),
+                repos: FfiConverterUInt32.read(from: &buf),
+                bytes: FfiConverterUInt64.read(from: &buf),
+                capBytes: FfiConverterUInt64.read(from: &buf),
+                sizeSetting: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                week: FfiConverterString.read(from: &buf),
+                hits: FfiConverterUInt32.read(from: &buf),
+                misses: FfiConverterUInt32.read(from: &buf),
+                secondsSaved: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RepoCacheStatus, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterUInt32.write(value.repos, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+        FfiConverterUInt64.write(value.capBytes, into: &buf)
+        FfiConverterString.write(value.sizeSetting, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterString.write(value.week, into: &buf)
+        FfiConverterUInt32.write(value.hits, into: &buf)
+        FfiConverterUInt32.write(value.misses, into: &buf)
+        FfiConverterUInt64.write(value.secondsSaved, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRepoCacheStatus_lift(_ buf: RustBuffer) throws -> RepoCacheStatus {
+    return try FfiConverterTypeRepoCacheStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRepoCacheStatus_lower(_ value: RepoCacheStatus) -> RustBuffer {
+    return FfiConverterTypeRepoCacheStatus.lower(value)
 }
 
 
@@ -50571,6 +50812,26 @@ public func locations() -> [LocationInfo]  {
 })
 }
 /**
+ * Deletes every repository the repo cache holds (they are copied again the
+ * next time a Space clones them). Returns the cache after.
+ */
+public func repoCacheClear()throws  -> RepoCacheStatus  {
+    return try  FfiConverterTypeRepoCacheStatus_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_func_repo_cache_clear($0
+    )
+})
+}
+/**
+ * The repo cache now: on or off, how much it holds of its cap, and what
+ * the last week saved.
+ */
+public func repoCacheStatus()throws  -> RepoCacheStatus  {
+    return try  FfiConverterTypeRepoCacheStatus_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_func_repo_cache_status($0
+    )
+})
+}
+/**
  * The canonical image for `os` (`linux`, `windows`, `macos`) and
  * `version` (`None` = default: `ghcr.io/trycua/linux:24.04`,
  * `ghcr.io/trycua/windows:2022`, `ghcr.io/trycua/macos:26`; macOS accepts
@@ -51116,6 +51377,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_locations() != 62174) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_func_repo_cache_clear() != 39088) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_repo_cache_status() != 20147) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_func_canonical_image() != 8955) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -51242,7 +51509,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 32481) {
+    if (uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692) {

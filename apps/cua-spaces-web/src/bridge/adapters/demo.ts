@@ -77,6 +77,9 @@ export interface DemoOptions {
   signedInMachines?: boolean;
   /** Saved credentials the provider refuses (`?demo=rejected-key`: the OpenAI key): a check marks them as needing a reconnect. */
   rejectedKeys?: string[];
+  /** Claude Code's sign-in on this Mac: imported already (`?demo=claude-signed-in`), imported and run out (`?demo=claude-expired`),
+   * or none to import (`?demo=claude-none`: Connect finds nothing and offers the ways on). Default: there is one, not imported yet. */
+  claudeLogin?: "signed-in" | "expired" | "none";
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
@@ -135,6 +138,8 @@ export interface DemoOptions {
   threadLookalike?: boolean;
   /** `?demo=thread-auth-failed`: Claude and Hermes answer "hi" with "not connected" (CUA-2638). */
   threadAuthFailed?: boolean;
+  /** `?demo=thread-paused`: agents wake each other until the daemon pauses agent to agent messages (CUA-2757). */
+  threadPaused?: boolean;
   /** `?demo=thread-stranger`: an agent whose owner is not in the Space (its card opens their profile in place). */
   threadStranger?: boolean;
   /** Join codes: redeemed this long after they are made (null: never, `?demo=thread-join-slow`). */
@@ -166,6 +171,7 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
  * `?demo=agents-readonly` (Cua can't write Hermes's config),
+ * `?demo=claude-signed-in` / `claude-expired` / `claude-none` (Claude Code's sign-in imported, run out, or not there to import),
  * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`, `?demo=update-error`,
  * `?demo=clouds` (AWS and Hetzner connected; `clouds-budget`, `clouds-untrusted`,
  * `clouds-token`, `clouds-approval`: one thing wrong with one of them;
@@ -222,6 +228,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     noVault: flags.has("novault"),
     ...(flags.has("signed-in-machines") ? { signedInMachines: true } : {}),
     ...(flags.has("rejected-key") ? { rejectedKeys: ["OPENAI_API_KEY"] } : {}),
+    ...(flags.has("claude-expired") ? { claudeLogin: "expired" as const } : flags.has("claude-signed-in") ? { claudeLogin: "signed-in" as const } : flags.has("claude-none") ? { claudeLogin: "none" as const } : {}),
     noSpaces: flags.has("empty"),
     ...(() => {
       const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
@@ -234,6 +241,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     threadLookalike: flags.has("thread-lookalike"),
     threadAuthFailed: flags.has("thread-auth-failed"),
     threadStranger: flags.has("thread-stranger"),
+    threadPaused: flags.has("thread-paused"),
     threadRequest: flags.has("thread-request"),
     ...(flags.has("thread-join-slow") || flags.has("thread-join-expire") ? { joinRedeemMs: null } : {}),
     ...(flags.has("thread-join-expire") ? { joinExpireMs: 6_000 } : {}),
@@ -333,7 +341,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
     imported: [],
-    keyStore: demoKeyStore(now, options.rejectedKeys ?? []),
+    keyStore: demoKeyStore(now, options.rejectedKeys ?? [], options.claudeLogin),
     readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
@@ -812,12 +820,14 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
               : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
           : r,
       );
-      // Claude Code's own token command: one browser approval, then its token is saved with the keys.
-      if (signIn && agents.includes("claude-code")) {
-        await wait(step * 14);
+      // Claude Code's own sign-in, read from where Claude Code keeps it (macOS asks to allow it), then its
+      // access token is saved with the keys. `?demo=claude-none`: there is nothing to read.
+      const claudeFound = options.claudeLogin !== "none";
+      if (signIn && agents.includes("claude-code") && claudeFound) {
+        await wait(step * 6);
         state.keyStore.keys = [
           ...state.keyStore.keys.filter((k) => k.env !== "CLAUDE_CODE_OAUTH_TOKEN"),
-          { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now() },
+          { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now(), label: "Signed in as ada@example.com (Claude Max)" },
         ];
         emit({ type: "agents.changed" });
       }
@@ -826,7 +836,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         if (row && state.readOnlyAgents.includes(agent)) {
           return { agent, tools_ok: false, tools_line: `Couldn't add Cua to ${row.mcpConfig ?? agent}: Permission denied (os error 13)`, sign_in: null };
         }
-        const copyable = agent === "hermes" || agent === "claude-code" || (agent === "codex" && Boolean(row?.signedIn));
+        const copyable = agent === "hermes" || (agent === "claude-code" && claudeFound) || (agent === "codex" && Boolean(row?.signedIn));
         if (signIn && copyable && !state.imported.includes(agent)) state.imported = [...state.imported, agent];
         return {
           agent,
@@ -836,7 +846,9 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
             ? null
             : copyable
               ? { imported: { source: agent, env: "", label: "", expires_ms: null, added_ms: now() }, refused: null, line: null }
-              : { imported: null, refused: "not_signed_in", line: "No ChatGPT sign-in on This Mac yet." },
+              : agent === "claude-code"
+                ? { imported: null, refused: "not_signed_in", line: "Claude Code isn't signed in on This Mac. Run `claude auth login` in Terminal, then try again." }
+                : { imported: null, refused: "not_signed_in", line: "No ChatGPT sign-in on This Mac yet." },
         };
       });
     },
@@ -850,7 +862,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       await wait(step * 20);
       state.keyStore.keys = [...state.keyStore.keys.filter((k) => k.env !== "CODEX_AUTH_JSON"), { provider: "other", env: "CODEX_AUTH_JSON", last4: "", addedMs: now() }];
       emit({ type: "agents.changed" });
-      return { imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Codex · ChatGPT sign-in", expires_ms: null, added_ms: now() }, refused: null, line: null };
+      return { imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Signed in with ChatGPT", expires_ms: null, added_ms: now() }, refused: null, line: null };
     },
     "agents.disconnect": async ({ agents, signIn, skills, mcp }) => {
       await wait(step);
@@ -909,7 +921,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
     ...demoLinksHandlers(ctx),
-    ...demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false,
+    ...demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false, paused: options.threadPaused ?? false,
       joinRedeemMs: options.joinRedeemMs,
       joinExpireMs: options.joinExpireMs,
       request: options.threadRequest ?? false,

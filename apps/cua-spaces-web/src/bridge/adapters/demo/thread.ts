@@ -278,7 +278,7 @@ function demoSideThreads(now: number, me: { id: string; name: string }): [string
   ];
 }
 
-function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean; authFailed?: boolean; stranger?: boolean } = {}): DemoThread {
+function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean; authFailed?: boolean; stranger?: boolean; paused?: boolean } = {}): DemoThread {
   const ids = demoIdentities(now, owner);
   // An agent's posts carry who it was when it posted (they stay after it leaves).
   const agent = (handle: string) => ({ kind: "agent", id: `agent:${handle}`, name: handle, identity: ids[handle] });
@@ -386,6 +386,18 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
       }
     }
   }
+  if (opts.paused) {
+    // Agents asked each other three times in a row; the fourth ask is posted, wakes nobody, and the daemon says so once.
+    const ask = (from: ReturnType<typeof agent>, to: string, text: string, ts: number, hops: number) =>
+      add({ ts_ms: ts, author: from, text, mentions: [to], ...(hops <= 3 ? { task: { to, session: null }, hops } : {}) });
+    const first = add({ ts_ms: min(4), author: DEMO_THREAD_ME, text: "@claude look at the flaky ws_reconnect test and get a second opinion", mentions: ["claude"], task: { to: "claude", session: null } });
+    update(min(4), first, "done");
+    ask(CLAUDE, "hermes", "@hermes can you check the timeout I picked?", min(3), 1);
+    ask(HERMES, "claude", "@claude it looks fine, can you confirm with a rerun?", min(2), 2);
+    ask(CLAUDE, "hermes", "@hermes rerun is green, anything else?", min(1), 3);
+    ask(HERMES, "claude", "@claude nothing else from me, anything from you?", min(1), 4);
+    add({ ts_ms: min(1), author: { kind: "system", id: "system:limits", name: "Cua" }, kind: "system", text: "Paused agent to agent messages for a moment" });
+  }
   if (opts.stranger) {
     // Dana's Gemini CLI: Dana is not in this Space, so her card opens in place.
     const dana = { id: "acct_dana", name: "Dana" };
@@ -443,6 +455,7 @@ export function demoThreadHandlers({
   lookalike = false,
   authFailed = false,
   stranger = false,
+  paused = false,
   joinRedeemMs,
   joinExpireMs,
   request = false,
@@ -458,6 +471,8 @@ export function demoThreadHandlers({
   authFailed?: boolean;
   /** `?demo=thread-stranger`: an agent whose owner is not in the Space. */
   stranger?: boolean;
+  /** `?demo=thread-paused`: the thread shows the daemon's note that agent to agent messages were paused. */
+  paused?: boolean;
   /** How long after it is made an open code is redeemed (null: never). Default 12 steps. */
   joinRedeemMs?: number | null;
   /** Codes expire this long after they are made, instead of their ttl. */
@@ -466,7 +481,7 @@ export function demoThreadHandlers({
   request?: boolean;
 }): DemoHandlers<ThreadOpName> {
   const owner = role === "owner" ? DEMO_THREAD_ME : GRACE;
-  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike, authFailed, stranger })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME) : [])]);
+  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike, authFailed, stranger, paused })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME) : [])]);
   let codeSeq = 0;
   const redeemAfter = joinRedeemMs === undefined ? stepMs * 12 : joinRedeemMs;
   const SYSTEM = { kind: "system", id: "system:members", name: "Cua" };

@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { activeMention, insertMention, matchMentions, mentionSegments, type MentionCandidate } from "./mentions";
+import { activeMention, addLeadingMention, insertMention, matchMentions, mentionedHandles, mentionSegments, startsWithMention, type MentionCandidate } from "./mentions";
 
 const PEOPLE: MentionCandidate[] = [
   { handle: "grace", label: "Grace", kind: "person" },
@@ -43,5 +43,28 @@ describe("the composer's mentions", () => {
       { text: ".", mention: false },
     ]);
     expect(mentionSegments("mail ada@example.com")).toEqual([{ text: "mail ada@example.com", mention: false }]);
+  });
+});
+
+describe("addressing from the text", () => {
+  it("lists the handles a text mentions, once each, lower case", () => {
+    expect(mentionedHandles("@Claude and @hermes, then @claude again")).toEqual(["claude", "hermes"]);
+    expect(mentionedHandles("mail ada@example.com")).toEqual([]);
+    expect(mentionedHandles("@claude @nobody", new Set(["claude"]))).toEqual(["claude"]);
+  });
+
+  it("knows whether a text already starts with a mention of a handle", () => {
+    expect(startsWithMention("@claude go", "claude")).toBe(true);
+    expect(startsWithMention("  @Claude. go", "claude")).toBe(true);
+    expect(startsWithMention("ask @claude", "claude")).toBe(false);
+    expect(startsWithMention("@hermes go", "claude")).toBe(false);
+  });
+
+  it("puts the missing mentions in front, once", () => {
+    expect(addLeadingMention("run the tests", "claude")).toBe("@claude run the tests");
+    expect(addLeadingMention("run the tests", "claude", "hermes")).toBe("@claude @hermes run the tests");
+    expect(addLeadingMention("@claude run the tests", "claude")).toBe("@claude run the tests");
+    expect(addLeadingMention("ask @claude to run", "claude")).toBe("ask @claude to run");
+    expect(addLeadingMention("@claude go", "claude", "hermes")).toBe("@hermes @claude go");
   });
 });

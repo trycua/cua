@@ -215,6 +215,35 @@ export class FixtureSpacesBackend implements SpacesBackend {
     if (value === null) this.runtimeSettings.delete(key);
     else this.runtimeSettings.set(key, value);
   }
+  repoCache = { enabled: true, sizeSetting: "auto", repos: 3, bytes: 1_288_490_189n };
+  private repoCacheOf() {
+    const cap = this.repoCache.sizeSetting === "auto" ? 5 : Number(this.repoCache.sizeSetting);
+    return {
+      enabled: this.repoCache.enabled,
+      repos: this.repoCache.repos,
+      bytes: this.repoCache.bytes,
+      capBytes: BigInt(cap) * 1024n ** 3n,
+      sizeSetting: this.repoCache.sizeSetting,
+      summary: `Repos: ${this.repoCache.repos}, 1.2 GB of ${cap} GB`,
+      week: "Last week: 80% of clones came from the cache, about 2 minutes saved",
+      hits: 8,
+      misses: 2,
+      secondsSaved: 125n,
+    };
+  }
+  async repoCacheStatus() {
+    return this.repoCacheOf();
+  }
+  async setRepoCache(change: { enabled?: boolean; sizeGb?: number | null }) {
+    if (change.enabled !== undefined) this.repoCache.enabled = change.enabled;
+    if (change.sizeGb !== undefined) this.repoCache.sizeSetting = change.sizeGb === null ? "auto" : String(change.sizeGb);
+    return this.repoCacheOf();
+  }
+  async clearRepoCache() {
+    this.repoCache.repos = 0;
+    this.repoCache.bytes = 0n;
+    return this.repoCacheOf();
+  }
   async localStorage() {
     return null;
   }

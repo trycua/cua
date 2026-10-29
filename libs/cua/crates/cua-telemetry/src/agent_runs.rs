@@ -158,6 +158,25 @@ impl Telemetry {
         }
     }
 
+    /// What the repo cache did for one clone (`cua_repo_cache`): only fixed
+    /// words and numbers, never a URL, a repository name or a path.
+    pub fn repo_cache(
+        &self,
+        outcome: &str,
+        source: &str,
+        bytes_saved: u64,
+        seconds_saved: u64,
+        reason: &str,
+    ) -> Captured {
+        if !self.is_enabled() {
+            return Captured::Disabled;
+        }
+        match events::repo_cache(outcome, source, bytes_saved, seconds_saved, reason) {
+            Some(ev) => self.capture(ev),
+            None => Captured::Invalid(format!("unknown repo cache outcome {outcome}")),
+        }
+    }
+
     /// Whether this install started `run_id` and has not seen it end yet.
     pub fn agent_run_pending(&self, run_id: &str) -> bool {
         self.pending_path(run_id).is_some_and(|p| p.exists())

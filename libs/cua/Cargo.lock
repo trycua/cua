@@ -2481,6 +2481,7 @@ dependencies = [
  "cua-host",
  "cua-image",
  "cua-proto",
+ "cua-repo-cache",
  "cua-sandbox-core",
  "cua-sdk",
  "cua-spaces",
@@ -2979,6 +2980,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-repo-cache"
+version = "0.9.0"
+dependencies = [
+ "cua-home",
+ "cua-telemetry",
+ "hex",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "cua-sandbox-core"
 version = "0.9.0"
 dependencies = [
@@ -2988,6 +3006,7 @@ dependencies = [
  "bytes",
  "cua-home",
  "cua-image",
+ "cua-repo-cache",
  "cua-sandbox-core",
  "cua-spacesd-client",
  "cua-vmm",

@@ -16,6 +16,9 @@ members = [
     "crates/cua-image",
     # Disk accounting, cache budget and garbage collection (`cua cache`).
     "crates/cua-disk",
+    # The repo cache: public git repositories mirrored by the daemon so a
+    # repeat clone in a Space is fast (a read-only mount, a git remote helper).
+    "crates/cua-repo-cache",
     # Share a link to anything you run (`cua share`): records, the read-only
     # file server and the access-checked gateway.
     "crates/cua-share",
@@ -185,6 +188,7 @@ cua-image = { path = "crates/cua-image", version = "0.9.0" } # x-release-please-
 cua-microvm-init = { path = "crates/cua-microvm-init", version = "0.9.0" } # x-release-please-version
 cua-vmm = { path = "crates/cua-vmm", version = "0.9.0", default-features = false } # x-release-please-version
 cua-disk = { path = "crates/cua-disk", version = "0.9.0" } # x-release-please-version
+cua-repo-cache = { path = "crates/cua-repo-cache", version = "0.9.0" } # x-release-please-version
 cua-sandbox-core = { path = "crates/cua-sandbox-core", version = "0.9.0" } # x-release-please-version
 cua-contrib = { path = "crates/cua-contrib", version = "0.9.0", default-features = false } # x-release-please-version
 cua-host = { path = "crates/cua-host", version = "0.9.0" } # x-release-please-version

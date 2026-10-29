@@ -642,6 +642,11 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
         try await b().runtimeCheckPath(kind: kind, path: path)
     }
+    public func repoCacheStatus() async -> RepoCacheState? { await b().repoCacheStatus() }
+    public func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? {
+        try await b().setRepoCache(enabled: enabled, size: size)
+    }
+    public func clearRepoCache() async throws -> RepoCacheState? { try await b().clearRepoCache() }
     public func setRuntimeSetting(key: String, value: String?) async throws {
         try await b().setRuntimeSetting(key: key, value: value)
     }

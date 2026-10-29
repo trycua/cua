@@ -829,6 +829,10 @@ external fun uniffi_cua_sdk_checksum_func_config_unset(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_locations(
 ): Short
+external fun uniffi_cua_sdk_checksum_func_repo_cache_clear(
+): Short
+external fun uniffi_cua_sdk_checksum_func_repo_cache_status(
+): Short
 external fun uniffi_cua_sdk_checksum_func_canonical_image(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_canonical_image_tier(
@@ -2900,6 +2904,10 @@ external fun uniffi_cua_sdk_fn_func_config_unset(`key`: RustBuffer.ByValue,uniff
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_locations(uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cua_sdk_fn_func_repo_cache_clear(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cua_sdk_fn_func_repo_cache_status(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_canonical_image(`os`: RustBuffer.ByValue,`version`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_canonical_image_tier(`os`: RustBuffer.ByValue,`version`: RustBuffer.ByValue,`tier`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -3138,6 +3146,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_func_locations() != 62174.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_func_repo_cache_clear() != 39088.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_func_repo_cache_status() != 20147.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_func_canonical_image() != 8955.toShort()) {
@@ -40410,6 +40424,119 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
 
 
 /**
+ * What the repo cache holds and what it saved, in plain words for
+ * Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+ * changed with [`config_set`]).
+ */
+data class RepoCacheStatus (
+    /**
+     * The cache is on (`cache.repos`).
+     */
+    var `enabled`: kotlin.Boolean
+    ,
+    /**
+     * Repositories held.
+     */
+    var `repos`: kotlin.UInt
+    ,
+    /**
+     * What they take on disk.
+     */
+    var `bytes`: kotlin.ULong
+    ,
+    /**
+     * The size cap in force.
+     */
+    var `capBytes`: kotlin.ULong
+    ,
+    /**
+     * The size setting: `auto`, or the number of GB.
+     */
+    var `sizeSetting`: kotlin.String
+    ,
+    /**
+     * `Repos: 3, 1.2 GB of 5 GB`.
+     */
+    var `summary`: kotlin.String
+    ,
+    /**
+     * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+     */
+    var `week`: kotlin.String
+    ,
+    /**
+     * Clones served from the cache in the last week.
+     */
+    var `hits`: kotlin.UInt
+    ,
+    /**
+     * Clones that downloaded in the last week.
+     */
+    var `misses`: kotlin.UInt
+    ,
+    /**
+     * Seconds the hits saved.
+     */
+    var `secondsSaved`: kotlin.ULong
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRepoCacheStatus: FfiConverterRustBuffer<RepoCacheStatus> {
+    override fun read(buf: ByteBuffer): RepoCacheStatus {
+        return RepoCacheStatus(
+            FfiConverterBoolean.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RepoCacheStatus) = (
+            FfiConverterBoolean.allocationSize(value.`enabled`) +
+            FfiConverterUInt.allocationSize(value.`repos`) +
+            FfiConverterULong.allocationSize(value.`bytes`) +
+            FfiConverterULong.allocationSize(value.`capBytes`) +
+            FfiConverterString.allocationSize(value.`sizeSetting`) +
+            FfiConverterString.allocationSize(value.`summary`) +
+            FfiConverterString.allocationSize(value.`week`) +
+            FfiConverterUInt.allocationSize(value.`hits`) +
+            FfiConverterUInt.allocationSize(value.`misses`) +
+            FfiConverterULong.allocationSize(value.`secondsSaved`)
+    )
+
+    override fun write(value: RepoCacheStatus, buf: ByteBuffer) {
+            FfiConverterBoolean.write(value.`enabled`, buf)
+            FfiConverterUInt.write(value.`repos`, buf)
+            FfiConverterULong.write(value.`bytes`, buf)
+            FfiConverterULong.write(value.`capBytes`, buf)
+            FfiConverterString.write(value.`sizeSetting`, buf)
+            FfiConverterString.write(value.`summary`, buf)
+            FfiConverterString.write(value.`week`, buf)
+            FfiConverterUInt.write(value.`hits`, buf)
+            FfiConverterUInt.write(value.`misses`, buf)
+            FfiConverterULong.write(value.`secondsSaved`, buf)
+    }
+}
+
+
+
+/**
  * A reference resolved for a backend.
  */
 data class ResolvedImage (
@@ -55172,6 +55299,36 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
             return FfiConverterSequenceTypeLocationInfo.lift(
     uniffiRustCall() { _status ->
     UniffiLib.uniffi_cua_sdk_fn_func_locations(
+
+        _status)
+}
+    )
+    }
+
+
+        /**
+         * Deletes every repository the repo cache holds (they are copied again the
+         * next time a Space clones them). Returns the cache after.
+         */
+    @Throws(CuaException::class) fun `repoCacheClear`(): RepoCacheStatus {
+            return FfiConverterTypeRepoCacheStatus.lift(
+    uniffiRustCallWithError(CuaException) { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_clear(
+
+        _status)
+}
+    )
+    }
+
+
+        /**
+         * The repo cache now: on or off, how much it holds of its cap, and what
+         * the last week saved.
+         */
+    @Throws(CuaException::class) fun `repoCacheStatus`(): RepoCacheStatus {
+            return FfiConverterTypeRepoCacheStatus.lift(
+    uniffiRustCallWithError(CuaException) { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_repo_cache_status(
 
         _status)
 }

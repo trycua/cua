@@ -57,7 +57,7 @@ import type {
   WizardEnv,
 } from "./new-space";
 import type { NotificationInput } from "./notifications";
-import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
+import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, RepoCacheView, StorageInput, UpdateState } from "./settings";
 import type { ShareEntry, ShareRemoval } from "./share";
 import type { BulkResult } from "./spaces-page";
 import type { CreateFix, CreatingElsewhere, SpaceAccess, SpaceProgress, SpaceRow, SpaceSharingFacts } from "./spaces";
@@ -406,6 +406,22 @@ const SettingsShape = ref(
 const ExperimentsShape = ref(
   "Experiments",
   obj<Experiments>()({ cuaVolume: opt(bool), yourCloud: opt(bool), sharing: opt(bool), webUi: opt(bool) }),
+);
+
+const RepoCacheShape = ref(
+  "RepoCacheView",
+  obj<RepoCacheView>()({
+    enabled: bool,
+    repos: num,
+    bytes: num,
+    capBytes: num,
+    sizeSetting: str,
+    summary: str,
+    week: str,
+    hits: num,
+    misses: num,
+    secondsSaved: num,
+  }),
 );
 
 const AboutShape = ref(
@@ -965,6 +981,7 @@ const ThreadEntryShape = ref(
     ),
     view: opt(nullable(object({ kind: oneOf("desktop", "window"), app: nullable(str), title: nullable(str), windowId: nullable(str) }))),
     failure: opt(nullable(ThreadFailureShape)),
+    fanoutOf: opt(nullable(num)),
   }),
 );
 
@@ -1441,6 +1458,9 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "loginItem.openSettings": nul,
   "runtimes.check": RuntimePathCheckShape,
   "runtimes.browse": object({ path: nullable(str) }),
+  "repoCache.get": RepoCacheShape,
+  "repoCache.set": RepoCacheShape,
+  "repoCache.clear": RepoCacheShape,
   "devices.get": DevicesShape,
   "devices.enroll": obj<EnrollResult>()({ enrolled: bool, code: nullable(str) }),
   "devices.checkEnrolled": bool,
@@ -1805,6 +1825,9 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "loginItem.openSettings": nul,
   "runtimes.check": RuntimePathCheckShape,
   "runtimes.browse": object({ path: nullable(str) }),
+  "repoCache.get": RepoCacheShape,
+  "repoCache.set": RepoCacheShape,
+  "repoCache.clear": RepoCacheShape,
   "devices.get": DevicesShape,
   "devices.enroll": OP_SHAPES["devices.enroll"],
   "devices.checkEnrolled": bool,

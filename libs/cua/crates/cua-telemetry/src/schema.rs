@@ -403,6 +403,29 @@ pub const INSTALL_ERROR_KINDS: &[&str] = &[
 pub const INSTALLERS: &[&str] = &["sh", "ps1"];
 /// What the install was asked to put on the machine (joined with `+`).
 pub const INSTALL_ITEMS: &[&str] = &["cli", "spaces", "cua_driver", "host"];
+/// What the repo cache did for one clone (`cua_repo_cache`): a hit (served
+/// from a mirror), a miss (no mirror yet), or a fallback (a mirror that could
+/// not be used).
+pub const REPO_CACHE_OUTCOMES: &[&str] = &["hit", "miss", "fallback"];
+/// Where a cloned repository came from.
+pub const REPO_CACHE_SOURCES: &[&str] = &["local", "network"];
+/// Why the repo cache did not serve a clone: a fixed list, `none` for a hit
+/// or a first sighting.
+pub const REPO_CACHE_REASONS: &[&str] = &[
+    "none",
+    "disabled",
+    "no_git",
+    "unsupported_url",
+    "host_not_public",
+    "private",
+    "unreachable",
+    "too_big",
+    "cache_full",
+    "disk_full",
+    "verify_failed",
+    "fill_failed",
+    "other",
+];
 /// The kind of Spaces tool an agent's call used (`cua_agent_used_space`).
 pub const SPACE_TOOL_GROUPS: &[&str] =
     &["shell", "files", "computer", "services", "agents", "other"];
@@ -934,6 +957,7 @@ pub mod event {
     pub const AGENT_RUN_STARTED: &str = "cua_agent_run_started";
     pub const AGENT_RUN_COMPLETED: &str = "cua_agent_run_completed";
     pub const AGENT_JOIN_PHASE: &str = "cua_agent_join_phase";
+    pub const REPO_CACHE: &str = "cua_repo_cache";
     pub const BENCH_RUN_COMPLETED: &str = "cua_bench_run_completed";
     pub const DAEMON_STARTED: &str = "cua_daemon_started";
     pub const DAEMON_HEALTH: &str = "cua_daemon_health";
@@ -1373,6 +1397,43 @@ pub const EVENTS: &[EventSpec] = &[
             ),
         ],
         purpose: "How long an agent takes to join a Space and answer, step by step, per agent and runtime, cold and warm; where joins fail.",
+    },
+    EventSpec {
+        name: event::REPO_CACHE,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: AGENT_PRODUCTS,
+        props: &[
+            p(
+                "outcome",
+                Kind::Enum(REPO_CACHE_OUTCOMES),
+                "What the repo cache did for one clone: hit (served from a mirror on this machine), miss (no mirror yet) or fallback (a mirror that could not be used, so the clone went the normal way).",
+            ),
+            p(
+                "source",
+                Kind::Enum(REPO_CACHE_SOURCES),
+                "Where the repository came from: local (a mirror on this machine) or network.",
+            ),
+            p(
+                "bytes_saved",
+                Kind::Count {
+                    max: 1_000_000_000_000,
+                },
+                "Bytes a hit did not download (the mirror's size); 0 otherwise.",
+            ),
+            p(
+                "seconds_saved",
+                Kind::Count { max: 86_400 },
+                "Seconds a hit saved against the network clone that filled the mirror; 0 otherwise.",
+            ),
+            p(
+                "reason",
+                Kind::Enum(REPO_CACHE_REASONS),
+                "Why a clone was not served from the cache: a fixed word (private, host_not_public, verify_failed, cache_full, disk_full, and so on); none for a hit or a first sighting. Never a URL, a repository name or a path.",
+            ),
+        ],
+        purpose: "Whether the repo cache makes repeat clones in Spaces faster, how often it can be used, and why it cannot. Counts and fixed words only.",
     },
     EventSpec {
         name: event::BENCH_RUN_COMPLETED,

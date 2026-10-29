@@ -690,6 +690,48 @@ export function qualifySandboxRef(name: string, local: boolean | undefined = und
     }
 
 /**
+ * Deletes every repository the repo cache holds (they are copied again the
+ * next time a Space clones them). Returns the cache after.
+ */
+export function repoCacheClear(): RepoCacheStatus /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeRepoCacheStatus.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_func_repo_cache_clear(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The repo cache now: on or off, how much it holds of its cap, and what
+ * the last week saved.
+ */
+export function repoCacheStatus(): RepoCacheStatus /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeRepoCacheStatus.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_func_repo_cache_status(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * Resolves `reference` for `backend` (`auto`, `local`, `provider`,
  * `container`/`docker`/`gvisor`, `vm`/`qemu`/`kubevirt`, `lume`)
  * on `arch` (`amd64`/`arm64`; `None` = this host).
@@ -15814,6 +15856,116 @@ const FfiConverterTypeReadinessProbe = (() => {
              FfiConverterOptionalString.allocationSize(value.httpPath) +
              FfiConverterOptionalUInt16.allocationSize(value.httpStatus) +
              FfiConverterOptionalString.allocationSize(value.service);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * What the repo cache holds and what it saved, in plain words for
+ * Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+ * changed with [`config_set`]).
+ */
+export type RepoCacheStatus = {
+    /**
+     * The cache is on (`cache.repos`).
+     */
+    enabled: boolean,
+    /**
+     * Repositories held.
+     */
+    repos: number,
+    /**
+     * What they take on disk.
+     */
+    bytes: bigint,
+    /**
+     * The size cap in force.
+     */
+    capBytes: bigint,
+    /**
+     * The size setting: `auto`, or the number of GB.
+     */
+    sizeSetting: string,
+    /**
+     * `Repos: 3, 1.2 GB of 5 GB`.
+     */
+    summary: string,
+    /**
+     * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+     */
+    week: string,
+    /**
+     * Clones served from the cache in the last week.
+     */
+    hits: number,
+    /**
+     * Clones that downloaded in the last week.
+     */
+    misses: number,
+    /**
+     * Seconds the hits saved.
+     */
+    secondsSaved: bigint
+}
+
+/**
+ * Generated factory for {@link RepoCacheStatus} record objects.
+ */
+export const RepoCacheStatus = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RepoCacheStatus, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RepoCacheStatus>,
+    });
+})();
+
+const FfiConverterTypeRepoCacheStatus = (() => {
+    type TypeName = RepoCacheStatus;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                enabled: FfiConverterBool.read(from),
+                repos: FfiConverterUInt32.read(from),
+                bytes: FfiConverterUInt64.read(from),
+                capBytes: FfiConverterUInt64.read(from),
+                sizeSetting: FfiConverterString.read(from),
+                summary: FfiConverterString.read(from),
+                week: FfiConverterString.read(from),
+                hits: FfiConverterUInt32.read(from),
+                misses: FfiConverterUInt32.read(from),
+                secondsSaved: FfiConverterUInt64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.enabled, into);
+            FfiConverterUInt32.write(value.repos, into);
+            FfiConverterUInt64.write(value.bytes, into);
+            FfiConverterUInt64.write(value.capBytes, into);
+            FfiConverterString.write(value.sizeSetting, into);
+            FfiConverterString.write(value.summary, into);
+            FfiConverterString.write(value.week, into);
+            FfiConverterUInt32.write(value.hits, into);
+            FfiConverterUInt32.write(value.misses, into);
+            FfiConverterUInt64.write(value.secondsSaved, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.enabled) +
+             FfiConverterUInt32.allocationSize(value.repos) +
+             FfiConverterUInt64.allocationSize(value.bytes) +
+             FfiConverterUInt64.allocationSize(value.capBytes) +
+             FfiConverterString.allocationSize(value.sizeSetting) +
+             FfiConverterString.allocationSize(value.summary) +
+             FfiConverterString.allocationSize(value.week) +
+             FfiConverterUInt32.allocationSize(value.hits) +
+             FfiConverterUInt32.allocationSize(value.misses) +
+             FfiConverterUInt64.allocationSize(value.secondsSaved);
 
         }
     };
@@ -46589,6 +46741,12 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_func_qualify_sandbox_ref() !== 59566) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_qualify_sandbox_ref");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_repo_cache_clear() !== 39088) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_repo_cache_clear");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_repo_cache_status() !== 20147) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_repo_cache_status");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_func_resolve_image() !== 56346) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_resolve_image");
     }
@@ -48200,6 +48358,7 @@ export default Object.freeze({
     FfiConverterTypeRelayDevice,
     FfiConverterTypeRelayMachine,
     FfiConverterTypeReplayMode,
+    FfiConverterTypeRepoCacheStatus,
     FfiConverterTypeResolvedImage,
     FfiConverterTypeResourcesEvent,
     FfiConverterTypeResourcesListener,

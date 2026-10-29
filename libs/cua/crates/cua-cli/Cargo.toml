@@ -43,6 +43,7 @@ cua-image.workspace = true
 cua-disk.workspace = true
 cua-vmm = { path = "../cua-vmm" }
 cua-sandbox-core.workspace = true
+cua-repo-cache.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 pbjson-types.workspace = true
 humantime.workspace = true

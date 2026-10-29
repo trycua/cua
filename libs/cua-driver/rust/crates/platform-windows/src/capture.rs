@@ -12,7 +12,9 @@
 //! buffer for `PrintWindow` to copy from. Result is an all-black image.
 //!
 //! When the PrintWindow result comes back mostly-black (sentinel for
-//! that case), we fall back to a **screen-region BitBlt**: read the
+//! that case), try Windows.Graphics.Capture first. If WGC fails or returns
+//! an entirely black frame, retry WGC with a software WARP device before
+//! falling back to a **screen-region BitBlt**: read the
 //! window's on-screen bounds via `GetWindowRect`, BitBlt the matching
 //! pixels off the desktop DC. This is the same approach the Windows
 //! Snipping Tool's "Window" mode uses. Trade-off: only works when the
@@ -21,10 +23,9 @@
 //! the daemon lives in the user's interactive session and the target
 //! is typically a visible window the agent just launched.
 //!
-//! The full proper fix (Windows.Graphics.Capture, which works for
-//! occluded / off-screen UWP windows too) is tracked separately on
-//! CUA-542; the screen-region fallback covers the same common
-//! ground at a fraction of the implementation cost.
+//! WGC reads the target's own surface, including occluded windows. Some
+//! virtual graphics drivers return a successful but entirely black WGC
+//! frame; screen-region captures retain their geometry and occlusion warning.
 
 use anyhow::{bail, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -173,6 +174,191 @@ fn is_mostly_black_bgra(bgra: &[u8]) -> bool {
     sampled > 0 && (black * 200) >= (sampled * 199)
 }
 
+/// A successful WGC API call does not guarantee usable target pixels. Confirm
+/// exact RGB-black rather than reusing the sampled PrintWindow heuristic: a
+/// sparse bright mark in an otherwise black window is still a valid frame.
+fn validate_wgc_frame(pixels: &[u8], width: u32, height: u32) -> Result<()> {
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|count| count.checked_mul(4));
+    if width == 0 || height == 0 || expected != Some(pixels.len()) {
+        bail!("WGC returned invalid BGRA dimensions or buffer length");
+    }
+    if pixels
+        .chunks_exact(4)
+        .all(|pixel| pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0)
+    {
+        bail!("WGC returned an entirely RGB-black frame");
+    }
+    Ok(())
+}
+
+type Bounds = (i32, i32, i32, i32);
+
+unsafe fn window_geometry(hwnd: HWND) -> Result<(FrameGeometry, Option<Bounds>)> {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let mut rect = RECT::default();
+    GetWindowRect(hwnd, &mut rect)?;
+    let geometry = FrameGeometry::from_bounds((rect.left, rect.top, rect.right, rect.bottom))
+        .ok_or_else(|| anyhow::anyhow!("window has invalid bounds"))?;
+    let mut dwm = RECT::default();
+    let bounds = DwmGetWindowAttribute(
+        hwnd,
+        DWMWA_EXTENDED_FRAME_BOUNDS,
+        &mut dwm as *mut _ as *mut _,
+        std::mem::size_of::<RECT>() as u32,
+    )
+    .ok()
+    .map(|_| (dwm.left, dwm.top, dwm.right, dwm.bottom));
+    Ok((geometry, bounds))
+}
+
+/// Use the exact same crop validation for capture and pixel/element mapping.
+pub(crate) fn window_capture_origin(hwnd: u64) -> Option<(i32, i32)> {
+    let (geometry, dwm) = unsafe { window_geometry(HWND(hwnd as *mut _)) }.ok()?;
+    let geometry = geometry.cropped(dwm);
+    Some((geometry.left, geometry.top))
+}
+
+/// Normalize either documented whole-window or DWM-frame WGC dimensions to
+/// the same inset frame used by GDI capture and bitmap_to_screen. Reject a
+/// resize race or unknown surface rather than inventing a pixel origin.
+fn normalize_wgc_frame(
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    window: FrameGeometry,
+    dwm: Option<Bounds>,
+) -> Result<(Vec<u8>, u32, u32, FrameGeometry)> {
+    validate_wgc_frame(&pixels, width, height)?;
+    let matches =
+        |frame: FrameGeometry| frame.width as u32 == width && frame.height as u32 == height;
+    let source = if matches(window) {
+        window
+    } else {
+        dwm.and_then(FrameGeometry::from_bounds)
+            .filter(|frame| window.cropped(dwm) != window && matches(*frame))
+            .ok_or_else(|| {
+                anyhow::anyhow!("WGC frame dimensions do not match current window bounds")
+            })?
+    };
+    let frame = source.cropped(dwm);
+    if frame == source {
+        return Ok((pixels, width, height, frame));
+    }
+    let x = (frame.left - source.left) as usize;
+    let y = (frame.top - source.top) as usize;
+    let stride = width as usize * 4;
+    let crop_stride = frame.width as usize * 4;
+    let mut cropped = vec![0; crop_stride * frame.height as usize];
+    for row in 0..frame.height as usize {
+        let start = (y + row) * stride + x * 4;
+        cropped[row * crop_stride..(row + 1) * crop_stride]
+            .copy_from_slice(&pixels[start..start + crop_stride]);
+    }
+    validate_wgc_frame(&cropped, frame.width as u32, frame.height as u32)?;
+    Ok((cropped, frame.width as u32, frame.height as u32, frame))
+}
+
+fn screenshot_window_via_wgc_checked(hwnd: u64) -> Result<(Vec<u8>, u32, u32, FrameGeometry)> {
+    let validate = |frame: (Vec<u8>, u32, u32)| {
+        let (geometry, dwm) = unsafe { window_geometry(HWND(hwnd as *mut _)) }?;
+        normalize_wgc_frame(frame.0, frame.1, frame.2, geometry, dwm)
+    };
+    let hardware = crate::wgc::screenshot_window_via_wgc(hwnd).and_then(validate);
+    match hardware {
+        Ok(frame) => Ok(frame),
+        Err(error) => {
+            tracing::warn!(target: "cua-driver", "screenshot: hardware WGC unusable for hwnd 0x{hwnd:x}: {error}; retrying with software WARP.");
+            crate::wgc::screenshot_window_via_wgc_software(hwnd)
+                .and_then(validate)
+                .map_err(|software| {
+                    anyhow::anyhow!("hardware WGC failed: {error}; software WGC failed: {software}")
+                })
+        }
+    }
+}
+
+#[cfg(test)]
+mod wgc_validation_tests {
+    use super::{normalize_wgc_frame, validate_wgc_frame, FrameGeometry};
+
+    #[test]
+    fn black_frames_do_not_depend_on_alpha() {
+        assert_eq!(
+            validate_wgc_frame(&[0, 0, 0, 0, 0, 0, 0, 255], 2, 1)
+                .unwrap_err()
+                .to_string(),
+            "WGC returned an entirely RGB-black frame"
+        );
+    }
+
+    #[test]
+    fn sparse_nonblack_content_is_preserved() {
+        let mut pixels = vec![0; 4096 * 4];
+        pixels[4 * 2049 + 2] = 1;
+        assert!(validate_wgc_frame(&pixels, 64, 64).is_ok());
+    }
+
+    #[test]
+    fn malformed_frames_are_rejected() {
+        for (pixels, width, height) in [
+            (&[][..], 0, 0),
+            (&[1, 2, 3][..], 1, 1),
+            (&[1, 2, 3, 4][..], 2, 1),
+            (&[][..], u32::MAX, u32::MAX),
+        ] {
+            assert_eq!(
+                validate_wgc_frame(pixels, width, height)
+                    .unwrap_err()
+                    .to_string(),
+                "WGC returned invalid BGRA dimensions or buffer length"
+            );
+        }
+    }
+
+    #[test]
+    fn whole_window_and_dwm_frames_share_the_input_origin() {
+        let window = FrameGeometry::from_bounds((100, 200, 108, 206)).unwrap();
+        let dwm = Some((102, 200, 106, 205));
+        for (width, height, first_pixel) in [(8, 6, 12), (4, 5, 6)] {
+            let pixels = (0..width * height)
+                .flat_map(|index| [index as u8 + 1, 0, 0, 255])
+                .collect();
+            let (pixels, width, height, geometry) =
+                normalize_wgc_frame(pixels, width, height, window, dwm).unwrap();
+            assert_eq!((width, height), (2, 3));
+            assert_eq!((geometry.left, geometry.top), (103, 201));
+            assert_eq!(&pixels[..4], &[first_pixel, 0, 0, 255]);
+            assert_eq!(geometry.local_point(103, 201), Some((0.0, 0.0)));
+        }
+    }
+
+    #[test]
+    fn unknown_wgc_dimensions_do_not_invent_an_origin() {
+        let window = FrameGeometry::from_bounds((100, 200, 108, 206)).unwrap();
+        let error = normalize_wgc_frame(vec![255; 3 * 2 * 4], 3, 2, window, None).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "WGC frame dimensions do not match current window bounds"
+        );
+    }
+
+    #[test]
+    fn colored_border_does_not_hide_black_capture_content() {
+        let window = FrameGeometry::from_bounds((0, 0, 5, 5)).unwrap();
+        let mut pixels = vec![0; 5 * 5 * 4];
+        pixels[0] = 1;
+        let error = normalize_wgc_frame(pixels, 5, 5, window, Some((0, 0, 5, 5))).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "WGC returned an entirely RGB-black frame"
+        );
+    }
+}
+
 /// Probe whether `target` is currently obscured by some other window.
 /// Samples `WindowFromPoint` at the target's center + four corners (insetting
 /// 2 px from each corner so we don't catch invisible 1-px frame slop). If any
@@ -235,7 +421,11 @@ unsafe fn target_is_obscured(target: HWND) -> bool {
 /// (the daemon's typical case — see module docs).
 unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32, FrameGeometry)> {
     use windows::Win32::Foundation::RECT;
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, GetWindowRect, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
 
     let mut rect = RECT::default();
     GetWindowRect(hwnd, &mut rect)?;
@@ -245,13 +435,39 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32,
     // DPI-unaware/system-aware processes), and BitBlt operates in physical
     // pixels too — use the rect as-is. Scaling by DPI/96 here would shift
     // and oversize the captured screen region (issue #1879).
-    let physical_left = rect.left;
-    let physical_top = rect.top;
-
     let geometry = FrameGeometry::from_bounds((rect.left, rect.top, rect.right, rect.bottom))
         .ok_or_else(|| anyhow::anyhow!("screen-region fallback: invalid window bounds"))?;
+    // Match PrintWindow's DWM crop and the bitmap_to_screen input mapping.
+    // Capturing the raw GetWindowRect would include invisible shadow margins
+    // and shift clicks derived from the screenshot by those margins.
+    let mut dwm = RECT::default();
+    let dwm_bounds = DwmGetWindowAttribute(
+        hwnd,
+        DWMWA_EXTENDED_FRAME_BOUNDS,
+        &mut dwm as *mut _ as *mut _,
+        std::mem::size_of::<RECT>() as u32,
+    )
+    .ok()
+    .map(|_| (dwm.left, dwm.top, dwm.right, dwm.bottom));
+    let geometry = geometry.cropped(dwm_bounds);
+    let physical_left = geometry.left;
+    let physical_top = geometry.top;
     let w = geometry.width;
     let h = geometry.height;
+
+    let screen_left = i64::from(GetSystemMetrics(SM_XVIRTUALSCREEN));
+    let screen_top = i64::from(GetSystemMetrics(SM_YVIRTUALSCREEN));
+    let screen_right = screen_left + i64::from(GetSystemMetrics(SM_CXVIRTUALSCREEN));
+    let screen_bottom = screen_top + i64::from(GetSystemMetrics(SM_CYVIRTUALSCREEN));
+    if i64::from(physical_left) < screen_left
+        || i64::from(physical_top) < screen_top
+        || i64::from(physical_left) + i64::from(w) > screen_right
+        || i64::from(physical_top) + i64::from(h) > screen_bottom
+    {
+        bail!(
+            "screen-region fallback: window is partly off-screen; bring it fully on-screen first"
+        );
+    }
 
     let screen_dc = GetDC(HWND(std::ptr::null_mut())); // NULL HWND → desktop DC
     if screen_dc.is_invalid() {
@@ -304,6 +520,8 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32,
     };
     let pixel_count = (w * h) as usize;
     let mut pixels = vec![0u8; pixel_count * 4];
+    // GetDIBits requires the bitmap to be deselected from every DC.
+    SelectObject(mem_dc, old_bitmap);
     let ok = GetDIBits(
         mem_dc,
         bitmap,
@@ -314,7 +532,6 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32,
         DIB_RGB_COLORS,
     );
 
-    SelectObject(mem_dc, old_bitmap);
     let _ = DeleteObject(bitmap);
     let _ = DeleteDC(mem_dc);
     ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
@@ -322,15 +539,23 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32,
     if blt_ok.is_err() {
         bail!("screen-region fallback: BitBlt failed: {:?}", blt_ok);
     }
-    if ok == 0 {
-        bail!("screen-region fallback: GetDIBits returned 0");
+    if ok != h {
+        bail!("screen-region fallback: GetDIBits copied {ok} of {h} scanlines");
     }
     Ok((pixels, w, h, geometry))
 }
 
 /// Capture a window by HWND, returning raw PNG bytes.
 pub fn screenshot_window_bytes(hwnd: u64) -> Result<Vec<u8>> {
-    screenshot_window_bytes_with_occlusion(hwnd).map(|(b, _)| b)
+    let (bytes, occluded) = screenshot_window_bytes_with_occlusion(hwnd)?;
+    if occluded {
+        bail!(
+            "cannot capture occluded window 0x{hwnd:x}: screen-region fallback \
+               contains covering-window pixels. Call bring_to_front with this \
+               window_id and take a fresh snapshot, or use get_desktop_state."
+        );
+    }
+    Ok(bytes)
 }
 
 /// Capture a window by HWND. Returns `(png_bytes, occluded_flag)` — the
@@ -344,8 +569,8 @@ pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, boo
     screenshot_window_mapped(hwnd).map(|(png, occluded, _)| (png, occluded))
 }
 
-/// Capture the final input point against the exact source frame. WGC supplies
-/// no proven screen origin, so it cannot produce mapped click evidence yet.
+/// Capture the final input point against the exact source frame. WGC frame
+/// dimensions must agree with the window geometry before accepting an origin.
 pub(crate) fn screenshot_window_click_target(
     hwnd: u64,
     screen_x: i32,
@@ -370,11 +595,11 @@ fn screenshot_window_mapped(hwnd: u64) -> Result<(Vec<u8>, bool, Option<FrameGeo
             // no usable GDI surface even though DWM is already rendering it.
             // WGC reads the compositor-owned frame and is therefore the right
             // first fallback for this class of capture failure.
-            match crate::wgc::screenshot_window_via_wgc(hwnd) {
-                Ok((pixels, width, height)) => Ok((
+            match screenshot_window_via_wgc_checked(hwnd) {
+                Ok((pixels, width, height, geometry)) => Ok((
                     cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)?,
                     false,
-                    None,
+                    Some(geometry),
                 )),
                 Err(wgc_error) => {
                     // Headless/virtualized Windows sessions can expose DWM but
@@ -461,12 +686,12 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
     // windows WGC may fail; fall back to the screen-region BitBlt
     // path, then to PrintWindow as a last resort.
     if crate::input::is_xaml_host_hwnd(hwnd_raw) {
-        match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
-            Ok((pixels, w, h)) => {
+        match screenshot_window_via_wgc_checked(hwnd_raw) {
+            Ok((pixels, w, h, geometry)) => {
                 return Ok((
                     cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w, h)?,
                     false, // WGC reads target's own pixels — never occluded by definition
-                    None,
+                    Some(geometry),
                 ));
             }
             Err(e) => {
@@ -574,6 +799,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
 
     let pixel_count = (w * h) as usize;
     let mut pixels = vec![0u8; pixel_count * 4];
+    SelectObject(mem_dc, old_bitmap);
     let ok = GetDIBits(
         mem_dc,
         bitmap,
@@ -584,13 +810,12 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
         DIB_RGB_COLORS,
     );
 
-    SelectObject(mem_dc, old_bitmap);
     let _ = DeleteObject(bitmap);
     let _ = DeleteDC(mem_dc);
     ReleaseDC(hwnd, screen_dc);
 
-    if ok == 0 {
-        bail!("GetDIBits returned 0");
+    if ok != h {
+        bail!("window capture: GetDIBits copied {ok} of {h} scanlines");
     }
 
     // Crop the bitmap to the DWM extended-frame bounds (computed above)
@@ -636,12 +861,12 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
     // screen-region path mishandles (returns covering window's pixels).
     let mostly_black = is_mostly_black_bgra(&pixels);
     if mostly_black {
-        match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
-            Ok((alt_pixels, w, h)) => {
+        match screenshot_window_via_wgc_checked(hwnd_raw) {
+            Ok((alt_pixels, w, h, geometry)) => {
                 return Ok((
                     cua_driver_core::image_utils::encode_bgra_to_png(&alt_pixels, w, h)?,
                     false,
-                    None,
+                    Some(geometry),
                 ));
             }
             Err(e) => {
@@ -666,14 +891,9 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
                 ));
             }
             Err(e) => {
-                // Screen-region path failed too — return the (black) PrintWindow
-                // result with an explanatory log rather than erroring outright.
-                // Caller still gets an image; the fact that it's black is now
-                // visible in the bytes themselves.
-                tracing::warn!(
-                    target: "cua-driver",
-                    "screenshot: PrintWindow returned a mostly-black bitmap (UWP / \
-                     DirectComposition target?); screen-region fallback failed: {e}"
+                bail!(
+                    "PrintWindow returned a mostly-black bitmap and no usable \
+                       WGC frame was available; screen-region fallback failed: {e}"
                 );
             }
         }
@@ -758,6 +978,7 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
             bmiColors: [RGBQUAD::default(); 1],
         };
         let mut pixels = vec![0u8; (w * h * 4) as usize];
+        SelectObject(mem_dc, old_bitmap);
         let ok = GetDIBits(
             mem_dc,
             bitmap,
@@ -767,7 +988,6 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
             &mut bmi,
             DIB_RGB_COLORS,
         );
-        SelectObject(mem_dc, old_bitmap);
         let _ = DeleteObject(bitmap);
         let _ = DeleteDC(mem_dc);
         ReleaseDC(HWND::default(), screen_dc);
@@ -778,8 +998,8 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
             }
             bail!("desktop capture: BitBlt failed: {error}");
         }
-        if ok == 0 {
-            bail!("GetDIBits returned 0");
+        if ok != h {
+            bail!("desktop capture: GetDIBits copied {ok} of {h} scanlines");
         }
         cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)
     }

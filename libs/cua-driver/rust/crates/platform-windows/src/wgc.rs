@@ -30,7 +30,10 @@ use windows::{
     Win32::{
         Foundation::HWND,
         Graphics::{
-            Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0},
+            Direct3D::{
+                D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP,
+                D3D_FEATURE_LEVEL_11_0,
+            },
             Direct3D11::{
                 D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
                 D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAPPED_SUBRESOURCE,
@@ -50,10 +53,19 @@ use windows::{
 /// Caller is responsible for encoding to PNG (or whatever format) via
 /// `cua_driver_core::image_utils::encode_bgra_to_png`.
 pub fn screenshot_window_via_wgc(hwnd: u64) -> Result<(Vec<u8>, u32, u32)> {
-    unsafe { wgc_capture_impl(HWND(hwnd as *mut _)) }
+    unsafe { wgc_capture_impl(HWND(hwnd as *mut _), D3D_DRIVER_TYPE_HARDWARE) }
 }
 
-unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
+/// WARP isolates capture/readback from a broken virtual or hardware D3D driver.
+/// It still captures the target's own DWM surface, including covered windows.
+pub fn screenshot_window_via_wgc_software(hwnd: u64) -> Result<(Vec<u8>, u32, u32)> {
+    unsafe { wgc_capture_impl(HWND(hwnd as *mut _), D3D_DRIVER_TYPE_WARP) }
+}
+
+unsafe fn wgc_capture_impl(
+    hwnd: HWND,
+    driver_type: D3D_DRIVER_TYPE,
+) -> Result<(Vec<u8>, u32, u32)> {
     if IsIconic(hwnd).as_bool() {
         bail!(
             "WGC cannot capture a minimized window (no rendered content). \
@@ -69,7 +81,7 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
     let mut d3d_context: Option<ID3D11DeviceContext> = None;
     D3D11CreateDevice(
         None,
-        D3D_DRIVER_TYPE_HARDWARE,
+        driver_type,
         windows::Win32::Foundation::HMODULE(std::ptr::null_mut()),
         D3D11_CREATE_DEVICE_BGRA_SUPPORT,
         Some(&[D3D_FEATURE_LEVEL_11_0]),
@@ -78,7 +90,9 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
         None,
         Some(&mut d3d_context),
     )
-    .context("D3D11CreateDevice failed (hardware feature-level 11.0 + BGRA)")?;
+    .with_context(|| {
+        format!("D3D11CreateDevice failed ({driver_type:?}, feature-level 11.0 + BGRA)")
+    })?;
     let d3d_device = d3d_device.context("D3D11CreateDevice returned a None device")?;
     let d3d_context = d3d_context.context("D3D11CreateDevice returned a None context")?;
 

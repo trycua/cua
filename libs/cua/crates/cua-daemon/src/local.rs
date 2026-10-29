@@ -460,15 +460,9 @@ async fn resolve_placement_inner(
             backend: BackendKind::Qemu,
             image: ImageSource::oci(&found.pinned_ref),
         },
-        // Lume pulls by tag; the digest rides along so the cached base VM
-        // follows it (a moved tag must not keep cloning the old base).
         Variant::Lume => Placement {
             backend: BackendKind::Lume,
-            image: ImageSource::oci(&if found.digest.starts_with("sha256:") {
-                format!("{}@{}", found.variant_ref, found.digest)
-            } else {
-                found.variant_ref.clone()
-            }),
+            image: ImageSource::oci(&lume_image_ref(&found)?),
         },
         Variant::Rootfs => Placement {
             backend: BackendKind::Container,
@@ -494,6 +488,34 @@ async fn resolve_placement_inner(
         },
         placement,
         image: Some(found),
+    })
+}
+
+/// The reference a Lume placement names: the variant's tag reference with
+/// the resolved digest riding along (`repo:tag@sha256:…`). Lume pulls by
+/// tag, and the digest keys the cached base VM, so a moved tag does not keep
+/// cloning the old base. A digest the input already carried is dropped
+/// first, so `macos:26@sha256:…` keys the same base as `macos:26` at that
+/// digest instead of naming the digest twice. A digest-only reference has
+/// no tag for Lume to pull, which is an error.
+fn lume_image_ref(found: &cua_image::ResolvedImage) -> Result<String> {
+    let mut tagged = cua_image::resolve::NormalizedRef::parse(&found.variant_ref)
+        .map_err(|e| Error::InvalidArgument(format!("{}: {e}", found.variant_ref)))?;
+    tagged.digest = None;
+    if tagged.tag.is_none() {
+        return Err(Error::InvalidArgument(format!(
+            "{}: Lume pulls macOS images by tag, so a digest-only reference cannot run on Lume; \
+             name the tag, optionally with the digest (`{}:<tag>@{}`)",
+            found.reference,
+            tagged.repo(),
+            found.digest,
+        )));
+    }
+    let tag_ref = tagged.full();
+    Ok(if found.digest.starts_with("sha256:") {
+        format!("{tag_ref}@{}", found.digest)
+    } else {
+        tag_ref
     })
 }
 

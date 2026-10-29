@@ -429,7 +429,7 @@ function ProviderSheet() {
                   </DialogDescription>
                 ) : null}
               </header>
-              <div className="mt-3 border-t pt-2">
+              <div className="mt-4">
                 {v.ways.map((w) => {
                   const Icon = ICON[w.id];
                   return (

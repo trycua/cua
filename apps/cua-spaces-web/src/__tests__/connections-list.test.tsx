@@ -240,8 +240,8 @@ describe.skipIf(!wasmBuilt)("the Connect card in a Space thread", () => {
     );
     await click(card.querySelector("[data-failure-connect]")!);
     const sheet = await found("[data-provider-sheet=anthropic]");
-    // Only a key, and one plain sentence on why.
-    expect(qa("[data-provider-way]").map((w) => w.dataset.providerWay)).toEqual(["key"]);
+    // Only keys (pasted, or the one in the demo shell), never the Claude sign-in, and one plain sentence on why.
+    expect(qa("[data-provider-way]").map((w) => w.dataset.providerWay)).toEqual(["key", "shell"]);
     expect(q("[data-provider-only-key]")!.textContent).toBe("Hermes uses an API key. Your Claude sign-in is used by Claude Code.");
     // The header is a header: a title and a small works-with line, no tile like the option rows have.
     const header = sheet.querySelector("[data-provider-sheet-header]")!;

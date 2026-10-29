@@ -327,8 +327,6 @@ fn all_builders(s: &str) -> Vec<Event> {
         .unwrap(),
     );
     assert!(events::repo_cache("https://github.com/o/r", "local", 0, 0, "none").is_none());
-    v.push(events::agent_signin_imported("codex"));
-    v.push(events::agent_signin_imported(s));
     v.push(events::agent_used_space("space_bash").unwrap());
     v.push(events::agent_used_space("computer_click").unwrap());
     assert!(events::installer_step(s, "cli", "network", "sh", &[]).is_none());

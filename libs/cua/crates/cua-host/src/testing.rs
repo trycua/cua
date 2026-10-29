@@ -78,6 +78,16 @@ struct State_ {
     /// Every machine read answers 503, as the proxy in front of the
     /// relay does while it has no backend.
     reads_down: bool,
+    /// `/m/<id>` of a machine listed offline answers 502 at once, as the
+    /// relay does once past its start-up grace.
+    refuse_offline: bool,
+    /// A relay that predates meta patches: the key is ignored.
+    ignore_meta_patches: bool,
+    /// Answers `POST /v1/machines/{id}/leave` as a relay that predates it.
+    without_leave: bool,
+    /// A relay (or its control plane) that refuses to change who a computer
+    /// is shared with, with this code (`share_outside_team`).
+    refuse_shares: Option<String>,
     /// Machine registrations received (including refused ones).
     register_calls: usize,
     /// machine id → `(path prefix, base URL)` its `/m/<id>/…` gRPC-Web
@@ -88,6 +98,9 @@ struct State_ {
     usage: Option<serde_json::Value>,
     /// Pairing codes by canonical code.
     pairing: BTreeMap<String, FakePairing>,
+    /// The most unused pairing codes an account may hold (none: no cap),
+    /// as the real relay's 429.
+    max_unused_codes: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -293,6 +306,10 @@ async fn register(
     st.register_calls += 1;
     if let Some(code) = st.fail_register.pop_front() {
         let status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        if code == 429 {
+            // The proxy's bare throttle, which the client waits out.
+            return (status, "Too Many Requests").into_response();
+        }
         return err(status, "the fake relay failed this registration");
     }
     let id = body["id"].as_str().unwrap_or_default().to_string();
@@ -312,7 +329,7 @@ async fn register(
                 return err(StatusCode::UNAUTHORIZED, "this pairing code is not valid");
             };
             if id.len() < 8 {
-                return err(StatusCode::BAD_REQUEST, "invalid machine id");
+                return err(StatusCode::BAD_REQUEST, "invalid computer id");
             }
             p.used_at = Some(now_secs());
             p.machine = Some(id.clone());
@@ -326,12 +343,12 @@ async fn register(
         },
     };
     if id.len() < 8 {
-        return err(StatusCode::BAD_REQUEST, "invalid machine id");
+        return err(StatusCode::BAD_REQUEST, "invalid computer id");
     }
     if let Some(existing) = st.machines.get(&id)
         && existing.machine.owner.id != who.id
     {
-        return err(StatusCode::CONFLICT, "machine id owned by another account");
+        return err(StatusCode::CONFLICT, "computer id owned by another account");
     }
     let allow: Vec<String> = body["allow"]
         .as_array()
@@ -370,10 +387,11 @@ async fn register(
         viewers: vec![],
         clients: vec![],
         host,
-        // This mock never asks for a device signature or MFA, so a
-        // registration here has nothing to vouch for either way; default to
-        // confirmed, matching behavior before S5 added the field.
-        confirmed: true,
+        // Like the real relay once devices are required: only a
+        // registration carrying an enrolled device's session is proven.
+        // Otherwise (devices not required) there is nothing to vouch for
+        // either way, so it is confirmed, as before S5 added the field.
+        confirmed: !st.require_devices || st.device_of(&headers, &who).is_some(),
         team: None,
         meta: body["meta"]
             .as_object()
@@ -415,6 +433,21 @@ async fn pairing_mint(
     let Some(Caller::Account(who)) = caller(&st, &headers) else {
         return err(StatusCode::UNAUTHORIZED, "account token required");
     };
+    if let Some(max) = st.max_unused_codes
+        && st
+            .pairing
+            .values()
+            .filter(|p| p.owner.id == who.id && p.state() == "active")
+            .count()
+            >= max
+    {
+        return err(
+            StatusCode::TOO_MANY_REQUESTS,
+            &format!(
+                "at most {max} unused pairing codes at once; revoke one or wait for it to expire"
+            ),
+        );
+    }
     let code: String = (0..12)
         .map(|_| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"[(rand::random::<u32>() % 32) as usize] as char)
         .collect();
@@ -512,7 +545,7 @@ fn authorize<'a>(
 ) -> Result<(Machine, &'a Record), Response> {
     st.gate(headers)?;
     let Some(record) = st.machines.get(id) else {
-        return Err(err(StatusCode::NOT_FOUND, "no such machine"));
+        return Err(err(StatusCode::NOT_FOUND, "no such computer"));
     };
     match caller(st, headers) {
         Some(Caller::Machine(m)) if m == id => {
@@ -523,7 +556,7 @@ fn authorize<'a>(
         Some(Caller::Account(who)) => match view(record, &who) {
             Some(v) if !owner_only || v.role == "owner" => Ok((v, record)),
             Some(_) => Err(err(StatusCode::FORBIDDEN, "owner only")),
-            None => Err(err(StatusCode::NOT_FOUND, "no such machine")),
+            None => Err(err(StatusCode::NOT_FOUND, "no such computer")),
         },
         _ => Err(err(StatusCode::UNAUTHORIZED, "credential required")),
     }
@@ -559,6 +592,11 @@ async fn patch(
     if matches!(caller(&st, &headers), Some(Caller::Machine(_))) {
         return err(StatusCode::FORBIDDEN, "owner only");
     }
+    if let Some(code) = st.refuse_shares.clone()
+        && (body["allow"].is_array() || body["viewers"].is_array())
+    {
+        return err(StatusCode::FORBIDDEN, &code);
+    }
     let rec = st.machines.get_mut(&id).unwrap();
     if let Some(n) = body["name"].as_str() {
         rec.machine.name = n.into();
@@ -581,6 +619,20 @@ async fn patch(
             rec.machine.clients.clear();
         }
     }
+    let ignore_meta = st.ignore_meta_patches;
+    let rec = st.machines.get_mut(&id).unwrap();
+    if let Some(meta) = body["meta"].as_object().filter(|_| !ignore_meta) {
+        for (k, v) in meta {
+            match v.as_str() {
+                Some("") | None => {
+                    rec.machine.meta.remove(k);
+                }
+                Some(v) => {
+                    rec.machine.meta.insert(k.clone(), v.to_string());
+                }
+            }
+        }
+    }
     Json(rec.machine.clone()).into_response()
 }
 
@@ -591,6 +643,59 @@ async fn delete(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) 
     }
     st.machines.remove(&id);
     StatusCode::NO_CONTENT.into_response()
+}
+
+async fn leave(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let mut st = s.lock().unwrap();
+    if st.without_leave {
+        // What an older relay answers: no such route.
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let (view, _) = match authorize(&st, &headers, &id, false) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if view.role == "owner" {
+        return err(
+            StatusCode::FORBIDDEN,
+            "you own this computer; delete it instead of leaving it",
+        );
+    }
+    let Some(Caller::Account(who)) = caller(&st, &headers) else {
+        return err(StatusCode::FORBIDDEN, "a machine token cannot do this");
+    };
+    let mine = |a: &String| {
+        a == &who.id
+            || who
+                .email
+                .as_deref()
+                .is_some_and(|e| e.eq_ignore_ascii_case(a))
+    };
+    let rec = st.machines.get_mut(&id).unwrap();
+    let removed: Vec<String> = rec
+        .machine
+        .allow
+        .iter()
+        .chain(&rec.machine.viewers)
+        .filter(|a| mine(a))
+        .cloned()
+        .collect();
+    rec.machine.allow.retain(|a| !mine(a));
+    rec.machine.viewers.retain(|a| !mine(a));
+    rec.machine.clients.retain(|c| c.id != who.id);
+    let owner = rec_owner(&st, &id);
+    st.audit.push((
+        owner,
+        serde_json::json!({"ts": now_secs(), "kind": "share_left", "machine": id, "subject": who.email.clone().unwrap_or_else(|| who.id.clone())}),
+    ));
+    Json(serde_json::json!({"id": id, "removed": removed})).into_response()
+}
+
+fn rec_owner(st: &State_, id: &str) -> String {
+    st.machines
+        .get(id)
+        .map(|r| r.machine.owner.id.clone())
+        .unwrap_or_default()
 }
 
 async fn sharing(s: S, headers: HeaderMap, id: String, on: bool) -> Response {
@@ -706,7 +811,7 @@ async fn device_register(
             StatusCode::FORBIDDEN,
             &match &entry.superseded_by {
                 Some(by) => format!(
-                    "this device key was replaced by {by} on the same machine; create a new device key to enroll again"
+                    "this device key was replaced by {by} on the same computer; create a new device key to enroll again"
                 ),
                 None => "this device was revoked; create a new device key to enroll again".into(),
             },
@@ -948,6 +1053,18 @@ async fn proxied(
     if let Some(r) = refused {
         return r;
     }
+    {
+        let st = s.lock().unwrap();
+        let offline = uri
+            .path()
+            .strip_prefix("/m/")
+            .and_then(|rest| rest.split('/').next())
+            .and_then(|id| st.machines.get(id))
+            .is_some_and(|r| !r.machine.online);
+        if st.refuse_offline && offline {
+            return err(StatusCode::BAD_GATEWAY, "the computer is not connected");
+        }
+    }
     if let Some(target) = target
         && headers
             .get(axum::http::header::CONTENT_TYPE)
@@ -1016,7 +1133,7 @@ fn proxied_record(
     // As the real relay: a machine that stopped sharing refuses everything
     // but its health check (a gRPC caller gets a gRPC status).
     if st.machines.get(&id).is_some_and(|r| !r.machine.sharing) && !is_health {
-        let message = "the host stopped sharing this machine";
+        let message = "the host stopped sharing this computer";
         if content_type.starts_with("application/grpc") {
             let r = Response::builder()
                 .status(StatusCode::OK)
@@ -1055,7 +1172,16 @@ async fn forward(
         .and_then(|rest| rest.find('/').map(|i| &rest[i..]))
         .unwrap_or(path);
     let url = format!("{}{path}", target.trim_end_matches('/'));
-    let mut req = reqwest::Client::new().request(method, url).body(payload);
+    // One client for every forward: a client per request read the system
+    // proxy settings each time, which serialized a test's many connects.
+    static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let http = HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("fake relay client")
+    });
+    let mut req = http.request(method, url).body(payload);
     for (k, v) in headers {
         if k != axum::http::header::HOST && k != axum::http::header::CONTENT_LENGTH {
             req = req.header(k, v);
@@ -1108,6 +1234,7 @@ impl FakeRelay {
             )
             .route("/v1/machines/{id}/stop-sharing", post(stop))
             .route("/v1/machines/{id}/start-sharing", post(start))
+            .route("/v1/machines/{id}/leave", post(leave))
             .route("/v1/devices", get(device_list).post(device_register))
             .route("/v1/devices/session", post(device_session))
             .route("/v1/devices/approve", post(device_approve))
@@ -1167,6 +1294,15 @@ impl FakeRelay {
         }
     }
 
+    /// Sets a machine's session: online since `connected_at` (Unix
+    /// seconds), or offline (a new driver session gets a new time).
+    pub fn set_session(&self, id: &str, online: bool, connected_at: Option<u64>) {
+        if let Some(r) = self.state.lock().unwrap().machines.get_mut(id) {
+            r.machine.online = online;
+            r.machine.connected_at = if online { connected_at } else { None };
+        }
+    }
+
     /// Adds a connected client to a machine.
     pub fn add_client(&self, id: &str, client: ConnectedClient) {
         if let Some(r) = self.state.lock().unwrap().machines.get_mut(id) {
@@ -1182,6 +1318,24 @@ impl FakeRelay {
             .machines
             .get(id)
             .map(|r| r.machine.clone())
+    }
+
+    /// Caps the unused pairing codes an account may hold at `max` (the
+    /// real relay's is 10): a mint over it answers 429.
+    pub fn cap_unused_codes(&self, max: usize) {
+        self.state.lock().unwrap().max_unused_codes = Some(max);
+    }
+
+    /// The pairing codes of `account` (its id) not used, revoked or
+    /// expired yet.
+    pub fn unused_codes(&self, account: &str) -> usize {
+        self.state
+            .lock()
+            .unwrap()
+            .pairing
+            .values()
+            .filter(|p| p.owner.id == account && p.state() == "active")
+            .count()
     }
 
     /// The next machine registrations answer with `statuses`, in order,
@@ -1204,10 +1358,35 @@ impl FakeRelay {
             .extend(statuses.iter().copied());
     }
 
+    /// While `on`, a request to a computer listed offline answers 502 at
+    /// once, as the relay does past its start-up grace.
+    pub fn set_refuse_offline(&self, on: bool) {
+        self.state.lock().unwrap().refuse_offline = on;
+    }
+
     /// While `down`, every machine read answers 503 "no available server"
     /// (a relay deploy, as its proxy answers).
     pub fn set_reads_down(&self, down: bool) {
         self.state.lock().unwrap().reads_down = down;
+    }
+
+    /// While set, a PATCH that changes who a computer is shared with is
+    /// refused with `code` (`share_outside_team`), as the relay does for
+    /// someone outside the owner's team.
+    pub fn refuse_shares(&self, code: Option<&str>) {
+        self.state.lock().unwrap().refuse_shares = code.map(str::to_string);
+    }
+
+    /// While `on`, a PATCH with `meta` is accepted but its keys are
+    /// dropped, as a relay that predates them does.
+    pub fn set_ignore_meta_patches(&self, on: bool) {
+        self.state.lock().unwrap().ignore_meta_patches = on;
+    }
+
+    /// Answers `POST /v1/machines/{id}/leave` the way a relay that
+    /// predates it does (404, no body), or as the current relay again.
+    pub fn without_leave(&self, on: bool) {
+        self.state.lock().unwrap().without_leave = on;
     }
 
     /// Machine registrations received so far (refused ones too).
@@ -1339,6 +1518,8 @@ struct ApiState {
     entitlement_reads: usize,
     /// Every org route answers 410, as a server without Teams.
     gone: bool,
+    /// (owner sub, removal) not yet acknowledged.
+    removals: Vec<(String, crate::spaces_api::ApiShareRemoval)>,
 }
 
 type A = Arc<Mutex<ApiState>>;
@@ -1441,8 +1622,11 @@ impl FakeSpacesApi {
             )
             .route(
                 "/v1/orgs/{org}/machines/{id}",
-                axum::routing::delete(api_remove_machine),
+                axum::routing::delete(api_remove_machine).patch(api_set_machine_role),
             )
+            .route("/v1/me/sharing", get(api_sharing))
+            .route("/v1/me/share-removals", get(api_share_removals))
+            .route("/v1/me/share-removals/ack", post(api_ack_share_removals))
             .route("/v1/orgs/{org}/devices", get(api_devices))
             .route("/v1/orgs/{org}/devices/request", post(api_request_device))
             .route(
@@ -1512,6 +1696,32 @@ impl FakeSpacesApi {
     /// How often `GET /v1/me/entitlements` was read.
     pub fn entitlement_reads(&self) -> usize {
         self.state.lock().unwrap().entitlement_reads
+    }
+
+    /// Records that `who` lost access to a computer of `owner` (a sub).
+    pub fn add_share_removal(&self, owner: &str, machine_name: &str, who: &str) {
+        self.state.lock().unwrap().removals.push((
+            owner.into(),
+            crate::spaces_api::ApiShareRemoval {
+                machine_id: "m1".into(),
+                machine_name: machine_name.into(),
+                who: who.into(),
+                removed_at: api_now(),
+            },
+        ));
+    }
+
+    /// The role of `machine` on `org` (`editor` or `viewer`).
+    pub fn machine_role(&self, org: &str, machine: &str) -> Option<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .orgs
+            .get(org)?
+            .machines
+            .iter()
+            .find(|m| m.machine_id == machine)
+            .map(|m| m.role.clone())
     }
 
     /// The machine ids bound to `org`.
@@ -1792,6 +2002,7 @@ async fn api_add_machine(
         platform: b["platform"].as_str().unwrap_or("").into(),
         label: b["label"].as_str().unwrap_or("").into(),
         added_by: sub,
+        role: b["role"].as_str().unwrap_or("editor").into(),
         added_at: api_now(),
     });
     (
@@ -1799,6 +2010,76 @@ async fn api_add_machine(
         Json(serde_json::json!({ "machine_id": machine })),
     )
         .into_response()
+}
+
+async fn api_set_machine_role(
+    State(s): State<A>,
+    h: HeaderMap,
+    Path((org, machine)): Path<(String, String)>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    let (id, _) = tri!(api_org(&st, &org, &sub, "admin"));
+    let role = b["role"].as_str().unwrap_or("");
+    if role != "viewer" && role != "editor" {
+        return api_fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bad_role",
+            "role is viewer or editor",
+        );
+    }
+    let o = st.orgs.get_mut(&id).unwrap();
+    let Some(m) = o.machines.iter_mut().find(|m| m.machine_id == machine) else {
+        return api_fail(StatusCode::NOT_FOUND, "machine_not_found", "");
+    };
+    m.role = role.into();
+    Json(serde_json::json!({ "machine_id": machine, "role": role })).into_response()
+}
+
+/// `GET /v1/me/sharing`: can share when in an org with `space_sharing`.
+async fn api_sharing(State(s): State<A>, h: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    if st.gone {
+        return api_fail(StatusCode::GONE, "gone", "retired");
+    }
+    let teams: Vec<_> = st
+        .orgs
+        .values()
+        .filter(|o| o.members.contains_key(&sub) && o.features.iter().any(|f| f == "space_sharing"))
+        .map(|o| {
+            let role = o.members[&sub].as_str();
+            serde_json::json!({
+                "id": o.id, "alias": o.alias, "name": o.name,
+                "can_add": role == "owner" || role == "admin",
+            })
+        })
+        .collect();
+    let mut out = serde_json::json!({ "can_share": !teams.is_empty(), "teams": teams });
+    if teams.is_empty() {
+        out["reason"] = "no_team".into();
+    }
+    Json(out).into_response()
+}
+
+async fn api_share_removals(State(s): State<A>, h: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    let rows: Vec<_> = st
+        .removals
+        .iter()
+        .filter(|(owner, _)| *owner == sub)
+        .map(|(_, r)| r.clone())
+        .collect();
+    Json(serde_json::json!({ "removals": rows })).into_response()
+}
+
+async fn api_ack_share_removals(State(s): State<A>, h: HeaderMap) -> Response {
+    let mut st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    st.removals.retain(|(owner, _)| *owner != sub);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn api_remove_machine(

@@ -13,21 +13,27 @@
 #   cua-driver  Cua Driver, which lets AI agents use apps while you keep
 #               working: installs it and adds its skill and MCP server to
 #               your agents (default off)
-# The checklist does not offer hosting. The app's first run asks how to use
-# this computer (--mode host|client preselects the answer). For scripts,
-# `--select host` / `--only host` still runs `cua host setup`, which lets
-# your other devices use this computer through the relay.
+# Signing in adds this computer to your account: after `cua auth login`
+# succeeds, the installer runs `cua host setup`, so your other devices can
+# use it through the relay (a computer set up before keeps its settings).
+# --no-host signs in only. Without a terminal there is no sign-in here; the
+# closing lines say how to finish. `--select host` / `--only host` run
+# `cua host setup` even without a sign-in here (kept for scripts).
 #
 # Options:
-#   --select LIST       preselect items (comma list: spaces, cua-driver, host)
+#   --select LIST       install these items plus the CLI, not the app unless
+#                       listed (comma list: spaces, cua-driver, host)
 #   --only LIST         install exactly LIST plus the CLI, no checklist
 #   --cli-only          install only the `cua` CLI (same as --only cli)
 #   --app-only          install only the Cua Spaces app (no CLI)
 #   --mode host|client  preselect the app's first-run choice (implies spaces)
 #   --pair CODE         add this machine to your account with a one-time code
-#                       from the Cua Spaces app (Add a machine): installs and
+#                       from the Cua Spaces app (Add a computer): installs and
 #                       runs `cua host setup --pair CODE`, no sign-in, no checklist
 #   --relay URL         relay for --pair (default https://relay.cua.ai)
+#   --no-host           sign in only: do not add this computer to your account
+#   --no-provide-spaces add this computer without creating Spaces for your
+#                       other devices on it (cua host setup --no-provide-spaces)
 #                       A computer that already has a cua with `host setup --pair`
 #                       (and the app) uses them instead of downloading again;
 #                       --version, --prefix or CUA_INSTALL_REINSTALL=1 install anyway
@@ -35,7 +41,9 @@
 #   --prefix DIR        install under DIR (DIR/bin, DIR/Applications)
 #   --modify-path       add the bin dir to your shell profile without asking
 #   --no-modify-path    never edit your shell profile (print the one-line command)
-#   --no-onboarding     do not run `cua auth login` afterwards
+#   --no-onboarding     do not run `cua auth login` afterwards (nor add this computer)
+#   --no-skills         with cua-driver, add only its MCP server to your agents,
+#                       not its skill (by default both are added)
 #   -v, --verbose       print every step (manifest, downloads, signature checks)
 #   --require-signature fail unless a signature (minisign/cosign) verifies
 #   --dry-run           print what would happen, change nothing
@@ -53,6 +61,14 @@
 #   CUA_INSTALL_OS, CUA_INSTALL_ARCH  override platform detection
 #   CUA_INSTALL_MINISIGN_PUBKEY       minisign public key for artifacts
 #   CUA_HOME                  cua state dir (default ~/.cua)
+#   DO_NOT_TRACK=1 or CUA_TELEMETRY=0  send no install events (see below)
+#
+# Telemetry: the installer sends three anonymous events about its own run
+# (installer started, finished, or failed with the step and a fixed reason
+# word), under the same switches as every Cua program: DO_NOT_TRACK,
+# CUA_TELEMETRY, `[telemetry] enabled = "off"` in $CUA_HOME/config.toml, and
+# off in CI. Never names, paths or messages. Nothing on --dry-run.
+# https://cua.ai/docs/cua-sdk/concepts/telemetry
 set -eu
 
 REPO="${CUA_INSTALL_REPO:-trycua/cua}"
@@ -90,6 +106,10 @@ verbose=0
 no_tty_noted=0
 signed_in=0
 onboarding=1
+no_host=0
+no_provide_spaces=0
+did_host=""
+driver_skills=1
 require_sig=0
 dry_run=0
 assume_yes=0
@@ -111,6 +131,7 @@ info() { [ "$verbose" = 0 ] || printf 'cua-install: %s\n' "$*"; }
 warn() { printf 'cua-install: warning: %s\n' "$*" >&2; }
 die() {
     printf 'cua-install: error: %s\n' "$*" >&2
+    tel_kind="$(tel_error_kind "$*")"
     exit 1
 }
 
@@ -119,6 +140,11 @@ usage() {
 }
 
 cleanup() {
+    rc=$?
+    if [ "$rc" != 0 ] && [ "$tel_on" = 1 ] && [ "$tel_ended" = 0 ]; then
+        [ "$rc" != 130 ] || tel_kind=cancelled
+        tel_send installer_failed "$tel_stage" "${tel_kind:-other}"
+    fi
     if [ -n "$tty_saved" ]; then
         stty "$tty_saved" </dev/tty 2>/dev/null || true
         tty_saved=""
@@ -132,6 +158,202 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+
+# ---------------------------------------------------------------- telemetry
+
+# Three anonymous events about this install (cua_installer_step):
+# installer_started, then installer_completed or installer_failed with the
+# stage that was running and a fixed reason word. The same switches as
+# every Cua program (libs/cua/crates/cua-telemetry/src/config.rs); the same
+# anonymous install id, so the app's later events continue this install.
+# Never a name, a path, a URL or an error message. Best effort: a send never
+# fails or slows the install by more than a few seconds.
+TEL_ENDPOINT_DEFAULT="https://eu.i.posthog.com/batch/"
+TEL_KEY_PROD="phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14"
+TEL_KEY_STAGING="phc_xDNLpzypNLVGmzQeBZEgZDZK7Ea6yYAmAnGZ6hMtHNKG"
+tel_on=0
+tel_ended=0
+tel_stage=other
+tel_kind=""
+tel_version=""
+tel_id=""
+tel_session=""
+tel_ci=false
+
+tel_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'; }
+
+# tel_bool VALUE: prints on, off, or nothing (unset or not a switch word).
+tel_bool() {
+    case "$(tel_lower "$1")" in
+    0 | false | no | off | disable | disabled) echo off ;;
+    1 | true | yes | on | enable | enabled) echo on ;;
+    esac
+}
+
+# The [telemetry] enabled value in $CUA_HOME/config.toml (on, off, or nothing).
+tel_config() {
+    f="${CUA_HOME:-$HOME/.cua}/config.toml"
+    [ -r "$f" ] || return 0
+    v="$(awk '
+        /^[[:space:]]*\[/ { sect = $0; gsub(/[[:space:]\[\]]/, "", sect); next }
+        sect == "telemetry" && /^[[:space:]]*enabled[[:space:]]*=/ {
+            sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*(#.*)?$/, ""); gsub(/"/, ""); print; exit
+        }' "$f" 2>/dev/null)"
+    tel_bool "$v"
+}
+
+tel_is_ci() {
+    for v in CI CONTINUOUS_INTEGRATION GITHUB_ACTIONS GITLAB_CI JENKINS_URL CIRCLECI BUILDKITE \
+        TF_BUILD TEAMCITY_VERSION TRAVIS APPVEYOR BITBUCKET_BUILD_NUMBER CODEBUILD_BUILD_ID DRONE HUDSON_URL; do
+        eval "x=\${$v:-}"
+        x="$(tel_lower "$x")"
+        case "$x" in "" | false | 0) ;; *) return 0 ;; esac
+    done
+    return 1
+}
+
+tel_hex() { # BYTES: random lowercase hex
+    od -An -N"$1" -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'
+}
+
+# telemetry_init: decide, show the notice, load or create the install id.
+telemetry_init() {
+    tel_on=0
+    [ "$dry_run" = 0 ] || return 0
+    if [ -n "${CUA_POSTHOG_KEY:-}" ]; then
+        tel_key="$CUA_POSTHOG_KEY"
+    elif [ "$(tel_lower "${CUA_ENV:-}")" = staging ]; then
+        tel_key="$TEL_KEY_STAGING"
+    else
+        tel_key="$TEL_KEY_PROD"
+    fi
+    [ -n "$tel_key" ] || return 0
+    case "$(tel_lower "${DO_NOT_TRACK:-}")" in "" | 0 | false) ;; *) return 0 ;; esac
+    tel_is_ci && tel_ci=true
+    sw="$(tel_bool "${CUA_TELEMETRY:-}")"
+    if [ -z "$sw" ]; then
+        [ "$(tel_bool "${CUA_TELEMETRY_ENABLED:-}")" != off ] || return 0
+        [ "$(tel_bool "${CUA_TELEMETRY_DISABLED:-}")" != on ] || return 0
+        sw="$(tel_config)"
+        [ -n "$sw" ] || { [ "$tel_ci" = true ] && sw=off; }
+    fi
+    [ "$sw" != off ] || return 0
+    tel_endpoint="${CUA_TELEMETRY_ENDPOINT:-$TEL_ENDPOINT_DEFAULT}"
+    if [ "$(tel_bool "${CUA_TELEMETRY_FORBID_NETWORK:-}")" = on ]; then
+        case "$tel_endpoint" in
+        http://127.0.0.1[:/]* | http://localhost[:/]* | http://\[::1\][:/]*) ;;
+        *) return 0 ;;
+        esac
+    fi
+    has curl || has wget || return 0
+    dir="${CUA_HOME:-$HOME/.cua}/telemetry"
+    tel_id="$(cat "$dir/install_id" 2>/dev/null | tr -d '[:space:]')"
+    case "$tel_id" in
+    *[!0-9a-f]* | "") tel_id="" ;;
+    esac
+    [ "${#tel_id}" = 32 ] || tel_id=""
+    if [ -z "$tel_id" ]; then
+        tel_id="$(tel_hex 16)"
+        [ "${#tel_id}" = 32 ] || return 0
+        (umask 077 && mkdir -p "$dir" && printf '%s' "$tel_id" >"$dir/install_id") 2>/dev/null || true
+    fi
+    tel_session="$(tel_hex 16)"
+    [ "${#tel_session}" = 32 ] || return 0
+    tel_on=1
+    say "Cua sends anonymous data about this install (whether it worked, and where it stopped if not). Never names, file paths or anything you type."
+    say "To turn it off, set DO_NOT_TRACK=1. Details: https://cua.ai/docs/cua-sdk/concepts/telemetry"
+}
+
+# tel_error_kind MESSAGE: the fixed reason word for a die message.
+tel_error_kind() {
+    case "$1" in
+    *"checksum mismatch"*) echo checksum ;;
+    *signature* | *"release identity"*) echo signature ;;
+    *"unsupported OS"* | *"unsupported CPU"* | *"on Windows, run"*) echo unsupported_platform ;;
+    *"cannot create"* | *ermission*) echo permission_denied ;;
+    *"need curl"* | *"need sha256sum"* | *"not found; cannot"* | *"needs bash"* | *"needs QEMU"*) echo missing_tool ;;
+    *cancelled*) echo cancelled ;;
+    *"download failed"* | *"could not read"* | *"unsupported release manifest"*) echo network ;;
+    *) echo other ;;
+    esac
+}
+
+tel_os() {
+    case "$(uname -s 2>/dev/null)" in
+    Darwin) echo macos ;;
+    Linux) echo linux ;;
+    MINGW* | MSYS* | CYGWIN*) echo windows ;;
+    *) echo other ;;
+    esac
+}
+
+tel_os_major() {
+    case "$(uname -s 2>/dev/null)" in
+    Darwin) v="$(sw_vers -productVersion 2>/dev/null)" ;;
+    Linux) v="$(sed -n 's/^VERSION_ID=//p' /etc/os-release 2>/dev/null | tr -d '"')" ;;
+    *) v="" ;;
+    esac
+    v="${v%%[!0-9]*}"
+    v="$(printf '%s' "$v" | sed 's/^0*//')"
+    case "$v" in "" | ????*) echo 0 ;; *) echo "$v" ;; esac
+}
+
+tel_arch() {
+    case "$(uname -m 2>/dev/null)" in
+    arm64 | aarch64) echo arm64 ;;
+    x86_64 | amd64) echo x86_64 ;;
+    *) echo other ;;
+    esac
+}
+
+tel_items() {
+    items=""
+    [ "$want_cli" = 0 ] || items="cli"
+    [ "$sel_spaces" = 0 ] || items="${items:+$items+}spaces"
+    [ "$sel_driver" = 0 ] || items="${items:+$items+}cua_driver"
+    [ "$sel_host" = 0 ] || items="${items:+$items+}host"
+    echo "${items:-none}"
+}
+
+# tel_send STEP [STAGE KIND]: one cua_installer_step, at most 3 seconds.
+tel_send() {
+    [ "$tel_on" = 1 ] || return 0
+    step_name="$1"
+    stage=none
+    kind=none
+    outcome=ok
+    case "$step_name" in
+    installer_completed) tel_ended=1 ;;
+    installer_failed)
+        tel_ended=1
+        stage="${2:-other}"
+        kind="${3:-other}"
+        outcome=error
+        [ "$kind" != cancelled ] || outcome=cancelled
+        ;;
+    esac
+    pv="${tel_version:-${version:-}}"
+    case "$pv" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *) pv=0.0.0 ;;
+    esac
+    pv="${pv%%[!0-9A-Za-z.-]*}"
+    synthetic=false
+    [ "$(tel_bool "${CUA_TELEMETRY_SYNTHETIC:-}")" != on ] || synthetic=true
+    u="$(tel_hex 16)"
+    uuid="$(printf '%s' "$u" | sed 's/^\(.\{8\}\)\(.\{4\}\).\(.\{3\}\).\(.\{3\}\)\(.\{12\}\)$/\1-\2-4\3-8\4-\5/')"
+    # The $-prefixed names are PostHog property names, not shell expansions.
+    # shellcheck disable=SC2016
+    body="$(printf '{"api_key":"%s","batch":[{"event":"cua_installer_step","distinct_id":"%s","uuid":"%s","timestamp":"%s","properties":{"telemetry_schema_version":1,"event_version":1,"product":"cli","product_version":"%s","os_family":"%s","os_major":%s,"arch":"%s","is_ci":%s,"is_synthetic":%s,"process_session_id":"%s","sample_rate":1,"$process_person_profile":false,"$geoip_disable":true,"$lib":"cua-installer","$lib_version":"1.0.0","step":"%s","outcome":"%s","install_stage":"%s","error_kind":"%s","installer":"sh","items":"%s"}}]}' \
+        "$tel_key" "$tel_id" "$uuid" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$pv" "$(tel_os)" "$(tel_os_major)" "$(tel_arch)" \
+        "$tel_ci" "$synthetic" "$tel_session" "$step_name" "$outcome" "$stage" "$kind" "$(tel_items)")"
+    [ "$(tel_bool "${CUA_TELEMETRY_DEBUG:-}")" != on ] || printf '[cua telemetry] %s\n' "$body" >&2
+    if has curl; then
+        curl -s -o /dev/null --max-time 3 -H 'Content-Type: application/json' --data "$body" "$tel_endpoint" >/dev/null 2>&1 || true
+    else
+        wget -q -O /dev/null --timeout=3 --tries=1 --header='Content-Type: application/json' --post-data="$body" "$tel_endpoint" >/dev/null 2>&1 || true
+    fi
+}
 
 # ---------------------------------------------------------------- arguments
 
@@ -189,6 +411,9 @@ parse_args() {
         --modify-path) modify_path=1 ;;
         --no-modify-path) no_modify_path=1 ;;
         --no-onboarding) onboarding=0 ;;
+        --no-host) no_host=1 ;;
+        --no-provide-spaces) no_provide_spaces=1 ;;
+        --no-skills) driver_skills=0 ;;
         -v | --verbose) verbose=1 ;;
         --require-signature) require_sig=1 ;;
         --dry-run) dry_run=1 ;;
@@ -228,6 +453,13 @@ parse_args() {
         if [ "$only_set" = 1 ]; then only_list="$only_list,host"; fi
         # The code stands in for the account: no sign-in here.
         onboarding=0
+    fi
+    if [ "$no_host" = 1 ]; then
+        [ -z "$pair_code" ] || die "--no-host and --pair contradict each other: --pair adds this computer"
+        case " $(items_in "$select_list$only_list") " in
+        *" host "*) die "--no-host and --select host contradict each other" ;;
+        esac
+        [ "$no_provide_spaces" = 0 ] || die "--no-provide-spaces goes with adding this computer; drop --no-host"
     fi
     if [ -n "$relay_url" ]; then
         [ -n "$pair_code" ] || die "--relay goes with --pair"
@@ -366,8 +598,10 @@ init_selection() {
         list="$only_list"
     else
         list="$select_list"
-        # The app is a default on macOS and Linux.
-        if spaces_supported; then sel_spaces=1; fi
+        # The app is a default on macOS and Linux, until --select names what
+        # to install: then only those items (and the CLI) are installed.
+        # --pair adds host to the list itself; it keeps the default.
+        if spaces_supported && { [ -n "$pair_code" ] || [ -z "$(printf %s "$list" | tr -d ', ')" ]; }; then sel_spaces=1; fi
     fi
     for item in $(items_in "$list"); do item_set "$item" 1; done
     # Legacy: --app-only and --mode mean the app, as they always did.
@@ -637,6 +871,7 @@ load_manifest() {
     fetch "$manifest_url" "$manifest"
     grep -q '"schema" *: *1' "$manifest" || die "unsupported release manifest at $manifest_url"
     manifest_dir="${manifest_url%/*}"
+    tel_version="$(sed -n 's/.*"version" *: *"\([0-9][0-9A-Za-z.-]*\)".*/\1/p' "$manifest" | head -n 1)"
 }
 
 # resolve_url VALUE: absolute URLs pass through; names are relative to the manifest.
@@ -797,11 +1032,95 @@ To use cua, run this one line, then open a new Terminal window:
     fi
 }
 
+# version_gt A B: succeeds when cua version A is strictly newer than B (semver:
+# a pre-release sorts before its release; a dev build, 0.0.0 or one naming
+# "dev", counts as older than any release of the same or a later version).
+# Fails when either does not parse. Mirrors cua-home's version.rs.
+version_gt() {
+    awk -v a="$1" -v b="$2" '
+    function parse(v, o,    p, n, pre, k) {
+        sub(/^v/, "", v)
+        o["dev"] = (v ~ /dev/) ? 1 : 0
+        sub(/\+.*/, "", v)
+        pre = ""
+        k = index(v, "-")
+        if (k > 0) { pre = substr(v, k + 1); v = substr(v, 1, k - 1) }
+        n = split(v, p, ".")
+        if (n != 3 || v !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) return 0
+        o["c"] = p[1] * 1000000000000 + p[2] * 1000000 + p[3]
+        if (o["c"] == 0) o["dev"] = 1
+        o["pre"] = pre
+        return 1
+    }
+    function cmppre(x, y,    xs, ys, nx, ny, i, m) {
+        if (x == "" && y == "") return 0
+        if (x == "") return 1
+        if (y == "") return -1
+        nx = split(x, xs, "."); ny = split(y, ys, ".")
+        m = nx < ny ? nx : ny
+        for (i = 1; i <= m; i++) {
+            if (xs[i] == ys[i]) continue
+            if (xs[i] ~ /^[0-9]+$/ && ys[i] ~ /^[0-9]+$/) return (xs[i] + 0 > ys[i] + 0) ? 1 : -1
+            if (xs[i] ~ /^[0-9]+$/) return -1
+            if (ys[i] ~ /^[0-9]+$/) return 1
+            return (xs[i] > ys[i]) ? 1 : -1
+        }
+        return (nx > ny) ? 1 : (nx < ny ? -1 : 0)
+    }
+    BEGIN {
+        if (!parse(a, A) || !parse(b, B)) exit 1
+        if (A["dev"] && !B["dev"]) exit !(A["c"] > B["c"])
+        if (!A["dev"] && B["dev"]) exit !(A["c"] >= B["c"])
+        if (A["c"] != B["c"]) exit !(A["c"] > B["c"])
+        exit !(cmppre(A["pre"], B["pre"]) > 0)
+    }'
+}
+
+# running_daemon_version CUA: the version of the daemon this cua finds running
+# (the one named by its daemon.json), or nothing. `cua daemon status` prints
+# "cua daemon X.Y.Z (pid N) ..." only when one is up.
+running_daemon_version() {
+    [ -x "$1" ] || return 0
+    "$1" daemon status 2>/dev/null </dev/null | sed -n 's/^cua daemon \([^ ]*\) (pid .*/\1/p' | head -n 1
+}
+
+# restart_old_daemon NEWCUA OLDVERSION: after the binary was replaced, stop a
+# daemon of an older version gracefully with the NEW cua (it reads daemon.json
+# and signals only that daemon) and start the new one. Local containers and
+# VMs run on in their own processes, so they survive. Never a broad kill.
+restart_old_daemon() {
+    [ -n "$2" ] || return 0
+    new_version="$("$1" --version 2>/dev/null </dev/null | sed -n 's/^cua \([^ ]*\).*/\1/p' | head -n 1)"
+    [ -n "$new_version" ] && [ "$new_version" != "$2" ] || return 0
+    if "$1" daemon stop >/dev/null 2>&1 </dev/null; then
+        if "$1" daemon start >/dev/null 2>&1 </dev/null; then
+            say "restarted the cua daemon ($2 -> $new_version); your Spaces keep running"
+        else
+            warn "stopped the old cua daemon ($2); it starts again with the next cua command"
+        fi
+    else
+        warn "the cua daemon $2 is still running; run 'cua daemon stop' to finish updating to $new_version"
+    fi
+}
+
 install_cli() {
     bindir="$(cli_bin_dir)"
     target="$bindir/cua"
     if ! confirm "Install the command-line tools to $target?" y; then
         die "cancelled; rerun with --prefix DIR to choose another location"
+    fi
+    # Never a downgrade: a newer cua already there (a build the user made, or
+    # one from a later release than the manifest's) stays, unless this run
+    # asked for a version (--version rolls back on purpose).
+    if [ -z "$version" ] && [ -x "$target" ]; then
+        have="$("$target" --version 2>/dev/null | sed -n '1s/^cua  *\([^ ]*\).*/\1/p')"
+        want="$(json_field "$(manifest_entry cli tar.gz)" version)"
+        if [ -n "$have" ] && [ -n "$want" ] && version_gt "$have" "$want"; then
+            say "kept $target (cua $have is newer than the release's $want; use --version $want to go back)"
+            cua_bin="$target"
+            ensure_path "$bindir"
+            return
+        fi
     fi
     step "Installing the command-line tools to $target"
     download cli tar.gz
@@ -813,9 +1132,24 @@ install_cli() {
         src="$(find "$tmp/cli" -type f -name cua | head -n 1)"
         [ -n "$src" ] || die "no cua binary inside ${artifact##*/}"
         mkdir -p "$bindir" || die "cannot create $bindir (try --prefix or run as root)"
+        # A daemon already running keeps serving the old binary after the swap
+        # (its exe shows "(deleted)"); note its version now, from the old cua.
+        old_daemon="$(running_daemon_version "$target")"
         cp "$src" "$bindir/.cua.tmp.$$"
         chmod 0755 "$bindir/.cua.tmp.$$"
         mv -f "$bindir/.cua.tmp.$$" "$target"
+        info "installed $target"
+        # macOS microVMs: the monitor and the guest init ship with the CLI
+        # and are found next to it, as is the static cua-spacesd injected
+        # into OCI images that carry none.
+        for extra in cua-vz cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
+            xsrc="$(find "$tmp/cli" -type f -name "$extra" | head -n 1)"
+            [ -n "$xsrc" ] || continue
+            cp "$xsrc" "$bindir/.$extra.tmp.$$"
+            chmod 0755 "$bindir/.$extra.tmp.$$"
+            mv -f "$bindir/.$extra.tmp.$$" "$bindir/$extra"
+        done
+        restart_old_daemon "$target" "$old_daemon"
         did_cli="$target"
     fi
     cua_bin="$target"
@@ -966,7 +1300,8 @@ linux_runtime() {
             return
         fi
     fi
-    die "Cua Spaces on Linux needs QEMU or Docker; install QEMU with: $(qemu_install_command) (or install Docker), then rerun the installer"
+    warn "Cua Spaces on Linux needs QEMU or Docker; install QEMU with: $(qemu_install_command) (or install Docker), then rerun the installer"
+    runtime_failed=1
 }
 
 write_mode() {
@@ -1017,8 +1352,13 @@ install_driver() {
         fetch "$driver_url" "$script"
         bash "$script" "$@" </dev/null || die "the cua-driver installer failed"
     fi
-    info "adding the cua-driver skill and MCP server to your agents"
+    if [ "$driver_skills" = 1 ]; then
+        info "adding the cua-driver skill and MCP server to your agents"
+    else
+        info "adding the cua-driver MCP server to your agents (no skill: --no-skills)"
+    fi
     set -- "$cua_bin" agents setup --cua-driver --agents all --yes
+    [ "$driver_skills" = 1 ] || set -- "$@" --no-skills
     if [ "$dry_run" = 1 ] || [ -x "$driver_dir/cua-driver" ]; then
         set -- "$@" --mcp-command "$driver_dir/cua-driver"
     fi
@@ -1039,26 +1379,40 @@ host_setup() {
         host_pair
         return
     fi
+    set -- "$cua_bin" host setup
+    if [ "$sel_host" = 0 ]; then
+        # Added by signing in: a computer already set up keeps its settings,
+        # and a new one provides Spaces with its screen kept private (sharing
+        # its desktop is a choice on its page in Cua Spaces).
+        if [ "$dry_run" = 0 ] && "$cua_bin" host status --json </dev/null 2>/dev/null | grep -q '"configured":true'; then
+            did_host=1
+            return
+        fi
+        if [ "$no_provide_spaces" = 0 ]; then set -- "$@" --no-desktop --provide-spaces; fi
+    fi
+    if [ "$no_provide_spaces" = 1 ]; then set -- "$@" --no-provide-spaces; fi
     if [ "$dry_run" = 1 ]; then
-        say "[dry-run] $cua_bin host setup"
+        say "[dry-run] $*"
         return
     fi
-    step "Letting your other devices use this computer (cua host setup)"
+    step "Adding this computer to your account (cua host setup)"
     if tty_ok; then
-        if "$cua_bin" host setup </dev/tty; then
-            say "  cua runtime setup lume  # also needed to provide macOS VM Spaces (cua host setup --profile spare --provide-spaces)"
-            return
+        if "$@" </dev/tty; then
+            did_host=1
         fi
     else
-        if "$cua_bin" host setup </dev/null; then
-            say "  cua runtime setup lume  # also needed to provide macOS VM Spaces (cua host setup --profile spare --provide-spaces)"
-            return
+        if "$@" </dev/null; then
+            did_host=1
         fi
     fi
-    warn "host setup did not finish; run 'cua auth login --remote' (over ssh) or 'cua auth login', then 'cua host setup' again"
+    if [ -n "$did_host" ]; then
+        say "  cua runtime setup lume  # also needed to provide macOS VM Spaces"
+        return
+    fi
+    warn "adding this computer did not finish; run 'cua host setup' to try again (sign in first with 'cua auth login', or 'cua auth login --remote' over ssh)"
 }
 
-# Add this machine with a pairing code (Add a machine in the app): joins
+# Add this machine with a pairing code (Add a computer in the app): joins
 # the account (or team) that made the code, with no sign-in here.
 host_pair() {
     set -- "$cua_bin" host setup --pair "$pair_code"
@@ -1069,16 +1423,20 @@ host_pair() {
     fi
     # A CLI released before pairing exists would fail with a bare
     # "unexpected argument '--pair'"; say what to do instead.
-    if ! "$cua_bin" host setup --help 2>&1 </dev/null | grep -q -e '--pair'; then
+    setup_help="$("$cua_bin" host setup --help 2>&1 </dev/null)"
+    if ! printf '%s\n' "$setup_help" | grep -q -e '--pair'; then
         die "the installed cua CLI ($("$cua_bin" --version 2>/dev/null || echo unknown)) cannot add a machine with a code (no 'cua host setup --pair'); update the CLI (cua update, or install a newer release: --version) or sign in instead: cua auth login && cua host setup"
     fi
+    # It provides Spaces and keeps its screen private, as a computer added
+    # by signing in does; sharing its desktop is a choice on its page.
+    if printf '%s\n' "$setup_help" | grep -q -e '--no-desktop'; then set -- "$@" --no-desktop --provide-spaces; fi
     step "Adding this computer to your account (cua host setup --pair)"
     if "$@" </dev/null; then
         say ""
         say "This machine is added. It shows up in Cua Spaces on your other devices in a few seconds."
         return
     fi
-    die "adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a machine) and run: cua host setup --pair <code>"
+    die "adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a computer) and run: cua host setup --pair <code>"
 }
 
 # ---------------------------------------------------------------- onboarding
@@ -1119,11 +1477,14 @@ summary() {
         [ -z "$did_cli$did_app" ] || checked=" (downloads checked)"
         say "Installed $(join_and "$@")$checked."
     fi
+    if [ -n "$did_host" ]; then
+        say "This computer is added to your account. It shows up in Cua Spaces on your other devices."
+    fi
     if [ -n "$did_app" ]; then
         if [ "$signed_in" = 1 ]; then
-            say "Next: $(app_where). There you can also let your other devices use this computer."
+            say "Next: $(app_where)."
         else
-            say "Next: $(app_where). It guides you through signing in and connecting your AI agents. You can also let your other devices use this computer."
+            say "Next: $(app_where). It guides you through signing in and connecting your AI agents. Signing in adds this computer to your account."
         fi
         if [ "$want_cli" = 1 ]; then
             if [ "$signed_in" = 1 ]; then
@@ -1139,16 +1500,32 @@ summary() {
             say 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.'
             say '(No web browser on this computer? Run "cua auth login --remote" instead.)'
         fi
-        if [ "$sel_host" = 0 ]; then
-            say 'To let your other devices use this computer, run "cua host setup".'
+        if [ -z "$did_host" ] && [ "$no_host" = 0 ]; then
+            say 'To add this computer to your account, run "cua host setup" after signing in.'
         fi
     fi
+}
+
+# The items this run installs, for --dry-run.
+plan_items() {
+    out=""
+    [ "$want_cli" != 1 ] || out="the cua command-line tools"
+    [ "$sel_spaces" != 1 ] || out="${out:+$out, }the Cua Spaces app"
+    [ "$sel_driver" != 1 ] || out="${out:+$out, }Cua Driver (its MCP server and skill in your agents)"
+    [ "$sel_host" != 1 ] || out="${out:+$out, }host setup"
+    printf '%s\n' "${out:-nothing}"
 }
 
 run_onboarding() {
     # --pair: the code stands in for the account; nothing to sign in to.
     [ -z "$pair_code" ] || return 0
     if [ "$want_cli" = 0 ] || [ "$onboarding" = 0 ] || [ "$dry_run" = 1 ]; then
+        return
+    fi
+    # Cua Driver on its own: `cua auth login` would end in the Cua Spaces
+    # agent onboarding (the cua MCP server and skills), which was not picked.
+    if [ "$sel_driver" = 1 ] && [ "$sel_spaces" = 0 ] && [ "$sel_host" = 0 ]; then
+        info "skipping sign-in: only Cua Driver was selected"
         return
     fi
     # No terminal to sign in on (piped install, -y, or nobody at the
@@ -1158,7 +1535,13 @@ run_onboarding() {
     say ""
     step "Signing in to Cua"
     # `cua auth login` runs agent onboarding after a successful sign-in.
-    if "$cua_bin" auth login </dev/tty; then
+    # No browser here (over ssh, or Linux without a display): a device code
+    # to approve in a browser on another device.
+    set -- auth login
+    if [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ] || { [ "$os" = linux ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; }; then
+        set -- "$@" --remote
+    fi
+    if "$cua_bin" "$@" </dev/tty; then
         signed_in=1
     else
         warn "sign-in did not finish. Run \"cua auth login\" later (add --remote if this computer has no web browser)"
@@ -1167,18 +1550,23 @@ run_onboarding() {
 
 main() {
     parse_args "$@"
+    telemetry_init
+    tel_stage=platform
     detect_platform
     init_selection
     reuse_installed
+    tel_send installer_started
     tmp="$(mktemp -d 2>/dev/null || mktemp -d -t cua-install)"
     if wants_checklist; then
         checklist
     fi
     if [ "$dry_run" = 1 ]; then
         step "Dry run: nothing will be changed"
+        say "[dry-run] would install: $(plan_items)"
     fi
     # Nothing to download (--pair on a computer that has Cua): no manifest to read.
     if [ "$want_cli" = 1 ] || [ "$sel_spaces" = 1 ] || [ "$sel_driver" = 1 ]; then
+        tel_stage=manifest
         load_manifest
         info "platform $platform, manifest $manifest_url"
     fi
@@ -1191,12 +1579,19 @@ main() {
     cua_bin="${existing_cua:-cua}"
     app_path=""
     if [ "$want_cli" = 1 ]; then
+        tel_stage=cli
         install_cli
     fi
+    runtime_failed=0
+    tel_stage=runtime
     if [ "$os" = linux ] && [ "$sel_spaces" = 1 ] && { [ "$dry_run" = 1 ] || has "$cua_bin"; }; then
         linux_runtime
+        if [ "$dry_run" != 1 ] && { [ "$want_cli" = 1 ] || [ -n "$existing_cua" ]; }; then
+            "$cua_bin" runtime doctor || runtime_failed=1
+        fi
     fi
     if [ "$sel_spaces" = 1 ]; then
+        tel_stage=app
         case "$os" in
         darwin) install_app_darwin ;;
         linux) install_app_linux ;;
@@ -1208,17 +1603,30 @@ main() {
     CUA_INSTALL_CHANNEL=install_script
     export CUA_INSTALL_CHANNEL
     if [ "$sel_driver" = 1 ]; then
+        tel_stage=driver
         install_driver
     fi
+    tel_stage=sign_in
     run_onboarding
-    if [ "$sel_host" = 1 ]; then
+    # Signing in adds this computer (unless --no-host); --select host adds
+    # it even without a sign-in here.
+    if [ "$sel_host" = 1 ] || { [ "$signed_in" = 1 ] && [ "$no_host" = 0 ]; }; then
+        tel_stage=host
         host_setup
+    fi
+    if [ "$runtime_failed" = 1 ]; then
+        tel_stage=runtime
+        tel_send installer_failed "$tel_stage" other
+    else
+        tel_stage=other
+        tel_send installer_completed
     fi
     summary
     if [ -n "$path_hint" ]; then
         say ""
         say "$path_hint"
     fi
+    return "$runtime_failed"
 }
 
 main "$@"

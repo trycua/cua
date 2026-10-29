@@ -91,13 +91,9 @@ def test_the_native_handle_is_the_source_of_truth():
     assert sb.image_info is None
 
 
-def test_fleet_claims_read_the_claim_or_transport_handle():
+def test_a_transport_handle_is_read_when_the_runtime_has_none():
     sb = _sandbox()
-    sb._claim_handle = SimpleNamespace(_native=_Handle(_native_info(variant="containerdisk")))
-    assert sb.image_info.variant == "containerdisk"
-    # After disconnect the claim handle lets go; the transport keeps one.
-    sb._claim_handle = SimpleNamespace(_native=None)
-    sb._transport._native_fleet_sandbox = _Handle(_native_info(arch=None, emulated=True))
+    sb._transport._native_sandbox = _Handle(_native_info(arch=None, emulated=True))
     info = sb.image_info
     assert info.arch is None and info.emulated is True
 

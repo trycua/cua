@@ -4,9 +4,9 @@
 //! Cua Volume: one drive per account, shared by every Space and agent in it.
 //!
 //! A persistent agent's memory, identity and outputs must outlive its Space:
-//! a cloud Space is a Fleet claim whose disk goes back to the pool, so an
-//! agent that keeps its memory on its own disk forgets everything on
-//! release. The drive is where that state lives instead.
+//! a Space's disk goes away when the Space is deleted, so an agent that
+//! keeps its memory on its own disk forgets everything then. The drive is
+//! where that state lives instead.
 //!
 //! ```text
 //! public/             shared reference: read by everyone, written by the user
@@ -20,7 +20,7 @@
 //! | [`acl`] | principals, the default access table, grants |
 //! | [`backend`] | the object-store trait: versioned puts with preconditions |
 //! | [`fs`] | the local backend (`$CUA_HOME/volume`), versioned on disk |
-//! | `s3` | the S3-compatible backend (feature `s3`): AWS S3, R2, MinIO, and the Cua cloud's vended keys |
+//! | `s3` | the S3-compatible backend (feature `s3`): AWS S3, R2, MinIO |
 //! | [`config`] | which backend a cua home uses (`$CUA_HOME/volume/config.json`, `CUA_DRIVE_*`) |
 //! | [`audit`] | the hash-chained audit log |
 //! | [`scan`] | the secret scanner run on writes under `agents/` |
@@ -54,6 +54,7 @@ pub mod fs;
 #[cfg(all(feature = "fuse", target_os = "linux"))]
 pub mod fuse;
 pub mod guest;
+pub mod journal;
 pub mod lease;
 #[cfg(feature = "nfs")]
 pub mod nfs;
@@ -67,7 +68,7 @@ pub mod stream;
 pub mod sync;
 pub mod vfs;
 
-pub use acl::{Context, Grant, Mode, Principal};
+pub use acl::{Context, Grant, Mode, MountAccess, Principal};
 pub use backend::{Backend, Condition, ObjectMeta, VersionInfo};
 pub use drive::{AccessRequest, Drive, Entry, Presence, Session};
 

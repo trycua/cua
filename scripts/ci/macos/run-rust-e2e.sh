@@ -382,6 +382,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_popup_set_value_keeps_front_key_focus_background \
     harness_appkit_context_menu_keeps_front_key_focus_background \
     harness_appkit_slider_drag_px_foreground \
+    harness_appkit_window_capture_ignores_pointer_outside_window \
       harness_appkit_slider_drag_px_background; do
       run_test "appkit-${appkit_test}" cargo test -p cua-driver-e2e --test harness_appkit_test -- \
         --ignored --exact "${appkit_test}" --nocapture --test-threads=1
@@ -412,6 +413,12 @@ EOF
       --ignored --nocapture --test-threads=1
     run_test installed-app-textedit cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
       --ignored --exact background_type_on_native_cocoa_is_ax_verified \
+      --nocapture --test-threads=1
+    run_test installed-app-textedit-hotkey cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
+      --ignored --exact foreground_window_hotkey_selects_all_behind_another_app \
+      --nocapture --test-threads=1
+    run_test installed-app-textedit-hotkey-sibling cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
+      --ignored --exact foreground_window_hotkey_reaches_an_unfocused_sibling_of_the_frontmost_app \
       --nocapture --test-threads=1
     # These rows assert through System Events and CoreGraphics oracles rather
     # than typed matrix results, so they must not leave unowned trajectories.

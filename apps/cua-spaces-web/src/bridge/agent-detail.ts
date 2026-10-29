@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * One persistent agent's Memory, Routines and Access to this computer, as
+ * One persistent agent's Memory, Routines and Access to this machine, as
  * the SwiftUI app's Agents page draws them (`AgentsPageView`). Every word
  * and rule is the app core's (`agents.pageReduce` / `agents.pageView`,
  * `cua-spaces-app-core/src/persistent.rs`); this runs the command each
@@ -87,7 +87,7 @@ export interface AgentDetailHook {
   error: string | null;
   /** The host can't read an agent's detail. */
   unsupported: boolean;
-  /** This machine's Space id, which "Allow on this computer" grants. */
+  /** This machine's Space id, which "Allow on this machine" grants. */
   thisMachine: string | null;
   /** Sends a page action; runs the command the core asks for. */
   act(action: AgentsPageAction): void;

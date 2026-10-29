@@ -1,0 +1,103 @@
+Coding app marks
+
+Each file is the maker's own artwork, copied from its official brand or press
+page without changing the artwork (fetched 25 Oct 2026). The marks are trademarks of their
+owners and are used only to identify each app next to its name. Cua is not
+affiliated with or endorsed by any of them. The app shows each mark in its
+original colours or in the maker's own one-colour variant, at a fixed aspect
+ratio, with clear space around it. Files ending in -dark are the maker's
+variant for dark backgrounds and show when the app theme is dark.
+
+mark-cursor.svg, mark-cursor-dark.svg
+  Cursor (Anysphere, Inc.): CUBE_2D_LIGHT.svg and CUBE_2D_DARK.svg from the brand assets zip.
+  Source: https://cursor.com/brand
+  Guideline: use the supplied light or dark variant; refer to the product as "Cursor".
+
+mark-vscode.svg
+  Visual Studio Code (Microsoft): vscode.svg from visual-studio-code-icons.zip, used in both themes
+  (the white vscode-alt.svg is only for blue backgrounds).
+  Source: https://code.visualstudio.com/brand
+  Guideline: don't modify, recolour, stretch or add a background; keep clear space of 25% of the "fish".
+
+mark-gemini-cli.svg, mark-gemini-cli-dark.svg
+  Gemini CLI (Google): gemini-cli-icon_full-color.svg and gemini-cli-icon_monotone_on_dark.svg.
+  Source: https://geminicli.com/brand-kit/
+  Guideline: https://geminicli.com/brandassets/gemini_cli_logo_icon_guidelines.pdf (never alter the icon or its gradient).
+
+mark-cline.svg, mark-cline-dark.svg
+  Cline (Cline Bot Inc.): General Logos/Bot/SVG/BOT_LIGHT.svg and BOT_DARK.svg from cline-brand-assets.zip.
+  Source: https://cline.bot/brand
+  Guideline: use the supplied light or dark variants.
+
+mark-opencode.svg, mark-opencode-dark.svg
+  OpenCode (Anomaly): opencode-logo-light.svg and opencode-logo-dark.svg from opencode-brand-assets.zip.
+  Source: https://opencode.ai/brand
+  Guideline: use the supplied light or dark variants.
+
+mark-pi.svg, mark-pi-dark.svg
+  Pi (Earendil Inc. & contributors): the press kit's Badge SVG, "square mark for favicons and compact badges"
+  (https://pi.dev/favicon.svg). That one file holds both official colours (#111111, and #f6f6f6 under
+  prefers-color-scheme: dark); it is split into two files so the app theme, not the OS, picks one.
+  Source: https://pi.dev/press-kit (press kit under the MIT License)
+
+mark-windsurf.svg, mark-windsurf-dark.svg
+  Windsurf (Cognition AI, Inc.): windsurf-black-symbol.svg and windsurf-white-symbol.svg.
+  Source: https://windsurf.com/brand
+  Guideline: symbol for space-limited layouts; no outline, effects, gradients, rotation or recolouring; keep contrast and spacing.
+
+mark-copilot.svg, mark-copilot-dark.svg
+  GitHub Copilot (GitHub, Inc.): Copilot_Icon_Black.svg and Copilot_Icon_White.svg from GitHub_Logos.zip.
+  Source: https://brand.github.com/foundations/logo and https://brand.github.com/brand-identity/copilot
+  Guideline: black or white only, no effects, don't distort or alter.
+
+mark-amp.svg
+  Amp: app-icon.svg, used in both themes (the press kit has no dark-mode icon; the light glyph carries the contrast).
+  Source: https://ampcode.com/press-kit
+
+mark-goose.svg, mark-goose-dark.svg
+  goose (Agentic AI Foundation / Block): the black mark, and the desktop app icon (black goose on a white tile) for dark mode.
+  Sources: https://github.com/aaif-goose/goose/blob/main/documentation/static/img/goose.svg
+           https://github.com/aaif-goose/goose/blob/main/ui/desktop/src/images/icon.svg
+  Guideline: none published.
+
+mark-zed.svg, mark-zed-dark.svg
+  Zed (Zed Industries, Inc.): the logomark in pure black and pure white, from the page's "Copy SVG"
+  (a height attribute added so the file stands alone).
+  Source: https://zed.dev/brand
+  Guideline: black, white or brand blue only; don't recolour or distort; no implied endorsement.
+
+mark-antigravity.svg
+  Google Antigravity (Google): antigravity-icon__full-color.svg, used in both themes.
+  Source: https://antigravity.google/press
+
+mark-claude.svg
+  Claude Code (Anthropic): Claude Spark - Clay.svg from the press kit, the only colour the spark is issued in;
+  used in both themes (2.9:1 on the light onboarding background, 3.1:1 on the white tile, 5.6:1 on dark).
+  Source: https://www.anthropic.com/press-kit
+
+mark-openai.svg, mark-openai-dark.svg
+  OpenAI Codex (OpenAI): OAI_OpenAI-Blossom_Black.svg and OAI_OpenAI-Blossom_White.svg from openai-logos.zip
+  (https://cdn.openai.com/brand/openai-logos.zip). The files keep OpenAI's built-in clear space; the app scales the
+  image so the Blossom matches the other marks.
+  Source: https://openai.com/brand/
+  Guideline: use as provided, no added colours or effects, keep clear space; no implied endorsement.
+
+mark-hermes.svg, mark-hermes-dark.svg
+  Hermes (Nous Research): assets/nous-girl-black.svg and assets/nous-girl-white.svg.
+  Source: https://github.com/NousResearch/hermes-agent/tree/main/assets
+  Guideline: none published.
+
+mark-openclaw.svg
+  OpenClaw: the static lobster mark served as https://openclaw.ai/favicon.svg, used in both themes
+  (no dark variant is published; the project's own dark UI uses the same mark).
+  Source: https://openclaw.ai/press (no published logo guide; press@openclaw.org)
+
+No usable official mark (letter tile):
+  Kiro (Amazon): no brand or press kit at https://kiro.dev; AWS marks need permission.
+
+mark-t3code.png
+  T3 Code (T3 Tools Inc.): apps/web/public/apple-touch-icon.png in github.com/pingdotgg/t3code (main, Oct 2026),
+  scaled to 128 px, used in both themes.
+  Source: https://github.com/pingdotgg/t3code
+  Terms: the repository is MIT (Copyright (c) 2026 T3 Tools Inc.); no trademark or logo policy is published.
+  The MIT License grants rights to the copyrighted file, not to the mark, which names the harness only.

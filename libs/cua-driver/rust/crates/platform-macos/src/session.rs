@@ -43,9 +43,62 @@ pub fn has_graphic_access() -> bool {
     status == 0 && (attributes & SESSION_HAS_GRAPHIC_ACCESS) != 0
 }
 
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGSessionCopyCurrentDictionary() -> core_foundation::dictionary::CFDictionaryRef;
+}
+
+/// Whether the login session currently reports its screen as locked
+/// (`CGSSessionScreenIsLocked` in `CGSessionCopyCurrentDictionary`).
+///
+/// Read fresh on every call; lock state changes at any time. On macOS 14 and
+/// later the screen saver and display sleep put the session behind the lock
+/// screen (`loginwindow` frontmost) even before a password is required, and
+/// while that holds every app's `AXWindows` reads as empty. The key is the
+/// session's lock flag, not a per-cause one: it covers the screen-saver lock,
+/// a manual lock, and loginwindow's lock on display dim (`kLWLockFromDisplayDim`,
+/// seen in a user's display-sleep logs with `screenSaverIsRunning = 0`). Only
+/// the screen-saver path was reproduced here; the dim path is the same lock
+/// as far as this key is concerned, so no separate check exists. `false` when the
+/// session dictionary is unavailable (no window-server session) or the key is
+/// absent, which is how an unlocked session reports itself.
+pub fn screen_locked() -> bool {
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::CFString;
+
+    let raw = unsafe { CGSessionCopyCurrentDictionary() };
+    if raw.is_null() {
+        return false;
+    }
+    // SAFETY: the "Copy" function returns a +1 reference we now own.
+    let dict: CFDictionary = unsafe { CFDictionary::wrap_under_create_rule(raw) };
+    let key = CFString::from_static_string("CGSSessionScreenIsLocked");
+    let Some(value) = dict.find(key.as_CFTypeRef() as *const _) else {
+        return false;
+    };
+    let value = unsafe { core_foundation::base::CFType::wrap_under_get_rule(*value as _) };
+    if let Some(flag) = value.downcast::<CFBoolean>() {
+        return flag.into();
+    }
+    value
+        .downcast::<CFNumber>()
+        .and_then(|number| number.to_i64())
+        .is_some_and(|number| number != 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Resolves the CoreGraphics symbol and reads the session dictionary
+    /// without crashing, with or without a window-server session.
+    #[test]
+    fn screen_lock_probe_does_not_abort() {
+        let _ = screen_locked();
+    }
 
     /// The probe must resolve the `Security` symbol and return a `bool`
     /// without aborting. We can't assert the value: it's `true` on a dev GUI

@@ -17,9 +17,9 @@ stubBrowserApis();
 
 const NOTICE = {
   kind: "needs-enrollment",
-  status: "Not enrolled",
-  text: "Enroll this Mac to connect to your other machines.",
-  actionLabel: "Enroll This Mac…",
+  status: "Not trusted yet",
+  text: "Trust this Mac to connect to your other machines.",
+  actionLabel: "Trust this Mac",
 };
 
 /** One of your machines on the relay, answering with `features`. */
@@ -41,6 +41,42 @@ function host(rows: unknown[], over: { access?: boolean; sharing?: boolean } = {
   };
 }
 
+describe.skipIf(!wasmBuilt)("this machine's own desktop opened as a Space page (real routes, wasm core)", () => {
+  // Regression: the Machines page's "This computer · Desktop" row opened a
+  // Space page that said "Loading the desktop…" forever, "No windows: the
+  // Space's window host is not up" and "Could not read this Space's agents":
+  // nothing streams this machine's own screen here, and it is not a Space to
+  // ask for windows or agents. Its page now says whether the desktop is shared,
+  // with the switch right there.
+  it("says whether the desktop is shared instead of loading forever, and asks it for no windows or agents", async () => {
+    // As the SwiftUI app sends This Mac while it shares its desktop (`spaceToRow`).
+    const thisMac = { id: "this-mac", name: "This Mac", provider: "local", os: "macos", spacesdVersion: "", features: [], reachable: true, powerState: "running" };
+    const asked: string[] = [];
+    const { router } = await mountApp("/spaces", {
+      ...host([thisMac]),
+      intercept: (op, args) => {
+        const id = (args as { spaceId?: string } | undefined)?.spaceId;
+        if (id === "this-mac") asked.push(op);
+        return undefined;
+      },
+    });
+    await act(() => router.navigate({ to: "/spaces/$spaceId", params: { spaceId: "this-mac" } }));
+    const page = await waitFor(() => {
+      const n = document.querySelector("[data-this-mac-desktop]");
+      expect(n).not.toBeNull();
+      return n!;
+    });
+    expect(page.textContent).toContain("You're sharing your desktop as a Space");
+    expect(screen.queryByText("Loading the desktop…")).toBeNull();
+    expect(document.querySelector("[data-stream-surface]")).toBeNull();
+    expect(document.querySelector('[data-section="agents"]')).toBeNull();
+    expect(screen.queryByText(/window host is not up/)).toBeNull();
+    // Give the page's polls a chance to run: none asks This Mac.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(asked.filter((op) => op === "spaces.windows" || op === "agents.runs")).toEqual([]);
+  });
+});
+
 describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (real routes, wasm core)", () => {
   it("greys out a machine's Connect, Teleport and Share while this device is not enrolled, and its action opens the enroll sheet", async () => {
     const { router, hooks } = await mountApp("/spaces", host([machine(["desktop_stream", "window_stream", "host_spaces", "relay_attach"])], { access: true, sharing: true }));
@@ -53,7 +89,7 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (real route
     expect((screen.getByRole("button", { name: /Share/ }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: NOTICE.actionLabel }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/devices"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
     await waitFor(() => expect(document.querySelector("[data-enroll]")).not.toBeNull());
   });
 

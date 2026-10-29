@@ -290,10 +290,14 @@ fi
             'git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"',
             workflow,
         )
-        self.assertIn("git rebase origin/main", workflow)
-        self.assertIn("merge_release_please_manifests.py", workflow)
-        self.assertIn('git diff --name-only --diff-filter=U', workflow)
-        self.assertIn("git rebase --abort", workflow)
+        # The replay onto main (manifest reconciliation, generated-commit drop,
+        # abort on a real conflict) lives in replay_release_branch.sh.
+        replay = (REPO_ROOT / ".github/scripts/replay_release_branch.sh").read_text()
+        self.assertIn("replay_release_branch.sh", workflow)
+        self.assertIn("git rebase origin/main", replay)
+        self.assertIn("merge_release_please_manifests.py", replay)
+        self.assertIn('git diff --name-only --diff-filter=U', replay)
+        self.assertIn("git rebase --abort", replay)
         self.assertIn('--force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD"', workflow)
         self.assertNotIn("git push --force ", workflow)
         self.assertIn("sync_driver_release_docs.py", workflow)
@@ -358,9 +362,9 @@ fi
         actually matters: the contract exists in the canonical document, and an
         agent reading AGENTS.md is pointed at it.
         """
-        contributing = self.read("CONTRIBUTING.md")
+        contributing = self.read(".github/CONTRIBUTING.md")
         for token in ("fix(cua-driver):", "feat(lume):", "no-release", "squash"):
-            self.assertIn(token, contributing, "CONTRIBUTING.md")
+            self.assertIn(token, contributing, ".github/CONTRIBUTING.md")
 
         # Either AGENTS.md carries the contract itself or it links to the file
         # that does -- both satisfy "an agent can find the rules from here".
@@ -526,7 +530,7 @@ fi
             "- name: Generate post-publication GitHub App token", bake_job
         )
         advance = workflow.index(
-            "- name: Advance public installer version on main", app_token
+            "- name: Advance public installer version through a pull request", app_token
         )
 
         self.assertLess(release_job, control_checkout)
@@ -548,8 +552,10 @@ fi
             '"$UPDATE_ROOT/.github/release-state/cua-driver-rs-published-version"',
             workflow,
         )
-        self.assertIn("-F force=false", workflow)
-        self.assertIn("[skip ci]", workflow)
+        self.assertNotIn("git/refs/heads/main", workflow)
+        self.assertNotIn("[skip ci]\"", workflow)
+        self.assertIn("gh pr create", workflow)
+        self.assertIn("gh pr merge", workflow)
 
     def test_release_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-rust.sh")
@@ -688,24 +694,47 @@ fi
         self.assertIn("launches the installed", shared_hints)
         self.assertNotIn("launches CuaDriver", shared_hints)
 
-    def test_post_install_hints_include_muse_stdio_mcp_config(self) -> None:
+    def test_post_install_hints_stay_short_and_point_at_mcp_config(self) -> None:
         shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
 
-        self.assertIn("Muse Code (macOS / Linux", shared_hints)
-        self.assertIn("$XDG_CONFIG_HOME/muse/settings.json", shared_hints)
-        self.assertIn('"mcp_servers": {', shared_hints)
-        self.assertIn('"transport": "stdio"', shared_hints)
-        self.assertIn('"command": "{{BINARY}}"', shared_hints)
-        self.assertIn('"args": ["mcp"]', shared_hints)
-        self.assertIn("MCP servers load at startup", shared_hints)
+        # Three essential steps; client snippets live behind `mcp-config`.
+        for step in ("  1. ", "  2. ", "  3. "):
+            self.assertIn(step, shared_hints)
+        self.assertNotIn("  4. ", shared_hints)
+        self.assertLess(len(shared_hints.splitlines()), 30)
+        self.assertIn("{{BINARY}} permissions grant", shared_hints)
+        self.assertIn("{{BINARY}} mcp-config --client <name>", shared_hints)
+        for removed in (
+            '"mcpServers"',
+            "codex mcp add",
+            "droid mcp add",
+            "qwen mcp add",
+            "check_permissions",
+            "open -n -g",
+            "-a CuaDriver",
+        ):
+            self.assertNotIn(removed, shared_hints)
 
-    def test_post_install_hints_use_canonical_capability_manifest_flags(self) -> None:
-        shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
+    def test_clients_without_an_mcp_config_preset_are_documented(self) -> None:
+        # Muse Code and GitHub Copilot CLI have no `mcp-config --client` preset;
+        # their snippets moved out of the installer output into the docs.
+        docs = self.read("docs/content/docs/cua-driver/guides/connect-your-agent.mdx")
 
-        self.assertIn("--capability-manifest", shared_hints)
-        self.assertIn("--approve-capability-manifest", shared_hints)
-        self.assertNotIn("--session-policy", shared_hints)
-        self.assertNotIn("--approve-session-policy", shared_hints)
+        self.assertIn("Muse Code (macOS, Linux)", docs)
+        self.assertIn("$XDG_CONFIG_HOME/muse/settings.json", docs)
+        self.assertIn('"mcp_servers"', docs)
+        self.assertIn('"transport": "stdio"', docs)
+        self.assertIn("MCP servers load at startup", docs)
+        self.assertIn("GitHub Copilot CLI", docs)
+        self.assertIn("~/.copilot/mcp-config.json", docs)
+
+    def test_permission_docs_use_canonical_capability_manifest_flags(self) -> None:
+        docs = self.read("docs/content/docs/cua-driver/guides/permissions.mdx")
+
+        self.assertIn("--capability-manifest", docs)
+        self.assertIn("--approve-capability-manifest", docs)
+        self.assertNotIn("--session-policy", docs)
+        self.assertNotIn("--approve-session-policy", docs)
 
     def test_agent_sdk_examples_use_implicit_sessions_and_per_call_targets(self) -> None:
         example_dir = REPO_ROOT / "libs/cua-driver/examples/agent-sdks"
@@ -1015,6 +1044,7 @@ fi
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn(
             "    needs:\n"
+            "      - staging-gate\n"
             "      - build-linux\n"
             "      - build-windows\n"
             "      - build-macos-universal\n"
@@ -1105,7 +1135,7 @@ fi
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 61)
+        self.assertEqual(len(expected["baseTools"]), 62)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
             {"darwin": 35, "linux": 39, "win32": 35},

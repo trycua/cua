@@ -35,7 +35,7 @@ fn def() -> &'static ToolDef {
             \n\
             A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
-            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
+            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
         input_schema: cua_driver_core::window_state_view::extend_input_schema(serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
@@ -55,7 +55,18 @@ fn def() -> &'static ToolDef {
                 },
                 "screenshot_out_file": {
                     "type": "string",
-                    "description": "When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead."
+                    "description": "When set, write the screenshot (PNG, or JPEG with screenshot_format:\"jpeg\") to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead."
+                },
+                "screenshot_format": {
+                    "type": "string",
+                    "enum": ["png", "jpeg"],
+                    "description": "Encoding of the returned screenshot. Default \"png\". \"jpeg\" is smaller, drops alpha, and mints no capture_id (capture_id-bound tools need a PNG read); pixel coordinates are unchanged."
+                },
+                "screenshot_quality": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 95,
+                    "description": "JPEG quality, 1-95, with screenshot_format:\"jpeg\" only. Default 85."
                 },
                 "max_elements": {
                     "type": "integer",
@@ -86,6 +97,47 @@ fn def() -> &'static ToolDef {
         idempotent: false,
         open_world: false,
     })
+}
+
+/// Start `capture` on a blocking thread now, so it overlaps the AX walk of a
+/// read that wants both. `None` when nothing would overlap: no screenshot is
+/// wanted, or no tree is walked (the caller then captures in its own turn).
+fn prefetch_capture<T: Send + 'static>(
+    should_capture: bool,
+    want_tree: bool,
+    capture: impl FnOnce() -> T + Send + 'static,
+) -> Option<tokio::task::JoinHandle<T>> {
+    (should_capture && want_tree).then(|| tokio::task::spawn_blocking(capture))
+}
+
+fn verified_capture(
+    window_id: u32,
+    prefetched: Option<anyhow::Result<crate::capture::CapturedImage>>,
+    bounds: &crate::windows::WindowBounds,
+    capture: impl FnOnce() -> anyhow::Result<crate::capture::CapturedImage>,
+) -> Result<(crate::capture::CapturedImage, u32, u32, f64), super::px_frame::PxFrameError> {
+    use super::px_frame::{validate_capture_frame, PxFrameError};
+    let validate = |raw: anyhow::Result<crate::capture::CapturedImage>| {
+        let (raw, w, h) = (|| -> anyhow::Result<_> {
+            let raw = raw?;
+            let (w, h) = raw.dimensions()?;
+            Ok((raw, w, h))
+        })()
+        .map_err(|e| PxFrameError::CaptureUnavailable {
+            window_id,
+            reason: e.to_string(),
+        })?;
+        let scale = validate_capture_frame(window_id, bounds, w, h)?;
+        Ok((raw, w, h, scale))
+    };
+    if let Some(raw) = prefetched {
+        match validate(raw) {
+            Ok(frame) => return Ok(frame),
+            Err(e @ PxFrameError::WindowNotFound { .. }) => return Err(e),
+            Err(_) => {}
+        }
+    }
+    validate(capture())
 }
 
 /// Chromium stops painting and stops updating its accessibility tree while its
@@ -243,6 +295,24 @@ impl Tool for GetWindowStateTool {
             .get("max_image_dimension")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
+        let encoding = match cua_driver_core::image_utils::ScreenshotEncoding::from_args(
+            "screenshot_format",
+            args.get("screenshot_format"),
+            "screenshot_quality",
+            args.get("screenshot_quality"),
+        ) {
+            Ok(encoding) => encoding,
+            Err(detail) => {
+                return ToolResult::error(format!("get_window_state: {detail}")).with_structured(
+                    serde_json::json!({
+                        "code": "invalid_arguments",
+                        "tool": "get_window_state",
+                        "detail": detail,
+                    }),
+                );
+            }
+        };
+        let jpeg = encoding != cua_driver_core::image_utils::ScreenshotEncoding::Png;
         // Internal direct-tool mode used by verify_state. Registry ingress
         // strips underscore-prefixed arguments before public dispatch; only
         // a trusted direct in-process invocation can enable this mode.
@@ -274,6 +344,12 @@ impl Tool for GetWindowStateTool {
         let collapse_menus = query.as_deref().is_none_or(|q| q.trim().is_empty())
             && !view.full_output
             && !observation_only;
+        // Start the screenshot grab before the tree walk so the two overlap:
+        // ScreenCaptureKit and the accessibility walk use independent system
+        // services, and the read otherwise pays for them one after the other.
+        let prefetched_capture = prefetch_capture(should_capture, want_tree, move || {
+            crate::capture::screenshot_window_image(window_id)
+        });
         let (tree_result, prepared_snapshot) = if want_tree {
             let q = query.clone();
             // `timeout_ms` bounds the walk itself: it returns the partial tree
@@ -350,6 +426,10 @@ impl Tool for GetWindowStateTool {
         // against, and the raw capture's backing scale.
         let mut screenshot_frame_error = None;
         let mut screenshot_resize_scale = None;
+        let prefetched_raw = match prefetched_capture {
+            Some(handle) => Some(handle.await.unwrap_or_else(|e| Err(anyhow::anyhow!(e)))),
+            None => None,
+        };
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
             let res = tokio::task::spawn_blocking(move || -> Result<
@@ -368,27 +448,15 @@ impl Tool for GetWindowStateTool {
                 let bounds = crate::windows::window_bounds_by_id(window_id)
                     .filter(|b| b.width > 0.0 && b.height > 0.0)
                     .ok_or(super::px_frame::PxFrameError::WindowNotFound { window_id })?;
-                let raw = crate::capture::screenshot_window_bytes(window_id).map_err(|e| {
-                    super::px_frame::PxFrameError::CaptureUnavailable {
-                        window_id,
-                        reason: e.to_string(),
-                    }
-                })?;
-                let (orig_w, orig_h) = crate::capture::png_dimensions(&raw).map_err(|e| {
-                    super::px_frame::PxFrameError::CaptureUnavailable {
-                        window_id,
-                        reason: e.to_string(),
-                    }
-                })?;
-                let scale =
-                    super::px_frame::validate_capture_frame(window_id, &bounds, orig_w, orig_h)?;
-                let png = crate::capture::resize_png_if_needed(&raw, max_dim).map_err(|e| {
-                    super::px_frame::PxFrameError::CaptureUnavailable {
-                        window_id,
-                        reason: e.to_string(),
-                    }
-                })?;
-                let (w, h) = crate::capture::png_dimensions(&png).map_err(|e| {
+                let (raw, orig_w, orig_h, scale) = verified_capture(
+                    window_id,
+                    prefetched_raw,
+                    &bounds,
+                    || crate::capture::screenshot_window_image(window_id),
+                )?;
+                // Resize and encode once from the raw pixels; the PNG bytes
+                // are identical to the former encode-decode-resize round trip.
+                let (png, w, h) = raw.encode(max_dim, encoding).map_err(|e| {
                     super::px_frame::PxFrameError::CaptureUnavailable {
                         window_id,
                         reason: e.to_string(),
@@ -462,7 +530,11 @@ impl Tool for GetWindowStateTool {
         if let Some((png, ref file_path, w, h, _, _, _, _)) = screenshot.as_ref() {
             if file_path.is_none() {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-                content.push(Content::image_png(BASE64.encode(png)));
+                content.push(if jpeg {
+                    Content::image_jpeg(BASE64.encode(png))
+                } else {
+                    Content::image_png(BASE64.encode(png))
+                });
             }
 
             // Summary text line (matching Swift reference format).
@@ -548,7 +620,8 @@ impl Tool for GetWindowStateTool {
                 })
                 .unzip(),
         };
-        let capture_id = match (snapshot_id, screenshot.as_ref()) {
+        // The capture registry holds PNG captures only; a JPEG read mints none.
+        let capture_id = match (snapshot_id, screenshot.as_ref().filter(|_| !jpeg)) {
             (Some(_), Some((png, _, width, height, native_width, native_height, _, _))) => {
                 match self.state.capture_bindings.publish_window(
                     &args,
@@ -664,13 +737,32 @@ impl Tool for GetWindowStateTool {
         let app_lookup_timed_out = tree_result
             .as_ref()
             .is_some_and(|r| r.walk.reason() == Some("app_lookup_timeout"));
-        match degradation_for(
+        let degradation = degradation_for(
             tree_result.is_some(),
             element_count,
             window_scope.as_ref(),
             app_lookup_timed_out,
-        ) {
+        );
+        let degradation = explain_locked_screen(
+            degradation,
+            !matches!(degradation, Degradation::None) && crate::session::screen_locked(),
+        );
+        match degradation {
             Degradation::None => {}
+            Degradation::ScreenLocked => {
+                structured["degraded"] = serde_json::json!(true);
+                structured["degraded_reason"] = serde_json::json!(format!(
+                    "screen_locked: window_id {window_id} has no accessibility tree because {}.",
+                    cua_driver_core::background_input::SCREEN_LOCKED_HINT
+                ));
+                structured["escalation"] = serde_json::json!({
+                    "recommended": "wait_for_unlock",
+                    "reason": "observation-only while the screen is locked: no delivery \
+                               mode can reach the app, and foreground input would go to \
+                               the lock screen. Re-snapshot after the Mac is woken and \
+                               unlocked."
+                });
+            }
             Degradation::AxTreeEmpty => {
                 structured["degraded"] = serde_json::json!(true);
                 structured["degraded_reason"] = serde_json::json!(
@@ -757,7 +849,7 @@ impl Tool for GetWindowStateTool {
             // know what they're holding. `Content::image_png` already carries
             // `mimeType` on the protocol image part — this mirrors it onto
             // the structured side. Additive: keeps every existing field.
-            structured["screenshot_mime_type"] = serde_json::json!("image/png");
+            structured["screenshot_mime_type"] = serde_json::json!(encoding.mime_type());
         }
         if let Some((bounds, scale)) = screenshot_frame {
             structured["window_bounds"] = serde_json::json!({
@@ -957,6 +1049,20 @@ enum Degradation {
     /// The window scope is unresolved because the app is still launching and
     /// did not answer accessibility within the caller's budget.
     AxAppLaunching,
+    /// The session's screen is locked (screen saver, display sleep or a
+    /// lock). macOS then reports no AXWindows for any app, so an empty or
+    /// unresolved tree has this cause rather than the app's own state.
+    ScreenLocked,
+}
+
+/// Name the locked screen as the cause of an empty or unresolved tree.
+/// `locked` is only probed when the walk already degraded.
+fn explain_locked_screen(degradation: Degradation, locked: bool) -> Degradation {
+    if locked && degradation != Degradation::None {
+        Degradation::ScreenLocked
+    } else {
+        degradation
+    }
 }
 
 /// Decide the degradation rung. Pure: `walk_attempted` is false in the
@@ -1229,6 +1335,28 @@ mod window_scope_contract_tests {
         );
     }
 
+    /// Screen saver or display sleep: every AXWindows list is empty, so the
+    /// window reads as unresolved. The reason names the lock instead, and a
+    /// healthy tree is never relabelled.
+    #[test]
+    fn a_locked_screen_explains_an_empty_or_unresolved_tree() {
+        let unresolved = degradation_for(
+            true,
+            0,
+            Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+            false,
+        );
+        assert_eq!(
+            explain_locked_screen(unresolved, true),
+            Degradation::ScreenLocked
+        );
+        assert_eq!(explain_locked_screen(unresolved, false), unresolved);
+        assert_eq!(
+            explain_locked_screen(Degradation::None, true),
+            Degradation::None
+        );
+    }
+
     #[test]
     fn empty_tree_still_degrades_as_ax_tree_empty() {
         // Back-compat with the pre-existing rung.
@@ -1331,6 +1459,149 @@ mod window_scope_contract_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verified_capture_reuses_or_recovers_prefetch() {
+        use super::super::px_frame::PxFrameError;
+        use std::{cell::Cell, io::Cursor};
+
+        let png = |w, h| {
+            let mut bytes = Cursor::new(Vec::new());
+            image::DynamicImage::new_rgba8(w, h)
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            bytes.into_inner()
+        };
+        let bounds = crate::windows::WindowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 4.0,
+            height: 4.0,
+        };
+        use crate::capture::CapturedImage;
+        let valid = CapturedImage::Png(png(4, 4));
+        for (prefetched, expected_calls) in [
+            (Some(Ok(valid.clone())), 0),
+            (Some(Err(anyhow::anyhow!("prefetch failed"))), 1),
+            (Some(Ok(CapturedImage::Png(png(3, 4)))), 1),
+            (Some(Ok(CapturedImage::Png(vec![0]))), 1),
+            (None, 1),
+        ] {
+            let calls = Cell::new(0);
+            let frame = verified_capture(7, prefetched, &bounds, || {
+                calls.set(calls.get() + 1);
+                Ok(valid.clone())
+            })
+            .unwrap();
+            assert_eq!(frame, (valid.clone(), 4, 4, 1.0));
+            assert_eq!(calls.get(), expected_calls);
+        }
+        let raw = |w: u32, h: u32| {
+            CapturedImage::Rgba(cua_driver_core::image_utils::RgbaFrame {
+                width: w,
+                height: h,
+                rgba: vec![0; (w * h * 4) as usize],
+            })
+        };
+        let calls = Cell::new(0);
+        let frame = verified_capture(7, Some(Ok(raw(4, 4))), &bounds, || {
+            calls.set(calls.get() + 1);
+            Ok(valid.clone())
+        })
+        .unwrap();
+        assert_eq!(frame, (raw(4, 4), 4, 4, 1.0));
+        assert_eq!(calls.get(), 0);
+        let calls = Cell::new(0);
+        let frame = verified_capture(7, Some(Ok(raw(3, 4))), &bounds, || {
+            calls.set(calls.get() + 1);
+            Ok(valid.clone())
+        })
+        .unwrap();
+        assert_eq!(frame, (valid.clone(), 4, 4, 1.0));
+        assert_eq!(calls.get(), 1);
+        let calls = Cell::new(0);
+        let error = verified_capture(7, Some(Ok(raw(3, 4))), &bounds, || {
+            calls.set(calls.get() + 1);
+            Ok(raw(3, 4))
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            PxFrameError::FrameMismatch {
+                window_id: 7,
+                bounds_width: 4.0,
+                bounds_height: 4.0,
+                capture_width: 3,
+                capture_height: 4,
+                scale_x: 0.75,
+                scale_y: 1.0,
+            }
+        );
+        assert_eq!(calls.get(), 1);
+        for prefetched in [Some(Err(anyhow::anyhow!("old error"))), None] {
+            let calls = Cell::new(0);
+            let error = verified_capture(7, prefetched, &bounds, || {
+                calls.set(calls.get() + 1);
+                Err(anyhow::anyhow!("fresh error"))
+            })
+            .unwrap_err();
+            assert_eq!(
+                error,
+                PxFrameError::CaptureUnavailable {
+                    window_id: 7,
+                    reason: "fresh error".into(),
+                }
+            );
+            assert_eq!(calls.get(), 1);
+        }
+    }
+
+    #[test]
+    fn a_capture_is_prefetched_only_when_a_tree_walk_can_overlap_it() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            assert!(prefetch_capture(true, false, || 1).is_none());
+            assert!(prefetch_capture(false, true, || 1).is_none());
+            assert!(prefetch_capture(false, false, || 1).is_none());
+            let handle = prefetch_capture(true, true, || 7).expect("prefetched");
+            assert_eq!(handle.await.unwrap(), 7);
+        });
+    }
+
+    /// Each side waits for the other to have started. They can only both
+    /// finish if the capture is running while the walk runs; a capture that
+    /// follows the walk would leave both waiting out the timeout.
+    #[test]
+    fn a_prefetched_capture_overlaps_the_tree_walk() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        const LIMIT: Duration = Duration::from_secs(10);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (capture_started, capture_seen) = mpsc::channel::<()>();
+        let (walk_started, walk_seen) = mpsc::channel::<()>();
+        let (capture_ok, walk_ok) = rt.block_on(async {
+            let capture = prefetch_capture(true, true, move || {
+                capture_started.send(()).unwrap();
+                walk_seen.recv_timeout(LIMIT).is_ok()
+            })
+            .unwrap();
+            let walk = tokio::task::spawn_blocking(move || {
+                walk_started.send(()).unwrap();
+                capture_seen.recv_timeout(LIMIT).is_ok()
+            })
+            .await
+            .unwrap();
+            (capture.await.unwrap(), walk)
+        });
+        assert!(capture_ok, "the capture never saw the walk start");
+        assert!(walk_ok, "the walk never saw the capture start");
+    }
 
     #[test]
     fn only_off_space_chromium_windows_get_the_staleness_note() {

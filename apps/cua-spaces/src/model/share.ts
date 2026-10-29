@@ -90,3 +90,41 @@ export function reduceShare(
 export function shareView(input: ShareInput, state: ShareSheetState): ShareSheetView {
   return core('share.view', { input, state });
 }
+
+/** Why the sheet cannot share and where to go (`share.gate`). */
+export interface ShareGate {
+  reason: string;
+  action: { label: string; url: string };
+}
+
+/**
+ * The gate for an account: closed with an explanation and a link to Teams
+ * when it is known to be in no team that can share. `null` leaves the sheet
+ * open: in a team, or not known (the server decides). This only explains;
+ * the control plane and the relay refuse an outside share either way.
+ */
+export function shareGate(hasTeam: boolean | null): ShareGate | null {
+  return core('share.gate', { hasTeam });
+}
+
+/** A refused share in plain words (`share_outside_team`, `sharing_needs_team`); null for any other error. */
+export function shareErrorWords(error: string, who: string): string | null {
+  return core('share.errorWords', { error, who });
+}
+
+/** Someone removed from a shared computer (`sharing.removals`). */
+export interface ShareRemoval {
+  who: string;
+  machineName: string;
+}
+
+/** The owner's one-line note about them (`share.removalNote`). */
+export interface ShareRemovalNote {
+  text: string;
+  action: { label: string; url: string };
+  dismiss: string;
+}
+
+export function shareRemovalNote(removals: ShareRemoval[]): ShareRemovalNote | null {
+  return core('share.removalNote', { removals });
+}

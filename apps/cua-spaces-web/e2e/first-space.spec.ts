@@ -24,11 +24,12 @@ test("empty home and New Space on the macOS host's answer, loaded before the hos
   // Under the Spaces header, as with Spaces.
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Spaces");
   await expect(page.getByText("0 Spaces on")).toBeVisible();
-  await expect(page.getByLabel("Filter by state").getByRole("button", { name: "Running" })).toBeVisible();
-  await expect(home.getByRole("heading")).toHaveText("No Spaces yet");
-  await expect(home).toContainText("Choose a system for your first Space.");
-  const linux = home.getByRole("button", { name: "Linux, About 1 minute · 3.2–7.1 GB of disk" });
-  const macos = home.getByRole("button", { name: "macOS, About 22 GB download" });
+  // The calm empty state: no toolbar until there is a Space to sort or filter.
+  await expect(page.getByLabel("Filter by state")).toHaveCount(0);
+  await expect(home.getByRole("heading")).toHaveText("Create your first Space");
+  await expect(home).toContainText("A separate computer on This Mac, for you and your agents.");
+  const linux = home.getByRole("button", { name: "Linux Space, About 3 minutes" });
+  const macos = home.getByRole("button", { name: "macOS Space, About 23 GB download" });
   await expect(linux).toBeVisible();
   await expect(macos).toBeVisible();
 

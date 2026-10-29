@@ -1,15 +1,21 @@
 ---
 title: Install
-description: 'Install the Cua Spaces app and the cua CLI on macOS, Windows or Linux.'
+description: 'Install the Cua Spaces app and the cua CLI on macOS, Windows or Linux, what the first-run screens ask, and how the app keeps itself up to date.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Cua Spaces 0.9.0 runs on macOS, Windows (preview) and Linux. One command installs the
-`cua` CLI and the app. The [download page](https://cua.ai/download) has
-the app for macOS, Windows (preview) and Linux, and every installer is attached to
-the [GitHub releases](https://github.com/trycua/cua/releases).
+Cua Spaces runs on macOS, Windows (preview) and Linux. One command installs the
+`cua` CLI and the app. The [download page](https://cua.ai/download) has the
+app for each system, and every installer is attached to the
+[GitHub releases](https://github.com/trycua/cua/releases).
+
+| System | Needs |
+|---|---|
+| macOS | macOS 26 or later |
+| Windows (preview) | Windows on x64 or Arm |
+| Linux | Ubuntu 24.04 on x64 or arm64 for the supported package. Other distributions and desktops are untested. |
 
 <Tabs items={['macOS', 'Windows (preview)', 'Linux']}>
   <Tab value="macOS">
@@ -17,7 +23,7 @@ the [GitHub releases](https://github.com/trycua/cua/releases).
     curl -fsSL https://cua.ai/install.sh | sh
     ```
 
-    Or open the universal `.dmg` (or `.pkg`) from the release. macOS 26 or later.
+    Or open the universal `.dmg` (or `.pkg`) from the release.
   </Tab>
   <Tab value="Windows (preview)">
     <Callout type="warn">
@@ -31,25 +37,114 @@ the [GitHub releases](https://github.com/trycua/cua/releases).
 
     Or run `cua-spaces-<version>-windows-x64-setup.exe` (`windows-arm64` on Arm)
     from the release. Windows may show a SmartScreen prompt the first time:
-    choose **More info**, then **Run anyway**.
+    choose **More info**, then **Run anyway**. The publisher shows as **Cua AI, Inc.**
   </Tab>
   <Tab value="Linux">
     ```bash skip="host-install"
     curl -fsSL https://cua.ai/install.sh | sh
     ```
 
-    The installer picks the supported **.deb** on Ubuntu 24.04 (x64 and arm64).
-    To install it by hand:
-    `sudo apt install ./cua-spaces_<version>_<arch>.deb`. A portable
-    **AppImage** is also released; it is not supported and has no Keyvault. See
-    [Cua Spaces on Linux](/spaces/quickstart#cua-spaces-on-linux).
+    The installer picks the supported **.deb** on Ubuntu 24.04. To install it by
+    hand, run `sudo apt install ./cua-spaces_<version>_<arch>.deb`. See
+    [Linux packages](#linux-packages).
   </Tab>
 </Tabs>
 
 At a console the installer shows a checklist first. Add `--cli-only`
-(`-CliOnly` on Windows) to install the CLI alone.
+(`-CliOnly` on Windows) to install the CLI alone. Other flags are `--select`,
+`--only`, `--app-only`, `--mode host|client`, `--version`, `--no-onboarding`,
+`--no-host`, `--dry-run` and `--yes` (`-Select`, `-CliOnly` and so on on Windows).
+
+In a terminal the installer then signs you in. Over ssh, or on Linux without a
+display, it shows a code to approve in a browser on another device. Signing in
+adds this computer to your account, so it shows up in Cua Spaces on your other
+devices. It provides Spaces and keeps its screen private; a computer set up
+before keeps its settings. Add `--no-host` (`-NoHost`) to sign in without
+adding it.
+
+## First run
+
+The first time you open the app, it walks you through a short setup. The
+[Quickstart](/spaces/quickstart) shows each step.
+
+| Step | What it does |
+|---|---|
+| Your computers, shared by your team and its agents | The welcome. |
+| Pick your agent | The agents found on this computer, most used first (Hermes, Claude Code, Codex, Cursor, then the rest). Press **Connect** on each one you want; nothing is connected until you do. See [Connect your agent](/spaces/guides/connect-your-agent). |
+| Add your other computers | Optional. Signing in lets your other computers and your cloud use this computer's Spaces. **Not now** keeps Cua on this computer only. |
+| Try it in your agent | A request to paste into the agent you connected, which makes a Space on this computer. With no agent, a first Space in one click: Linux, or macOS on a Mac with Apple silicon. |
+
+If you skip the setup, **Finish setting up** at the bottom of the sidebar opens it again.
+
+Cua Spaces launches at login by default, so the Spaces this computer provides
+and your persistent agents come back after a restart. Turn it off in **Settings,
+General**.
+
+## Linux packages
+
+The supported package is the **.deb** on Ubuntu 24.04. It is sandboxed and
+installs the confirmation prompt (polkit) that sharing a Space and the Keyvault
+need. The prompt asks for your password in a desktop session with a polkit
+authentication agent, local or over a remote desktop such as xrdp. `sudo apt remove cua-spaces`
+turns off what the app set up (see
+[Check, pause or remove](/spaces/guides/add-a-computer#check-pause-or-remove)).
+
+The **AppImage** is a portable build, not a supported one. It cannot use the
+browser sandbox (it starts with `--no-sandbox`), and without the system's
+confirmation prompt you cannot share a Space and the Keyvault is unavailable.
+Use it to try Cua Spaces without installing, and install the .deb to keep it.
+
+For Linux Spaces created on this computer, the `cua` CLI uses Docker (gVisor
+`runsc`, when installed, adds isolation) or QEMU. QEMU needs read and write
+access to `/dev/kvm` to run same-architecture guests quickly. Run
+`cua runtime doctor` to see what this computer has.
+
+## Updates
+
+Cua Spaces checks for new versions and downloads them in the background on
+macOS, Windows and Linux. The settings are in **Settings, About**, which also
+shows your version.
+
+The app checks when it starts and again every few hours. When a new version is
+ready, **Update ready** appears at the bottom of the sidebar, with **Restart to
+update** and a **What's new** link to the release notes. Nothing restarts until
+you click. If an agent is still working, the app asks first.
+
+In **Settings, About**:
+
+- **Check for and download updates automatically** turns the background checks on
+  or off. With it off, press **Check Now** to check by hand.
+- **Install a downloaded update when Cua Spaces quits** installs a downloaded
+  update when you quit the app. It needs automatic checks.
+- **Last check** says when the app last looked.
+
+On macOS, every update is the same notarized disk image as the download on the
+release page, and the app installs it only when its signature matches the key
+built into the app. Windows and Linux update through their own updater.
+
+### Stable or Beta
+
+**Update to:** picks the channel.
+
+- **Stable**: tested releases.
+- **Beta**: releases and prereleases, with new features sooner and rough edges.
+
+Going back to Stable from a newer beta keeps the version you have until a newer
+stable release is out.
+
+### After an update
+
+The first time the new version opens, it refreshes what Cua installed into your
+AI agents, the way `cua agents update` does: the Cua skill folders and the Cua
+MCP entries in Claude Code, Cursor and the other agents you set up. A skill
+folder you edited is left as you left it. It also restarts the Cua daemon when
+the app started it, so the daemon runs the new version too.
+
+This happens without any window. If something fails, the app shows one notice
+with what to run.
 
 ## Next
 
-- [Quickstart](/spaces/quickstart)
-- [Plans](/spaces/guides/plans): what Free, Pro and Teams include.
+- [Quickstart](/spaces/quickstart): connect an agent and run a first task.
+- [Plans and Teams](/spaces/guides/teams): what Free, Pro and Teams include.
+- [Troubleshoot](/spaces/guides/troubleshoot): when a Space won't create, update first, then retry.

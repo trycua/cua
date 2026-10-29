@@ -14,11 +14,25 @@
 //! | Spaces site   | `CUA_SPACES_SITE_URL` | `https://cua.ai`                         | `https://spaces.staging.cua.ai`             |
 //! | cua home      | `CUA_HOME`            | `~/.cua`                                 | `~/.cua/envs/staging`                       |
 //!
+//! (The cua home and the Keychain service in the table are Stable's; Local
+//! has its own, see [`crate::channel`].)
+//!
 //! A per-setting override always wins over `CUA_ENV`. With `CUA_ENV` unset,
 //! the build's default applies: production, or staging for a beta channel
 //! build (compiled with `CUA_DEFAULT_ENV=staging`).
+//!
+//! The Local channel (`CUA_CHANNEL=local`, "Cua Spaces Local",
+//! [`crate::channel`]) is a different default: with `CUA_ENV` unset it is
+//! staging, so a Local build never signs in to production by accident, and
+//! its home is `~/.cua-local` itself. `CUA_ENV=prod` is an explicit opt-in,
+//! and it gets its own home below that, `~/.cua-local/envs/prod`, so Local's
+//! production state never mixes with its staging state or with Stable's.
+//! Stable is unchanged. The Keychain service follows the channel too
+//! ([`CuaChannel::keychain_service`]).
 
 use std::path::PathBuf;
+
+use crate::channel::{CUA_CHANNEL_VAR, CuaChannel};
 
 /// The environment variable that selects the deployment.
 pub const CUA_ENV_VAR: &str = "CUA_ENV";
@@ -44,34 +58,52 @@ impl CuaEnv {
         }
     }
 
-    /// `CUA_ENV`, or an error naming the accepted values.
+    /// `CUA_ENV`, or an error naming the accepted values (or the accepted
+    /// channels, for an unknown `CUA_CHANNEL`). The channel decides what an
+    /// unset `CUA_ENV` means ([`CuaEnv::build_default`]).
     pub fn try_current() -> Result<Self, String> {
-        Self::try_from_value(std::env::var(CUA_ENV_VAR).ok().as_deref())
+        CuaChannel::try_current()?.env_from_value(std::env::var(CUA_ENV_VAR).ok().as_deref())
     }
 
-    /// The default when `CUA_ENV` is unset: the build's `CUA_DEFAULT_ENV`
-    /// (beta channel builds are compiled with `staging`), else production.
+    /// The default when `CUA_ENV` is unset: the channel's
+    /// ([`CuaChannel::default_env`]). Local is staging; Stable is the
+    /// build's `CUA_DEFAULT_ENV` (beta channel builds are compiled with
+    /// `staging`), else production ([`CuaEnv::compiled_default`]).
     pub fn build_default() -> Self {
+        CuaChannel::current().default_env()
+    }
+
+    /// The Stable channel's default: the build's `CUA_DEFAULT_ENV` (beta
+    /// channel builds are compiled with `staging`), else production.
+    pub fn compiled_default() -> Self {
         option_env!("CUA_DEFAULT_ENV")
             .and_then(Self::parse)
             .unwrap_or_default()
     }
 
     /// [`CuaEnv::try_current`] for a given value (`None`: unset, the
-    /// [`CuaEnv::build_default`]).
+    /// [`CuaEnv::build_default`]) in this process's channel.
     pub fn try_from_value(value: Option<&str>) -> Result<Self, String> {
+        CuaChannel::current().env_from_value(value)
+    }
+
+    /// The Stable channel's rule for a `CUA_ENV` value (`None`: unset, the
+    /// [`CuaEnv::compiled_default`]): what [`CuaEnv::try_from_value`] was
+    /// before channels, and what [`CuaChannel::env_from_value`] is for Stable.
+    pub(crate) fn stable_from_value(value: Option<&str>) -> Result<Self, String> {
         match value {
-            None => Ok(Self::build_default()),
+            None => Ok(Self::compiled_default()),
             Some(v) => Self::parse(v).ok_or_else(|| {
                 format!("{CUA_ENV_VAR}={v:?} is not a Cua environment (prod or staging)")
             }),
         }
     }
 
-    /// `CUA_ENV`; an unknown value is production (the `cua` CLI refuses
-    /// one at startup instead, see [`CuaEnv::try_current`]).
+    /// `CUA_ENV`; an unknown value is production for Stable and staging for
+    /// Local (the `cua` CLI refuses one at startup instead, see
+    /// [`CuaEnv::try_current`]).
     pub fn current() -> Self {
-        Self::try_current().unwrap_or_default()
+        CuaChannel::current_env()
     }
 
     /// `prod` or `staging`.
@@ -130,16 +162,32 @@ impl CuaEnv {
         }
     }
 
-    /// The OS credential vault service the session is stored under
-    /// (production keeps `run.cua.ai`).
+    /// The OS credential vault service Stable stores the session, the device
+    /// key and the other named secrets under (Local's are
+    /// [`CuaChannel::keychain_service`]). The name is neutral on purpose:
+    /// it used to be the retired Cloud API host (see
+    /// [`CuaEnv::legacy_keyring_service`]).
     pub fn keyring_service(self) -> &'static str {
+        match self {
+            Self::Prod => "ai.cua.session",
+            Self::Staging => "ai.cua.session.staging",
+        }
+    }
+
+    /// The service older builds stored the session under (the retired Cloud
+    /// API host). Builds that use [`CuaEnv::keyring_service`] move an item
+    /// they find here once, then delete it. Remove this, and the move in
+    /// `cua-auth`, two releases or 60 days after the first release that has
+    /// the move, whichever is later (CUA-1877).
+    pub fn legacy_keyring_service(self) -> &'static str {
         match self {
             Self::Prod => "run.cua.ai",
             Self::Staging => "staging.run.cua.ai",
         }
     }
 
-    /// The cua home below the default `~/.cua` (`None`: `~/.cua` itself).
+    /// Stable's cua home below the default `~/.cua` (`None`: `~/.cua`
+    /// itself). Use [`CuaChannel::home_subdir`] for the process's channel.
     pub fn home_subdir(self) -> Option<&'static str> {
         match self {
             Self::Prod => None,
@@ -167,14 +215,21 @@ pub struct Endpoints {
 }
 
 impl Endpoints {
-    /// From the process environment (an unknown `CUA_ENV` is production).
+    /// From the process environment (an unknown `CUA_ENV` is production on
+    /// Stable and staging on Local).
     pub fn current() -> Self {
         Self::from_lookup(|k| std::env::var(k).ok())
     }
 
     /// From `get` (a variable lookup; for tests).
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Self {
-        let env = CuaEnv::try_from_value(get(CUA_ENV_VAR).as_deref()).unwrap_or_default();
+        // The channel comes from `get` as well (`CUA_CHANNEL`), so a test's
+        // lookup is hermetic; the compile-time default and this process's
+        // executable path still apply, as in `CuaChannel::current`. An
+        // unknown `CUA_ENV` is production for Stable, as it always was, and
+        // never production for Local.
+        let channel = CuaChannel::from_env_value(get(CUA_CHANNEL_VAR).as_deref());
+        let env = channel.env_or_fallback(get(CUA_ENV_VAR).as_deref());
         let setting = |var: &str, default: &str| {
             get(var)
                 .map(|v| v.trim().trim_end_matches('/').to_string())
@@ -218,26 +273,50 @@ pub fn account_app_url() -> String {
     Endpoints::current().account_app_url
 }
 
-/// The cua home a non-production environment uses when `CUA_HOME` is not
-/// set: `None` for production or when `CUA_HOME` is set.
+/// The cua home a Local channel or a non-default environment uses when
+/// `CUA_HOME` is not set: `None` for Stable production or when `CUA_HOME`
+/// is set.
 pub fn env_home() -> Option<PathBuf> {
     if std::env::var_os("CUA_HOME").is_some_and(|v| !v.is_empty()) {
         return None;
     }
-    CuaEnv::current().home_subdir()?;
-    Some(crate::cua_home())
+    // Local always has a home of its own (`~/.cua-local`, or its `envs/prod`
+    // below it); Stable has one only below `~/.cua`.
+    let (channel, env) = CuaChannel::current_with_env();
+    if !channel.is_local() {
+        channel.home_subdir(env)?;
+    }
+    Some(channel.env_home_dir(env))
 }
 
-/// Sets `CUA_HOME` to the environment's home when `CUA_ENV` selects a
-/// non-production deployment and `CUA_HOME` is unset, so every component
-/// (and every child process) that reads `CUA_HOME` directly agrees with
-/// [`crate::cua_home`]. Returns the home it set.
+/// Sets `CUA_HOME` to the channel's or environment's home when the Local
+/// channel, or a non-production `CUA_ENV`, applies and `CUA_HOME` is unset,
+/// so every component (and every child process) that reads `CUA_HOME`
+/// directly agrees with [`crate::cua_home`]. Returns the home it set.
+///
+/// A Local process also sets `CUA_CHANNEL=local` and, when `CUA_ENV` is
+/// unset or blank, `CUA_ENV` to its default (staging), so every child agrees
+/// with it even when it could not tell it is Local from its own path.
+/// Stable sets neither.
 ///
 /// # Safety
 ///
 /// Changes the process environment: call it first in `main`, before any
 /// other thread exists.
 pub unsafe fn pin_home() -> Option<PathBuf> {
+    let channel = CuaChannel::current();
+    if channel.is_local() {
+        // SAFETY: the caller guarantees no other thread exists.
+        unsafe { std::env::set_var(CUA_CHANNEL_VAR, channel.name()) };
+        let env_unset = match std::env::var(CUA_ENV_VAR) {
+            Ok(v) => v.trim().is_empty(),
+            Err(_) => std::env::var_os(CUA_ENV_VAR).is_none(),
+        };
+        if env_unset {
+            // SAFETY: as above.
+            unsafe { std::env::set_var(CUA_ENV_VAR, channel.default_env().name()) };
+        }
+    }
     let home = env_home()?;
     // SAFETY: the caller guarantees no other thread exists.
     unsafe { std::env::set_var("CUA_HOME", &home) };
@@ -264,9 +343,62 @@ mod tests {
         assert_eq!(CuaEnv::parse(" Production "), Some(CuaEnv::Prod));
         assert_eq!(CuaEnv::parse("STAGING"), Some(CuaEnv::Staging));
         assert_eq!(CuaEnv::parse("stage"), None);
-        assert_eq!(CuaEnv::try_from_value(None), Ok(CuaEnv::Prod));
-        let err = CuaEnv::try_from_value(Some("dev")).unwrap_err();
+        // The Stable rule (a test process is Stable unless it says otherwise).
+        assert_eq!(
+            CuaEnv::stable_from_value(None),
+            Ok(CuaEnv::compiled_default())
+        );
+        assert_eq!(CuaEnv::stable_from_value(Some("")), Ok(CuaEnv::Prod));
+        let err = CuaEnv::stable_from_value(Some("dev")).unwrap_err();
         assert!(err.contains("CUA_ENV") && err.contains("staging"), "{err}");
+    }
+
+    #[test]
+    fn local_channel_defaults_to_staging_and_prod_is_an_opt_in() {
+        let local = |vars: &[(&str, &str)]| {
+            let mut v = vec![("CUA_CHANNEL", "local")];
+            v.extend_from_slice(vars);
+            endpoints(&v)
+        };
+        let staging = endpoints(&[("CUA_ENV", "staging"), ("CUA_CHANNEL", "stable")]);
+        let prod = endpoints(&[("CUA_ENV", "prod"), ("CUA_CHANNEL", "stable")]);
+
+        // CUA_ENV unset, blank or mistyped: staging, never production.
+        for e in [
+            local(&[]),
+            local(&[("CUA_ENV", "")]),
+            local(&[("CUA_ENV", "  ")]),
+            local(&[("CUA_ENV", "stagign")]),
+            local(&[("CUA_ENV", "staging")]),
+        ] {
+            assert_eq!(e, staging);
+        }
+        // CUA_ENV=prod is the explicit opt-in.
+        assert_eq!(local(&[("CUA_ENV", "prod")]), prod);
+        assert_eq!(local(&[("CUA_ENV", "Production")]), prod);
+        // A per-setting override still wins.
+        assert_eq!(
+            local(&[("CUA_RELAY_URL", "http://127.0.0.1:9000")]).relay_url,
+            "http://127.0.0.1:9000"
+        );
+    }
+
+    #[test]
+    fn stable_channel_in_a_lookup_is_unchanged() {
+        let unset = endpoints(&[("CUA_CHANNEL", "stable")]);
+        assert_eq!(unset.env, CuaEnv::compiled_default());
+        assert_eq!(unset, endpoints(&[]));
+        assert_eq!(
+            endpoints(&[("CUA_CHANNEL", "stable"), ("CUA_ENV", "")]).env,
+            CuaEnv::Prod
+        );
+        assert_eq!(
+            endpoints(&[("CUA_CHANNEL", "stable"), ("CUA_ENV", "stagign")]).env,
+            CuaEnv::Prod,
+            "an unknown CUA_ENV is still production on Stable"
+        );
+        // An unknown channel is ignored: this test binary is Stable.
+        assert_eq!(endpoints(&[("CUA_CHANNEL", "dev")]), endpoints(&[]));
     }
 
     #[test]
@@ -278,7 +410,8 @@ mod tests {
         assert_eq!(e.spaces_api_url, "https://api.cua.ai");
         assert_eq!(e.account_app_url, "https://app.cua.ai");
         assert_eq!(e.spaces_site_url, "https://cua.ai");
-        assert_eq!(CuaEnv::Prod.keyring_service(), "run.cua.ai");
+        assert_eq!(CuaEnv::Prod.keyring_service(), "ai.cua.session");
+        assert_eq!(CuaEnv::Prod.legacy_keyring_service(), "run.cua.ai");
         assert_eq!(CuaEnv::Prod.home_subdir(), None);
         // An unknown value never selects staging.
         assert_eq!(endpoints(&[("CUA_ENV", "stagign")]), e);
@@ -296,7 +429,11 @@ mod tests {
         assert_eq!(e.spaces_api_url, "https://api.staging.cua.ai");
         assert_eq!(e.account_app_url, "https://app.staging.cua.ai");
         assert_eq!(e.spaces_site_url, "https://spaces.staging.cua.ai");
-        assert_eq!(CuaEnv::Staging.keyring_service(), "staging.run.cua.ai");
+        assert_eq!(CuaEnv::Staging.keyring_service(), "ai.cua.session.staging");
+        assert_eq!(
+            CuaEnv::Staging.legacy_keyring_service(),
+            "staging.run.cua.ai"
+        );
         assert_eq!(CuaEnv::Staging.home_subdir(), Some("envs/staging"));
     }
 

@@ -25,7 +25,7 @@ struct TeleportBridgeTests {
                              telemetry: FixtureTelemetry())
         await model.refresh()
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        bridge.actions = WebUIActions(openSpace: { _ in })
         return (bridge, model)
     }
 

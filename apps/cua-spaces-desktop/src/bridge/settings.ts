@@ -9,15 +9,34 @@
 // runtimes, launch at login, usage data, the update channel, the
 // experiments, Welcome's "Show again", the coding agents (`model.agents`)
 // and the Keyvault's switches (`model.keyvault`).
-import type { AppLoginItemStatus, AppSettingsInput, AppTeamInput, AppTelemetryInput } from "../native/generated/index";
+import type { AppLoginItemStatus, AppSettingsInput, AppTeamInput, AppTelemetryInput, RepoCacheStatus } from "../native/generated/index";
 import type { AppModel } from "../model/app-model";
 import { words } from "../model/errors";
 import { bounded } from "../model/time";
 import { string } from "./args";
+import { consentMayHaveChanged } from "../crash-reporting";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 import { hostParts, type HostParts } from "./host-parts";
 import { encode } from "./value";
+import { cliSetting } from "./cli";
+
+/** The repo cache as the page reads it (`RepoCacheView`); the SDK's numbers are 64-bit. */
+function repoCacheView(s: RepoCacheStatus | null) {
+  if (!s) throw Failure.unsupported("The repo cache is not available in this build");
+  return {
+    enabled: s.enabled,
+    repos: s.repos,
+    bytes: Number(s.bytes),
+    capBytes: Number(s.capBytes),
+    sizeSetting: s.sizeSetting,
+    summary: s.summary,
+    week: s.week,
+    hits: s.hits,
+    misses: s.misses,
+    secondsSaved: Number(s.secondsSaved),
+  };
+}
 
 function telemetryInput(model: AppModel): AppTelemetryInput | undefined {
   try {
@@ -38,16 +57,12 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     signIn: model.signIn,
     canSignOut: model.account !== null && model.identity !== null,
     menuBar: model.settings.menuBar,
-    defaultLocation: model.settings.defaultLocation,
-    locationLockedBy: undefined,
     telemetry: telemetryInput(model),
     agents: coding.rows ?? undefined,
     agentsBusy: coding.busy,
     agentsPending: coding.pending,
     // Teams from the Spaces API (read by `settings.get`).
     teams: model.teams.input(),
-    // No Cua Cloud billing in the apps (the row stays hidden).
-    billing: undefined,
     loginItem:
       login.status === null
         ? undefined
@@ -64,9 +79,10 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     keyvaultSiteIcons: model.settings.keyvaultSiteIcons,
     keyvaultProtection: model.keyvault.page.protection,
     autoConnect: model.settings.autoConnect,
-    lumeSource: model.lumeSource ?? undefined,
-    // The built-in Linux runtime is a gVisor VM on a Mac; Docker is the runtime elsewhere, so no row.
-    linuxSource: process.platform === "darwin" ? (model.linuxSource ?? undefined) : undefined,
+    // Settings, Advanced: every kind of Space's runtime row ("Checking…" until read).
+    runtimes: model.runtimesInput(),
+    // Settings, General's Show tips (the tips themselves live in `AppSettings.tips`).
+    showTips: !model.settings.tips.off,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
@@ -91,7 +107,27 @@ export function settingsState(model: AppModel, parts: HostParts) {
     // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
     // environment, so Upgrade's billing fallback names this one.
     accountUrl: model.native.appAccountAppUrl(),
+    // The CLI this app installs and whether it is here (`cli.ts`).
+    cli: cliSetting(model),
+    // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`): the page's core lays out every kind's row.
+    runtimes: encode(model.runtimesInput()),
+    // The app core's own settings the page changes (`settings.update`).
+    tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
   };
+}
+
+/** `settings.update`'s fields, as the page sends them (each optional). */
+export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel["settings"]> {
+  const patch: Partial<AppModel["settings"]> = {};
+  if ("tips" in args) {
+    const t = args.tips;
+    if (!t || typeof t !== "object" || Array.isArray(t)) throw Failure.badArgs("tips: {off, done}");
+    const { off, done } = t as { off?: unknown; done?: unknown };
+    if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string")) throw Failure.badArgs("tips: {off: boolean, done: string[]}");
+    patch.tips = { off, done: done as string[] };
+  }
+  if (!Object.keys(patch).length) throw Failure.badArgs("tips");
+  return patch;
 }
 
 /** A switch in Settings, Experiments: saved and recorded. Off hides; nothing is undone. */
@@ -123,10 +159,41 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
     const [lume, linux] = await Promise.all([bounded(5, () => model.backend.lumeSource()), bounded(5, () => model.backend.linuxSource())]);
     if (lume !== null) model.lumeSource = lume;
     if (linux !== null) model.linuxSource = linux;
+    // What is installed for each kind and the doctor: in the background, the page hears `settings.changed`.
+    refreshRuntimes();
+  };
+
+  /** Reads the runtimes again unless a read is recent or running. */
+  let runtimesReadAt = 0;
+  let runtimesReading = false;
+  const refreshRuntimes = (force = false) => {
+    if (!model.servicesIn || runtimesReading || (!force && Date.now() - runtimesReadAt < 15_000)) return;
+    runtimesReading = true;
+    void model
+      .readRuntimes()
+      .then(() => {
+        runtimesReadAt = Date.now();
+        model.changed("settings");
+      })
+      .catch(() => {})
+      .finally(() => {
+        runtimesReading = false;
+      });
   };
 
   /** A choice row changed (`AppModel.choose`). */
   const choose = async (row: string, option: string): Promise<void> => {
+    // Settings, Advanced's runtime rows: the setting the core names, written; the runtimes read again.
+    const change = row.startsWith("runtime") ? model.native.appRuntimesChoose(model.runtimesInput(), row, option) : undefined;
+    if (change) {
+      await model.backend.setRuntimeSetting(change.key, change.value ?? null);
+      await bounded(15, () => model.readRuntimes());
+      const [lume, linux] = await Promise.all([model.backend.lumeSource(), model.backend.linuxSource()]);
+      model.lumeSource = lume;
+      model.linuxSource = linux;
+      model.changed("settings");
+      return;
+    }
     switch (row) {
       case "team-current":
         // Settings, Teams: the team to work in (saved; the option is its id).
@@ -136,22 +203,21 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         // "Spaces tab in the notch" (shown) or the menu bar only (hide); the notch follows `settings.changed`.
         save({ menuBar: option === "hide" });
         return;
-      case "macos-runtime":
-        await model.backend.setLumeSource(option);
-        model.lumeSource = (await model.backend.lumeSource()) ?? option;
-        model.changed("settings");
-        return;
-      case "linux-runtime":
-        await model.backend.setLinuxSource(option);
-        model.linuxSource = (await model.backend.linuxSource()) ?? option;
-        model.changed("settings");
-        return;
-      case "default-location":
-        save({ defaultLocation: model.native.AppLocation.Local }); // Cua Cloud has ended
-        return;
       case "auto-connect":
         save({ autoConnect: option === "on" });
         return;
+      case "global-shortcut": {
+        // The keys that bring the app forward from any app (Mac). The option is the accelerator.
+        const system = parts().system;
+        if (!system?.setGlobalShortcut) throw Failure.failed("This machine has no shortcut to change.");
+        try {
+          system.setGlobalShortcut(option);
+        } catch (e) {
+          throw Failure.failed(e instanceof Error ? e.message : String(e));
+        }
+        model.changed("settings");
+        return;
+      }
       case "launch-at-login": {
         const login = parts().loginItem;
         login.set(option === "on");
@@ -172,8 +238,16 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       case "keyvault-site-icons":
         save({ keyvaultSiteIcons: option === "on" });
         return;
+      // General's Show tips and Reset tips: the core's (`settings::choose`).
+      case "tips":
+      case "reset-tips":
+        model.settings = model.native.appSettingsChoose(model.settings, row, option);
+        model.saveSettings();
+        return;
       case "telemetry":
         model.telemetry?.setEnabled(option === "on");
+        // Off also stops crash reports (crash-reporting.ts).
+        consentMayHaveChanged();
         // The switch sits beside the usage note (Welcome, Settings): the
         // notice was seen.
         model.telemetry?.acknowledgeNotice();
@@ -202,7 +276,8 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
     },
     "settings.choose": async (args) => {
       const row = string(args, "row");
-      const option = string(args, "option");
+      // An empty option only for a runtime path ("Reset to detected").
+      const option = row.startsWith("runtime-path:") && args.option === "" ? "" : string(args, "option");
       if (row === "update-channel") {
         // Settings → About's channel (saved in `AppSettings`).
         const updates = parts().updates;
@@ -225,6 +300,45 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
           throw Failure.failed(words(error));
         }
       }
+      return settingsState(model, parts());
+    },
+    // Settings, Advanced: what a typed path is, before it is saved.
+    "runtimes.check": async (args) => {
+      try {
+        return encode(await model.backend.runtimeCheckPath(string(args, "kind"), string(args, "path")));
+      } catch (error) {
+        throw Failure.failed(words(error));
+      }
+    },
+    // Settings, Advanced's "Browse…".
+    "runtimes.browse": async (args, caller) => {
+      string(args, "kind");
+      if (!ctx.ui.chooseProgram) throw Failure.unsupported("This build has no file picker");
+      return { path: (await ctx.ui.chooseProgram(caller.window)) ?? null };
+    },
+    // Settings, General: the repo cache (the daemon's; the page shows its words).
+    "repoCache.get": async () => repoCacheView(await model.backend.repoCacheStatus()),
+    "repoCache.set": async (args) => {
+      const change: { enabled?: boolean; sizeGb?: number | null } = {};
+      if (args.enabled !== undefined) {
+        if (typeof args.enabled !== "boolean") throw Failure.badArgs("enabled: true or false");
+        change.enabled = args.enabled;
+      }
+      if (args.sizeGb !== undefined) {
+        const g = args.sizeGb;
+        if (g !== null && (typeof g !== "number" || !Number.isFinite(g) || g < 0 || g > 100_000)) throw Failure.badArgs("sizeGb: a number of GB, 0 or more, or null for automatic");
+        change.sizeGb = g;
+      }
+      try {
+        return repoCacheView(await model.backend.setRepoCache(change));
+      } catch (error) {
+        throw Failure.failed(words(error));
+      }
+    },
+    "repoCache.clear": async () => repoCacheView(await model.backend.clearRepoCache()),
+    // The page's tips (`AppSettings.tips`), saved as given.
+    "settings.update": (args) => {
+      save(settingsUpdate(args));
       return settingsState(model, parts());
     },
   };

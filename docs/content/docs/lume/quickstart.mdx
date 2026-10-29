@@ -22,10 +22,11 @@ lume --version
 lume create macos-tahoe --ipsw latest --unattended tahoe
 ```
 
-`--ipsw latest` downloads the newest supported restore image (or pass a local
-`.ipsw`; `lume ipsw` prints the URL). The `tahoe` preset prepares the guest
-offline: user `lume` with password `lume`, SSH, autologin, no sleep or screen
-lock. Creation boots once, checks SSH and leaves the VM stopped.
+`--ipsw latest` downloads the newest restore image Lume supports. To use a file
+you already have, pass its `.ipsw` path; `lume ipsw` prints the download URL.
+The `tahoe` preset sets up the guest without clicking through Setup Assistant:
+user `lume` with password `lume`, SSH on, autologin, and no sleep or screen
+lock. Lume boots the VM once, checks that SSH answers, and leaves it stopped.
 
 ```bash test="cli-shape" id="lume-run-macos-tahoe"
 lume run macos-tahoe
@@ -39,7 +40,7 @@ The VM's desktop opens in Lume's viewer. From another terminal:
 lume ssh macos-tahoe 'sw_vers; id -un'
 ```
 
-prints the guest's macOS version and `lume`. Change the password before using
+prints the guest's macOS version and `lume`. Change the password before you use
 the VM for anything sensitive.
 
 ![lume ls listing local macOS VMs](/img/lume/lume-ls.png)
@@ -54,5 +55,5 @@ lume delete macos-tahoe
 ## Next
 
 - [Manage VMs](/lume/guides/manage-vms)
-- [Drive Lume from scripts and agents](/lume/guides/api-and-mcp)
+- [Drive Lume from scripts and AI clients](/lume/guides/manage-vms#drive-lume-from-scripts-and-ai-clients)
 - [CLI reference](/lume/reference/cli)

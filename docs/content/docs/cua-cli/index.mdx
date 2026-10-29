@@ -1,11 +1,13 @@
 ---
 title: Cua CLI
 description: 'The cua command: sign-in, sandboxes local and in your cloud, one-shot computer actions, MCP, Spaces, unattended access and teleport.'
+landing:
+  summary: 'The cua command for Spaces, sandboxes, sign-in and MCP.'
 ---
 
-`cua` is one binary built on the [cua SDK](/cua-sdk). It creates and drives
-sandboxes on this machine or in your own cloud, serves them to AI agents over MCP,
-and manages Spaces.
+`cua` is one command-line tool built on the [cua SDK](/cua-sdk). It creates and
+drives sandboxes on this machine or in your own cloud, serves them to AI agents
+over MCP, and manages Spaces.
 
 ## Install
 
@@ -18,27 +20,28 @@ npm install -g @trycua/cua                    # CLI only
 
 Add `-s -- --select cua-driver` to also set up the cua-driver MCP server and
 skill for your agents, or `--only ITEMS` to skip the checklist. Installer
-flags: [Cua Spaces quickstart](/spaces/quickstart#run).
+flags: [Install Cua Spaces](/spaces/guides/install).
 
 ## Commands
 
 | Group | Alias | Purpose |
 |-------|-------|---------|
-| `cua auth` | | Sign in, session, API keys ([Authentication](/cua-cli/guides/authentication)). |
-| `cua agents` | | Install cua skills and the cua MCP server into AI coding agents. |
+| `cua auth` | | Sign in, session ([Authentication](/cua-cli/guides/authentication)). |
+| `cua connect` | `agents` | Install cua skills and the cua MCP server into AI coding agents ([Connect your agent](/spaces/guides/connect-your-agent)). |
+| `cua agent` | | Agents in a Space: add, send, run, schedule ([Agents in a Space](/spaces/guides/agents-in-a-space)). |
 | `cua sandbox` | `sb` | Create, list and operate sandboxes; `--on local\|aws\|gcp\|modal\|direct:<addr>`, `--kind`, `--runtime`. |
 | `cua config` | | User defaults: where sandboxes run (`default.on`), the default kind and runtime. |
 | `cua do` | | One computer action (click, type, screenshot, ...) against the selected sandbox. |
 | `cua mcp` | `serve-mcp` | Stdio MCP server ([MCP server](/cua-cli/guides/mcp-server)). |
 | `cua daemon` | | Shared background runtime; `cua daemon mcp`. |
 | `cua spaces` | | Registered Spaces and your relay machines ([Cua Spaces](/spaces)). |
-| `cua cloud` | | Your own AWS, Google Cloud or Modal account as a location ([Use your own cloud](/cua-sdk/guides/your-cloud)). |
-| `cua host` | | [Unattended access](/spaces/guides/unattended-access) to this machine. |
+| `cua cloud` | | Your own AWS, Google Cloud, Hetzner or Modal account as a location ([Choose where sandboxes run](/cua-sdk/guides/your-cloud)). |
+| `cua host` | | [Unattended access](/spaces/guides/add-a-computer#add-a-computer-from-a-terminal) to this machine. |
 | `cua teleport` | | [Move an app session](/spaces/guides/teleport-an-app) into a sandbox. |
 | `cua image` | `img` | Local OCI images. |
 | `cua spacesd` | | Talk to any cua-spacesd by URL. |
 | `cua runtime` | | Inspect or provision local runtimes. |
-| `cua cache` | | Disk used by images, sandboxes and logs, and its cleanup ([Disk usage](/cua-sdk/guides/disk-usage)). |
+| `cua cache` | | Disk used by images, sandboxes and logs, and its cleanup ([Disk usage](/cua-sdk/guides/lifecycle#disk-usage-and-cleanup)). |
 | `cua doctor` | | Check the host, an image and a sandbox's guest in one report. |
 | `cua skills`, `cua trajectory` | `traj` | Recorded demonstrations and `cua do` sessions. |
 
@@ -53,7 +56,7 @@ and the [CLI reference](/cua-cli/reference/cli) list every option.
 | `1` | Failure. |
 | `2` | Invalid argument. |
 | `3` | Not found (sandbox, window, skill, image). |
-| `4` | Not supported or not configured (for example no cloud credentials). |
+| `4` | Not supported or not configured (for example no provider credentials). |
 | `5` | No cua-spacesd answered, or a transport failure. |
 | `6` | Unauthenticated or permission denied. |
 | `7` | Not enough free disk for a pull, build or VM create (`cua cache prune`). |
@@ -61,4 +64,39 @@ and the [CLI reference](/cua-cli/reference/cli) list every option.
 `cua sb exec` and `cua spacesd exec` exit with the command's own status. State
 lives in `~/.cua` (`CUA_HOME` moves it).
 
-Start with the [Quickstart](/cua-cli/quickstart).
+### Run a command as a stdio stream
+
+A plain `exec` collects the output and returns when the command ends, and
+`cua sb exec` stops a command after 120 seconds. Add `-i` (`--stdin`) to use
+`exec` as a long-lived pipe into the sandbox, the way `docker exec -i` is used:
+
+```bash test="cli-shape" id="exec-stream"
+cua sb exec -i dev -- bash -c 'wc -c'
+```
+
+With `-i`:
+
+- The command is an argv, not a shell line: nothing is joined or re-quoted,
+  so `-- bash -c '<script>'` reaches the sandbox as three words.
+- Standard input is forwarded until it ends, then the command sees end of
+  file. Standard output and standard error arrive as they are produced and
+  stay separate.
+- There is no time limit. `--timeout SECONDS` sets one (`0` removes the
+  120 second limit of a plain `cua sb exec`).
+- The exit status is the command's, or 128 plus the signal number when a
+  signal ended it. Exit 127 means the command could not start.
+- `SIGINT`, `SIGTERM` and `SIGHUP` sent to `cua` are passed on to the command.
+- The command is killed when `cua` goes away, even if `cua` is killed with
+  `SIGKILL`, so a host that dies leaves nothing running in the sandbox.
+- `--user NAME` and `--cwd DIR` choose the guest account and start directory.
+  They also work without `-i`.
+
+Options go before the sandbox name. `cua spacesd exec -i URL ...` takes the
+same options for a cua-spacesd address. A local macOS 15 sandbox without
+cua-spacesd cannot stream (it only has `lume ssh`); the command fails with
+`Unsupported`.
+
+From code, `SpacesdClient.spawn` with `stdin=True` and `kill_on_disconnect=True`
+is the same stream in the Python, TypeScript, Swift, Kotlin and Rust SDKs.
+
+Start with the [Quickstart](/cua-cli/quickstart), which also creates a local macOS sandbox.

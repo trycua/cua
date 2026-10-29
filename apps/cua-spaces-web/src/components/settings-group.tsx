@@ -3,25 +3,29 @@
 
 import type { ReactNode } from "react";
 
-export function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
+import { GroupedSection, SettingRow } from "@/components/ui/grouped";
+import { cn } from "@/lib/utils";
+
+/**
+ * A titled grouped container of settings (components/ui/grouped.tsx). Every
+ * Settings tab is made of these, so the gap between sections (32 px), the
+ * heading style and the footer under a card are the same on each.
+ */
+export function SettingsGroup({
+  title,
+  footer,
+  action,
+  children,
+  className,
+  ...props
+}: { title: ReactNode; footer?: ReactNode; action?: ReactNode; children: ReactNode; className?: string } & Record<`data-${string}`, unknown>) {
   return (
-    <section className="mb-7">
-      <h2 className="mb-2 px-1 text-xs font-semibold text-muted-foreground">{title}</h2>
-      <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">{children}</div>
-    </section>
+    <GroupedSection title={title} footer={footer} action={action} className={cn("mb-8", className)} {...props}>
+      {children}
+    </GroupedSection>
   );
 }
 
-export function SettingsRow({ label, description, control, htmlFor }: { label: string; description?: ReactNode; control: ReactNode; htmlFor?: string }) {
-  return (
-    <div className="flex min-h-12 items-center justify-between gap-6 px-4 py-2.5">
-      <div className="min-w-0">
-        <label htmlFor={htmlFor} className="block text-[13px]">
-          {label}
-        </label>
-        {description ? <p className="mt-0.5 text-xs text-muted-foreground">{description}</p> : null}
-      </div>
-      <div className="shrink-0">{control}</div>
-    </div>
-  );
+export function SettingsRow({ label, description, control, htmlFor }: { label: ReactNode; description?: ReactNode; control: ReactNode; htmlFor?: string }) {
+  return <SettingRow label={label} help={description} control={control} htmlFor={htmlFor} />;
 }

@@ -7,15 +7,20 @@
 // data. Bounded where the app waits on it.
 import type { Native } from "../native/load";
 import type {
-  AppCloudPricing,
   AppCreateSpaceArgs,
   AppGpuChoice,
+  AppRuntime,
+  AppRuntimeKindInput,
+  AppRuntimePathCheck,
   AppSpaceAgentRun,
   AppSpaceHost,
   AppSpaceKind,
   AppSpaceOs,
   AppSpaceRow,
+  AppSpaceSharingFacts,
   AppSentFileInfo,
+  BulkResult as SdkBulkResult,
+  SpaceSharing,
   AppShareEntryInput,
   AppSpaceUsage,
   AppStreamDisplay,
@@ -24,16 +29,76 @@ import type {
   LocalStorage,
   SpaceAppIconRequest,
   SpaceCreateProgress,
+  Share,
+  ShareAccess,
   SpaceShares,
   SpaceWindow,
   SpaceLike,
   SpacePresenceLike,
   PresenceIdentity,
+  RepoCacheStatus,
+  ResourcesSnapshot,
   TeleportLike,
 } from "../native/generated/index";
 import { words } from "./errors";
 import type { StreamWindow } from "./streams";
 import { bounded, withTimeout } from "./time";
+
+/** A link as the page's `links.*` operations carry it. */
+export interface ShareLinkRow {
+  id: string;
+  url: string;
+  name: string | null;
+  access: "private" | "team" | "public";
+  kind: string;
+  target: string;
+  owner: string;
+  createdAtUnix: number | null;
+  expiresAtUnix: number | null;
+}
+
+export function linkRow(s: Share): ShareLinkRow {
+  const n = (v: bigint | undefined) => (v === undefined ? null : Number(v));
+  return {
+    id: s.id,
+    url: s.url,
+    name: s.name ?? null,
+    // The enum's values are its words (a type import: the binding loads the native library).
+    access: s.access === ("team" as ShareAccess) ? "team" : s.access === ("public" as ShareAccess) ? "public" : "private",
+    kind: s.kind,
+    target: s.target,
+    owner: s.owner,
+    createdAtUnix: n(s.createdAtUnix),
+    expiresAtUnix: n(s.expiresAtUnix),
+  };
+}
+
+/** One Space's outcome of a bulk delete or leave, as the page reads it. */
+export interface BulkResult {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
+function bulkResult(r: SdkBulkResult): BulkResult {
+  return r.ok ? { id: r.id, ok: true } : { id: r.id, ok: false, error: r.error ?? "It didn't go through." };
+}
+
+/** The SDK's sharing facts as the core's row field (empty texts absent). */
+export function sharingFacts(s: SpaceSharing | undefined): AppSpaceSharingFacts | undefined {
+  if (!s) return undefined;
+  return {
+    ownerId: s.ownerId,
+    ownerEmail: text(s.ownerEmail),
+    ownerName: text(s.ownerName),
+    role: s.role,
+    team: text(s.team),
+    teamName: text(s.teamName),
+    editors: s.editors,
+    viewers: s.viewers,
+    teams: s.teams.map((t) => ({ key: t.key, name: t.name, role: t.role })),
+  };
+}
 
 export interface LocalRuntimes {
   /** The ready backends (lowercase names). */
@@ -42,9 +107,38 @@ export interface LocalRuntimes {
   details: Map<string, string>;
 }
 
+/** One read of the Space list and how far it got (the SDK's `SpaceList`). */
+export interface ListRead {
+  rows: AppSpaceRow[];
+  /** Some of your computers have not answered yet: not "no Spaces". */
+  incomplete: boolean;
+  /** How many computers are still being reached (0 when unknown). */
+  reaching: number;
+  /** Your other computers' rows are the last known ones. */
+  stale: boolean;
+  /** Why your other computers could not be read, when they could not. */
+  notice: string;
+  /** Spaces your other computers are creating now (the SDK's `SpaceList.creating`). */
+  creating?: CreatingElsewhereRow[];
+}
+
+/** A Space another of your computers is creating, as the page reads it (`spaces.list`'s `creatingElsewhere`). */
+export interface CreatingElsewhereRow {
+  machineId: string;
+  machineName: string;
+  name: string;
+  os: string;
+  phase: string;
+  percent: number;
+}
+
 export interface SpacesBackend {
   /** The registry, one row per Space, with a bounded reachability probe. */
   rows(): Promise<AppSpaceRow[]>;
+  /** `rows` with how far the read got (`Spaces.list_known`): this machine's
+   * Spaces at once, your other computers as they answer. Undefined: the
+   * backend lists complete lists only. */
+  listRead?(): Promise<ListRead>;
   /** Creates a Space, reporting the SDK's progress until it is ready; its id. */
   create(args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void): Promise<string>;
   cancelCreate(createId: string): Promise<void>;
@@ -54,17 +148,47 @@ export interface SpacesBackend {
   reportedHostname(id: string): string | null;
   add(url: string, token: string | null, name: string | null): Promise<void>;
   remove(id: string, removeOnly: boolean): Promise<void>;
+  /** Deletes several Spaces (the SDK turns running ones off first); one result per id. */
+  deleteMany(ids: string[]): Promise<BulkResult[]>;
+  /** Takes you off Spaces shared with you; one result per id. */
+  leave(ids: string[]): Promise<BulkResult[]>;
+  /** Gives a Space a new name (the SDK's `Spaces.rename`); its id stays the same. */
+  rename(id: string, name: string): Promise<void>;
+  /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. */
+  relayUnregister(machineId: string): Promise<void>;
+  /** A machine's health as its own cua daemon checks it (the SDK's `Spaces.machine_health`): null for this one, else another of yours by id. */
+  machineHealth(machine: string | null): Promise<MachineHealthReport>;
   setPower(id: string, on: boolean): Promise<void>;
   localRuntimes(): Promise<LocalRuntimes | null>;
   lumeSource(): Promise<string | null>;
   setLumeSource(value: string): Promise<void>;
   linuxSource(): Promise<string | null>;
   setLinuxSource(value: string): Promise<void>;
+  /** Each kind of Space's runtime setting and what is installed for it (`runtime_kinds`); null when unknown. */
+  runtimeKinds(): Promise<AppRuntimeKindInput[] | null>;
+  /** What `path` is for `kind` (`container`, `vm`, `microvm`). */
+  runtimeCheckPath(kind: string, path: string): Promise<AppRuntimePathCheck>;
+  /** Writes a runtime setting (`runtime.container`, `runtime.vm_path`), or unsets it (null). */
+  setRuntimeSetting(key: string, value: string | null): Promise<void>;
+  /** The repo cache: on or off, what it holds and saved (`repo_cache_status`); null when unknown. */
+  repoCacheStatus(): Promise<RepoCacheStatus | null>;
+  /** Turns the repo cache on or off and sets its size in GB (null: automatic); a missing field keeps its value. */
+  setRepoCache(change: { enabled?: boolean; sizeGb?: number | null }): Promise<RepoCacheStatus | null>;
+  /** Deletes every repository the repo cache holds. */
+  clearRepoCache(): Promise<RepoCacheStatus | null>;
   localStorage(): Promise<LocalStorage | null>;
-  cloudAvailable(): Promise<boolean>;
+  /** A Cua account is signed in (or client credentials are set). */
+  loggedIn(): Promise<boolean>;
   runningMacosVms(): Promise<number | null>;
-  cloudPricing(): Promise<AppCloudPricing | null>;
   usage(id: string): Promise<AppSpaceUsage | null>;
+  /**
+   * Processor, memory and disk (the SDK's `Spaces.resources`, the daemon's
+   * one sampler): this computer, its Spaces, your other computers'
+   * summaries and what your Spaces there take on them. `visible` says a
+   * window shows them. Null when the daemon can't say; absent in a backend
+   * without the SDK.
+   */
+  resources?(visible: boolean): Promise<ResourcesSnapshot | null>;
   /** The Space's coding-agent runs as rows (the core's mapping of the runs, attention first). */
   agentRuns(id: string): Promise<AppSpaceAgentRun[]>;
   /** The Space's windows that can be streamed (its Stream section; throws when they can't be read). */
@@ -81,6 +205,12 @@ export interface SpacesBackend {
   share(id: string, who: string, role: string): Promise<AppShareEntryInput[]>;
   /** Stops sharing it with `who`; who it is shared with now. */
   unshare(id: string, who: string): Promise<AppShareEntryInput[]>;
+  /** Links to things you run (`cua share`), owned by the cua daemon. */
+  links(): Promise<ShareLinkRow[]>;
+  /** Shares `target` (a port, `space:NAME:PORT`, an absolute path) and returns the link. */
+  createLink(target: string, access: string | null, ttlSeconds: number | null, name: string | null): Promise<ShareLinkRow>;
+  /** Stops one link, or every link for `"all"`; the ids stopped. */
+  stopLink(id: string): Promise<string[]>;
   /** One of the daemon's Spaces tools (`agent_*`, `volume_*`, `cloud_*`), its JSON answer. */
   tool(tool: string, args: Record<string, unknown>): Promise<unknown>;
   /** The SDK's teleport handle and the Space handle, for "Teleport an app"; null without a live SDK. Throws when the Space is unreachable. */
@@ -91,6 +221,12 @@ export interface SpacesBackend {
   joinPresence(id: string, identity: PresenceIdentity, timeoutMs: number): Promise<SpacePresenceLike>;
   /** A Space's app icons in one call (`Space.appIcons`, through its one icon cache): 64 px PNG or SVG bytes, null where it has none. */
   appIcons(id: string, requests: SpaceAppIconRequest[]): Promise<(Uint8Array | null)[]>;
+}
+
+/** A machine's health as its daemon reported it (the SDK's `MachineHealth`, the parts the Machines page reads). */
+export interface MachineHealthReport {
+  cuaVersion: string;
+  checks: { id: string; status: string; message: string; remediation: string; facts: Map<string, string> }[];
 }
 
 /** A Space's thumbnail as the SDK returns it: the encoded image (PNG or JPEG), its size and when it was captured. */
@@ -156,7 +292,46 @@ export function osOf(native: Native, word: string): AppSpaceOs | undefined {
 export function kindOf(native: Native, word: string): AppSpaceKind | undefined {
   if (word === "container") return native.AppSpaceKind.Container;
   if (word === "vm") return native.AppSpaceKind.Vm;
+  if (word === "microvm") return native.AppSpaceKind.Microvm;
   return undefined;
+}
+
+/** The engines built into the SDK, by the word a create passes. */
+const BUILT_IN_RUNTIMES = ["auto", "gvisor", "runc", "qemu", "lume", "firecracker", "vz", "containerization"] as const;
+
+/** A runtime word the app core accepts (its `valid_runtime_word`): a built-in engine or an external provider's name. */
+export function isRuntimeWord(word: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,31}$/.test(word);
+}
+
+/** The core's runtime for a create's word: a built-in engine, else an external provider (`Other`). */
+export function runtimeOf(native: Native, word: string): AppRuntime | undefined {
+  if (!isRuntimeWord(word)) return undefined;
+  switch (word as (typeof BUILT_IN_RUNTIMES)[number]) {
+    case "auto":
+      return new native.AppRuntime.Auto();
+    case "gvisor":
+      return new native.AppRuntime.Gvisor();
+    case "runc":
+      return new native.AppRuntime.Runc();
+    case "qemu":
+      return new native.AppRuntime.Qemu();
+    case "lume":
+      return new native.AppRuntime.Lume();
+    case "firecracker":
+      return new native.AppRuntime.Firecracker();
+    case "vz":
+      return new native.AppRuntime.Vz();
+    case "containerization":
+      return new native.AppRuntime.Containerization();
+    default:
+      return new native.AppRuntime.Other(word);
+  }
+}
+
+/** The SDK's word for the core's runtime (`auto`, `qemu`, ..., or an external provider's name). */
+export function runtimeWord(runtime: AppRuntime): string {
+  return runtime.tag === "Other" ? runtime.inner[0] : runtime.tag.toLowerCase();
 }
 
 const text = (s: string | undefined) => (s ? s : undefined);
@@ -215,13 +390,25 @@ export class LiveSpacesBackend implements SpacesBackend {
   ) {}
 
   async rows(): Promise<AppSpaceRow[]> {
+    return (await this.listRead()).rows;
+  }
+
+  /** This machine's Spaces at once, your other computers as far as they answered (`Spaces.list_known`). */
+  async listRead(): Promise<ListRead> {
+    const list = await this.cua.spaces().listKnown();
+    const creating = (list.creating ?? []).map((c) => ({ machineId: c.machineId, machineName: c.machineName, name: c.name, os: c.os, phase: c.phase, percent: c.percent }));
+    return { rows: await this.probe(list.spaces), incomplete: list.incomplete, reaching: list.reaching, stale: list.stale, notice: list.notice, creating };
+  }
+
+  /** The rows of `infos`, each with a bounded reachability probe. */
+  private async probe(infos: Awaited<ReturnType<ReturnType<CuaLike["spaces"]>["list"]>>): Promise<AppSpaceRow[]> {
     const spaces = this.cua.spaces();
-    const infos = await spaces.list();
     return Promise.all(
       infos.map(async (info) => {
         const row: AppSpaceRow = {
           id: info.id,
           name: info.name,
+          displayName: text(info.displayName),
           provider: info.provider,
           spacesdVersion: info.spacesdVersion,
           features: info.features,
@@ -243,6 +430,7 @@ export class LiveSpacesBackend implements SpacesBackend {
           cloudPlace: text(info.cloudPlace),
           cloudDelete: text(info.cloudDelete),
           stopReason: text(info.stopReason),
+          sharing: sharingFacts(info.sharing),
         };
         // Turned off on purpose: no probe (it would only time out).
         if (info.powerState === "suspended" || info.powerState === "stopped") return row;
@@ -288,7 +476,7 @@ export class LiveSpacesBackend implements SpacesBackend {
         image: args.image,
         on: args.on,
         kind: args.kind,
-        runtime: args.runtime,
+        runtime: runtimeWord(args.runtime),
         name: args.name,
         cpus: args.cpus,
         memoryMb: args.memoryMb === undefined ? undefined : BigInt(args.memoryMb),
@@ -302,6 +490,9 @@ export class LiveSpacesBackend implements SpacesBackend {
         spacesd: args.spacesd,
         gpu: args.gpu,
         createId,
+        durable: false,
+        volumes: [],
+        labels: new Map(),
       },
       { onProgress: progress },
     );
@@ -331,6 +522,30 @@ export class LiveSpacesBackend implements SpacesBackend {
     else await this.cua.spaces().delete_(id);
   }
 
+  async deleteMany(ids: string[]): Promise<BulkResult[]> {
+    return (await this.cua.spaces().deleteMany(ids)).map(bulkResult);
+  }
+
+  async leave(ids: string[]): Promise<BulkResult[]> {
+    return (await this.cua.spaces().leaveMany(ids)).map(bulkResult);
+  }
+
+  async rename(id: string, name: string): Promise<void> {
+    await this.cua.spaces().rename(id, name);
+  }
+
+  async relayUnregister(machineId: string): Promise<void> {
+    await this.cua.spaces().relayUnregister(`relay:${machineId}`);
+  }
+
+  async machineHealth(machine: string | null): Promise<MachineHealthReport> {
+    const h = await this.cua.spaces().machineHealth(machine ?? undefined);
+    return {
+      cuaVersion: h.cuaVersion,
+      checks: h.checks.map((c) => ({ id: c.id, status: c.status, message: c.message, remediation: c.remediation, facts: new Map(c.facts) })),
+    };
+  }
+
   async setPower(id: string, on: boolean): Promise<void> {
     if (on) await this.cua.spaces().start(id);
     else await this.cua.spaces().stop(id);
@@ -340,9 +555,10 @@ export class LiveSpacesBackend implements SpacesBackend {
     const report = await bounded(PROBE_SECONDS, () => this.cua.local().doctor());
     if (!report) return null;
     const ok = this.native.RuntimeCheckStatus.Ok;
-    // Lume and the built-in Linux runtime count as ready when cua sets them
-    // up by itself on the first create that needs them.
-    const setsUpItself = new Set(["lume", "managed"]);
+    // Lume, the built-in Linux runtime and Apple's container (microVMs)
+    // count as ready when cua sets them up by itself on the first create
+    // that needs them.
+    const setsUpItself = new Set(["lume", "managed", "containerization", "firecracker"]);
     const ready = report.checks
       .filter((c) => c.status === ok || (c.status === this.native.RuntimeCheckStatus.Installable && setsUpItself.has(c.name.toLowerCase())))
       .map((c) => c.name.toLowerCase());
@@ -377,12 +593,47 @@ export class LiveSpacesBackend implements SpacesBackend {
     this.native.configSet("runtime.linux", value);
   }
 
+  async runtimeKinds(): Promise<AppRuntimeKindInput[] | null> {
+    const kinds = await bounded(PROBE_SECONDS, () => this.cua.local().runtimeKinds());
+    return kinds?.map((k) => ({ kind: k.kind, source: k.source, path: k.path, detected: k.detected, check: k.check, expected: k.expected })) ?? null;
+  }
+
+  async runtimeCheckPath(kind: string, path: string): Promise<AppRuntimePathCheck> {
+    return this.cua.local().runtimeCheckPath(kind, path);
+  }
+
+  async setRuntimeSetting(key: string, value: string | null): Promise<void> {
+    if (value === null) this.native.configUnset(key);
+    else this.native.configSet(key, value);
+  }
+
+  async repoCacheStatus(): Promise<RepoCacheStatus | null> {
+    try {
+      return this.native.repoCacheStatus();
+    } catch {
+      return null;
+    }
+  }
+
+  async setRepoCache(change: { enabled?: boolean; sizeGb?: number | null }): Promise<RepoCacheStatus | null> {
+    if (change.enabled !== undefined) this.native.configSet("cache.repos", change.enabled ? "on" : "off");
+    if (change.sizeGb !== undefined) this.native.configSet("cache.repos_size_gb", change.sizeGb === null ? "auto" : String(change.sizeGb));
+    return this.repoCacheStatus();
+  }
+
+  async clearRepoCache(): Promise<RepoCacheStatus | null> {
+    try {
+      return this.native.repoCacheClear();
+    } catch {
+      return null;
+    }
+  }
+
   async localStorage(): Promise<LocalStorage | null> {
     return bounded(PROBE_SECONDS, () => this.cua.local().storage());
   }
 
-  async cloudAvailable(): Promise<boolean> {
-    if (this.env.FLEETS_TOKEN !== undefined || this.env.CUA_CLIENT_ID !== undefined) return true;
+  async loggedIn(): Promise<boolean> {
     return (await bounded(PROBE_SECONDS, () => this.cua.auth().status().loggedIn)) ?? false;
   }
 
@@ -397,18 +648,13 @@ export class LiveSpacesBackend implements SpacesBackend {
     return runningMacosVms(answer);
   }
 
-  /**
-   * No estimate: the rates came from the retired Fleets API
-   * (`fleet().usagePricing()` on run.cua.ai), and the app does not offer new
-   * cloud Spaces. New Space never waits on it.
-   */
-  async cloudPricing(): Promise<AppCloudPricing | null> {
-    return null;
-  }
-
   async usage(id: string): Promise<AppSpaceUsage | null> {
     const u = await bounded(5, async () => (await this.cua.spaces().space(id)).usage());
-    return u ? { memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
+    return u ? { cpuCount: u.cpuCount, cpuPercent: u.cpuPercent, loadAverage1m: u.loadAverage1m, memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
+  }
+
+  async resources(visible: boolean): Promise<ResourcesSnapshot | null> {
+    return bounded(PROBE_SECONDS, () => this.cua.spaces().resources(visible));
   }
 
   async agentRuns(id: string): Promise<AppSpaceAgentRun[]> {
@@ -458,6 +704,19 @@ export class LiveSpacesBackend implements SpacesBackend {
 
   async unshare(id: string, who: string): Promise<AppShareEntryInput[]> {
     return shareRows(await (await this.cua.spaces().space(id)).unshare(who));
+  }
+
+  async links(): Promise<ShareLinkRow[]> {
+    return (await this.cua.shares()).map(linkRow);
+  }
+
+  async createLink(target: string, access: string | null, ttlSeconds: number | null, name: string | null): Promise<ShareLinkRow> {
+    const a = access === "team" || access === "public" ? (access as ShareAccess) : undefined;
+    return linkRow(await this.cua.share(target, a, ttlSeconds ?? undefined, name ?? undefined));
+  }
+
+  async stopLink(id: string): Promise<string[]> {
+    return id === "all" ? this.cua.stopAllShares() : this.cua.stopShare(id);
   }
 
   async tool(tool: string, args: Record<string, unknown>): Promise<unknown> {

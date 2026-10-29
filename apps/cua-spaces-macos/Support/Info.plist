@@ -8,6 +8,8 @@
 	<string>CuaSpacesMac</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.trycua.spaces.macos</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -19,7 +21,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.9.2</string>
+	<string>0.16.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -44,7 +46,7 @@
 	<key>NSAppleEventsUsageDescription</key>
 	<string>App Teleport reads the open tabs and session of the browser you choose to move into a Space.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Cua Spaces connects to the Spaces it runs on this Mac (macOS virtual machines live on a local network inside your Mac) and to your other machines on this network.</string>
+	<string>Cua Spaces connects to the Spaces it runs on this Mac (macOS virtual machines live on a local network inside your Mac) and to your other computers on this network.</string>
 	<key>SUFeedURL</key>
 	<string>https://github.com/trycua/cua/releases/download/cua-spaces-latest/cua-spaces-appcast.xml</string>
 	<key>SUPublicEDKey</key>

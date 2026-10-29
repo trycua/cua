@@ -1,61 +1,213 @@
 ---
 title: What the relay can see
-description: 'A plain accounting of what relay.cua.ai (or any self-hosted cua-relay) can and cannot see, and what we have done and are still doing about it.'
+description: 'A plain accounting of what relay.cua.ai can and cannot see, what we have done and are still doing about it, and the end-to-end encrypted connections (on by default) that keep the relay from reading a session.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`relay.cua.ai` (and any self-hosted `cua-relay`) is a **trusted, TLS-terminating
-proxy, not a blind relay**. This page says plainly what that means, kept
-current as the relay changes. If anything here reads as a surprise, it is a
-bug in this page: tell us.
+`relay.cua.ai` (and any self-hosted `cua-relay`) does two jobs:
+
+- **For Cua devices and computers, it coordinates a WireGuard®-based mesh.**
+  It introduces the two ends. When they can't reach each other directly, it
+  forwards their traffic as ciphertext it can't read. This is the default
+  for current versions of the Cua app, CLI and SDK.
+- **For everything else, it is a trusted, TLS-terminating proxy, not a blind
+  relay.** This covers the browser viewer, web agents, share links and older
+  Cua versions.
+
+This page says plainly what each of those means, and we keep it current as the
+relay changes. If anything here reads as a surprise, that is a bug in this
+page: tell us.
+
+## Which path you are on
+
+| Your Cua version | Connections to your computers |
+|---|---|
+| `cua` CLI and SDK 0.7.0 or later, Cua Spaces app 0.13.0 or later, `cua-spacesd` 0.7.0 or later | **The mesh by default** (`CUA_MESH=prefer`): end to end. They use the HTTPS path only when the mesh isn't available (see [Turn it off, or require it](#turn-it-off-or-require-it)). |
+| Older versions (`cua` 0.6.x and earlier, Cua Spaces app 0.12.x and earlier) | **The relay's HTTPS path**, unless the mesh beta was turned on. They keep working, but the relay can read their sessions in transit. Update to get the mesh. |
+
+A connection uses the mesh only when **both ends** support it: the device you
+connect from and the computer you host. A mixed account (a new laptop and an
+old computer, say) uses the HTTPS path for that pair. Update in this order:
+the Cua Spaces app first, then the `cua` CLI and SDK, then each hosted
+computer (`cua host setup` again, or let the app update it).
 
 ## The short version
 
-- TLS ends at the relay's ingress. The relay process parses every request it
-  forwards (gRPC, gRPC-Web, WebSocket upgrades, `/files` transfers) to route
-  and authorize it. **It can read the plaintext of anything it proxies while
-  the request is in flight**: shell output, file contents, the desktop media
-  stream, keystrokes and clipboard data sent as input, and, unless sealed
-  (below), Keyvault passwords and teleport session bundles.
-- It does not **store** traffic, env tokens or account tokens: it strips a
-  client's credentials and forwards a short-lived signed assertion instead
-  (account mode), or forwards a self-hosted relay's env token unmodified
-  without persisting it (static mode). See the relay README
-  (`libs/cua-spacesd/crates/cua-relay/README.md` in the cua repository)
-  for the exact claims and how they are enforced in code.
+- **Over the mesh (Cua apps, CLI, SDK and daemon, on current versions):**
+  traffic between your device and the machine is encrypted end to end with
+  WireGuard between keys that never leave the two ends. Most connections go
+  directly between the two networks; when they cannot, the relay forwards
+  the encrypted packets. **The relay cannot read or change shell output,
+  files, input, the desktop stream, Keyvault passwords or teleport
+  bundles.** It sees who talks to whom, when, and how much. See
+  [End-to-end encrypted connections](#end-to-end-encrypted-connections).
+- **Over the relay's HTTPS path (the browser viewer, web agents, older Cua
+  versions, `CUA_MESH=off`, or a self-hosted relay without `--mesh on`):** TLS ends at the relay's ingress, and the
+  relay parses every request it forwards (gRPC, gRPC-Web, WebSocket
+  upgrades, `/files` transfers) to route and authorize it. **It can read the
+  plaintext of anything it proxies while the request is in flight**:
+  shell output, file contents, the desktop media stream, keystrokes and
+  clipboard data sent as input, and, unless sealed (below), Keyvault
+  passwords and teleport session bundles.
+- **Runs on all your machines** (`cua sb run --on auto`, durable Spaces):
+  the relay stores the job log and passes requests between your devices,
+  but everything a job is and produces is **sealed on your devices** with
+  keys only your enrolled devices hold. The relay sees job ids, the kind of
+  each change, which machine an attempt went to, and sizes; never a command,
+  environment, input, output or result. See
+  [Runs on all your machines](#runs-on-all-your-machines).
+- It does not **store** traffic, env tokens or account tokens on either
+  path. On the HTTPS path it strips a client's credentials and forwards a
+  short-lived signed assertion instead (account mode), or forwards a
+  self-hosted relay's env token unmodified without persisting it (static
+  mode). On the mesh, account tokens go only to the relay, never to the
+  machine, and a static relay never sees the env token at all (a device
+  proves it holds the token to the machine itself). See the relay README
+  (`libs/cua-spacesd/crates/cua-relay/README.md` in the cua repository) for
+  the exact claims and how they are enforced in code.
+- **The relay is still a trusted coordinator.** In account mode, the relay
+  tells each device and computer which peers are yours (your devices, and
+  the accounts a computer is shared with) and what each peer's mesh public
+  key is. Both ends trust that list, just as they trust the relay's signed
+  assertions on the HTTPS path. So a compromised relay could add a device of
+  its own as a peer, or hand your device a key of its own in place of a
+  computer's key, and then sit in the middle of the connections that follow.
+  It can't decrypt traffic sent under keys it doesn't hold. A
+  static-token relay can do less: each computer accepts only the devices that
+  proved they hold its env token, and ignores any other peer the relay names.
+  We are working on device-signed keys, so that only your enrolled devices can
+  vouch for a peer's key. Until then, if you need a coordinator you don't
+  have to trust, run your own relay or [use your own
+  tailnet](/spaces/guides/your-tailnet).
+- **The HTTPS path is quiet by default.** With the default `CUA_MESH=prefer`,
+  a connection that can't use the mesh falls back to the HTTPS path, and only
+  a log line says so. Set `CUA_MESH=require` on your devices and computers,
+  and their connections never fall back to a path the relay can read.
 - A compromised relay process, relay host, or a memory dump of either, is
-  equivalent to a compromised session for every machine currently routed
-  through it: it can mint assertions the machines still trust, and read
-  whatever crosses it meanwhile.
+  equivalent to a compromised session for every computer currently routed
+  through it on the **HTTPS path**: it can mint assertions the computers still
+  trust, and read whatever crosses it meanwhile.
 
-## The mesh (beta, opt-in)
+## The mesh (on by default)
 
-With [end-to-end encrypted connections](/spaces/guides/mesh) turned on
-(`CUA_MESH=prefer` or `require` on both the device and the machine), a
-`relay:` Space no longer goes through the HTTPS path below: the device and
-the machine talk WireGuard to each other, directly when they can, and the
-relay forwards only ciphertext it cannot read or change. It still decides
-who may connect, from the same accounts, devices and share lists. The mesh
-is off by default; everything on this page describes the HTTPS path, which
-stays in use for everything else (the browser viewer, web-hosted agents,
-machines and devices without the mesh, and `prefer` when the mesh is not
-available). With `CUA_MESH=require`, a device never falls back to it.
+[End-to-end encrypted connections](#end-to-end-encrypted-connections) are
+on by default. When both ends and the relay support them, a `relay:` Space no longer goes through
+the HTTPS path, and the relay forwards only ciphertext it cannot read or change.
+Everything in the next sections describes the HTTPS path, which stays in use for
+everything else: the browser viewer, web-hosted agents, computers and devices
+without the mesh, and anything where the mesh is not available (or you set
+`CUA_MESH=off`).
+
+## What the relay can still read
+
+These always use the relay's HTTPS path, so the relay can read them in
+transit, whichever Cua version you run:
+
+- **The browser viewer**, and anything else that opens a computer through
+  `https://<relay>/m/<computer>/…`: web or Cloudflare-hosted agents, and MCP
+  clients that connect to a computer through a relay URL.
+- **Share links** (`cua share`): a private, team or public link is served
+  through the relay to whoever opens it.
+- **A Keyvault site-login password** sent to a `relay:` Space over the HTTPS
+  path. This is refused by default, and needs your acknowledgement for each
+  sign-in (see [Sealed delivery](#sealed-delivery-where-it-stands)).
+
+And for Cua's own apps, CLI and SDK, these use the HTTPS path:
+
+- devices and computers on [older versions](#which-path-you-are-on);
+- anything set to `CUA_MESH=off`;
+- a connection that fell back from the mesh under the default `prefer`;
+- a self-hosted relay started without `--mesh on`.
 
 ## What crosses the relay
 
-| | Path | Relay sees plaintext? |
+| | Over the mesh | Over the HTTPS path |
 |---|---|---|
-| gRPC (shell, files, input) | Parsed and forwarded | Yes |
-| Desktop media stream | Parsed and forwarded (TCP over the relay; QUIC only on a direct/LAN path) | Yes |
-| `/files` transfers | Parsed and forwarded | Yes |
-| Env / account tokens | Stripped and replaced (account mode); forwarded unmodified, not stored (static mode) | In transit only (static mode); not at all (account mode) |
-| Keyvault site-login password | `browser_type` call argument | **Gated**: refused over a `relay:` Space by default; sending anyway needs your explicit, per-sign-in acknowledgement (no end-to-end sealing for this path yet; see below) |
-| Teleport session bundle (cookies, Safe Storage keys) | `TeleportService.ImportSession` | **Sealed** once the Space's guest key is pinned (every image built from this point on); **gated** otherwise: refused unless you explicitly acknowledge the risk for that one delivery |
+| gRPC (shell, files, input) | Ciphertext only (direct when possible) | Parsed and forwarded: **readable** |
+| Desktop media stream | Ciphertext only; QUIC over the mesh, direct or relayed | Parsed and forwarded (TCP over the relay): **readable** |
+| `/files` transfers | Ciphertext only | Parsed and forwarded: **readable** |
+| Account tokens | Sent to the relay only, to join the mesh; never to the machine | Stripped and replaced with a signed assertion |
+| Env tokens (static relays) | Never sent to the relay (a proof to the machine instead); travel to the machine inside WireGuard | Forwarded unmodified, not stored: **readable in transit** |
+| Keyvault site-login password | Inside WireGuard to the machine | **Gated**: refused over a `relay:` Space by default; sending anyway needs your explicit, per-sign-in acknowledgement (see below) |
+| Teleport session bundle (cookies, Safe Storage keys) | Inside WireGuard to the machine | **Sealed** once the Space's guest key is pinned; **gated** otherwise |
+| Who connects to which machine, when, how much | Visible (it coordinates and may relay) | Visible |
+| Batch runs' job log and requests (`--on auto`) | Stored sealed: commands, environments, outputs and results are ciphertext; job ids, placements and sizes are visible | Same (sealed before it leaves the device) |
+
+Which path a connection took shows in the logs of the device (`relay
+Space over the mesh`, or `using the relay's HTTPS path` with the reason).
+With `CUA_MESH=require`, a device never falls back to the HTTPS path.
+
+## Runs on all your machines
+
+A batch run on your machines (`cua sb run --on auto`, `on="auto"` in the SDK
+and MCP tools) and a durable Space are coordinated by one of your machines,
+and the relay keeps their job log so that another machine can take over.
+That log, its snapshots, and the requests and answers between your devices
+are encrypted end to end:
+
+- **Your devices hold the keys.** Each signed-in device has a pool key
+  (X25519, in the same store as its device key: the OS keychain for
+  Cua-signed builds). It signs the pool key with its enrolled device key and
+  registers it with the relay. The account's data key is wrapped to each
+  device's pool key with HPKE (RFC 9180) in authenticated mode, so a device
+  only accepts keys another of your devices wrapped. The relay stores the
+  wraps and cannot open them.
+- **Everything about a job is sealed** before it leaves the device, with
+  XChaCha20-Poly1305: its command, environment, input, image and resources,
+  its output and result, durable Spaces' addresses and tokens, your machines'
+  details, and every request and answer between your devices. Each sealed
+  entry is bound to its position and readable fields, so the relay cannot
+  move it, swap it or change it unnoticed.
+- **New and revoked devices.** A device you add is given the keys by any of
+  your devices that has them, within seconds, and can then take over runs.
+  At least one of those devices must be online for that: until then, a run
+  on your machines from the new device fails within seconds and names the
+  devices that hold the keys and when the relay last saw them (`cua
+  computers` shows them too). Open Cua on one of them, or revoke the ones
+  you no longer have. A new device never makes new keys on its own while a
+  device that holds them is still enrolled, however long ago it was seen:
+  only you can tell an asleep laptop from a lost one, and the relay can't
+  make your devices drop the keys by hiding the others. Runs on the device
+  itself (`--on local`, the default for `cua run`) never need the keys.
+  When you revoke a device, the relay refuses anything sealed under the
+  keys it had until one of your devices makes new ones without it, which
+  happens on the next write: nothing written after it left is readable by
+  it, even with the relay's help. What it could read before stays readable to
+  it. If every device that held the keys is revoked, the next device starts
+  new keys and the log nobody can read is dropped (its runs are lost).
+
+| The relay can see | The relay cannot see |
+|---|---|
+| Job ids, run ids, and how many jobs a run has | Commands, arguments, environment variables, input |
+| The kind of each change (submitted, dispatched, running, ended) and which entry ends a job | Outputs, exit codes, errors and results |
+| Which of your machines an attempt went to, and the attempt's number | Images, resources and timeouts |
+| Which device coordinates, its epoch, and when | Durable Spaces' names, addresses and tokens |
+| Sizes and timing of every entry and request | Your machines' details as the coordinator records them |
+| Which devices hold the keys, and the key generation | The keys |
+
+The relay checks what it can without the keys: it stores only sealed data
+(anything else is refused), only under the newest key generation, keyrings
+wrapped by and to your account's enrolled devices, and the fencing that
+keeps one coordinator and one result per job. How this was checked (a model
+checker, a simulation of the real code, and fault injection on real
+machines) is in the
+[design](https://github.com/trycua/cua/blob/main/docs/rfcs/pool-self-coordination.md).
+
+<Callout type="warn">
+  The relay still decides which devices are your account's. A relay that is
+  actively malicious could enroll a device of its own (as it could add a
+  peer to the mesh, above) and be given the keys for what is written after
+  that; it could not read anything sealed before, and the device shows in
+  `cua devices ls`, in the app, and in `cua computers` as one the keys are
+  shared with. Run your own relay if that is not acceptable. Jobs reach your
+  computers over the mesh (ciphertext); with the mesh off they use the HTTPS
+  path, where the relay can read them in transit (above).
+</Callout>
 
 ## Sealed delivery: where it stands
 
-We seal teleport secrets end to end to the destination machine's own key, so
+We seal teleport secrets end to end to the destination computer's own key, so
 the relay forwards only ciphertext for a sealed delivery. The construction:
 an ephemeral X25519 key per delivery, HKDF-SHA256, XChaCha20Poly1305, bound
 to the Space id, a purpose string and a timestamp, with replay rejection
@@ -71,7 +223,7 @@ every subsequent teleport delivery to it.
   the teleport `ImportSession` path (which the Keyvault broker's combined
   prompt also uses for cookies and session data) refuses to send over a
   `relay:` Space from such an image unless you explicitly acknowledge the
-  risk for that one delivery -- republishing the guest image is what makes
+  risk for that one delivery. Republishing the guest image is what makes
   the refusal go away, by making the delivery sealed instead. The
   **Keyvault site-login password path** (typed directly into a page via
   `browser_type`) is **gated the same way, but not yet sealed**: a saved
@@ -83,47 +235,217 @@ every subsequent teleport delivery to it.
   crosses a proxy you do not control, until this page says otherwise.
 </Callout>
 
-**Local and direct Spaces are unaffected either way**: no relay is in the
-path, so there is nothing to seal against.
+**Local and direct Spaces, and connections over the mesh, are unaffected
+either way**: the relay cannot read them, so there is nothing to seal
+against. The gate and sealing apply to the HTTPS path only.
 
 ## Other hardening already shipped
 
 - **Device enrollment with MFA for new devices.** Re-signing in enrolls only
-  your own machine (a re-key, or your account's first device). A brand-new
+  your own computer (a re-key, or your account's first device). A brand-new
   device on an account that already has an enrolled device needs an approval
   from an enrolled device, or a sign-in whose token itself proves a second
-  factor -- a verified email alone is not enough.
-- **New machines are flagged.** A machine registered without an enrolled
+  factor. A verified email alone is not enough.
+- **New computers are flagged.** A computer registered without an enrolled
   device's signature or MFA is marked unconfirmed until an enrolled device
   vouches for it.
-- **A separate origin for machine content.** Machines no longer render as
+- **A separate origin for computer content.** Computers no longer render as
   HTML, register a Service Worker, or set cookies on the relay's own
   origin outside the one known viewer path; a fully separate registrable
-  domain for machine content is designed and partly implemented in code,
+  domain for computer content is designed and partly implemented in code,
   pending a DNS/TLS rollout.
 - **Bounded relay memory.** A per-machine cap on buffered bytes and streams,
-  plus a relay-wide budget with backpressure, so one machine (or one
+  plus a relay-wide budget with backpressure, so one computer (or one
   account's worth of them) with slow-reading clients cannot take down every
-  other machine's connection.
+  other computer's connection.
 - **A tamper-evident, exportable audit log**, hash-chained like the
   Keyvault's own, with `GET /v1/audit?format=jsonl` for export to your own
   SIEM or backup.
 - **The migration grace period (a stolen session alone reaching every
-  machine) is off by default**, and time-boxed to an announced rollout
+  computer) is off by default**, and time-boxed to an announced rollout
   window when it does run.
+- **State writes that fail loudly.** The relay appends audit events and
+  sessions to their own logs instead of rewriting its state per event, cleans
+  up after an interrupted write at startup, refuses a device or machine
+  change it could not store (rather than acknowledging it), and keeps a
+  reserve of free space that pool data cannot use, so sign-ins and device
+  changes keep working when pools fill the volume. A self-hosted relay
+  reports this on `GET /readyz` (a real write probe, free space, each
+  store's last write) and `GET /metrics`; alert when `/readyz` fails, free
+  space drops under 20%, or any write fails. The relay's
+  [README](https://github.com/trycua/cua/tree/main/libs/cua-spacesd/crates/cua-relay#state-and-monitoring)
+  lists the rules.
+- **No Nagle delay on relayed calls.** The relay and machines disable
+  Nagle's algorithm on the tunnel, which used to add about 80 ms to each
+  small relayed call.
+
+## End-to-end encrypted connections
+
+<Callout type="info">
+  **On by default** in the Cua Spaces app (every channel), the `cua` CLI and
+  hosted computers, once they are on a version that includes it. Where the mesh
+  cannot be used (a self-hosted relay without one, an older computer, a
+  network that blocks it) Cua uses the relay's HTTPS path, as before. To turn
+  it off, set `CUA_MESH=off` (below).
+</Callout>
+
+With the mesh on, a device that opens a Space on one of your computers
+(`relay:<machine>`) connects to it over a WireGuard®-based mesh that runs
+inside Cua itself, instead of through the relay's HTTPS path. The relay
+coordinates the mesh but never holds a session key: shell, files, input,
+screen and Keyvault deliveries cross it only as ciphertext.
+
+- **End to end.** Each device and computer makes its own key pair on first
+  use; the private half never leaves it. Traffic between two of them is
+  encrypted with WireGuard between those two keys.
+- **Direct when possible.** Two ends on the same network connect directly.
+  Otherwise packets go through the relay, still encrypted between the two
+  ends: the relay forwards them without being able to read or change them.
+- **Inside Cua only.** There is no network interface, no VPN profile, no
+  system extension and nothing that needs administrator rights. Mesh
+  addresses (`fd5c:a000::/32`) exist only inside Cua, so the mesh never
+  conflicts with Tailscale or another VPN you already run, and it carries
+  Spaces traffic only.
+
+### Turn it off, or require it
+
+Both ends use the mesh when it is available: the device you connect from and
+the computer you host. Each end decides for itself with `CUA_MESH`.
+
+| `CUA_MESH` | Behavior |
+|---|---|
+| unset or `prefer` (default) | The mesh when both ends and the relay support it; the relay's HTTPS path otherwise, with a log line saying why. |
+| `off` | The relay's HTTPS path only, as before the mesh. |
+| `require` | The mesh or nothing: a relay that could read the session is never used. |
+
+- **On the device:** set `CUA_MESH` where `cua` runs (your shell, or the
+  environment of the cua daemon; restart the daemon with `cua daemon stop`
+  after changing it).
+- **On a hosted computer:** to turn it off there, run `cua host setup` with
+  `CUA_MESH=off` set. The setting is kept for the host's service until you run
+  setup again without it.
+
+`cua spaces ls` lists the same computers either way. With `prefer`, a computer
+or relay that does not speak the mesh is used over HTTPS, so mixing
+updated and older computers works.
+
+### Who can connect
+
+The relay applies the rules you already manage:
+
+- A device enrolled for your account reaches the computers your account owns
+  and those shared with it, while their sharing is on.
+- The computer sees each device with the same identity as before (account,
+  verified email, owner, editor or viewer), and its own host policy still
+  decides what that caller may do.
+- Stopping sharing, removing someone from a share list, or revoking a device
+  takes it off the mesh within seconds and cuts its open connections. The
+  next call says why.
+
+### Your plan allowance
+
+A desktop view, terminal or agent session over the mesh counts toward your
+plan's live sessions, the same as one over the relay's HTTPS path, and one
+computer reached both ways at once counts once. Remote hours count only the
+time a session's traffic goes through the relay: a direct connection uses
+none. `cua usage` and the app's Settings show both.
+
+### When the network changes
+
+Connections belong to the two ends, not to a network path. When a laptop
+moves from Wi-Fi to Ethernet or its public address changes, traffic moves to
+the relay for a moment and back to a direct path as soon as one answers. A
+relay restart does not interrupt direct connections; a connection that was
+going through the relay resumes when the relay is back.
+
+### Self-hosted relays
+
+A self-hosted `cua-relay` coordinates a mesh when you turn it on with
+`--mesh on` (or `CUA_RELAY_MESH=on`); without it, devices use the HTTPS
+path. Give it a UDP port for STUN so devices learn their public addresses:
+
+```bash skip="no-runner"
+cua-relay --tokens "$TOKEN" --public-url https://relay.example.com \
+  --mesh on --mesh-stun-listen 0.0.0.0:3478
+```
+
+The relay advertises `relay.example.com:3478` (override with
+`--mesh-stun`). Open UDP 3478 to it. `--mesh off` (the default) leaves the
+mesh off (devices then use the HTTPS path); `--mesh-relay off` keeps the
+coordinator but stops relaying packets (devices that cannot reach each other
+directly then cannot connect over the mesh). The mesh registry persists next
+to the state file (`<state>.mesh.json`), so a restart keeps every device's
+keys.
+
+On a self-hosted relay with static tokens, a device reaches a computer only
+after proving it holds that computer's env token. The computer checks the
+proof itself and remembers the devices it accepted; the relay only passes the
+proof along and never sees the token.
+
+### Use your own tailnet instead
+
+Teams that already run Tailscale or Headscale can host Spaces on their own
+tailnet instead, with the tailnet's identities, ACLs and SSO deciding who
+connects: see [Use your tailnet](/spaces/guides/your-tailnet).
+
+### What still goes through the relay's HTTPS path
+
+See [What the relay can still read](#what-the-relay-can-still-read).
+
+### Firewalls
+
+Direct paths use UDP. Each end picks a UDP port on its own; outbound UDP is
+all it needs. On networks that block UDP, the mesh still works through the
+relay, over HTTPS to the same relay address as the rest of Cua.
+
+<Callout type="info">
+  WireGuard is a registered trademark of Jason A. Donenfeld. Cua's mesh uses
+  the WireGuard protocol through Cloudflare's BSD-licensed boringtun; it is
+  not affiliated with or endorsed by the WireGuard project.
+</Callout>
+
+## What the relay stores, and for how long
+
+This is what `relay.cua.ai` keeps. A self-hosted relay keeps the same things
+on its own disk.
+
+| Data | Why | How long |
+|---|---|---|
+| Your account id, email and name; your computers' names, owners and share lists | Routing, and checking who may connect | Until you remove the computer or delete your account |
+| Your enrolled devices: their public keys and sessions | Device enrollment | An enrollment ends 30 days after it was last used; removed when you revoke the device |
+| Mesh registry: each device's and computer's WireGuard public key, and the network addresses it reports (up to 32 public and local IP addresses per node) | Introducing the two ends of a connection | While the device or computer is registered |
+| Which accounts reached each computer recently, and whose access was revoked (grants) | Making a revoke also cut the short-lived tickets a computer issued | About a day: each entry is dropped after 24 hours |
+| Your account's audit log (hash-chained) | Your own audit trail, exportable with `GET /v1/audit?format=jsonl` | The latest 5,000 entries per account |
+| Pool keys (wrapped to your devices) and the sealed job log | [Runs on all your machines](#runs-on-all-your-machines) | Kept with your account; the relay can't open them |
+| Usage totals (hosted relay) | Your plan's allowance | Totals for the current calendar month |
+| Usage analytics events (PostHog, EU) | Product metrics on relay usage | Sent under a pseudonymous id derived from your account id, with no person profile; PostHog's retention applies |
+| Server logs | Operating the service | 30 days. Your account id can appear in them; emails are redacted |
+| Backups of everything above (hosted relay) | Restoring the relay if its disk is lost | Encrypted snapshots, taken hourly and kept 3 days |
+
+The relay never stores session traffic, file contents, screen images,
+keystrokes or Keyvault secrets, on either path.
+
+**Delete your account** (in the account app) and the relay erases everything
+in the table that belongs to you, including your entries in other people's
+share lists and any analytics events it has not sent yet. Logs age out within
+30 days, backups within 3 days, and analytics events already sent stay under
+the pseudonymous id.
 
 ## Reporting a concern
 
-See [`SECURITY.md`](https://github.com/trycua/cua/blob/main/SECURITY.md) for
+See [`SECURITY.md`](https://github.com/trycua/cua/blob/main/.github/SECURITY.md) for
 how to report a vulnerability privately, our response targets, and our safe
 harbor for good-faith security research.
 
 ## Related
 
-- [Set up unattended access](/spaces/guides/unattended-access) -- device
-  enrollment in full.
-- [Share a Space](/spaces/guides/share-a-space) -- the allowlist and audit
-  trail for sharing.
-- [Keyvault](/spaces/guides/keyvault) and [Teleport an
-  app](/spaces/guides/teleport-an-app) -- what these deliver and how consent
-  works.
+- [End-to-end encrypted connections](#end-to-end-encrypted-connections): the
+  mesh in full, and [Use your tailnet](/spaces/guides/your-tailnet) to run on
+  your own Tailscale or Headscale network instead.
+- [Add a computer](/spaces/guides/add-a-computer#reach-it-from-your-other-machines):
+  device enrollment in full.
+- [Share a Space](/spaces/guides/share-a-space): the allowlist and audit trail
+  for sharing.
+- [Keyvault](/spaces/guides/keyvault) and
+  [Teleport an app](/spaces/guides/teleport-an-app): what these deliver and how
+  consent works.

@@ -14,14 +14,13 @@ One `Cua` object, embedded in this process or connected to a running
 
     asyncio.run(main())
 
-Modules: sandboxes (Fleet, local, direct), env (cua-spacesd, with
+Modules: sandboxes (local, direct, your own cloud), env (cua-spacesd, with
 `call_json` for every `cua.env.v1` RPC), media sessions with `FrameSink` /
 `AudioSink` callbacks (encoded) or `DecodedFrameSink` / `PcmSink` callbacks
-(decoded BGRA frames and PCM audio), fleet (pools, claims, images), local
-runtimes and images, and spaces (`c.spaces()`: add a machine by URL, claim a
-Fleet Space, provision a local one; then bash, files, send_file, driver
-tools, streams, presence, teleport with an approval callback, hotspot,
-agents).
+(decoded BGRA frames and PCM audio), local runtimes and images, and spaces
+(`c.spaces()`: add a machine by URL, provision a local one; then bash,
+files, send_file, driver tools, streams, presence, teleport with an
+approval callback, hotspot, agents).
 
 Everything is generated from the Rust `cua-sdk` crate by UniFFI
 (`cua._native`); this module only adds two constructors.
@@ -31,7 +30,7 @@ High-level API (optional extras)
 `cua` also carries the convenience surface of the former `cua` meta-package
 (0.1.x), resolved lazily from the optional extras::
 
-    pip install "cua[sandbox]"   # cua-sandbox: Sandbox, Image, Pool, runtimes ...
+    pip install "cua[sandbox]"   # cua-sandbox: Sandbox, Image, runtimes ...
     pip install "cua[agent]"     # cua-agent: ComputerAgent, callbacks, tools
     pip install "cua[all]"
 
@@ -60,11 +59,11 @@ except Exception:  # noqa: BLE001 - optional convenience
     pass
 
 from ._native import *  # noqa: F401,F403
-from ._native import Cua, CuaConfig, FleetSettings
+from ._native import Cua, CuaConfig
 from ._native import Sandbox as SandboxHandle
 from ._native import cua_sdk_version
 
-__version__ = "0.4.1"  # x-release-please-version
+__version__ = "0.9.0"  # x-release-please-version
 
 # Usage telemetry (anonymous, content-free; https://cua.ai/docs/cua-sdk/concepts/telemetry)
 # attributes events to this binding; `cua.telemetry` has the switches. It
@@ -95,6 +94,53 @@ _CuaError.doc_url = property(  # type: ignore[attr-defined]
     lambda self: _error_doc_url(type(self).__name__)
 )
 
+# ── Plan limits ────────────────────────────────────────────────────────────
+# The relay refuses a new live session over the plan's cap (HTTP 429). The
+# SDK raises `CuaError.Http` with the plain sentence; `error.plan_limit`
+# reads it as a `PlanLimitError` (None for any other error).
+from ._plan_limit import parse_plan_limit as _parse_plan_limit  # noqa: E402
+
+
+class PlanLimitError(_CuaError.Http):  # type: ignore[name-defined,misc]
+    """The relay refused a new live session because the plan is at its cap.
+
+    ``str(error)`` is the plain sentence. Live sessions are never cut, and
+    retrying gets the same answer: close one, or send the person to
+    ``upgrade_url``.
+    """
+
+    code = "plan_limit"
+    status = 429
+
+    def __init__(self, message, *, kind, plan, used, limit, upgrade_url=None):
+        super().__init__(message)
+        self.kind = kind  # "sessions" or "hours"
+        self.plan = plan  # "free", "pro", "teams", or the relay's own name
+        self.used = used
+        self.limit = limit
+        self.upgrade_url = upgrade_url
+
+    def __repr__(self):
+        return "PlanLimitError({})".format(repr(str(self)))
+
+    @classmethod
+    def from_error(cls, error):
+        """The refusal an error carries, else None."""
+        found = _parse_plan_limit(str(error))
+        if found is None:
+            return None
+        return cls(
+            found.message,
+            kind=found.kind,
+            plan=found.plan,
+            used=found.used,
+            limit=found.limit,
+            upgrade_url=found.upgrade_url,
+        )
+
+
+_CuaError.Http.plan_limit = property(PlanLimitError.from_error)  # type: ignore[attr-defined]
+
 # `Sandbox` is resolved lazily (see __getattr__): the cua-sandbox facade when
 # it is installed, else the native handle type.
 del Sandbox  # type: ignore[name-defined]  # noqa: F821
@@ -103,34 +149,26 @@ del Sandbox  # type: ignore[name-defined]  # noqa: F821
 def embedded(
     *,
     state_dir: Optional[str] = None,
-    fleet: Optional[FleetSettings] = None,
-    fleet_from_env: bool = True,
-    fleet_from_session: bool = False,
+    account_from_session: bool = False,
     env_probe_timeout_ms: Optional[int] = None,
     spaces_home: Optional[str] = None,
     teleport_home: Optional[str] = None,
-    fleet_pool_home: Optional[str] = None,
 ) -> Cua:
     """An SDK runtime in this process (no I/O until the first call).
 
-    Fleet uses ``CUA_CLIENT_ID``/``CUA_CLIENT_SECRET`` (or ``FLEETS_TOKEN``);
-    ``fleet_from_session=True`` falls back to the ``cua auth login`` session
-    (cua-sandbox's ``Sandbox`` does this by default).
+    ``account_from_session=True`` uses the ``cua auth login`` session for
+    the relay account the runtime lists "My machines" with.
     ``spaces_home`` is the Spaces registry directory (default ``~/.cua``);
     ``teleport_home`` makes teleport read app sessions under that directory
-    with no host side effects (tests); ``fleet_pool_home`` is where managed Fleet pools keep their name
-    cache and GC lock (default ``~/.cua``).
+    with no host side effects (tests).
     """
     return Cua.embedded(
         CuaConfig(
             state_dir=state_dir,
-            fleet=fleet,
-            fleet_from_env=fleet_from_env,
-            fleet_from_session=fleet_from_session,
+            account_from_session=account_from_session,
             env_probe_timeout_ms=env_probe_timeout_ms,
             spaces_home=spaces_home,
             teleport_home=teleport_home,
-            fleet_pool_home=fleet_pool_home,
         )
     )
 
@@ -176,9 +214,6 @@ def connect(address: Optional[str] = None, token: Optional[str] = None) -> Cua:
 _SANDBOX_NAMES = (
     "Sandbox",
     "SandboxInfo",
-    "Pool",
-    "Template",
-    "PoolAccessDeniedError",
     "sandbox",
     "configure",
     "login",

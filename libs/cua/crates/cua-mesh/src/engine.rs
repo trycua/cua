@@ -268,7 +268,10 @@ impl Engine {
 
     pub(crate) fn local_ports(&self) -> (u16, Option<u16>) {
         let s = self.sockets.read().expect("sockets");
-        let s = s.as_ref().expect("bound");
+        // Shut down (the discovery loop may run once more): no sockets.
+        let Some(s) = s.as_ref() else {
+            return (self.listen_port, None);
+        };
         (
             s.v4.local_addr()
                 .map(|a| a.port())

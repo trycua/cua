@@ -43,6 +43,11 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/golden/create-gpu.json"),
     ),
     (
+        "create-microvm",
+        include_str!("../parity/create-microvm.json"),
+        include_str!("../parity/golden/create-microvm.json"),
+    ),
+    (
         "create-cancel",
         include_str!("../parity/create-cancel.json"),
         include_str!("../parity/golden/create-cancel.json"),
@@ -211,6 +216,42 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         "create-stages",
         include_str!("../parity/create-stages.json"),
         include_str!("../parity/golden/create-stages.json"),
+    ),
+    (
+        "first-run",
+        include_str!("../parity/first-run.json"),
+        include_str!("../parity/golden/first-run.json"),
+    ),
+    (
+        "create-retry",
+        include_str!("../parity/create-retry.json"),
+        include_str!("../parity/golden/create-retry.json"),
+    ),
+    // The new Spaces page (CUA-2204).
+    (
+        "spaces-menu",
+        include_str!("../parity/spaces-menu.json"),
+        include_str!("../parity/golden/spaces-menu.json"),
+    ),
+    (
+        "bulk-confirm",
+        include_str!("../parity/bulk-confirm.json"),
+        include_str!("../parity/golden/bulk-confirm.json"),
+    ),
+    (
+        "tips",
+        include_str!("../parity/tips.json"),
+        include_str!("../parity/golden/tips.json"),
+    ),
+    (
+        "pro-banner",
+        include_str!("../parity/pro-banner.json"),
+        include_str!("../parity/golden/pro-banner.json"),
+    ),
+    (
+        "connectors",
+        include_str!("../parity/connectors.json"),
+        include_str!("../parity/golden/connectors.json"),
     ),
 ];
 
@@ -444,14 +485,14 @@ pub mod frame {
         json!({
             "thisMachine": v["thisMachine"]["name"],
             "sections": v["sections"].as_array().map(|a| a.iter().map(|sec| {
-                Value::String(format!("{}: {}", sec["title"].as_str().unwrap_or(""),
+                Value::String(format!("{}: {}", sec["title"]["code"].as_str().unwrap_or(""),
                     sec["rows"].as_array().map(|r| r.iter().map(|row| format!("{}{}{}",
                         row["name"].as_str().unwrap_or(""),
                         if row["dim"] == true { " (dim)" } else { "" },
                         if row["selected"] == true { " (selected)" } else { "" })).collect::<Vec<_>>().join(", ")).unwrap_or_default()))
             }).collect::<Vec<_>>()).unwrap_or_default(),
             "selectedId": v["selectedId"],
-            "emptyText": v["emptyText"],
+            "emptyText": v["emptyText"]["code"],
         })
     }
 
@@ -480,7 +521,7 @@ pub mod frame {
         format!(
             " <{} {}{}{}>",
             str_of(&b["symbol"]),
-            str_of(&b["help"]),
+            str_of(&b["help"]["code"]),
             if b["turnOn"] == true { " on" } else { "" },
             if b["busy"] == true { " busy" } else { "" },
         )
@@ -507,7 +548,7 @@ pub mod frame {
                 .as_str()
                 .map(|p| format!(" @ {p}"))
                 .unwrap_or_default(),
-            str_of(&r["statusText"]),
+            str_of(&r["statusText"]["code"]),
             str_of(&r["detail"]),
             if r["dim"] == true { " (dim)" } else { "" },
             if r["selected"] == true {
@@ -523,13 +564,13 @@ pub mod frame {
         json!({
             "thisMachine": if v["thisMachine"].is_null() { Value::Null } else { Value::String(sidebar_row(&v["thisMachine"])) },
             "sections": v["sections"].as_array().map(|a| a.iter().flat_map(|sec| {
-                let title = str_of(&sec["title"]).to_string();
+                let title = str_of(&sec["title"]["code"]).to_string();
                 std::iter::once(Value::String(format!("# {title}"))).chain(
                     sec["rows"].as_array().cloned().unwrap_or_default().into_iter()
                         .map(|r| Value::String(sidebar_row(&r))))
             }).collect::<Vec<_>>()).unwrap_or_default(),
             "selectedId": v["selectedId"],
-            "emptyText": v["emptyText"],
+            "emptyText": v["emptyText"]["code"],
         })
     }
 
@@ -1038,6 +1079,11 @@ pub mod frame {
             "showMark": v["showMark"],
             "dots": v["dots"].as_array().map(|a| a.iter().map(|d| format!("{}{}", if d["current"] == true { "*" } else { "" }, str_of(&d["label"]))).collect::<Vec<_>>().join(",")).unwrap_or_default(),
             "summary": facts(&v["summary"]),
+            // Done's to-do list: `[x] title ~note -> fix (optional)`.
+            "todos": v["todos"].as_array().map(|a| a.iter().map(|t| Value::String(format!("[{}] {} ~{}{}{}",
+                if t["done"] == true { "x" } else { " " }, str_of(&t["title"]), str_of(&t["note"]),
+                t["action"].as_str().map(|x| format!(" -> {x}")).unwrap_or_default(),
+                if t["optional"] == true { " (optional)" } else { "" }))).collect::<Vec<_>>()).unwrap_or_default(),
             "choices": v["choices"].as_array().map(|a| a.iter().map(|c| Value::String(format!("{}: {}{}", str_of(&c["mode"]), str_of(&c["label"]),
                 if c["preselected"] == true { " (preselected)" } else { "" }))).collect::<Vec<_>>()).unwrap_or_default(),
             "presentations": v["presentations"].as_array().map(|a| a.iter().map(|c| Value::String(format!("{} [{}]{}", str_of(&c["title"]), str_of(&c["id"]),
@@ -1224,8 +1270,8 @@ pub mod frame {
             "error": state["error"],
             "report": state["report"]["appId"],
             "sensitive": sensitive.as_array().map(|a| a.iter().map(|o| Value::String(format!("{}:{}:{}:{}",
-                o["group"].as_str().unwrap_or(""), o["label"].as_str().unwrap_or(""),
-                o["detail"].as_str().unwrap_or(""), if o["checked"] == true { "on" } else { "off" }))).collect::<Vec<_>>()).unwrap_or_default(),
+                o["group"].as_str().unwrap_or(""), o["label"]["code"].as_str().unwrap_or(""),
+                o["detail"]["code"].as_str().unwrap_or(""), if o["checked"] == true { "on" } else { "off" }))).collect::<Vec<_>>()).unwrap_or_default(),
             "planSensitive": plan_sensitive,
         });
         // Saved passwords, while the review offers them: the box's label
@@ -1817,6 +1863,7 @@ pub mod frame {
                 if r["selected"] == true { " | selected" } else { "" }))).collect::<Vec<_>>(),
             "field": field(&v["field"]),
             "profile": field(&v["profileField"]),
+            "token": field(&v["tokenField"]),
             "checks": v["checks"].as_array().into_iter().flatten().map(|c| Value::String(format!(
                 "{} {}", if c["ok"] == true { "ok" } else { "failed" }, str_of(&c["text"])))).collect::<Vec<_>>(),
             "result": v["result"],
@@ -1909,14 +1956,16 @@ fn c(h: &dyn Host, method: &str, args: Value) -> Result<Value, String> {
 pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
     let flow: Value = serde_json::from_str(flow_json).map_err(|e| e.to_string())?;
     match name {
-        "create-space" | "create-resources" | "create-gpu" => run_create_space(&flow, h),
+        "create-space" | "create-resources" | "create-gpu" | "create-microvm" => {
+            run_create_space(&flow, h)
+        }
         "teleport-review" | "teleport-sign-ins" => run_teleport(&flow, h),
         "keyvault-approve-deny" => run_keyvault(&flow, h),
         "keyvault-unlock" => run_keyvault_unlock(&flow, h),
         "main-window" => run_main_window(&flow, h),
         "notch" => run_notch(&flow, h),
         "notch-drag-trigger" => run_notch_drag_trigger(&flow, h),
-        "provisioning" | "create-progress" | "create-cancel" | "create-stages" => {
+        "provisioning" | "create-progress" | "create-cancel" | "create-stages" | "create-retry" => {
             run_provisioning(&flow, h)
         }
         "stream-section" => run_stream_section(&flow, h),
@@ -1942,6 +1991,13 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "placement-picker" => run_placement_picker(&flow, h),
         "machines" => run_machines(&flow, h),
         "checklist" => run_checklist(&flow, h),
+        "first-run" => run_first_run(&flow, h),
+        // The new Spaces page (CUA-2204).
+        "spaces-menu" => run_spaces_menu(&flow, h),
+        "bulk-confirm" => run_bulk_confirm(&flow, h),
+        "tips" => run_tips(&flow, h),
+        "pro-banner" => run_pro_banner(&flow, h),
+        "connectors" => run_connectors(&flow, h),
         other => Err(format!("unknown flow {other}")),
     }
 }
@@ -2201,7 +2257,7 @@ fn provisioning_frame(
                 "{} {} [{}] {} {}{}",
                 r["osIcon"].as_str().unwrap_or(""),
                 r["name"].as_str().unwrap_or(""),
-                r["statusText"].as_str().unwrap_or(""),
+                r["statusText"]["code"].as_str().unwrap_or(""),
                 r["progress"]
                     .as_u64()
                     .map(|p| p.to_string())
@@ -2254,15 +2310,21 @@ fn provisioning_frame(
             "progressText": d["progressText"],
             "canStream": d["canStream"],
             "actions": actions,
-            // `text [button -> url]`, when a cloud create ran out of credit.
-            "creditNotice": if d["creditNotice"].is_null() { Value::Null } else {
-                Value::String(format!("{} [{} -> {}]", d["creditNotice"]["text"].as_str().unwrap_or(""),
-                    d["creditNotice"]["button"].as_str().unwrap_or(""), d["creditNotice"]["url"].as_str().unwrap_or("")))
-            },
         });
         // Why turning it off or on failed, when it did.
         if let Some(e) = d["powerError"].as_str() {
             detail["powerError"] = Value::String(e.into());
+        }
+        // A create that failed the same way twice: its fix, as
+        // `text [label: action value]`.
+        let fix = &space["progress"]["fix"];
+        if let Some(text) = fix["text"].as_str() {
+            detail["fix"] = Value::String(format!(
+                "{text} [{}: {} {}]",
+                fix["label"].as_str().unwrap_or(""),
+                fix["action"].as_str().unwrap_or(""),
+                fix["value"].as_str().unwrap_or("-"),
+            ));
         }
         details.push(detail);
     }
@@ -2948,104 +3010,6 @@ fn run_stream_section(f: &Value, h: &dyn Host) -> Result<Value, String> {
     Ok(json!({ "flow": "stream-section", "frames": frames }))
 }
 
-/// A Space detail's facts, one frame per case: a registry row, and the
-/// memory and storage use when the case has any.
-/// The Machines page for each case: one line per row (name, online, the
-/// device merged in, or a device of its own), and the "Run on" choices.
-fn run_machines(f: &Value, h: &dyn Host) -> Result<Value, String> {
-    let mut frames = Vec::new();
-    for case in f["cases"].as_array().into_iter().flatten() {
-        let rows = c(
-            h,
-            "machines.merge",
-            json!({ "input": { "machines": case["machines"], "devices": case["devices"], "now": f["now"] } }),
-        )?;
-        let rows = rows.as_array().cloned().unwrap_or_default();
-        let lines: Vec<String> = rows
-            .iter()
-            .map(|r| {
-                let state = if r["online"].as_bool() == Some(true) {
-                    "online"
-                } else {
-                    "offline"
-                };
-                let with = match (r["deviceOnly"].as_bool(), r["device"].as_str()) {
-                    (Some(true), _) => " (a device)".to_string(),
-                    (_, Some(d)) => format!(" + {d}"),
-                    _ => String::new(),
-                };
-                format!(
-                    "{} [{}] {state}{with}",
-                    str_of(&r["name"]),
-                    str_of(&r["id"])
-                )
-            })
-            .collect();
-        let run_on: Vec<&str> = rows
-            .iter()
-            .filter(|r| {
-                r["current"].as_bool() != Some(true) && r["deviceOnly"].as_bool() != Some(true)
-            })
-            .map(|r| str_of(&r["id"]))
-            .collect();
-        frames.push(json!({ "case": case["name"], "rows": lines, "runOn": run_on }));
-    }
-    for page in f["pages"].as_array().into_iter().flatten() {
-        let rows = c(h, "machines.pageRows", json!({ "input": page["input"] }))?;
-        frames.push(json!({ "page": page["name"], "rows": page_lines(&rows) }));
-    }
-    Ok(json!({ "flow": "machines", "frames": frames }))
-}
-
-/// The Machines page's rows (`machines.pageRows`), one line each: name,
-/// id, how it is reached, its system, online, the device in it or a
-/// device of its own, its desktop's Space, whether it stopped sharing, and
-/// the status word and Spaces count every UI shows.
-fn page_lines(rows: &Value) -> Vec<String> {
-    rows.as_array()
-        .into_iter()
-        .flatten()
-        .map(|r| {
-            let state = if r["online"].as_bool() == Some(true) {
-                "online"
-            } else {
-                "offline"
-            };
-            let mut line = format!(
-                "{} [{}] {} {} {state}",
-                str_of(&r["name"]),
-                str_of(&r["id"]),
-                str_of(&r["via"]),
-                if str_of(&r["os"]).is_empty() {
-                    "?"
-                } else {
-                    str_of(&r["os"])
-                },
-            );
-            if r["current"].as_bool() == Some(true) {
-                line.push_str(" (this machine)");
-            }
-            match (r["deviceOnly"].as_bool(), r["device"].as_str()) {
-                (Some(true), _) => line.push_str(" (a device)"),
-                (_, Some(d)) => line.push_str(&format!(" + {d}")),
-                _ => {}
-            }
-            if let Some(s) = r["spaceId"].as_str() {
-                line.push_str(&format!(" desktop {s}"));
-            }
-            if r["stoppedSharing"].as_bool() == Some(true) {
-                line.push_str(" (stopped sharing)");
-            }
-            // The words every UI shows: its status and its Spaces.
-            line.push_str(&format!(" \"{}\"", str_of(&r["status"])));
-            if !str_of(&r["spacesLabel"]).is_empty() {
-                line.push_str(&format!(" \"{}\"", str_of(&r["spacesLabel"])));
-            }
-            line
-        })
-        .collect()
-}
-
 /// The checklist for each case: the Machines page from the case's page
 /// input, what `checklist.observeFrom` reads from it and the case's Spaces
 /// and agents, the count after that observation on the stored progress,
@@ -3099,6 +3063,731 @@ fn run_checklist(f: &Value, h: &dyn Host) -> Result<Value, String> {
         frames.push(frame);
     }
     Ok(json!({ "flow": "checklist", "frames": frames }))
+}
+
+/// A Space detail's facts, one frame per case: a registry row, and the
+/// memory and storage use when the case has any.
+/// The Machines page for each case: one line per row (name, online, the
+/// device merged in, or a device of its own), and the "Run on" choices.
+fn run_machines(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for case in f["cases"].as_array().into_iter().flatten() {
+        let rows = c(
+            h,
+            "machines.merge",
+            json!({ "input": { "machines": case["machines"], "devices": case["devices"], "now": f["now"] } }),
+        )?;
+        let rows = rows.as_array().cloned().unwrap_or_default();
+        let lines: Vec<String> = rows
+            .iter()
+            .map(|r| {
+                let state = if r["online"].as_bool() == Some(true) {
+                    "online"
+                } else {
+                    "offline"
+                };
+                let with = match (r["deviceOnly"].as_bool(), r["device"].as_str()) {
+                    (Some(true), _) => " (a device)".to_string(),
+                    (_, Some(d)) => format!(" + {d}"),
+                    _ => String::new(),
+                };
+                format!(
+                    "{} [{}] {state}{with}",
+                    str_of(&r["name"]),
+                    str_of(&r["id"])
+                )
+            })
+            .collect();
+        let run_on: Vec<&str> = rows
+            .iter()
+            .filter(|r| {
+                r["current"].as_bool() != Some(true) && r["deviceOnly"].as_bool() != Some(true)
+            })
+            .map(|r| str_of(&r["id"]))
+            .collect();
+        frames.push(json!({ "case": case["name"], "rows": lines, "runOn": run_on }));
+    }
+    for page in f["pages"].as_array().into_iter().flatten() {
+        let rows = c(h, "machines.pageRows", json!({ "input": page["input"] }))?;
+        frames.push(json!({ "page": page["name"], "rows": page_lines(&rows) }));
+    }
+    for v in f["views"].as_array().into_iter().flatten() {
+        let view = c(h, "machines.view", json!({ "input": v["input"] }))?;
+        frames.push(view_frame(&v["name"], &view));
+    }
+    Ok(json!({ "flow": "machines", "frames": frames }))
+}
+
+/// The Machines page as drawn (`machines.view`): the header, each group
+/// with its rows' one line, and each machine's page in words (status,
+/// switches, Spaces, New Space here, Details, Remove from account).
+fn view_frame(name: &Value, v: &Value) -> Value {
+    let machines = v["machines"].as_array().cloned().unwrap_or_default();
+    let by_id = |id: &str| machines.iter().find(|m| str_of(&m["id"]) == id);
+    let groups: Vec<Value> = v["groups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|g| {
+            let rows: Vec<String> = g["ids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|id| by_id(str_of(id)))
+                .map(|m| {
+                    let dot = if m["online"].as_bool() == Some(true) {
+                        "\u{25cf}"
+                    } else {
+                        "\u{25cb}"
+                    };
+                    let badge = m["badge"]
+                        .as_str()
+                        .map(|b| format!(" [{b}]"))
+                        .unwrap_or_default();
+                    // The dot's tint for the machine's issues.
+                    let health = m["health"]
+                        .as_str()
+                        .filter(|h| !h.is_empty())
+                        .map(|h| format!(" [{h}]"))
+                        .unwrap_or_default();
+                    format!(
+                        "{dot} {}{badge} \u{2014} {}{health}",
+                        str_of(&m["name"]),
+                        str_of(&m["line"])
+                    )
+                })
+                .collect();
+            let mut title = str_of(&g["title"]).to_string();
+            if g["collapsed"].as_bool() == Some(true) {
+                title.push_str(" (collapsed)");
+            }
+            if let Some(all) = g["removeAll"].as_object() {
+                title.push_str(&format!(" \u{b7} {}", str_of(&all["label"])));
+            }
+            json!({ "group": title, "rows": rows })
+        })
+        .collect();
+    let pages: Vec<Value> = machines
+        .iter()
+        .map(|m| {
+            let mut lines = vec![];
+            let mut head = format!("{} \u{2014} {}", str_of(&m["name"]), str_of(&m["status"]));
+            if let Some(by) = m["sharedBy"].as_str() {
+                head.push_str(&format!(" \u{b7} {by}"));
+            }
+            if let Some(r) = m["rename"].as_object() {
+                head.push_str(&format!(" (rename: {})", str_of(&r["target"])));
+            }
+            lines.push(head);
+            for i in m["issues"].as_array().into_iter().flatten() {
+                let action = i["action"]["label"]
+                    .as_str()
+                    .map(|l| format!(" [{l}]"))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "{} {}: {}{action}",
+                    str_of(&m["issuesTitle"]).to_lowercase(),
+                    str_of(&i["level"]),
+                    str_of(&i["text"])
+                ));
+            }
+            if let Some(n) = m["notice"].as_str() {
+                let action = m["noticeAction"]["label"]
+                    .as_str()
+                    .map(|l| format!(" [{l}]"))
+                    .unwrap_or_default();
+                lines.push(format!("notice: {n}{action}"));
+            }
+            for t in m["toggles"].as_array().into_iter().flatten() {
+                let on = if t["on"].as_bool() == Some(true) {
+                    "on"
+                } else {
+                    "off"
+                };
+                let how = if t["editable"].as_bool() != Some(true) {
+                    "read-only".to_string()
+                } else if t["enabled"].as_bool() != Some(true) {
+                    "disabled".to_string()
+                } else if let Some(p) = t["setup"].as_str() {
+                    format!("sets up: {p}")
+                } else {
+                    let a: Vec<&str> = t["actions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(str_of)
+                        .collect();
+                    format!("runs: {}", a.join(", "))
+                };
+                lines.push(format!("{}: {on} ({how})", str_of(&t["label"])));
+            }
+            if let Some(n) = m["togglesNote"].as_str() {
+                lines.push(format!("note: {n}"));
+            }
+            if let Some(d) = m["desktop"].as_object() {
+                let d = |k: &str| d.get(k).and_then(Value::as_str).unwrap_or("");
+                lines.push(format!(
+                    "desktop {} \u{b7} {} \u{b7} {} [{}] -> {}",
+                    d("name"),
+                    d("os"),
+                    d("status"),
+                    d("label"),
+                    d("id")
+                ));
+            }
+            for s in m["spaces"].as_array().into_iter().flatten() {
+                lines.push(format!(
+                    "space {} \u{b7} {} \u{b7} {} -> {}",
+                    str_of(&s["name"]),
+                    str_of(&s["os"]),
+                    str_of(&s["status"]),
+                    str_of(&s["id"])
+                ));
+            }
+            if let Some(e) = m["spacesEmpty"].as_str() {
+                lines.push(format!("spaces: {e}"));
+            }
+            let ns = &m["newSpace"];
+            lines.push(format!(
+                "{} on {}{}",
+                str_of(&ns["label"]),
+                str_of(&ns["on"]),
+                if ns["enabled"].as_bool() == Some(true) {
+                    String::new()
+                } else {
+                    format!(" (disabled: {})", str_of(&ns["help"]))
+                }
+            ));
+            let facts: Vec<String> = m["details"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|f| format!("{}: {}", str_of(&f["label"]), str_of(&f["value"])))
+                .collect();
+            lines.push(format!("details: {}", facts.join("; ")));
+            if let Some(r) = m["remove"].as_object() {
+                let what = if r["host"].as_bool() == Some(true) {
+                    "host setup".to_string()
+                } else {
+                    [r.get("machine"), r.get("device")]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" + ")
+                };
+                let state = match r.get("help").and_then(|h| h.as_str()) {
+                    Some(h) if r["enabled"].as_bool() != Some(true) => format!(" (disabled: {h})"),
+                    _ => String::new(),
+                };
+                lines.push(format!("{} -> {what}{state}", str_of(&r["label"])));
+            }
+            json!(lines)
+        })
+        .collect();
+    let mut frame =
+        json!({ "view": name, "summary": v["summary"], "groups": groups, "pages": pages });
+    // The Clouds group and each cloud's page, when the view has any.
+    if let Some(rows) = v["clouds"]["group"]["rows"]
+        .as_array()
+        .filter(|r| !r.is_empty())
+    {
+        let dot = |h: &str| match h {
+            "ok" => "\u{25cf}",
+            "warn" => "\u{25d0}",
+            _ => "\u{25cb}",
+        };
+        let group: Vec<String> = rows
+            .iter()
+            .map(|r| {
+                format!(
+                    "{} {} \u{2014} {} ({})",
+                    dot(str_of(&r["health"])),
+                    str_of(&r["name"]),
+                    str_of(&r["line"]),
+                    str_of(&r["logo"])
+                )
+            })
+            .collect();
+        let pages: Vec<Value> = v["clouds"]["pages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|p| {
+                let mut lines = vec![format!(
+                    "{} \u{2014} {}",
+                    str_of(&p["name"]),
+                    str_of(&p["status"])
+                )];
+                for i in p["issues"].as_array().into_iter().flatten() {
+                    let action = i["action"]["label"]
+                        .as_str()
+                        .map(|l| format!(" [{l}]"))
+                        .unwrap_or_default();
+                    lines.push(format!(
+                        "issue {}: {}{action}",
+                        str_of(&i["level"]),
+                        str_of(&i["text"])
+                    ));
+                }
+                if let Some(s) = p["spend"].as_object() {
+                    let s = |k: &str| s.get(k).and_then(Value::as_str).unwrap_or("");
+                    lines.push(format!(
+                        "spend {} {} ({}) {}",
+                        s("amount"),
+                        s("ofBudget"),
+                        s("resets"),
+                        s("note")
+                    ));
+                }
+                if let Some(r) = p["running"].as_object() {
+                    let ms: Vec<String> = r["machines"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|m| {
+                            format!(
+                                "{} {} {}",
+                                str_of(&m["name"]),
+                                str_of(&m["by"]),
+                                str_of(&m["cost"])
+                            )
+                            .trim()
+                            .to_string()
+                        })
+                        .collect();
+                    lines.push(format!("{}: {}", str_of(&r["title"]), ms.join("; ")));
+                }
+                if let Some(t) = p["token"].as_object() {
+                    let t = |k: &str| t.get(k).and_then(Value::as_str).unwrap_or("");
+                    lines.push(format!(
+                        "token: {}; {} {}",
+                        t("lock"),
+                        t("holdersLabel"),
+                        t("holders")
+                    ));
+                }
+                for s in p["settings"].as_array().into_iter().flatten() {
+                    lines.push(format!("{}: {}", str_of(&s["label"]), str_of(&s["value"])));
+                }
+                if let Some(a) = p["switchAuth"]["label"].as_str() {
+                    lines.push(format!("[{a}]"));
+                }
+                if let Some(a) = p["approval"].as_object() {
+                    let rows: Vec<String> = a["rows"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|r| format!("{} {}", str_of(&r["label"]), str_of(&r["value"])))
+                        .collect();
+                    let a = |k: &str| a.get(k).and_then(Value::as_str).unwrap_or("");
+                    lines.push(format!(
+                        "approval: {} {} ({}) [{} / {}]",
+                        a("title"),
+                        a("intro"),
+                        rows.join("; "),
+                        a("approveLabel"),
+                        a("denyLabel")
+                    ));
+                }
+                if let Some(d) = p["disconnect"].as_object() {
+                    lines.push(format!(
+                        "{} -> {}",
+                        d.get("label").and_then(Value::as_str).unwrap_or(""),
+                        d["confirm"]["confirmLabel"].as_str().unwrap_or("")
+                    ));
+                }
+                json!(lines)
+            })
+            .collect();
+        frame["clouds"] = json!({
+            "order": v["order"],
+            "title": v["clouds"]["group"]["title"],
+            "rows": group,
+            "connect": v["clouds"]["group"]["connectLabel"],
+            "pages": pages
+        });
+    }
+    frame
+}
+
+/// The Machines page's rows (`machines.pageRows`), one line each: name,
+/// id, how it is reached, its system, online, the device in it or a
+/// device of its own, its desktop's Space, whether it stopped sharing, and
+/// the status word and Spaces count every UI shows.
+fn page_lines(rows: &Value) -> Vec<String> {
+    rows.as_array()
+        .into_iter()
+        .flatten()
+        .map(|r| {
+            let state = if r["online"].as_bool() == Some(true) {
+                "online"
+            } else {
+                "offline"
+            };
+            let mut line = format!(
+                "{} [{}] {} {} {state}",
+                str_of(&r["name"]),
+                str_of(&r["id"]),
+                str_of(&r["via"]),
+                if str_of(&r["os"]).is_empty() {
+                    "?"
+                } else {
+                    str_of(&r["os"])
+                },
+            );
+            if r["current"].as_bool() == Some(true) {
+                line.push_str(" (this machine)");
+            }
+            match (r["deviceOnly"].as_bool(), r["device"].as_str()) {
+                (Some(true), _) => line.push_str(" (a device)"),
+                (_, Some(d)) => line.push_str(&format!(" + {d}")),
+                _ => {}
+            }
+            if let Some(s) = r["spaceId"].as_str() {
+                line.push_str(&format!(" desktop {s}"));
+            }
+            if r["stoppedSharing"].as_bool() == Some(true) {
+                line.push_str(" (stopped sharing)");
+            }
+            // The words every UI shows: its status and its Spaces.
+            line.push_str(&format!(" \"{}\"", str_of(&r["status"])));
+            if !str_of(&r["spacesLabel"]).is_empty() {
+                line.push_str(&format!(" \"{}\"", str_of(&r["spacesLabel"])));
+            }
+            line
+        })
+        .collect()
+}
+
+/// `patch` laid over `base`, object by object (any other value replaces).
+fn patched(base: &Value, patch: &Value) -> Value {
+    match (base, patch) {
+        (Value::Object(b), Value::Object(p)) => {
+            let mut out = b.clone();
+            for (k, v) in p {
+                let next = match (b.get(k), v) {
+                    // A nested object a case gives whole (host, extra, plan) replaces.
+                    (Some(_), v) => v.clone(),
+                    (None, v) => v.clone(),
+                };
+                out.insert(k.clone(), next);
+            }
+            Value::Object(out)
+        }
+        (_, p) => p.clone(),
+    }
+}
+
+/// Each case's first-run screen (`firstRun.view`) as small frames: the
+/// screen's headline and lines (the agents, what signing in connects, the
+/// first request and its status, the first Space card), its buttons and the
+/// art; with Home's to-do list (`firstRun.todos`) where the case asks.
+fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for case in f["cases"].as_array().into_iter().flatten() {
+        let mut input = patched(&f["base"], &case["patch"]);
+        // A machine: its one-click offers are the wizard's for that
+        // machine's env (`wizard.firstSpaceOffers`), as the page reads them.
+        let mut offered = Value::Null;
+        if case["machine"].is_object() {
+            let m = &case["machine"];
+            let env = patched(&f["machineBase"], &m["env"]);
+            let offers = c(
+                h,
+                "wizard.firstSpaceOffers",
+                json!({ "env": env, "hostOs": m["hostOs"] }),
+            )?;
+            let list: Vec<Value> = offers
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|o| {
+                    json!({ "id": o["id"], "os": o["os"], "time": o["time"], "size": o["size"], "blocked": o["blocked"] })
+                })
+                .collect();
+            offered = json!(
+                list.iter()
+                    .map(|o| format!(
+                        "{} {} ({}; {}){}",
+                        o["id"].as_str().unwrap_or(""),
+                        o["os"].as_str().unwrap_or(""),
+                        o["size"].as_str().unwrap_or("-"),
+                        o["time"].as_str().unwrap_or(""),
+                        o["blocked"]
+                            .as_str()
+                            .map(|b| format!(" blocked: {b}"))
+                            .unwrap_or_default()
+                    ))
+                    .collect::<Vec<_>>()
+            );
+            input["offers"] = json!(list);
+            input["hostOs"] = m["hostOs"].clone();
+        }
+        let v = c(h, "firstRun.view", json!({ "input": input }))?;
+        let s = |v: &Value| v.as_str().unwrap_or("").to_string();
+        let btn = |b: &Value| {
+            if b.is_object() {
+                format!("{}:{}", s(&b["id"]), s(&b["label"]))
+            } else {
+                String::new()
+            }
+        };
+        let mut frame = json!({
+            "case": case["name"],
+            "step": v["step"],
+            "art": format!("{} {} {}", s(&v["art"]["agent"]), s(&v["art"]["computer"]), s(&v["art"]["extra"])),
+        });
+        if !offered.is_null() {
+            frame["offers"] = offered;
+        }
+        let row = |r: &Value| {
+            format!(
+                "[{}] {} — {}{}",
+                s(&r["state"]),
+                s(&r["title"]),
+                s(&r["note"]),
+                if r["action"].is_object() {
+                    format!(" ({})", btn(&r["action"]))
+                } else {
+                    String::new()
+                }
+            )
+        };
+        if v["welcome"].is_object() {
+            let k = &v["welcome"];
+            frame["welcome"] =
+                json!({ "title": k["title"], "lede": k["lede"], "primary": btn(&k["primary"]) });
+        }
+        if v["connect"].is_object() {
+            let k = &v["connect"];
+            // "Hermes (~/.hermes/config.yaml) connect:Connect", "Codex (…) [Connected]".
+            let agents: Vec<String> = k["agents"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|p| {
+                    format!(
+                        "{}{}{}{}",
+                        s(&p["name"]),
+                        if p["file"].is_string() {
+                            format!(" ({})", s(&p["file"]))
+                        } else {
+                            String::new()
+                        },
+                        if p["note"].is_string() {
+                            format!(" [{}]", s(&p["note"]))
+                        } else {
+                            String::new()
+                        },
+                        if p["action"].is_object() {
+                            format!(" {}", btn(&p["action"]))
+                        } else {
+                            String::new()
+                        },
+                    )
+                })
+                .collect();
+            let alternatives: Vec<String> = k["alternatives"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|a| {
+                    format!(
+                        "{}: {} — {}{}",
+                        s(&a["id"]),
+                        s(&a["title"]),
+                        s(&a["note"]),
+                        if a["command"].is_string() {
+                            format!(" `{}`", s(&a["command"]))
+                        } else if a["url"].is_string() {
+                            format!(" <{}>", s(&a["url"]))
+                        } else {
+                            String::new()
+                        }
+                    )
+                })
+                .collect();
+            let creds: Vec<String> = k["credentials"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|r| {
+                    format!(
+                        "{} — {}{}{}{}",
+                        s(&r["title"]),
+                        s(&r["note"]),
+                        if r["status"].is_string() {
+                            format!(" [{}]", s(&r["status"]))
+                        } else {
+                            String::new()
+                        },
+                        if r["action"].is_object() {
+                            format!(" ({})", btn(&r["action"]))
+                        } else {
+                            String::new()
+                        },
+                        if r["error"].is_string() {
+                            format!(" !{}", s(&r["error"]))
+                        } else {
+                            String::new()
+                        },
+                    )
+                })
+                .collect();
+            frame["connect"] = json!({
+                "title": k["title"],
+                "lede": k["lede"],
+                "agents": agents,
+                "alternatives": alternatives,
+                "credentials": if creds.is_empty() { Value::Null } else {
+                    json!(format!("{}: {}", s(&k["credentialsNote"]), creds.join(" / ")))
+                },
+                "primary": btn(&k["primary"]),
+                "secondary": btn(&k["secondary"]),
+                "error": k["error"],
+            });
+        }
+        if v["devices"].is_object() {
+            let k = &v["devices"];
+            let rows: Vec<String> = k["rows"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|r| format!("{} — {}", s(&r["title"]), s(&r["note"])))
+                .collect();
+            frame["devices"] = json!({
+                "title": k["title"],
+                "lede": k["lede"],
+                "rows": rows,
+                "status": if k["status"].is_object() { json!(row(&k["status"])) } else { Value::Null },
+                "primary": btn(&k["primary"]),
+                "secondary": btn(&k["secondary"]),
+                "note": k["note"],
+            });
+        }
+        if v["permissions"].is_object() {
+            let k = &v["permissions"];
+            let rows: Vec<String> = k["rows"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|r| {
+                    format!(
+                        "{}{}",
+                        row(r),
+                        if r["settingsUrl"].is_string() {
+                            format!(" <{}>", s(&r["settingsUrl"]))
+                        } else {
+                            String::new()
+                        }
+                    )
+                })
+                .collect();
+            frame["permissions"] = json!({
+                "title": k["title"],
+                "lede": k["lede"],
+                "rows": rows,
+                "note": k["note"],
+                "primary": btn(&k["primary"]),
+                "secondary": btn(&k["secondary"]),
+            });
+        }
+        if v["setup"].is_object() {
+            let k = &v["setup"];
+            let extra = if k["extra"].is_object() {
+                let x = &k["extra"];
+                let choices: Vec<String> = x["choices"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|o| {
+                        format!(
+                            "{} {}: {}{}",
+                            s(&o["id"]),
+                            s(&o["label"]),
+                            s(&o["detail"]),
+                            if o["blocked"].is_string() {
+                                format!(" (blocked: {})", s(&o["blocked"]))
+                            } else {
+                                String::new()
+                            }
+                        )
+                    })
+                    .collect();
+                json!({
+                    "phase": x["phase"],
+                    "title": x["title"],
+                    "note": x["note"],
+                    "choices": choices,
+                    "action": btn(&x["action"]),
+                    "footnote": x["footnote"],
+                })
+            } else {
+                Value::Null
+            };
+            frame["setup"] = json!({
+                "title": k["title"],
+                "lede": k["lede"],
+                "prompt": if k["prompt"].is_object() {
+                    json!(format!("{}: {} / {}", s(&k["prompt"]["heading"]), s(&k["prompt"]["text"]), s(&k["prompt"]["note"])))
+                } else { Value::Null },
+                "status": if k["status"].is_object() { json!(row(&k["status"])) } else { Value::Null },
+                "extra": extra,
+                "primary": format!("{}{}", btn(&k["primary"]), if k["primary"]["enabled"].as_bool() == Some(true) { "" } else { " (off)" }),
+            });
+        }
+        if v["cli"].is_object() {
+            let k = &v["cli"];
+            let facts: Vec<String> = k["facts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|f| format!("{}: {}", s(&f["label"]), s(&f["value"])))
+                .collect();
+            frame["cli"] = json!({
+                "title": k["title"],
+                "lede": k["lede"],
+                "facts": facts,
+                "status": k["status"],
+                "try": k["tryCommand"],
+                "error": k["error"],
+                "primary": btn(&k["primary"]),
+                "secondary": btn(&k["secondary"]),
+            });
+        }
+        if case["steps"].as_bool() == Some(true) {
+            frame["steps"] = v["steps"].clone();
+        }
+        if case["todos"].as_bool() == Some(true) {
+            let t = c(h, "firstRun.todos", json!({ "input": input }))?;
+            let items: Vec<String> = t["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|i| {
+                    format!(
+                        "[{}] {} — {}{}",
+                        if i["done"].as_bool() == Some(true) {
+                            "x"
+                        } else {
+                            " "
+                        },
+                        s(&i["title"]),
+                        s(&i["note"]),
+                        if i["action"].is_object() {
+                            format!(" ({})", btn(&i["action"]))
+                        } else {
+                            String::new()
+                        }
+                    )
+                })
+                .collect();
+            frame["todos"] = json!({ "lede": t["lede"], "progress": t["progress"], "items": items, "complete": t["complete"] });
+        }
+        frames.push(frame);
+    }
+    Ok(json!({ "flow": "first-run", "frames": frames }))
 }
 
 fn run_space_facts(f: &Value, h: &dyn Host) -> Result<Value, String> {
@@ -3594,7 +4283,8 @@ fn run_drive_storage(f: &Value, h: &dyn Host) -> Result<Value, String> {
     Ok(json!({ "flow": "drive-storage", "frames": frames }))
 }
 
-/// The menu bar item and the notch count the same Spaces: for each case
+/// The menu bar item and the notch count the same Spaces, the ones on or
+/// starting: for each case
 /// (this machine not hosting, hosting, a provider's Spaces, remote Spaces,
 /// then Cua Volume's sync states), the notch tab's count, the menu's lines
 /// and whether the two agree.
@@ -3624,7 +4314,7 @@ fn run_menu_count(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "notch.view",
             json!({ "state": notch_state, "spaces": roster }),
         )?;
-        let count = c(h, "spaces.openableCount", json!({ "spaces": roster }))?;
+        let count = c(h, "spaces.onCount", json!({ "spaces": roster }))?;
         let menu = c(
             h,
             "window.menu",
@@ -3803,7 +4493,7 @@ fn run_launch_at_login(f: &Value, h: &dyn Host) -> Result<Value, String> {
             h,
             "settings.page",
             json!({ "input": { "signIn": { "kind": "idle" }, "canSignOut": false, "menuBar": false,
-                "defaultLocation": "local", "agentsBusy": false, "agentsPending": [],
+                "agentsBusy": false, "agentsPending": [],
                 "loginItem": step["loginItem"] } }),
         )?;
         let general: Vec<Value> = v["sections"]
@@ -4069,4 +4759,396 @@ fn run_placement_picker(f: &Value, h: &dyn Host) -> Result<Value, String> {
         }));
     }
     Ok(json!({ "flow": "placement-picker", "frames": frames }))
+}
+
+// ---- The new Spaces page (CUA-2204) ----------------------------------------
+
+/// A menu, one string per item: `--- id: Label (disabled) (red) = value`.
+fn menu_lines(v: &Value) -> Value {
+    Value::Array(
+        v.as_array()
+            .into_iter()
+            .flatten()
+            .map(|i| {
+                Value::String(format!(
+                    "{}{}: {}{}{}{}",
+                    if i["separatorBefore"] == true {
+                        "--- "
+                    } else {
+                        ""
+                    },
+                    str_of(&i["id"]),
+                    str_of(&i["label"]),
+                    if i["enabled"] == false {
+                        " (disabled)"
+                    } else {
+                        ""
+                    },
+                    if i["destructive"] == true {
+                        " (red)"
+                    } else {
+                        ""
+                    },
+                    i["value"]
+                        .as_str()
+                        .map(|v| format!(" = {v}"))
+                        .unwrap_or_default()
+                ))
+            })
+            .collect(),
+    )
+}
+
+/// A Space's "…" menu for each case's facts (`spaces.menu`).
+fn run_spaces_menu(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for step in f["steps"].as_array().into_iter().flatten() {
+        let menu = c(h, "spaces.menu", step["input"].clone())?;
+        frames.push(json!({ "step": step["step"], "menu": menu_lines(&menu) }));
+    }
+    Ok(json!({ "flow": "spaces-menu", "frames": frames }))
+}
+
+/// The bulk confirm dialog as strings.
+fn bulk_frame(v: &Value) -> Value {
+    if v.is_null() {
+        return Value::Null;
+    }
+    let mut rows = vec![];
+    for g in v["groups"].as_array().into_iter().flatten() {
+        if let Some(t) = g["title"].as_str() {
+            rows.push(Value::String(format!("# {t}")));
+        }
+        for r in g["rows"].as_array().into_iter().flatten() {
+            let people: Vec<&str> = r["people"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(str_of)
+                .collect();
+            rows.push(Value::String(format!(
+                "{} ({}){}{} = {}",
+                str_of(&r["name"]),
+                str_of(&r["os"]),
+                r["status"]
+                    .as_str()
+                    .map(|s| format!(" [{s}]"))
+                    .unwrap_or_default(),
+                if people.is_empty() {
+                    String::new()
+                } else {
+                    format!(" <{}>", people.join(", "))
+                },
+                r["detail"].as_str().unwrap_or("-"),
+            )));
+        }
+    }
+    let ids = |k: &str| {
+        v[k].as_array()
+            .into_iter()
+            .flatten()
+            .map(str_of)
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    json!({
+        "title": v["title"],
+        "body": v["body"],
+        "rows": rows,
+        "frees": v["frees"].as_str().map(|f| format!("{} {f}", str_of(&v["freesLabel"]))),
+        "buttons": format!(
+            "{} / {}{}",
+            str_of(&v["cancel"]),
+            str_of(&v["button"]),
+            if v["destructive"] == true { " (red)" } else { "" }
+        ),
+        "ids": format!("delete {} / leave {}", ids("deleteIds"), ids("leaveIds")),
+    })
+}
+
+/// The bulk delete and leave dialog for each selection, the selection
+/// bar's count as each id finishes, and the done toast for the results
+/// (`spaces.bulkConfirm`, `spaces.bulkProgress`, `spaces.bulkDone`).
+fn run_bulk_confirm(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for step in f["steps"].as_array().into_iter().flatten() {
+        let items = &step["items"];
+        let view = c(h, "spaces.bulkConfirm", json!({ "items": items }))?;
+        let mut progress = vec![];
+        let mut finished: Vec<Value> = vec![];
+        for id in step["order"].as_array().into_iter().flatten() {
+            progress.push(c(
+                h,
+                "spaces.bulkProgress",
+                json!({ "items": items, "finished": finished }),
+            )?);
+            finished.push(id.clone());
+        }
+        progress.push(c(
+            h,
+            "spaces.bulkProgress",
+            json!({ "items": items, "finished": finished }),
+        )?);
+        let done = c(
+            h,
+            "spaces.bulkDone",
+            json!({ "items": items, "results": step["results"] }),
+        )?;
+        frames.push(json!({
+            "step": step["step"],
+            "confirm": bulk_frame(&view),
+            "progress": progress,
+            "done": format!("{} ({})", str_of(&done["text"]), str_of(&done["tone"])),
+        }));
+    }
+    Ok(json!({ "flow": "bulk-confirm", "frames": frames }))
+}
+
+/// A tip as strings (null: none).
+fn tip_frame(t: &Value) -> Value {
+    if t.is_null() {
+        return Value::Null;
+    }
+    let a = &t["action"];
+    json!({
+        "tip": format!("{} ({}): {}", str_of(&t["id"]), str_of(&t["place"]), str_of(&t["text"])),
+        "code": t["code"],
+        "agent": t["agent"],
+        "action": format!(
+            "{}{}{}{}",
+            str_of(&a["kind"]),
+            a["label"].as_str().filter(|l| !l.is_empty()).map(|l| format!(" [{l}]")).unwrap_or_default(),
+            a["value"].as_str().map(|v| format!(" = {v}")).unwrap_or_default(),
+            a["doneLabel"].as_str().map(|d| format!(" then {d}")).unwrap_or_default(),
+        ),
+        "buttons": [t["next"], t["dontShow"], t["close"]],
+        "openIn": t["openIn"]["label"].as_str().map(|l| format!("{l} <{}>", str_of(&t["openIn"]["url"]))),
+    })
+}
+
+/// Tips: each step may change the facts (a patch), send a tips event
+/// (`tips.reduce`) or choose a Settings row (`settings.choose`, which also
+/// redraws Settings' tips rows), then shows the tip for its place and the
+/// sidebar's.
+fn run_tips(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    let mut facts = f["facts"].clone();
+    let mut settings = c(h, "settings.defaults", json!({}))?;
+    for step in f["steps"].as_array().into_iter().flatten() {
+        if let Some(p) = step["facts"].as_object() {
+            for (k, v) in p {
+                facts[k] = v.clone();
+            }
+        }
+        if !step["event"].is_null() {
+            settings["tips"] = c(
+                h,
+                "tips.reduce",
+                json!({ "state": settings["tips"], "event": step["event"] }),
+            )?;
+        }
+        let mut general = Value::Null;
+        if let Some(row) = step["settings"]["row"].as_str() {
+            settings = c(
+                h,
+                "settings.choose",
+                json!({ "settings": settings, "row": row, "option": step["settings"]["option"] }),
+            )?;
+            let page = c(
+                h,
+                "settings.page",
+                json!({ "input": { "showTips": settings["tips"]["off"] != true } }),
+            )?;
+            general = Value::Array(
+                page["sections"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|s| s["id"] == "general")
+                    .flat_map(|s| s["rows"].as_array().cloned().unwrap_or_default())
+                    .filter(|r| r["id"] == "tips" || r["id"] == "reset-tips")
+                    .map(|r| Value::String(frame::setting_row(&r)))
+                    .collect(),
+            );
+        }
+        let place = step["place"].clone();
+        let tip = c(
+            h,
+            "tips.view",
+            json!({ "place": place, "facts": facts, "state": settings["tips"] }),
+        )?;
+        let mut side_facts = facts.clone();
+        side_facts["pageTipShown"] = Value::Bool(!tip.is_null() && place != "sidebar");
+        let sidebar = c(
+            h,
+            "tips.view",
+            json!({ "place": "sidebar", "facts": side_facts, "state": settings["tips"] }),
+        )?;
+        let done: Vec<&str> = settings["tips"]["done"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(str_of)
+            .collect();
+        frames.push(json!({
+            "step": step["step"],
+            "tip": tip_frame(&tip),
+            "sidebar": tip_frame(&sidebar),
+            "state": format!("off={} done={}", settings["tips"]["off"] == true, done.join(",")),
+            "settings": general,
+        }));
+    }
+    Ok(json!({ "flow": "tips", "frames": frames }))
+}
+
+/// The account area: the Pro banner (Free only, not closable) and the
+/// account menu.
+fn run_pro_banner(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for step in f["steps"].as_array().into_iter().flatten() {
+        let banner = c(h, "upsell.proBanner", json!({ "plan": step["plan"] }))?;
+        let menu = c(
+            h,
+            "account.menu",
+            json!({
+                "plan": step["plan"],
+                "signedIn": step["signedIn"],
+                "authMode": step["authMode"],
+            }),
+        )?;
+        frames.push(json!({
+            "step": step["step"],
+            "banner": if banner["visible"] == true {
+                format!("{} [{}]", str_of(&banner["text"]), str_of(&banner["button"]))
+            } else {
+                "hidden".to_owned()
+            },
+            "menu": menu_lines(&menu),
+        }));
+    }
+    Ok(json!({ "flow": "pro-banner", "frames": frames }))
+}
+
+/// Settings, Connectors (redesign), summoning agents and the one agent list.
+fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let line = |parts: &[&Value]| {
+        parts
+            .iter()
+            .map(|v| match v {
+                Value::Null => "-".to_string(),
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let mut frames = Vec::new();
+    let mut last = Value::Null;
+    for step in f["connectors"].as_array().into_iter().flatten() {
+        let v = c(h, "connectors.view", json!({ "input": step["input"] }))?;
+        let apps: Vec<String> = v["apps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|a| {
+                line(&[
+                    &a["agent"],
+                    &a["state"],
+                    &a["line"],
+                    &a["button"]["label"],
+                    &a["connectedLabel"],
+                ])
+            })
+            .collect();
+        let providers: Vec<String> = v["providers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|p| line(&[&p["id"], &p["state"], &p["status"], &p["button"]["label"]]))
+            .collect();
+        frames.push(json!({ "step": step["step"], "apps": apps, "providers": providers, "footer": v["providersFooter"] }));
+        last = step["input"].clone();
+    }
+    let first = &f["connectors"][0]["input"];
+    for p in f["sheets"].as_array().into_iter().flatten() {
+        let s = c(
+            h,
+            "connectors.providerSheet",
+            json!({ "input": first, "provider": p }),
+        )?;
+        let ways: Vec<String> = s["ways"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|w| line(&[&w["id"], &w["label"], &w["button"]]))
+            .collect();
+        frames.push(json!({ "sheet": p, "title": s["title"], "ways": ways, "key": line(&[&s["keyProvider"], &s["keyEnv"]]) }));
+    }
+    for a in f["plans"].as_array().into_iter().flatten() {
+        let p = c(
+            h,
+            "connectors.connectPlan",
+            json!({ "input": first, "agent": a }),
+        )?;
+        frames.push(json!({ "plan": a, "does": line(&[&p["tools"], &p["appToken"], &p["device"], &p["provider"], &p["tokenProvider"]]) }));
+    }
+    for a in f["details"].as_array().into_iter().flatten() {
+        let d = c(
+            h,
+            "connectors.appDetail",
+            json!({ "input": last, "agent": a }),
+        )?;
+        let toggles: Vec<String> = d["toggles"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|t| line(&[&t["id"], &t["label"], &t["on"]]))
+            .collect();
+        frames.push(json!({ "detail": a, "status": d["status"], "toggles": toggles, "signIn": line(&[&d["signIn"]["title"], &d["signIn"]["status"], &d["signIn"]["button"]["label"]]), "note": d["signInNote"] }));
+    }
+    let si = &f["summon"]["input"];
+    let cands = c(h, "summon.candidates", json!({ "input": si }))?;
+    let cands: Vec<String> = cands
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|x| line(&[&x["handle"], &x["label"], &x["member"], &x["detail"]]))
+        .collect();
+    frames.push(json!({ "candidates": cands }));
+    for t in f["summon"]["texts"].as_array().into_iter().flatten() {
+        let p = c(h, "summon.plan", json!({ "input": si, "text": t }))?;
+        let steps: Vec<String> = p["steps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|s| {
+                line(&[
+                    &s["handle"],
+                    &s["action"],
+                    &s["cantWake"]["text"],
+                    &s["cantWake"]["connectLabel"],
+                    &s["cantWake"]["onlyYouLabel"],
+                ])
+            })
+            .collect();
+        frames.push(json!({ "send": t, "steps": steps }));
+    }
+    let list = c(h, "agentList.view", json!({ "input": f["agentList"] }))?;
+    let rows: Vec<String> = list["rows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|r| {
+            line(&[
+                &r["kind"],
+                &r["label"],
+                &r["tone"],
+                &r["line"],
+                &r["action"]["label"],
+            ])
+        })
+        .collect();
+    frames
+        .push(json!({ "agents": rows, "summary": list["summary"], "seeAll": list["seeAllLabel"] }));
+    Ok(json!({ "flow": "connectors", "frames": frames }))
 }

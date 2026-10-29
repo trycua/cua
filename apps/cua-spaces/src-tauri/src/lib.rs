@@ -10,8 +10,7 @@
 //! Beyond the portal window, the shell hosts the cua SDK: [`core`] links
 //! `cua-spaces` in-process (the shared `~/.cua` Spaces registry, streams,
 //! files, teleport, hotspot, agents) and connects to or starts `cua daemon`
-//! (the webview media bridge for Fleet Spaces, and the process CLI / MCP
-//! clients share Spaces through). [`commands`] are thin Tauri wrappers over
+//! (the process CLI / MCP clients share Spaces through). [`commands`] are thin Tauri wrappers over
 //! it; [`viewer_windows`], [`window_drag`] and the notch stay app UI, and
 //! [`control`] lets `cua daemon mcp` ask the app to present a Space.
 
@@ -442,14 +441,12 @@ pub fn run() {
             set_display_style,
             open_external,
             sf_symbol::sf_symbol,
-            commands::fleet_status,
+            commands::account_status,
             commands::begin_sign_in,
             commands::sign_out,
             commands::daemon_status,
             commands::ensure_daemon,
             commands::local_status,
-            commands::cloud_pricing,
-            commands::billing_status,
             commands::host_arch,
             commands::list_spaces,
             commands::space_info,
@@ -463,7 +460,6 @@ pub fn run() {
             commands::get_default_location,
             commands::set_default_location,
             commands::remove_space,
-            commands::keep_alive_space,
             commands::space_screenshot,
             commands::send_files_to_space,
             commands::list_remote_windows,
@@ -554,6 +550,8 @@ pub fn run() {
             commands::share_space,
             commands::cloud_tool,
             commands::unshare_space,
+            commands::share_removals,
+            commands::ack_share_removals,
             commands::agents_tool,
             commands::drive_reveal,
             tray::tray_set_menu,
@@ -571,11 +569,14 @@ pub fn run() {
             keyvault::keyvault_approve,
             keyvault::keyvault_deny,
             telemetry::telemetry_status,
+            telemetry::telemetry_link_notice,
+            telemetry::telemetry_acknowledge_link_notice,
             telemetry::telemetry_set_enabled,
             telemetry::telemetry_acknowledge_notice,
             telemetry::telemetry_record_feature,
             telemetry::telemetry_record_step,
             telemetry::telemetry_record_signals,
+            telemetry::telemetry_set_ui_locale,
             telemetry::telemetry_welcome_left,
             telemetry::telemetry_record_stream,
             webview_data::ui_storage_set,
@@ -587,6 +588,13 @@ pub fn run() {
         ])
         .setup(move |app| {
             let accessory_activation = false;
+
+            // Links usage data to the signed-in account when the Spaces API
+            // offers it (CUA-1881). Best effort, off the startup path.
+            {
+                let core = core.clone();
+                tauri::async_runtime::spawn(async move { core.sync_usage_link().await });
+            }
 
             // Webview data stays in the app's data directory (webview_data):
             // the page's settings file, then the tauri.conf.json windows
@@ -663,8 +671,7 @@ pub fn run() {
             control::spawn(app.handle().clone(), core.clone());
 
             // Connect to (or start) `cua daemon` in the background, so CLI and
-            // MCP clients share Spaces with the app and Fleet streams have
-            // their media bridge. Failure only disables Fleet streaming.
+            // MCP clients share Spaces with the app. A failure is only logged.
             {
                 let core = core.clone();
                 tauri::async_runtime::spawn(async move {

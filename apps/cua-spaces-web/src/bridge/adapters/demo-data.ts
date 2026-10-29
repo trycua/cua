@@ -24,7 +24,10 @@ export const DEMO_MACHINES: MachineRow[] = [
     online: true,
     os: "macos",
     model: "Mac mini",
-    limits: [{ resource: "macos-vms", used: 1, limit: 2, reason: "macOS runs at most two VMs per Mac." }],
+    limits: [
+      { resource: "spaces", used: 1, limit: 4, reason: "This machine's limit." },
+      { resource: "macos-vms", used: 1, limit: 2, reason: "macOS runs at most two VMs per Mac." },
+    ],
   },
   { id: "linux-box", name: "Linux box", via: "relay", online: true, os: "linux", model: "ThinkCentre M90q", limits: [] },
   {
@@ -78,6 +81,15 @@ export function demoSpaceRows(now: number): SpaceRow[] {
       reachable: true,
       power: "suspend",
       powerState: "running",
+      // Yours, shared with Sam and Priya (who edit) and three more who watch.
+      sharing: {
+        ownerId: "acct-ada",
+        ownerEmail: "ada@example.com",
+        ownerName: "Ada Park",
+        role: "owner",
+        editors: ["sam@example.com", "priya@example.com"],
+        viewers: ["alex@example.com", "jordan@example.com", "morgan@example.com"],
+      },
     },
     {
       id: "local:agent-sandbox",
@@ -172,6 +184,65 @@ export function demoSpaceRows(now: number): SpaceRow[] {
       power: "suspend",
       powerState: "suspended",
     },
+    // Shared with you by Sam on his Mac mini: you can use it.
+    {
+      id: "relay:space-sam-qa-shared",
+      name: "qa-shared",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 600),
+      os: "macos",
+      osName: "macOS",
+      osPrettyName: "macOS Tahoe 26.0",
+      image: "macos-tahoe",
+      kind: "vm",
+      arch: "arm64",
+      reachable: true,
+      hostName: "Mac mini",
+      power: "stop",
+      powerState: "running",
+      sharing: { ownerId: "acct-sam", ownerEmail: "sam@example.com", ownerName: "Sam Rivera", role: "editor" },
+    },
+    // Shared with you by Priya on her PC: you can watch it.
+    {
+      id: "relay:space-priya-checkout",
+      name: "checkout-flow",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 2880),
+      os: "windows",
+      osName: "Windows",
+      osPrettyName: "Windows 11 Pro 24H2",
+      image: "windows-11",
+      kind: "vm",
+      arch: "amd64",
+      reachable: false,
+      hostName: "PC",
+      power: "stop",
+      powerState: "stopped",
+      sharing: { ownerId: "acct-priya", ownerEmail: "priya@example.com", ownerName: "Priya Shah", role: "viewer" },
+    },
+    // The QA team's Space (Sam made it; the team can use it).
+    {
+      id: "relay:space-qa-regression",
+      name: "qa-regression",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 180),
+      os: "linux",
+      osName: "Ubuntu",
+      osPrettyName: "Ubuntu 24.04.3 LTS",
+      image: "ubuntu-xfce",
+      kind: "container",
+      arch: "amd64",
+      reachable: true,
+      power: "stop",
+      powerState: "running",
+      sharing: { ownerId: "acct-sam", ownerEmail: "sam@example.com", ownerName: "Sam Rivera", role: "editor", team: "org-qa", teamName: "QA team" },
+    },
   ];
 }
 
@@ -181,6 +252,8 @@ export function demoHostStatus(now = Date.now(), firstRun = false): HostStatus {
   if (firstRun) {
     return {
       configured: false,
+      // What the system calls this computer: the setup form starts with it.
+      name: "Ada’s MacBook Pro",
       sharing: false,
       service: { installed: false, running: false, kind: "launchd" },
       clients: [],
@@ -217,6 +290,17 @@ export function demoHostStatus(now = Date.now(), firstRun = false): HostStatus {
     provideSpaces: true,
     maxSpaces: 4,
     maxMacosVms: 2,
+    maxMemoryGb: 0,
+    maxDiskGb: 0,
+    maxRunMinutes: 0,
+    usedMemoryGb: 8,
+    usedDiskGb: 32,
+    totalMemoryGb: 32,
+    totalDiskGb: 994,
+    providedSpaces: [
+      { relayMachine: "space-build-1", localSpace: "local:build-1", name: "build-1", image: "ghcr.io/trycua/linux", os: "linux", kind: "container", createdBy: "Mac mini", createdAtMs: now - 40 * 60_000 },
+      { relayMachine: "space-build-2", localSpace: "local:build-2", name: "build-2", image: "ghcr.io/trycua/linux", os: "linux", kind: "container", createdBy: "Linux box", createdAtMs: now - 12 * 60_000 },
+    ],
     recentAccess: [
       { atMs: now - 4 * 60_000, via: "relay", who: DEMO_IDENTITY, what: "DesktopService" },
       { atMs: now - 52 * 60_000, via: "relay", who: DEMO_IDENTITY, what: "MCP" },
@@ -230,7 +314,7 @@ export function demoTelemetry(enabled: boolean): TelemetryView {
     source: "config ~/.cua/config.toml",
     sourceKind: "config",
     noticeShown: true,
-    noticeText: "Cua sends anonymous usage data to improve the app. No content, names or addresses.",
+    noticeText: "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen.",
     docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
   };
 }

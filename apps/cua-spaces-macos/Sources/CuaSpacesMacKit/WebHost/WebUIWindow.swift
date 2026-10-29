@@ -6,10 +6,11 @@ import CuaSpacesFFI
 import SwiftUI
 import WebKit
 
-/// New UI (preview): the shared React UI (`apps/cua-spaces-web`) in a window
-/// of its own, behind the `web_ui` experiment. The notch, the menu bar extra,
-/// Touch ID and video stay native; a Space's desktop opens in its native
-/// window.
+/// The app's main window: the shared React UI (`apps/cua-spaces-web`) in a
+/// `WKWebView`. It is the only main window; the Swift shell around it keeps
+/// what has to be native: the notch, the menu bar extra, permission prompts,
+/// Touch ID, the Keychain, the updater and video (a Space's desktop opens in
+/// its native window).
 ///
 /// - Release: the bundled build (`Contents/Resources/WebUI`) at
 ///   `cua-spaces://app/` through `WebUISchemeHandler`.
@@ -23,8 +24,8 @@ import WebKit
 public final class WebUIWindowController: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     /// The open window, if any (one per app).
     public private(set) static var shared: WebUIWindowController?
-    /// What the scenes let the bridge do (open a Space's window, the main
-    /// window, Settings); set by whichever SwiftUI view saw them last.
+    /// What the scenes let the bridge do (open a Space's window); set by
+    /// whichever SwiftUI view saw them last.
     public static var actions: WebUIActions? {
         didSet { shared?.bridge.actions = actions }
     }
@@ -32,6 +33,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     /// The traffic lights' width plus a gap, for `--titlebar-left-inset`.
     static let fallbackLeftInset: CGFloat = 78
     static let titlebarHeight: CGFloat = 48
+    static let windowIdentifier = NSUserInterfaceItemIdentifier("cua-new-ui")
     /// Where the window's frame is saved (the defaults' `NSWindow Frame <name>`).
     static let frameName = "CuaSpacesWebUI"
     static let devServer = URL(string: "http://localhost:5174/")!
@@ -43,8 +45,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         return devServer
     }
 
-    /// Opens the window, or brings it forward; at `frame` when given (the
-    /// native main window's, which it replaces).
+    /// Opens the window, or brings it forward; at `frame` when given.
     public static func show(model: AppModel, frame: NSRect? = nil) {
         show(model: model, frame: frame, startRoute: nil)
     }
@@ -67,35 +68,22 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     /// Opens the window (or brings it forward) at `route`. A drop on a
     /// notch tile is kept for the page, which asks for it by name
     /// (`spaces.droppedFiles`).
-    public static func show(model: AppModel, at route: MainUIRoute) {
+    public static func show(model: AppModel, at route: MainUIRoute, frame: NSRect? = nil) {
         notchDrop = route.dropped
         guard shared != nil else {
             // A new window loads the page there: a route asked for while it
             // starts could reach it before its router listens, and be lost.
-            show(model: model, frame: nil, startRoute: route.webPath)
+            show(model: model, frame: frame, startRoute: route.webPath)
             return
         }
-        show(model: model)
+        show(model: model, frame: frame)
         shared?.bridge.requestRoute(route.webPath)
     }
 
     /// The apps and files last dropped on a notch tile, until the page takes them.
     static var notchDrop: [URL] = []
 
-    /// Closes the New UI window, if open (its experiment was turned off),
-    /// and shows the native main window in its place, at its frame.
-    public static func closeShared() {
-        guard let c = shared else { return }
-        let main = c.bridge.actions?.openMain ?? actions?.openMain
-        // After the bridge answered the page's switch.
-        DispatchQueue.main.async {
-            let frame = c.window?.isVisible == true ? c.window?.frame : nil
-            c.window?.close()
-            MainWindowSwitch.switchToNative(webFrame: frame, openMain: main)
-        }
-    }
-
-    /// New Space in the New UI window: opens it (or brings it forward) and
+    /// New Space in the web UI window: opens it (or brings it forward) and
     /// asks the page for its wizard ("Run on" set to `on` when given).
     @discardableResult
     public static func showNewSpace(model: AppModel, on: String?) -> Bool {
@@ -154,10 +142,12 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
             videoSurfaces = nil
         }
 
-        let window = WebUIAppWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.title = "Cua Spaces"
+        // What the UI tests find this window by (the native one has none).
+        window.identifier = Self.windowIdentifier
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
@@ -168,6 +158,8 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         // Where it was last (size and place), else centred.
         if !window.setFrameUsingName(Self.frameName) { window.center() }
         window.setFrameAutosaveName(Self.frameName)
+        // An offscreen run (`OffscreenRun`): invisible, though it paints.
+        OffscreenRun.hide(window)
         super.init(window: window)
         window.delegate = self
         webView.navigationDelegate = self
@@ -201,6 +193,8 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
             shown = true
             applyInset()
         }
+        // Offscreen: in (so the page paints for `takeSnapshot`), never key, never active.
+        if OffscreenRun.isOn { return window.orderFrontRegardless() }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }
@@ -263,7 +257,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
                         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { return decisionHandler(.cancel) }
         if isAppURL(url) || url.scheme == "about" { return decisionHandler(.allow) }
-        if action.navigationType == .linkActivated, ["http", "https", "mailto"].contains(url.scheme ?? "") {
+        if action.navigationType == .linkActivated, Self.opensOutside(url) {
             NSWorkspace.shared.open(url)
         }
         decisionHandler(.cancel)
@@ -271,10 +265,17 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
 
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme ?? "") {
+        if let url = action.request.url, Self.opensOutside(url) {
             NSWorkspace.shared.open(url)
         }
         return nil
+    }
+
+    /// What the page may hand to the system (`window.open`, a link): web
+    /// pages and mail, and System Settings' panes (`x-apple.systempreferences:`,
+    /// as Electron's `openExternal` allows).
+    static func opensOutside(_ url: URL) -> Bool {
+        ["http", "https", "mailto", "x-apple.systempreferences"].contains(url.scheme ?? "")
     }
 
     func isAppURL(_ url: URL) -> Bool {
@@ -476,86 +477,16 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     }
 }
 
-// MARK: - Settings: ⌘, goes where the user is
-
-/// Which window is in front, as far as the Settings command goes.
-enum SettingsFrontWindow: Equatable {
-    /// The New UI window, or a sheet on it.
-    case webUI
-    /// Any other window of the app.
-    case other
-    /// None (the app is in the background, or only a utility panel is key).
-    case none
-}
-
-/// Where the Settings command (⌘, in the app menu) goes.
-enum SettingsRoute: Equatable {
-    /// The New UI page's own Settings.
-    case web
-    /// The SwiftUI Settings scene (the classic UI).
-    case native
-}
+// MARK: - Settings
 
 extension WebUIWindowController {
-    /// The New UI window's Settings when it is the key window, whether or
-    /// not its web view has focus; the native scene when another window is
-    /// key. With no key window (the app is in the background, a dialog of
-    /// another app has focus) the frontmost window of the app decides.
-    static func settingsRoute(key: SettingsFrontWindow, frontmost: SettingsFrontWindow) -> SettingsRoute {
-        switch key {
-        case .webUI: return .web
-        case .other: return .native
-        case .none: return frontmost == .webUI ? .web : .native
-        }
-    }
-
-    /// `window` as the Settings command sees it: this window (or a sheet on
-    /// it), another window of the app, or none when it is a utility panel
-    /// that can't be the main window (the notch).
-    static func settingsFront(_ window: NSWindow?, webUI: NSWindow?) -> SettingsFrontWindow {
-        guard let window else { return .none }
-        if let parent = window.sheetParent { return parent === webUI ? .webUI : .other }
-        if window === webUI { return .webUI }
-        return window.canBecomeMain ? .other : .none
-    }
-
-    /// The decision over real windows: `key` is the key window (nil: none),
-    /// `frontmost` the frontmost one (`frontmostWindow`).
-    static func settingsRoute(webUI: NSWindow?, key: NSWindow?, frontmost: NSWindow?) -> SettingsRoute {
-        guard let webUI else { return .native }
-        return settingsRoute(key: settingsFront(key, webUI: webUI), frontmost: settingsFront(frontmost, webUI: webUI))
-    }
-
-    /// The frontmost visible window that can be the main one, from the app's
-    /// windows ordered front to back.
-    static func frontmostWindow(in ordered: [NSWindow], webUI: NSWindow?, visible: (NSWindow) -> Bool = { $0.isVisible }) -> NSWindow? {
-        ordered.first { visible($0) && ($0 === webUI || $0.canBecomeMain) }
-    }
-
-    /// The Settings command: the page's Settings when the New UI window is
-    /// in front, else `native` (the classic UI's Settings scene).
-    static func openSettings(native: () -> Void) {
-        guard let c = shared, let window = c.window, window.isVisible,
-              settingsRoute(webUI: window, key: NSApp.keyWindow,
-                            frontmost: frontmostWindow(in: NSApp.orderedWindows, webUI: window)) == .web
-        else { return native() }
-        c.bridge.requestSettings()
-    }
-}
-
-/// The New UI window. The app menu's "Settings…" (⌘,) is the `Settings`
-/// scene's own item, which sends `showSettingsWindow:` down the responder
-/// chain; while this window is key it answers first and opens the page's
-/// Settings, else the native scene gets it. One menu item, no
-/// `CommandGroup(replacing: .appSettings)` (that left the scene's item next
-/// to its own: two "Settings…").
-final class WebUIAppWindow: NSWindow {
-    static let settingsAction = Selector(("showSettingsWindow:"))
-
-    @objc func showSettingsWindow(_ sender: Any?) {
-        WebUIWindowController.openSettings(native: {
-            _ = NSApp.tryToPerform(Self.settingsAction, with: sender)
-        })
+    /// The page's Settings: an open window goes there (`settings.openRequested`),
+    /// else the window opens at `route` (`/settings`, or one tab).
+    static func openSettings(model: AppModel, at route: MainUIRoute = .settings) {
+        NSApp.activate()
+        guard route == .settings, shared != nil else { return show(model: model, at: route) }
+        show(model: model)
+        shared?.bridge.requestSettings()
     }
 }
 
@@ -565,6 +496,12 @@ final class WebUIAppWindow: NSWindow {
 final class WebUIWebView: WKWebView {
     var dragRegions: [CGRect]?
     var titlebarLeftInset: CGFloat = WebUIWindowController.fallbackLeftInset
+
+    /// The first click on a window that is not frontmost (System Settings is,
+    /// or the app was reopened behind it) must reach the page. WKWebView
+    /// refuses it by default, so "Allow" on the permissions step only brought
+    /// the window forward and opened nothing (CUA-2342).
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
         guard let window, isDragPoint(event) else { return super.mouseDown(with: event) }
@@ -601,8 +538,6 @@ extension NSColor {
 extension WebUIActions {
     /// The scenes' window actions for the bridge.
     static func make(openWindow: OpenWindowAction) -> WebUIActions {
-        WebUIActions(
-            openSpace: { id in NSApp.activate(); openWindow(id: "space", value: id) },
-            openMain: { NSApp.activate(); openWindow(id: "main") })
+        WebUIActions(openSpace: { id in NSApp.activate(); openWindow(id: "space", value: id) })
     }
 }

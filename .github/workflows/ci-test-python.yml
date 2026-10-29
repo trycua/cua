@@ -12,6 +12,18 @@ on:
       # cua-test-fixtures links a real driver core.
       - "libs/cua-spacesd/tests/spaces-e2e/**"
       - ".github/workflows/ci-test-python.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/python/**"
+      # cua-sandbox is a thin wrapper over the cua SDK: SDK changes can break it.
+      - "libs/cua/crates/**"
+      - "libs/cua/python/**"
+      - "libs/cua/proto/**"
+      - "libs/cua/Cargo.*"
+      # cua-test-fixtures links a real driver core.
+      - "libs/cua-spacesd/tests/spaces-e2e/**"
+      - ".github/workflows/ci-test-python.yml"
   workflow_dispatch: # Allow manual trigger
 
 permissions:
@@ -21,13 +33,23 @@ env:
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_TIMEOUT: "120"
   CARGO_HTTP_MULTIPLEXING: "false"
+  # CI checks behavior, not speed: a cheaper release profile compiles about a
+  # quarter faster and the dev profile drops debug info (the line-table
+  # test binaries filled the runner's disk). Release builds in cd-*.yml keep
+  # the shipped profile.
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_LTO: "off"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Test ${{ matrix.package }}
     runs-on: ubuntu-latest
 
@@ -38,6 +60,7 @@ jobs:
           - core
           - agent
           - som
+          - cua-e2b
 
     steps:
       - name: Checkout code
@@ -93,10 +116,11 @@ jobs:
         continue-on-error: true
 
   cua-sandbox:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     # cua-sandbox drives sandboxes through the cua SDK (UniFFI over cua-sdk),
     # so the native library and the MockServer fixture are built first. The
     # hermetic suite never touches the host or a cloud;
-    # the live runtime/Fleet suites are excluded (they are gated separately).
+    # the live runtime suites are excluded (they are gated separately).
     name: Test cua-sandbox (hermetic, on the cua SDK)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -115,7 +139,7 @@ jobs:
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
 
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-sandbox
@@ -142,7 +166,6 @@ jobs:
           --ignore=tests/live
           --ignore=tests/test_runtime.py
           --ignore=tests/test_snapshots.py
-          --ignore=tests/test_windows_cloud.py
           --ignore=tests/test_windows_timing.py
           --deselect tests/test_oci.py::TestLiveRegistry
 

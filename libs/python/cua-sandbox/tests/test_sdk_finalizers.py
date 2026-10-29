@@ -24,7 +24,7 @@ import cua_sandbox._sdk as sdk
 runtime = sdk.runtime(state_dir=sys.argv[1])
 runtime.sandboxes()
 # The pattern of a real program: a handle in a library module's globals.
-sdk._test_extra_handle = sdk.sdk().embedded(state_dir=sys.argv[1], fleet_from_env=False)
+sdk._test_extra_handle = sdk.sdk().embedded(state_dir=sys.argv[1])
 print("ok")
 """
 
@@ -46,11 +46,8 @@ def test_sdk_handles_alive_at_exit_print_nothing(tmp_path):
         "HOME": str(home),
         "CUA_HOME": str(home / ".cua"),
         "CUA_CREDENTIAL_STORE": "file",
-        "CUA_FLEET_SESSION": "0",
         "CUA_TELEMETRY_ENABLED": "false",
     }
-    for var in ("FLEETS_TOKEN", "CUA_CLIENT_ID", "CUA_CLIENT_SECRET"):
-        env.pop(var, None)
     result = subprocess.run(
         [sys.executable, "-c", SCRIPT, str(tmp_path / "state")],
         env=env,

@@ -7,6 +7,7 @@
 // locked off, drops every signal here.
 import type { Native } from "../native/load";
 import type { AppTelemetrySignal } from "../native/generated/index";
+import { crashReportingAnswer } from "../crash-reporting";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 
@@ -52,8 +53,12 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
       const [location, guestOs, kind, outcome, failedPhase] = [word("location"), word("guestOs"), word("kind"), word("outcome"), word("failedPhase")];
       const [stalled, gpu, elapsedMs] = [flag("stalled"), flag("gpu"), ms("elapsedMs")];
       const errorVariant = typeof s.errorVariant === "string" && VARIANT.test(s.errorVariant) ? s.errorVariant : null;
+      // A retried create's final outcome; a page from before them sends neither.
+      const retryAttempt = s.retryAttempt === undefined ? 0 : s.retryAttempt === 0 || s.retryAttempt === 1 ? s.retryAttempt : null;
+      const errorSubclass = s.errorSubclass === undefined ? "none" : word("errorSubclass");
       if (!location || !guestOs || !kind || !outcome || !failedPhase || stalled === null || gpu === null || elapsedMs === null || errorVariant === null) return null;
-      return new S.SpaceCreate({ location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant });
+      if (retryAttempt === null || !errorSubclass) return null;
+      return new S.SpaceCreate({ location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant, retryAttempt, errorSubclass });
     }
     case "space-create-started": {
       const [location, guestOs, kind, gpu] = [word("location"), word("guestOs"), word("kind"), flag("gpu")];
@@ -65,7 +70,10 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
     }
     case "share": {
       const [action, role, outcome] = [word("action"), word("role"), word("outcome")];
-      return action && role && outcome ? new S.Share({ action, role, outcome }) : null;
+      // Why and where a share failed (CUA-1855); a page from before them sends neither.
+      const errorKind = s.errorKind === undefined ? "none" : word("errorKind");
+      const failedStage = s.failedStage === undefined ? "none" : word("failedStage");
+      return action && role && outcome && errorKind && failedStage ? new S.Share({ action, role, outcome, errorKind, failedStage }) : null;
     }
     case "app-update": {
       const [action, channel, trigger] = [word("action"), word("channel"), word("trigger")];
@@ -85,6 +93,13 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
       if (!list.every((w) => typeof w === "string" && WORD.test(w))) return null;
       return new S.ExperimentsOn({ experiments: list as string[] });
     }
+    // A plan limit shown, or its (or an upgrade prompt's) link opened (CUA-1881).
+    case "plan-limit-shown":
+    case "upgrade-link-opened": {
+      const [surface, kind, plan] = [word("surface"), word("kind"), word("plan")];
+      if (!surface || !kind || !plan) return null;
+      return s.type === "plan-limit-shown" ? new S.PlanLimitShown({ surface, kind, plan }) : new S.UpgradeLinkOpened({ surface, kind, plan });
+    }
     default:
       return null;
   }
@@ -97,8 +112,9 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
  * The page's store derives the same signals from its own copy of the
  * creates, so recording both counted every create twice on Windows and
  * Linux (`cua_space_create`, `cua_space_create_started`,
- * `space_create_local`, `first_space_created`, `first_space_ready`). The
- * SwiftUI host records only the page's.
+ * `space_create_local`, `first_space_created`, `first_space_ready`). A
+ * page that knows its host runs creates no longer sends them
+ * (`HOST_RUNS_CREATES`); this keeps an older page from counting twice.
  */
 export function hostRecorded(raw: unknown): boolean {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
@@ -122,7 +138,8 @@ export function hostRecorded(raw: unknown): boolean {
 export function leftWelcome(raw: unknown): boolean {
   if (!raw || typeof raw !== "object") return false;
   const s = raw as Record<string, unknown>;
-  if (s.type === "onboarding-page") return !(s.page === "welcome" && s.action === "shown");
+  // Welcome being shown (the old `shown`, the funnel's `step_viewed`) is before the notice.
+  if (s.type === "onboarding-page") return !(s.page === "welcome" && (s.action === "shown" || s.action === "step_viewed"));
   return s.type === "step" && s.step === "onboarding_skipped";
 }
 
@@ -140,6 +157,18 @@ export function telemetryMethods({ model }: BridgeContext): Handlers {
       // Held until the notice was shown; leaving Welcome sends them in order.
       if (kept.length) telemetry.record(kept.map((k) => k.signal));
       if (kept.some((k) => leftWelcome(k.raw))) telemetry.acknowledgeNotice();
+      return null;
+    },
+    // The one-time linking notice (CUA-1881): the SDK's words and whether
+    // it is due. No telemetry (a test host) has none.
+    // The page's own crash reports (apps/cua-spaces-web/src/crash-reporting): allowed only while usage data is on and its notice shown.
+    "crashReporting.config": () => {
+      const status = model.telemetry?.status();
+      return crashReportingAnswer(status?.enabled === true && status.noticeShown !== false);
+    },
+    "telemetry.linkNotice": () => model.telemetry?.linkNotice() ?? null,
+    "telemetry.acknowledgeLinkNotice": () => {
+      model.telemetry?.acknowledgeLinkNotice();
       return null;
     },
   };

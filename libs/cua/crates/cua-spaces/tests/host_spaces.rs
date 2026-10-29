@@ -42,6 +42,14 @@ struct FakeRuntime {
     /// The download stops at this step of 30 with this error (Lume's pull
     /// failed, or Lume died under it).
     pull_stops: Mutex<Option<(u64, String)>>,
+    /// The download stops only once this turns true (the caller has seen it
+    /// running), so a test waits on what the client saw, not on timing.
+    pull_stop_when: Mutex<Option<tokio::sync::watch::Receiver<bool>>>,
+    /// Egress policies the runtime enforces, by instance (`set_egress`,
+    /// and a start's spec).
+    egress: Mutex<BTreeMap<String, cua_vmm::egress::EgressPolicy>>,
+    /// Checkpoints taken.
+    checkpoints: Mutex<std::collections::BTreeSet<String>>,
 }
 
 #[async_trait]
@@ -57,8 +65,18 @@ impl LocalRuntime for FakeRuntime {
         if let Some(total) = pull {
             use cua_sandbox_core::progress::{Phase, Progress, Transfer, report};
             let stops = self.pull_stops.lock().unwrap().clone();
+            let stop_when = self.pull_stop_when.lock().unwrap().clone();
             for i in 0..=30u64 {
                 if let Some((_, e)) = stops.as_ref().filter(|(at, _)| *at == i) {
+                    if let Some(mut seen) = stop_when {
+                        // Bounded: a client that never sees the download
+                        // fails the test's own assertion, not a hang.
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(60),
+                            seen.wait_for(|s| *s),
+                        )
+                        .await;
+                    }
                     return Err(RuntimeError::Other(e.clone()));
                 }
                 let done = total * i / 30;
@@ -80,6 +98,12 @@ impl LocalRuntime for FakeRuntime {
             tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
         }
         self.started.lock().unwrap().push(spec.clone());
+        if !spec.egress.is_empty() {
+            self.egress
+                .lock()
+                .unwrap()
+                .insert(spec.name.clone(), spec.egress.clone());
+        }
         self.running.lock().unwrap().insert(spec.name.clone(), true);
         if self.hang.load(std::sync::atomic::Ordering::SeqCst) {
             std::future::pending::<()>().await;
@@ -94,6 +118,26 @@ impl LocalRuntime for FakeRuntime {
     async fn stop(&self, name: &str) -> Result<(), RuntimeError> {
         self.running.lock().unwrap().insert(name.into(), false);
         Ok(())
+    }
+    async fn set_egress(
+        &self,
+        name: &str,
+        policy: &cua_vmm::egress::EgressPolicy,
+    ) -> Result<cua_vmm::egress::Enforcement, RuntimeError> {
+        self.egress
+            .lock()
+            .unwrap()
+            .insert(name.into(), policy.clone());
+        Ok(cua_vmm::egress::Enforcement::Host)
+    }
+    async fn egress(&self, name: &str) -> Result<cua_vmm::egress::EgressPolicy, RuntimeError> {
+        Ok(self
+            .egress
+            .lock()
+            .unwrap()
+            .get(name)
+            .cloned()
+            .unwrap_or_default())
     }
     /// Pauses in memory, as a container does.
     async fn suspend(&self, name: &str) -> Result<(), RuntimeError> {
@@ -112,6 +156,20 @@ impl LocalRuntime for FakeRuntime {
             status: InstanceStatus::Running,
             endpoints: self.endpoints(name).await?,
         })
+    }
+    async fn checkpoint(&self, name: &str, checkpoint: &str) -> Result<(), RuntimeError> {
+        if !self.running.lock().unwrap().contains_key(name) {
+            return Err(RuntimeError::NotFound(name.into()));
+        }
+        self.checkpoints.lock().unwrap().insert(checkpoint.into());
+        Ok(())
+    }
+    async fn delete_checkpoint(&self, _rt: &str, checkpoint: &str) -> Result<(), RuntimeError> {
+        if self.checkpoints.lock().unwrap().remove(checkpoint) {
+            Ok(())
+        } else {
+            Err(RuntimeError::NotFound(checkpoint.into()))
+        }
     }
     async fn list(&self) -> Result<Vec<LocalSummary>, RuntimeError> {
         Ok(vec![])
@@ -160,6 +218,11 @@ async fn fixture(profile: HostProfile) -> Fixture {
     let driver = dir.path().join("cua-spacesd");
     std::fs::write(&driver, b"#!/bin/sh\n").unwrap();
     let mut opts = SetupOptions::relay(&relay.url).profile(profile);
+    if profile == HostProfile::Desktop {
+        // A desktop that does not provide Spaces (`--no-provide-spaces`;
+        // a new setup provides them by default).
+        opts.provide_spaces = Some(false);
+    }
     opts.name = Some("Mac mini (spare)".into());
     opts.driver_bin = Some(driver);
     Host::new(&home)
@@ -206,7 +269,10 @@ async fn runtime_fixture(
         hang: Default::default(),
         fail: Mutex::default(),
         pull_stops: Mutex::default(),
+        pull_stop_when: Mutex::default(),
         pull_bytes: Mutex::default(),
+        egress: Mutex::default(),
+        checkpoints: Mutex::default(),
     });
     let spaces = Spaces::builder()
         .home(&home)
@@ -522,6 +588,26 @@ async fn limits_two_macos_vms_per_mac_and_the_hosts_own() {
         ..Default::default()
     };
     provided::save_provided(&f.host_dir(), &[running(1), running(2)]).unwrap();
+    // Their sandboxes exist (a provided Space whose sandbox is gone is
+    // forgotten when the host reports its status).
+    for n in [1, 2] {
+        f.rt.running
+            .lock()
+            .unwrap()
+            .insert(format!("mac-{n}"), true);
+        f.spaces
+            .sandboxes()
+            .state()
+            .save(&cua_sandbox_core::SandboxState::Local(
+                cua_sandbox_core::LocalState {
+                    name: format!("mac-{n}"),
+                    runtime_type: "fake".into(),
+                    status: "running".into(),
+                    ..Default::default()
+                },
+            ))
+            .unwrap();
+    }
     let e = f
         .create(
             &ada(),
@@ -563,6 +649,251 @@ async fn limits_two_macos_vms_per_mac_and_the_hosts_own() {
         .unwrap_err();
     assert_eq!(e.tag(), "limit_exceeded", "{e}");
     assert!(e.to_string().contains("--max-spaces"), "{e}");
+}
+
+/// A provided Space of `memory_mb` and `disk_gb` that exists on the host.
+fn provided_of(f: &Fixture, n: u32, memory_mb: u64, disk_gb: u32) -> ProvidedSpace {
+    f.rt.running
+        .lock()
+        .unwrap()
+        .insert(format!("limit-{n}"), true);
+    f.spaces
+        .sandboxes()
+        .state()
+        .save(&cua_sandbox_core::SandboxState::Local(
+            cua_sandbox_core::LocalState {
+                name: format!("limit-{n}"),
+                runtime_type: "fake".into(),
+                status: "running".into(),
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+    ProvidedSpace {
+        relay_machine: format!("space-limit0000{n}"),
+        local_space: format!("local:limit-{n}"),
+        image: "linux".into(),
+        os: "linux".into(),
+        created_by_account: "ada".into(),
+        memory_mb,
+        disk_gb,
+        ..Default::default()
+    }
+}
+
+async fn ask_bob(
+    f: &Fixture,
+    memory_mb: u64,
+    disk_gb: u32,
+    attach: pb::AttachRelayRequest,
+) -> cua_spaces::Result<pb::HostSpace> {
+    f.server
+        .create(
+            &bob(),
+            pb::CreateHostSpaceRequest {
+                image: "linux".into(),
+                memory_mb,
+                disk_gb,
+                attach: Some(attach),
+                ..Default::default()
+            },
+        )
+        .await
+}
+
+async fn configure(f: &Fixture, change: HostSettingsChange) {
+    Host::new(&f.home)
+        .with_service_manager(Arc::new(FakeServiceManager::default()))
+        .configure(change)
+        .await
+        .unwrap();
+}
+
+/// The owner's limits on the Spaces other machines create here: memory and
+/// disk in total. A create past one is refused for any requester with "has
+/// no room for another Space"; a limit lowered below what runs stops
+/// nothing (it only refuses new ones); the use is reported live.
+#[tokio::test]
+async fn memory_and_disk_limits_refuse_what_does_not_fit_and_stop_nothing() {
+    let f = fixture(HostProfile::Spare).await;
+    provided::save_provided(&f.host_dir(), &[provided_of(&f, 1, 6144, 40)]).unwrap();
+    configure(
+        &f,
+        HostSettingsChange {
+            max_spaces: Some(0),
+            max_memory_gb: Some(8),
+            max_disk_gb: Some(100),
+            ..Default::default()
+        },
+    )
+    .await;
+    // 6 GB are given out of 8: another 4 GB does not fit, whoever asks (an
+    // editor of the machine, as an agent or a child Space's overflow would).
+    for (who, id) in [(bob(), "space-mem00001"), (ada(), "space-mem00002")] {
+        let e = f
+            .server
+            .create(
+                &who,
+                pb::CreateHostSpaceRequest {
+                    image: "linux".into(),
+                    memory_mb: 4096,
+                    attach: Some(f.register("ada-token", id).await),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(e.tag(), "limit_exceeded", "{e}");
+        let m = e.to_string();
+        assert!(m.contains("has no room for another Space"), "{m}");
+        assert!(
+            m.contains("Mac mini (spare)") && m.contains("--max-memory"),
+            "{m}"
+        );
+    }
+    assert!(f.rt.started.lock().unwrap().is_empty(), "nothing started");
+    assert_eq!(f.audit().last().unwrap().0, "refused");
+    // A smaller one fits exactly (6 + 2 = 8 GB), and the use says so.
+    ask_bob(
+        &f,
+        2048,
+        10,
+        f.register("ada-token", "space-mem00003").await,
+    )
+    .await
+    .unwrap();
+    let caps = f.server.get(&ada()).await.unwrap().capacity;
+    let c = |r: &str| {
+        caps.iter()
+            .find(|c| c.resource == r)
+            .map(|c| (c.used, c.limit))
+    };
+    assert_eq!(c("memory_gb"), Some((8, 8)));
+    assert_eq!(c("disk_gb"), Some((50, 100)));
+    assert_eq!(c("spaces"), Some((2, 0)));
+    // Disk: 50 of 100 GB are given; lowering the limit to 30 stops nothing,
+    // shows as over, and refuses the next one.
+    configure(
+        &f,
+        HostSettingsChange {
+            max_disk_gb: Some(30),
+            max_memory_gb: Some(0),
+            ..Default::default()
+        },
+    )
+    .await;
+    let caps = f.server.get(&ada()).await.unwrap().capacity;
+    assert_eq!(
+        caps.iter()
+            .find(|c| c.resource == "disk_gb")
+            .map(|c| (c.used, c.limit)),
+        Some((50, 30))
+    );
+    let e = ask_bob(&f, 1024, 5, f.register("ada-token", "space-disk0001").await)
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "limit_exceeded", "{e}");
+    assert!(
+        e.to_string().contains("has no room for another Space"),
+        "{e}"
+    );
+    assert!(e.to_string().contains("--max-disk"), "{e}");
+    assert!(
+        f.rt.deleted.lock().unwrap().is_empty(),
+        "nothing was stopped or removed"
+    );
+    assert_eq!(provided::load_provided(&f.host_dir()).unwrap().len(), 2);
+    // No limit (0) gives the room back.
+    configure(
+        &f,
+        HostSettingsChange {
+            max_disk_gb: Some(0),
+            max_memory_gb: Some(0),
+            ..Default::default()
+        },
+    )
+    .await;
+    ask_bob(&f, 1024, 5, f.register("ada-token", "space-disk0002").await)
+        .await
+        .unwrap();
+}
+
+/// The owner's Space limit is refused with the same words, and a Space
+/// made here by another machine gets the longest running time the owner set.
+#[tokio::test]
+async fn the_space_limit_says_no_room_and_a_run_time_limit_ends_a_space() {
+    let f = fixture(HostProfile::Spare).await;
+    provided::save_provided(&f.host_dir(), &[provided_of(&f, 1, 0, 0)]).unwrap();
+    configure(
+        &f,
+        HostSettingsChange {
+            max_spaces: Some(1),
+            max_run_minutes: Some(5),
+            ..Default::default()
+        },
+    )
+    .await;
+    let e = f
+        .create(
+            &ada(),
+            "linux",
+            f.register("ada-token", "space-room00001").await,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "limit_exceeded", "{e}");
+    assert!(
+        e.to_string().contains("has no room for another Space"),
+        "{e}"
+    );
+    assert!(e.to_string().contains("--max-spaces"), "{e}");
+    configure(
+        &f,
+        HostSettingsChange {
+            max_spaces: Some(3),
+            ..Default::default()
+        },
+    )
+    .await;
+    let made = f
+        .create(
+            &ada(),
+            "linux",
+            f.register("ada-token", "space-room00002").await,
+        )
+        .await
+        .unwrap();
+    let life = f
+        .spaces
+        .lifetime(&made.local_space)
+        .expect("a running time limit");
+    assert_eq!(life.on_expire, "suspend", "turned off, not deleted");
+    let left = life
+        .expires_at()
+        .duration_since(std::time::SystemTime::now())
+        .unwrap();
+    assert!(
+        left > std::time::Duration::from_secs(240) && left <= std::time::Duration::from_secs(300),
+        "{left:?}"
+    );
+    // Without the limit a Space has no lifetime.
+    configure(
+        &f,
+        HostSettingsChange {
+            max_run_minutes: Some(0),
+            ..Default::default()
+        },
+    )
+    .await;
+    let free = f
+        .create(
+            &ada(),
+            "linux",
+            f.register("ada-token", "space-room00003").await,
+        )
+        .await
+        .unwrap();
+    assert!(f.spaces.lifetime(&free.local_space).is_none());
 }
 
 /// The owner deleting a provided Space on the host itself takes it off the
@@ -659,6 +990,45 @@ async fn a_cancelled_host_create_stops_and_removes_what_it_made() {
     );
 }
 
+/// F65: a direct Space (no relay machine) whose create finished before the
+/// cancel arrived is deleted by `CancelHostSpace` with its create key, as the
+/// contract says, not left behind with "already created".
+#[tokio::test]
+async fn cancelling_a_finished_direct_create_deletes_its_space() {
+    let f = direct_fixture().await;
+    let local = HostCaller::local();
+    let made = f
+        .server
+        .create(
+            &local,
+            pb::CreateHostSpaceRequest {
+                image: "linux".into(),
+                direct: true,
+                name: "hc-f65".into(),
+                create_key: "hc-f65".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(provided::load_provided(&f.host_dir()).unwrap().len(), 1);
+    let msg = f.server.cancel(&local, "hc-f65").await.unwrap();
+    assert!(!msg.contains("already created"), "{msg}");
+    assert!(
+        provided::load_provided(&f.host_dir()).unwrap().is_empty(),
+        "the Space is deleted: {msg}"
+    );
+    assert!(
+        !f.rt
+            .running
+            .lock()
+            .unwrap()
+            .keys()
+            .any(|r| made.local_space.ends_with(r.as_str())),
+        "its sandbox is gone"
+    );
+}
+
 /// The owner turns a provided Space off and on (`SetHostSpacePower`): off
 /// stops it, freeing the host, even where the runtime could suspend it; on
 /// boots it and its driver joins its relay machine again with the machine
@@ -668,6 +1038,30 @@ async fn a_cancelled_host_create_stops_and_removes_what_it_made() {
 /// cua-spacesd and hands back the Space's token; the Space turns off and on
 /// with the same port and no relay attach; deleting it closes the port.
 /// A relay host refuses a direct create and says how to set one up.
+#[tokio::test]
+async fn a_host_creates_a_microvm_space_when_asked() {
+    let f = direct_fixture().await;
+    let local = HostCaller::local();
+    f.server
+        .create(
+            &local,
+            pb::CreateHostSpaceRequest {
+                image: "linux".into(),
+                direct: true,
+                kind: "microvm".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let started = f.rt.started.lock().unwrap();
+    assert_eq!(
+        started.last().and_then(|s| s.kind.as_deref()),
+        Some("microvm"),
+        "the host's runtime is asked for a microVM"
+    );
+}
+
 #[tokio::test]
 async fn a_direct_host_forwards_its_spaces_without_the_relay() {
     let f = direct_fixture().await;
@@ -782,8 +1176,107 @@ async fn a_direct_host_forwards_its_spaces_without_the_relay() {
     assert!(e.to_string().contains("--direct"), "{e}");
 }
 
+/// A relay host creates a routed Space: no relay machine and no direct
+/// address, only a forward on its loopback that callers open over the
+/// host's channel; it survives a restart and goes with the Space.
+#[tokio::test]
+async fn a_relay_host_routes_a_space_through_itself() {
+    let f = fixture(HostProfile::Spare).await;
+    let before = provided_machines(&f).await;
+    let space = f
+        .server
+        .create(
+            &ada(),
+            pb::CreateHostSpaceRequest {
+                image: "linux".into(),
+                routed: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(space.relay_machine.is_empty(), "{space:?}");
+    assert_ne!(space.direct_port, 0);
+    assert!(!space.direct_token.is_empty());
+    assert!(
+        f.env.state.relay_attached.lock().unwrap().is_none(),
+        "never attached to the relay"
+    );
+    assert_eq!(
+        provided_machines(&f).await,
+        before,
+        "no relay machine registered"
+    );
+    let recorded = provided::load_provided(&f.host_dir()).unwrap();
+    assert!(recorded[0].routed && recorded[0].is_direct());
+    // Its forward is on loopback and reaches the Space's cua-spacesd.
+    let url = format!("http://127.0.0.1:{}", space.direct_port);
+    cua_spacesd_client::SpacesdClient::connect(
+        cua_spacesd_client::ConnectOptions::parse(&url)
+            .unwrap()
+            .token(space.direct_token.clone()),
+    )
+    .await
+    .unwrap();
+    // A new daemon opens it again on the same port.
+    let port = space.direct_port as u16;
+    let Fixture { server, spaces, .. } = f;
+    drop(server);
+    for _ in 0..50 {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err()
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let server = HostSpacesServer::new(spaces);
+    server.restore_direct_forwards().await;
+    cua_spacesd_client::SpacesdClient::connect(
+        cua_spacesd_client::ConnectOptions::parse(&format!("http://127.0.0.1:{port}"))
+            .unwrap()
+            .token(space.direct_token.clone()),
+    )
+    .await
+    .unwrap();
+}
+
 /// After the host's daemon starts again, the ports of the Spaces it
 /// provides directly open again on the same numbers.
+/// A Space whose sandbox was removed outside the host service (a container
+/// removed with `docker rm`) is no longer listed: whoever placed a durable
+/// Space here learns it is gone. A Space that is only stopped stays.
+#[tokio::test]
+async fn a_provided_space_whose_sandbox_is_gone_is_no_longer_listed() {
+    let f = direct_fixture().await;
+    let local = HostCaller::local();
+    let create = || pb::CreateHostSpaceRequest {
+        image: "linux".into(),
+        direct: true,
+        ..Default::default()
+    };
+    let kept = f.server.create(&local, create()).await.unwrap();
+    let lost = f.server.create(&local, create()).await.unwrap();
+    assert_eq!(f.server.get(&local).await.unwrap().spaces.len(), 2);
+    // One is stopped (still there), the other removed from under the host.
+    let name = |s: &pb::HostSpace| s.local_space.trim_start_matches("local:").to_string();
+    f.rt.running.lock().unwrap().insert(name(&kept), false);
+    f.rt.running.lock().unwrap().remove(&name(&lost));
+    let got = f.server.get(&local).await.unwrap();
+    let listed: Vec<_> = got.spaces.iter().map(|s| s.local_space.clone()).collect();
+    assert_eq!(listed, vec![kept.local_space.clone()], "{listed:?}");
+    let recorded = provided::load_provided(&f.host_dir()).unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert!(
+        f.audit()
+            .iter()
+            .any(|(action, _, space)| action == "delete" && *space == lost.local_space),
+        "{:?}",
+        f.audit()
+    );
+}
+
 #[tokio::test]
 async fn a_restarted_direct_host_reopens_its_forwards() {
     let f = direct_fixture().await;
@@ -853,7 +1346,7 @@ async fn the_host_turns_a_provided_space_off_and_on_and_it_rejoins_the_relay() {
     assert_eq!(
         off.message,
         format!(
-            "Stopped relay:space-ada00011 (its disk is kept) ({} on Mac mini (spare))",
+            "Stopped relay:space-ada00011 (its disk is kept; its memory is free) ({} on Mac mini (spare))",
             space.local_space
         )
     );
@@ -947,7 +1440,10 @@ async fn a_local_space_suspends_and_resumes_and_others_refuse() {
         (off.space.as_str(), off.state.as_str(), off.power.as_str()),
         (id.as_str(), "suspended", "suspend")
     );
-    assert_eq!(off.message, format!("Suspended {id} (its memory is kept)."));
+    assert_eq!(
+        off.message,
+        format!("Suspended {id} (its memory is kept, and still in use).")
+    );
     assert!(f.rt.paused.lock().unwrap().contains(&name));
     assert_eq!(
         listed(&f.spaces),
@@ -985,6 +1481,27 @@ async fn a_local_space_suspends_and_resumes_and_others_refuse() {
         f.spaces.power_of("direct:10.0.0.5:3211"),
         (String::new(), String::new())
     );
+
+    // Suspending on purpose keeps the memory, the same way.
+    let off = f.spaces.suspend(&id).await.unwrap();
+    assert_eq!(
+        (off.state.as_str(), off.power.as_str()),
+        ("suspended", "suspend")
+    );
+    assert!(f.rt.paused.lock().unwrap().contains(&name));
+    f.spaces.start(&id).await.unwrap();
+    // Only a Space on this computer suspends or resizes.
+    let e = f.spaces.suspend("direct:10.0.0.5:3211").await.unwrap_err();
+    assert_eq!(e.tag(), "wrong_provider", "{e}");
+    let e = f
+        .spaces
+        .resize("direct:10.0.0.5:3211", None, Some(4096), None)
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "wrong_provider", "{e}");
+    // A resize says what to change.
+    let e = f.spaces.resize(&id, None, None, None).await.unwrap_err();
+    assert!(e.to_string().contains("cpus, memory_mb or disk_gb"), "{e}");
 }
 
 /// Your other Mac must not vanish from "Run on" while its service is down
@@ -1004,6 +1521,10 @@ async fn an_offline_machine_set_up_for_spaces_is_listed_by_name() {
         let driver = dir.path().join(format!("{name}-cua-spacesd"));
         std::fs::write(&driver, b"#!/bin/sh\n").unwrap();
         let mut opts = SetupOptions::relay(&relay.url).profile(profile);
+        if profile == HostProfile::Desktop {
+            // Its desktop only (`--no-provide-spaces`).
+            opts.provide_spaces = Some(false);
+        }
         opts.name = Some(name.into());
         opts.driver_bin = Some(driver);
         Host::new(&home)
@@ -1028,14 +1549,18 @@ async fn an_offline_machine_set_up_for_spaces_is_listed_by_name() {
 /// The host fixture's `HostSpacesServer` as the host's daemon serves it
 /// (every call as ada, the owner: the fake relay does not assert callers).
 /// The host's `HostSpacesService`; `old`: as a host that predates
-/// `GetHostSpacesResponse.creating` answers (it never lists creates).
-struct HostSvc(Arc<HostSpacesServer>, bool);
+/// `GetHostSpacesResponse.creating` and `CreateHostSpaceRequest.network`
+/// answers (it never lists creates, and never reads the network asked for,
+/// so it never says which it applied). The third field: a host whose cua
+/// predates egress policies (it ignores `CreateHostSpaceRequest.egress` and
+/// has no `SetHostSpaceEgress`).
+struct HostSvc(Arc<HostSpacesServer>, bool, bool);
 
 #[tonic::async_trait]
 impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
     async fn get_host_spaces(
         &self,
-        _req: tonic::Request<pb::GetHostSpacesRequest>,
+        req: tonic::Request<pb::GetHostSpacesRequest>,
     ) -> Result<tonic::Response<pb::GetHostSpacesResponse>, tonic::Status> {
         let mut r = self.0.get(&ada()).await;
         if self.1
@@ -1043,15 +1568,42 @@ impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
         {
             r.creating.clear();
         }
+        // As the daemon answers (an old host does not know the field).
+        if req.get_ref().disk
+            && !self.1
+            && let Ok(r) = &mut r
+        {
+            self.0.with_disks(&mut r.spaces).await;
+        }
         r.map(tonic::Response::new).map_err(|e| to_status(&e))
     }
     async fn create_host_space(
         &self,
         req: tonic::Request<pb::CreateHostSpaceRequest>,
     ) -> Result<tonic::Response<pb::CreateHostSpaceResponse>, tonic::Status> {
-        let r = self.0.create(&ada(), req.into_inner()).await;
+        let mut req = req.into_inner();
+        if self.1 {
+            // An unknown field: the old host's decoder drops it.
+            req.network.clear();
+        }
+        if self.2 {
+            // An older host does not know the field.
+            req.egress = None;
+        }
+        let r = self.0.create(&ada(), req).await;
         r.map(|s| tonic::Response::new(pb::CreateHostSpaceResponse { space: Some(s) }))
             .map_err(|e| to_status(&e))
+    }
+    async fn set_host_space_egress(
+        &self,
+        req: tonic::Request<pb::SetHostSpaceEgressRequest>,
+    ) -> Result<tonic::Response<pb::SetHostSpaceEgressResponse>, tonic::Status> {
+        if self.2 {
+            return Err(tonic::Status::unimplemented("SetHostSpaceEgress"));
+        }
+        let r = req.into_inner();
+        let r = self.0.set_egress(&ada(), &r.space, r.egress).await;
+        r.map(tonic::Response::new).map_err(|e| to_status(&e))
     }
     async fn delete_host_space(
         &self,
@@ -1069,6 +1621,13 @@ impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
         r.map(|message| tonic::Response::new(pb::CancelHostSpaceResponse { message }))
             .map_err(|e| to_status(&e))
     }
+    async fn set_host_warm(
+        &self,
+        _: tonic::Request<pb::SetHostWarmRequest>,
+    ) -> Result<tonic::Response<pb::SetHostWarmResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("warm pools"))
+    }
+
     async fn set_host_space_power(
         &self,
         req: tonic::Request<pb::SetHostSpacePowerRequest>,
@@ -1085,6 +1644,17 @@ impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
         r.map(|message| tonic::Response::new(pb::DeleteCloudSpaceResponse { message }))
             .map_err(|e| to_status(&e))
     }
+
+    async fn diagnose_host(
+        &self,
+        _req: tonic::Request<pb::DiagnoseHostRequest>,
+    ) -> Result<tonic::Response<pb::DiagnoseHostResponse>, tonic::Status> {
+        Ok(tonic::Response::new(pb::DiagnoseHostResponse {
+            report: None,
+            cua_version: "0.0.0-test".into(),
+            os: "macos".into(),
+        }))
+    }
 }
 
 /// The client half: the spare host is online on the fake relay (its driver
@@ -1097,6 +1667,37 @@ async fn client_fixture(f: &Fixture) -> (String, Spaces, tempfile::TempDir) {
 
 /// [`client_fixture`] with a host that predates listing its creates.
 async fn client_fixture_of(f: &Fixture, old_host: bool) -> (String, Spaces, tempfile::TempDir) {
+    client_fixture_full(f, old_host, false, None).await
+}
+
+/// [`client_fixture_of`], with a host whose cua predates egress policies
+/// (`no_egress`).
+async fn client_fixture_with(
+    f: &Fixture,
+    old_host: bool,
+    no_egress: bool,
+) -> (String, Spaces, tempfile::TempDir) {
+    client_fixture_full(f, old_host, no_egress, None).await
+}
+
+/// [`client_fixture_of`] with an extension registered on the client.
+async fn client_fixture_ext(
+    f: &Fixture,
+    old_host: bool,
+    ext: Option<Arc<dyn cua_spaces::extension::SpacesExtension>>,
+) -> (String, Spaces, tempfile::TempDir) {
+    client_fixture_full(f, old_host, false, ext).await
+}
+
+/// The client side of a host fixture: `old_host` predates listing its
+/// creates, `no_egress` predates egress policies, `ext` is registered on
+/// the client.
+async fn client_fixture_full(
+    f: &Fixture,
+    old_host: bool,
+    no_egress: bool,
+    ext: Option<Arc<dyn cua_spaces::extension::SpacesExtension>>,
+) -> (String, Spaces, tempfile::TempDir) {
     let relay = cua_host::RelayClient::new(&f.relay.url).unwrap();
     let host = relay
         .machines("ada-token")
@@ -1114,12 +1715,17 @@ async fn client_fixture_of(f: &Fixture, old_host: bool) -> (String, Spaces, temp
     let svc = pb::host_spaces_service_server::HostSpacesServiceServer::new(HostSvc(
         f.server.clone(),
         old_host,
+        no_egress,
+    ));
+    let snaps = pb::host_snapshots_service_server::HostSnapshotsServiceServer::new(SnapSvc(
+        f.server.clone(),
     ));
     tokio::spawn(
         tonic::transport::Server::builder()
             .accept_http1(true)
             .layer(tonic_web::GrpcWebLayer::new())
             .add_service(svc)
+            .add_service(snaps)
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
     );
     f.relay.tunnel_service(
@@ -1127,14 +1733,22 @@ async fn client_fixture_of(f: &Fixture, old_host: bool) -> (String, Spaces, temp
         "/cua.env.v1.HostSpacesService/",
         &format!("http://{addr}"),
     );
+    f.relay.tunnel_service(
+        &host,
+        "/cua.env.v1.HostSnapshotsService/",
+        &format!("http://{addr}"),
+    );
     let other = tempfile::tempdir().unwrap();
-    let spaces = Spaces::builder()
+    let mut builder = Spaces::builder()
         .home(other.path())
         .relay(cua_spaces::RelayAccount::new(
             &f.relay.url,
             Arc::new(StaticToken("ada-token".into())),
-        ))
-        .build();
+        ));
+    if let Some(ext) = ext {
+        builder = builder.extension(ext);
+    }
+    let spaces = builder.build();
     (host, spaces, other)
 }
 
@@ -1417,18 +2031,33 @@ async fn a_download_that_stops_on_the_host_fails_the_create_with_its_reason() {
     let why = "The image download stopped before it finished (Lume stopped running). Try \
                again; it picks up where it stopped.";
     *f.rt.pull_stops.lock().unwrap() = Some((10, why.into()));
+    // The host's download stops once the client has shown it (state, not a
+    // race between the download's speed and the client's polling).
+    let (shown, shown_rx) = tokio::sync::watch::channel(false);
+    *f.rt.pull_stop_when.lock().unwrap() = Some(shown_rx);
+    let shown_at = Arc::new(Mutex::new(None::<std::time::Instant>));
     let seen = Arc::new(Mutex::new(Vec::<cua_spaces::CreateProgress>::new()));
-    let s = seen.clone();
+    let (s, at) = (seen.clone(), shown_at.clone());
     let mut create = on_host("Mac mini (spare)");
     create.progress = Some(cua_spaces::ProgressSink::new(move |p| {
+        if p.phase == cua_spaces::CreatePhase::Pulling {
+            at.lock()
+                .unwrap()
+                .get_or_insert_with(std::time::Instant::now);
+            shown.send_replace(true);
+        }
         s.lock().unwrap().push(p.clone())
     }));
-    let t = std::time::Instant::now();
     let e = spaces.create(create).await.unwrap_err().to_string();
+    // Failed right after the stop, not after a create timeout.
+    let since = shown_at
+        .lock()
+        .unwrap()
+        .expect("the download showed")
+        .elapsed();
     assert!(
-        t.elapsed() < std::time::Duration::from_secs(10),
-        "failed after {:?}",
-        t.elapsed()
+        since < std::time::Duration::from_secs(10),
+        "failed {since:?} after the download showed"
     );
     assert!(e.contains(why), "the host's reason: {e}");
     assert!(
@@ -1516,4 +2145,955 @@ async fn the_host_lists_a_running_create_to_its_caller_and_owner_only() {
         f.server.get(&ada()).await.unwrap().creating.is_empty(),
         "gone once it ended"
     );
+}
+
+/// A provided Space whose sandbox is gone (deleted behind the host's back, or
+/// lost when the machine went down) stops reserving capacity: the host
+/// forgets its record when it reports its status.
+#[tokio::test]
+async fn a_provided_space_whose_sandbox_is_gone_is_forgotten() {
+    let f = fixture(HostProfile::Spare).await;
+    let lost = |n: u32| ProvidedSpace {
+        local_space: format!("local:lost-{n}"),
+        name: format!("lost-{n}"),
+        kind: "vm".into(),
+        cpus: 1,
+        memory_mb: 1024,
+        created_by_account: "ada".into(),
+        ..Default::default()
+    };
+    provided::save_provided(&f.host_dir(), &[lost(1), lost(2)]).unwrap();
+    assert_eq!(provided::load_provided(&f.host_dir()).unwrap().len(), 2);
+    let node = f.server.node_status().await.expect("status");
+    assert!(provided::load_provided(&f.host_dir()).unwrap().is_empty());
+    assert_eq!(
+        node.memory_free_mb,
+        node.memory_total_mb.min(node.memory_free_mb)
+    );
+}
+
+/// Brings every new Space's relay machine online, as its driver would
+/// once it is up (until aborted).
+fn bring_online(f: &Fixture) -> tokio::task::JoinHandle<()> {
+    let relay = f.relay.clone();
+    tokio::spawn(async move {
+        let client = cua_host::RelayClient::new(&relay.url).unwrap();
+        loop {
+            for m in client.machines("ada-token").await.unwrap_or_default() {
+                if m.host.is_some() && !m.online {
+                    relay.set_online(&m.id, true, "1.0.0");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+}
+
+fn deny_all_but(allow: &[&str]) -> cua_vmm::egress::EgressPolicy {
+    cua_vmm::egress::EgressPolicy {
+        allow: allow.iter().map(|s| s.to_string()).collect(),
+        deny: vec!["all".into()],
+    }
+}
+
+/// The host side: a create with an egress policy starts the Space with it
+/// (the runtime enforces it from the first instruction) and answers where
+/// it is enforced; `SetHostSpaceEgress` replaces it, for the owner and the
+/// creator only, and both are in the audit.
+#[tokio::test]
+async fn a_host_starts_a_space_with_its_egress_policy_and_replaces_it() {
+    let f = fixture(HostProfile::Spare).await;
+    let attach = f.register("ada-token", "space-egress01").await;
+    let policy = deny_all_but(&["1.1.1.1"]);
+    let space = f
+        .server
+        .create(
+            &ada(),
+            pb::CreateHostSpaceRequest {
+                image: "linux".into(),
+                attach: Some(attach),
+                egress: Some(pb::HostEgressPolicy {
+                    allow: policy.allow.clone(),
+                    deny: policy.deny.clone(),
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(space.egress_enforced, "host");
+    let started = f.rt.started.lock().unwrap()[0].clone();
+    assert_eq!(
+        started.egress, policy,
+        "in the start spec: before its first instruction"
+    );
+    let listed = f.server.get(&ada()).await.unwrap();
+    assert_eq!(listed.spaces[0].egress_enforced, "host");
+    let local = space.local_space.trim_start_matches("local:").to_string();
+
+    // Someone else's Space: refused, and kept.
+    let bob_says = f
+        .server
+        .set_egress(&bob(), "space-egress01", None)
+        .await
+        .unwrap_err();
+    assert_eq!(bob_says.tag(), "permission_denied", "{bob_says}");
+    assert_eq!(f.rt.egress.lock().unwrap()[&local], policy);
+
+    let wider = deny_all_but(&["1.1.1.1", "8.8.8.8"]);
+    let r = f
+        .server
+        .set_egress(
+            &ada(),
+            "relay:space-egress01",
+            Some(pb::HostEgressPolicy {
+                allow: wider.allow.clone(),
+                deny: wider.deny.clone(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.enforced, "host");
+    assert_eq!(f.rt.egress.lock().unwrap()[&local], wider);
+    // Removed: nothing enforced, the runtime has an empty policy.
+    let r = f
+        .server
+        .set_egress(&ada(), "space-egress01", None)
+        .await
+        .unwrap();
+    assert_eq!(r.enforced, "");
+    assert!(f.rt.egress.lock().unwrap()[&local].is_empty());
+    let audit = f.audit();
+    assert!(
+        audit
+            .iter()
+            .filter(|(a, _, s)| a == "egress" && s == "space-egress01")
+            .count()
+            == 2,
+        "{audit:?}"
+    );
+}
+
+/// The client side: `on="host:..."` carries the policy to the host, which
+/// enforces it; `set_egress` on the relay Space goes to that host.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_on_a_host_takes_its_policy_there() {
+    let f = fixture(HostProfile::Spare).await;
+    let (_host, spaces, _other) = client_fixture(&f).await;
+    let _online = bring_online(&f);
+    let policy = deny_all_but(&["1.1.1.1"]);
+    let mut opts = on_host("Mac mini (spare)");
+    opts.egress = policy.clone();
+    let info = spaces.create(opts).await.unwrap().ready().unwrap();
+    assert!(info.id.starts_with("relay:"), "{}", info.id);
+    assert_eq!(info.egress, policy);
+    assert_eq!(
+        info.egress_enforced,
+        Some(cua_vmm::egress::Enforcement::Host)
+    );
+    let started = f.rt.started.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(started.egress, policy);
+    let local = started.name.clone();
+
+    let deny_one = cua_vmm::egress::EgressPolicy {
+        allow: vec![],
+        deny: vec!["8.8.8.8".into()],
+    };
+    spaces.set_egress(&info.id, &deny_one).await.unwrap();
+    assert_eq!(f.rt.egress.lock().unwrap()[&local], deny_one);
+    assert_eq!(spaces.egress(&info.id), deny_one);
+    assert_eq!(
+        spaces.egress_enforced(&info.id),
+        Some(cua_vmm::egress::Enforcement::Host)
+    );
+}
+
+/// A host whose cua predates egress policies would create the Space
+/// without one: the client deletes it and says so, and a policy set later
+/// is refused the same way. Never a Space that only looks enforced.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_that_does_not_enforce_egress_gets_no_space_with_a_policy() {
+    let f = fixture(HostProfile::Spare).await;
+    let (_host, spaces, _other) = client_fixture_with(&f, false, true).await;
+    let _online = bring_online(&f);
+    let mut opts = on_host("Mac mini (spare)");
+    opts.egress = deny_all_but(&["1.1.1.1"]);
+    let e = spaces.create(opts).await.unwrap_err();
+    assert_eq!(e.tag(), "wrong_provider", "{e}");
+    assert!(e.to_string().contains("update cua on it"), "{e}");
+    assert!(
+        provided_machines(&f).await.is_empty(),
+        "nothing left on the relay"
+    );
+    assert_eq!(
+        f.rt.deleted.lock().unwrap().len(),
+        1,
+        "the host deleted the Space it made"
+    );
+
+    // Without a policy that host still creates Spaces; a policy set on one
+    // later is refused, not ignored.
+    let info = spaces
+        .create(on_host("Mac mini (spare)"))
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    let e = spaces
+        .set_egress(&info.id, &deny_all_but(&[]))
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "wrong_provider", "{e}");
+    assert!(spaces.egress(&info.id).is_empty());
+    assert_eq!(spaces.egress_enforced(&info.id), None);
+}
+
+/// Stands in for the Cua Volume extension: answers the operations a create
+/// with volumes uses, and keeps what it was asked.
+struct StubDrive {
+    calls: Mutex<Vec<(String, serde_json::Value)>>,
+    attach_fails: bool,
+}
+
+impl cua_spaces::extension::SpacesExtension for StubDrive {
+    fn name(&self) -> &str {
+        "drive"
+    }
+    fn serves(&self, tool: &str) -> bool {
+        matches!(tool, "volumes.exists" | "volume.attach")
+    }
+    fn call_tool<'a>(
+        &'a self,
+        call: cua_spaces::extension::ToolCall<'a>,
+    ) -> cua_spaces::extension::BoxFuture<'a, cua_spaces::Result<cua_spaces::mcp::ToolOutcome>>
+    {
+        Box::pin(async move {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((call.tool.to_string(), call.args.clone()));
+            if call.tool == "volume.attach" && self.attach_fails {
+                return Err(cua_spaces::Error::invalid("the guest cannot mount"));
+            }
+            Ok(cua_spaces::mcp::ToolOutcome::json(&serde_json::json!({})))
+        })
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+fn mount(name: &str, path: &str, read_only: bool) -> cua_spaces::named_volumes::VolumeMount {
+    cua_spaces::named_volumes::VolumeMount {
+        name: name.into(),
+        path: path.into(),
+        read_only,
+        subpath: String::new(),
+    }
+}
+
+/// Named volumes reach a Space on a pool host: the host is not asked for
+/// them (it has no Cua Volume), the creating machine records the mounts for
+/// the Space's relay id and serves them over its connection; a failed mount
+/// removes the Space again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_create_on_a_host_mounts_volumes_from_this_machine() {
+    let f = fixture(HostProfile::Spare).await;
+    let stub = Arc::new(StubDrive {
+        calls: Mutex::new(vec![]),
+        attach_fails: false,
+    });
+    let (_host, spaces, _other) = client_fixture_ext(&f, false, Some(stub.clone())).await;
+    let online = bring_online(&f);
+    let mut create = on_host("Mac mini (spare)");
+    create.volumes = vec![mount("shared", "/mnt/shared", true)];
+    let info = spaces.create(create).await.unwrap().ready().unwrap();
+    online.abort();
+    assert!(info.id.starts_with("relay:"), "{}", info.id);
+    // The mounts are the Space's, here, whichever way it is looked up.
+    assert_eq!(info.volumes, vec![mount("shared", "/mnt/shared", true)]);
+    assert_eq!(
+        spaces.volume_mounts(&info.id).unwrap(),
+        vec![mount("shared", "/mnt/shared", true)]
+    );
+    assert_eq!(
+        spaces.volume_users().unwrap()["shared"],
+        vec![info.id.clone()]
+    );
+    let calls = stub.calls.lock().unwrap().clone();
+    assert_eq!(calls[0].0, "volumes.exists");
+    assert_eq!(calls[0].1["names"], serde_json::json!(["shared"]));
+    assert_eq!(calls[1].0, "volume.attach");
+    assert_eq!(calls[1].1["space"], serde_json::json!(info.id));
+    // The host was not given the mounts and runs the Space as any other.
+    assert_eq!(f.rt.started.lock().unwrap().len(), 1);
+    // Deleting the Space forgets its mounts.
+    spaces.delete(&info.id).await.unwrap();
+    assert!(spaces.volume_users().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_space_that_cannot_mount_its_volumes_is_not_kept() {
+    let f = fixture(HostProfile::Spare).await;
+    let stub = Arc::new(StubDrive {
+        calls: Mutex::new(vec![]),
+        attach_fails: true,
+    });
+    let (_host, spaces, _other) = client_fixture_ext(&f, false, Some(stub)).await;
+    let relay = f.relay.clone();
+    let online = tokio::spawn(async move {
+        let client = cua_host::RelayClient::new(&relay.url).unwrap();
+        loop {
+            for m in client.machines("ada-token").await.unwrap_or_default() {
+                if m.host.is_some() && !m.online {
+                    relay.set_online(&m.id, true, "1.0.0");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+    let mut create = on_host("Mac mini (spare)");
+    create.volumes = vec![mount("shared", "/mnt/shared", false)];
+    let e = spaces.create(create).await.unwrap_err();
+    online.abort();
+    assert!(e.to_string().contains("cannot mount"), "{e}");
+    assert!(spaces.volume_users().unwrap().is_empty());
+    let _ = spaces.relay_machines().await;
+    assert!(
+        spaces.list().unwrap().iter().all(|s| s.volumes.is_empty()),
+        "no Space with mounts is left"
+    );
+}
+
+/// A durable Space has no client to serve a volume to it.
+#[tokio::test]
+async fn a_durable_space_refuses_volumes() {
+    let dir = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder().home(dir.path()).build();
+    let e = spaces
+        .create(cua_spaces::SpaceCreate {
+            on: Some(cua_sandbox_core::placement::On::Auto),
+            durable: true,
+            volumes: vec![mount("shared", "/mnt/shared", false)],
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("durable"), "{e}");
+}
+
+/// The host's `HostSnapshotsService` (listing, taking and deleting
+/// checkpoints), every call as ada.
+struct SnapSvc(Arc<HostSpacesServer>);
+
+type NoStream<T> =
+    std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<T, tonic::Status>> + Send>>;
+
+#[tonic::async_trait]
+impl pb::host_snapshots_service_server::HostSnapshotsService for SnapSvc {
+    async fn list_host_snapshots(
+        &self,
+        _req: tonic::Request<pb::ListHostSnapshotsRequest>,
+    ) -> Result<tonic::Response<pb::ListHostSnapshotsResponse>, tonic::Status> {
+        self.0
+            .snapshots_list(&ada())
+            .await
+            .map(tonic::Response::new)
+            .map_err(|e| to_status(&e))
+    }
+    async fn export_host_snapshot(
+        &self,
+        _req: tonic::Request<pb::ExportHostSnapshotRequest>,
+    ) -> Result<tonic::Response<pb::ExportHostSnapshotResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("not in this test"))
+    }
+    type PullHostSnapshotStream = NoStream<pb::PullHostSnapshotResponse>;
+    async fn pull_host_snapshot(
+        &self,
+        _req: tonic::Request<pb::PullHostSnapshotRequest>,
+    ) -> Result<tonic::Response<Self::PullHostSnapshotStream>, tonic::Status> {
+        Err(tonic::Status::unimplemented("not in this test"))
+    }
+    type PublishHostSnapshotStream = NoStream<pb::PublishHostSnapshotResponse>;
+    async fn publish_host_snapshot(
+        &self,
+        _req: tonic::Request<pb::PublishHostSnapshotRequest>,
+    ) -> Result<tonic::Response<Self::PublishHostSnapshotStream>, tonic::Status> {
+        Err(tonic::Status::unimplemented("not in this test"))
+    }
+    async fn create_host_snapshot(
+        &self,
+        req: tonic::Request<pb::CreateHostSnapshotRequest>,
+    ) -> Result<tonic::Response<pb::CreateHostSnapshotResponse>, tonic::Status> {
+        self.0
+            .snapshot_create(&ada(), req.into_inner())
+            .await
+            .map(|s| tonic::Response::new(pb::CreateHostSnapshotResponse { snapshot: Some(s) }))
+            .map_err(|e| to_status(&e))
+    }
+    async fn delete_host_snapshot(
+        &self,
+        req: tonic::Request<pb::DeleteHostSnapshotRequest>,
+    ) -> Result<tonic::Response<pb::DeleteHostSnapshotResponse>, tonic::Status> {
+        self.0
+            .snapshot_delete(&ada(), req.into_inner())
+            .await
+            .map(|message| tonic::Response::new(pb::DeleteHostSnapshotResponse { message }))
+            .map_err(|e| to_status(&e))
+    }
+}
+
+/// A checkpoint of a Space the host provides is taken on the host
+/// (`CreateHostSnapshot`), where it stays: the owner checkpoints any, an
+/// editor only its own Spaces, and deletes only the checkpoints it took;
+/// the host lists each with its source and audits each step.
+#[tokio::test]
+async fn the_host_checkpoints_a_provided_space_and_deletes_it_for_its_taker() {
+    let f = fixture(HostProfile::Spare).await;
+    let ada_space = f
+        .create(
+            &ada(),
+            "linux",
+            f.register("ada-token", "space-ada00011").await,
+        )
+        .await
+        .unwrap();
+    let local = ada_space
+        .local_space
+        .strip_prefix("local:")
+        .unwrap()
+        .to_string();
+    let snap = f
+        .server
+        .snapshot_create(
+            &ada(),
+            pb::CreateHostSnapshotRequest {
+                space: format!("relay:{}", ada_space.relay_machine),
+                name: "world".into(),
+                pin: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(snap.name, "world");
+    assert_eq!(snap.source, local);
+    assert_eq!(snap.runtime_type, "fake");
+    assert!(snap.created_at_ms > 0);
+    let listed = f.server.snapshots_list(&ada()).await.unwrap();
+    assert_eq!(
+        listed
+            .snapshots
+            .iter()
+            .map(|s| (s.name.as_str(), s.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("world", local.as_str())]
+    );
+    // The name is taken.
+    let e = f
+        .server
+        .snapshot_create(
+            &ada(),
+            pb::CreateHostSnapshotRequest {
+                space: ada_space.relay_machine.clone(),
+                name: "world".into(),
+                pin: false,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "invalid_argument", "{e}");
+
+    // An editor cannot checkpoint someone else's Space, nor delete a
+    // checkpoint it did not take.
+    let e = f
+        .server
+        .snapshot_create(
+            &bob(),
+            pb::CreateHostSnapshotRequest {
+                space: ada_space.relay_machine.clone(),
+                name: "theirs".into(),
+                pin: false,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("created by someone else"), "{e}");
+    let e = f
+        .server
+        .snapshot_delete(
+            &bob(),
+            pb::DeleteHostSnapshotRequest {
+                name: "world".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("taken by someone else"), "{e}");
+
+    // Its own Space: checkpointed and deleted by it.
+    let bob_space = f
+        .create(
+            &bob(),
+            "linux",
+            f.register("bob-token", "space-bob00011").await,
+        )
+        .await
+        .unwrap();
+    f.server
+        .snapshot_create(
+            &bob(),
+            pb::CreateHostSnapshotRequest {
+                space: bob_space.relay_machine.clone(),
+                name: "bobs".into(),
+                pin: false,
+            },
+        )
+        .await
+        .unwrap();
+    let m = f
+        .server
+        .snapshot_delete(
+            &bob(),
+            pb::DeleteHostSnapshotRequest {
+                name: "bobs".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(m.starts_with("Deleted checkpoint bobs on "), "{m}");
+
+    // A Space the host does not provide, a checkpoint it does not hold.
+    let e = f
+        .server
+        .snapshot_create(
+            &ada(),
+            pb::CreateHostSnapshotRequest {
+                space: "relay:space-nope".into(),
+                name: "x".into(),
+                pin: false,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "not_found", "{e}");
+    f.server
+        .snapshot_delete(
+            &ada(),
+            pb::DeleteHostSnapshotRequest {
+                name: "world".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let e = f
+        .server
+        .snapshot_delete(
+            &ada(),
+            pb::DeleteHostSnapshotRequest {
+                name: "world".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "not_found", "{e}");
+    assert!(f.rt.checkpoints.lock().unwrap().is_empty());
+    let actions: Vec<String> = f.audit().into_iter().map(|(a, _, _)| a).collect();
+    assert!(
+        actions.iter().filter(|a| *a == "checkpoint").count() == 2
+            && actions.iter().any(|a| a == "refused"),
+        "{actions:?}"
+    );
+}
+
+/// From another of the owner's devices, a Space a host provides is
+/// checkpointed on that host (by its id or its name), the checkpoint is
+/// listed with the host it is on, and deleting it deletes it there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_on_another_machine_is_checkpointed_listed_and_deleted_there() {
+    let f = fixture(HostProfile::Spare).await;
+    let (_host, spaces, _other) = client_fixture(&f).await;
+    // The new Space's driver comes online on the relay once it is up.
+    let relay = f.relay.clone();
+    let online = tokio::spawn(async move {
+        let client = cua_host::RelayClient::new(&relay.url).unwrap();
+        loop {
+            for m in client.machines("ada-token").await.unwrap_or_default() {
+                if m.host.is_some() && !m.online {
+                    relay.set_online(&m.id, true, "1.0.0");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+    let info = spaces
+        .create(cua_spaces::SpaceCreate {
+            name: Some("baker".into()),
+            ..on_host("Mac mini (spare)")
+        })
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    online.abort();
+    assert!(info.id.starts_with("relay:"), "{info:?}");
+
+    use cua_spaces::pool_checkpoints::SpaceCheckpoint;
+    for (by, cp) in [(info.id.as_str(), "world"), ("baker", "world-2")] {
+        match spaces.checkpoint_space(by, cp, false).await.unwrap() {
+            SpaceCheckpoint::Remote { host, snapshot } => {
+                assert_eq!(host, "Mac mini (spare)");
+                assert_eq!(snapshot.name, cp);
+            }
+            other => panic!("checkpointed here: {other:?}"),
+        }
+    }
+    assert_eq!(
+        f.rt.checkpoints.lock().unwrap().len(),
+        2,
+        "taken on the host"
+    );
+
+    let pool = spaces.pool_checkpoints().await.unwrap();
+    let world = pool
+        .iter()
+        .find(|c| c.snapshot.name == "world")
+        .expect("listed");
+    assert_eq!(world.host.as_deref(), Some("Mac mini (spare)"));
+    assert!(world.host_id.is_some());
+    assert_eq!(
+        spaces.checkpoint_holder("world").await.unwrap(),
+        Some(world.host_id.clone())
+    );
+
+    let on = spaces.delete_checkpoint_everywhere("world").await.unwrap();
+    assert_eq!(on, vec!["Mac mini (spare)".to_string()]);
+    assert!(!f.rt.checkpoints.lock().unwrap().contains("world"));
+    let e = spaces
+        .delete_checkpoint_everywhere("world")
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "not_found", "{e}");
+    assert_eq!(spaces.checkpoint_holder("world").await.unwrap(), None);
+}
+
+/// `checkpoint:<name>` images: a fork keeps the checkpoint's guest, so
+/// what cannot apply is refused by name, a checkpoint no machine holds is
+/// not found, and a location that cannot hold one is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_from_a_checkpoint_refuses_what_cannot_apply() {
+    let f = fixture(HostProfile::Spare).await;
+    let (_host, spaces, _other) = client_fixture(&f).await;
+    let e = spaces
+        .create(cua_spaces::SpaceCreate {
+            image: Some("checkpoint:nowhere".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "not_found", "{e}");
+    assert!(
+        e.to_string().contains("no machine of yours holds it"),
+        "{e}"
+    );
+
+    let e = spaces
+        .create(cua_spaces::SpaceCreate {
+            image: Some("checkpoint:world".into()),
+            command: Some(vec!["true".into()]),
+            env: [("A".to_string(), "1".to_string())].into(),
+            gpu: Some("auto".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "invalid_argument", "{e}");
+    assert!(
+        e.to_string()
+            .contains("so it takes no command, environment variables, GPU"),
+        "{e}"
+    );
+
+    let e = spaces
+        .create(cua_spaces::SpaceCreate {
+            image: Some("checkpoint:world".into()),
+            on: Some(cua_sandbox_core::placement::On::Cloud),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "invalid_argument", "{e}");
+}
+
+/// `on_host` with no outbound network, the Space's driver brought online on
+/// the relay once it is up (as a real one dials out).
+async fn create_on_host_without_network(
+    f: &Fixture,
+    spaces: &Spaces,
+) -> cua_spaces::Result<cua_spaces::SpaceCreated> {
+    let mut create = on_host("Mac mini (spare)");
+    create.network = cua_sandbox_core::NetworkMode::None;
+    let relay = f.relay.clone();
+    let online = tokio::spawn(async move {
+        let client = cua_host::RelayClient::new(&relay.url).unwrap();
+        loop {
+            for m in client.machines("ada-token").await.unwrap_or_default() {
+                if m.host.is_some() && !m.online {
+                    relay.set_online(&m.id, true, "1.0.0");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+    let r = spaces.create(create).await;
+    online.abort();
+    r
+}
+
+/// A host whose cua predates `network` would create the Space with outbound
+/// network and say nothing: the create is refused, naming the host and what
+/// to do, and nothing is left behind (no Space on the host, no relay
+/// machine).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn network_none_on_a_host_too_old_to_enforce_it_is_refused() {
+    let f = fixture(HostProfile::Spare).await;
+    let (_host, spaces, _other) = client_fixture_of(&f, true).await;
+    let e = create_on_host_without_network(&f, &spaces)
+        .await
+        .expect_err("an old host cannot give a Space no network");
+    assert_eq!(e.tag(), "capability_missing", "{e}");
+    let msg = e.to_string();
+    assert!(msg.contains("Mac mini (spare)"), "{msg}");
+    assert!(msg.contains("network none"), "{msg}");
+    assert!(
+        msg.contains("too old") && msg.contains("update cua"),
+        "{msg}"
+    );
+    // The host made it with outbound network, then deleted it on request.
+    let started = f.rt.started.lock().unwrap().clone();
+    assert_eq!(started.len(), 1, "{started:?}");
+    assert!(!started[0].restrict_network, "the old host never cut it");
+    assert_eq!(
+        *f.rt.deleted.lock().unwrap(),
+        [started[0].name.clone()],
+        "deleted on the host"
+    );
+    assert!(
+        f.server.get(&ada()).await.unwrap().spaces.is_empty(),
+        "the host provides nothing"
+    );
+    assert!(provided_machines(&f).await.is_empty(), "no ghost Space");
+    // Only the host itself is listed: no Space it provides.
+    let listed = spaces.list().unwrap();
+    assert!(
+        listed.iter().all(|s| s.name == "Mac mini (spare)"),
+        "nothing registered: {listed:#?}"
+    );
+    assert!(listed.len() <= 1, "{listed:#?}");
+}
+
+/// A current host applies `network: none` and says so: the create works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn network_none_on_a_current_host_is_enforced() {
+    let f = fixture(HostProfile::Spare).await;
+    let (_host, spaces, _other) = client_fixture(&f).await;
+    let created = create_on_host_without_network(&f, &spaces)
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert!(created.id.starts_with("relay:"), "{created:?}");
+    let started = f.rt.started.lock().unwrap().clone();
+    assert_eq!(started.len(), 1, "{started:?}");
+    assert!(started[0].restrict_network, "the host cut its network");
+    assert!(f.rt.deleted.lock().unwrap().is_empty());
+}
+
+/// The host's create response says which network it applied, for the
+/// client to check: `none` when asked for, empty for the default.
+#[tokio::test]
+async fn a_host_says_which_network_it_applied() {
+    let f = direct_fixture().await;
+    let local = HostCaller::local();
+    let mut answered = Vec::new();
+    for network in ["none", ""] {
+        let space = f
+            .server
+            .create(
+                &local,
+                pb::CreateHostSpaceRequest {
+                    image: "linux".into(),
+                    direct: true,
+                    network: network.into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        answered.push(space.network);
+    }
+    assert_eq!(answered, ["none", ""]);
+    let started = f.rt.started.lock().unwrap();
+    assert_eq!(
+        started
+            .iter()
+            .map(|s| s.restrict_network)
+            .collect::<Vec<_>>(),
+        [true, false]
+    );
+}
+
+/// The host gives the Space the guest environment of the request (a secret
+/// the caller passed), and its own mesh setting wins on a clash.
+#[tokio::test]
+async fn the_host_applies_the_requested_env() {
+    let f = fixture(HostProfile::Spare).await;
+    let attach = f.register("ada-token", "space-ada00009").await;
+    f.server
+        .create(
+            &ada(),
+            pb::CreateHostSpaceRequest {
+                image: "linux".into(),
+                attach: Some(attach),
+                env: [
+                    ("API_KEY".to_string(), "s3cret".to_string()),
+                    ("CUA_MESH".to_string(), "hijack".to_string()),
+                ]
+                .into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let started = f.rt.started.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(
+        started.env.get("API_KEY").map(String::as_str),
+        Some("s3cret")
+    );
+    assert_ne!(
+        started.env.get(cua_mesh::policy::ENV).map(String::as_str),
+        Some("hijack")
+    );
+}
+
+/// [`Fixture::register`] as the client does it: the new Space's relay
+/// machine names its host.
+async fn register_on(f: &Fixture, host: &str, id: &str) -> pb::AttachRelayRequest {
+    let reg = cua_host::RelayClient::new(&f.relay.url)
+        .unwrap()
+        .register(
+            "ada-token",
+            &cua_host::relay::RegisterRequest {
+                id: id.into(),
+                name: id.into(),
+                allow: vec![],
+                host: Some(host.into()),
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    pb::AttachRelayRequest {
+        relay_url: f.relay.url.clone(),
+        machine_token: reg.machine_token,
+        machine_id: id.into(),
+        relay_jwks_json: reg.jwks.to_string(),
+        owner: reg.machine.owner.id,
+        owner_email: reg.machine.owner.email.unwrap_or_default(),
+    }
+}
+
+/// Gives provided Space `local` (`local:<name>`) a disk this host can
+/// measure: a QEMU VM directory with `mib` MiB in it.
+fn give_disk(f: &Fixture, local: &str, mib: usize) {
+    let name = local.trim_start_matches("local:");
+    let mut fields = serde_json::Map::new();
+    fields.insert("runtime_type".into(), "qemu".into());
+    f.spaces.sandboxes().state().update(name, fields).unwrap();
+    let dir = cua_disk::Layout::new(&f.home).qemu().join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("disk.qcow2"), vec![7u8; mib << 20]).unwrap();
+}
+
+/// Sizes on disk for Spaces on your other computers (CUA-2204): the host
+/// measures what each of its Spaces takes when asked
+/// (`GetHostSpacesRequest.disk`), and another device of the account puts
+/// it in its resources under its own id for the Space; nothing for a host
+/// that predates the question, or one that is offline.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn another_device_reads_what_its_spaces_take_on_their_host() {
+    use cua_spaces::resources::Measure;
+    let f = fixture(HostProfile::Spare).await;
+    let (host, other, _dir) = client_fixture(&f).await;
+    let attach = register_on(&f, &host, "space-ada00007").await;
+    let space = f.create(&ada(), "linux", attach).await.unwrap();
+    // Not asked: the host measures nothing.
+    let listed = f.server.get(&ada()).await.unwrap();
+    assert!(listed.spaces.iter().all(|s| s.disk.is_none()));
+    // Asked: a Space it can measure says what it takes.
+    give_disk(&f, &space.local_space, 6);
+    let mut spaces = listed.spaces.clone();
+    f.server.with_disks(&mut spaces).await;
+    let d = spaces[0].disk.expect("measured");
+    assert!(d.allocated >= 6 << 20, "{d:?}");
+    assert_eq!(d.bytes, Some(d.allocated));
+
+    let ask = Measure {
+        disk: true,
+        guests: false,
+    };
+    let listed = other.list_all().await.unwrap();
+    assert!(
+        listed
+            .iter()
+            .any(|s| s.id == "relay:space-ada00007" && s.host == host)
+    );
+    let r = other.resources_now(ask).await;
+    let mine = r
+        .spaces
+        .iter()
+        .find(|s| s.id == "relay:space-ada00007")
+        .expect("keyed by this device's id for it");
+    assert_eq!(mine.disk_on_host.unwrap().bytes, d.bytes);
+    // Only its disk is known; this computer's own totals leave it out.
+    assert!(mine.usage.is_none());
+    assert_eq!(r.this_mac.spaces_count, 0);
+    // Without `disk`, nobody is asked.
+    let quick = other
+        .resources_now(Measure {
+            disk: false,
+            guests: false,
+        })
+        .await;
+    assert!(quick.spaces.is_empty());
+
+    // The host goes offline: its Spaces get no size.
+    f.relay.set_online(&host, false, "1.0.0");
+    other.list_all().await.unwrap();
+    let r = other.resources_now(ask).await;
+    assert!(r.spaces.is_empty(), "{:?}", r.spaces);
+}
+
+/// A host that predates `GetHostSpacesRequest.disk` answers without sizes:
+/// its Spaces get none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_that_predates_sizes_gives_none() {
+    use cua_spaces::resources::Measure;
+    let f = fixture(HostProfile::Spare).await;
+    let (host, other, _dir) = client_fixture_of(&f, true).await;
+    let attach = register_on(&f, &host, "space-ada00008").await;
+    let space = f.create(&ada(), "linux", attach).await.unwrap();
+    give_disk(&f, &space.local_space, 2);
+    let listed = other.list_all().await.unwrap();
+    assert!(
+        listed
+            .iter()
+            .any(|s| s.id == "relay:space-ada00008" && s.host == host)
+    );
+    let r = other
+        .resources_now(Measure {
+            disk: true,
+            guests: false,
+        })
+        .await;
+    assert!(r.spaces.is_empty(), "{:?}", r.spaces);
 }

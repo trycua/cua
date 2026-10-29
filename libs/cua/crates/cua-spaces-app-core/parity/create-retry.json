@@ -1,0 +1,124 @@
+{
+  "name": "create-retry",
+  "about": "A create that fails for a reason that usually passes (here the built-in Linux runtime did not start) runs once more by itself: the row says Retrying… and goes on, and a second failure is shown. A create that fails for a lasting reason (no disk space) is never retried; when it fails the same way again (same cause, same machine, same image), even after the first row was dismissed, the row offers that cause's fix instead of a plain Try again. A success there clears the count.",
+  "now": 1800000000000,
+  "rows": [],
+  "creates": [
+    {
+      "type": "start",
+      "id": "pending:1",
+      "name": "Box",
+      "os": "linux",
+      "provider": "local",
+      "now": 1800000001000,
+      "kind": "container"
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "preparing",
+      "fraction": 0.3,
+      "now": 1800000002000
+    },
+    {
+      "type": "fail",
+      "id": "pending:1",
+      "error": "local runtime: the built-in Linux runtime did not start: exiting, status 1",
+      "errorVariant": "Runtime",
+      "now": 1800000003000
+    },
+    {
+      "type": "tick",
+      "now": 1800000004000
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "preparing",
+      "fraction": 0.5,
+      "now": 1800000005000
+    },
+    {
+      "type": "fail",
+      "id": "pending:1",
+      "error": "local runtime: the built-in Linux runtime did not start: exiting, status 1",
+      "errorVariant": "Runtime",
+      "now": 1800000007000
+    },
+    {
+      "type": "dismiss",
+      "id": "pending:1"
+    },
+    {
+      "type": "start",
+      "id": "pending:2",
+      "name": "Mac",
+      "os": "macos",
+      "provider": "local",
+      "now": 1800000010000,
+      "image": "ghcr.io/trycua/macos:26"
+    },
+    {
+      "type": "fail",
+      "id": "pending:2",
+      "error": "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume",
+      "errorVariant": "Runtime",
+      "now": 1800000011000
+    },
+    {
+      "type": "dismiss",
+      "id": "pending:2"
+    },
+    {
+      "type": "start",
+      "id": "pending:3",
+      "name": "Mac",
+      "os": "macos",
+      "provider": "local",
+      "now": 1800000020000,
+      "image": "ghcr.io/trycua/macos:26"
+    },
+    {
+      "type": "fail",
+      "id": "pending:3",
+      "error": "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume",
+      "errorVariant": "Runtime",
+      "now": 1800000021000
+    },
+    {
+      "type": "dismiss",
+      "id": "pending:3"
+    },
+    {
+      "type": "start",
+      "id": "pending:4",
+      "name": "Mac",
+      "os": "macos",
+      "provider": "local",
+      "now": 1800000030000,
+      "image": "ghcr.io/trycua/macos:26"
+    },
+    {
+      "type": "finish",
+      "id": "pending:4",
+      "spaceId": "local:mac"
+    },
+    {
+      "type": "start",
+      "id": "pending:5",
+      "name": "Mac",
+      "os": "macos",
+      "provider": "local",
+      "now": 1800000040000,
+      "image": "ghcr.io/trycua/macos:26"
+    },
+    {
+      "type": "fail",
+      "id": "pending:5",
+      "error": "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume",
+      "errorVariant": "Runtime",
+      "now": 1800000041000
+    }
+  ],
+  "refreshed": []
+}

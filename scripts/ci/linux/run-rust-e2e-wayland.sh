@@ -14,8 +14,8 @@ if [[ "${SESSION_KIND}" == sway-xwayland ]]; then
   # their established Sway paths while this wrapper additionally enables XWayland.
   export CUA_E2E_WAYLAND_SESSION=sway
 fi
-COMPOSITOR_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/${SESSION_KIND}.log"
-ATSPI_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/at-spi-bus.log"
+COMPOSITOR_LOG="${CUA_E2E_ARTIFACT_DIR:-${REPO_ROOT}/artifacts/cua-driver/linux}/${SESSION_KIND}.log"
+ATSPI_LOG="${CUA_E2E_ARTIFACT_DIR:-${REPO_ROOT}/artifacts/cua-driver/linux}/at-spi-bus.log"
 COMPOSITOR_PID=""
 DBUS_PID=""
 ATSPI_PID=""

@@ -3,7 +3,7 @@
 
 /**
  * The account's relay allowance (`relay.usage`), read while a screen shows
- * it: at once, every 5 minutes, and when the app comes to the front (at
+ * it: at once, every minute, and when the app comes to the front (at
  * most once a minute). A host without the operation, signed out, or a relay
  * that meters nothing reads as null, and the page shows nothing. The words
  * are the app core's (`relayUsage.view`).
@@ -12,13 +12,13 @@
 import { useContext, useMemo, useSyncExternalStore } from "react";
 import { isUnsupported, type DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
-import { relayUsageView } from "./derive";
+import { planLimitNotice, relayUsageView } from "./derive";
 import { useSettings } from "./hooks";
-import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
+import type { RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
 export type { PlanCard, PlanLink, RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
-export const RELAY_USAGE_POLL_MS = 5 * 60_000;
+export const RELAY_USAGE_POLL_MS = 60_000;
 /** A focus reads again only when the last read is older than this. */
 export const RELAY_USAGE_FOCUS_MS = 60_000;
 
@@ -134,4 +134,12 @@ export function useRelayUsageView(): RelayUsageView | null {
   const core = useContext(BridgeContext)?.core;
   const accountApp = useSettings().data?.accountUrl ?? null;
   return useMemo(() => (usage && core ? relayUsageView(core, usage, accountApp) : null), [usage, core, accountApp]);
+}
+
+/** The plan-limit refusal in an error's text, as the core's sentence with
+ * its Upgrade link; null for any other error (or without the core). */
+export function usePlanLimitNotice(): (error: string) => RelayAllowanceNotice | null {
+  const core = useContext(BridgeContext)?.core;
+  const accountApp = useSettings().data?.accountUrl ?? null;
+  return useMemo(() => (error: string) => (core ? planLimitNotice(core, error, accountApp) : null), [core, accountApp]);
 }

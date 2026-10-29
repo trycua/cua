@@ -305,7 +305,7 @@ pub(crate) fn background_refusal_result(
 }
 
 /// Hint shown with every `windowserver_connection_invalid` refusal.
-pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `open -n -g -a CuaDriver --args serve`.";
+pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `cua-driver permissions grant`.";
 
 /// Structured refusal for a background action whose no-raise focus step got
 /// `SLPSPostEventRecordTo` status 1002 (invalid connection). Nothing was sent
@@ -1057,7 +1057,7 @@ pub fn register_all(
     }
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
-    crate::recording_hooks::set_snapshots(state.snapshots.clone());
+    cua_driver_core::snapshot_store::register_runtime_store(&state.snapshots);
 
     // Drop a disconnecting session's config overrides + owned cursor on
     // `session_end`. The daemon fans the session id out to this hook;
@@ -1407,6 +1407,6 @@ mod windowserver_refusal_tests {
         assert!(structured["hint"]
             .as_str()
             .unwrap()
-            .contains("open -n -g -a CuaDriver --args serve"));
+            .contains("cua-driver permissions grant"));
     }
 }

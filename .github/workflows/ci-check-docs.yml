@@ -9,7 +9,6 @@ on:
       - "libs/lume/src/**"
       - "libs/python/cua-sandbox/**"
       - "libs/cua/python/pyproject.toml"
-      - "libs/typescript/fleet/package.json"
       - "libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json"
       - "docs/content/docs/cua-driver/reference/**"
       - "docs/content/docs/lume/reference/**"
@@ -30,7 +29,7 @@ on:
       - "libs/images/sandbox-images.json"
       - "libs/images/bench/*/lock.json"
       - "docs/content/docs/cua-sdk/quickstart.mdx"
-      - "docs/content/docs/start-here/sandbox-images.mdx"
+      - "docs/content/docs/cua-sdk/guides/images.mdx"
       - ".github/workflows/ci-check-docs.yml"
       - ".gitattributes"
   # Run every native check on demand, e.g. to produce the native Windows Driver
@@ -160,7 +159,7 @@ jobs:
       # cache key matches. Pull requests never save.
       - uses: dtolnay/rust-toolchain@stable
         if: matrix.library == 'cua-driver'
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         if: matrix.library == 'cua-driver'
         with:
           workspaces: "libs/cua-driver/rust -> target"
@@ -182,7 +181,7 @@ jobs:
       - name: Install the pinned nightly for rustdoc JSON (this job only)
         if: matrix.library == 'cua-rust'
         run: rustup toolchain install nightly-2026-09-20 --profile minimal
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
         with:
           workspaces: |

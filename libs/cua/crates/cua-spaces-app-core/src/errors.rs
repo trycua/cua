@@ -74,7 +74,7 @@ mod tests {
             "connection refused",
             "transport: transport error: Connection refused (os error 61)",
             "no macOS image is configured",
-            "fleet: 503 Service Unavailable",
+            "upstream: 503 Service Unavailable",
         ] {
             assert_eq!(plain_error(raw), raw, "{raw}");
         }

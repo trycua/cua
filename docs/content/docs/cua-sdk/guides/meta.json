@@ -1,26 +1,28 @@
 {
   "title": "Guides",
   "pages": [
+    "own-harness",
     "images",
+    "build-an-image",
     "services",
-    "secrets",
-    "sidecars",
+    "egress",
     "lifecycle",
     "desktop",
-    "thumbnails",
     "spacesd",
     "local-runtimes",
-    "disk-usage",
-    "cua-cloud-ended",
+    "docker-vm",
+    "external-runtimes",
+    "external-runtime-protocol",
     "your-cloud",
-    "your-cloud-resources",
-    "contrib-providers",
+    "your-cloud-without-a-key",
+    "your-cloud-safety",
+    "your-cloud-cleanup",
     "test-in-ci",
     "run-a-coding-agent",
-    "coding-agent-options",
-    "browse-the-web",
+    "build-a-durable-agent",
+    "durable-agent-guarantees",
     "agent-frameworks",
     "omarchy",
-    "migrate-from-deprecated-packages"
+    "cua-cloud-ended"
   ]
 }

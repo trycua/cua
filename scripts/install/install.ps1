@@ -15,10 +15,11 @@ except with -AppOnly). Items:
     cua-driver  Cua Driver, which lets AI agents use apps while you keep
                 working: installs it and adds its skill and MCP server to
                 your agents (off by default)
-The list does not offer hosting. The app's first run asks how to use this
-computer (-Mode host|client preselects the answer). For scripts, `-Select host`
-and `-Only host` still run `cua host setup`, which lets your other devices use
-this computer through the relay.
+Signing in adds this computer to your account: after `cua auth login`
+succeeds, the installer runs `cua host setup`, so your other devices can use
+it through the relay (a computer set up before keeps its settings). -NoHost
+signs in only. `-Select host` and `-Only host` run `cua host setup` even
+without a sign-in here (kept for scripts).
 Set CUA_INSTALL_NONINTERACTIVE=1 to never prompt. Add -Verbose to see every
 step (manifest, downloads, signature checks).
 
@@ -29,8 +30,8 @@ signature when available), installs `cua` to %LOCALAPPDATA%\Programs\cua\bin
 skips it), then runs `cua auth login` when a user is at the console (not
 with -CliOnly, -Pair or -NoOnboarding).
 -AppOnly, -Mode and the `spaces` item install the Cua Spaces app: its signed
-setup.exe for this machine's architecture, run silently (/S) after the sha256
-(and cosign, when available) check.
+setup.exe for this machine's architecture, run silently (/S) after checking sha256,
+cosign (when available) and its Authenticode signature (signer Cua AI, Inc.).
 
 .PARAMETER Select
 Preselect items (comma list: spaces, cua-driver, host); the list still shows.
@@ -44,7 +45,7 @@ Install only the Cua Spaces app (no CLI).
 Preselect the app's first-run choice: host or client (implies spaces).
 .PARAMETER Pair
 Add this machine to your account with a one-time code from the Cua Spaces app
-(Add a machine): installs the CLI and runs `cua host setup --pair <code>`, with
+(Add a computer): installs the CLI and runs `cua host setup --pair <code>`, with
 no sign-in and no checklist. A computer that already has a cua with
 `host setup --pair` uses it instead of downloading again; -Prefix, -Version or
 CUA_INSTALL_REINSTALL=1 install anyway.
@@ -59,7 +60,14 @@ Kept for older commands: the CLI directory is added to the user PATH by default.
 .PARAMETER NoModifyPath
 Do not add the CLI directory to the user PATH.
 .PARAMETER NoOnboarding
-Do not run `cua auth login` afterwards.
+Do not run `cua auth login` afterwards (nor add this computer).
+.PARAMETER NoHost
+Sign in only: do not add this computer to your account.
+.PARAMETER NoProvideSpaces
+Add this computer without creating Spaces for your other devices on it
+(`cua host setup --no-provide-spaces`).
+.PARAMETER NoSkills
+With cua-driver, add only its MCP server to your agents, not its skill (by default both are added).
 .PARAMETER RequireSignature
 Fail unless a signature verifies.
 .PARAMETER Installer
@@ -83,6 +91,9 @@ param(
     [switch]$ModifyPath,
     [switch]$NoModifyPath,
     [switch]$NoOnboarding,
+    [switch]$NoHost,
+    [switch]$NoProvideSpaces,
+    [switch]$NoSkills,
     [switch]$RequireSignature,
     [ValidateSet('msi', 'nsis')][string]$Installer = 'nsis',
     [switch]$DryRun,
@@ -118,6 +129,7 @@ $script:DidCli = $null
 $script:DidApp = $false
 $script:DidDriver = $false
 $script:SignedIn = $false
+$script:DidHost = $false
 $script:PathHint = $null
 
 function Get-Sha256Hex([string]$Path) {
@@ -134,6 +146,164 @@ function Get-Sha256Hex([string]$Path) {
 function Write-Step([string]$Message) { Write-Host $Message }
 function Write-Info([string]$Message) { Write-Verbose "cua-install: $Message" }
 function Stop-Install([string]$Message) { throw "cua-install: error: $Message" }
+
+# ---------------------------------------------------------------- telemetry
+# Three anonymous events about this install (cua_installer_step):
+# installer_started, then installer_completed or installer_failed with the
+# stage that was running and a fixed reason word. The same switches as every
+# Cua program (DO_NOT_TRACK, CUA_TELEMETRY, `[telemetry] enabled = "off"` in
+# $CUA_HOME\config.toml, off in CI) and the same anonymous install id. Never a
+# name, a path, a URL or an error message; nothing with -DryRun. Best effort:
+# a send never fails the install and waits at most 3 seconds.
+$script:TelKeyProd = 'phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14'
+$script:TelKeyStaging = 'phc_xDNLpzypNLVGmzQeBZEgZDZK7Ea6yYAmAnGZ6hMtHNKG'
+$script:TelCiVars = @('CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'GITLAB_CI', 'JENKINS_URL', 'CIRCLECI', 'BUILDKITE',
+    'TF_BUILD', 'TEAMCITY_VERSION', 'TRAVIS', 'APPVEYOR', 'BITBUCKET_BUILD_NUMBER', 'CODEBUILD_BUILD_ID', 'DRONE', 'HUDSON_URL')
+$script:Tel = $null
+$script:TelStage = 'other'
+$script:TelVersion = ''
+
+# 'on', 'off' or $null for a switch word.
+function ConvertTo-TelSwitch([string]$Value) {
+    if ($null -eq $Value) { return $null }
+    switch -Regex ($Value.Trim().ToLowerInvariant()) {
+        '^(0|false|no|off|disable|disabled)$' { return 'off' }
+        '^(1|true|yes|on|enable|enabled)$' { return 'on' }
+    }
+    return $null
+}
+
+function Get-TelConfigSwitch([string]$CuaHome) {
+    $f = Join-Path $CuaHome 'config.toml'
+    if (-not (Test-Path -LiteralPath $f)) { return $null }
+    $section = ''
+    foreach ($line in (Get-Content -LiteralPath $f -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*\[\s*([^\]]+?)\s*\]') { $section = $Matches[1]; continue }
+        if ($section -eq 'telemetry' -and $line -match '^\s*enabled\s*=\s*"?([^"#\s]*)"?') { return (ConvertTo-TelSwitch $Matches[1]) }
+    }
+    return $null
+}
+
+# Whether install events may be sent here (the rules of cua-telemetry's config.rs).
+function Test-TelemetryEnabled([string]$CuaHome) {
+    $dnt = "$env:DO_NOT_TRACK".Trim().ToLowerInvariant()
+    if ($dnt -and $dnt -ne '0' -and $dnt -ne 'false') { return $false }
+    $sw = ConvertTo-TelSwitch $env:CUA_TELEMETRY
+    if ($sw) { return ($sw -eq 'on') }
+    if ((ConvertTo-TelSwitch $env:CUA_TELEMETRY_ENABLED) -eq 'off') { return $false }
+    if ((ConvertTo-TelSwitch $env:CUA_TELEMETRY_DISABLED) -eq 'on') { return $false }
+    $sw = Get-TelConfigSwitch $CuaHome
+    if ($sw) { return ($sw -eq 'on') }
+    return -not (Test-TelCi)
+}
+
+function Test-TelCi {
+    foreach ($v in $script:TelCiVars) {
+        $x = "$([Environment]::GetEnvironmentVariable($v))".Trim().ToLowerInvariant()
+        if ($x -and $x -ne 'false' -and $x -ne '0') { return $true }
+    }
+    return $false
+}
+
+function New-TelHex {
+    $b = New-Object byte[] 16
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+    return (($b | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
+# Decides, shows the notice, and loads or creates the anonymous install id.
+function Initialize-CuaTelemetry {
+    $script:Tel = $null
+    if ($DryRun) { return }
+    $key = if ($env:CUA_POSTHOG_KEY) { $env:CUA_POSTHOG_KEY } elseif ("$env:CUA_ENV".Trim().ToLowerInvariant() -eq 'staging') { $script:TelKeyStaging } else { $script:TelKeyProd }
+    if (-not $key) { return }
+    $cuaHome = if ($env:CUA_HOME) { $env:CUA_HOME } else { Join-Path $HOME '.cua' }
+    if (-not (Test-TelemetryEnabled $cuaHome)) { return }
+    $endpoint = if ($env:CUA_TELEMETRY_ENDPOINT) { $env:CUA_TELEMETRY_ENDPOINT } else { 'https://eu.i.posthog.com/batch/' }
+    if ((ConvertTo-TelSwitch $env:CUA_TELEMETRY_FORBID_NETWORK) -eq 'on' -and $endpoint -notmatch '^http://(127\.0\.0\.1|localhost|\[::1\])[:/]') { return }
+    $dir = Join-Path $cuaHome 'telemetry'
+    $idFile = Join-Path $dir 'install_id'
+    $id = $null
+    try { $id = (Get-Content -Raw -LiteralPath $idFile -ErrorAction Stop).Trim() } catch { }
+    if ($id -notmatch '^[0-9a-f]{32}$') {
+        $id = New-TelHex
+        try {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Set-Content -LiteralPath $idFile -Value $id -NoNewline
+        } catch { Write-Verbose "could not store the telemetry id: $_" }
+    }
+    $script:Tel = @{ Key = $key; Endpoint = $endpoint; Id = $id; Session = (New-TelHex); Ci = (Test-TelCi); Ended = $false }
+    Write-Host 'Cua sends anonymous data about this install (whether it worked, and where it stopped if not). Never names, file paths or anything you type.'
+    Write-Host 'To turn it off, set DO_NOT_TRACK=1. Details: https://cua.ai/docs/cua-sdk/concepts/telemetry'
+}
+
+# The fixed reason word for an install error message.
+function Get-CuaInstallErrorKind([string]$Message) {
+    switch -Wildcard ($Message) {
+        '*checksum mismatch*' { return 'checksum' }
+        '*signature*' { return 'signature' }
+        '*release identity*' { return 'signature' }
+        '*unsupported CPU*' { return 'unsupported_platform' }
+        '*cannot create*' { return 'permission_denied' }
+        '*ermission*' { return 'permission_denied' }
+        '*Access*denied*' { return 'permission_denied' }
+        '*cancelled*' { return 'cancelled' }
+        '*download failed*' { return 'network' }
+        '*unsupported release manifest*' { return 'network' }
+        '*Unable to connect*' { return 'network' }
+        '*could not be resolved*' { return 'network' }
+        '*timed out*' { return 'network' }
+        '*No such host*' { return 'network' }
+        '*404*' { return 'network' }
+    }
+    return 'other'
+}
+
+# The cua_installer_step payload (one batch body).
+function New-CuaInstallerStepBody($Sel, [string]$Step, [string]$Stage = 'none', [string]$Kind = 'none') {
+    $failed = $Step -eq 'installer_failed'
+    if (-not $failed) { $Stage = 'none'; $Kind = 'none' }
+    $outcome = if (-not $failed) { 'ok' } elseif ($Kind -eq 'cancelled') { 'cancelled' } else { 'error' }
+    $items = @()
+    if ($Sel) {
+        if ($Sel.cli) { $items += 'cli' }
+        if ($Sel.spaces) { $items += 'spaces' }
+        if ($Sel['cua-driver']) { $items += 'cua_driver' }
+        if ($Sel.host) { $items += 'host' }
+    }
+    $pv = if ($script:TelVersion) { $script:TelVersion } elseif ($Version) { $Version.TrimStart('v') } else { '' }
+    if ($pv -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { $pv = '0.0.0' }
+    $isWin = (-not (Test-Path variable:IsWindows)) -or $IsWindows
+    $os = if ($isWin) { 'windows' } elseif ($IsMacOS) { 'macos' } elseif ($IsLinux) { 'linux' } else { 'other' }
+    $major = [int][Environment]::OSVersion.Version.Major
+    if ($major -gt 999 -or $major -lt 0) { $major = 0 }
+    $archRaw = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } elseif ($env:PROCESSOR_ARCHITECTURE) { $env:PROCESSOR_ARCHITECTURE } else { [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() }
+    $arch = switch -Regex ($archRaw) { '^(AMD64|x64|X64|x86_64)$' { 'x86_64' } '^(ARM64|Arm64|aarch64)$' { 'arm64' } default { 'other' } }
+    $u = New-TelHex
+    $uuid = '{0}-{1}-4{2}-8{3}-{4}' -f $u.Substring(0, 8), $u.Substring(8, 4), $u.Substring(13, 3), $u.Substring(17, 3), $u.Substring(20, 12)
+    $props = [ordered]@{
+        telemetry_schema_version = 1; event_version = 1; product = 'cli'; product_version = $pv
+        os_family = $os; os_major = $major; arch = $arch; is_ci = [bool]$script:Tel.Ci
+        is_synthetic = ((ConvertTo-TelSwitch $env:CUA_TELEMETRY_SYNTHETIC) -eq 'on'); process_session_id = $script:Tel.Session
+        sample_rate = 1; '$process_person_profile' = $false; '$geoip_disable' = $true
+        '$lib' = 'cua-installer'; '$lib_version' = '1.0.0'
+        step = $Step; outcome = $outcome; install_stage = $Stage; error_kind = $Kind; installer = 'ps1'
+        items = $(if ($items.Count) { $items -join '+' } else { 'none' })
+    }
+    $event = [ordered]@{ event = 'cua_installer_step'; distinct_id = $script:Tel.Id; uuid = $uuid
+        timestamp = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); properties = $props }
+    return (ConvertTo-Json -Depth 6 -Compress ([ordered]@{ api_key = $script:Tel.Key; batch = @($event) }))
+}
+
+function Send-CuaInstallerStep($Sel, [string]$Step, [string]$Stage = 'none', [string]$Kind = 'none') {
+    if (-not $script:Tel -or $script:Tel.Ended) { return }
+    if ($Step -ne 'installer_started') { $script:Tel.Ended = $true }
+    try {
+        $body = New-CuaInstallerStepBody $Sel $Step $Stage $Kind
+        if ((ConvertTo-TelSwitch $env:CUA_TELEMETRY_DEBUG) -eq 'on') { Write-Host "[cua telemetry] $body" }
+        Invoke-RestMethod -Method Post -Uri $script:Tel.Endpoint -ContentType 'application/json' -Body $body -TimeoutSec 3 | Out-Null
+    } catch { Write-Verbose "install telemetry not sent: $_" }
+}
 
 function Get-CuaPlatform {
     param([string]$Arch = $env:CUA_INSTALL_ARCH)
@@ -184,14 +354,19 @@ function Get-CuaSelection {
     if ($App -and ($extra -contains 'cua-driver' -or $extra -contains 'host')) { Stop-Install '-AppOnly skips the CLI, which cua-driver and host need' }
     $sel = [ordered]@{ cli = -not $App; spaces = $false; 'cua-driver' = $false; host = $false }
     $list = if ($OnlyList -or $Cli) { $OnlyList } else { $SelectList }
-    # The app is a default, as on macOS and Linux (not with -Only, -CliOnly
-    # or a pairing code, which adds a host machine).
-    if (-not ($OnlyList -or $Cli -or $Pair)) { $sel.spaces = $true }
+    # The app is a default, as on macOS and Linux (not with -Only, -CliOnly,
+    # -Select naming items, or a pairing code, which adds a host machine).
+    if (-not ($OnlyList -or $Cli -or $Pair -or "$SelectList".Trim(' ', ',', "`t"))) { $sel.spaces = $true }
     foreach ($item in @(ConvertTo-CuaItems $list)) { $sel[$item] = $true }
     # A pairing code adds this machine: the CLI and host setup.
     if ($Pair) {
         if ($App) { Stop-Install '-Pair needs the CLI; drop -AppOnly' }
         $sel.host = $true
+    }
+    if ($NoHost) {
+        if ($Pair) { Stop-Install '-NoHost and -Pair contradict each other: -Pair adds this computer' }
+        if ($sel.host) { Stop-Install '-NoHost and -Select host contradict each other' }
+        if ($NoProvideSpaces) { Stop-Install '-NoProvideSpaces goes with adding this computer; drop -NoHost' }
     }
     # Legacy: -AppOnly and -Mode mean the app, as they always did.
     if ($App -or ($InstallMode -and -not $Cli)) { $sel.spaces = $true }
@@ -385,11 +560,60 @@ function Add-UserPath([string]$Dir) {
     Write-Step "Added $Dir to your user PATH (open a new terminal window to use cua)"
 }
 
+# True when cua version $A is strictly newer than $B (semver: a pre-release
+# sorts before its release; a dev build, 0.0.0 or one naming "dev", counts
+# as older than any release of the same or a later version). False when
+# either does not parse. Mirrors cua-home's version.rs and install.sh.
+function Read-CuaVersion([string]$V) {
+    $V = $V.TrimStart('v')
+    $dev = $V -match 'dev'
+    $V = ($V -split '\+')[0]
+    $pre = ''
+    $i = $V.IndexOf('-')
+    if ($i -ge 0) { $pre = $V.Substring($i + 1); $V = $V.Substring(0, $i) }
+    if ($V -notmatch '^\d+\.\d+\.\d+$') { return $null }
+    $core = [version]$V
+    if ($core -eq [version]'0.0.0') { $dev = $true }
+    return @{ Core = $core; Pre = $pre; Dev = $dev }
+}
+
+function Test-CuaVersionNewer([string]$A, [string]$B) {
+    $x = Read-CuaVersion $A; $y = Read-CuaVersion $B
+    if ($null -eq $x -or $null -eq $y) { return $false }
+    if ($x.Dev -and -not $y.Dev) { return $x.Core -gt $y.Core }
+    if (-not $x.Dev -and $y.Dev) { return $x.Core -ge $y.Core }
+    if ($x.Core -ne $y.Core) { return $x.Core -gt $y.Core }
+    if ($x.Pre -eq $y.Pre) { return $false }
+    if ($x.Pre -eq '') { return $true }
+    if ($y.Pre -eq '') { return $false }
+    $xs = $x.Pre -split '\.'; $ys = $y.Pre -split '\.'
+    for ($k = 0; $k -lt [Math]::Min($xs.Count, $ys.Count); $k++) {
+        if ($xs[$k] -eq $ys[$k]) { continue }
+        $xn = $xs[$k] -match '^\d+$'; $yn = $ys[$k] -match '^\d+$'
+        if ($xn -and $yn) { return [int64]$xs[$k] -gt [int64]$ys[$k] }
+        if ($xn) { return $false }
+        if ($yn) { return $true }
+        return [string]::CompareOrdinal($xs[$k], $ys[$k]) -gt 0
+    }
+    return $xs.Count -gt $ys.Count
+}
+
 function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string]$Tmp) {
     $bin = Get-CliBinDir
     $target = Join-Path $bin 'cua.exe'
     # -CliOnly / -Only already said what to install.
     if (-not ($CliOnly -or $Only) -and -not (Confirm-Step "Install the command-line tools to ${target}?")) { Stop-Install 'cancelled; rerun with -Prefix DIR to choose another location' }
+    # Never a downgrade: a newer cua already there stays, unless a version
+    # was asked for (-Version rolls back on purpose).
+    if (-not $Version -and (Test-Path -LiteralPath $target)) {
+        $have = $null
+        try { $have = ((& $target --version 2>$null | Select-Object -First 1) -replace '^cua\s+(\S+).*$', '$1') } catch { }
+        $entry = Find-Artifact $Manifest 'cli' $Platform 'zip'
+        if ($have -and $entry -and (Test-CuaVersionNewer $have ([string]$entry.version))) {
+            Write-Step "Kept $target (cua $have is newer than the release's $($entry.version); use -Version $($entry.version) to go back)"
+            return $target
+        }
+    }
     Write-Step "Installing the command-line tools to $target"
     $zip = Get-Artifact $Manifest $ManifestUrl 'cli' $Platform 'zip' $Tmp
     if ($DryRun) {
@@ -401,6 +625,12 @@ function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string
         if (-not $exe) { Stop-Install "no cua.exe inside $(Split-Path -Leaf $zip)" }
         New-Item -ItemType Directory -Force -Path $bin | Out-Null
         Copy-Item -LiteralPath $exe.FullName -Destination $target -Force
+        # The static cua-spacesd injected into OCI images that carry none is
+        # found next to the CLI.
+        Get-ChildItem -LiteralPath $out -Recurse -Filter 'cua-spacesd-linux-*' | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $bin $_.Name) -Force
+        }
+        Write-Info "installed $target"
         $script:DidCli = $target
     }
     $onPath = @($env:Path -split ';') -contains $bin
@@ -442,6 +672,21 @@ function Install-App($Manifest, [string]$ManifestUrl, [string]$Platform, [string
     if ($DryRun) {
         Write-Host "[dry-run] $($cmd.FilePath) $($cmd.ArgumentList -join ' ')"
         return
+    }
+    if ($kind -eq 'nsis') {
+        try {
+            $sig = Get-AuthenticodeSignature -LiteralPath $file -ErrorAction Stop
+        } catch {
+            Stop-Install "Cua Spaces Authenticode signature verification failed: $($_.Exception.Message); refusing to run installer."
+        }
+        if ($sig.Status -ne 'Valid') {
+            Stop-Install "Cua Spaces Authenticode signature is not valid ($($sig.Status): $($sig.StatusMessage)); refusing to run installer."
+        }
+        if (-not $sig.SignerCertificate -or
+            $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'Cua AI, Inc.') {
+            Stop-Install 'Cua Spaces Authenticode signature signer is not Cua AI, Inc.; refusing to run installer.'
+        }
+        Write-Info "verified the Authenticode signature of $(Split-Path -Leaf $file) (Cua AI, Inc.)"
     }
     Write-Info "installing Cua Spaces ($kind, silent)"
     $proc = Start-Process -FilePath $cmd.FilePath -ArgumentList $cmd.ArgumentList -Wait -PassThru
@@ -490,8 +735,10 @@ function Install-CuaDriver([string]$Cua, [string]$Tmp, [string]$ManifestUrl) {
         try { & $exe -NoProfile -ExecutionPolicy Bypass -File $script @driverArgs } finally { $env:CUA_DRIVER_RS_INSTALL_DIR = $saved }
         if ($LASTEXITCODE -ne 0) { Stop-Install "the cua-driver installer failed (exit $LASTEXITCODE)" }
     }
-    Write-Info 'adding the cua-driver skill and MCP server to your agents'
+    if ($NoSkills) { Write-Info 'adding the cua-driver MCP server to your agents (no skill: -NoSkills)' }
+    else { Write-Info 'adding the cua-driver skill and MCP server to your agents' }
     $setup = @('agents', 'setup', '--cua-driver', '--agents', 'all', '--yes')
+    if ($NoSkills) { $setup += '--no-skills' }
     $driver = Join-Path $binDir 'cua-driver.exe'
     if ($DryRun -or (Test-Path -LiteralPath $driver)) { $setup += @('--mcp-command', $driver) }
     if ($DryRun) { Write-Host "[dry-run] $Cua $($setup -join ' ')"; return }
@@ -522,20 +769,36 @@ function Invoke-HostPair([string]$Cua) {
         $have = (& $Cua --version 2>&1 | Out-String).Trim()
         Stop-Install "the installed cua CLI ($have) cannot add a machine with a code (no 'cua host setup --pair'); install a newer release (-Version) or sign in instead: cua auth login; cua host setup"
     }
+    # It provides Spaces and keeps its screen private, as a computer added
+    # by signing in does; sharing its desktop is a choice on its page.
+    if ($setupHelp -match '--no-desktop') { $pairArgs += @('--no-desktop', '--provide-spaces') }
     Write-Step 'Adding this computer to your account (cua host setup --pair)'
     $null | & $Cua @pairArgs
-    if ($LASTEXITCODE -ne 0) { Stop-Install 'adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a machine) and run: cua host setup --pair <code>' }
+    if ($LASTEXITCODE -ne 0) { Stop-Install 'adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a computer) and run: cua host setup --pair <code>' }
     Write-Host ''
     Write-Host 'This machine is added. It shows up in Cua Spaces on your other devices in a few seconds.'
 }
 
 # Host this machine: joins the relay as the signed-in account.
-function Invoke-HostSetup([string]$Cua) {
+function Invoke-HostSetup([string]$Cua, $Sel) {
     if ($Pair) { Invoke-HostPair $Cua; return }
-    if ($DryRun) { Write-Host "[dry-run] $Cua host setup"; return }
-    Write-Step 'Letting your other devices use this computer (cua host setup)'
-    if (Test-Interactive) { & $Cua host setup } else { $null | & $Cua host setup }
-    if ($LASTEXITCODE -ne 0) { Write-Warning "host setup did not finish; run 'cua host setup' after 'cua auth login'" }
+    $setupArgs = @('host', 'setup')
+    if (-not $Sel.host) {
+        # Added by signing in: a computer already set up keeps its settings,
+        # and a new one provides Spaces with its screen kept private (sharing
+        # its desktop is a choice on its page in Cua Spaces).
+        if (-not $DryRun) {
+            $status = (& $Cua host status --json 2>$null | Out-String)
+            if ($status -match '"configured"\s*:\s*true') { $script:DidHost = $true; return }
+        }
+        if (-not $NoProvideSpaces) { $setupArgs += @('--no-desktop', '--provide-spaces') }
+    }
+    if ($NoProvideSpaces) { $setupArgs += '--no-provide-spaces' }
+    if ($DryRun) { Write-Host "[dry-run] $Cua $($setupArgs -join ' ')"; return }
+    Write-Step 'Adding this computer to your account (cua host setup)'
+    if (Test-Interactive) { & $Cua @setupArgs } else { $null | & $Cua @setupArgs }
+    if ($LASTEXITCODE -ne 0) { Write-Warning "adding this computer did not finish; run 'cua host setup' to try again (sign in first with 'cua auth login')" }
+    else { $script:DidHost = $true }
 }
 
 # -Pair on a computer that already has Cua: the `cua` that is there (it must
@@ -574,9 +837,10 @@ function Write-CuaSummary($Sel) {
         $checked = if ($script:DidCli -or $script:DidApp) { ' (downloads checked)' } else { '' }
         Write-Host "Installed $(Join-And $did)$checked."
     }
+    if ($script:DidHost) { Write-Host 'This computer is added to your account. It shows up in Cua Spaces on your other devices.' }
     if ($script:DidApp) {
-        if ($script:SignedIn) { Write-Host 'Next: open Cua Spaces from the Start menu. There you can also let your other devices use this computer.' }
-        else { Write-Host 'Next: open Cua Spaces from the Start menu. It guides you through signing in and connecting your AI agents. You can also let your other devices use this computer.' }
+        if ($script:SignedIn) { Write-Host 'Next: open Cua Spaces from the Start menu.' }
+        else { Write-Host 'Next: open Cua Spaces from the Start menu. It guides you through signing in and connecting your AI agents. Signing in adds this computer to your account.' }
         if ($Sel.cli) {
             if ($script:SignedIn) { Write-Host 'To connect more AI agents later, run "cua agents setup" in a terminal.' }
             else { Write-Host 'Prefer a terminal? Run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.' }
@@ -587,7 +851,7 @@ function Write-CuaSummary($Sel) {
             Write-Host 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.'
             Write-Host '(No web browser on this computer? Run "cua auth login --remote" instead.)'
         }
-        if (-not $Sel.host) { Write-Host 'To let your other devices use this computer, run "cua host setup".' }
+        if (-not $script:DidHost -and -not $NoHost) { Write-Host 'To add this computer to your account, run "cua host setup" after signing in.' }
     }
 }
 
@@ -598,13 +862,33 @@ function Invoke-CuaInstall {
     $ProgressPreference = 'SilentlyContinue'
     Test-PairArgs
     $sel = Get-CuaSelection
+    Initialize-CuaTelemetry
+    $script:TelStage = 'platform'
+    try {
+        Invoke-CuaInstallSteps $sel
+        $script:TelStage = 'other'
+        Send-CuaInstallerStep $sel 'installer_completed'
+    } catch {
+        Send-CuaInstallerStep $sel 'installer_failed' $script:TelStage (Get-CuaInstallErrorKind "$_")
+        throw
+    } finally {
+        # Stopped without an error (Ctrl+C): cancelled.
+        Send-CuaInstallerStep $sel 'installer_failed' $script:TelStage 'cancelled'
+    }
+}
+
+function Invoke-CuaInstallSteps($sel) {
     if ($sel.spaces -and -not $script:SpacesSupported) {
         Write-Step 'Cua Spaces is not available on this platform; skipping the app'
         $sel.spaces = $false
     }
     if ($Version -and $Version.TrimStart('v') -notmatch '^\d+\.\d+\.\d+') { Stop-Install "-Version must look like 1.2.3, not '$Version'" }
     $platform = Get-CuaPlatform
-    if (Test-WantsChecklist) { $sel = Read-CuaSelection $sel }
+    Send-CuaInstallerStep $sel 'installer_started'
+    if (Test-WantsChecklist) {
+        $picked = Read-CuaSelection $sel
+        foreach ($k in @($picked.Keys)) { $sel[$k] = $picked[$k] }
+    }
     if ($DryRun) { Write-Step 'Dry run: nothing will be changed' }
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("cua-install-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
@@ -619,15 +903,21 @@ function Invoke-CuaInstall {
         $manifestUrl = $null
         # Nothing to download (-Pair on a computer that has Cua): no manifest to read.
         if ($sel.cli -or $sel.spaces -or $sel['cua-driver']) {
+            $script:TelStage = 'manifest'
             $manifestUrl = Get-ManifestUrl
             $manifestFile = Join-Path $tmp 'release-artifacts.json'
             Get-Remote $manifestUrl $manifestFile
             $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json
             if ($manifest.schema -ne 1) { Stop-Install "unsupported release manifest at $manifestUrl" }
             Write-Info "platform $platform, manifest $manifestUrl"
+            # A per-platform release may carry no cli artifact; StrictMode rejects .version on $null.
+            $cliArtifact = $manifest.artifacts | Where-Object { $_.component -eq 'cli' } | Select-Object -First 1
+            $script:TelVersion = if ($cliArtifact) { "$($cliArtifact.version)" } else { '' }
         }
+        $script:TelStage = 'cli'
         if ($sel.cli) { $cua = Install-Cli $manifest $manifestUrl $platform $tmp }
         if ($sel.spaces) {
+            $script:TelStage = 'app'
             if ($Mode) {
                 $cuaHome = if ($env:CUA_HOME) { $env:CUA_HOME } else { Join-Path $HOME '.cua' }
                 $modeFile = Join-Path $cuaHome 'spaces-install-mode'
@@ -651,14 +941,21 @@ function Invoke-CuaInstall {
             } catch { Write-Verbose "could not record the install channel: $_" }
         }
         $env:CUA_INSTALL_CHANNEL = 'install_script'
+        $script:TelStage = 'driver'
         if ($sel['cua-driver']) { Install-CuaDriver $cua $tmp $manifestUrl }
-        if ($cua -and -not $Pair -and -not $CliOnly -and -not $NoOnboarding -and -not $DryRun -and (Test-Interactive)) {
+        $script:TelStage = 'sign_in'
+        # Cua Driver on its own: sign-in would run the Cua Spaces agent onboarding, which was not picked.
+        $driverOnly = $sel['cua-driver'] -and -not $sel.spaces -and -not $sel.host
+        if ($cua -and -not $Pair -and -not $CliOnly -and -not $NoOnboarding -and -not $DryRun -and -not $driverOnly -and (Test-Interactive)) {
             Write-Host ''
             Write-Step 'Signing in to Cua'
             & $cua auth login
             if ($LASTEXITCODE -ne 0) { Write-Warning 'Sign-in did not finish. Run "cua auth login" later (add --remote if this computer has no web browser).' } else { $script:SignedIn = $true }
         }
-        if ($sel.host) { Invoke-HostSetup $cua }
+        $script:TelStage = 'host'
+        # Signing in adds this computer (unless -NoHost); -Select host adds it
+        # even without a sign-in here.
+        if ($sel.host -or ($script:SignedIn -and -not $NoHost)) { Invoke-HostSetup $cua $sel }
         Write-CuaSummary $sel
         if ($script:PathHint) {
             Write-Host ''

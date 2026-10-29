@@ -56,7 +56,7 @@ impl From<cua_image::ResolvedImage> for ResolvedImage {
     }
 }
 
-fn image_error(e: cua_image::ImageError) -> CuaError {
+pub(crate) fn image_error(e: cua_image::ImageError) -> CuaError {
     use cua_image::ImageError as E;
     match e {
         E::NotFound(m) => CuaError::NotFound(m),
@@ -68,14 +68,14 @@ fn image_error(e: cua_image::ImageError) -> CuaError {
     }
 }
 
-/// Resolves `reference` for `backend` (`auto`, `local`, `fleet`,
+/// Resolves `reference` for `backend` (`auto`, `local`, `provider`,
 /// `container`/`docker`/`gvisor`, `vm`/`qemu`/`kubevirt`, `lume`)
-/// on `arch` (`amd64`/`arm64`; `None` = this host, or amd64 for `fleet`).
+/// on `arch` (`amd64`/`arm64`; `None` = this host).
 /// `reference` is literal (`ubuntu:24.04` is Docker Hub's image): no
 /// alias applies here; use [`image_alias`] or [`canonical_image`] first.
 /// Raises `NotFound` (no such image: e.g. a tag only the local engine has),
 /// `Unauthenticated` (the registry refused the credentials), `Unsupported`
-/// (no variant the backend runs, e.g. a macOS image on Fleet).
+/// (no variant the backend runs, e.g. a macOS image on a cloud provider).
 /// Blocks while the registry is read (cached for five minutes).
 #[uniffi::export]
 pub fn resolve_image(
@@ -84,13 +84,7 @@ pub fn resolve_image(
     arch: Option<String>,
 ) -> Result<ResolvedImage> {
     let backend = cua_image::Backend::parse(&backend).map_err(image_error)?;
-    let arch = arch.unwrap_or_else(|| {
-        if backend == cua_image::Backend::Fleet {
-            "amd64".into()
-        } else {
-            host_arch().into()
-        }
-    });
+    let arch = arch.unwrap_or_else(|| host_arch().into());
     // A plain thread: the caller may itself be on a Tokio runtime.
     let resolved = std::thread::spawn(move || {
         super::runtime().block_on(cua_image::resolve::resolve(&reference, backend, &arch))
@@ -112,13 +106,7 @@ pub fn resolve_image_with_secret(
     secret: super::RegistrySecret,
 ) -> Result<ResolvedImage> {
     let backend = cua_image::Backend::parse(&backend).map_err(image_error)?;
-    let arch = arch.unwrap_or_else(|| {
-        if backend == cua_image::Backend::Fleet {
-            "amd64".into()
-        } else {
-            host_arch().into()
-        }
-    });
+    let arch = arch.unwrap_or_else(|| host_arch().into());
     let resolved = std::thread::spawn(move || {
         super::runtime().block_on(async {
             let creds = secret.credentials(&reference).await?;
@@ -150,13 +138,14 @@ pub fn canonical_image(os: String, version: Option<String>) -> Result<String> {
 
 /// The canonical image for `os`, `version` and `tier`: `slim` (the minimum
 /// that passes `cua-spacesd doctor --strict`; CI and benchmarks use it),
-/// `full` or `None` (the default, with dev tooling) or, on macOS, `xcode`
-/// / `xcode-<X.Y>` (full plus one pinned Xcode). The tag is
+/// `full` or `None` (the default, with dev tooling), on macOS `xcode`
+/// / `xcode-<X.Y>` (full plus one pinned Xcode) or, on Linux, `docker`
+/// (slim plus the Docker engine, a VM: `-docker-disk`). The tag is
 /// `<os-version>[-<tier>]` (`ghcr.io/trycua/linux:24.04-slim`); the
 /// resolver finds its `-disk` sibling. `CUA_IMAGE_<OS>` overrides only the
 /// default full image. Raises `ImageNotPublished` for a tier CI has not
-/// published yet, `InvalidArgument` for an unknown tier or `xcode`
-/// outside macOS.
+/// published yet, `InvalidArgument` for an unknown tier, `xcode` outside
+/// macOS or `docker` outside Linux.
 #[uniffi::export]
 pub fn canonical_image_tier(
     os: String,

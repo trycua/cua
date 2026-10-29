@@ -18,17 +18,12 @@ Usage
   # Local emulator:
   CUA_TEST_ANDROID_MULTITOUCH=1 pytest tests/test_android_multitouch.py -v -k local
 
-  # Cloud (once implemented):
-  CUA_TEST_ANDROID_MULTITOUCH=1 CUA_TEST_API_KEY=sk-... \
-      pytest tests/test_android_multitouch.py -v -k cloud
-
 Environment variables
 ─────────────────────
   CUA_TEST_ANDROID_MULTITOUCH  set to 1 to run this module (default: skipped)
   CUA_ANDROID_TEST_APK   path or URL to a pre-built TouchTest debug APK
                          default: latest release from
                          https://github.com/trycua/android-touch-test-app
-  CUA_TEST_API_KEY       Anthropic API key (cloud tests only)
   CUA_ANDROID_API_LEVEL  Android API level to boot  (default: 34)
   CUA_ANDROID_AVD_NAME   AVD name                   (default: cua-multitouch-test)
 
@@ -78,7 +73,6 @@ _RESET_ACTION = "com.cuatest.touchtest.RESET_LOG"
 
 _API_LEVEL = int(os.environ.get("CUA_ANDROID_API_LEVEL", "34"))
 _AVD_NAME = os.environ.get("CUA_ANDROID_AVD_NAME", "cua-multitouch-test")
-_API_KEY = os.environ.get("CUA_TEST_API_KEY")
 _SETTLE_S = 0.6
 _LAUNCH_WAIT_S = 3.0
 
@@ -447,41 +441,3 @@ class TestAndroidMultitouchLocal(_MultitouchTests):
     async def sb(self, local_android_sb: Sandbox):
         await _reset(local_android_sb)
         return local_android_sb
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Cloud tests
-# ══════════════════════════════════════════════════════════════════════════════
-
-skip_no_api_key = pytest.mark.skipif(not _API_KEY, reason="CUA_TEST_API_KEY not set")
-# Note: cloud Android tests are gated by API key only — hardware compat is the cloud's concern.
-
-
-@pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def cloud_android_sb():
-    """
-    Spin up an ephemeral cloud Android VM, install the TouchTest APK, escalate
-    to root, launch the app, and yield the ready Sandbox.
-    Shared across all cloud tests so we only pay the boot cost once.
-    """
-    if not _API_KEY:
-        pytest.skip("CUA_TEST_API_KEY not set — cloud tests skipped")
-
-    image = Image.android("14").apk_install(_APK_RELEASE_URL)
-    async with Sandbox.ephemeral(image, api_key=_API_KEY, local=False) as sb:
-        # Launch app
-        await sb.shell.run(f"am start -n {_APK_ACTIVITY}")
-        await asyncio.sleep(_LAUNCH_WAIT_S)
-
-        yield sb
-
-
-@pytest.mark.asyncio(loop_scope="session")
-@pytest.mark.skipif(not _API_KEY, reason="CUA_TEST_API_KEY not set")
-class TestAndroidMultitouchCloud(_MultitouchTests):
-    """Full touch action suite against a cloud-hosted Android VM."""
-
-    @pytest_asyncio.fixture(loop_scope="session")
-    async def sb(self, cloud_android_sb: Sandbox):
-        await _reset(cloud_android_sb)
-        return cloud_android_sb

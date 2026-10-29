@@ -12,6 +12,8 @@ public struct HostSetupFailure: Equatable, Sendable {
         case download
         /// No network, a timeout, or a server that could not be reached.
         case network
+        /// The server is throttling this Mac (HTTP 429): too many attempts.
+        case throttled
         /// No one is signed in at this Mac's screen (launchd's Aqua session).
         case guiSession
         /// The Cua account is signed out or its session expired.
@@ -36,7 +38,7 @@ public struct HostSetupFailure: Equatable, Sendable {
     /// A failure whose kind the error itself says (the account refused,
     /// whatever its words), with the raw error as details.
     public static func presenting(_ raw: String, as kind: Kind) -> HostSetupFailure {
-        let (title, message) = words(kind)
+        let (title, message) = words(kind, raw: raw)
         return HostSetupFailure(kind: kind, title: title, message: message, details: raw)
     }
 
@@ -47,11 +49,42 @@ public struct HostSetupFailure: Equatable, Sendable {
     /// Maps the raw setup error to what the sheet shows.
     public static func presenting(_ raw: String) -> HostSetupFailure {
         let kind = classify(raw)
-        let (title, message) = words(kind)
+        let (title, message) = words(kind, raw: raw)
         return HostSetupFailure(kind: kind, title: title, message: message, details: raw)
     }
 
+    /// Seconds to wait when the raw error is the server telling this Mac to
+    /// slow down: the host's own sentence, or a bare HTTP 429 "Too Many
+    /// Requests" from an older host (`.some(nil)`, no number). `nil` when it
+    /// is not that. A 429 that says why (a limit, a quota) is not a throttle.
+    static func throttledWait(_ raw: String) -> Int?? {
+        let own = #"too many attempts right now\. wait (\d+) seconds?"#
+        if let r = raw.range(of: own, options: [.regularExpression, .caseInsensitive]) {
+            let digits = raw[r].filter(\.isNumber)
+            return .some(Int(digits))
+        }
+        let bare = #"\bhttp 429\b[:\s]*too many requests\s*$"#
+        if raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .range(of: bare, options: [.regularExpression, .caseInsensitive]) != nil {
+            return .some(nil)
+        }
+        return nil
+    }
+
+    /// Seconds before the app tries again by itself, when the server is
+    /// throttling this Mac and said how long to wait.
+    public var throttleSeconds: Int? {
+        kind == .throttled ? (Self.throttledWait(details) ?? nil) : nil
+    }
+
+    /// The line once the one automatic retry is used up.
+    static func manualWait(_ f: HostSetupFailure) -> String {
+        guard let s = f.throttleSeconds else { return f.message }
+        return "Wait \(s) \(s == 1 ? "second" : "seconds"), then try again."
+    }
+
     static func classify(_ raw: String) -> Kind {
+        if throttledWait(raw) != nil { return .throttled }
         let s = raw.lowercased()
         func any(_ needles: [String]) -> Bool { needles.contains { s.contains($0) } }
         func word(_ pattern: String) -> Bool {
@@ -84,7 +117,7 @@ public struct HostSetupFailure: Equatable, Sendable {
         return .other
     }
 
-    static func words(_ kind: Kind) -> (String, String) {
+    static func words(_ kind: Kind, raw: String = "") -> (String, String) {
         switch kind {
         case .download:
             return ("Couldn\u{2019}t download the Cua host service",
@@ -93,6 +126,11 @@ public struct HostSetupFailure: Equatable, Sendable {
         case .network:
             return ("Couldn\u{2019}t connect",
                     "Cua Spaces couldn\u{2019}t reach the internet. Check your connection and try again.")
+        case .throttled:
+            let seconds = throttledWait(raw) ?? nil
+            let wait = seconds.map { "Trying again in \($0) \($0 == 1 ? "second" : "seconds")." }
+                ?? "Wait a few seconds, then try again."
+            return ("Too many attempts right now", wait)
         case .guiSession:
             return ("Sign in to this Mac first",
                     "Setting up access needs someone signed in at this Mac\u{2019}s own screen, not only over "
@@ -102,7 +140,7 @@ public struct HostSetupFailure: Equatable, Sendable {
                     "Your Cua account isn\u{2019}t signed in on this Mac. Sign in, then try again.")
         case .service:
             return ("Couldn\u{2019}t start the Cua host service",
-                    "macOS didn\u{2019}t start the service your other devices connect to. Try again; "
+                    "macOS didn\u{2019}t start the service your other machines connect to. Try again; "
                         + "if it keeps failing, restart this Mac.")
         case .other:
             return ("Couldn\u{2019}t set up this Mac for access",

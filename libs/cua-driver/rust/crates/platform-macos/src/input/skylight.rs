@@ -684,15 +684,6 @@ pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
 }
 
-/// Return the current active macOS Space (desktop) ID.
-///
-/// Uses the private `CGSGetActiveSpace` SPI from SkyLight.  Returns `None`
-/// when the symbol is unavailable (future macOS version that removes it).
-pub fn get_active_space() -> Option<u64> {
-    let cid = main_connection_id()?;
-    nonzero_space_id(get_active_space_fn().map(|f| unsafe { f(cid) }))
-}
-
 fn nonzero_space_id(space_id: Option<u64>) -> Option<u64> {
     space_id.filter(|id| *id != 0)
 }
@@ -1286,20 +1277,14 @@ fn foreground_turn() -> ForegroundTurn {
 /// seen the background rungs fail (clicks) or the field is unverifiable +
 /// focus-sensitive (Catalyst typing).
 ///
-/// ## Why this does not delegate to [`with_menu_shortcut_activation`]
+/// ## Why the body waits for the activation
 ///
-/// It used to. That helper posts `set_front` and calls `action` immediately,
-/// which is correct for its own purpose: NSMenu key dispatch only needs the key
-/// event *enqueued* in the target's run-loop queue, so first-responder identity
-/// is irrelevant and the sub-millisecond front → act → restore is a feature.
-///
-/// Input delivery has the opposite requirement. `set_front` is asynchronous, so
-/// running the body straight away means the body's `AXFocused` write races
-/// AppKit's own activation. AppKit wins: when activation completes it installs
-/// the window's remembered first responder and clobbers the write. The
-/// keystrokes then land wherever the app chose — for a Catalyst app such as
-/// WhatsApp, the message list rather than the composer, which silently scrolls
-/// the transcript instead of typing.
+/// `set_front` is asynchronous, so running the body straight away means the
+/// body's `AXFocused` write races AppKit's own activation. AppKit wins: when
+/// activation completes it installs the window's remembered first responder
+/// and clobbers the write. The keystrokes then land wherever the app chose —
+/// for a Catalyst app such as WhatsApp, the message list rather than the
+/// composer, which silently scrolls the transcript instead of typing.
 ///
 /// So this waits for the activation to be observable before running `body`, the
 /// same ordering [`with_foreground_hid_activation`] already relies on. The wait
@@ -1435,12 +1420,11 @@ fn focus_failure_hint_from(
 
 /// Activate an exact target window for a global HID keyboard action.
 ///
-/// Unlike [`with_menu_shortcut_activation`], this helper must not run `action`
-/// when the private foreground SPI is unavailable: a global HID event has no
-/// pid addressing and would otherwise land in whichever application is
-/// currently frontmost. The short settles keep the target frontmost until
-/// WindowServer has routed both sides of the key chord, then restore the prior
-/// process even when the action fails.
+/// This helper must not run `action` when the private foreground SPI is
+/// unavailable: a global HID event has no pid addressing and would otherwise
+/// land in whichever application is currently frontmost. The short settles
+/// keep the target frontmost until WindowServer has routed both sides of the
+/// key chord, then restore the prior process even when the action fails.
 pub fn with_foreground_hid_activation(
     target_pid: libc::pid_t,
     target_wid: u32,
@@ -1476,11 +1460,13 @@ pub fn with_foreground_hid_activation(
     }
 
     make_exact_window_key(target_pid, target_wid);
+    crate::ax::bindings::raise_exact_window_of_pid(target_pid, target_wid);
     // A slow app (LibreOffice) can take longer than one wait to install its
     // key window: ask once more before giving up.
     if !await_window_focused(target_pid, target_wid) {
         unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
         make_exact_window_key(target_pid, target_wid);
+        crate::ax::bindings::raise_exact_window_of_pid(target_pid, target_wid);
     }
     if !await_window_focused(target_pid, target_wid) {
         if prev_ok {
@@ -1512,58 +1498,6 @@ fn preserves_exact_existing_focus(
     previous_process_known
         && previous_psn == target_psn
         && focused_window_id == Some(target_window_id)
-}
-
-/// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,
-/// then immediately restore the prior frontmost process.
-///
-/// The entire activate → action → restore sequence is < 1 ms — a 5 ms UX monitor
-/// never observes the intermediate frontmost state. NSMenu still fires because the
-/// key event is already enqueued in the target's run-loop queue before we restore.
-///
-/// Returns `Ok(true)` when activation succeeded, `Ok(false)` when SPIs unavailable.
-pub fn with_menu_shortcut_activation(
-    target_pid: libc::pid_t,
-    target_wid: u32,
-    action: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<bool> {
-    let _turn = foreground_turn();
-    let set_front = match set_front_process_fn() {
-        Some(f) => f,
-        None => {
-            // SPIs unavailable — run action anyway without activation.
-            action()?;
-            return Ok(false);
-        }
-    };
-
-    // Capture prior frontmost PSN.
-    let mut prev_psn = [0u8; 8];
-    let prev_ok = get_front_process_fn()
-        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
-        .unwrap_or(false);
-
-    // Resolve target PSN.
-    let mut target_psn = [0u8; 8];
-    let target_ok = get_process_psn_for_window(target_wid, target_pid, &mut target_psn);
-    if !target_ok {
-        action()?;
-        return Ok(false);
-    }
-
-    // Make target WindowServer-frontmost (kCPSNoWindows = 0x400).
-    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
-
-    // Run action then restore — even if action fails.
-    let result = action();
-
-    // Restore prior frontmost (windowID=0, options=0x400).
-    if prev_ok {
-        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
-    }
-
-    result?;
-    Ok(true)
 }
 
 #[cfg(test)]

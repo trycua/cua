@@ -1,0 +1,6 @@
+{
+ "mask_keys": ["sandbox_id", "started_at", "end_at", "envd_version", "envd_access_token", "traffic_access_token",
+  "sandbox_domain", "template_id", "snapshot_id", "timestamp", "timestamp_unix", "volume_id", "secret_id",
+  "build_id", "token", "created_at", "updated_at", "client_id", "id", "next_token", "mtime", "modified_time"],
+ "doc": "Shared by runner.py and runner.mjs: keys whose values are volatile (ids, times, versions) are replaced with a mask in observations."
+}

@@ -20,7 +20,7 @@ async def _open_computer(config: Dict[str, Any]) -> Any:
     if config.get("localhost") or config.get("use_host_computer_server"):
         raise ValueError(
             "Host control was removed from the agent proxy. Use cua-driver (its SDK "
-            "or MCP server) to control this machine, or pass a sandbox name."
+            "or MCP server) to control this computer, or pass a sandbox name."
         )
     from cua_sandbox import Sandbox
 

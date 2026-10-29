@@ -1,6 +1,6 @@
 //! `cua config`: the user defaults in `$CUA_HOME/config.toml` (default
 //! `~/.cua/config.toml`): where sandboxes run when `--on` is not given,
-//! the default kind and runtime, and the cloud defaults. Each value's
+//! the default kind and runtime. Each value's
 //! effective setting and its source (explicit flag > environment > config
 //! file > built-in default) is what `list` and `get` print.
 
@@ -27,21 +27,26 @@ pub enum ConfigCmd {
   cua config get default.on")]
     Get {
         /// Setting (`default.on`, `default.kind`, `default.runtime`,
-        /// `cloud.warm`, `cloud.max_pool_size`, `cloud.claim_ttl`).
+        /// `pool.auto`, `pool.memory_percent`, `pool.warm`; `cua config
+        /// list` shows them all).
         key: String,
     },
     /// Write a setting to the config file.
     #[command(after_help = "Examples:
-  # Create sandboxes in the cloud unless --on says otherwise
-  cua config set default.on cloud
-  # Back to this machine
+  # Create sandboxes in your AWS account unless --on says otherwise
+  cua config set default.on aws
+  # Back to this computer
   cua config set default.on local
   # Prefer VMs when the image offers both
-  cua config set default.kind vm")]
+  cua config set default.kind vm
+  # A dedicated host: keep 8 Linux desktops ready to claim
+  cua config set pool.warm ghcr.io/trycua/linux:24.04-slim=8
+  # Only explicit pools on this machine
+  cua config set pool.auto off")]
     Set {
         /// Setting.
         key: String,
-        /// Value (checked: `default.on` takes local, cloud or a provider).
+        /// Value (checked: `default.on` takes local, aws, gcp, modal or a provider).
         value: String,
     },
     /// Remove a setting from the config file (the environment variable or

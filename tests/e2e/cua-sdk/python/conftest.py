@@ -24,6 +24,24 @@ def pytest_configure(config):
     )
 
 
+def pytest_collection_modifyitems(config, items):
+    """`CUA_E2E_SELECT=<file>` (one node id per line) keeps only those tests:
+    run.py --shard gives each CI shard its slice. An id that no longer exists
+    fails the run, so a plan can never silently drop a test."""
+    chosen = os.environ.get("CUA_E2E_SELECT")
+    if not chosen:
+        return
+    keep = {line.strip() for line in Path(chosen).read_text().splitlines() if line.strip()}
+    missing = keep - {item.nodeid for item in items}
+    if missing:
+        raise pytest.UsageError(
+            f"CUA_E2E_SELECT names tests that do not exist: {sorted(missing)[:5]}"
+        )
+    dropped = [item for item in items if item.nodeid not in keep]
+    items[:] = [item for item in items if item.nodeid in keep]
+    config.hook.pytest_deselected(items=dropped)
+
+
 def _mark(item):
     m = item.get_closest_marker("e2e")
     if m is None:
@@ -119,7 +137,7 @@ def _record_docs_blocks(item, record: dict, out: Path) -> None:
 
 @pytest.fixture(scope="session")
 def fixtures():
-    """cua-test-fixtures: MockServer spacesd + fake Fleet on loopback."""
+    """cua-test-fixtures: a MockServer spacesd on loopback."""
     binary = e2e.fixtures_binary()
     if binary is None:
         pytest.skip("cua-test-fixtures is not built")
@@ -139,26 +157,7 @@ def fixtures():
 
 
 @pytest.fixture
-def fake_fleet(fixtures, tmp_path):
-    """An embedded Cua whose Fleet is the fake API."""
-    import cua
-
-    return cua.embedded(
-        state_dir=str(tmp_path / "state"),
-        fleet_from_env=False,
-        fleet=cua.FleetSettings(base_url=fixtures["fleet_base_url"], token=fixtures["fleet_token"]),
-    )
-
-
-@pytest.fixture
-def live_fleet(tmp_path):
-    import cua
-
-    return cua.embedded(state_dir=str(tmp_path / "state"))
-
-
-@pytest.fixture
 def local_cua(tmp_path):
     import cua
 
-    return cua.embedded(state_dir=str(tmp_path / "state"), fleet_from_env=False)
+    return cua.embedded(state_dir=str(tmp_path / "state"))

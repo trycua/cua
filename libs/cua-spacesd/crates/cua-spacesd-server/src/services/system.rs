@@ -47,6 +47,11 @@ impl SystemServiceImpl {
         providers: Arc<Vec<Arc<dyn ServiceProvider>>>,
         core_features: Vec<Feature>,
     ) -> Self {
+        // The first CPU sample is taken now, so `Metrics` never waits
+        // for one.
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn_blocking(cpu_usage);
+        }
         Self {
             diagnose: DiagnoseState::new(ctx.clone(), None),
             ctx,
@@ -234,6 +239,19 @@ pub fn windows_pretty(product: &str, build: &str) -> String {
 }
 
 /// Whether the guest is a virtual machine (its memory and disk are its own).
+/// A guest whose kernel is its host's (a runc container) or whose runtime
+/// keeps the kernel's random pool and clock (gVisor). A container whose
+/// isolation is a microVM (detected as `Container` with an agent detail)
+/// has a kernel of its own; `runtime()` reports it as `Container` too, so
+/// the agent check repeats here.
+fn shares_host_kernel(runtime: Runtime) -> bool {
+    match runtime {
+        Runtime::Gvisor => true,
+        Runtime::Container => microvm_container_agent(&read_trimmed("/proc/1/comm")).is_none(),
+        _ => false,
+    }
+}
+
 fn is_vm(runtime: Runtime) -> bool {
     matches!(
         runtime,
@@ -277,8 +295,8 @@ fn read_trimmed(path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Whether the kernel is gVisor's synthetic one: older releases (still
-/// what Fleet's runsc reports) say exactly "4.4.0", current ones name
+/// Whether the kernel is gVisor's synthetic one: older runsc releases say
+/// exactly "4.4.0", current ones name
 /// themselves ("4.19.0-gvisor", and "gVisor" in /proc/version). A real
 /// "4.4.0-<abi>-generic" kernel (Ubuntu 16.04) is not gVisor.
 pub fn is_gvisor(kernel: &str, proc_version: &str) -> bool {
@@ -394,7 +412,7 @@ mod windows_bios {
 pub fn detect_runtime(kernel: &str) -> (Runtime, String) {
     if cfg!(target_os = "linux") {
         // gVisor's synthetic kernel is only ever seen inside runsc, and a
-        // Kubernetes pod under containerd (Fleet) has none of docker's or
+        // Kubernetes pod under containerd has none of docker's or
         // podman's marker files, so the kernel decides on its own.
         if is_gvisor(kernel, &read_trimmed("/proc/version")) {
             return (Runtime::Gvisor, "runsc".into());
@@ -503,9 +521,10 @@ fn disk_usage(path: &std::path::Path) -> (u64, u64) {
             return (0, 0);
         }
         let frag = stat.f_frsize as u64;
-        let total = stat.f_blocks as u64 * frag;
-        let free = stat.f_bfree as u64 * frag;
-        (total, total.saturating_sub(free))
+        sized(
+            (stat.f_blocks as u64).saturating_mul(frag),
+            (stat.f_bfree as u64).saturating_mul(frag),
+        )
     }
     #[cfg(not(unix))]
     {
@@ -514,8 +533,24 @@ fn disk_usage(path: &std::path::Path) -> (u64, u64) {
             .iter()
             .filter(|d| path.starts_with(d.mount_point()))
             .max_by_key(|d| d.mount_point().as_os_str().len())
-            .map(|d| (d.total_space(), d.total_space() - d.available_space()))
+            .map(|d| sized(d.total_space(), d.available_space()))
             .unwrap_or((0, 0))
+    }
+}
+
+/// Sizes at or above this are "unlimited" sentinels, not sizes (gVisor's
+/// root overlay reports `MaxInt64` bytes; no volume holds an exbibyte).
+const SIZE_SENTINEL_FLOOR: u64 = 1 << 60;
+
+/// `(total, used)` from a file system's size and free bytes. One with no
+/// size of its own (gVisor's root overlay) reports total 0, the contract's
+/// "no size", and what it holds as used: never the sentinel.
+fn sized(total: u64, free: u64) -> (u64, u64) {
+    let used = total.saturating_sub(free);
+    if total >= SIZE_SENTINEL_FLOOR {
+        (0, if used >= SIZE_SENTINEL_FLOOR { 0 } else { used })
+    } else {
+        (total, used)
     }
 }
 
@@ -555,7 +590,7 @@ fn require_root(caller: &crate::auth::CallerIdentity, what: &str) -> Result<(), 
 /// Why the desktop's features are unsupported for a relayed caller of a
 /// machine that does not share its desktop (it only provides Spaces).
 pub const DESKTOP_NOT_SHARED: &str =
-    "this machine does not share its desktop (it only provides Spaces)";
+    "this computer does not share its desktop (it only provides Spaces)";
 
 /// `features` with every desktop feature ([`crate::provider::DESKTOP_FEATURES`])
 /// unsupported because the desktop is not shared.
@@ -598,6 +633,15 @@ impl SystemService for SystemServiceImpl {
             .unwrap_or_else(display_server);
         let displays = self.providers.iter().flat_map(|p| p.displays()).collect();
         let config = self.ctx.config();
+        let bulk = crate::bulk::refresh().await.map(|d| {
+            let h = d.header();
+            BulkLane {
+                id: h.id.to_vec(),
+                slots: h.slots,
+                slot_bytes: h.slot_bytes,
+                data_offset: h.data_offset,
+            }
+        });
         let has_mcp = self
             .core_features
             .iter()
@@ -658,6 +702,7 @@ impl SystemService for SystemServiceImpl {
                 default_scrollback_bytes: config.default_scrollback_bytes,
             }),
             machine_seal_public_key: self.ctx.machine_seal_public_key(),
+            bulk,
         }))
     }
 
@@ -681,6 +726,17 @@ impl SystemService for SystemServiceImpl {
                 ErrorReason::PermissionDenied,
                 "the access token is managed by the claim's token file; Init cannot set or rotate it",
             ));
+        }
+        if body.new_machine
+            && !(crate::identity::MIN_ENTROPY_BYTES..=crate::identity::MAX_ENTROPY_BYTES)
+                .contains(&body.entropy.len())
+        {
+            return Err(crate::error::invalid(format!(
+                "new_machine needs {}..={} bytes of entropy (got {})",
+                crate::identity::MIN_ENTROPY_BYTES,
+                crate::identity::MAX_ENTROPY_BYTES,
+                body.entropy.len()
+            )));
         }
         if bootstrapping && body.token.is_empty() {
             return Err(status(
@@ -716,6 +772,7 @@ impl SystemService for SystemServiceImpl {
                 ));
             }
             bootstrap_claimed = true;
+            self.ctx.first_token_installed();
             tracing::info!(
                 "gateway bootstrap: token installed by the first Init; bootstrap mode ended"
             );
@@ -734,10 +791,53 @@ impl SystemService for SystemServiceImpl {
             install_ca_bundle(&self.ctx, &body.ca_bundle)?;
         }
         let mut clock_adjusted = false;
-        if let Some(now) = &body.now {
+        let mut renewal = None;
+        if body.new_machine {
+            // The guest first (entropy, clock, machine-id), so every secret
+            // generated after it draws on a reseeded pool where the guest
+            // allows that, and on the caller's entropy regardless.
+            let guest = crate::identity::GuestRenewal {
+                entropy: hex::encode(&body.entropy),
+                now_unix_nanos: body
+                    .now
+                    .as_ref()
+                    .and_then(|now| system_time(now).duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos()),
+                machine_id: crate::identity::new_machine_id(&body.entropy),
+                machine_id_paths: self.ctx.config().machine_id_files.clone(),
+                shares_host_kernel: shares_host_kernel(self.runtime()),
+            };
+            let report =
+                tokio::task::spawn_blocking(move || crate::identity::apply_privileged(&guest))
+                    .await
+                    .map_err(|e| crate::error::internal(e.to_string()))?;
+            clock_adjusted = report.clock_adjusted;
+            renewal = Some(report);
+        } else if let Some(now) = &body.now {
             clock_adjusted = maybe_step_clock(system_time(now));
         }
         let token_changed = bootstrap_claimed || self.ctx.auth().set_token(&body.token);
+        if let Some(report) = &renewal {
+            // After the token: a driver that waited for one may hold a
+            // machine-seal key only from now on.
+            let saved = self.ctx.renew_machine(&body.entropy);
+            // Whatever the previous token (a pool secret, or the snapshot
+            // source's token) opened is not this machine's.
+            self.ctx.revoke_sessions_keep_connections();
+            self.ctx.notify_token_rotated();
+            tracing::info!(
+                token_changed,
+                seal_key_saved = saved,
+                entropy_mixed = report.entropy_mixed,
+                rng_reseeded = report.rng_reseeded,
+                clock_adjusted = report.clock_adjusted,
+                clock_denied = report.clock_denied,
+                machine_id_written = report.machine_id_written,
+                denied = ?report.denied,
+                errors = ?report.errors,
+                "new machine: per-machine secrets regenerated"
+            );
+        }
         if let Some(access) = &body.audio_uplink {
             self.ctx.set_audio_uplink(access);
         }
@@ -759,13 +859,14 @@ impl SystemService for SystemServiceImpl {
             }
             state.initialized = true;
         });
-        if token_changed {
+        if token_changed && renewal.is_none() {
             tracing::info!("access token installed or rotated by Init");
             self.ctx.notify_token_rotated();
         }
         Ok(Response::new(InitResponse {
             token_changed,
             clock_adjusted,
+            new_machine: renewal.is_some(),
         }))
     }
 
@@ -802,14 +903,11 @@ impl SystemService for SystemServiceImpl {
         };
         let vm = is_vm(self.runtime());
         let sample = tokio::task::spawn_blocking(move || {
-            use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
-            let mut system = System::new_with_specifics(
-                RefreshKind::nothing()
-                    .with_cpu(CpuRefreshKind::nothing().with_cpu_usage())
-                    .with_memory(MemoryRefreshKind::everything()),
+            use sysinfo::{MemoryRefreshKind, RefreshKind, System};
+            let system = System::new_with_specifics(
+                RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
             );
-            std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-            system.refresh_cpu_usage();
+            let (cpu_count, cpu_percent) = cpu_usage();
             let networks = sysinfo::Networks::new_with_refreshed_list();
             let (rx, tx) = networks.iter().fold((0u64, 0u64), |(rx, tx), (_, data)| {
                 (rx + data.total_received(), tx + data.total_transmitted())
@@ -824,8 +922,8 @@ impl SystemService for SystemServiceImpl {
                 _ => (system.total_memory(), system.used_memory(), vm),
             };
             (
-                system.cpus().len() as u32,
-                system.global_cpu_usage() as f64,
+                cpu_count,
+                cpu_percent,
                 System::load_average().one,
                 (mem_total, mem_used, mem_limited),
                 (disk_total, disk_used, vm),
@@ -1101,31 +1199,7 @@ fn install_ca_bundle(ctx: &ServerContext, pem: &[u8]) -> Result<(), Status> {
 /// Steps the clock when it is off by more than a second and the driver may
 /// (root on Linux). Returns whether it did.
 fn maybe_step_clock(now: std::time::SystemTime) -> bool {
-    let skew = match now.duration_since(std::time::SystemTime::now()) {
-        Ok(ahead) => ahead,
-        Err(behind) => behind.duration(),
-    };
-    if skew <= Duration::from_secs(1) {
-        return false;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: geteuid has no preconditions.
-        if unsafe { libc::geteuid() } != 0 {
-            return false;
-        }
-        let since = now
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let ts = libc::timespec {
-            tv_sec: since.as_secs() as libc::time_t,
-            tv_nsec: since.subsec_nanos() as _,
-        };
-        // SAFETY: valid timespec.
-        return unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) } == 0;
-    }
-    #[allow(unreachable_code)]
-    false
+    crate::identity::step_clock(now) == crate::identity::ClockStep::Stepped
 }
 
 #[cfg(test)]
@@ -1234,5 +1308,69 @@ mod os_override_tests {
         assert_eq!(os_family_named("macos"), OsFamily::Macos);
         assert_eq!(os_family_named("windows"), OsFamily::Windows);
         assert_eq!(os_family_named("plan9"), OsFamily::Unspecified);
+    }
+}
+
+/// CPU count and utilisation (0 to 100) since the previous sample, from one
+/// sampler kept for the process. CPU usage needs two readings at least
+/// [`sysinfo::MINIMUM_CPU_UPDATE_INTERVAL`] apart: the first is taken when
+/// the service starts and every later call refreshes it when that interval
+/// has passed (else returns the last value), so a `Metrics` call never
+/// waits for a sample (only a call within the interval of the process start
+/// waits out the rest of it). Blocking: call it off the async runtime.
+fn cpu_usage() -> (u32, f64) {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Instant;
+    use sysinfo::{CpuRefreshKind, RefreshKind, System};
+    struct Sampler {
+        system: System,
+        at: Instant,
+        last: Option<f64>,
+    }
+    static SAMPLER: OnceLock<Mutex<Sampler>> = OnceLock::new();
+    let sampler = SAMPLER.get_or_init(|| {
+        let mut system = System::new_with_specifics(
+            RefreshKind::nothing().with_cpu(CpuRefreshKind::nothing().with_cpu_usage()),
+        );
+        system.refresh_cpu_usage();
+        Mutex::new(Sampler {
+            system,
+            at: Instant::now(),
+            last: None,
+        })
+    });
+    let mut s = sampler.lock().unwrap_or_else(|e| e.into_inner());
+    let min = sysinfo::MINIMUM_CPU_UPDATE_INTERVAL;
+    if s.last.is_none() {
+        if let Some(rest) = min.checked_sub(s.at.elapsed()) {
+            std::thread::sleep(rest);
+        }
+    }
+    if s.last.is_none() || s.at.elapsed() >= min {
+        s.system.refresh_cpu_usage();
+        s.at = Instant::now();
+        s.last = Some(s.system.global_cpu_usage() as f64);
+    }
+    (s.system.cpus().len() as u32, s.last.unwrap_or(0.0))
+}
+
+#[cfg(test)]
+mod sized_tests {
+    use super::sized;
+
+    #[test]
+    fn a_file_system_with_no_size_reports_none_never_the_sentinel() {
+        // gVisor's root overlay: MaxInt64 rounded down to a page.
+        let total = (i64::MAX as u64) & !4095;
+        assert_eq!(sized(total, total - 241_664), (0, 241_664));
+        assert_eq!(sized(i64::MAX as u64, i64::MAX as u64), (0, 0));
+        assert_eq!(sized(u64::MAX, 0), (0, 0));
+    }
+
+    #[test]
+    fn a_real_disk_reports_its_size() {
+        let gib = 1u64 << 30;
+        assert_eq!(sized(64 * gib, 40 * gib), (64 * gib, 24 * gib));
+        assert_eq!(sized(0, 0), (0, 0));
     }
 }

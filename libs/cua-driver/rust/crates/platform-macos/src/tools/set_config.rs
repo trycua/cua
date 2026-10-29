@@ -47,9 +47,10 @@ fn def() -> &'static ToolDef {
             reduced motion always wins.\n\nAgent cursor badge: cursor.badges is \
             minimal (default), verbose or off, saved to ~/.cua-driver/config.json \
             and applied to every cursor at once.\n\nAgent cursor extras: \
-            cursor.marks (action marks), cursor.float (resting float) and \
-            cursor.rotate (turn toward travel) are on, off (default) or default, \
-            saved to ~/.cua-driver/config.json and applied to every cursor at once."
+            cursor.float (resting float) is on (default), off or default; \
+            cursor.marks (action marks) and cursor.rotate (turn toward travel) \
+            are on, off (default) or default. All are saved to \
+            ~/.cua-driver/config.json and applied to every cursor at once."
             .into(),
         input_schema: with_cursor_motion_properties(serde_json::json!({
             "type": "object",

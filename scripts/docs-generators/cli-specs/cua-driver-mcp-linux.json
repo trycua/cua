@@ -2122,7 +2122,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\nThe experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today — see issue #1729).\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.\n\n`cursor.marks` (action marks), `cursor.float` (resting float) and `cursor.rotate` (turn toward travel) are `on`, `off` (default) or `default`, and apply to every cursor at once.",
+   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\nThe experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today — see issue #1729).\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.\n\n`cursor.float` (resting float) is `on` (default), `off` or `default`; `cursor.marks` (action marks) and `cursor.rotate` (turn toward travel) are `on`, `off` (default) or `default`. All apply to every cursor at once.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2147,7 +2147,7 @@
       "type": "string"
      },
      "cursor.float": {
-      "description": "Agent cursor resting float: a slow bob and tilt while the cursor rests. off (default): the cursor stays still at rest. Applies immediately to every cursor.",
+      "description": "Agent cursor resting float: a slow up-and-down bob while the cursor rests; the arrow stays upright. on (default). off: the cursor stays still at rest and the overlay stops redrawing. Applies immediately to every cursor.",
       "enum": [
        "on",
        "off",

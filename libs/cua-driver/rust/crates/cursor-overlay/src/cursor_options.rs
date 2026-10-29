@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Opt-in extras of the agent cursor, all off by default.
+//! Extras of the agent cursor.
 //!
-//! The default agent cursor is a plain, upright arrow that only moves when
-//! the agent moves it. Three saved settings in `~/.cua-driver/config.json`
-//! (`{"cursor": {"marks": true}}`) bring the extras back:
+//! The default agent cursor is a plain, upright arrow that levitates gently
+//! while it rests. Three saved settings in `~/.cua-driver/config.json`
+//! (`{"cursor": {"marks": true}}`) switch the extras:
 //!
 //! - `cursor.marks`: the theme's action marks (observe arcs, click lines,
 //!   I-beam, key cap and the rest), including the navigate and click marks a
 //!   move or click used to start by itself, and the macOS focus rectangle
 //!   around a clicked element. Off: every theme paints its idle frame.
-//! - `cursor.float`: the resting float of the built-in theme (a slow bob and
-//!   tilt). Off: a resting cursor is still, so the overlay stops redrawing.
+//! - `cursor.float` (on by default): the resting float of the built-in
+//!   theme, a slow vertical bob with the arrow kept upright. Off: a resting
+//!   cursor is still, so the overlay stops redrawing.
 //! - `cursor.rotate`: the arrow turns toward the direction it travels and
 //!   settles back upright on arrival. Off: the arrow stays upright.
+//!
+//! `cursor.marks` and `cursor.rotate` are off by default.
 //!
 //! Like `cursor.badges` they apply live: every cursor reads the process-wide
 //! value on each frame, so a `set_config` write changes cursors already on
@@ -28,15 +31,36 @@ pub const MARKS_KEY: &str = "cursor.marks";
 pub const FLOAT_KEY: &str = "cursor.float";
 pub const ROTATE_KEY: &str = "cursor.rotate";
 
-/// The opt-in cursor extras. `Default` is everything off.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+/// The cursor extras. `Default` is the float alone; [`CursorOptions::NONE`]
+/// is everything off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CursorOptions {
     pub marks: bool,
     pub float: bool,
     pub rotate: bool,
 }
 
+impl Default for CursorOptions {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 impl CursorOptions {
+    /// The built-in default: a plain upright arrow that floats at rest.
+    pub const DEFAULT: Self = Self {
+        marks: false,
+        float: true,
+        rotate: false,
+    };
+
+    /// Every extra off: a plain arrow that is still at rest.
+    pub const NONE: Self = Self {
+        marks: false,
+        float: false,
+        rotate: false,
+    };
+
     /// Every extra on: the cursor as it looked before these settings.
     pub const ALL_ON: Self = Self {
         marks: true,
@@ -88,7 +112,7 @@ impl CursorOptions {
 }
 
 /// Parse one value: `on`, `off` or `default` (also a bool or null, like the
-/// `cursor.motion.effects.*` keys). `None` means the built-in default (off).
+/// `cursor.motion.effects.*` keys). `None` means the built-in default.
 pub fn parse_value(key: &str, value: &Value) -> Result<Option<bool>, String> {
     cua_driver_contract::CursorEffectSetting::from_json(value)
         .map(cua_driver_contract::CursorEffectSetting::override_value)
@@ -96,7 +120,7 @@ pub fn parse_value(key: &str, value: &Value) -> Result<Option<bool>, String> {
 }
 
 /// Read the saved options from `path`. A missing file or an invalid value
-/// falls back to off; a bad value is logged, never fatal.
+/// falls back to the built-in default; a bad value is logged, never fatal.
 pub fn load_from(path: &Path) -> CursorOptions {
     let cursor = std::fs::read_to_string(path)
         .ok()
@@ -109,7 +133,7 @@ pub fn load_from(path: &Path) -> CursorOptions {
     for (key, field) in CursorOptions::KEYS {
         if let Some(value) = cursor.get(field) {
             match parse_value(key, value) {
-                Ok(flag) => options.set(field, flag.unwrap_or(false)),
+                Ok(flag) => options.set(field, flag.unwrap_or(CursorOptions::DEFAULT.get(field))),
                 Err(error) => tracing::warn!("ignoring saved {key}: {error}"),
             }
         }
@@ -165,10 +189,11 @@ pub fn set_at(path: &Path, args: &Value) -> Result<(CursorOptions, Vec<&'static 
     Ok((load_from(path), keys))
 }
 
-// Process-wide options every cursor reads per frame. They start off so unit
-// tests never read the user's file; the daemon loads them at startup
-// (`CursorConfig::from_args`) and on every config write.
-static ACTIVE: AtomicU8 = AtomicU8::new(0);
+// Process-wide options every cursor reads per frame. They start at the
+// built-in default so unit tests never read the user's file; the daemon
+// loads them at startup (`CursorConfig::from_args`) and on every config
+// write.
+static ACTIVE: AtomicU8 = AtomicU8::new(CursorOptions::DEFAULT.to_u8());
 
 /// The options cursors paint with right now.
 pub fn active() -> CursorOptions {
@@ -241,7 +266,7 @@ pub fn config_schema_properties() -> Map<String, Value> {
         ),
         (
             FLOAT_KEY,
-            "Agent cursor resting float: a slow bob and tilt while the cursor rests. off (default): the cursor stays still at rest. Applies immediately to every cursor.",
+            "Agent cursor resting float: a slow up-and-down bob while the cursor rests; the arrow stays upright. on (default). off: the cursor stays still at rest and the overlay stops redrawing. Applies immediately to every cursor.",
         ),
         (
             ROTATE_KEY,
@@ -277,10 +302,25 @@ mod tests {
     }
 
     #[test]
-    fn everything_is_off_by_default() {
-        assert_eq!(CursorOptions::default(), CursorOptions::from_u8(0));
+    fn only_the_float_is_on_by_default() {
+        assert_eq!(CursorOptions::default(), CursorOptions::from_u8(2));
+        assert_eq!(CursorOptions::NONE, CursorOptions::from_u8(0));
+        assert_eq!(active(), CursorOptions::DEFAULT);
         let path = temp_config("missing");
         assert_eq!(load_from(&path), CursorOptions::default());
+    }
+
+    #[test]
+    fn the_float_can_be_turned_off_and_reset() {
+        let path = temp_config("float-off");
+        let (options, _) = set_at(&path, &json!({"cursor.float": "off"})).unwrap();
+        assert_eq!(options, CursorOptions::NONE);
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["cursor"]["float"], false);
+
+        let (options, _) = set_at(&path, &json!({"cursor.float": "default"})).unwrap();
+        assert!(options.float, "default brings the float back");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

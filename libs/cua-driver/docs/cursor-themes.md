@@ -11,19 +11,24 @@ colored backgrounds. The anonymous/default cursor uses Cua blue. Named sessions
 receive a stable fill from the built-in session palette, so concurrent agents
 remain visually distinct.
 
-A resting cursor is still, so the macOS, Windows, X11, and Wayland overlays stop
-rendering once activity settles. The cursor fades out after its idle-hide delay.
+A resting cursor levitates: it rises about 4 pt and settles back on a
+four-second loop, straight up and down, so the arrow stays upright. The cursor
+fades out after its idle-hide delay. Turn the float off with
+`cua-driver config set cursor.float off`; a resting cursor is then still, so
+the macOS, Windows, X11, and Wayland overlays stop rendering once activity
+settles.
 
-### Opt-in extras
+### Extras
 
-Everything beyond the plain arrow is off by default. Each extra is a saved
-setting in `~/.cua-driver/config.json` that applies at once to every cursor on
-screen. Turn one on with `cua-driver config set <key> on`, or with `set_config`:
+Apart from the float, everything beyond the plain arrow is off by default. Each
+extra is a saved setting in `~/.cua-driver/config.json` that applies at once to
+every cursor on screen. Turn one on with `cua-driver config set <key> on`, or
+with `set_config`:
 
 | Key | What it adds |
 | --- | --- |
 | `cursor.marks` | Action marks: a small cue next to the arrow while the agent observes, clicks, types, presses keys, scrolls, drags, manages apps, moves files, records, or makes system calls. Moves and clicks show the navigate and click marks. On macOS, a clicked element also gets a brief focus box. |
-| `cursor.float` | The resting float: a slow bob and tilt on a four-second loop while the cursor rests, until the idle fade hides it. |
+| `cursor.float` | On by default. The resting float: a slow vertical bob on a four-second loop while the cursor rests, until the idle fade hides it. The arrow never tilts. |
 | `cursor.rotate` | Rotation: the arrow turns toward the direction it moves and settles upright on arrival. |
 | `cursor.motion.effects.glow` | A soft glow behind the pointer that grows with speed. |
 | `cursor.motion.effects.ripple` | A ring that expands from each click point. |

@@ -1762,16 +1762,13 @@ mod tests {
 
     // Before the shared predicate, a landed Windows cursor dropped to the IDLE
     // cadence for the whole idle-hide delay and its resting bob froze. The bob
-    // is the opt-in `cursor.float` now; a default cursor rests still.
+    // is `cursor.float`, on by default.
     #[test]
     fn resting_cursor_keeps_the_active_cadence_for_its_bob() {
         let mut map = empty_map();
         map.seed_start_if_unplaced("sessA", 60.0, 60.0, map.platform.frame());
         map.cursors.get_mut("sessA").unwrap().core.options_override =
-            Some(cursor_overlay::CursorOptions {
-                float: true,
-                ..cursor_overlay::CursorOptions::default()
-            });
+            Some(cursor_overlay::CursorOptions::default());
         apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
         settle(&mut map);
         let rs = &map.cursors["sessA"];

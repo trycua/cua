@@ -286,7 +286,7 @@ Cursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.mot
 
 Agent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.
 
-Agent cursor extras: cursor.marks (action marks), cursor.float (resting float) and cursor.rotate (turn toward travel) are on, off (default) or default, saved to ~/.cua-driver/config.json and applied to every cursor at once.
+Agent cursor extras: cursor.float (resting float) is on (default), off or default; cursor.marks (action marks) and cursor.rotate (turn toward travel) are on, off (default) or default. All are saved to ~/.cua-driver/config.json and applied to every cursor at once.
 
 **macOS parameters**
 
@@ -308,7 +308,7 @@ The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next
 
 `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.
 
-`cursor.marks` (action marks), `cursor.float` (resting float) and `cursor.rotate` (turn toward travel) are `on`, `off` (default) or `default`, and apply to every cursor at once.
+`cursor.float` (resting float) is `on` (default), `off` or `default`; `cursor.marks` (action marks) and `cursor.rotate` (turn toward travel) are `on`, `off` (default) or `default`. All apply to every cursor at once.
 
 **Linux parameters**
 
@@ -331,7 +331,7 @@ Known keys:
 
 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`): saved default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 - `cursor.badges` (`minimal` default, `verbose`, or `off`): agent cursor badge; applies to every cursor at once.
-- `cursor.marks` (action marks), `cursor.float` (resting float), `cursor.rotate` (turn toward travel): `on`, `off` (default), or `default`; apply to every cursor at once.
+- `cursor.float` (resting float): `on` (default), `off`, or `default`. `cursor.marks` (action marks), `cursor.rotate` (turn toward travel): `on`, `off` (default), or `default`. All apply to every cursor at once.
 
 Returns the full updated config in the same shape as `get_config`.
 
@@ -351,7 +351,7 @@ Returns the full updated config in the same shape as `get_config`.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_config--cursor-badges"></span>`cursor.badges` | `"minimal" \| "verbose" \| "off" \| "default"` |  | Agent cursor badge. minimal (default): no badge at rest; a brief chip for a foreground moment or a key combo, and the session name on hover or when two or more agent cursors are on screen. verbose: the earlier badge with the session name and delivery/target chips on every action. off: no badge. Applies immediately to every cursor. |
-| <span id="set_config--cursor-float"></span>`cursor.float` | `"on" \| "off" \| "default"` |  | Agent cursor resting float: a slow bob and tilt while the cursor rests. off (default): the cursor stays still at rest. Applies immediately to every cursor. |
+| <span id="set_config--cursor-float"></span>`cursor.float` | `"on" \| "off" \| "default"` |  | Agent cursor resting float: a slow up-and-down bob while the cursor rests; the arrow stays upright. on (default). off: the cursor stays still at rest and the overlay stops redrawing. Applies immediately to every cursor. |
 | <span id="set_config--cursor-marks"></span>`cursor.marks` | `"on" \| "off" \| "default"` |  | Agent cursor action marks: the small cue next to the arrow for observe, click, type, keys, scroll, drag, apps, files, recording and system calls, plus the focus box around a clicked element on macOS. off (default): a plain arrow. Applies immediately to every cursor. |
 | <span id="set_config--cursor-motion"></span>`cursor.motion` | `"default"` |  | Pass `default` to clear every saved cursor motion default. |
 | <span id="set_config--cursor-motion-effects-glow"></span>`cursor.motion.effects.glow` | `"on" \| "off" \| "default"` |  | Saved default for the `glow` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |

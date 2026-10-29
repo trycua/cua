@@ -339,11 +339,11 @@ impl RenderStateCore {
 
     /// Whether a revealed cursor keeps changing pixels while it rests.
     ///
-    /// The default cursor rests still, so the overlay stops rendering once
-    /// activity settles. Two opt-in extras animate at rest: the resting float
-    /// of the built-in theme (`cursor.float`), and a theme's multi-frame
-    /// animation for its current action (`cursor.marks`, or a custom theme
-    /// whose idle animation loops).
+    /// Two extras animate at rest: the resting float of the built-in theme
+    /// (`cursor.float`, on by default), and a theme's multi-frame animation
+    /// for its current action (`cursor.marks`, or a custom theme whose idle
+    /// animation loops). With both off the cursor rests still, so the overlay
+    /// stops rendering once activity settles.
     ///
     /// Resting motion is bounded by idle hide: it runs while the idle-hide
     /// countdown runs and stops when the fade hides the cursor. A cursor
@@ -3130,12 +3130,12 @@ mod plain_cursor_tests {
     }
 
     #[test]
-    fn every_extra_is_off_by_default() {
+    fn only_the_float_is_on_by_default() {
         assert_eq!(
             CursorOptions::default(),
             CursorOptions {
                 marks: false,
-                float: false,
+                float: true,
                 rotate: false,
             }
         );
@@ -3145,7 +3145,7 @@ mod plain_cursor_tests {
 
     #[test]
     fn moves_and_clicks_start_no_mark_without_marks() {
-        let mut plain = core(CursorOptions::default());
+        let mut plain = core(CursorOptions::NONE);
         plain.apply_command_base(
             OverlayCommand::MoveTo {
                 x: 160.0,
@@ -3180,9 +3180,9 @@ mod plain_cursor_tests {
 
     #[test]
     fn semantic_actions_paint_the_idle_arrow_without_marks() {
-        let idle = paint(&core(CursorOptions::default()), None);
+        let idle = paint(&core(CursorOptions::NONE), None);
         for action in CursorAction::ALL {
-            let mut plain = core(CursorOptions::default());
+            let mut plain = core(CursorOptions::NONE);
             plain.apply_command_base(
                 OverlayCommand::BeginAction {
                     action,
@@ -3203,7 +3203,7 @@ mod plain_cursor_tests {
 
         let mut marked = core(CursorOptions {
             marks: true,
-            ..CursorOptions::default()
+            ..CursorOptions::NONE
         });
         marked.apply_command_base(
             OverlayCommand::BeginAction {
@@ -3220,8 +3220,8 @@ mod plain_cursor_tests {
 
     #[test]
     fn the_arrow_stays_upright_unless_rotation_is_on() {
-        let upright = paint(&core(CursorOptions::default()), None);
-        let mut turned = core(CursorOptions::default());
+        let upright = paint(&core(CursorOptions::NONE), None);
+        let mut turned = core(CursorOptions::NONE);
         turned.heading = FRAC_PI_4 + 0.6;
         turned.pos = crate::anchor_for_pointer(100.0, 100.0, turned.heading);
         assert_eq!(
@@ -3232,24 +3232,21 @@ mod plain_cursor_tests {
 
         turned.options_override = Some(CursorOptions {
             rotate: true,
-            ..CursorOptions::default()
+            ..CursorOptions::NONE
         });
         assert_ne!(paint(&turned, None), upright, "cursor.rotate turns it");
     }
 
     #[test]
-    fn the_resting_cursor_floats_only_with_float_on() {
-        let mut still = core(CursorOptions::default());
+    fn the_resting_cursor_floats_unless_float_is_off() {
+        let mut still = core(CursorOptions::NONE);
         still.motion.idle_hide_ms = 20_000.0;
         let before = paint(&still, None);
         still.visual.elapsed_secs = 1.3;
         assert_eq!(paint(&still, None), before);
         assert!(!still.has_resting_motion());
 
-        let mut floating = core(CursorOptions {
-            float: true,
-            ..CursorOptions::default()
-        });
+        let mut floating = core(CursorOptions::default());
         floating.motion.idle_hide_ms = 20_000.0;
         let before = paint(&floating, None);
         floating.visual.elapsed_secs = 1.3;
@@ -3263,11 +3260,11 @@ mod plain_cursor_tests {
             rect: [20.0, 20.0, 60.0, 30.0],
             t: 0.0,
         });
-        let plain = core(CursorOptions::default());
+        let plain = core(CursorOptions::NONE);
         assert_eq!(paint(&plain, focus), paint(&plain, None));
         let marked = core(CursorOptions {
             marks: true,
-            ..CursorOptions::default()
+            ..CursorOptions::NONE
         });
         assert_ne!(paint(&marked, focus), paint(&marked, None));
     }

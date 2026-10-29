@@ -1617,13 +1617,10 @@ mod tests {
         let mut map = empty_map();
         let cursor = placed(&mut map, "sessA");
         cursor.core.motion.idle_hide_ms = 20_000.0;
-        // The default cursor rests still; only the opt-in float animates.
-        cursor.core.options_override = Some(cursor_overlay::CursorOptions::default());
+        // With `cursor.float` off the cursor rests still; the default floats.
+        cursor.core.options_override = Some(cursor_overlay::CursorOptions::NONE);
         assert!(!cursor.core.has_resting_motion());
-        cursor.core.options_override = Some(cursor_overlay::CursorOptions {
-            float: true,
-            ..cursor_overlay::CursorOptions::default()
-        });
+        cursor.core.options_override = Some(cursor_overlay::CursorOptions::default());
         assert!(cursor.core.has_resting_motion());
         assert!(map.needs_frame_tick());
 
@@ -1645,13 +1642,13 @@ mod tests {
         cursor.core.motion.idle_hide_ms = 0.0;
         assert!(!cursor.needs_frame_tick());
         // The focus box is an opt-in mark: without `cursor.marks` it is dropped.
-        cursor.core.options_override = Some(cursor_overlay::CursorOptions::default());
+        cursor.core.options_override = Some(cursor_overlay::CursorOptions::NONE);
         cursor.apply_command(OverlayCommand::ShowFocusRect(Some([0.0, 0.0, 10.0, 10.0])));
         assert!(cursor.focus_rect.is_none());
         assert!(!cursor.needs_frame_tick());
         cursor.core.options_override = Some(cursor_overlay::CursorOptions {
             marks: true,
-            ..cursor_overlay::CursorOptions::default()
+            ..cursor_overlay::CursorOptions::NONE
         });
         cursor.apply_command(OverlayCommand::ShowFocusRect(Some([0.0, 0.0, 10.0, 10.0])));
         assert!(cursor.needs_frame_tick());

@@ -394,7 +394,6 @@ async fn agents_commands_round_trip_and_protect_malformed_files() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_local_cli_registers_cua_local_beside_stables_cua() {
     let mut h = home();
-    let drv = fake_driver(&h);
     mkdirs(&h, &[".cursor"]);
     let cursor = h.dir.path().join(".cursor/mcp.json");
     let stable_skill = h.dir.path().join(".agents/skills/cua-spaces");

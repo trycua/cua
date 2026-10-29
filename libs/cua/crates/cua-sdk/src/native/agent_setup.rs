@@ -759,15 +759,30 @@ mod tests {
         assert!(!d.path().join(".agents/skills/cua-spaces").exists());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn sdk_cua_driver_setup_in_a_temp_home() {
         let d = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(d.path().join(".codex")).unwrap();
+        // Set up writes the MCP server only for a driver that answers
+        // `initialize`, so use a stand-in that does.
+        let drv = d.path().join("opt/drv/cua-driver");
+        std::fs::create_dir_all(drv.parent().unwrap()).unwrap();
+        std::fs::write(
+            &drv,
+            "#!/bin/sh\nread line\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"cua-driver\",\"version\":\"9.9.9\"}}}'\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&drv, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let drv_path = drv.display().to_string();
         let s = AgentSetup::with_env(cua_agent_setup::HostEnv::isolated(d.path()));
         let out = s
             .setup_cua_driver(
                 vec!["codex".into()],
-                Some("/opt/drv/cua-driver".into()),
+                Some(drv_path.clone().into()),
                 true,
                 true,
             )
@@ -787,6 +802,6 @@ mod tests {
         let codex = s.status().into_iter().find(|a| a.id == "codex").unwrap();
         assert!(codex.cua_driver_configured && !codex.cua_configured);
         let toml = std::fs::read_to_string(d.path().join(".codex/config.toml")).unwrap();
-        assert!(toml.contains("/opt/drv/cua-driver"), "{toml}");
+        assert!(toml.contains(&drv_path), "{toml}");
     }
 }

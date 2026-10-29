@@ -35,7 +35,6 @@ pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
     pub suppress_response: bool,
     pub result: Result<Value, (i64, String)>,
-    pub suppress_response: bool,
     pub response_ready: Option<Arc<tokio::sync::Notify>>,
 }
 
@@ -46,7 +45,6 @@ impl MockReply {
             suppress_response: false,
             response_ready: None,
             result: Ok(result),
-            suppress_response: false,
         }
     }
 
@@ -56,7 +54,6 @@ impl MockReply {
             suppress_response: false,
             response_ready: None,
             result: Err((code, message.to_owned())),
-            suppress_response: false,
         }
     }
 
@@ -148,9 +145,6 @@ impl MockCdpServer {
                             if ws.send(Message::Text(frame.to_string())).await.is_err() {
                                 return;
                             }
-                        }
-                        if reply.suppress_response {
-                            continue;
                         }
                         if let Some(ready) = reply.response_ready {
                             ready.notified().await;

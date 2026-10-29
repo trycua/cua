@@ -1378,15 +1378,13 @@ pub fn provider_sheet_on(
     };
     // An app's own sign-in is that app's alone: say so when this app is shown only the key.
     let only_key_note = for_app.and_then(|a| {
-        let owner = p
-            .offered()
-            .find(|m| {
-                matches!(
-                    m.kind,
-                    reg::MethodKind::ImportLogin | reg::MethodKind::SubscriptionLogin
-                ) && !m.app.is_empty()
-                    && m.app != a
-            })?;
+        let owner = p.offered().find(|m| {
+            matches!(
+                m.kind,
+                reg::MethodKind::ImportLogin | reg::MethodKind::SubscriptionLogin
+            ) && !m.app.is_empty()
+                && m.app != a
+        })?;
         let who = input.row_app(a)?.name;
         let owner_name = input.row_app(owner.app)?.name;
         let signin = match p.id {
@@ -1449,7 +1447,10 @@ pub fn provider_picker(
                 } else if provider_credential(input, p).is_some() {
                     // Saved for another app (a Claude or ChatGPT sign-in): not usable here.
                     let name = input.row_app(app).map(|a| a.name).unwrap_or_default();
-                    ("not-connected".to_string(), format!("{name} needs an API key"))
+                    (
+                        "not-connected".to_string(),
+                        format!("{name} needs an API key"),
+                    )
                 } else {
                     ("not-connected".to_string(), "Not connected".to_string())
                 }
@@ -2140,7 +2141,11 @@ mod tests {
         // The Connections list still says Anthropic and OpenAI are connected (a sign-in is saved)...
         let v = view(&i);
         assert_eq!(
-            v.providers.iter().find(|p| p.id == "anthropic").unwrap().state,
+            v.providers
+                .iter()
+                .find(|p| p.id == "anthropic")
+                .unwrap()
+                .state,
             "connected"
         );
         // ...but Hermes reads only API keys, so its picker must not.
@@ -2150,7 +2155,10 @@ mod tests {
             assert_eq!(status, "Hermes needs an API key", "{p}");
         }
         // The same sign-ins are Claude Code's and Codex's.
-        assert_eq!(state_in_picker(&i, "claude-code", "anthropic").0, "connected");
+        assert_eq!(
+            state_in_picker(&i, "claude-code", "anthropic").0,
+            "connected"
+        );
         assert_eq!(state_in_picker(&i, "codex", "openai").0, "connected");
         // Nothing saved at all: plainly not connected.
         assert_eq!(
@@ -2168,13 +2176,22 @@ mod tests {
         let mut k = key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA");
         k.expired = true;
         e.keys.keys.push(k);
-        assert_eq!(state_in_picker(&e, "hermes", "anthropic").1, "Not connected");
-        assert_eq!(state_in_picker(&e, "claude-code", "anthropic").1, "Needs reconnect");
+        assert_eq!(
+            state_in_picker(&e, "hermes", "anthropic").1,
+            "Not connected"
+        );
+        assert_eq!(
+            state_in_picker(&e, "claude-code", "anthropic").1,
+            "Needs reconnect"
+        );
         let mut x = input();
         let mut k = key("ANTHROPIC_API_KEY", "AAAA");
         k.expired = true;
         x.keys.keys.push(k);
-        assert_eq!(state_in_picker(&x, "hermes", "anthropic").1, "Needs reconnect");
+        assert_eq!(
+            state_in_picker(&x, "hermes", "anthropic").1,
+            "Needs reconnect"
+        );
     }
 
     #[test]
@@ -2211,9 +2228,24 @@ mod tests {
             Some("Hermes uses an API key. Your ChatGPT sign-in is used by OpenAI Codex.")
         );
         // Claude Code's own sheet and the Connections list have nothing to explain; nor does a key-only provider.
-        assert!(provider_sheet_on(&i, "anthropic", SpaceOs::Macos, Some("claude-code")).unwrap().only_key_note.is_none());
-        assert!(provider_sheet(&i, "anthropic").unwrap().only_key_note.is_none());
-        assert!(provider_sheet_on(&i, "openrouter", SpaceOs::Macos, Some("hermes")).unwrap().only_key_note.is_none());
+        assert!(
+            provider_sheet_on(&i, "anthropic", SpaceOs::Macos, Some("claude-code"))
+                .unwrap()
+                .only_key_note
+                .is_none()
+        );
+        assert!(
+            provider_sheet(&i, "anthropic")
+                .unwrap()
+                .only_key_note
+                .is_none()
+        );
+        assert!(
+            provider_sheet_on(&i, "openrouter", SpaceOs::Macos, Some("hermes"))
+                .unwrap()
+                .only_key_note
+                .is_none()
+        );
         // No middle dot, no "devices".
         let all = format!("{a:?}{o:?}");
         assert!(!all.contains('\u{b7}') && !all.to_lowercase().contains("device"));

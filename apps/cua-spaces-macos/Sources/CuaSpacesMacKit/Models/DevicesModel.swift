@@ -69,7 +69,7 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
         guard device.state == "enrolled" else {
             throw CuaError.Runtime(
                 message: "The relay did not enroll \(device.name) (\(device.id)): it is \(device.state). "
-                    + "Ask that device for a new code and try again.")
+                    + "Ask that machine for a new code and try again.")
         }
     }
     public func rename(id: String, name: String) async throws { _ = try await inner.rename(id: id, name: name) }

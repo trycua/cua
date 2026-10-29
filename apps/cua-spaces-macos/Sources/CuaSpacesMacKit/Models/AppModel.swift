@@ -524,7 +524,7 @@ public final class AppModel {
         if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
         if let device {
             guard let relay = devices.devices else {
-                throw CuaError.InvalidArgument(message: "Revoking a device needs a signed-in Cua account")
+                throw CuaError.InvalidArgument(message: "Revoking a machine needs a signed-in Cua account")
             }
             try await relay.revoke(id: device)
         }
@@ -926,7 +926,7 @@ public final class AppModel {
             // Your other computers could not be read: their rows are the
             // last known ones (this Mac's are current).
             rosterError = list.notice.isEmpty ? nil
-                : "Could not reach your other computers. Their Spaces may be out of date."
+                : "Could not reach your other machines. Their Spaces may be out of date."
             await hostRead
             // Your machines' load for their sidebar lines, every so often
             // (each machine is asked; never holds up the list).

@@ -575,6 +575,49 @@ async fn deleting_a_relay_registered_space_removes_its_machine() {
     assert!(!ada.list_all().await.unwrap().iter().any(|i| i.id == id));
 }
 
+/// CUA-2841: `rm` of a relay-registered Space takes its machine off the
+/// relay too, and a Space whose delete could not reach the relay (it is
+/// gone here, its machine is still remembered) is removed by
+/// `relay-unregister local:<name>`.
+#[tokio::test]
+async fn rm_and_relay_unregister_leave_no_stale_relay_record() {
+    let (relay, ada, _bob, homes) = two_accounts().await;
+    let env = MockServer::start(MockAuth::default()).await;
+    env.state.advertise(&["relay_attach"]);
+    let info = ada.add(&env.url(), None, Some("bot".into())).await.unwrap();
+    let state = env.state.clone();
+    let handle = relay.clone();
+    tokio::spawn(async move {
+        for _ in 0..400 {
+            if let Some(a) = state.relay_attached.lock().unwrap().clone() {
+                handle.set_online(&a.machine_id, true, "0.1.0");
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    });
+    let r = ada.relay_register(&info.id).await.unwrap();
+    assert!(relay.machine(&r.machine).is_some());
+    ada.remove(&info.id).await.unwrap();
+    assert!(
+        relay.machine(&r.machine).is_none(),
+        "rm removed the machine"
+    );
+
+    // A Space that is gone here, its machine still remembered.
+    let ghost = "space-00000000000000bb";
+    register(&relay, ghost, false).await;
+    let file = homes[0].path().join("shared-spaces.json");
+    std::fs::write(
+        &file,
+        serde_json::json!({"local:ghost": {"machine": ghost}}).to_string(),
+    )
+    .unwrap();
+    assert!(ada.relay_unregister("local:ghost").await.unwrap());
+    assert!(relay.machine(ghost).is_none(), "stale record removed");
+    assert!(!ada.relay_unregister("local:ghost").await.unwrap_or(false));
+}
+
 /// Removing a stale record: `rm` of a gone Space's `relay:<machine>` and
 /// `relay_unregister` of a machine that is no longer connected remove it
 /// from the relay directory; a host that is connected now is refused with

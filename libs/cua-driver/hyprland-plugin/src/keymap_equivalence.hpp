@@ -31,9 +31,18 @@ inline constexpr bool foreground_modifier_key(std::uint32_t code) {
     }
 }
 
+// us(altgr-intl) types like US on every other key: it puts \ and | on the
+// ISO-only KEY_102ND where US has < and >, and makes Right Alt AltGr. The driver
+// never presses either key, and foreground_chord_failure still refuses a chord
+// that does.
+inline constexpr bool foreground_layout_exempt_key(std::uint32_t code) {
+    return code == 86 || code == 100;
+}
+
 // True when typing through `physical` produces the same keysyms as `canonical`
 // for every key the foreground KEY command can press (evdev 1-247, minus the
-// lock keys): at the base level, and with Shift held for non-modifier keys.
+// lock keys and foreground_layout_exempt_key): at the base level, and with
+// Shift held for non-modifier keys.
 // Options that only change Caps Lock or modifier chords, such as compose:caps
 // and shift:both_capslock_cancel, qualify. A different layout, or a remap of a
 // letter, digit, punctuation, or modifier key, does not. This compares fresh
@@ -50,7 +59,9 @@ inline bool typing_keymap_equivalent(xkb_keymap* physical, xkb_keymap* canonical
             xkb_state_update_key(expected, left_shift, XKB_KEY_DOWN);
         }
         for (std::uint32_t code = 1; equal && code <= 247; ++code) {
-            if (foreground_lock_key(code) || (shifted && foreground_modifier_key(code))) continue;
+            if (foreground_lock_key(code) || foreground_layout_exempt_key(code) ||
+                (shifted && foreground_modifier_key(code)))
+                continue;
             equal = xkb_state_key_get_one_sym(actual, code + 8) == xkb_state_key_get_one_sym(expected, code + 8);
         }
     }

@@ -44,9 +44,13 @@ describe("an agent that is not connected", () => {
     expect(reply.querySelector("[data-failure-connect]")).not.toBeNull();
     expect(reply.textContent).toContain("I can't reach Claude yet. Connect Claude, then try again.");
     expect(reply.textContent).not.toMatch(/401|authentication_error|OAuth/);
-    // Connect opens Settings, Connectors on the app; Retry is there too.
-    const connect = reply.querySelector<HTMLAnchorElement>("[data-failure-connect]")!;
-    expect(connect.getAttribute("href")).toBe("/settings/connectors/claude-code");
+    // Connect opens the same sheet as Settings, Connections, on the provider that refused it; Retry is there too.
+    const connect = reply.querySelector<HTMLButtonElement>("[data-failure-connect]")!;
+    expect(connect.tagName).toBe("BUTTON");
+    await act(async () => {
+      fireEvent.click(connect);
+    });
+    await waitFor(() => expect(q("[data-import-sheet], [data-provider-sheet]")).not.toBeNull());
     expect(reply.querySelector("[data-failure-retry]")).not.toBeNull();
     // No middle dot anywhere in what the failure draws.
     expect(claude.textContent).not.toContain("·");

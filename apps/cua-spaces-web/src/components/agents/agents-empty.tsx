@@ -21,7 +21,7 @@ export function nameList(names: string[]): string {
 /**
  * The Agents page before any run. It says what to do next, by what is true
  * on this computer: coding apps found but Cua not in them yet (their marks
- * and a button to Settings, Connectors, where each has its switch); Cua already in them (the first prompts to
+ * and a button to Settings, Connections, where each has its switch); Cua already in them (the first prompts to
  * try); or no coding app found.
  */
 export function AgentsEmpty() {
@@ -47,8 +47,8 @@ export function AgentsEmpty() {
   const todo = installed.filter((r) => !r.configured);
   const state = installed.length === 0 ? "none" : ready.length === 0 ? "setup" : "ready";
 
-  // Connecting is its switch in Settings, Connectors: open it at the first app waiting for Cua.
-  const openConnectors = (agent?: string) => void navigate({ to: "/settings/connectors", search: { app: agent } });
+  // Connecting is its switch in Settings, Connections: open it at the first app waiting for Cua.
+  const openConnectors = (agent?: string) => void navigate({ to: "/settings/connections", search: { app: agent } });
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col items-center pt-8 text-center" data-agents-empty={state}>

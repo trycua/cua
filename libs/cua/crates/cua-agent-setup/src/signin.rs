@@ -8,7 +8,7 @@
 //! |---|---|---|
 //! | Codex | `$CODEX_HOME/auth.json` (`tokens`, `OPENAI_API_KEY`); with keyring storage, `codex login status`'s exit code | a sign-in made for Cua: `codex login --device-auth` in a folder Cua owns ([`DeviceSignIn`]), as `CODEX_AUTH_JSON`; never your own `auth.json` |
 //! | Claude Code | `claude auth status` (exit 0, `authMethod`), else `.credentials.json` / `.claude.json` | the access token of the sign-in Claude Code already has ([`crate::claude_login`]: the Keychain item `Claude Code-credentials` or `<config dir>/.credentials.json`, who it is from `.claude.json`), as `CLAUDE_CODE_OAUTH_TOKEN`; never the refresh token, and Claude Code's own files and Keychain item are only read |
-//! | Hermes | `$HERMES_HOME/.env` provider keys, `auth.json` `providers` (whether a key is there; never its value) | nothing: it uses the providers connected in Settings, Connectors |
+//! | Hermes | `$HERMES_HOME/.env` provider keys, `auth.json` `providers` (whether a key is there; never its value) | nothing: it uses the providers connected in Settings, Connections |
 //! | Cursor | `~/.config/cursor/auth.json`, `~/.cursor/auth.json`, `CURSOR_API_KEY`; else unknown | nothing (no supported export) |
 //! | OpenClaw | legacy `auth-profiles.json`; else unknown (profiles are in SQLite) | nothing yet |
 //! | T3 Code | uses the agents it controls | nothing (it uses Codex's and Claude's own) |
@@ -582,11 +582,11 @@ fn hermes_check(env: &HostEnv) -> Check {
     }
 }
 
-/// Hermes uses the provider keys connected in Settings, Connectors; its own
+/// Hermes uses the provider keys connected in Settings, Connections; its own
 /// `.env` is never copied.
 fn hermes_copy() -> Result<SignInCopy, CopyRefusal> {
     Err(CopyRefusal::NotYet(
-        "Connected. Hermes uses your Anthropic or OpenAI connection: connect one in Settings, Connectors.".into(),
+        "Connected. Hermes uses your Anthropic or OpenAI connection: connect one in Settings, Connections.".into(),
     ))
 }
 

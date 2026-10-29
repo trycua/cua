@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Connect, as Settings → Connectors, an app's page, a Space's
+ * Connect, as Settings → Connections, an app's page, a Space's
  * "isn't connected yet" note and Ask first share it: one place that knows
  * which connects are running, what failed, and which provider sheet is
  * open. The steps and words are the core's (`connectors.*`); the host
@@ -26,12 +26,15 @@ import {
   connectorsInputOf,
   connectorsView,
   connectPlan,
+  providerPicker,
   providerSheet,
   useAgentKeys,
   useBridge,
   type AppDetailView,
   type ConnectorsInput,
   type ConnectorsView,
+  type KeyChoices,
+  type ProviderPickerView,
   type ProviderSheetView,
   type ProviderWay,
 } from "@/bridge";
@@ -43,8 +46,11 @@ type Step = ConnectorsInput["busy"][number]["step"];
 interface ConnectState {
   busy: ConnectorsInput["busy"];
   failures: ConnectorsInput["failures"];
-  /** The provider sheet open now, and what opened it (an app's Connect continues there). */
-  sheet: { provider: string; forApp: string | null; way?: "token" | "key" } | null;
+  /** The provider sheet open now (`provider: null`: the provider choice), and what opened it (an app's Connect continues there). */
+  sheet: { provider: string | null; forApp: string | null; way?: "token" | "key"; query: string; expanded: boolean } | null;
+  /** What is typed in the search of More providers on the page, and whether it is open. */
+  query: string;
+  moreOpen: boolean;
   /** Provider keys your login shell has set (names), read when a sheet opens. */
   shellKeys: string[];
   /** A device-code sign-in waiting for its code to be entered. */
@@ -53,7 +59,7 @@ interface ConnectState {
   importing: { app: string; phase: "consent" | "reading" | "not-found"; line: string | null } | null;
 }
 
-const useConnectState = create<ConnectState>(() => ({ busy: [], failures: [], sheet: null, shellKeys: [], device: null, importing: null }));
+const useConnectState = create<ConnectState>(() => ({ busy: [], failures: [], sheet: null, query: "", moreOpen: false, shellKeys: [], device: null, importing: null }));
 const set = useConnectState.setState;
 
 const start = (id: string, step: Step) =>
@@ -91,7 +97,7 @@ export const closeDeviceSignIn = () => set({ device: null });
 /** Tests start clean. */
 export function resetConnectState(): void {
   pendingImport = null;
-  set({ busy: [], failures: [], sheet: null, shellKeys: [], device: null, importing: null });
+  set({ busy: [], failures: [], sheet: null, query: "", moreOpen: false, shellKeys: [], device: null, importing: null });
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -106,16 +112,23 @@ export interface Connectors {
   detail(agent: string): AppDetailView | null;
   /** The provider sheet open now. */
   sheet: ProviderSheetView | null;
-  /** The app it was opened for (its other providers are offered in it). */
+  /** The provider choice open now (the sheet's "Other providers", or an app that takes several). */
+  picker: ProviderPickerView | null;
+  /** The app it was opened for (the choice lists the providers it can use). */
   sheetApp: string | null;
   /** One Connect for an app: Cua's tools, then its sign-in (its token command, or the provider's sheet). */
   connectApp(agent: string): Promise<ConnectOutcome>;
-  openProvider(provider: string, forApp?: string | null, way?: "token" | "key"): void;
+  /** Opens a provider's sheet (`null`: the provider choice). */
+  openProvider(provider: string | null, forApp?: string | null, way?: "token" | "key"): void;
+  /** Searches the provider choice, or lists all of it. */
+  searchPicker(query: string, expanded?: boolean): void;
+  /** Searches More providers on the page, or opens or closes it. */
+  searchMore(query: string, open?: boolean): void;
   /** Reads the sign-in the app already has, once the person agreed in the import sheet. */
   confirmImport(): Promise<boolean>;
   closeProvider(): void;
-  /** Runs one of the sheet's ways (`key` with the pasted value). */
-  runWay(way: ProviderWay, value?: string): Promise<boolean>;
+  /** Runs one of the sheet's ways: a pasted `value` for a key, token or endpoint, with its `choices` (a plan, a model, a URL). */
+  runWay(way: ProviderWay, value?: string, choices?: KeyChoices): Promise<boolean>;
   signOut(provider: string): Promise<void>;
   /** An app page's switch: Cua's skills, its MCP server, or keeping it set up. */
   setToggle(agent: string, id: "skills" | "mcp" | "auto", on: boolean): Promise<void>;
@@ -130,9 +143,18 @@ export function useConnectors(): Connectors {
   const keys = useAgentKeys({ watch: true });
   const app = useConnectedAppsState();
   const st = useConnectState();
-  const input = connectorsInputOf(apps.rows, keys.input, { auto: app.auto === true, off: app.off, busy: st.busy, failures: st.failures, shellKeys: st.shellKeys });
+  const input = connectorsInputOf(apps.rows, keys.input, {
+    auto: app.auto === true,
+    off: app.off,
+    busy: st.busy,
+    failures: st.failures,
+    shellKeys: st.shellKeys,
+    query: st.query,
+    moreOpen: st.moreOpen,
+  });
   const view = connectorsView(core, input);
-  const sheet = st.sheet ? providerSheet(core, input, st.sheet.provider, undefined, st.sheet.forApp) : null;
+  const sheet = st.sheet?.provider ? providerSheet(core, input, st.sheet.provider, undefined, st.sheet.forApp) : null;
+  const picker = st.sheet && !st.sheet.provider ? providerPicker(core, input, st.sheet.forApp, st.sheet.query, st.sheet.expanded) : null;
 
   const reload = useCallback(async () => {
     await Promise.all([apps.reload(), keys.refresh()]);
@@ -204,7 +226,7 @@ export function useConnectors(): Connectors {
           }
         }
         if (plan.provider) {
-          set({ sheet: { provider: plan.provider, forApp: agent } });
+          set({ sheet: { provider: plan.provider, forApp: agent, query: "", expanded: false } });
           return "sheet";
         }
         return "connected";
@@ -261,9 +283,9 @@ export function useConnectors(): Connectors {
   }, [core, data, input, reload]);
 
   const runWay = useCallback(
-    async (way: ProviderWay, value?: string): Promise<boolean> => {
+    async (way: ProviderWay, value?: string, choices: KeyChoices = {}): Promise<boolean> => {
       const open = useConnectState.getState().sheet;
-      if (!data || !open || !sheet) return false;
+      if (!data || !open?.provider || !sheet) return false;
       const id = `provider:${open.provider}`;
       try {
         if (way.id === "app-token" && way.app) {
@@ -275,12 +297,18 @@ export function useConnectors(): Connectors {
           return await runDevice(way.app, open.provider);
         } else if (way.id === "shell" && way.env) {
           start(id, "connecting");
-          await data.call("agentKeys.fromShell", { env: way.env });
+          await data.call("agentKeys.fromShell", { env: way.env, ...choices });
           await keys.refresh();
           set({ sheet: null });
-        } else if ((way.id === "key" || way.id === "token") && value?.trim()) {
+        } else if (way.id === "token" && value?.trim()) {
+          // A token from `claude setup-token`: the daemon saves it as the sign-in it is, not as a key.
           start(id, "connecting");
-          await keys.save(sheet.keyProvider, value.trim(), sheet.keyEnv);
+          await keys.save(open.provider, value.trim(), null);
+          set({ sheet: null });
+        } else if ((way.id === "key" && value?.trim()) || (way.id === "endpoint" && (value?.trim() || way.secret === "optional"))) {
+          // Saving never waits on the provider: the check runs later, in the background.
+          start(id, "connecting");
+          await keys.save(open.provider, (value ?? "").trim(), null, choices);
           set({ sheet: null });
         } else {
           return false;
@@ -362,11 +390,12 @@ export function useConnectors(): Connectors {
     view,
     detail: (agent) => appDetail(core, input, agent),
     sheet,
+    picker,
     sheetApp: st.sheet?.forApp ?? null,
     connectApp,
     confirmImport,
     openProvider: (provider, forApp = null, way) => {
-      set({ sheet: { provider, forApp, ...(way ? { way } : {}) } });
+      set({ sheet: { provider, forApp, ...(way ? { way } : {}), query: "", expanded: false } });
       // Which keys your shell has (names only), for "Use … from your shell".
       void data
         ?.call("agentKeys.shell", {})
@@ -374,6 +403,8 @@ export function useConnectors(): Connectors {
         .catch(() => set({ shellKeys: [] }));
     },
     closeProvider: () => set({ sheet: null }),
+    searchPicker: (query, expanded = false) => set((s) => (s.sheet ? { sheet: { ...s.sheet, query, expanded: expanded || s.sheet.expanded } } : {})),
+    searchMore: (query, open) => set((s) => ({ query, moreOpen: open ?? (s.moreOpen || query.trim() !== "") })),
     runWay,
     signOut,
     setToggle,

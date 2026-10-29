@@ -2233,14 +2233,12 @@ pub(crate) fn note_rejected(rec: &AgentRecord, f: &ag::failure::Failure) {
     }
 }
 
-/// A failed member's status: one short word ("Not connected" when it needs a sign-in, else "Stopped").
+/// A failed member's status: one short word, the Connections words ("Needs reconnect" when the
+/// provider refused its credential, "Not connected" when it has none, else "Stopped").
 /// The error itself is never the status; the member's `failure` carries its complete text for Show
 /// details.
 fn failed_line(harness: &str, e: &str) -> String {
-    match ag::failure::classify(harness, e).class {
-        ag::failure::FailureClass::NeedsConnect => "Not connected".into(),
-        ag::failure::FailureClass::Error => "Stopped".into(),
-    }
+    ag::failure::status_word(&ag::failure::classify(harness, e)).into()
 }
 
 /// One session of an agent member, as `agent_members` shows it.

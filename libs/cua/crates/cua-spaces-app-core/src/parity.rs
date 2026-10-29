@@ -5029,7 +5029,7 @@ fn run_pro_banner(f: &Value, h: &dyn Host) -> Result<Value, String> {
     Ok(json!({ "flow": "pro-banner", "frames": frames }))
 }
 
-/// Settings, Connectors (redesign), summoning agents and the one agent list.
+/// Settings, Connections (redesign), summoning agents and the one agent list.
 fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
     let line = |parts: &[&Value]| {
         parts
@@ -5060,13 +5060,44 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
                 ])
             })
             .collect();
+        let row = |p: &Value| {
+            let chips: Vec<String> = p["worksWith"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|c| c["name"].as_str().unwrap_or_default().to_string())
+                .collect();
+            line(&[
+                &p["id"],
+                &p["tier"],
+                &p["state"],
+                &p["status"],
+                &p["credential"],
+                &json!(chips.join(", ")),
+                &p["button"]["label"],
+            ])
+        };
         let providers: Vec<String> = v["providers"]
             .as_array()
             .into_iter()
             .flatten()
-            .map(|p| line(&[&p["id"], &p["state"], &p["status"], &p["button"]["label"]]))
+            .map(row)
             .collect();
-        frames.push(json!({ "step": step["step"], "apps": apps, "providers": providers, "footer": v["providersFooter"] }));
+        let more: Vec<String> = v["moreProviders"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(row)
+            .collect();
+        frames.push(json!({
+            "step": step["step"],
+            "apps": apps,
+            "title": v["providersTitle"],
+            "providers": providers,
+            "more": line(&[&v["moreTitle"], &v["moreCount"], &v["moreEmpty"]]),
+            "moreProviders": more,
+            "footer": v["providersFooter"],
+        }));
         last = step["input"].clone();
     }
     let first = &f["connectors"][0]["input"];
@@ -5076,13 +5107,59 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "connectors.providerSheet",
             json!({ "input": first, "provider": p }),
         )?;
-        let ways: Vec<String> = s["ways"]
+        let ways: Vec<Value> = s["ways"]
             .as_array()
             .into_iter()
             .flatten()
-            .map(|w| line(&[&w["id"], &w["label"], &w["button"]]))
+            .map(|w| {
+                let fields: Vec<String> = w["fields"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|f| {
+                        line(&[
+                            &f["id"],
+                            &f["label"],
+                            &f["kind"],
+                            &f["required"],
+                            &f["value"],
+                        ])
+                    })
+                    .collect();
+                json!({
+                    "way": line(&[&w["id"], &w["kind"], &w["label"], &w["button"], &w["secret"]]),
+                    "fields": fields,
+                })
+            })
             .collect();
-        frames.push(json!({ "sheet": p, "title": s["title"], "ways": ways, "key": line(&[&s["keyProvider"], &s["keyEnv"]]) }));
+        frames.push(json!({
+            "sheet": p,
+            "title": s["title"],
+            "lede": s["lede"],
+            "ways": ways,
+            "note": s["note"],
+            "switch": s["switchLabel"],
+        }));
+    }
+    for pk in f["pickers"].as_array().into_iter().flatten() {
+        let v = c(
+            h,
+            "connectors.providerPicker",
+            json!({ "input": first, "forApp": pk["forApp"], "query": pk["query"], "expanded": pk["expanded"] }),
+        )?;
+        let items: Vec<String> = v["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|i| line(&[&i["provider"], &i["tier"], &i["state"]]))
+            .collect();
+        frames.push(json!({
+            "picker": pk,
+            "title": v["title"],
+            "lede": v["lede"],
+            "items": items,
+            "more": line(&[&v["moreLabel"], &v["moreCount"], &v["empty"]]),
+        }));
     }
     for os in ["macos", "linux"] {
         let s = c(h, "connectors.importSheet", json!({ "hostOs": os }))?;

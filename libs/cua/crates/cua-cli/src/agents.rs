@@ -102,7 +102,7 @@ pub struct SetupCmdArgs {
     /// from where Claude Code keeps it, as an access token only; Claude
     /// Code's own sign-in is never changed) and Codex's own device sign-in
     /// (a link and a code to enter there, in a folder Cua owns); Hermes uses
-    /// the providers connected in Cua Spaces (Settings, Connectors).
+    /// the providers connected in Cua Spaces (Settings, Connections).
     /// Only Claude Code's own sign-in is read, and only its access token is
     /// kept; Codex's own `auth.json` is never read or changed.
     #[arg(long, conflicts_with = "cua_driver")]

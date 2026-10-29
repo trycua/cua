@@ -51,6 +51,9 @@ members = [
     "crates/cua-spaces-cli",
     # Hotspot (reverse-SOCKS) tunnel protocol shared with cua-spacesd.
     "crates/cua-hotspot",
+    # The provider registry (Settings, Connections): one TOML file per provider,
+    # the generated tables and the per-app delivery rules.
+    "crates/cua-connections",
     # Sealed delivery to a pinned machine key (S1), shared with cua-spacesd
     # (the guest that decrypts).
     "crates/cua-machine-seal",
@@ -215,6 +218,7 @@ cua-create-failure = { path = "crates/cua-create-failure", version = "0.9.0" } #
 cua-spaces = { path = "crates/cua-spaces", version = "0.9.0" } # x-release-please-version
 cua-spaces-contract = { path = "crates/cua-spaces-contract", version = "0.9.0" } # x-release-please-version
 cua-hotspot = { path = "crates/cua-hotspot", version = "0.9.0" } # x-release-please-version
+cua-connections = { path = "crates/cua-connections", version = "0.9.0" } # x-release-please-version
 cua-share = { path = "crates/cua-share", version = "0.9.0" } # x-release-please-version
 cua-compat = { path = "crates/cua-compat", version = "0.9.0" } # x-release-please-version
 cua-media-protocol = { path = "crates/cua-media-protocol" }

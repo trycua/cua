@@ -87,7 +87,7 @@ export interface ConnectedApps {
   reload(): Promise<void>;
 }
 
-/** Settings, Connectors. */
+/** Settings, Connections. */
 export function useConnectedApps(): ConnectedApps {
   const { data } = useBridge();
   const app = useConnectedAppsState();

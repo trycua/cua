@@ -98,7 +98,14 @@ export class FakeAgentKeysTools {
         const env = provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "openai" ? "OPENAI_API_KEY" : String(args.env ?? "");
         const value = String(args.value ?? "");
         this.keys = this.keys.filter((k) => k.env !== env);
-        this.keys.push({ provider, env, last4: value.slice(-4), added_ms: 1_790_000_100_000 });
+        this.keys.push({
+          provider,
+          env,
+          last4: value.slice(-4),
+          added_ms: 1_790_000_100_000,
+          ...(typeof args.region === "string" ? { region: args.region } : {}),
+          ...(args.fields && typeof args.fields === "object" ? { fields: args.fields } : {}),
+        });
         break;
       }
       case "agent_keys.remove":

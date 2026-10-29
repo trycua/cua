@@ -86,11 +86,7 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["claude-agent-acp", "claude-code"],
         acp: &["claude-agent-acp"],
         cli: Some("claude"),
-        keys: &[
-            "ANTHROPIC_API_KEY",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-            "ANTHROPIC_AUTH_TOKEN",
-        ],
+        keys: cua_connections::READS_CLAUDE_CODE,
         logins: Some(&[
             "[ -s \"$HOME/.claude/.credentials.json\" ]",
             "security find-generic-password -s 'Claude Code-credentials' >/dev/null 2>&1",
@@ -113,7 +109,7 @@ pub const HARNESSES: &[Harness] = &[
         // person's Mac (their `~/.codex/auth.json`, OpenAI's documented
         // headless route). A run writes it to the guest's
         // `~/.codex/auth.json` when the guest has none ([`crate::runs`]).
-        keys: &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_AUTH_JSON"],
+        keys: cua_connections::READS_OPENAI_CODEX,
         logins: Some(&["[ -s \"$HOME/.codex/auth.json\" ]"]),
         auth_method: None,
         wires: &[Wire::OpenaiResponses],
@@ -129,7 +125,7 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["gemini-cli"],
         acp: &["gemini", "--acp"],
         cli: Some("gemini"),
-        keys: &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        keys: cua_connections::READS_GEMINI_CLI,
         logins: Some(&[]),
         auth_method: Some("gemini-api-key"),
         wires: &[Wire::Gemini],
@@ -147,7 +143,7 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["antigravity-acp"],
         acp: &["agy-acp-server", "--uid="],
         cli: None,
-        keys: &["GEMINI_API_KEY"],
+        keys: cua_connections::READS_GOOGLE_ANTIGRAVITY,
         logins: Some(&[]),
         auth_method: Some("gemini-api-key"),
         wires: &[Wire::Gemini],
@@ -166,12 +162,7 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["opencode"],
         acp: &["opencode", "acp"],
         cli: Some("opencode"),
-        keys: &[
-            "ANTHROPIC_API_KEY",
-            "OPENAI_API_KEY",
-            "GEMINI_API_KEY",
-            "OPENROUTER_API_KEY",
-        ],
+        keys: cua_connections::READS_OPENCODE,
         logins: Some(&[
             "[ -s \"$HOME/.local/share/opencode/auth.json\" ]",
             "[ -s \"$HOME/.config/opencode/opencode.json\" ]",
@@ -190,12 +181,7 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["goose"],
         acp: &["goose", "acp"],
         cli: Some("goose"),
-        keys: &[
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "GOOGLE_API_KEY",
-            "OPENROUTER_API_KEY",
-        ],
+        keys: cua_connections::READS_GOOSE,
         logins: Some(&[
             "[ -s \"$HOME/.config/goose/config.yaml\" ]",
             "[ -s \"$HOME/.config/goose/secrets.yaml\" ]",
@@ -214,12 +200,7 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["pi"],
         acp: &["pi-acp"],
         cli: Some("pi"),
-        keys: &[
-            "ANTHROPIC_API_KEY",
-            "OPENAI_API_KEY",
-            "GEMINI_API_KEY",
-            "OPENROUTER_API_KEY",
-        ],
+        keys: cua_connections::READS_PI,
         logins: Some(&[
             "[ -s \"$HOME/.pi/agent/auth.json\" ]",
             "[ -s \"$HOME/.pi/agent/models.json\" ]",
@@ -241,10 +222,11 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["hermes"],
         acp: &["hermes-acp"],
         cli: Some("hermes"),
-        // Provider API keys only. The Claude subscription sign-in
-        // (CLAUDE_CODE_OAUTH_TOKEN) and the ChatGPT one (CODEX_AUTH_JSON) are
-        // Claude Code's and Codex's: they are never given to Hermes.
-        keys: &["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+        // Provider API keys only, for every provider Hermes supports. The
+        // Claude subscription sign-in (CLAUDE_CODE_OAUTH_TOKEN) and the ChatGPT
+        // one (CODEX_AUTH_JSON) are Claude Code's and Codex's: they are never
+        // given to Hermes (the provider files scope them).
+        keys: cua_connections::READS_HERMES,
         // Its own `.env` (a key set inside the Space) or a provider sign-in.
         logins: Some(&[
             "[ -s \"$HOME/.hermes/.env\" ]",
@@ -268,7 +250,7 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["openclaw"],
         acp: &["openclaw", "acp"],
         cli: Some("openclaw"),
-        keys: &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"],
+        keys: cua_connections::READS_OPENCLAW,
         logins: Some(&[
             "[ -s \"$HOME/.openclaw/openclaw.json\" ]",
             "[ -s \"$HOME/.openclaw/.env\" ]",
@@ -345,15 +327,17 @@ pub enum Auth {
 /// What the guest probe found: `env:<NAME>`, `login`, or `none`.
 pub const PROBE_NONE: &str = "none";
 
-/// Where the Cua Spaces app takes a key named `env` (Settings, Connectors):
-/// Anthropic and OpenAI have their own rows, any other key goes under Other.
+/// Where the Cua Spaces app takes a key named `env` (Settings, Connections):
+/// the provider that saves it, else under Other keys.
 pub fn settings_hint(env: &str) -> String {
-    match env {
-        "ANTHROPIC_API_KEY" => {
-            "Add an Anthropic API key in Cua Spaces → Settings → Connectors".into()
-        }
-        "OPENAI_API_KEY" => "Add an OpenAI API key in Cua Spaces → Settings → Connectors".into(),
-        other => format!("Add {other} under Other in Cua Spaces → Settings → Connectors"),
+    match cua_connections::provider_of_env(env) {
+        Some(p) => format!(
+            "Connect {} in Cua Spaces \u{2192} Settings \u{2192} Connections",
+            p.name
+        ),
+        None => format!(
+            "Add {env} under Other keys in Cua Spaces \u{2192} Settings \u{2192} Connections"
+        ),
     }
 }
 
@@ -580,6 +564,22 @@ pub fn launch_with_home(
     cwd: &str,
     home: Option<&str>,
 ) -> crate::Result<Launch> {
+    launch_with_config(h, endpoint, model, run_dir, cwd, home, None)
+}
+
+/// [`launch_with_home`] with `hermes_config`: the `config.yaml` Cua generated
+/// from the person's connections (`cua_connections::hermes`). Hermes then
+/// starts from it, not from the guest's own setup, and uses the provider it
+/// names. Ignored for any other harness and when an endpoint is given.
+pub fn launch_with_config(
+    h: &Harness,
+    endpoint: Option<&Endpoint>,
+    model: Option<&str>,
+    run_dir: &str,
+    cwd: &str,
+    home: Option<&str>,
+    hermes_config: Option<&str>,
+) -> crate::Result<Launch> {
     let mut l = Launch::default();
     let model = endpoint
         .and_then(|e| e.model.clone())
@@ -744,9 +744,13 @@ pub fn launch_with_home(
             }
         }
         "hermes" => {
+            let generated = hermes_config.filter(|_| endpoint.is_none());
             let hermes_home = match home {
                 Some(h) => Some(format!("{h}/hermes")),
-                None => base.as_ref().map(|_| format!("{run_dir}/hermes-home")),
+                None => base
+                    .as_ref()
+                    .map(|_| format!("{run_dir}/hermes-home"))
+                    .or_else(|| generated.map(|_| format!("{run_dir}/hermes-home"))),
             };
             if let Some(b) = &base {
                 let m = model.clone().unwrap_or_else(|| "default".into());
@@ -758,12 +762,23 @@ pub fn launch_with_home(
                     },
                     body: format!(
                         "model:\n  default: {m:?}\n  provider: custom\n  base_url: {:?}\n  \
-                         api_key: ${{OPENAI_API_KEY}}\n  context_length: 131072\n",
+                         api_key: ${{OPENAI_API_KEY}}\n  context_length: 131072\n\
+                         auth:\n  adopt_external_logins: false\n",
                         v1(b)
                     ),
                 });
+            } else if let Some(yaml) = generated {
+                let dir = hermes_home.clone().expect("set with a generated config");
+                l.files.push(ConfigFile {
+                    rel: match home {
+                        Some(_) => format!("{dir}/config.yaml"),
+                        None => "hermes-home/config.yaml".into(),
+                    },
+                    body: yaml.to_string(),
+                });
+                // The provider, model and credentials all come from the connections.
             } else if let Some(dir) = &hermes_home {
-                // No endpoint: start from the guest's own Hermes setup.
+                // No connections: start from the guest's own Hermes setup.
                 let q = crate::quote;
                 l.prelude.extend([
                     format!("mkdir -p {}", q(dir)),
@@ -1160,5 +1175,90 @@ mod tests {
                 .collect();
             assert!(key_check(h, &all, false).is_none(), "{}", h.id);
         }
+    }
+
+    /// The registry and the launcher agree on the apps and on how they are pointed at an endpoint.
+    #[test]
+    fn the_registry_names_the_same_apps_and_wires() {
+        let ours: Vec<&str> = HARNESSES.iter().map(|h| h.id).collect();
+        assert_eq!(ours, cua_connections::HARNESS_IDS);
+        for (id, wire) in cua_connections::ENDPOINT_HARNESSES {
+            let h = harness(id).unwrap();
+            assert_eq!(Wire::parse(wire), Some(h.wires[0]), "{id}");
+        }
+        // What an app reads is what the registry delivers to it, nothing more.
+        for h in HARNESSES {
+            assert_eq!(h.keys, cua_connections::reads(h.id), "{}", h.id);
+        }
+    }
+
+    #[test]
+    fn hermes_starts_from_the_config_cua_generated() {
+        let hermes = harness("hermes").unwrap();
+        let yaml = "model:\n  provider: \"openrouter\"\n";
+        let l =
+            launch_with_config(hermes, None, None, "/run/1", "/work", None, Some(yaml)).unwrap();
+        let f = l
+            .files
+            .iter()
+            .find(|f| f.rel == "hermes-home/config.yaml")
+            .unwrap();
+        assert_eq!(f.body, yaml);
+        assert!(
+            l.env
+                .contains(&("HERMES_HOME".into(), "/run/1/hermes-home".into()))
+        );
+        // Nothing is copied from the guest's own Hermes setup, no wrapper or prelude is needed.
+        assert!(l.prelude.is_empty() && l.wrapper.is_none());
+        // With a persistent home the file lands in the home, over any older copy.
+        let l = launch_with_config(
+            hermes,
+            None,
+            None,
+            "/run/1",
+            "/work",
+            Some("/home/a"),
+            Some(yaml),
+        )
+        .unwrap();
+        assert!(
+            l.files
+                .iter()
+                .any(|f| f.rel == "/home/a/hermes/config.yaml" && f.body == yaml)
+        );
+        // An explicit endpoint wins, and never borrows logins either.
+        let ep = Endpoint {
+            base_url: "http://x/v1".into(),
+            wire: None,
+            model: Some("m".into()),
+        };
+        let l = launch_with_config(hermes, Some(&ep), None, "/run/1", "/work", None, Some(yaml))
+            .unwrap();
+        let f = l
+            .files
+            .iter()
+            .find(|f| f.rel == "hermes-home/config.yaml")
+            .unwrap();
+        assert!(
+            f.body.contains("provider: custom") && f.body.contains("adopt_external_logins: false"),
+            "{}",
+            f.body
+        );
+        // No connections: the guest's own setup, as before.
+        let l = launch_with_config(hermes, None, None, "/run/1", "/work", Some("/home/a"), None)
+            .unwrap();
+        assert!(l.files.is_empty() && !l.prelude.is_empty());
+        // Other apps ignore it.
+        let l = launch_with_config(
+            harness("goose").unwrap(),
+            None,
+            None,
+            "/run/1",
+            "/work",
+            None,
+            Some(yaml),
+        )
+        .unwrap();
+        assert!(l.files.is_empty());
     }
 }

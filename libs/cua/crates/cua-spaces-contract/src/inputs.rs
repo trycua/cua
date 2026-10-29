@@ -451,7 +451,7 @@ pub struct AgentStart {
     /// The task.
     pub prompt: String,
     /// Provider key variables to forward from this server's environment
-    /// (or from the keys saved in Cua Spaces, Settings → Connectors), for
+    /// (or from the keys saved in Cua Spaces, Settings → Connections), for
     /// example ["ANTHROPIC_API_KEY"]. Names only; values never pass through
     /// the conversation. Saved keys the harness reads are added without
     /// being named.

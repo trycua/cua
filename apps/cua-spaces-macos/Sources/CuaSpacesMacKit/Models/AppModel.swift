@@ -121,7 +121,7 @@ public final class AppModel {
     public let checklist: ChecklistModel
     /// Settings, Storage: the Cua Volume's store, Finder volume and cache.
     public internal(set) var storage: StorageModel
-    /// Settings, Connectors: the provider keys agents get (kept by the daemon).
+    /// Settings, Connections: the provider keys agents get (kept by the daemon).
     public let agentKeys: AgentKeysModel
     /// The user's own clouds: the "Your cloud" tile and "Connect a cloud".
     public let cloud: CloudModel

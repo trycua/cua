@@ -1,0 +1,24 @@
+id = "qwen-oauth"
+name = "Qwen CLI sign-in"
+icon = "qwen"
+tier = "more"
+rank = 350
+kind = "hosted"
+hidden = true
+hidden_reason = "Subscription login: Cua has not reviewed the provider's terms for reusing another app's sign-in yet."
+terms = "review"
+aliases = ["qwen cli", "qwen code"]
+wire = "openai-chat"
+base_url = "https://portal.qwen.ai/v1"
+default_model = ""
+hermes_id = "qwen-oauth"
+key_help = "Use the sign-in the Qwen CLI made on this machine."
+
+[[method]]
+id = "qwen-login"
+kind = "import_login"
+env = "QWEN_API_KEY"
+scope = "hermes"
+terms = "review"
+label = "Use your Qwen CLI sign-in"
+help = "Copies the sign-in the Qwen CLI made on this machine. Only Hermes uses it."

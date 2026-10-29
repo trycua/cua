@@ -151,7 +151,7 @@ pub fn person(i: &PersonCardInput) -> PersonCardView {
 
 // ------------------------------------------------------------------ agents
 
-/// The Connectors row of the harness an agent runs as: every agent harness
+/// The Connections row of the harness an agent runs as: every agent harness
 /// ([`connectors::HARNESS_APPS`]), and the apps a connected agent may report.
 fn app_of(harness: &str) -> Option<&'static str> {
     connectors::app_for_harness(harness).or(match harness {
@@ -217,7 +217,7 @@ pub struct AgentCardView {
     pub status_text: String,
     /// "Connect Claude Code", while Not connected.
     pub connect_label: Option<String>,
-    /// The Connectors app it runs as (Connect and Open its settings).
+    /// The Connections app it runs as (Connect and Open its settings).
     pub app: Option<String>,
     pub settings_label: Option<String>,
     pub remove_label: Option<String>,
@@ -441,6 +441,8 @@ mod tests {
                         added_ms: 1,
                         expired: false,
                         label: None,
+                        region: None,
+                        fields: Default::default(),
                     }],
                     ..Default::default()
                 },

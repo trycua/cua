@@ -8836,7 +8836,16 @@ export type AppAgentKeyInput = {
     /**
      * A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
      */
-    label?: string
+    label?: string,
+    /**
+     * The plan or region chosen for it (Z.AI), when the provider has them.
+     */
+    region?: string,
+    /**
+     * Non-secret values saved with it: a custom endpoint's `base_url`, `model`
+     * and `wire`, or a `model`. Never the key.
+     */
+    fields: Map<string, string>
 }
 
 /**
@@ -8865,7 +8874,9 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
                 last4: FfiConverterString.read(from),
                 addedMs: FfiConverterUInt64.read(from),
                 expired: FfiConverterBool.read(from),
-                label: FfiConverterOptionalString.read(from)
+                label: FfiConverterOptionalString.read(from),
+                region: FfiConverterOptionalString.read(from),
+                fields: FfiConverterMapStringString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -8875,6 +8886,8 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
             FfiConverterUInt64.write(value.addedMs, into);
             FfiConverterBool.write(value.expired, into);
             FfiConverterOptionalString.write(value.label, into);
+            FfiConverterOptionalString.write(value.region, into);
+            FfiConverterMapStringString.write(value.fields, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.provider) +
@@ -8882,7 +8895,9 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
              FfiConverterString.allocationSize(value.last4) +
              FfiConverterUInt64.allocationSize(value.addedMs) +
              FfiConverterBool.allocationSize(value.expired) +
-             FfiConverterOptionalString.allocationSize(value.label);
+             FfiConverterOptionalString.allocationSize(value.label) +
+             FfiConverterOptionalString.allocationSize(value.region) +
+             FfiConverterMapStringString.allocationSize(value.fields);
 
         }
     };
@@ -69639,6 +69654,9 @@ const FfiConverterSequenceTypeAppLineView = new FfiConverterArray(FfiConverterTy
 // FfiConverter for AppFileView | undefined
 const FfiConverterOptionalTypeAppFileView = new FfiConverterOptional(FfiConverterTypeAppFileView);
 
+// FfiConverter for Map<string, string>
+const FfiConverterMapStringString = new FfiConverterMap(FfiConverterString, FfiConverterString);
+
 // FfiConverter for bigint | undefined
 const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
@@ -69866,9 +69884,6 @@ const FfiConverterSequenceTypeAppDeviceInput = new FfiConverterArray(FfiConverte
 
 // FfiConverter for Array<AppAuditInput>
 const FfiConverterSequenceTypeAppAuditInput = new FfiConverterArray(FfiConverterTypeAppAuditInput);
-
-// FfiConverter for Map<string, string>
-const FfiConverterMapStringString = new FfiConverterMap(FfiConverterString, FfiConverterString);
 
 // FfiConverter for Array<AppMachineInput>
 const FfiConverterSequenceTypeAppMachineInput = new FfiConverterArray(FfiConverterTypeAppMachineInput);

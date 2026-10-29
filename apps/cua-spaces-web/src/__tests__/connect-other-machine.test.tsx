@@ -66,8 +66,8 @@ describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
     expect(q("[data-connect-others]")?.textContent).toMatch(/Not touched: .+/);
   });
 
-  it("Settings, Connectors names the machine it edits, what it leaves alone, and shows how to use it from another machine", async () => {
-    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
+  it("Settings, Connections names the machine it edits, what it leaves alone, and shows how to use it from another machine", async () => {
+    await mountApp("/settings/connections", { failsCreates: false, listsGhost: false });
     const footer = await waitFor(() => {
       const f = q("[data-connectors-machine]");
       if (!f) throw new Error("no footer");
@@ -90,7 +90,7 @@ describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
     expect(block.textContent).not.toMatch(/·|\bdevices?\b/i);
     // An app's own page says which machine it is on.
     cleanup();
-    await mountApp("/settings/connectors/claude-code", { failsCreates: false, listsGhost: false });
+    await mountApp("/settings/connections/claude-code", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(q("[data-connector-on]")?.textContent).toMatch(/^On \S+/));
   });
 

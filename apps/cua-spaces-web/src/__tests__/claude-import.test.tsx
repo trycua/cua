@@ -52,7 +52,7 @@ const WHO = "Signed in as ada@example.com (Claude Max)";
 describe.skipIf(!wasmBuilt)("importing the Claude Code sign-in", () => {
   it("asks first, in plain words, and reads nothing until you agree", async () => {
     const calls: Call[] = [];
-    await mountApp("/settings/connectors", host(calls));
+    await mountApp("/settings/connections", host(calls));
     await click(await found("[data-connector-app=claude-code] [data-connector-connect]"));
     const sheet = await found("[data-import-sheet=consent]");
     const text = sheet.textContent ?? "";
@@ -73,7 +73,7 @@ describe.skipIf(!wasmBuilt)("importing the Claude Code sign-in", () => {
 
   it("Cancel leaves everything as it was", async () => {
     const calls: Call[] = [];
-    await mountApp("/settings/connectors", host(calls));
+    await mountApp("/settings/connections", host(calls));
     await click(await found("[data-connector-app=claude-code] [data-connector-connect]"));
     await found("[data-import-sheet=consent]");
     await click([...document.querySelectorAll("button")].find((b) => b.textContent === "Cancel")!);
@@ -84,7 +84,7 @@ describe.skipIf(!wasmBuilt)("importing the Claude Code sign-in", () => {
 
   it("Use my sign-in imports it for Claude Code alone, then every surface says who", async () => {
     const calls: Call[] = [];
-    await mountApp("/settings/connectors", host(calls));
+    await mountApp("/settings/connections", host(calls));
     await click(await found("[data-connector-app=claude-code] [data-connector-connect]"));
     await click(await found("[data-import-confirm]"));
     await waitFor(() => expect(q("[data-import-sheet]")).toBeNull());
@@ -93,13 +93,13 @@ describe.skipIf(!wasmBuilt)("importing the Claude Code sign-in", () => {
     // The row, the Anthropic provider row and the app's own page.
     expect(q("[data-connector-app=claude-code]")!.textContent).toContain(WHO);
     expect(q("[data-connector-provider=anthropic]")!.textContent).toContain(WHO);
-    expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Sign out");
+    expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Disconnect");
     // Hermes does not count it: a Claude sign-in is Claude Code's alone.
     expect(q("[data-connector-app=hermes]")!.dataset.state).not.toBe("connected");
   });
 
   it("a sign-in that ran out reads Needs reconnect with Reconnect, never the name", async () => {
-    await mountApp("/settings/connectors", host([], { claudeLogin: "expired" }));
+    await mountApp("/settings/connections", host([], { claudeLogin: "expired" }));
     await waitFor(() => expect(q("[data-connector-provider=anthropic]")?.textContent).toContain("Needs reconnect"));
     const app = q("[data-connector-app=claude-code]")!;
     expect(app.dataset.state).toBe("not-connected");
@@ -113,7 +113,7 @@ describe.skipIf(!wasmBuilt)("importing the Claude Code sign-in", () => {
 
   it("Reconnect asks again and imports the newer sign-in", async () => {
     const calls: Call[] = [];
-    await mountApp("/settings/connectors", host(calls, { claudeLogin: "expired" }));
+    await mountApp("/settings/connections", host(calls, { claudeLogin: "expired" }));
     await click(await found("[data-connector-app=claude-code] [data-connector-connect]"));
     await click(await found("[data-import-confirm]"));
     await waitFor(() => expect(q("[data-connector-app=claude-code]")!.dataset.state).toBe("connected"));
@@ -123,7 +123,7 @@ describe.skipIf(!wasmBuilt)("importing the Claude Code sign-in", () => {
 
   it("with nothing to import it offers, in order: sign in with Claude Code, paste a token, use an API key", async () => {
     const calls: Call[] = [];
-    await mountApp("/settings/connectors", host(calls, { claudeLogin: "none" }));
+    await mountApp("/settings/connections", host(calls, { claudeLogin: "none" }));
     await click(await found("[data-connector-app=claude-code] [data-connector-connect]"));
     await click(await found("[data-import-confirm]"));
     const sheet = await found("[data-import-sheet=not-found]");
@@ -143,7 +143,7 @@ describe.skipIf(!wasmBuilt)("importing the Claude Code sign-in", () => {
 
   it("Try again after signing in with Claude Code reads it again", async () => {
     const calls: Call[] = [];
-    await mountApp("/settings/connectors", host(calls, { claudeLogin: "none" }));
+    await mountApp("/settings/connections", host(calls, { claudeLogin: "none" }));
     await click(await found("[data-connector-app=claude-code] [data-connector-connect]"));
     await click(await found("[data-import-confirm]"));
     await found("[data-import-sheet=not-found]");
@@ -171,7 +171,11 @@ describe.skipIf(!wasmBuilt)("the Space thread's Connect card", () => {
   it("says Reconnect when the saved sign-in ran out, with the same word as Settings", async () => {
     const r = await reply({ claudeLogin: "expired" });
     await waitFor(() => expect(r.querySelector("[data-failure-connect]")?.textContent).toContain("Reconnect"));
-    expect(r.querySelector<HTMLAnchorElement>("[data-failure-connect]")!.getAttribute("href")).toBe("/settings/connectors/claude-code");
+    // Connect opens the same sheet as Settings, on the provider that refused it: the import question.
+    const connect = r.querySelector<HTMLButtonElement>("[data-failure-connect]")!;
+    expect(connect.tagName).toBe("BUTTON");
+    await click(connect);
+    await found("[data-import-sheet=consent]");
     expect(r.textContent).not.toContain("\u00b7");
   });
 

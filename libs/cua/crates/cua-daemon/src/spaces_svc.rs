@@ -936,7 +936,7 @@ mod imp {
                 serde_json::from_str(&r.arguments_json)
                     .map_err(|_| st(Error::InvalidArgument("arguments_json is not JSON".into())))?
             };
-            // The app's Settings → Connectors methods: not contract tools, so no
+            // The app's Settings → Connections methods: not contract tools, so no
             // MCP server lists or forwards them to an agent.
             let out = if app_method {
                 cua_spaces::agents::keys::app_tool_async(&r.name, args)

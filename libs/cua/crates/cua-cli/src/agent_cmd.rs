@@ -168,7 +168,7 @@ pub enum AgentCmd {
   cua --json agent harnesses")]
     Harnesses,
     /// The provider keys agents get, kept in the Keychain by the Cua daemon
-    /// (Cua Spaces → Settings → Connectors). Values are read from stdin and never
+    /// (Cua Spaces → Settings → Connections). Values are read from stdin and never
     /// printed.
     #[command(after_help = "Examples:
   cua agent keys
@@ -478,7 +478,7 @@ async fn follow(
 
 /// The harnesses with the readiness the Spaces server reports
 /// (`agent_capabilities`, which counts the keys saved in Cua Spaces →
-/// Settings → Connectors and the server's environment), so `cua agent
+/// Settings → Connections and the server's environment), so `cua agent
 /// harnesses`, MCP and the app agree. Without a server: the static list.
 async fn harnesses(cua: &Arc<Cua>) -> serde_json::Value {
     let caps = cua

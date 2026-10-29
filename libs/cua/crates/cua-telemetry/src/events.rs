@@ -1523,6 +1523,24 @@ pub fn repo_cache(
     )
 }
 
+/// `cua_connection_changed`: a provider was connected, reconnected, removed or
+/// checked. Only fixed words leave: the registry's provider id, the kind of
+/// method, the action and the outcome; never a key, a URL, an account or an
+/// error text.
+pub fn connection_changed(provider: &str, method: &str, action: &str, outcome: &str) -> Event {
+    Event::new(event::CONNECTION_CHANGED)
+        .s(
+            "provider",
+            pick(schema::CONNECTION_PROVIDERS, provider, "other"),
+        )
+        .s("method", pick(schema::CONNECTION_METHODS, method, "other"))
+        .s("action", pick(schema::CONNECTION_ACTIONS, action, "check"))
+        .s(
+            "outcome",
+            pick(schema::CONNECTION_OUTCOMES, outcome, "failed"),
+        )
+}
+
 /// `cua_agent_used_space`: an agent's tool call reached a Space and worked.
 /// None for a tool that does not act inside a Space.
 pub fn agent_used_space(tool: &str) -> Option<Event> {

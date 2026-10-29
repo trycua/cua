@@ -21,6 +21,8 @@ pub mod transcript;
 
 /// Where Claude Code keeps its sign-in (the freshness check at run start reads it).
 pub use cua_agent_setup::{HostEnv, claude_login, signin};
+/// The provider registry (what each saved connection is and which app receives it).
+pub use cua_connections as connections;
 pub use durable::{DriverSpec, DurableOptions, Policy, durable_driver_spec};
 pub use events::{AgentEvent, EventPage};
 pub use harness::{Endpoint, Harness, Wire};

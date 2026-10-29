@@ -68,7 +68,7 @@ export {
   type AgentKeysInput,
   type AgentKeysView,
 } from "./agent-keys";
-export type { AgentKeyInfo, AgentKeyProvider, AgentKeysReport } from "./ops/agent-keys";
+export type { AgentKeyInfo, AgentKeyProvider, AgentKeysReport, KeyChoices } from "./ops/agent-keys";
 export { connectionRows, useConnections, type ConnectionsHook, type ConnectionReport, type ConnectionRow, type ConnectionRowView, type ConnectResult } from "./connections";
 export {
   DEFAULT_SETTINGS,

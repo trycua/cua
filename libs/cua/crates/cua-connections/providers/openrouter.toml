@@ -1,0 +1,25 @@
+id = "openrouter"
+name = "OpenRouter"
+icon = "openrouter"
+tier = "top"
+rank = 30
+kind = "aggregator"
+wire = "openai-chat"
+base_url = "https://openrouter.ai/api/v1"
+default_model = "anthropic/claude-sonnet-5"
+hermes_id = "openrouter"
+key_help = "Create a key at openrouter.ai/keys. Every app that uses OpenRouter can use it."
+placeholder = "sk-or-…"
+check = { path = "/auth/key", auth = "bearer" }
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "OPENROUTER_API_KEY"
+
+[delivery]
+opencode = ["OPENROUTER_API_KEY"]
+goose = ["OPENROUTER_API_KEY"]
+pi = ["OPENROUTER_API_KEY"]
+openclaw = ["OPENROUTER_API_KEY"]
+hermes = ["OPENROUTER_API_KEY"]

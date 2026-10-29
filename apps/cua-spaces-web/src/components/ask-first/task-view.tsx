@@ -288,7 +288,7 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
   const view = startErrorView(error, name);
   const { core } = useBridge();
   const connectors = useConnectors();
-  // "Connect <app>" in place of Add your key: Settings, Connectors' Connect, here; then it starts again by itself.
+  // "Connect <app>" in place of Add your key: Settings, Connections' Connect, here; then it starts again by itself.
   const setupId = TASK_AGENTS.find((a) => a.id === agent)?.setupId ?? agent ?? "";
   const card = view.action === "add-key" ? setupCard(core, connectors.input, setupId, name) : null;
   const [connecting, setConnecting] = useState(false);

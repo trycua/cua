@@ -1,6 +1,6 @@
 {
   "name": "connectors",
-  "about": "Settings, Connectors (redesign) and summoning agents in a Space: the coding apps with Connect and Connected, the Providers with Connect or Sign out, each provider's Connect sheet (an app's own sign-in, a pasted token or key, a key from your shell), the words around importing Claude Code's sign-in, , what one Connect on an app does (importing the sign-in it already has, its device code, or the provider's sheet), an app's page, what sending an @mention does (add, wake, or why it can't be woken), and the one agent list Home and the Agents page draw (agents in Spaces and this device's runs that haven't started).",
+  "about": "Settings, Connections and summoning agents in a Space: the coding apps with Connect and Connected, the Connections list (up front, then the searchable More providers) with state, works-with chips and Connect, Reconnect or Disconnect, each provider's Connect sheet (only the methods that apply: an app's own sign-in, a pasted token or key, a key from your shell, a custom endpoint), the provider choice an app opens, the words around importing Claude Code's sign-in, what one Connect on an app does (importing the sign-in it already has, its device code, or the provider's sheet), an app's page, what sending an @mention does (add, wake, or why it can't be woken), and the one agent list Home and the Agents page draw (agents in Spaces and this device's runs that haven't started).",
   "connectors": [
     {
       "step": "nothing connected",
@@ -48,10 +48,31 @@
         "keys": { "keys": [] },
         "busy": [{ "id": "app:claude-code", "step": "signing-in" }]
       }
+    },
+    {
+      "step": "DeepSeek key and a custom endpoint, More providers searched",
+      "input": {
+        "apps": [
+          { "agent": "opencode", "name": "OpenCode", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": "~/.config/opencode/opencode.json" }
+        ],
+        "keys": { "keys": [
+          { "provider": "deepseek", "env": "DEEPSEEK_API_KEY", "last4": "9c2e", "addedMs": 1790000200000 },
+          { "provider": "zai", "env": "GLM_API_KEY", "last4": "7d1f", "addedMs": 1790000300000, "region": "coding-global" },
+          { "provider": "custom", "env": "CUSTOM_ENDPOINT_API_KEY", "last4": "", "addedMs": 1790000400000, "fields": { "base_url": "http://127.0.0.1:1234/v1", "model": "qwen", "wire": "openai-chat" } },
+          { "provider": "huggingface", "env": "HF_TOKEN", "last4": "1a2b", "addedMs": 1790000500000, "expired": true }
+        ] },
+        "moreOpen": true,
+        "query": "fire"
+      }
     }
   ],
-  "sheets": ["anthropic", "openai", "github"],
-  "plans": ["claude-code", "codex", "vscode", "copilot-cli"],
+  "sheets": ["anthropic", "openai", "openrouter", "zai", "custom", "deepinfra", "github"],
+  "pickers": [
+    { "forApp": "hermes", "query": "", "expanded": false },
+    { "forApp": "claude-code", "query": "", "expanded": false },
+    { "forApp": null, "query": "kimi", "expanded": false }
+  ],
+  "plans": ["claude-code", "codex", "hermes", "vscode", "copilot-cli"],
   "details": ["claude-code", "vscode"],
   "summon": {
     "input": {

@@ -76,7 +76,7 @@ describe("a Space's thread", () => {
     });
     fireEvent.change(box, { target: { value: "@", selectionStart: 1 } });
     await waitFor(() => expect(q("[data-mention-picker]")).not.toBeNull());
-    expect(qa("[data-mention-option]").map((o) => o.dataset.mentionOption)).toEqual(["claude", "hermes", "cursor", "codex", "openclaw", "grace", "linus"]);
+    expect(qa("[data-mention-option]").map((o) => o.dataset.mentionOption)).toEqual(["claude", "hermes", "cursor", "codex", "openclaw", "everyone", "grace", "linus"]);
     fireEvent.keyDown(box, { key: "ArrowDown" });
     fireEvent.keyDown(box, { key: "Enter" });
     expect(box.value).toBe("@hermes ");

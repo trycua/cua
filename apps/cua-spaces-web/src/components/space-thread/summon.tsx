@@ -197,9 +197,9 @@ export function useSummon({ spaceId, thread, roster, canAdd }: { spaceId: string
   const handles = useMemo(() => new Set([...roster.handles, ...extra.map((c) => c.handle.toLowerCase())]), [roster.handles, extra]);
 
   const send = useCallback(
-    async (text: string, view: PostView | null) => {
+    async (text: string, view: PostView | null, replyTo?: number | null) => {
       if (!data) return;
-      await sendWithSummon({ core, data, spaceId, input, text, post: (t) => thread.post(t, view) });
+      await sendWithSummon({ core, data, spaceId, input, text, post: (t) => thread.post(t, view, replyTo) });
     },
     [core, data, spaceId, input, thread],
   );

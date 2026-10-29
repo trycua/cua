@@ -160,6 +160,8 @@ export interface ThreadEntry {
   view?: ThreadView | null;
   /** On an agent's reply to a task that failed: what failed, with the complete text. `text` says it in plain words. */
   failure?: ThreadFailure | null;
+  /** On the copy of a message that tasks one more agent when it names several (`@a @b`, `@everyone`): the entry it copies. The page draws the original only. */
+  fanoutOf?: number | null;
 }
 
 /** `thread_post`'s `view` and every entry's: the Space's desktop, or one of its windows (`cua.env.v1.ThreadView`). */
@@ -643,6 +645,7 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
     ...(kind === "join_request" ? { joinRequest: joinRequest(e) } : {}),
     ...(e.view != null ? { view: threadViewFromTool(e.view) } : {}),
     ...(e.failure != null ? { failure: threadFailure(e.failure) } : {}),
+    ...(num(e.fanout_of) !== null ? { fanoutOf: num(e.fanout_of) } : {}),
   };
 }
 

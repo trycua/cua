@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { CheckIcon, FileTextIcon, ImageIcon, XIcon } from "lucide-react";
+import { CheckIcon, FileTextIcon, ImageIcon, ReplyIcon, XIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { useBridge, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadQuote, type ThreadView } from "@/bridge";
@@ -9,7 +9,7 @@ import { Inlines } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { parseInline } from "@/lib/markdown";
 import { mentionSegments } from "@/lib/mentions";
-import { cn } from "@/lib/utils";
+import { cn, isMacPlatform } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
 import { FailureNote } from "./failure-note";
@@ -45,6 +45,7 @@ export function ThreadView({
   onReachTop,
   onRemoveAgent,
   onRetry,
+  onReply,
   empty,
   className,
   endInset = 0,
@@ -62,6 +63,8 @@ export function ThreadView({
   onRemoveAgent?: (handle: string) => Promise<void>;
   /** Sends a message again (a failed agent's Retry); absent: no Retry. */
   onRetry?: (text: string) => Promise<void>;
+  /** Reply on an agent's message: puts its @handle in the composer (absent: no Reply button). */
+  onReply?: (handle: string, seq: number) => void;
   /** Scrolled to the top: read the page before (when there is one). */
   onReachTop?: () => Promise<void>;
   roster: Roster;
@@ -146,7 +149,7 @@ export function ThreadView({
         <div ref={body} className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
           {items.map((item, i) => (
             <Fragment key={item.key}>
-              <ThreadItemView item={item} above={aboveSeq(items, i)} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} onRetry={onRetry} />
+              <ThreadItemView item={item} above={aboveSeq(items, i)} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} onRetry={onRetry} onReply={onReply} />
               {after && "entry" in item ? after(item.entry.seq) : null}
             </Fragment>
           ))}
@@ -175,6 +178,7 @@ export const ThreadItemView = memo(function Item({
   onOpenAttachment,
   onRemoveAgent,
   onRetry,
+  onReply,
   label,
   above = null,
 }: {
@@ -186,10 +190,11 @@ export const ThreadItemView = memo(function Item({
   onOpenAttachment: (a: ThreadAttachment) => void;
   onRemoveAgent?: (handle: string) => Promise<void>;
   onRetry?: (text: string) => Promise<void>;
+  onReply?: (handle: string, seq: number) => void;
   /** Beside each message's time (the DM's Space). */
   label?: ReactNode;
 }) {
-  const m = { roster, onOpenAttachment, onRemoveAgent, label };
+  const m = { roster, onOpenAttachment, onRemoveAgent, onReply, label };
   switch (item.type) {
     case "unread":
       return (
@@ -235,6 +240,7 @@ function Message({
   roster,
   onOpenAttachment,
   onRemoveAgent,
+  onReply,
   label,
   status,
   footnote,
@@ -246,6 +252,7 @@ function Message({
   roster: Roster;
   onOpenAttachment: (a: ThreadAttachment) => void;
   onRemoveAgent?: (handle: string) => Promise<void>;
+  onReply?: (handle: string, seq: number) => void;
   label?: ReactNode;
   /** What the avatar sits on (the owner badge is cut out of it). */
   surface?: "background" | "muted";
@@ -272,8 +279,37 @@ function Message({
       className="mt-0.5"
     />
   );
+  // Reply: an agent still in the Space can be addressed from its message.
+  const replyTo = who.kind === "agent" && onReply ? who.agent?.handle : undefined;
   return (
-    <div data-entry={entry.seq} className="flex gap-3 py-2">
+    <div
+      data-entry={entry.seq}
+      className="group/msg relative flex gap-3 py-2"
+      // R on a focused message (or its Reply button) replies, as the button does.
+      onKeyDown={
+        replyTo
+          ? (e) => {
+              if (e.key.toLowerCase() !== "r" || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.nativeEvent.isComposing) return;
+              const t = e.target as HTMLElement;
+              if (t.closest("input, textarea, [contenteditable=true]")) return;
+              e.preventDefault();
+              onReply!(replyTo, entry.seq);
+            }
+          : undefined
+      }
+    >
+      {replyTo ? (
+        <button
+          type="button"
+          data-reply={replyTo}
+          aria-label={`Reply to ${who.label}`}
+          title={`Reply to ${who.label} (R, or ${isMacPlatform() ? "⌘⇧A" : "Ctrl+Shift+A"} for the latest)`}
+          onClick={() => onReply!(replyTo, entry.seq)}
+          className="absolute top-1 right-0 inline-flex size-7 cursor-default items-center justify-center rounded-lg bg-background text-muted-foreground opacity-0 shadow-sm outline-none ring-1 ring-border transition-opacity group-focus-within/msg:opacity-100 group-hover/msg:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 max-md:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:size-9"
+        >
+          <ReplyIcon className="size-3.5" />
+        </button>
+      ) : null}
       {who.kind === "agent" && who.identity ? (
         <ProfileTrigger identity={who.identity} agent={who.agent} roster={roster} onRemove={onRemoveAgent} className="self-start rounded-full">
           {avatar}

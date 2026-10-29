@@ -170,6 +170,16 @@ describe.skipIf(!wasmBuilt)("one list of machines (real routes, wasm core)", () 
     expect(trust.querySelector("[data-machine-trust-status]")?.textContent).toMatch(/^Trusted until/);
     // The demo's relay says studio-mac and mac-mini were reached.
     act(() => q('[data-machine-id="mac-mini"]')?.click());
+    // Recent access is a plain text link by Remove from account, not a block on the page.
+    const link = await waitFor(() => {
+      const l = q("[data-machine-recent-link]");
+      if (!l) throw new Error("no See recent access link");
+      return l;
+    });
+    expect(link.textContent).toBe("See recent access");
+    expect(q("[data-machine-recent]")).toBeNull();
+    expect(q("[data-machine-actions]")?.contains(q("[data-machine-remove]"))).toBe(true);
+    act(() => link.click());
     const recent = await waitFor(() => {
       const r = q("[data-machine-recent]");
       if (!r) throw new Error("no recent access");

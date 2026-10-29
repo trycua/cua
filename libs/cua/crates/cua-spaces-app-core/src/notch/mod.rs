@@ -545,12 +545,7 @@ pub fn tiles_pinned(
         .collect();
     let mut sorted = sort_by_mru(&listed);
     // Pinned first, in pin order; the rest keep their MRU order.
-    sorted.sort_by_key(|s| {
-        pinned
-            .iter()
-            .position(|p| *p == s.id)
-            .unwrap_or(usize::MAX)
-    });
+    sorted.sort_by_key(|s| pinned.iter().position(|p| *p == s.id).unwrap_or(usize::MAX));
     sorted
         .into_iter()
         .filter(|s| matches(s, query))
@@ -585,7 +580,11 @@ pub fn tiles_pinned(
                     s.os.label(),
                     if desktop { "desktop" } else { place.as_str() },
                     status_text,
-                    if pinned.contains(&s.id) { ", pinned" } else { "" }
+                    if pinned.contains(&s.id) {
+                        ", pinned"
+                    } else {
+                        ""
+                    }
                 ),
                 location: place,
                 progress: s
@@ -2425,7 +2424,12 @@ mod tests {
         // Pinned tiles survive the cap: the seventh Space is the one cut.
         let many: Vec<Space> = (0..MAX_TILES + 2)
             .map(|i| {
-                let mut s = space(&format!("local:{i}"), &format!("S{i}"), SpaceOs::Linux, SpaceStatus::Running);
+                let mut s = space(
+                    &format!("local:{i}"),
+                    &format!("S{i}"),
+                    SpaceOs::Linux,
+                    SpaceStatus::Running,
+                );
                 s.last_used_at = 100 - i as i64;
                 s
             })
@@ -2507,19 +2511,31 @@ mod tests {
         .state;
         assert_eq!(st.pinned, ["relay:wsl"]);
         // Saved with the state, absent when nothing is pinned.
-        assert!(serde_json::to_value(NotchState::default())
-            .unwrap()
-            .get("pinned")
-            .is_none());
+        assert!(
+            serde_json::to_value(NotchState::default())
+                .unwrap()
+                .get("pinned")
+                .is_none()
+        );
         let ev: NotchEvent =
             serde_json::from_value(serde_json::json!({"type": "pinned", "ids": ["a"]})).unwrap();
-        assert_eq!(ev, NotchEvent::Pinned { ids: vec!["a".into()] });
+        assert_eq!(
+            ev,
+            NotchEvent::Pinned {
+                ids: vec!["a".into()]
+            }
+        );
         // A hidden notch still learns its pins.
         let hidden = NotchState {
             hidden: true,
             ..Default::default()
         };
-        let t = reduce(&hidden, &NotchEvent::Pinned { ids: vec!["x".into()] });
+        let t = reduce(
+            &hidden,
+            &NotchEvent::Pinned {
+                ids: vec!["x".into()],
+            },
+        );
         assert_eq!(t.state.pinned, ["x"]);
     }
 

@@ -1396,6 +1396,11 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_notch_reduce(RustBuffer state, Rust
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_notch_tile_at(RustBuffer layout, RustBuffer tiles, int8_t row, double x, double y, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_NOTCH_TOGGLE_PIN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_NOTCH_TOGGLE_PIN
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_notch_toggle_pin(RustBuffer pinned, RustBuffer id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_NOTCH_VIEW
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_NOTCH_VIEW
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_notch_view(RustBuffer state, RustBuffer spaces, RustCallStatus *_Nonnull out_status
@@ -3517,6 +3522,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_notch_reduce(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_NOTCH_TILE_AT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_NOTCH_TILE_AT
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_notch_tile_at(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_NOTCH_TOGGLE_PIN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_NOTCH_TOGGLE_PIN
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_notch_toggle_pin(void
 
 );
 #endif

@@ -3034,6 +3034,28 @@ export function appNotchTileAt(layout: AppNotchLayout, tiles: Array<AppNotchTile
     }
 
 /**
+ * `pinned` (the notch's pins, in pin order) with `id` pinned or, when it
+ * already is, unpinned: Pin to notch and Unpin from notch.
+ */
+export function appNotchTogglePin(pinned: Array<string>, id: string): Array<string> {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterSequenceString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_notch_toggle_pin(
+        FfiConverterSequenceString.lower(pinned, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(id, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The notch panel as drawn.
  */
 export function appNotchView(state: AppNotchState, spaces: Array<AppSpace>): AppNotchView {
@@ -32667,7 +32689,23 @@ export type AppNotchTile = {
     /**
      * Signed in through the Keyvault (and not dismissed): the key badge.
      */
-    signedIn: boolean
+    signedIn: boolean,
+    /**
+     * One of your other machines' desktops, not a Space it provides: the
+     * tile reads "Desktop" and opens the same desktop the machine's page
+     * does, creating nothing.
+     */
+    desktop: boolean,
+    /**
+     * Pinned to the notch (Pin to notch in the Space's "..." menu): the
+     * tiles list pinned ones first.
+     */
+    pinned: boolean,
+    /**
+     * Why a pinned desktop cannot be opened now ("Offline", "Not
+     * shared"); `None` while it can. The tile stays, dimmed, and says it.
+     */
+    note?: string
 }
 
 /**
@@ -32703,7 +32741,10 @@ const FfiConverterTypeAppNotchTile = (() => {
                 location: FfiConverterString.read(from),
                 progress: FfiConverterOptionalUInt32.read(from),
                 progressLabel: FfiConverterOptionalString.read(from),
-                signedIn: FfiConverterBool.read(from)
+                signedIn: FfiConverterBool.read(from),
+                desktop: FfiConverterBool.read(from),
+                pinned: FfiConverterBool.read(from),
+                note: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -32720,6 +32761,9 @@ const FfiConverterTypeAppNotchTile = (() => {
             FfiConverterOptionalUInt32.write(value.progress, into);
             FfiConverterOptionalString.write(value.progressLabel, into);
             FfiConverterBool.write(value.signedIn, into);
+            FfiConverterBool.write(value.desktop, into);
+            FfiConverterBool.write(value.pinned, into);
+            FfiConverterOptionalString.write(value.note, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -32734,7 +32778,10 @@ const FfiConverterTypeAppNotchTile = (() => {
              FfiConverterString.allocationSize(value.location) +
              FfiConverterOptionalUInt32.allocationSize(value.progress) +
              FfiConverterOptionalString.allocationSize(value.progressLabel) +
-             FfiConverterBool.allocationSize(value.signedIn);
+             FfiConverterBool.allocationSize(value.signedIn) +
+             FfiConverterBool.allocationSize(value.desktop) +
+             FfiConverterBool.allocationSize(value.pinned) +
+             FfiConverterOptionalString.allocationSize(value.note);
 
         }
     };
@@ -33150,6 +33197,11 @@ export type AppNotchState = {
      */
     signedIn: Array<string>,
     /**
+     * The Spaces and desktops pinned to the notch, in the order they were
+     * pinned (`AppSettings::notch_pinned`): their tiles come first.
+     */
+    pinned: Array<string>,
+    /**
      * "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
      * the notch, and hover, clicks and window drags do nothing.
      */
@@ -33187,6 +33239,7 @@ const FfiConverterTypeAppNotchState = (() => {
                 transfer: FfiConverterOptionalTypeAppNotchTransfer.read(from),
                 keyvault: FfiConverterOptionalString.read(from),
                 signedIn: FfiConverterSequenceString.read(from),
+                pinned: FfiConverterSequenceString.read(from),
                 hidden: FfiConverterBool.read(from)
             };
         }
@@ -33201,6 +33254,7 @@ const FfiConverterTypeAppNotchState = (() => {
             FfiConverterOptionalTypeAppNotchTransfer.write(value.transfer, into);
             FfiConverterOptionalString.write(value.keyvault, into);
             FfiConverterSequenceString.write(value.signedIn, into);
+            FfiConverterSequenceString.write(value.pinned, into);
             FfiConverterBool.write(value.hidden, into);
         }
         allocationSize(value: TypeName): number {
@@ -33214,6 +33268,7 @@ const FfiConverterTypeAppNotchState = (() => {
              FfiConverterOptionalTypeAppNotchTransfer.allocationSize(value.transfer) +
              FfiConverterOptionalString.allocationSize(value.keyvault) +
              FfiConverterSequenceString.allocationSize(value.signedIn) +
+             FfiConverterSequenceString.allocationSize(value.pinned) +
              FfiConverterBool.allocationSize(value.hidden);
 
         }
@@ -40734,6 +40789,13 @@ export type AppSettings = {
      */
     dismissedAccess: Array<string>,
     /**
+     * The Spaces and the machines' desktops pinned to the notch ("Pin to
+     * notch" in a Space's "..." menu), in the order they were pinned: the
+     * notch lists them first ([`crate::notch::tiles_pinned`]). Ids only,
+     * nothing secret; an id whose Space is gone is kept and draws nothing.
+     */
+    notchPinned: Array<string>,
+    /**
      * Keyvault rows may load a site's icon from Google's favicon service
      * when the source browser had none (Settings, Keyvault; on by default).
      * Off, only icons read locally are shown.
@@ -40796,6 +40858,7 @@ const FfiConverterTypeAppSettings = (() => {
                 experiments: FfiConverterTypeAppExperiments.read(from),
                 newUi: FfiConverterOptionalBoolean.read(from),
                 dismissedAccess: FfiConverterSequenceString.read(from),
+                notchPinned: FfiConverterSequenceString.read(from),
                 keyvaultSiteIcons: FfiConverterBool.read(from),
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from),
                 autoConnect: FfiConverterBool.read(from),
@@ -40816,6 +40879,7 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterTypeAppExperiments.write(value.experiments, into);
             FfiConverterOptionalBoolean.write(value.newUi, into);
             FfiConverterSequenceString.write(value.dismissedAccess, into);
+            FfiConverterSequenceString.write(value.notchPinned, into);
             FfiConverterBool.write(value.keyvaultSiteIcons, into);
             FfiConverterSequenceTypeAppRememberedChoice.write(value.teleportChoices, into);
             FfiConverterBool.write(value.autoConnect, into);
@@ -40835,6 +40899,7 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterTypeAppExperiments.allocationSize(value.experiments) +
              FfiConverterOptionalBoolean.allocationSize(value.newUi) +
              FfiConverterSequenceString.allocationSize(value.dismissedAccess) +
+             FfiConverterSequenceString.allocationSize(value.notchPinned) +
              FfiConverterBool.allocationSize(value.keyvaultSiteIcons) +
              FfiConverterSequenceTypeAppRememberedChoice.allocationSize(value.teleportChoices) +
              FfiConverterBool.allocationSize(value.autoConnect) +
@@ -43758,7 +43823,15 @@ export type AppSpaceMenuInput = {
     /**
      * You may leave it.
      */
-    canLeave: boolean
+    canLeave: boolean,
+    /**
+     * It can be pinned to the notch (not This machine).
+     */
+    canPin: boolean,
+    /**
+     * It is pinned to the notch now (Unpin from notch).
+     */
+    pinned: boolean
 }
 
 /**
@@ -43792,7 +43865,9 @@ const FfiConverterTypeAppSpaceMenuInput = (() => {
                 canShare: FfiConverterBool.read(from),
                 canRename: FfiConverterBool.read(from),
                 canDelete: FfiConverterBool.read(from),
-                canLeave: FfiConverterBool.read(from)
+                canLeave: FfiConverterBool.read(from),
+                canPin: FfiConverterBool.read(from),
+                pinned: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -43807,6 +43882,8 @@ const FfiConverterTypeAppSpaceMenuInput = (() => {
             FfiConverterBool.write(value.canRename, into);
             FfiConverterBool.write(value.canDelete, into);
             FfiConverterBool.write(value.canLeave, into);
+            FfiConverterBool.write(value.canPin, into);
+            FfiConverterBool.write(value.pinned, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppSpaceMenuKind.allocationSize(value.kind) +
@@ -43819,7 +43896,9 @@ const FfiConverterTypeAppSpaceMenuInput = (() => {
              FfiConverterBool.allocationSize(value.canShare) +
              FfiConverterBool.allocationSize(value.canRename) +
              FfiConverterBool.allocationSize(value.canDelete) +
-             FfiConverterBool.allocationSize(value.canLeave);
+             FfiConverterBool.allocationSize(value.canLeave) +
+             FfiConverterBool.allocationSize(value.canPin) +
+             FfiConverterBool.allocationSize(value.pinned);
 
         }
     };
@@ -43858,7 +43937,11 @@ export enum AppSpaceMenuItemId {
     /**
      * Leaves it (asks first: `spaces.bulkConfirm`).
      */
-    Leave = "leave"
+    Leave = "leave",
+    /**
+     * Pins it to the notch, or unpins it (the label says which).
+     */
+    Pin = "pin"
 }
 
 const FfiConverterTypeAppSpaceMenuItemId = (() => {
@@ -43875,6 +43958,7 @@ const FfiConverterTypeAppSpaceMenuItemId = (() => {
                 case 6: return AppSpaceMenuItemId.Rename;
                 case 7: return AppSpaceMenuItemId.Delete;
                 case 8: return AppSpaceMenuItemId.Leave;
+                case 9: return AppSpaceMenuItemId.Pin;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -43888,6 +43972,7 @@ const FfiConverterTypeAppSpaceMenuItemId = (() => {
                 case AppSpaceMenuItemId.Rename: return ordinalConverter.write(6, into);
                 case AppSpaceMenuItemId.Delete: return ordinalConverter.write(7, into);
                 case AppSpaceMenuItemId.Leave: return ordinalConverter.write(8, into);
+                case AppSpaceMenuItemId.Pin: return ordinalConverter.write(9, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -58454,7 +58539,8 @@ export enum AppNotchEvent_Tags {
     Escape = "Escape",
     Visibility = "Visibility",
     Activity = "Activity",
-    Keyvault = "Keyvault"
+    Keyvault = "Keyvault",
+    Pinned = "Pinned"
 }
 export const AppNotchEvent = (() => {
 
@@ -58885,6 +58971,41 @@ inner: {label?: string; signedIn: Array<string> }): Keyvault_ {
 
     }
 
+    type Pinned__interface = {
+        tag: AppNotchEvent_Tags.Pinned;
+        inner:
+Readonly<{ids: Array<string>}>
+    };
+    /**
+     * The pinned Spaces and desktops changed (Pin to notch, Unpin from
+     * notch, or settings read at start): their ids in pin order.
+     */
+    class Pinned_ extends UniffiEnum implements Pinned__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppNotchEvent";
+        readonly tag = AppNotchEvent_Tags.Pinned;
+        readonly inner:
+Readonly<{ids: Array<string>}>;
+        constructor(
+inner: {ids: Array<string> }) {
+            super("AppNotchEvent", "Pinned");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {ids: Array<string> }): Pinned_ {
+            return new Pinned_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Pinned_ {
+            return obj.tag === AppNotchEvent_Tags.Pinned;
+        }
+
+    }
+
     function instanceOf(obj: any): obj is AppNotchEvent {
         return obj[uniffiTypeNameSymbol] === "AppNotchEvent";
     }
@@ -58904,12 +59025,13 @@ inner: {label?: string; signedIn: Array<string> }): Keyvault_ {
   Escape: Escape_,
   Visibility: Visibility_,
   Activity: Activity_,
-  Keyvault: Keyvault_
+  Keyvault: Keyvault_,
+  Pinned: Pinned_
     });
 
 })();
 export type AppNotchEvent = InstanceType<
-    typeof AppNotchEvent['HoverEnter' | 'HoverExit' | 'DwellElapsed' | 'CloseElapsed' | 'Click' | 'Dismiss' | 'DropTargeted' | 'Drag' | 'DragPermission' | 'Search' | 'Escape' | 'Visibility' | 'Activity' | 'Keyvault']
+    typeof AppNotchEvent['HoverEnter' | 'HoverExit' | 'DwellElapsed' | 'CloseElapsed' | 'Click' | 'Dismiss' | 'DropTargeted' | 'Drag' | 'DragPermission' | 'Search' | 'Escape' | 'Visibility' | 'Activity' | 'Keyvault' | 'Pinned']
 >;
 
 // FfiConverter for enum AppNotchEvent
@@ -58933,6 +59055,7 @@ const FfiConverterTypeAppNotchEvent = (() => {
                 case 12: return new AppNotchEvent.Visibility({shown: FfiConverterBool.read(from) });
                 case 13: return new AppNotchEvent.Activity({hotspot: FfiConverterBool.read(from), transfer: FfiConverterOptionalTypeAppNotchTransfer.read(from) });
                 case 14: return new AppNotchEvent.Keyvault({label: FfiConverterOptionalString.read(from), signedIn: FfiConverterSequenceString.read(from) });
+                case 15: return new AppNotchEvent.Pinned({ids: FfiConverterSequenceString.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -59010,6 +59133,12 @@ const FfiConverterTypeAppNotchEvent = (() => {
                     FfiConverterSequenceString.write(inner.signedIn, into);
                     return;
                 }
+                case AppNotchEvent_Tags.Pinned: {
+                    ordinalConverter.write(15, into);
+                    const inner = value.inner;
+                    FfiConverterSequenceString.write(inner.ids, into);
+                    return;
+                }
                 default:
                     // Throwing from here means that AppNotchEvent_Tags hasn't matched an ordinal.
                     throw new UniffiInternalError.UnexpectedEnumCase();
@@ -59080,6 +59209,12 @@ const FfiConverterTypeAppNotchEvent = (() => {
                     let size = ordinalConverter.allocationSize(14);
                     size += FfiConverterOptionalString.allocationSize(inner.label);
                     size += FfiConverterSequenceString.allocationSize(inner.signedIn);
+                    return size;
+                }
+                case AppNotchEvent_Tags.Pinned: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(15);
+                    size += FfiConverterSequenceString.allocationSize(inner.ids);
                     return size;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
@@ -71133,6 +71268,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_notch_tile_at() !== 23982) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_notch_tile_at");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_notch_toggle_pin() !== 49031) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_notch_toggle_pin");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_notch_view() !== 50142) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_notch_view");

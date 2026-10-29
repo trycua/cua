@@ -627,7 +627,6 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
         </>
       ) : null}
 
-      {account ? <RecentAccess lines={accessFor(account.access, m.current ? (row?.relayId ?? m.id) : m.id, m.current ? null : row?.device ? m.id : null)} title={account.recentTitle} empty={account.recentEmpty} now={now} error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null} /> : null}
 
       <div className="mt-6">
         <button
@@ -656,19 +655,22 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
         ) : null}
       </div>
 
-      {m.remove ? (
-        <span title={m.remove.help ?? undefined} className="mt-7 inline-flex">
-          <button
-            type="button"
-            disabled={!m.remove.enabled}
-            onClick={() => setRemoving(m.remove!)}
-            className="cursor-default py-1 text-[13px] text-destructive hover:underline hover:underline-offset-2 disabled:opacity-50 disabled:hover:no-underline"
-            data-machine-remove={m.id}
-          >
-            {m.remove.label}
-          </button>
-        </span>
-      ) : null}
+      <div className="mt-7 flex flex-wrap items-center gap-x-5" data-machine-actions="">
+        {account ? <RecentAccess lines={accessFor(account.access, m.current ? (row?.relayId ?? m.id) : m.id, m.current ? null : row?.device ? m.id : null)} title={account.recentTitle} empty={account.recentEmpty} now={now} error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null} /> : null}
+        {m.remove ? (
+          <span title={m.remove.help ?? undefined} className="inline-flex">
+            <button
+              type="button"
+              disabled={!m.remove.enabled}
+              onClick={() => setRemoving(m.remove!)}
+              className="cursor-default py-1 text-[13px] text-destructive hover:underline hover:underline-offset-2 disabled:opacity-50 disabled:hover:no-underline"
+              data-machine-remove={m.id}
+            >
+              {m.remove.label}
+            </button>
+          </span>
+        ) : null}
+      </div>
 
       {removing ? (
         <ConfirmDialog

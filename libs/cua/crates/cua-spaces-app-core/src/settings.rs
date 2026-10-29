@@ -1288,7 +1288,11 @@ mod tests {
             ..AppSettings::default()
         };
         save(&path, &s).unwrap();
-        assert!(std::fs::read_to_string(&path).unwrap().contains("\"notchPinned\""));
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("\"notchPinned\"")
+        );
         assert_eq!(load(&path).notch_pinned, ["relay:wsl", "local:dev"]);
     }
 

@@ -4393,6 +4393,12 @@
                 "off",
                 "done"
               ]
+            },
+            "notchPinned": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -6951,6 +6957,12 @@
             "off",
             "done"
           ]
+        },
+        "notchPinned": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "runtimes": {
           "anyOf": [

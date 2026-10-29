@@ -454,7 +454,8 @@ pub fn openable_spaces(spaces: &[Space]) -> Vec<Space> {
         .iter()
         .filter(|s| {
             !is_machine_desktop(s)
-                || (is_remote_desktop(s) && desktop_availability(s) == DesktopAvailability::Available)
+                || (is_remote_desktop(s)
+                    && desktop_availability(s) == DesktopAvailability::Available)
         })
         .cloned()
         .collect()

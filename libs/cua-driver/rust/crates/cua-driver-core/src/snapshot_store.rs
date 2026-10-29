@@ -145,7 +145,11 @@ fn stale_token_refusal<S>(pid: i32, lane: &[Snapshot<S>]) -> ToolResult {
         .map(|snapshot| (format_snapshot_id(snapshot.id), snapshot.window_id))
         .collect();
     let message = match current.as_slice() {
-        [] => format!("{STALE_TOKEN_ERROR}; pid {pid} has no current snapshot"),
+        [] => format!(
+            "{STALE_TOKEN_ERROR}; pid {pid} has no current snapshot on this connection. \
+             Snapshots belong to the connection that took them, so one-shot CLI calls must \
+             pass the same \"session\" label to get_window_state and to this call"
+        ),
         current => format!(
             "{STALE_TOKEN_ERROR}; current snapshots for pid {pid}: {}",
             current
@@ -816,6 +820,39 @@ mod tests {
         assert!(cache
             .resolve(1, &serde_json::json!({ "element_token": token_for(0, 0) }))
             .is_err());
+    }
+
+    #[test]
+    fn stale_token_for_a_process_with_no_snapshot_says_snapshots_are_per_connection() {
+        let cache = SnapshotStore::<Payload>::new();
+        let error = cache
+            .resolve(7, &serde_json::json!({ "element_token": token_for(0, 0) }))
+            .unwrap_err();
+        let structured = error.structured_content.unwrap();
+        assert_eq!(structured["refusal"]["code"], "stale_element_token");
+        let message = structured["refusal"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("pid 7 has no current snapshot"),
+            "{message}"
+        );
+        assert!(message.contains("\"session\" label"), "{message}");
+    }
+
+    #[test]
+    fn stale_token_for_a_process_with_snapshots_still_lists_them() {
+        let cache = SnapshotStore::new();
+        let id = cache.publish(7, 42, Payload(vec![1]));
+        let error = cache
+            .resolve(
+                7,
+                &serde_json::json!({ "element_token": token_for(id + 1000, 0) }),
+            )
+            .unwrap_err();
+        let structured = error.structured_content.unwrap();
+        assert_eq!(structured["refusal"]["code"], "stale_element_token");
+        let message = structured["refusal"]["message"].as_str().unwrap();
+        assert!(message.contains("current snapshots for pid 7"), "{message}");
+        assert!(!message.contains("\"session\" label"), "{message}");
     }
 
     #[test]

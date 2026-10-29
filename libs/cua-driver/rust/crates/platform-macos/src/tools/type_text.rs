@@ -212,7 +212,6 @@ impl Tool for TypeTextTool {
                         .with_structured(serde_json::json!({
                             "scope": "desktop",
                             "path": "hid",
-                            "key_events": key_events.as_str(),
                             "effect": "unverifiable"
                         }))
                 }

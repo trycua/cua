@@ -352,8 +352,7 @@ on a US keyboard, so the target's input source must be U.S. It covers printable
 ASCII, Tab, and Return. Text with any other character is refused with
 `physical_key_unavailable`, naming the character, before any key is sent. Any
 other variable value makes desktop-scope `type_text` refuse with
-`text_key_events_invalid` instead of typing. A successful result reports the
-mode as `key_events`. No tool argument can change it.
+`text_key_events_invalid` instead of typing. No tool argument can change it.
 
 - **macOS desktop scope only.** Window-targeted `type_text` and interactive
   remote-control text still send Unicode. Linux and Windows do not read it.

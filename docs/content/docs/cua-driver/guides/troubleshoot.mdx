@@ -139,20 +139,20 @@ Karabiner-Elements does this when its CGEventTap option is on. `press_key` and
 Set `CUA_DRIVER_TEXT_KEY_EVENTS=physical` in the daemon's environment to send
 US-keyboard key presses instead, then restart the daemon. For a
 [LaunchAgent daemon](/cua-driver/guides/operate#keep-it-running), add it to the plist's
-`EnvironmentVariables`. A daemon that CuaDriver.app starts on demand reads it
-from your login session, until you log out:
+`EnvironmentVariables`. A daemon started on demand gets the environment of the
+program that started it, usually your MCP client, so stop the daemon, export
+the variable in the shell you start the client from, and restart the client:
 
 ```bash skip="host-install"
-launchctl setenv CUA_DRIVER_TEXT_KEY_EVENTS physical
 cua-driver stop
+export CUA_DRIVER_TEXT_KEY_EVENTS=physical
 ```
 
 The input source must be U.S., and only printable ASCII, Tab, and Return can
 be typed: other text is refused with `physical_key_unavailable` before any key
 is sent. Window-targeted
 `type_text` and Cua Spaces remote control still send Unicode. To restore the
-default, remove the variable (`launchctl unsetenv CUA_DRIVER_TEXT_KEY_EVENTS`)
-and restart the daemon.
+default, remove the variable and restart the daemon.
 
 ### Native Wayland keyboard input is focus-bound
 

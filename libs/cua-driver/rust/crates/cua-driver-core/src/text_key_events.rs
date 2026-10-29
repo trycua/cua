@@ -18,8 +18,7 @@
 pub const TEXT_KEY_EVENTS_ENV: &str = "CUA_DRIVER_TEXT_KEY_EVENTS";
 
 /// The host's choice of key events for desktop-scope typed text. The macOS
-/// `type_text` tool resolves it once from [`text_key_events_from_env`] and
-/// reports [`TextKeyEvents::as_str`] in its result.
+/// `type_text` tool resolves it once from [`text_key_events_from_env`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextKeyEvents {
     /// Each character is a Unicode payload on key code 0. Types any character

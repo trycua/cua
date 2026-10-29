@@ -26,7 +26,7 @@
     },
     {
       "apps": [
-        "claude-code | connected | - | - | Connected",
+        "claude-code | connected | Signed in as ada@example.com (Claude Max) | - | Connected",
         "codex | connecting | Enter the code in your browser… | Connect | -",
         "gemini-cli | not-connected | Needs an API key for Google. | Connect | -",
         "antigravity | not-connected | Needs an API key for Google. | Connect | -",
@@ -38,7 +38,7 @@
       ],
       "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
       "providers": [
-        "anthropic | connected | Claude Code sign-in | Sign out",
+        "anthropic | connected | Signed in as ada@example.com (Claude Max) | Sign out",
         "openai | connected | API key •••• 3f9a | Sign out",
         "google | not-connected | Not connected | Connect",
         "openrouter | not-connected | Not connected | Connect",
@@ -47,11 +47,56 @@
       "step": "Claude Code signed in, an OpenAI key pasted, Codex connecting"
     },
     {
+      "apps": [
+        "claude-code | not-connected | Needs reconnect | Reconnect | -",
+        "codex | not-connected | Needs a sign-in to OpenAI. | Connect | -",
+        "gemini-cli | not-connected | Needs an API key for Google. | Connect | -",
+        "antigravity | not-connected | Needs an API key for Google. | Connect | -",
+        "opencode | not-connected | Needs an API key for Anthropic, OpenAI, Google or OpenRouter. | Connect | -",
+        "goose | not-connected | Needs an API key for OpenAI, Anthropic or OpenRouter. | Connect | -",
+        "pi | not-connected | Needs an API key for Anthropic, OpenAI, Google or OpenRouter. | Connect | -",
+        "hermes | not-connected | Needs an API key for Anthropic or OpenAI. | Connect | -",
+        "openclaw | not-connected | Needs an API key for Anthropic, OpenAI or OpenRouter. | Connect | -"
+      ],
+      "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
+      "providers": [
+        "anthropic | not-connected | Needs reconnect | Reconnect",
+        "openai | not-connected | Not connected | Connect",
+        "google | not-connected | Not connected | Connect",
+        "openrouter | not-connected | Not connected | Connect",
+        "github | not-connected | Not connected | Connect"
+      ],
+      "step": "Claude Code sign-in ran out (needs reconnect)"
+    },
+    {
+      "apps": [
+        "claude-code | connecting | Reading your Claude Code sign-in… | Connect | -",
+        "codex | not-connected | Needs a sign-in to OpenAI. | Connect | -",
+        "gemini-cli | not-connected | Needs an API key for Google. | Connect | -",
+        "antigravity | not-connected | Needs an API key for Google. | Connect | -",
+        "opencode | not-connected | Needs an API key for Anthropic, OpenAI, Google or OpenRouter. | Connect | -",
+        "goose | not-connected | Needs an API key for OpenAI, Anthropic or OpenRouter. | Connect | -",
+        "pi | not-connected | Needs an API key for Anthropic, OpenAI, Google or OpenRouter. | Connect | -",
+        "hermes | not-connected | Needs an API key for Anthropic or OpenAI. | Connect | -",
+        "openclaw | not-connected | Needs an API key for Anthropic, OpenAI or OpenRouter. | Connect | -"
+      ],
+      "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
+      "providers": [
+        "anthropic | not-connected | Not connected | Connect",
+        "openai | not-connected | Not connected | Connect",
+        "google | not-connected | Not connected | Connect",
+        "openrouter | not-connected | Not connected | Connect",
+        "github | not-connected | Not connected | Connect"
+      ],
+      "step": "Claude Code is reading its sign-in"
+    },
+    {
       "key": "anthropic | -",
       "sheet": "anthropic",
       "title": "Connect Anthropic",
       "ways": [
-        "app-token | Sign in with Claude | Sign in",
+        "app-token | Use your Claude Code sign-in | Sign in",
+        "token | Paste a Claude token | Paste token",
         "key | Paste an API key | Paste key",
         "shell | Use ANTHROPIC_API_KEY from your shell | Use it"
       ]
@@ -74,6 +119,40 @@
       ]
     },
     {
+      "buttons": "Use my sign-in | Cancel | Reading your Claude Code sign-in…",
+      "importSheet": "macos",
+      "notFound": "No Claude Code sign-in found | Claude Code isn't signed in on this Mac, or its sign-in couldn't be read. Pick one:",
+      "options": [
+        "login | Sign in with Claude Code | claude auth login | Try again",
+        "token | Paste a token | - | Paste token",
+        "key | Use an Anthropic API key | - | Paste key"
+      ],
+      "points": [
+        "Cua reads your Claude Code sign-in from the Keychain item “Claude Code-credentials” (macOS asks you to allow it), or the file ~/.claude/.credentials.json.",
+        "It keeps the access token in Cua's own item in the Keychain, never your refresh token, and doesn't change Claude Code's sign-in. You stay signed in to Claude Code.",
+        "Your Spaces get that access token so Claude Code can run there. Only Claude Code uses it.",
+        "When it runs out, Cua reads the newer one from Claude Code. Sign out here to remove the copy."
+      ],
+      "title": "Use your Claude Code sign-in"
+    },
+    {
+      "buttons": "Use my sign-in | Cancel | Reading your Claude Code sign-in…",
+      "importSheet": "linux",
+      "notFound": "No Claude Code sign-in found | Claude Code isn't signed in on this machine, or its sign-in couldn't be read. Pick one:",
+      "options": [
+        "login | Sign in with Claude Code | claude auth login | Try again",
+        "token | Paste a token | - | Paste token",
+        "key | Use an Anthropic API key | - | Paste key"
+      ],
+      "points": [
+        "Cua reads your Claude Code sign-in from the file ~/.claude/.credentials.json.",
+        "It keeps the access token in Cua's own place for credentials, never your refresh token, and doesn't change Claude Code's sign-in. You stay signed in to Claude Code.",
+        "Your Spaces get that access token so Claude Code can run there. Only Claude Code uses it.",
+        "When it runs out, Cua reads the newer one from Claude Code. Sign out here to remove the copy."
+      ],
+      "title": "Use your Claude Code sign-in"
+    },
+    {
       "does": "true | true | false | - | anthropic",
       "plan": "claude-code"
     },
@@ -92,8 +171,8 @@
     {
       "detail": "claude-code",
       "note": null,
-      "signIn": "Signs in with Anthropic | Claude Code sign-in | Sign out",
-      "status": "Connected",
+      "signIn": "Signs in with Anthropic | Not connected | Sign in",
+      "status": "Reading your Claude Code sign-in…",
       "toggles": [
         "skills | Cua skills | true",
         "mcp | Cua tools (MCP) | true",

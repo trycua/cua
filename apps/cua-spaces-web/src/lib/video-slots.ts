@@ -51,22 +51,25 @@ export function sameSurface(a: SurfaceState | null, b: SurfaceState): boolean {
 
 /** Page UI that hides a Space tile's video entirely when it overlaps the
  * tile: a dialog takes the keyboard and dims the page, so the video under it
- * goes. The Space viewer never hides for one (`keepUnderDialogs`): a dialog
- * is a hole there, like a menu. A popover that marks itself a hole
- * (`data-video-occluder`, a profile card) is no occluder for either. */
+ * goes. A dialog-role popup that is not modal (`keepUnderDialogs`, the viewer)
+ * is a hole, like a menu. A popover that marks itself a hole
+ * (`data-video-occluder`, a profile card) is no occluder for either. A modal
+ * dialog (one with the dimmed layer, [`modalOpen`]) hides the viewer too: see
+ * `VideoSlotReporter.measure`. */
 export const OCCLUDER_SELECTOR = ['[role="dialog"]', '[role="alertdialog"]'].join(",");
 
 /** The dimmed layer under a modal dialog (our Dialog and AlertDialog
- * backdrops): it paints over the whole page, so over a viewer that keeps its
- * video it is looked through, and the viewer takes no pointer or keys while
- * it is open (`modalOpen`). */
+ * backdrops): it paints over the whole page. A native video layer sits above
+ * the web view and cannot be dimmed or covered by it, so while a modal dialog
+ * is open the viewer's video is hidden (`occluded`), takes no pointer or keys,
+ * and gives the keyboard back (`modalOpen`); it returns when the dialog closes. */
 export const DIM_SELECTOR = "[data-window-dim]";
 
 /** A dialog as a hole (a viewer that keeps its video under dialogs). */
 const DIALOG_HOLE_SELECTOR = [OCCLUDER_SELECTOR, DIM_SELECTOR].join(",");
 
 /** Whether a modal dialog is open: the page dims behind it and the Space
- * under it must take neither the pointer nor the keys. */
+ * under it must take neither the pointer nor the keys, nor draw over it. */
 export function modalOpen(doc: Document = document): boolean {
   return doc.querySelector(`${DIM_SELECTOR}:not([data-closed]):not([data-ending-style])`) !== null;
 }
@@ -173,6 +176,8 @@ export class VideoSlotReporter {
   private mutations: MutationObserver | null = null;
   private dpr: MediaQueryList | null = null;
   private focused: string | null = null;
+  /** The keyboard was handed back to the page for the modal dialog open now (once per dialog). */
+  private releasedForModal = false;
   private next = 0;
 
   constructor(
@@ -226,6 +231,13 @@ export class VideoSlotReporter {
 
   /** Measures every slot now and sends what changed. */
   flush(): void {
+    // A modal dialog takes the keyboard from a viewer that has it (once; the host answers `video.focus`).
+    const modal = modalOpen(this.win.document);
+    if (modal && this.focused && !this.releasedForModal) {
+      this.releasedForModal = true;
+      this.focus(null);
+    }
+    if (!modal) this.releasedForModal = false;
     const update: SurfaceState[] = [];
     for (const slot of this.slots.values()) {
       const next = this.measure(slot);
@@ -247,8 +259,11 @@ export class VideoSlotReporter {
       width: Math.max(0, box.width - 2 * inset),
       height: Math.max(0, box.height - 2 * inset),
     });
-    // The Space viewer stays drawn under every popup, card, menu, tooltip and dialog (CUA-2641); a tile hides under a dialog.
+    // The Space viewer stays drawn under every popup, card, menu and tooltip (CUA-2641: they are holes); a tile hides under a dialog.
+    // A modal dialog hides both: the native video layer cannot sit under the page's dimmed layer or the dialog, and it must never
+    // capture the pointer or keys while one is up.
     const keep = slot.tier === "full";
+    const modal = modalOpen(this.win.document);
     const clipRaw = visiblePart(slot.el, rect, this.win);
     const clip = clipRaw ? roundRect(clipRaw) : null;
     const shown = this.win.document.visibilityState !== "hidden" && clip !== null && clip.width > 0 && clip.height > 0;
@@ -256,13 +271,13 @@ export class VideoSlotReporter {
       surfaceId: slot.id,
       spaceId: slot.spaceId,
       tier: slot.tier,
-      // Under a modal dialog the viewer keeps playing but takes no pointer or keys.
-      interactive: slot.interactive && !(keep && modalOpen(this.win.document)),
+      // Under a modal dialog nothing takes the pointer or keys.
+      interactive: slot.interactive && !modal,
       rect,
       clip,
       radius: Math.max(0, slot.radius - inset),
-      occluded: shown && clip ? isOccluded(slot.el, clip, this.win.document, slot.radius, keep) : false,
-      holes: shown && clip ? videoHoles(slot.el, clip, this.win.document, keep).map(roundRect) : [],
+      occluded: shown && clip ? modal || isOccluded(slot.el, clip, this.win.document, slot.radius, keep) : false,
+      holes: shown && clip && !modal ? videoHoles(slot.el, clip, this.win.document, keep).map(roundRect) : [],
       visible: shown,
     };
   }

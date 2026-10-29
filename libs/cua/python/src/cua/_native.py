@@ -615,7 +615,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 32481:
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -29971,8 +29971,9 @@ class AgentSetupProtocol(typing.Protocol):
         """
         Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
         (`server`, default this channel's cua), and with `sign_in` the
-        agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-        for its one browser approval). JSON: one result per agent.
+        agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+        sign-in it already has, read from where Claude Code keeps it). JSON:
+        one result per agent.
 """
         raise NotImplementedError
     def connection_status_json(self, expected: typing.Optional[AgentMcpServer],refresh: bool) -> str:
@@ -30136,8 +30137,9 @@ class AgentSetup(AgentSetupProtocol):
         """
         Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
         (`server`, default this channel's cua), and with `sign_in` the
-        agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-        for its one browser approval). JSON: one result per agent.
+        agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+        sign-in it already has, read from where Claude Code keeps it). JSON:
+        one result per agent.
 """
 
         _UniffiFfiConverterSequenceString.check_lower(agents)

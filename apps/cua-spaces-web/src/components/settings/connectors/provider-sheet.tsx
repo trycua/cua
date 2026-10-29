@@ -2,16 +2,16 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, KeyRoundIcon, Loader2Icon, LogInIcon, SmartphoneIcon, TerminalIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import type { ProviderWay } from "@/bridge";
+import { importSheet, useBridge, type ProviderWay } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useSession } from "@/bridge";
-import { closeDeviceSignIn, useConnectors, useDeviceSignIn, useProviderSheetOpen } from "@/hooks/use-connectors";
+import { closeDeviceSignIn, closeImport, useConnectors, useDeviceSignIn, useImporting, useProviderSheetOpen, useSheetWay } from "@/hooks/use-connectors";
 
-const ICON = { "app-token": LogInIcon, "app-device": SmartphoneIcon, key: KeyRoundIcon, shell: TerminalIcon } as const;
+const ICON = { "app-token": LogInIcon, "app-device": SmartphoneIcon, token: KeyRoundIcon, key: KeyRoundIcon, shell: TerminalIcon } as const;
 
 /**
  * "Connect <provider>": the ways the core offers (`connectors.providerSheet`),
@@ -22,8 +22,118 @@ const ICON = { "app-token": LogInIcon, "app-device": SmartphoneIcon, key: KeyRou
 export function ProviderSheetHost() {
   const device = useDeviceSignIn();
   const open = useProviderSheetOpen();
+  const importing = useImporting();
+  if (importing) return <ImportSheet />;
   if (device) return <DeviceCodeSheet />;
   return open ? <ProviderSheet /> : null;
+}
+
+/**
+ * Importing the sign-in Claude Code already has: first what is read, kept and
+ * sent (the core's `connectors.importSheet` words), then Use my sign-in; while
+ * it reads (macOS may ask to allow it); and when nothing is found, the ways
+ * on in order: sign in with Claude Code, paste a token, use an API key.
+ */
+function ImportSheet() {
+  const { core } = useBridge();
+  const c = useConnectors();
+  const importing = useImporting();
+  const [copied, setCopied] = useState(false);
+  const v = importSheet(core);
+  if (!importing || !v) return null;
+  const reading = importing.phase === "reading";
+  return (
+    <Dialog open onOpenChange={(o) => !o && !reading && closeImport()}>
+      <DialogPopup data-import-sheet={importing.phase} className="top-[12vh] w-[min(520px,calc(100vw-2rem))]">
+        <div className="px-6 pt-5 pb-5">
+          {importing.phase === "not-found" ? (
+            <>
+              <DialogTitle className="text-[15px] font-semibold">{v.notFoundTitle}</DialogTitle>
+              <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{importing.line ?? v.notFoundLede}</DialogDescription>
+              <div className="mt-3">
+                {v.options.map((o) => {
+                  const Icon = o.id === "login" ? LogInIcon : KeyRoundIcon;
+                  return (
+                    <div key={o.id} data-import-option={o.id} className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2.5">
+                      <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                        <Icon className="size-3.5" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13px]">{o.label}</span>
+                        <span className="block text-xs text-muted-foreground">{o.help}</span>
+                        {o.command ? (
+                          <span className="mt-1.5 flex items-center justify-between gap-2 rounded-lg bg-muted px-3 py-1.5">
+                            <code data-import-command="" className="font-mono text-xs select-all">
+                              {o.command}
+                            </code>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                void navigator.clipboard?.writeText(o.command ?? "").catch(() => undefined);
+                                setCopied(true);
+                              }}
+                            >
+                              {copied ? <CheckIcon /> : <CopyIcon />}
+                              {copied ? "Copied" : "Copy"}
+                            </Button>
+                          </span>
+                        ) : null}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-import-option-action={o.id}
+                        onClick={() => {
+                          if (o.id === "login") void c.confirmImport();
+                          else {
+                            closeImport();
+                            c.openProvider("anthropic", importing.app, o.id);
+                          }
+                        }}
+                      >
+                        {o.button}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-4 flex justify-end">
+                <Button variant="outline" onClick={closeImport}>
+                  {v.cancelLabel}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogTitle className="text-[15px] font-semibold" data-import-title="">
+                {v.title}
+              </DialogTitle>
+              <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{v.lede}</DialogDescription>
+              <ul data-import-points="" className="mt-3 space-y-2 text-[13px]">
+                {v.points.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+              {reading ? (
+                <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground" data-import-reading="">
+                  <Loader2Icon className="size-3.5 animate-spin" /> {v.readingLabel}
+                </p>
+              ) : null}
+              <div className="mt-4 flex justify-end gap-2">
+                <Button variant="outline" disabled={reading} onClick={closeImport}>
+                  {v.cancelLabel}
+                </Button>
+                <Button disabled={reading} data-import-confirm="" onClick={() => void c.confirmImport()}>
+                  {v.confirmLabel}
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </DialogPopup>
+    </Dialog>
+  );
 }
 
 /**
@@ -82,6 +192,11 @@ function ProviderSheet() {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const startWay = useSheetWay();
+  // Sent here from "nothing found" to paste a token or a key: open straight on that field.
+  useEffect(() => {
+    if (startWay && v) setKeyWay(v.ways.find((w) => w.id === startWay) ?? null);
+  }, [startWay, v?.provider]); // eslint-disable-line react-hooks/exhaustive-deps
   const close = () => {
     setKeyWay(null);
     setValue("");
@@ -95,7 +210,7 @@ function ProviderSheet() {
     const ok = await c.runWay(way, typed);
     setBusy(false);
     if (ok) close();
-    else if (way.id === "key") setError("Couldn't save the key. Check it and try again.");
+    else if (way.id === "key" || way.id === "token") setError(way.id === "token" ? "Couldn't save the token. Check it and try again." : "Couldn't save the key. Check it and try again.");
   };
   return (
     <Dialog open onOpenChange={(o) => !o && close()}>
@@ -121,13 +236,13 @@ function ProviderSheet() {
               </DialogTitle>
               <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{keyWay.help}</DialogDescription>
               <label className="mt-4 block">
-                <span className="mb-1 block text-xs font-medium">{v.keyLabel}</span>
+                <span className="mb-1 block text-xs font-medium">{keyWay.id === "token" ? v.tokenLabel : v.keyLabel}</span>
                 <Input
                   type="password"
                   autoFocus
                   data-provider-key=""
                   value={value}
-                  placeholder={v.keyPlaceholder}
+                  placeholder={keyWay.id === "token" ? v.tokenPlaceholder : v.keyPlaceholder}
                   autoComplete="off"
                   spellCheck={false}
                   className="font-mono"
@@ -160,7 +275,7 @@ function ProviderSheet() {
                       type="button"
                       data-provider-way={w.id}
                       disabled={busy}
-                      onClick={() => (w.id === "key" ? setKeyWay(w) : void run(w))}
+                      onClick={() => (w.id === "key" || w.id === "token" ? setKeyWay(w) : void run(w))}
                       className="-mx-2 flex w-[calc(100%+1rem)] cursor-default items-center gap-3 rounded-lg px-2 py-2.5 text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:opacity-50"
                     >
                       <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">

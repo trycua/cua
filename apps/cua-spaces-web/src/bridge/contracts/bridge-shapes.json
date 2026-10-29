@@ -198,6 +198,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -9329,6 +9332,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -9398,6 +9404,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -9467,6 +9476,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -9536,6 +9548,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [
@@ -9605,6 +9620,9 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
               }
             },
             "required": [

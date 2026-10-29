@@ -48,7 +48,7 @@ import type { CuaDesktopBridge } from "@/bridge/detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "@/bridge/electron-channels";
 import { isWebkitResponse } from "@/bridge/webkit-protocol";
 import type { StreamTarget, StreamTicket } from "@/bridge/ops/stream";
-import type { SlotOptions, SlotStatus } from "@/lib/video-slots";
+import { modalOpen, type SlotOptions, type SlotStatus } from "@/lib/video-slots";
 
 import { KeyCapture } from "./key-capture";
 import { attachPresence, type PresenceAttachment } from "./presence";
@@ -136,6 +136,9 @@ class TicketError extends Error {
 export class WebCodecsSlots {
   private readonly slots = new Map<string, Slot>();
   private next = 0;
+  /** Watches for a modal dialog opening or closing (while any slot is mounted). */
+  private modalWatch: MutationObserver | null = null;
+  private modal = false;
 
   /** The video bench's counters, while the shell asks for them. */
   readonly stats: VideoStats | null;
@@ -176,7 +179,11 @@ export class WebCodecsSlots {
     }
     this.stats?.open(id, options.spaceId, options.tier);
     this.slots.set(id, slot);
-    if (this.slots.size === 1) this.doc.addEventListener("visibilitychange", this.onVisibility);
+    if (this.slots.size === 1) {
+      this.doc.addEventListener("visibilitychange", this.onVisibility);
+      this.watchModal();
+    }
+    if (this.modal) this.stepBack(slot, true);
     if (options.interactive) this.wireFocus(slot);
     this.open(slot);
     return () => {
@@ -186,8 +193,39 @@ export class WebCodecsSlots {
       slot.presence?.detach();
       canvas.remove();
       this.stats?.close(id);
-      if (this.slots.size === 0) this.doc.removeEventListener("visibilitychange", this.onVisibility);
+      if (this.slots.size === 0) {
+        this.doc.removeEventListener("visibilitychange", this.onVisibility);
+        this.modalWatch?.disconnect();
+        this.modalWatch = null;
+        this.modal = false;
+      }
     };
+  }
+
+  /**
+   * While a modal dialog is open no slot takes the pointer or the keys: the
+   * canvas stops catching pointer events and gives the keyboard back to the
+   * page (the dialog's own backdrop, Escape and focus work), and it takes
+   * both again when the dialog closes. The canvas is inside the page here, so
+   * the dialog already paints over it (nothing sits above the page's overlay).
+   */
+  private watchModal(): void {
+    const View = this.doc.defaultView;
+    if (!View || typeof View.MutationObserver !== "function") return;
+    const check = () => {
+      const now = modalOpen(this.doc);
+      if (now === this.modal) return;
+      this.modal = now;
+      for (const slot of this.slots.values()) this.stepBack(slot, now);
+    };
+    this.modalWatch = new View.MutationObserver(check);
+    this.modalWatch.observe(this.doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-closed", "data-ending-style", "data-open", "data-starting-style"] });
+    check();
+  }
+
+  private stepBack(slot: Slot, away: boolean): void {
+    slot.canvas.style.pointerEvents = away ? "none" : "";
+    if (away && this.doc.activeElement === slot.canvas) slot.canvas.blur();
   }
 
   /** Gives keys to a slot's Space (null: back to the page). */

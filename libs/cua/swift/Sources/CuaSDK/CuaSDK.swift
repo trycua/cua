@@ -988,8 +988,9 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
     /**
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
-     * agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-     * for its one browser approval). JSON: one result per agent.
+     * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+     * sign-in it already has, read from where Claude Code keeps it). JSON:
+     * one result per agent.
      */
     func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool) async throws  -> String
 
@@ -1172,8 +1173,9 @@ open func configureMcp(agents: [String], server: AgentMcpServer?)async throws  -
     /**
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
-     * agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-     * for its one browser approval). JSON: one result per agent.
+     * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+     * sign-in it already has, read from where Claude Code keeps it). JSON:
+     * one result per agent.
      */
 open func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool)async throws  -> String  {
     return
@@ -51507,7 +51509,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 32481) {
+    if (uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692) {

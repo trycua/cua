@@ -199,6 +199,7 @@ pub const METHODS: &[&str] = &[
     "connectors.view",
     "connectors.connectPlan",
     "connectors.providerSheet",
+    "connectors.importSheet",
     "connectors.appDetail",
     "connectors.setupCard",
     "summon.candidates",
@@ -1004,6 +1005,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
             a.get::<Option<String>>("forApp")?.as_deref(),
+        )),
+        "connectors.importSheet" => out(connectors::import_sheet_on(
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         "connectors.appDetail" => out(connectors::app_detail(
             &a.get("input")?,

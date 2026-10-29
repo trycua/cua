@@ -440,6 +440,7 @@ mod tests {
                         last4: String::new(),
                         added_ms: 1,
                         expired: false,
+                        label: None,
                     }],
                     ..Default::default()
                 },

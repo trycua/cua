@@ -3,8 +3,9 @@
 
 // Settings, Connectors: each coding app has Connect (Cua's
 // tools and its sign-in, once) and a chevron to its own page; Providers has
-// Connect or Sign out. Connect on Claude Code runs only its own token
-// command (`signIn: true` for Claude Code alone) and connects Anthropic too.
+// Connect or Sign out. Connect on Claude Code asks first, then imports the
+// sign-in Claude Code already has (`signIn: true` for Claude Code alone) and
+// connects Anthropic too (claude-import.test.tsx walks every state of it).
 // Off, the page as it was: switches and Account keys.
 
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
@@ -107,14 +108,15 @@ describe.skipIf(!wasmBuilt)("Settings, Connectors", () => {
     expect(calls.filter((c) => c.op === "agents.connect")).toEqual([]);
   });
 
-  it("Connect on Claude Code runs its token command alone, and connects Anthropic", async () => {
+  it("Connect on Claude Code imports its own sign-in once you agree, and connects Anthropic", async () => {
     const calls: { op: string; args: unknown }[] = [];
     await mountApp("/settings/connectors", host(calls));
     const btn = await found("[data-connector-app=claude-code] [data-connector-connect]");
     await click(btn);
+    await click(await found("[data-import-confirm]"));
     await waitFor(() => expect(q("[data-connector-app=claude-code]")!.dataset.state).toBe("connected"));
     await waitFor(() => expect(q("[data-connector-provider=anthropic]")!.dataset.state).toBe("connected"));
-    expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Claude Code sign-in");
+    expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Signed in as ada@example.com (Claude Max)");
     const connects = calls.filter((c) => c.op === "agents.connect").map((c) => c.args as { agents: string[]; signIn: boolean });
     expect(connects).toEqual([{ agents: ["claude-code"], signIn: true }]);
   });
@@ -154,7 +156,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connectors", () => {
     expect(code.textContent).toBe("QX7P-4M2KD");
     expect(q("[data-device-sign-in=codex]")?.textContent).toContain("Open sign-in page");
     await waitFor(() => expect(q("[data-connector-provider=openai]")!.dataset.state).toBe("connected"), { timeout: 8000 });
-    expect(q("[data-connector-provider=openai]")!.textContent).toContain("ChatGPT sign-in, for Codex");
+    expect(q("[data-connector-provider=openai]")!.textContent).toContain("Signed in with ChatGPT, for Codex");
     expect(q("[data-device-sign-in]")).toBeNull();
     // Never Codex's own files: no agents.connect with signIn for Codex.
     const signIns = calls.filter((c) => c.op === "agents.connect").map((c) => c.args as { agents: string[]; signIn: boolean });

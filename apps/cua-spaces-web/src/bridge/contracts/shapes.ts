@@ -965,6 +965,7 @@ const ThreadEntryShape = ref(
     ),
     view: opt(nullable(object({ kind: oneOf("desktop", "window"), app: nullable(str), title: nullable(str), windowId: nullable(str) }))),
     failure: opt(nullable(ThreadFailureShape)),
+    fanoutOf: opt(nullable(num)),
   }),
 );
 

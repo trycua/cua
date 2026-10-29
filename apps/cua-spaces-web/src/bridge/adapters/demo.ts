@@ -135,6 +135,8 @@ export interface DemoOptions {
   threadLookalike?: boolean;
   /** `?demo=thread-auth-failed`: Claude and Hermes answer "hi" with "not connected" (CUA-2638). */
   threadAuthFailed?: boolean;
+  /** `?demo=thread-paused`: agents wake each other until the daemon pauses agent to agent messages (CUA-2757). */
+  threadPaused?: boolean;
   /** `?demo=thread-stranger`: an agent whose owner is not in the Space (its card opens their profile in place). */
   threadStranger?: boolean;
   /** Join codes: redeemed this long after they are made (null: never, `?demo=thread-join-slow`). */
@@ -234,6 +236,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     threadLookalike: flags.has("thread-lookalike"),
     threadAuthFailed: flags.has("thread-auth-failed"),
     threadStranger: flags.has("thread-stranger"),
+    threadPaused: flags.has("thread-paused"),
     threadRequest: flags.has("thread-request"),
     ...(flags.has("thread-join-slow") || flags.has("thread-join-expire") ? { joinRedeemMs: null } : {}),
     ...(flags.has("thread-join-expire") ? { joinExpireMs: 6_000 } : {}),
@@ -909,7 +912,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
     ...demoLinksHandlers(ctx),
-    ...demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false,
+    ...demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false, paused: options.threadPaused ?? false,
       joinRedeemMs: options.joinRedeemMs,
       joinExpireMs: options.joinExpireMs,
       request: options.threadRequest ?? false,

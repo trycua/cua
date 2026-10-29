@@ -19,6 +19,8 @@ export interface MentionCandidate {
   harness?: string;
   /** Under the name for an agent not in the Space yet ("Starts in this Space", "Not connected yet"). */
   detail?: string;
+  /** Listed but not pickable (`@everyone` for someone who can't give tasks); `detail` says why. */
+  disabled?: boolean;
 }
 
 /** `@` starts a mention at the start or after a space or an opening
@@ -72,4 +74,28 @@ export function mentionSegments(text: string, handles?: ReadonlySet<string>): Me
   }
   if (last < text.length) out.push({ text: text.slice(last), mention: false });
   return out;
+}
+
+/** The handle that addresses every agent you may task. */
+export const EVERYONE = "everyone";
+
+/** The lower-case handles `text` mentions, in order and once each. With
+ * `handles`, only those names count. */
+export function mentionedHandles(text: string, handles?: ReadonlySet<string>): string[] {
+  const out: string[] = [];
+  for (const s of mentionSegments(text, handles)) if (s.mention && !out.includes(s.handle)) out.push(s.handle);
+  return out;
+}
+
+/** Whether `text` already starts with a mention of `handle` (so a Reply does not add it twice). */
+export function startsWithMention(text: string, handle: string): boolean {
+  const m = /^\s*@([\w][\w.-]*)/.exec(text);
+  return !!m && m[1]!.replace(/[.-]+$/, "").toLowerCase() === handle.toLowerCase();
+}
+
+/** `text` addressed to `handles`: `@a @b ` in front, unless `text` already starts with `@handle` (one handle). */
+export function addLeadingMention(text: string, ...handles: string[]): string {
+  const missing = handles.filter((h) => !mentionedHandles(text).includes(h.toLowerCase()));
+  if (!missing.length) return text;
+  return `${missing.map((h) => `@${h}`).join(" ")} ${text.replace(/^\s+/, "")}`;
 }

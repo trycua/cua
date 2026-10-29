@@ -37,6 +37,7 @@ pub mod notify;
 pub mod phases;
 pub(crate) use phases::DISPATCH_BUDGET;
 pub mod rights;
+pub mod wake;
 
 use crate::DriveResult as _;
 use crate::SpacesDrive as _;
@@ -471,6 +472,8 @@ pub(crate) struct Live {
     /// Runs started for a task whose "woke up and joined" note waits until
     /// the agent is up: run id to the task's seq.
     joining: HashMap<String, u64>,
+    /// Agent-to-agent wakes per Space ([`wake`]).
+    wake: wake::LiveWake,
 }
 
 /// The persistent agents of one cua home. Cheap to clone.

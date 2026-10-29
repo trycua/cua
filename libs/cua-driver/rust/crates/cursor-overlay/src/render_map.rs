@@ -700,13 +700,39 @@ mod tests {
         assert!(!map.needs_frame_tick(), "a finished pulse must park");
     }
 
-    // The resting bob is painted by every adapter through `paint_cursor`, so a
-    // visible resting cursor must keep receiving frames on every platform
-    // until its idle fade hides it.
+    // By default the cursor rests still: once activity settles, nothing
+    // changes pixels until the idle fade, so the overlay stops rendering.
+    #[test]
+    fn a_default_resting_cursor_is_still_so_the_overlay_parks() {
+        let mut map = map();
+        let core = placed(&mut map, DEFAULT_CURSOR_KEY);
+        core.options_override = Some(crate::CursorOptions::default());
+        core.motion.idle_hide_ms = 20_000.0;
+        settle(core);
+        assert!(!core.has_resting_motion());
+
+        let paint = |core: &RenderStateCore| {
+            let mut pixmap = tiny_skia::Pixmap::new(200, 200).unwrap();
+            crate::paint_cursor(&mut pixmap, core, 0.0, 0.0, None, 1.0);
+            pixmap.data().to_vec()
+        };
+        let core = &mut map.cursors[DEFAULT_CURSOR_KEY];
+        let before = paint(core);
+        core.tick_motion(0.4);
+        assert_eq!(before, paint(core), "resting frames are identical");
+    }
+
+    // The opt-in resting float (`cursor.float`) is painted by every adapter
+    // through `paint_cursor`, so a visible resting cursor with it on must keep
+    // receiving frames on every platform until its idle fade hides it.
     #[test]
     fn a_visible_resting_cursor_keeps_ticking_for_its_resting_motion() {
         let mut map = map();
         let core = placed(&mut map, DEFAULT_CURSOR_KEY);
+        core.options_override = Some(crate::CursorOptions {
+            float: true,
+            ..crate::CursorOptions::default()
+        });
         core.motion.idle_hide_ms = 20_000.0;
         settle(core);
         assert!(core.has_resting_motion());
@@ -728,6 +754,7 @@ mod tests {
     fn resting_motion_stops_for_reduced_motion_hidden_and_faded_cursors() {
         let mut map = map();
         let core = placed(&mut map, DEFAULT_CURSOR_KEY);
+        core.options_override = Some(crate::CursorOptions::ALL_ON);
         core.motion.idle_hide_ms = 20_000.0;
         assert!(core.needs_frame_tick());
 

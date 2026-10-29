@@ -24,6 +24,7 @@ fn with_cursor_motion_properties(mut schema: Value) -> Value {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
         properties.extend(cursor_overlay::badge_mode::config_schema_properties());
+        properties.extend(cursor_overlay::cursor_options::config_schema_properties());
     }
     schema
 }
@@ -45,7 +46,10 @@ fn def() -> &'static ToolDef {
             start_session cursor_motion and set_agent_cursor_motion override them; \
             reduced motion always wins.\n\nAgent cursor badge: cursor.badges is \
             minimal (default), verbose or off, saved to ~/.cua-driver/config.json \
-            and applied to every cursor at once."
+            and applied to every cursor at once.\n\nAgent cursor extras: \
+            cursor.marks (action marks), cursor.float (resting float) and \
+            cursor.rotate (turn toward travel) are on, off (default) or default, \
+            saved to ~/.cua-driver/config.json and applied to every cursor at once."
             .into(),
         input_schema: with_cursor_motion_properties(serde_json::json!({
             "type": "object",
@@ -109,6 +113,10 @@ impl Tool for SetConfigTool {
 
         let badge_key = match cursor_overlay::badge_mode::apply_config_args(&args) {
             Ok(key) => key,
+            Err(message) => return ToolResult::error(message),
+        };
+        let option_keys = match cursor_overlay::cursor_options::apply_config_args(&args) {
+            Ok(keys) => keys,
             Err(message) => return ToolResult::error(message),
         };
 
@@ -185,7 +193,7 @@ impl Tool for SetConfigTool {
                 motion_keys.join(", ")
             ));
         }
-        if let Some(key) = badge_key {
+        for key in badge_key.into_iter().chain(option_keys) {
             pip_note.push_str(&format!(" — saved {key} (applies now)"));
         }
         let scope_note = if session_id.is_some() {

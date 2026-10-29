@@ -13511,10 +13511,7 @@ impl Tool for GetConfigTool {
             "platform": "linux",
             "capture_mode": cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
-            "cursor": {
-                "motion": cursor_overlay::motion_defaults::read_saved().config_json(),
-                "badges": cursor_overlay::badge_mode::read_saved().as_str(),
-            },
+            "cursor": cursor_overlay::cursor_options::saved_config_json(),
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry
         }))
@@ -13527,6 +13524,7 @@ fn with_cursor_motion_config_properties(mut schema: Value) -> Value {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
         properties.extend(cursor_overlay::badge_mode::config_schema_properties());
+        properties.extend(cursor_overlay::cursor_options::config_schema_properties());
     }
     schema
 }
@@ -13551,7 +13549,10 @@ impl Tool for SetConfigTool {
                 (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. \
                 `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n\
                 `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge \
-                for every cursor at once.".into(),
+                for every cursor at once.\n\n\
+                `cursor.marks` (action marks), `cursor.float` (resting float) and `cursor.rotate` \
+                (turn toward travel) are `on`, `off` (default) or `default`, and apply to every \
+                cursor at once.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
@@ -13581,12 +13582,21 @@ impl Tool for SetConfigTool {
             Ok(key) => key,
             Err(message) => return ToolResult::error(message),
         };
+        let option_keys = match cursor_overlay::cursor_options::apply_config_args(&args) {
+            Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
+        };
         let mut cfg = self.state.config.write().unwrap();
         let mut parts: Vec<String> = motion_keys
             .iter()
             .map(|key| format!("{key} (applies to sessions started from now on)"))
             .collect();
-        parts.extend(badge_key.map(|key| format!("{key} (applies now)")));
+        parts.extend(
+            badge_key
+                .into_iter()
+                .chain(option_keys)
+                .map(|key| format!("{key} (applies now)")),
+        );
         if let Some(mode) = args.opt_str("capture_mode") {
             if let Err(e) =
                 pip_preview::write_config_key("capture_mode", Value::String(mode.clone()))

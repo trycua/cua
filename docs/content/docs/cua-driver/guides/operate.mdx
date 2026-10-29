@@ -329,18 +329,28 @@ to another release.
 
 ## Personalize the cursor
 
-The agent's cursor is an overlay, not the real pointer: a session-colored
-pointer (`cua.default`, the only built-in theme). Its color tells agents apart.
-It is a visual aid, not an authorization signal.
+The agent's cursor is an overlay, not the real pointer: a plain, upright,
+session-colored arrow (`cua.default`, the only built-in theme). Its color tells
+agents apart. It is a visual aid, not an authorization signal.
 
-By default the cursor carries no badge. A small chip appears for about a second
-when the agent brings something to the foreground or presses a key combo such
-as ⌘C. The session name appears when you hover over the cursor, or while two or
-more agent cursors are on screen. Nothing is shown while the cursor moves.
+By default the arrow does nothing extra: no marks next to it, no glow, ripple
+or bounce, and it stays still when it rests. Each extra is a setting you can
+turn on for every cursor at once:
 
-The `cursor.badges` setting changes this for every cursor at once:
-`minimal` (the default), `verbose` (the session name on reveal, plus delivery
-and target chips on every action), or `off`. For example,
+- `cursor.marks`: a small mark for what the agent is doing (observing,
+  clicking, typing, pressing keys, scrolling and more).
+- `cursor.float`: a slow float while the cursor rests.
+- `cursor.rotate`: the arrow turns toward where it is going.
+- `cursor.motion.effects.glow`, `.ripple` and `.squish`: a glow while it moves,
+  a ring on each click, and a small press on each click.
+
+For example, `cua-driver config set cursor.marks on`.
+
+The cursor shows its session name when you hover over it, or while two or more
+agent cursors are on screen, and never while it moves. The `cursor.badges`
+setting changes this: `minimal` (the default), `verbose` (the session name on
+reveal, delivery and target chips on every action, and a short chip for key
+combos such as ⌘C), or `off`. For example,
 `cua-driver config set cursor.badges verbose` restores the earlier badge:
 
 ![Verbose badge combinations for background and foreground delivery across accessibility, pixel, browser, and desktop targets](https://github.com/user-attachments/assets/071dbfd0-b0d4-442f-9654-994c84db3029)

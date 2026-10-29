@@ -780,8 +780,37 @@ pub fn paint_compiled_theme_with_tint(
     alpha: f32,
     tint: Option<[u8; 4]>,
 ) {
+    paint_compiled_theme_with_float(
+        target,
+        theme,
+        visual,
+        anchor_x,
+        anchor_y,
+        heading,
+        backing_scale,
+        alpha,
+        tint,
+        false,
+    );
+}
+
+/// [`paint_compiled_theme_with_tint`] with the opt-in resting float
+/// (`cursor.float`) of the built-in theme. Custom themes never float.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_compiled_theme_with_float(
+    target: &mut tiny_skia::Pixmap,
+    theme: &CompiledTheme,
+    visual: &CursorVisualState,
+    anchor_x: f32,
+    anchor_y: f32,
+    heading: f32,
+    backing_scale: f32,
+    alpha: f32,
+    tint: Option<[u8; 4]>,
+    float: bool,
+) {
     let scale = crate::theme::DISPLAY_SIZE * backing_scale / crate::theme::CANVAS_SIZE;
-    let (float_dx, float_dy, float_rotation) = if theme.id == crate::DEFAULT_THEME_ID {
+    let (float_dx, float_dy, float_rotation) = if float && theme.id == crate::DEFAULT_THEME_ID {
         crate::theme::shared_float_motion(visual)
     } else {
         (0.0, 0.0, 0.0)

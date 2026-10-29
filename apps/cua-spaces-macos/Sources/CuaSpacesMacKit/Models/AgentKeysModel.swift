@@ -82,7 +82,7 @@ public final class AgentKeysModel {
                              fields: (k["fields"] as? [String: String]) ?? [:])
         }
         let unavailable = report?["available"] as? Bool == false
-            ? (report?["unavailable"] as? String ?? "this computer can't keep keys") : nil
+            ? (report?["unavailable"] as? String ?? "this machine can't keep keys") : nil
         return AppAgentKeysInput(keys: keys.filter { !$0.env.isEmpty }, unavailable: unavailable, error: error)
     }
 

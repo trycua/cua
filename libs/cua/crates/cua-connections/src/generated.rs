@@ -1799,7 +1799,7 @@ pub static PROVIDERS: &[Provider] = &[
         base_url_env: "",
         default_model: "",
         hermes_id: "custom",
-        key_help: "Any server that speaks the OpenAI chat API: LM Studio, Ollama, vLLM, a gateway or a proxy. A server on this Mac is only reachable from a Space that is allowed to reach that port.",
+        key_help: "Any server that speaks the OpenAI chat API: LM Studio, Ollama, vLLM, a gateway or a proxy.",
         placeholder: "Key, if the server asks for one",
         check: None,
         apps: &[],

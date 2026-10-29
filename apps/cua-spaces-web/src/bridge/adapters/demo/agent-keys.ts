@@ -23,9 +23,19 @@ export interface DemoKeyStore {
   rejected: string[];
 }
 
-export const demoKeyStore = (now: () => number, rejected: string[] = [], claude?: "signed-in" | "expired" | "none"): DemoKeyStore => ({
+const DAY = 24 * 3600_000;
+
+/** `keys: "several"`: a few providers connected, one with a key the provider refuses (with `rejected`), a custom endpoint. */
+const SEVERAL = (now: () => number): AgentKeyInfo[] => [
+  { provider: "anthropic", env: "ANTHROPIC_API_KEY", last4: "a91c", addedMs: now() - 9 * DAY },
+  { provider: "openrouter", env: "OPENROUTER_API_KEY", last4: "cdef", addedMs: now() - 4 * DAY },
+  { provider: "deepseek", env: "DEEPSEEK_API_KEY", last4: "9c2e", addedMs: now() - 2 * DAY },
+  { provider: "custom", env: "CUSTOM_ENDPOINT_API_KEY", last4: "", addedMs: now() - DAY, fields: { base_url: "http://192.168.1.20:1234/v1", model: "qwen3-coder", wire: "openai-chat" } },
+];
+
+export const demoKeyStore = (now: () => number, rejected: string[] = [], claude?: "signed-in" | "expired" | "none", keys?: "none" | "several"): DemoKeyStore => ({
   keys: [
-    { provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: now() - 6 * 24 * 3600_000 },
+    ...(keys === "none" ? [] : keys === "several" ? SEVERAL(now) : [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: now() - 6 * DAY }]),
     // The sign-in imported from Claude Code (`?demo=claude-signed-in`), or one that ran out (`?demo=claude-expired`).
     ...(claude === "signed-in" || claude === "expired"
       ? [{ provider: "other" as const, env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now() - 26 * 3600_000, label: "Signed in as ada@example.com (Claude Max)", ...(claude === "expired" ? { expired: true } : {}) }]

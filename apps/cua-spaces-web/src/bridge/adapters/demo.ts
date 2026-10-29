@@ -80,6 +80,8 @@ export interface DemoOptions {
   /** Claude Code's sign-in on this Mac: imported already (`?demo=claude-signed-in`), imported and run out (`?demo=claude-expired`),
    * or none to import (`?demo=claude-none`: Connect finds nothing and offers the ways on). Default: there is one, not imported yet. */
   claudeLogin?: "signed-in" | "expired" | "none";
+  /** Which connections are saved: `none` (`?demo=no-keys`, an empty Connections list) or `several` (`?demo=connections`: Anthropic, OpenRouter, a custom endpoint and a DeepSeek key the provider refuses). Default: an OpenAI key. */
+  keys?: "none" | "several";
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
@@ -228,6 +230,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     noVault: flags.has("novault"),
     ...(flags.has("signed-in-machines") ? { signedInMachines: true } : {}),
     ...(flags.has("rejected-key") ? { rejectedKeys: ["OPENAI_API_KEY"] } : {}),
+    ...(flags.has("no-keys") ? { keys: "none" as const } : flags.has("connections") ? { keys: "several" as const, rejectedKeys: ["DEEPSEEK_API_KEY"] } : {}),
     ...(flags.has("claude-expired") ? { claudeLogin: "expired" as const } : flags.has("claude-signed-in") ? { claudeLogin: "signed-in" as const } : flags.has("claude-none") ? { claudeLogin: "none" as const } : {}),
     noSpaces: flags.has("empty"),
     ...(() => {
@@ -341,7 +344,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
     imported: [],
-    keyStore: demoKeyStore(now, options.rejectedKeys ?? [], options.claudeLogin),
+    keyStore: demoKeyStore(now, options.rejectedKeys ?? [], options.claudeLogin, options.keys),
     readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,

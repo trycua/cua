@@ -418,16 +418,18 @@ function ProviderSheet() {
             </form>
           ) : (
             <>
-              <div className="flex items-center gap-3">
-                <ProviderMark id={v.provider} name={v.title.replace(/^Connect /, "")} large />
-                <div className="min-w-0 flex-1">
-                  <DialogTitle className="text-[15px] font-semibold" data-provider-sheet-title="">
-                    {v.title}
-                  </DialogTitle>
-                  {v.lede ? <DialogDescription className="mt-0.5 text-[13px] text-muted-foreground">{v.lede}</DialogDescription> : null}
-                </div>
-              </div>
-              <div className="mt-3">
+              <header data-provider-sheet-header="">
+                <DialogTitle className="flex items-center gap-2 text-[15px] font-semibold" data-provider-sheet-title="">
+                  <ProviderMark id={v.provider} name={v.title.replace(/^Connect /, "")} plain />
+                  {v.title}
+                </DialogTitle>
+                {v.lede ? (
+                  <DialogDescription className="mt-1.5 text-xs text-muted-foreground" data-provider-works-with="">
+                    {v.lede}
+                  </DialogDescription>
+                ) : null}
+              </header>
+              <div className="mt-4">
                 {v.ways.map((w) => {
                   const Icon = ICON[w.id];
                   return (
@@ -451,6 +453,11 @@ function ProviderSheet() {
                   );
                 })}
               </div>
+              {v.onlyKeyNote ? (
+                <p className="mt-2 text-xs text-muted-foreground" data-provider-only-key="">
+                  {v.onlyKeyNote}
+                </p>
+              ) : null}
               <div className="mt-4 flex justify-end gap-2">
                 {switcher}
                 <Button variant="outline" onClick={close}>

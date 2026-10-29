@@ -1401,7 +1401,12 @@ impl Thread {
     }
 
     /// Posts as the caller. An @mention of an agent member (not the author
-    /// itself) makes the entry a task for the first one mentioned.
+    /// itself) makes the entry a task for it, and each further agent
+    /// mentioned (`@a @b`) gets the same task on a copy of the message.
+    /// `@everyone` mentions every member the caller may task, and a person's
+    /// reply to an agent's message with no @mention addresses that agent.
+    /// An agent's message wakes another agent only through an explicit
+    /// @mention, within the chatter limits ([`super::wake`]).
     pub async fn post(&self, args: PostArgs) -> Result<ThreadEntry> {
         policy::may_write(self.p.role_of(&self.caller))?;
         check_text(&args.text)?;
@@ -1421,6 +1426,40 @@ impl Thread {
             .filter_map(|m| self.member_key(&m))
             .collect();
         let fold = self.store.fold()?;
+        let by_agent = author.agent_name().map(str::to_string);
+        // Mentions a person did not type: `@everyone`, or a reply to an agent's message.
+        let mut implied: Vec<String> = vec![];
+        let mut everyone = false;
+        let mut mentions = mentions;
+        if by_agent.is_none() {
+            let typed = parse_mentions(&args.text);
+            if typed.iter().any(|m| m == "everyone") && !members.iter().any(|h| h == "everyone") {
+                everyone = true;
+                implied = self
+                    .p
+                    .members_of(self.store.space())?
+                    .into_iter()
+                    .map(|r| r.name)
+                    .filter(|k| !mentions.contains(k))
+                    .collect();
+            } else if mentions.is_empty()
+                && let Some(r) = args.reply_to
+                && let Some(parent) = self.store.get(r)?
+                && let Some(key) = parent.author.agent_name()
+                && self
+                    .p
+                    .get(key)
+                    .is_ok_and(|rec| rec.space == self.store.space())
+            {
+                implied = vec![key.to_string()];
+            }
+        }
+        let quiet: Vec<String> = if everyone { implied.clone() } else { vec![] };
+        for k in &implied {
+            if !mentions.contains(k) {
+                mentions.push(k.clone());
+            }
+        }
         let mut kind = EntryKind::Message;
         let mut draft_approval = None;
         let mut draft_answer = None;
@@ -1462,27 +1501,50 @@ impl Thread {
             .transpose()?;
         let id = new_entry_id();
         let attachments = self.attachments(&id, &args.attachments).await?;
-        let task_to = mentions
-            .iter()
-            .find(|m| author.agent_name() != Some(m.as_str()))
-            .cloned();
+        // Everyone mentioned but the author itself, the caller may task.
+        let mut targets: Vec<(String, Option<crate::thread::KeyOwner>)> = vec![];
         // A mention of an agent the caller can't task is posted, but gives
-        // no task (a note says why).
-        let mut refused = None;
-        let mut keys_of = None;
-        let task_to = match task_to.map(|to| (self.p.get(&to), to)) {
-            Some((Ok(rec), to)) => {
-                if self.p.allows(&self.caller, &rec, Right::Task) {
-                    keys_of = self.p.keys_of(&self.caller, &rec);
-                    Some(to)
-                } else {
-                    refused = Some((to, Persistent::rights_of(&rec).task));
-                    None
+        // no task (a note says why; `@everyone` skips them quietly).
+        let mut refused = vec![];
+        for to in mentions
+            .iter()
+            .filter(|m| author.agent_name() != Some(m.as_str()))
+        {
+            match self.p.get(to) {
+                Ok(rec) if self.p.allows(&self.caller, &rec, Right::Task) => {
+                    targets.push((to.clone(), self.p.keys_of(&self.caller, &rec)));
+                }
+                Ok(rec) => {
+                    if !quiet.contains(to) {
+                        refused.push((to.clone(), Persistent::rights_of(&rec).task));
+                    }
+                }
+                Err(_) => targets.push((to.clone(), None)),
+            }
+        }
+        // Chatter limits: an agent's wake counts hops from the person who started the chain.
+        let mut hops = 0;
+        if let Some(me) = &by_agent {
+            if !targets.is_empty() {
+                let mine = fold
+                    .tasks
+                    .values()
+                    .filter(|t| t.to == *me)
+                    .max_by_key(|t| (!t.state.is_closed(), t.seq));
+                hops = mine.map_or(0, |t| t.hops) + 1;
+                if !self
+                    .p
+                    .wake_allowed(&self.store, hops, targets.len())
+                    .await?
+                {
+                    targets.clear();
                 }
             }
-            Some((Err(_), to)) => Some(to),
-            None => None,
-        };
+        } else if !targets.is_empty() {
+            self.p.wake_reset(self.store.space()).await;
+        }
+        let keys_of = targets.first().and_then(|t| t.1.clone());
+        let task_to = targets.first().map(|t| t.0.clone());
         let who = author.name.clone();
         let answered_join = draft_answer
             .as_ref()
@@ -1500,8 +1562,27 @@ impl Thread {
                 )));
             }
         }
+        // The other agents it names get the same task on a copy of the message.
+        let copies: Vec<(String, Draft)> = targets
+            .iter()
+            .skip(1)
+            .map(|(to, keys)| {
+                let mut c = Draft::new(author.clone(), kind, args.text.clone());
+                c.mentions = mentions.clone();
+                c.attachments = attachments.clone();
+                c.task = Some(TaskTo {
+                    to: to.clone(),
+                    session: None,
+                });
+                c.runs_on_keys_of = keys.clone();
+                c.view = view.clone();
+                c.hops = hops;
+                (to.clone(), c)
+            })
+            .collect();
         let mut d = Draft::new(author, kind, args.text);
         d.id = Some(id);
+        d.hops = if task_to.is_some() { hops } else { 0 };
         d.mentions = mentions;
         d.reply_to = args.reply_to.or(draft_answer.as_ref().map(|a| a.approval));
         d.attachments = attachments;
@@ -1513,29 +1594,35 @@ impl Thread {
         });
         d.runs_on_keys_of = keys_of;
         d.view = view;
-        // The agent shows as at work in the thread's live row right away
+        // Each agent shows as at work in the thread's live row right away
         // (the dispatcher gives it the task within a second).
-        if let Some(to) = &task_to
-            && let Ok(rec) = self.p.get(to)
-            && !rec.paused
-            && !super::identity::is_external(&rec)
-            && rec.session_views().iter().all(|s| s.activity.is_none())
-        {
-            self.p.set_stage(
-                &rec,
-                Some(if rec.run_id.is_some() {
-                    "thinking"
-                } else {
-                    "starting"
-                }),
-            );
+        for to in targets.iter().map(|t| &t.0) {
+            if let Ok(rec) = self.p.get(to)
+                && !rec.paused
+                && !super::identity::is_external(&rec)
+                && rec.session_views().iter().all(|s| s.activity.is_none())
+            {
+                self.p.set_stage(
+                    &rec,
+                    Some(if rec.run_id.is_some() {
+                        "thinking"
+                    } else {
+                        "starting"
+                    }),
+                );
+            }
         }
         let e = self.store.append(d)?;
+        let mut copied = vec![];
+        for (to, mut c) in copies {
+            c.fanout_of = Some(e.seq);
+            copied.push((to, self.store.append(c)?.seq));
+        }
         if let Some((seq, approve)) = answered_join {
             self.p
                 .answer_join_request(&self.caller, &self.store, seq, approve)?;
         }
-        if let Some((to, holders)) = refused {
+        for (to, holders) in refused {
             self.store.append(Draft::note(
                 "rights",
                 None,
@@ -1545,15 +1632,21 @@ impl Thread {
                 ),
             ))?;
         }
-        if let Some(to) = task_to
-            && let Ok(rec) = self.p.get(&to)
-            && rec.paused
-        {
-            self.store.append(Draft::note(
-                "dispatch",
-                Some(e.seq),
-                format!("{to} is paused; task #{} waits until it is resumed.", e.seq),
-            ))?;
+        let seqs = task_to
+            .into_iter()
+            .map(|to| (to, e.seq))
+            .chain(copied)
+            .collect::<Vec<_>>();
+        for (to, seq) in seqs {
+            if let Ok(rec) = self.p.get(&to)
+                && rec.paused
+            {
+                self.store.append(Draft::note(
+                    "dispatch",
+                    Some(seq),
+                    format!("{to} is paused; task #{seq} waits until it is resumed."),
+                ))?;
+            }
         }
         Ok(e)
     }

@@ -374,9 +374,9 @@ export class AgentKeysModel {
 }
 
 /** A record of strings (a connection's non-secret fields), else empty. */
-function stringMap(v: unknown): Record<string, string> {
-  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
-  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"));
+function stringMap(v: unknown): Map<string, string> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return new Map();
+  return new Map(Object.entries(v as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"));
 }
 
 /** The core's input for `agent_keys.list`'s answer (never a value). */

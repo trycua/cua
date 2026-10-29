@@ -3207,6 +3207,7 @@ dependencies = [
  "cua-agent-setup",
  "cua-agents",
  "cua-auth",
+ "cua-connections",
  "cua-create-failure",
  "cua-home",
  "cua-keyvault",

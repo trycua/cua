@@ -500,6 +500,8 @@ fn run_options(o: AgentRunOptions) -> Result<ca::RunOptions> {
         bridge: false,
         // Durable runs are started through a session (`cua agent run --durable`).
         durable: None,
+        // The saved connections are the Cua Spaces app's; an SDK run names its own keys.
+        hermes_config: None,
     })
 }
 

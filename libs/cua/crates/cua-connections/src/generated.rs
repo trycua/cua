@@ -29,6 +29,36 @@ pub static PROVIDERS: &[Provider] = &[
         apps: &["t3code"],
         methods: &[
             Method {
+                id: "claude-login",
+                kind: MethodKind::ImportLogin,
+                env: "CLAUDE_CODE_OAUTH_TOKEN",
+                aliases: &[],
+                scope: "claude-code",
+                app: "claude-code",
+                flow: "",
+                label: "Use your Claude Code sign-in",
+                help: "Reads the sign-in Claude Code already has on this machine. Uses your Claude plan. Only Claude Code uses it.",
+                terms_review: false,
+                secret_optional: false,
+                fields: &[
+                ],
+            },
+            Method {
+                id: "claude-token",
+                kind: MethodKind::ImportLogin,
+                env: "CLAUDE_CODE_OAUTH_TOKEN",
+                aliases: &[],
+                scope: "claude-code",
+                app: "claude-code",
+                flow: "paste",
+                label: "Paste a Claude token",
+                help: "Advanced. A token made by running claude setup-token in Terminal. It lasts a year. Only Claude Code uses it.",
+                terms_review: false,
+                secret_optional: false,
+                fields: &[
+                ],
+            },
+            Method {
                 id: "key",
                 kind: MethodKind::ApiKey,
                 env: "ANTHROPIC_API_KEY",
@@ -38,21 +68,6 @@ pub static PROVIDERS: &[Provider] = &[
                 flow: "",
                 label: "",
                 help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-            Method {
-                id: "claude-login",
-                kind: MethodKind::ImportLogin,
-                env: "CLAUDE_CODE_OAUTH_TOKEN",
-                aliases: &[],
-                scope: "claude-code",
-                app: "claude-code",
-                flow: "",
-                label: "Use your Claude sign-in",
-                help: "Copies the Claude Code sign-in found on this machine. It uses your Claude plan and only Claude Code uses it.",
                 terms_review: false,
                 secret_optional: false,
                 fields: &[
@@ -93,21 +108,6 @@ pub static PROVIDERS: &[Provider] = &[
         apps: &["t3code"],
         methods: &[
             Method {
-                id: "key",
-                kind: MethodKind::ApiKey,
-                env: "OPENAI_API_KEY",
-                aliases: &["CODEX_API_KEY"],
-                scope: "",
-                app: "",
-                flow: "",
-                label: "",
-                help: "",
-                terms_review: false,
-                secret_optional: false,
-                fields: &[
-                ],
-            },
-            Method {
                 id: "chatgpt-login",
                 kind: MethodKind::SubscriptionLogin,
                 env: "CODEX_AUTH_JSON",
@@ -117,6 +117,21 @@ pub static PROVIDERS: &[Provider] = &[
                 flow: "device_code",
                 label: "Sign in with ChatGPT",
                 help: "Shows a code to enter on openai.com. It uses your ChatGPT plan and only Codex uses it.",
+                terms_review: false,
+                secret_optional: false,
+                fields: &[
+                ],
+            },
+            Method {
+                id: "key",
+                kind: MethodKind::ApiKey,
+                env: "OPENAI_API_KEY",
+                aliases: &["CODEX_API_KEY"],
+                scope: "",
+                app: "",
+                flow: "",
+                label: "",
+                help: "",
                 terms_review: false,
                 secret_optional: false,
                 fields: &[

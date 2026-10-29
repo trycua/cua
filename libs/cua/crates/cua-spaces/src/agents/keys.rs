@@ -1262,6 +1262,16 @@ struct RemoveArgs {
     env: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FromShellArgs {
+    env: String,
+    #[serde(default)]
+    region: Option<String>,
+    #[serde(default)]
+    fields: BTreeMap<String, String>,
+}
+
 #[derive(Serialize)]
 struct ShellReport {
     /// The provider keys your login shell has set (names; never a value).
@@ -1316,17 +1326,19 @@ pub fn app_call(
         .map_err(|e| Error::Agent(e.to_string())),
         // The value goes straight from your shell into the store; it is never answered.
         "agent_keys.from_shell" => report(
-            serde_json::from_value::<RemoveArgs>(args)
+            serde_json::from_value::<FromShellArgs>(args)
                 .map_err(|e| Error::InvalidArgument(format!("agent_keys.from_shell: {e}")))
                 .and_then(|a| {
                     let value = shell_value(shell, &a.env).ok_or_else(|| {
                         Error::InvalidArgument(format!("{} isn't set in your shell", a.env))
                     })?;
                     let provider = provider_of(&a.env);
-                    keys.set(
+                    keys.set_with(
                         provider,
                         (provider == "other").then_some(a.env.as_str()),
                         &value,
+                        a.region.as_deref(),
+                        &a.fields,
                     )
                 })
                 .and_then(|_| keys.report()),

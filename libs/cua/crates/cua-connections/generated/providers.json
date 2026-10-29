@@ -53,14 +53,19 @@
       "kind": "hosted",
       "methods": [
         {
-          "id": "key",
-          "kind": "api_key",
-          "scope": ""
-        },
-        {
           "id": "claude-login",
           "kind": "import_login",
           "scope": "claude-code"
+        },
+        {
+          "id": "claude-token",
+          "kind": "import_login",
+          "scope": "claude-code"
+        },
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
         }
       ],
       "name": "Anthropic",
@@ -103,14 +108,14 @@
       "kind": "hosted",
       "methods": [
         {
-          "id": "key",
-          "kind": "api_key",
-          "scope": ""
-        },
-        {
           "id": "chatgpt-login",
           "kind": "subscription_login",
           "scope": "openai-codex"
+        },
+        {
+          "id": "key",
+          "kind": "api_key",
+          "scope": ""
         }
       ],
       "name": "OpenAI",

@@ -62,6 +62,11 @@ pub struct AgentKeyInput {
     pub expired: bool,
     /// A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
     pub label: Option<String>,
+    /// The plan or region chosen for it (Z.AI), when the provider has them.
+    pub region: Option<String>,
+    /// Non-secret values saved with it: a custom endpoint's `base_url`, `model`
+    /// and `wire`, or a `model`. Never the key.
+    pub fields: std::collections::HashMap<String, String>,
 }
 
 /// What the section shows.
@@ -469,6 +474,8 @@ mod tests {
             added_ms: 1,
             expired: false,
             label: None,
+            region: None,
+            fields: Default::default(),
         }
     }
 

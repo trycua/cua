@@ -50,10 +50,15 @@ public final class AgentKeysModel {
         }
     }
 
-    /// Adds or replaces a key (`env` names an Other key).
-    public func save(provider: String, env: String?, value: String) async throws {
+    /// Adds or replaces a key (`env` names an Other key; `provider` is a provider
+    /// of the registry otherwise). `region` and `fields` are the non-secret
+    /// choices a connection carries (a plan, a model, a custom endpoint's URL).
+    public func save(provider: String, env: String?, value: String,
+                     region: String? = nil, fields: [String: String] = [:]) async throws {
         var args: [String: Any] = ["provider": provider, "value": value]
         if provider == "other", let env, !env.isEmpty { args["env"] = env }
+        if let region, !region.isEmpty { args["region"] = region }
+        if !fields.isEmpty { args["fields"] = fields }
         try await call("agent_keys.set", args)
     }
 
@@ -72,7 +77,9 @@ public final class AgentKeysModel {
                              last4: k["last4"] as? String ?? "",
                              addedMs: (k["added_ms"] as? NSNumber)?.uint64Value ?? 0,
                              expired: k["expired"] as? Bool ?? false,
-                             label: k["label"] as? String)
+                             label: k["label"] as? String,
+                             region: k["region"] as? String,
+                             fields: (k["fields"] as? [String: String]) ?? [:])
         }
         let unavailable = report?["available"] as? Bool == false
             ? (report?["unavailable"] as? String ?? "this computer can't keep keys") : nil

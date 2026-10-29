@@ -14,19 +14,29 @@ check = { path = "/v1/models?limit=1", auth = "x-api-key" }
 apps = ["t3code"]
 
 [[method]]
-id = "key"
-kind = "api_key"
-env = "ANTHROPIC_API_KEY"
-aliases = ["ANTHROPIC_AUTH_TOKEN"]
-
-[[method]]
 id = "claude-login"
 kind = "import_login"
 env = "CLAUDE_CODE_OAUTH_TOKEN"
 scope = "claude-code"
 app = "claude-code"
-label = "Use your Claude sign-in"
-help = "Copies the Claude Code sign-in found on this machine. It uses your Claude plan and only Claude Code uses it."
+label = "Use your Claude Code sign-in"
+help = "Reads the sign-in Claude Code already has on this machine. Uses your Claude plan. Only Claude Code uses it."
+
+[[method]]
+id = "claude-token"
+kind = "import_login"
+env = "CLAUDE_CODE_OAUTH_TOKEN"
+scope = "claude-code"
+app = "claude-code"
+flow = "paste"
+label = "Paste a Claude token"
+help = "Advanced. A token made by running claude setup-token in Terminal. It lasts a year. Only Claude Code uses it."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "ANTHROPIC_API_KEY"
+aliases = ["ANTHROPIC_AUTH_TOKEN"]
 
 [delivery]
 claude-code = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"]

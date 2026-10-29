@@ -15,12 +15,6 @@ check = { path = "/models", auth = "bearer" }
 apps = ["t3code"]
 
 [[method]]
-id = "key"
-kind = "api_key"
-env = "OPENAI_API_KEY"
-aliases = ["CODEX_API_KEY"]
-
-[[method]]
 id = "chatgpt-login"
 kind = "subscription_login"
 env = "CODEX_AUTH_JSON"
@@ -29,6 +23,12 @@ app = "codex"
 flow = "device_code"
 label = "Sign in with ChatGPT"
 help = "Shows a code to enter on openai.com. It uses your ChatGPT plan and only Codex uses it."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "OPENAI_API_KEY"
+aliases = ["CODEX_API_KEY"]
 
 [delivery]
 openai-codex = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_AUTH_JSON"]

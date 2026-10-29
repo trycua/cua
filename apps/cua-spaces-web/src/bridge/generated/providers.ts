@@ -10,38 +10,40 @@ export interface ProviderEntry {
   icon: string;
   tier: "top" | "more";
   aliases: string[];
+  /** The variable a key for it is saved as. */
+  keyEnv: string;
 }
 
 /** The providers a person can see, in rank order. */
 export const PROVIDER_REGISTRY: ProviderEntry[] = [
-  { id: "anthropic", name: "Anthropic", icon: "anthropic", tier: "top", aliases: [] },
-  { id: "openai", name: "OpenAI", icon: "openai", tier: "top", aliases: [] },
-  { id: "openrouter", name: "OpenRouter", icon: "openrouter", tier: "top", aliases: [] },
-  { id: "google", name: "Google AI Studio", icon: "google", tier: "top", aliases: ["gemini", "google ai", "aistudio"] },
-  { id: "xai", name: "xAI", icon: "xai", tier: "top", aliases: ["grok"] },
-  { id: "deepseek", name: "DeepSeek", icon: "deepseek", tier: "top", aliases: [] },
-  { id: "kimi", name: "Kimi (Moonshot)", icon: "kimi", tier: "top", aliases: ["moonshot", "kimi code"] },
-  { id: "github", name: "GitHub Copilot", icon: "github", tier: "more", aliases: ["copilot", "github copilot cli"] },
-  { id: "huggingface", name: "Hugging Face", icon: "huggingface", tier: "more", aliases: ["hf"] },
-  { id: "zai", name: "Z.AI (GLM)", icon: "zai", tier: "more", aliases: ["glm", "zhipu", "z.ai"] },
-  { id: "fireworks", name: "Fireworks AI", icon: "fireworks", tier: "more", aliases: ["fw"] },
-  { id: "nvidia", name: "NVIDIA NIM", icon: "nvidia", tier: "more", aliases: ["nim", "nemotron", "build.nvidia.com"] },
-  { id: "ollama-cloud", name: "Ollama Cloud", icon: "ollama-cloud", tier: "more", aliases: ["ollama"] },
-  { id: "deepinfra", name: "DeepInfra", icon: "deepinfra", tier: "more", aliases: ["deep infra"] },
-  { id: "novita", name: "Novita AI", icon: "novita", tier: "more", aliases: ["novitaai"] },
-  { id: "nebius-token-factory", name: "Nebius Token Factory", icon: "nebius-token-factory", tier: "more", aliases: ["nebius"] },
-  { id: "gmi", name: "GMI Cloud", icon: "gmi", tier: "more", aliases: ["gmicloud"] },
-  { id: "upstage", name: "Upstage Solar", icon: "upstage", tier: "more", aliases: ["solar"] },
-  { id: "arcee", name: "Arcee AI", icon: "arcee", tier: "more", aliases: ["trinity"] },
-  { id: "ai-gateway", name: "Vercel AI Gateway", icon: "ai-gateway", tier: "more", aliases: ["vercel"] },
-  { id: "opencode-zen", name: "OpenCode Zen", icon: "opencode-zen", tier: "more", aliases: ["zen"] },
-  { id: "opencode-go", name: "OpenCode Go", icon: "opencode-go", tier: "more", aliases: ["go"] },
-  { id: "kilocode", name: "Kilo Code", icon: "kilocode", tier: "more", aliases: ["kilo"] },
-  { id: "xiaomi", name: "Xiaomi MiMo", icon: "xiaomi", tier: "more", aliases: ["mimo"] },
-  { id: "stepfun", name: "StepFun", icon: "stepfun", tier: "more", aliases: ["step"] },
-  { id: "minimax", name: "MiniMax", icon: "minimax", tier: "more", aliases: ["mini-max"] },
-  { id: "alibaba", name: "Qwen Cloud (Alibaba)", icon: "alibaba", tier: "more", aliases: ["qwen", "dashscope", "alibaba cloud"] },
-  { id: "custom", name: "Custom endpoint", icon: "custom", tier: "top", aliases: ["openai compatible", "lm studio", "ollama", "vllm", "llama.cpp", "litellm", "local server", "gateway", "proxy"] },
+  { id: "anthropic", name: "Anthropic", icon: "anthropic", tier: "top", aliases: [], keyEnv: "ANTHROPIC_API_KEY" },
+  { id: "openai", name: "OpenAI", icon: "openai", tier: "top", aliases: [], keyEnv: "OPENAI_API_KEY" },
+  { id: "openrouter", name: "OpenRouter", icon: "openrouter", tier: "top", aliases: [], keyEnv: "OPENROUTER_API_KEY" },
+  { id: "google", name: "Google AI Studio", icon: "google", tier: "top", aliases: ["gemini", "google ai", "aistudio"], keyEnv: "GEMINI_API_KEY" },
+  { id: "xai", name: "xAI", icon: "xai", tier: "top", aliases: ["grok"], keyEnv: "XAI_API_KEY" },
+  { id: "deepseek", name: "DeepSeek", icon: "deepseek", tier: "top", aliases: [], keyEnv: "DEEPSEEK_API_KEY" },
+  { id: "kimi", name: "Kimi (Moonshot)", icon: "kimi", tier: "top", aliases: ["moonshot", "kimi code"], keyEnv: "KIMI_API_KEY" },
+  { id: "github", name: "GitHub Copilot", icon: "github", tier: "more", aliases: ["copilot", "github copilot cli"], keyEnv: "COPILOT_GITHUB_TOKEN" },
+  { id: "huggingface", name: "Hugging Face", icon: "huggingface", tier: "more", aliases: ["hf"], keyEnv: "HF_TOKEN" },
+  { id: "zai", name: "Z.AI (GLM)", icon: "zai", tier: "more", aliases: ["glm", "zhipu", "z.ai"], keyEnv: "GLM_API_KEY" },
+  { id: "fireworks", name: "Fireworks AI", icon: "fireworks", tier: "more", aliases: ["fw"], keyEnv: "FIREWORKS_API_KEY" },
+  { id: "nvidia", name: "NVIDIA NIM", icon: "nvidia", tier: "more", aliases: ["nim", "nemotron", "build.nvidia.com"], keyEnv: "NVIDIA_API_KEY" },
+  { id: "ollama-cloud", name: "Ollama Cloud", icon: "ollama-cloud", tier: "more", aliases: ["ollama"], keyEnv: "OLLAMA_API_KEY" },
+  { id: "deepinfra", name: "DeepInfra", icon: "deepinfra", tier: "more", aliases: ["deep infra"], keyEnv: "DEEPINFRA_API_KEY" },
+  { id: "novita", name: "Novita AI", icon: "novita", tier: "more", aliases: ["novitaai"], keyEnv: "NOVITA_API_KEY" },
+  { id: "nebius-token-factory", name: "Nebius Token Factory", icon: "nebius-token-factory", tier: "more", aliases: ["nebius"], keyEnv: "NEBIUS_API_KEY" },
+  { id: "gmi", name: "GMI Cloud", icon: "gmi", tier: "more", aliases: ["gmicloud"], keyEnv: "GMI_API_KEY" },
+  { id: "upstage", name: "Upstage Solar", icon: "upstage", tier: "more", aliases: ["solar"], keyEnv: "UPSTAGE_API_KEY" },
+  { id: "arcee", name: "Arcee AI", icon: "arcee", tier: "more", aliases: ["trinity"], keyEnv: "ARCEEAI_API_KEY" },
+  { id: "ai-gateway", name: "Vercel AI Gateway", icon: "ai-gateway", tier: "more", aliases: ["vercel"], keyEnv: "AI_GATEWAY_API_KEY" },
+  { id: "opencode-zen", name: "OpenCode Zen", icon: "opencode-zen", tier: "more", aliases: ["zen"], keyEnv: "OPENCODE_ZEN_API_KEY" },
+  { id: "opencode-go", name: "OpenCode Go", icon: "opencode-go", tier: "more", aliases: ["go"], keyEnv: "OPENCODE_GO_API_KEY" },
+  { id: "kilocode", name: "Kilo Code", icon: "kilocode", tier: "more", aliases: ["kilo"], keyEnv: "KILOCODE_API_KEY" },
+  { id: "xiaomi", name: "Xiaomi MiMo", icon: "xiaomi", tier: "more", aliases: ["mimo"], keyEnv: "XIAOMI_API_KEY" },
+  { id: "stepfun", name: "StepFun", icon: "stepfun", tier: "more", aliases: ["step"], keyEnv: "STEPFUN_API_KEY" },
+  { id: "minimax", name: "MiniMax", icon: "minimax", tier: "more", aliases: ["mini-max"], keyEnv: "MINIMAX_API_KEY" },
+  { id: "alibaba", name: "Qwen Cloud (Alibaba)", icon: "alibaba", tier: "more", aliases: ["qwen", "dashscope", "alibaba cloud"], keyEnv: "DASHSCOPE_API_KEY" },
+  { id: "custom", name: "Custom endpoint", icon: "custom", tier: "top", aliases: ["openai compatible", "lm studio", "ollama", "vllm", "llama.cpp", "litellm", "local server", "gateway", "proxy"], keyEnv: "CUSTOM_ENDPOINT_API_KEY" },
 ];
 
 /** The kinds of way to connect a provider (a closed set). */

@@ -441,6 +441,8 @@ mod tests {
                         added_ms: 1,
                         expired: false,
                         label: None,
+                        region: None,
+                        fields: Default::default(),
                     }],
                     ..Default::default()
                 },

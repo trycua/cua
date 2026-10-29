@@ -229,7 +229,7 @@ export function Composer({
                     className={cn("inline-flex h-6 max-w-full items-center gap-1 rounded-lg bg-background pr-0.5 pl-2 text-xs text-foreground")}
                   >
                     {problem ? <TriangleAlertIcon aria-hidden className="size-3 shrink-0 text-warning" /> : null}
-                    <span className="min-w-0 truncate">{problem ?? addressee.label(h)}</span>
+                    <span className="min-w-0 truncate">{problem ?? `Talking to ${addressee.label(h)}`}</span>
                     <button
                       type="button"
                       data-addressee-remove={h}
@@ -238,7 +238,7 @@ export function Composer({
                         addressee.onRemove(h);
                         area.current?.focus();
                       }}
-                      className="inline-flex size-5 shrink-0 cursor-default items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                      className="inline-flex size-5 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
                     >
                       <XIcon className="size-3" />
                     </button>

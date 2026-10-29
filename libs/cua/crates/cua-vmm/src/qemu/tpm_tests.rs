@@ -428,7 +428,8 @@ async fn cancelled_launch_child() {
     let launch = runtime.launch_once(&mut st, &spec, boot, true, true);
     // Early: cancelled while the launch shell runs. Late: cancelled after the
     // pid is persisted, while the launch waits for QMP.
-    let wait = if std::env::var("CUA_CANCEL_LATE").is_ok() {
+    let late = std::env::var("CUA_CANCEL_LATE").is_ok();
+    let wait = if late {
         Duration::from_secs(2)
     } else {
         Duration::from_millis(100)
@@ -438,25 +439,36 @@ async fn cancelled_launch_child() {
     let _owner = tokio::time::timeout(Duration::from_secs(10), runtime.own("vm"))
         .await
         .expect("the VM is released");
-    drop(_owner);
     let tpm = dir.join("tpm");
-    let old = std::fs::read_to_string(root.join("fake.pid"))
-        .unwrap()
-        .trim()
-        .parse::<u32>()
+    // Early cancellation can precede either stub's pid write, including when
+    // the launch shell has already backgrounded QEMU. Late cancellation must
+    // still exercise both processes after they started.
+    for file in ["fake.pid", "qemu.pid"] {
+        match std::fs::read_to_string(root.join(file)) {
+            Ok(pid) => assert!(!host::pid_alive(pid.trim().parse().unwrap()), "{file}"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !late => {}
+            Err(e) => panic!("{file}: {e}"),
+        }
+    }
+    // Check even when a stub never wrote its pid. Both stand-ins retain the
+    // unique run directory in argv, including after the QEMU stub execs sleep.
+    let ps = std::process::Command::new("ps")
+        .args(["-ww", "-axo", "command="])
+        .output()
         .unwrap();
-    assert!(!host::pid_alive(old), "the cancelled swtpm is gone");
-    let qemu: u32 = std::fs::read_to_string(root.join("qemu.pid"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    assert!(!host::pid_alive(qemu), "the cancelled QEMU is gone");
+    assert!(ps.status.success());
+    let commands = String::from_utf8_lossy(&ps.stdout);
+    let live: Vec<_> = commands
+        .lines()
+        .filter(|line| line.contains(root.to_str().unwrap()))
+        .collect();
+    assert!(live.is_empty(), "processes survived VM release: {live:?}");
     assert!(
         tpm_records(&dir).unwrap().is_empty(),
         "its record is removed"
     );
 
+    drop(_owner);
     // A replacement on the same directory is not touched by late cleanup.
     let _ = std::fs::remove_file(tpm.join("swtpm.sock"));
     let link = fake_swtpm_link(&root);
@@ -484,6 +496,8 @@ fn cancelled_launch(late: bool) {
     let bin = tmp.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     let link = fake_swtpm_link(tmp.path());
+    let sleeper = tmp.path().join("qemu-sleep");
+    std::os::unix::fs::symlink(host::which("sleep").unwrap(), &sleeper).unwrap();
     let exe = |name: &str, body: String| {
         let path = bin.join(name);
         std::fs::write(&path, body).unwrap();
@@ -492,8 +506,9 @@ fn cancelled_launch(late: bool) {
     exe(
         "qemu-system-aarch64",
         format!(
-            "#!/bin/sh\necho $$ > {}\nexec sleep 30\n",
-            tmp.path().join("qemu.pid").display()
+            "#!/bin/sh\necho $$ > {}\nexec {} 30\n",
+            tmp.path().join("qemu.pid").display(),
+            sleeper.display()
         ),
     );
     exe(

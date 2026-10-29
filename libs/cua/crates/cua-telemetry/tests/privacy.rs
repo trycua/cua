@@ -327,7 +327,9 @@ fn all_builders(s: &str) -> Vec<Event> {
         .unwrap(),
     );
     assert!(events::repo_cache("https://github.com/o/r", "local", 0, 0, "none").is_none());
-    v.push(events::connection_changed("deepseek", "api_key", "connect", "ok"));
+    v.push(events::connection_changed(
+        "deepseek", "api_key", "connect", "ok",
+    ));
     v.push(events::connection_changed(s, s, s, s));
     v.push(events::agent_used_space("space_bash").unwrap());
     v.push(events::agent_used_space("computer_click").unwrap());
@@ -1991,17 +1993,31 @@ fn connection_events_use_the_registrys_words_only() {
     registry.sort_unstable();
     let mut ours: Vec<&str> = schema::CONNECTION_PROVIDERS.to_vec();
     ours.sort_unstable();
-    assert_eq!(ours, registry, "regenerate schema::CONNECTION_PROVIDERS from providers/*.toml");
-    let mut kinds: Vec<&str> = cua_connections::MethodKind::ALL.iter().map(|k| k.word()).collect();
+    assert_eq!(
+        ours, registry,
+        "regenerate schema::CONNECTION_PROVIDERS from providers/*.toml"
+    );
+    let mut kinds: Vec<&str> = cua_connections::MethodKind::ALL
+        .iter()
+        .map(|k| k.word())
+        .collect();
     kinds.push("other");
     assert_eq!(schema::CONNECTION_METHODS, kinds.as_slice());
     // A provider, method or action that is not a fixed word is sent as the fallback, never as typed.
-    let e = events::connection_changed("http://127.0.0.1:1234/v1", "sk-ant-secret", "ada@example.com", "401 from api.example");
+    let e = events::connection_changed(
+        "http://127.0.0.1:1234/v1",
+        "sk-ant-secret",
+        "ada@example.com",
+        "401 from api.example",
+    );
     let text = format!("{e:?}");
     for leak in ["127.0.0.1", "sk-ant", "ada@", "401", "example"] {
         assert!(!text.contains(leak), "{text}");
     }
     let e = events::connection_changed("openrouter", "api_key", "connect", "ok");
     let text = format!("{e:?}");
-    assert!(text.contains("openrouter") && text.contains("api_key") && text.contains("connect"), "{text}");
+    assert!(
+        text.contains("openrouter") && text.contains("api_key") && text.contains("connect"),
+        "{text}"
+    );
 }

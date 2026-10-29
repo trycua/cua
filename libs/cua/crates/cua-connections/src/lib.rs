@@ -20,6 +20,7 @@ pub mod generate;
 pub mod hermes;
 pub mod schema;
 
+#[rustfmt::skip]
 mod generated;
 
 use std::collections::BTreeMap;

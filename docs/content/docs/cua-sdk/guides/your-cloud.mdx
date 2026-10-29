@@ -13,7 +13,7 @@ SDK calls and `cua-bench` runs work there, and you pay the cloud directly.
 Each sandbox dials out to the cua.ai relay as a machine of your account, so
 nothing in your cloud listens on the internet. Your laptop, your agents and the
 Cua Spaces app reach it wherever they are. Streams, files and presence pass
-through relay.cua.ai, and only your devices and the accounts you share a Space
+through relay.cua.ai, and only your machines and the accounts you share a Space
 with can reach the sandbox. The guest holds only its own machine token, never
 your account credentials. An account holds at most 32 machines, and each cloud
 sandbox uses one until you delete it.
@@ -32,10 +32,10 @@ sandbox uses one until you delete it.
   - **Google Cloud**: `gcloud auth login` and a project with the Compute Engine
     API enabled.
   - **Hetzner**: a project API token with Read & Write access. Hetzner has no
-    sign-in, so Cua seals the token to your devices (see
-    [Hetzner and Modal tokens](#hetzner-and-modal-tokens-sealed-to-your-devices)).
+    sign-in, so Cua seals the token to your machines (see
+    [Hetzner and Modal tokens](#hetzner-and-modal-tokens-sealed-to-your-machines)).
   - **Modal**: a profile in `~/.modal.toml` (`modal token new`), or its token
-    sealed to your devices.
+    sealed to your machines.
   - **Azure**: nothing on this machine. Azure is always linked through Cua's
     sign-in, with no key. See
     [Link a cloud without a key](/cua-sdk/guides/your-cloud-without-a-key#azure).
@@ -105,9 +105,9 @@ how many machines run there.
 
 With `--oidc`, Cua stores no AWS credentials, on this machine or anywhere
 else. Cua's issuer (`oidc.cua.ai`) signs a 15-minute token for your Cua
-account each time a device needs AWS, and your AWS account trusts those tokens
-through one CloudFormation stack, `cua-spaces`. Every signed-in device, and
-every agent on those devices, can then use the link, so you link the account
+account each time a machine needs AWS, and your AWS account trusts those tokens
+through one CloudFormation stack, `cua-spaces`. Every signed-in machine, and
+every agent on those machines, can then use the link, so you link the account
 once:
 
 ```bash test="cli-shape" id="cua-cloud-connect-oidc"
@@ -159,23 +159,23 @@ cua daemon that runs is older than the cua you call it from, a link with
 `--oidc` or a budget is refused with a message to update and restart the
 daemon, instead of falling back to the CLI sign-in.
 
-### Hetzner and Modal tokens, sealed to your devices
+### Hetzner and Modal tokens, sealed to your machines
 
 Hetzner and Modal have no OIDC, so they need an API token. Cua seals it to
-your devices, and you give it once for all of them:
+your machines, and you give it once for all of them:
 
 ```bash test="cli-shape" id="cua-cloud-connect-hetzner-sealed"
 cua cloud connect hetzner --token-stdin --region fsn1 --budget 50 --max-size 4x8
 cua cloud connect modal --token-stdin --budget 50
 ```
 
-Cua checks the token first and creates nothing. Your device encrypts it with
+Cua checks the token first and creates nothing. Your machine encrypts it with
 your account's pool key, so Cua's servers keep only ciphertext, and any of
-your devices opens it in memory when it calls the cloud. `cua cloud status
+your machines opens it in memory when it calls the cloud. `cua cloud status
 hetzner` lists the devices that can open it. On another device, `cua cloud
 connect hetzner --sealed --budget 50` links the same token without pasting
-it. `--no-sealed` keeps the Hetzner token on this device only. Replacing,
-revoking and removed devices are covered in
+it. `--no-sealed` keeps the Hetzner token on this machine only. Replacing,
+revoking and removed machines are covered in
 [Connect a cloud](/spaces/guides/connect-a-cloud#hetzner-and-modal).
 
 ## Create sandboxes and Spaces
@@ -317,8 +317,8 @@ its disk.
   - Give the token to `cua cloud connect hetzner` on standard input
     (`--token-stdin`) or in `HCLOUD_TOKEN`; the `hcloud` CLI's active context
     also works. Only a token that passes the checks is used. It is
-    [sealed to your devices](#hetzner-and-modal-tokens-sealed-to-your-devices),
-    or with `--no-sealed` saved in this device's credential store (the system
+    [sealed to your machines](#hetzner-and-modal-tokens-sealed-to-your-machines),
+    or with `--no-sealed` saved in this machine's credential store (the system
     vault on a Cua-signed Mac, a private file in the cua home elsewhere),
     never in `config.toml`.
   - **Container images only.** Hetzner Cloud servers have no `/dev/kvm`, so
@@ -339,7 +339,7 @@ its disk.
 - **Modal**:
   - One environment per connection (`--environment`) and a `~/.modal.toml`
     profile (`--profile`), or a token
-    [sealed to your devices](#hetzner-and-modal-tokens-sealed-to-your-devices)
+    [sealed to your machines](#hetzner-and-modal-tokens-sealed-to-your-machines)
     (`--token-stdin`, given as `<token id>:<token secret>`).
   - Sandboxes run under gVisor by default. `--runtime microvm` uses Modal's VM
     runtime. Neither has `/dev/kvm`, so only Linux images run.

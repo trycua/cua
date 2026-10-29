@@ -7,8 +7,8 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 One command removes Cua Spaces, the `cua` CLI and what they set up on this
-computer. It lists what it found and asks before it removes anything. Run it
-again any time: a computer that has nothing left, or only part of Cua, is fine.
+machine. It lists what it found and asks before it removes anything. Run it
+again any time: a machine that has nothing left, or only part of Cua, is fine.
 
 <Tabs items={['macOS and Linux', 'Windows']}>
   <Tab value="macOS and Linux">
@@ -36,13 +36,13 @@ curl -fsSL https://cua.ai/uninstall.sh | sh -s -- --dry-run
 - The Cua Spaces app.
 - The `cua` CLI, and the line the installer added to your shell profile (the user
   PATH on Windows).
-- The host service, after `cua host remove`, so this computer no longer shows up
-  as a computer in your account.
+- The host service, after `cua host remove`, so this machine no longer shows up
+  as a machine in your account.
 - The Cua Spaces skills and the `cua` MCP server in your AI agents, the way
   `cua connect remove` does. Entries from other tools stay, and so do Cua Driver's
   `cua-driver` skill and MCP server (see [Other Cua tools](#other-cua-tools)).
 - Launch at login.
-- Your sign-in and the device key: macOS Keychain items (including the old
+- Your sign-in and the machine key: macOS Keychain items (including the old
   `run.cua.ai` one), Windows Credential Manager entries.
 - Cua's settings, caches and logs.
 
@@ -53,13 +53,13 @@ Cua Volume files and the Keyvault. Running Spaces are listed and stopped first,
 and their disks stay.
 
 Pass `--keep-data` (`-KeepData`) to also keep `~/.cua` (settings, caches, the
-device key) and the app's settings, for a later reinstall. Programs, services,
+machine key) and the app's settings, for a later reinstall. Programs, services,
 agent entries and your sign-in are still removed.
 
 ## Delete Spaces and their data too
 
 <Callout type="warn">
-`--delete-spaces` deletes the Spaces on this computer, the local Cua Volume files
+`--delete-spaces` deletes the Spaces on this machine, the local Cua Volume files
 and the Keyvault. It cannot be undone.
 </Callout>
 

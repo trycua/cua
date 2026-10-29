@@ -5,10 +5,10 @@ description: 'Add a coding or computer-use agent to a Space, message it, and che
 
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 
-An agent in a Space works on a computer of its own instead of on This Mac. You
+An agent in a Space works on a machine of its own instead of on This Mac. You
 add it once, give it work, and come back later to read what it did. The Space
 is the boundary: the agent approves its own tool calls inside it, and nothing
-it does reaches your computer unless you allow it.
+it does reaches your machine unless you allow it.
 
 There are three ways to run one:
 
@@ -62,9 +62,9 @@ re-driven after a crash (see
   </Tab>
 </Tabs>
 
-Named agents are kept by the Cua daemon on This Mac (or on the computer whose
+Named agents are kept by the Cua daemon on This Mac (or on the machine whose
 daemon you use), and their Space can be any Space you can reach: a local one,
-one on a [computer you added](/spaces/guides/add-a-computer), or one in your own
+one on a [machine you added](/spaces/guides/add-a-computer), or one in your own
 cloud.
 
 ## Message it
@@ -90,7 +90,7 @@ message. On a narrow window the Reply button is always visible.
 After you talk to an agent, a small chip with its name and an X sits in the
 box, and the next message goes to it until you @ someone else or press the X.
 Cua Spaces adds the `@name` when you send, and says so quietly the first time.
-Which agent is kept for each Space on your computer, so it is still there after
+Which agent is kept for each Space on your machine, so it is still there after
 a reload.
 
 When you have not said who, the message goes to the one agent in the Space, or
@@ -132,15 +132,15 @@ cua agent notifications --unread
 `cua agent ls` with no Space lists your named agents; with a Space it lists the
 runs in it, including one-off tasks.
 
-## From another device or person
+## From another machine or person
 
-A Space's thread and its agents live on the computer that provides the Space.
-When that computer is shared with you, directly or through a
+A Space's thread and its agents live on the machine that provides the Space.
+When that machine is shared with you, directly or through a
 [team](/spaces/guides/teams), you read and post in the thread of each Space it
-provides from your own device, and @mention its agents there, with the same
-tools as on that computer. When only a Space is shared with you, you reach that
-Space's thread the same way, and nothing else of the computer that provides it.
-Your role is the one the Space was shared with, and stopping the share ends it. Cua sends each call to that computer's daemon
+provides from your own machine, and @mention its agents there, with the same
+tools as on that machine. When only a Space is shared with you, you reach that
+Space's thread the same way, and nothing else of the machine that provides it.
+Your role is the one the Space was shared with, and stopping the share ends it. Cua sends each call to that machine's daemon
 through the relay, signed in as you: what you post shows your name, and the
 owner's roles and each agent's rights decide what you can do. Shared with you
 to view, you can read the thread and see the agents, but you cannot post,
@@ -152,7 +152,7 @@ thread_read {space: "relay:space-7f2c41d0", after: 41, follow_ms: 20000}
 ```
 
 `follow_ms` waits up to 25 seconds for new entries, so a client can follow the
-thread. The thread can be reached while that computer is online. If it runs an
+thread. The thread can be reached while that machine is online. If it runs an
 older Cua, the answer says to update Cua on it.
 
 ## Coding agents
@@ -176,7 +176,7 @@ A harness needs a provider key. Save it once in **Cua Spaces, Settings,
 Agents** (or `cua agent keys set`), and each run gets the keys its harness
 reads, written 0600 inside the run and redacted from its log; see
 [Agent keys](/spaces/guides/connect-your-agent#agent-keys). Credential files on
-your computer are never copied into a Space. The one exception is Claude Code's
+your machine are never copied into a Space. The one exception is Claude Code's
 own sign-in, which you choose to import: Cua reads it once you agree and gives
 Claude Code runs the access token only, never the refresh token (see
 [Claude Code and your Claude plan](/spaces/guides/connect-your-agent#claude-code-and-your-claude-plan)).

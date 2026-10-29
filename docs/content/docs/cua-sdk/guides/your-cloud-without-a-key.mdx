@@ -5,7 +5,7 @@ description: Link Google Cloud or Azure to Cua with no stored key, through workl
 
 `cua cloud connect` can link AWS, Google Cloud and Azure with no key stored
 anywhere. Cua's issuer (`oidc.cua.ai`) signs a 15-minute token for your Cua
-account each time a device needs the cloud, and your cloud trusts those
+account each time a machine needs the cloud, and your cloud trusts those
 tokens. AWS is in [Use your own cloud](/cua-sdk/guides/your-cloud#link-aws-without-a-key);
 Google Cloud and Azure are below. An agent can do all of it for you: see
 [Connect a cloud (for agents)](/spaces/guides/connect-a-cloud).
@@ -31,7 +31,7 @@ creates:
   only its own name as the audience, and has the condition
   `assertion.sub=='account:<account>'`. It maps `google.subject` and
   `attribute.account` to the subject, and `attribute.device` and
-  `attribute.purpose` to the device and purpose of each token, which Cloud
+  `attribute.purpose` to the machine and purpose of each token, which Cloud
   Audit Logs show;
 - the custom role `cuaSpaces` with the
   [15 Compute Engine permissions](/cua-sdk/guides/your-cloud-safety#google-cloud)

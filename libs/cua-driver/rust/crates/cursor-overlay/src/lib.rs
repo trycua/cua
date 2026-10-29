@@ -13,6 +13,7 @@ pub mod badge_glyphs;
 pub mod badge_mode;
 pub mod capture_exclusion;
 pub mod capture_utils;
+pub mod cursor_options;
 pub mod motion;
 pub mod motion_defaults;
 pub mod render_map;
@@ -28,6 +29,7 @@ pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use badge_mode::BadgeMode;
+pub use cursor_options::CursorOptions;
 pub use motion::{
     MotionConfig, MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, Spring,
     DEFAULT_FIXED_MS,
@@ -55,10 +57,10 @@ pub use theme::{
 };
 pub use theme_artifact::{
     decode_theme, embedded_default_theme, inspect_artifact, list_installed_themes,
-    load_installed_theme, paint_compiled_theme, paint_compiled_theme_with_tint,
-    resolve_theme_selection, theme_store_root, validate_compiled_theme, CompiledAnimation,
-    CompiledDrawCommand, CompiledFrame, CompiledGeometry, CompiledStroke, CompiledTheme,
-    CompiledTransform,
+    load_installed_theme, paint_compiled_theme, paint_compiled_theme_with_float,
+    paint_compiled_theme_with_tint, resolve_theme_selection, theme_store_root,
+    validate_compiled_theme, CompiledAnimation, CompiledDrawCommand, CompiledFrame,
+    CompiledGeometry, CompiledStroke, CompiledTheme, CompiledTransform,
 };
 #[cfg(feature = "theme-authoring")]
 pub use theme_artifact::{encode_theme, install_artifact, uninstall_theme};
@@ -115,6 +117,7 @@ impl CursorConfig {
         // them under each cursor it creates.
         motion_defaults::load_active();
         badge_mode::load_active();
+        cursor_options::load_active();
         Self::parse(&args[1..])
     }
 

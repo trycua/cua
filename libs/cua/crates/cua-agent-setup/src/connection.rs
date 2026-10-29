@@ -832,9 +832,9 @@ impl AgentSetup {
         r.connected_at = crate::state::now();
     }
 
-    /// Copies `agent`'s sign-in into `vault` (Claude Code waits up to
-    /// `wait` for its one browser approval). The agent's own sign-in is
-    /// never changed.
+    /// Copies `agent`'s sign-in into `vault` (Claude Code's is the sign-in it
+    /// already has; `wait` is how long Claude Code may take to refresh it).
+    /// The agent's own sign-in is never changed.
     pub fn import_sign_in(
         &self,
         agent: &str,

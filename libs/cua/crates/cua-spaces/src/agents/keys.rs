@@ -543,6 +543,21 @@ impl AgentKeys {
     /// Adds or replaces a key. `provider` is `anthropic`, `openai` or
     /// `other`; `other` needs `env` (checked by [`validate_name`]).
     pub fn set(&self, provider: &str, env: Option<&str>, value: &str) -> Result<KeyInfo> {
+        // A Claude token (`sk-ant-oat...`, from `claude setup-token`) pasted where an API
+        // key goes is a sign-in for Claude Code, not an API key: saved as one, so it
+        // works for Claude Code and is never offered to another app as a key.
+        if provider == "anthropic" && value.trim().contains("sk-ant-oat") {
+            let copy = cua_agents::signin::claude_pasted_token(value)
+                .map_err(|r| Error::InvalidArgument(r.line().into()))?;
+            return self.import(
+                &copy.source,
+                &copy.env,
+                &copy.label,
+                &copy.value,
+                copy.expires_ms,
+                copy.origin.as_deref(),
+            );
+        }
         let env = match (provider, env.map(str::trim).filter(|e| !e.is_empty())) {
             ("other", Some(e)) => {
                 validate_name(e)?;
@@ -1873,6 +1888,42 @@ mod tests {
         assert_eq!(token_of(&keys2), "sk-ant-oat01-again");
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn a_claude_token_pasted_as_an_api_key_is_saved_as_a_claude_code_sign_in() {
+        let (keys, dir) = temp_keys();
+        let token = format!("sk-ant-oat01-{}", "aB3_".repeat(24));
+        let info = keys
+            .set("anthropic", None, &format!("  {token}\n"))
+            .unwrap();
+        assert_eq!(info.env, CLAUDE_ENV);
+        assert_eq!(info.label.as_deref(), Some("Signed in with a Claude token"));
+        assert!(
+            info.expires_ms
+                .is_some_and(|e| e > now_ms() + 300 * 24 * 3600 * 1000)
+        );
+        assert_eq!(keys.values(&[CLAUDE_ENV]).get(CLAUDE_ENV), Some(&token));
+        assert!(
+            keys.values(&["ANTHROPIC_API_KEY"]).is_empty(),
+            "never as an API key"
+        );
+        // Never re-read from Claude Code: a pasted token is the person's own.
+        let claude = FakeClaude::new(login("sk-ant-oat01-x", now_ms() + HOUR, "a@b.c"), None);
+        assert_eq!(
+            keys.sync_claude_login(&claude, true),
+            LoginSync::NotApplicable
+        );
+        // A cut-off one is refused in plain words, and a real API key is untouched.
+        let e = keys
+            .set("anthropic", None, "sk-ant-oat01-short")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("doesn't look like a Claude token"), "{e}");
+        keys.set("anthropic", None, "sk-ant-api03-abcdefghijklmnop")
+            .unwrap();
+        assert_eq!(keys.values(&["ANTHROPIC_API_KEY"]).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

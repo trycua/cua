@@ -550,7 +550,7 @@ const NotificationShape = ref(
 const AgentKeysShape = ref(
   "AgentKeysReport",
   obj<AgentKeysReport>()({
-    keys: list(object({ provider: oneOf("anthropic", "openai", "other"), env: str, last4: str, addedMs: num, expired: opt(bool) })),
+    keys: list(object({ provider: oneOf("anthropic", "openai", "other"), env: str, last4: str, addedMs: num, expired: opt(bool), label: opt(str) })),
     providers: list(object({ id: oneOf("anthropic", "openai", "other"), label: str, env: str })),
     available: bool,
     unavailable: nullable(str),
@@ -1642,7 +1642,7 @@ const WkMachinesShape = ref(
 
 /** The daemon's `agent_keys.*` answer, which `agentKeysFromWire` reads. */
 const AgentKeysWire = object({
-  keys: list(object({ provider: str, env: str, last4: str, added_ms: num, expired: opt(bool) })),
+  keys: list(object({ provider: str, env: str, last4: str, added_ms: num, expired: opt(bool), label: opt(str) })),
   providers: list(object({ id: str, env: str, label: opt(str) })),
   available: bool,
   unavailable: optNull(str),

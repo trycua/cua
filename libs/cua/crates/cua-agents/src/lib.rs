@@ -20,7 +20,7 @@ pub mod runs;
 pub mod transcript;
 
 /// Where Claude Code keeps its sign-in (the freshness check at run start reads it).
-pub use cua_agent_setup::{HostEnv, claude_login};
+pub use cua_agent_setup::{HostEnv, claude_login, signin};
 pub use durable::{DriverSpec, DurableOptions, Policy, durable_driver_spec};
 pub use events::{AgentEvent, EventPage};
 pub use harness::{Endpoint, Harness, Wire};

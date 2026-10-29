@@ -431,7 +431,7 @@ pub fn claude_pasted_token(pasted: &str) -> Result<SignInCopy, CopyRefusal> {
     Ok(SignInCopy {
         source: "claude-code".into(),
         env: "CLAUDE_CODE_OAUTH_TOKEN".into(),
-        label: "Claude token you pasted".into(),
+        label: "Signed in with a Claude token".into(),
         value: token,
         // A setup-token token lasts a year.
         expires_ms: Some(now_ms() + 365 * 24 * 3600 * 1000),

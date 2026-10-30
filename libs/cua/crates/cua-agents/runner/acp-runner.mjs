@@ -653,6 +653,41 @@ const keyCheck = checkKey(cfg.keyCheck).catch(() => null);
 const agentLog = fs.openSync(P("agent.log"), "a");
 const logStart = fs.fstatSync(agentLog).size;
 
+// Node reports a missing working folder, a missing program and a missing
+// shebang interpreter all as `spawn <program> ENOENT`. Say which it is, in
+// words a person can act on (the surfaces show this line first).
+function spawnProblem(error) {
+  if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return "";
+  let isDir = false;
+  try {
+    isDir = fs.statSync(cfg.cwd).isDirectory();
+  } catch {}
+  if (!isDir) {
+    return `The working folder ${cfg.cwd} is not available in this Space (a folder on the Cua Volume is missing until the Volume is attached again).`;
+  }
+  let head = "";
+  try {
+    const fd = fs.openSync(command, "r");
+    try {
+      const b = Buffer.alloc(256);
+      head = b.toString("utf8", 0, fs.readSync(fd, b, 0, 256, 0));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return `${cfg.agent.command} is not installed in this Space.`;
+  }
+  const m = /^#!\s*(\S+)(?:\s+(\S+))?/.exec(head);
+  if (m) {
+    const prog = path.basename(m[1]) === "env" && m[2] ? m[2] : m[1];
+    const found = prog.includes("/")
+      ? fs.existsSync(prog)
+      : (env.PATH ?? "").split(path.delimiter).some((d) => d && fs.existsSync(path.join(d, prog)));
+    if (!found) return `${prog === "node" ? "Node" : prog} is not installed in this Space.`;
+  }
+  return "";
+}
+
 function diagnostic(error, phase) {
   const size = fs.fstatSync(agentLog).size;
   const tail = Buffer.alloc(Math.min(4096, size - logStart));
@@ -662,7 +697,10 @@ function diagnostic(error, phase) {
   } finally {
     fs.closeSync(fd);
   }
-  return redact(`${error?.message ?? error}`
+  // macOS reports a missing shebang interpreter as exit 127 from env, not ENOENT.
+  const why = phase === "spawn" ? spawnProblem(error) : error?.exit127 ? spawnProblem({ code: "ENOENT" }) : "";
+  return redact((why ? `${why}\n` : "")
+    + `${error?.message ?? error}`
     + (error?.code != null ? ` (code ${error.code})` : "")
     + (error?.data != null ? ` ${JSON.stringify(error.data)}` : "")
     + ` (${phase}: ${cfg.agent.command})`
@@ -686,6 +724,11 @@ let restarts = 0;
 // start, or closes its stdout (the ACP transport) while still alive.
 function startAgent() {
   const myGen = ++gen;
+  // The working folder can be gone when a run starts again (it was on a
+  // Volume that is not attached yet): make it, or say it is not there.
+  try {
+    fs.mkdirSync(cfg.cwd, { recursive: true });
+  } catch {}
   const c = spawn(command, cfg.agent.args ?? [], {
     cwd: cfg.cwd,
     env,
@@ -716,7 +759,7 @@ function startAgent() {
 function goneDiagnostic(g) {
   if (g.error) return diagnostic(g.error, "spawn");
   if (g.stdoutClosed) return diagnostic(new Error("agent stdout closed"), "transport");
-  return diagnostic(new Error(`the agent exited unexpectedly (code ${g.code}, signal ${g.signal})`), "transport");
+  return diagnostic(Object.assign(new Error(`the agent exited unexpectedly (code ${g.code}, signal ${g.signal})`), { exit127: g.code === 127 }), "transport");
 }
 
 // End this run's cua-driver session on the guest MCP (cua-spacesd keys it by

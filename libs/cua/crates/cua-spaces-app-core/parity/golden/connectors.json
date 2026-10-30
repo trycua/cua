@@ -308,6 +308,48 @@
       "title": "Connect a provider"
     },
     {
+      "connect": "Connect a provider | Connect a provider to pick a model.",
+      "default": "- | -",
+      "groups": [],
+      "models": "nothing connected"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "anthropic | claude-haiku-4-5",
+      "groups": [
+        "anthropic | Anthropic | connected | - :: claude-haiku-4-5 | Claude Haiku 4.5 | true | false / claude-sonnet-5 | Claude Sonnet 5 | false | true / claude-opus-5-5 | Claude Opus 5.5 | false | false",
+        "openai | OpenAI | connected | - :: gpt-5.5 | GPT-5.5 | false | true",
+        "deepseek | DeepSeek | connected | - :: deepseek-flash | DeepSeek Flash | true | true"
+      ],
+      "models": "an Anthropic key, an OpenAI key and a DeepSeek key"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "anthropic | claude-haiku-4-5",
+      "groups": [
+        "anthropic | Anthropic | connected | claude-code :: claude-haiku-4-5 | Claude Haiku 4.5 | true | false / claude-sonnet-5 | Claude Sonnet 5 | false | true / claude-opus-5-5 | Claude Opus 5.5 | false | false",
+        "openai | OpenAI | connected | openai-codex :: gpt-5.5 | GPT-5.5 | false | true"
+      ],
+      "models": "only a Claude sign-in and a ChatGPT sign-in (each is its own app's)"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "openai | gpt-5.5",
+      "groups": [
+        "openai | OpenAI | connected | - :: gpt-5.5 | GPT-5.5 | false | true",
+        "anthropic | Anthropic | needs-reconnect | - :: claude-haiku-4-5 | Claude Haiku 4.5 | true | false / claude-sonnet-5 | Claude Sonnet 5 | false | true / claude-opus-5-5 | Claude Opus 5.5 | false | false"
+      ],
+      "models": "a Claude sign-in that ran out and an OpenAI key"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "zai | glm-5.3",
+      "groups": [
+        "zai | Z.AI (GLM) | connected | - :: glm-5.3 | glm-5.3 | false | true"
+      ],
+      "models": "a provider with no list falls back to its default"
+    },
+    {
       "buttons": "Use my sign-in | Cancel | Reading your Claude Code sign-in…",
       "importSheet": "macos",
       "notFound": "No Claude Code sign-in found | Claude Code isn't signed in on this Mac, or its sign-in couldn't be read. Pick one:",

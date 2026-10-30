@@ -30,6 +30,10 @@ kind = "api_key"
 env = "OPENAI_API_KEY"
 aliases = ["CODEX_API_KEY"]
 
+[[model]]
+id = "gpt-5.5"
+name = "GPT-5.5"
+
 [delivery]
 openai-codex = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_AUTH_JSON"]
 opencode = ["OPENAI_API_KEY"]

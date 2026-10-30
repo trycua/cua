@@ -196,6 +196,15 @@ pub struct Method {
     pub fields: &'static [Field],
 }
 
+/// One model a provider serves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Model {
+    pub id: &'static str,
+    pub name: &'static str,
+    /// A quick, cheap model (the picker's default is the first of these).
+    pub fast: bool,
+}
+
 /// A region (or plan) with its own base URL.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Region {
@@ -250,6 +259,9 @@ pub struct Provider {
     pub apps: &'static [&'static str],
     pub methods: &'static [Method],
     pub regions: &'static [Region],
+    /// The models a person can pick, best known first (may be empty: then
+    /// `default_model` is the only one).
+    pub models: &'static [Model],
     pub delivery: &'static [Delivery],
 }
 
@@ -287,6 +299,21 @@ impl Provider {
             .find(|d| d.harness == harness)
             .map(|d| d.entries)
             .unwrap_or(&[])
+    }
+
+    /// The models a person can pick: the listed ones, or the default alone.
+    pub fn model_list(&self) -> Vec<Model> {
+        if !self.models.is_empty() {
+            return self.models.to_vec();
+        }
+        if self.default_model.is_empty() {
+            return vec![];
+        }
+        vec![Model {
+            id: self.default_model,
+            name: self.default_model,
+            fast: false,
+        }]
     }
 
     /// The base URL for `region` (the provider's own when empty or unknown).

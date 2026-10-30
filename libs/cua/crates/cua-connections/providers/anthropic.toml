@@ -38,6 +38,19 @@ kind = "api_key"
 env = "ANTHROPIC_API_KEY"
 aliases = ["ANTHROPIC_AUTH_TOKEN"]
 
+[[model]]
+id = "claude-haiku-4-5"
+name = "Claude Haiku 4.5"
+fast = true
+
+[[model]]
+id = "claude-sonnet-5"
+name = "Claude Sonnet 5"
+
+[[model]]
+id = "claude-opus-5-5"
+name = "Claude Opus 5.5"
+
 [delivery]
 claude-code = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"]
 opencode = ["ANTHROPIC_API_KEY"]

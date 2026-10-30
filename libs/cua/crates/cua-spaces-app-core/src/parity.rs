@@ -5161,6 +5161,33 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "more": line(&[&v["moreLabel"], &v["moreCount"], &v["empty"]]),
         }));
     }
+    for step in f["models"].as_array().into_iter().flatten() {
+        let v = c(h, "connectors.models", json!({ "input": step["input"] }))?;
+        let groups: Vec<String> = v["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|g| {
+                let models: Vec<String> = g["models"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|m| line(&[&m["id"], &m["label"], &m["fast"], &m["default"]]))
+                    .collect();
+                format!(
+                    "{} :: {}",
+                    line(&[&g["provider"], &g["label"], &g["state"], &g["harness"]]),
+                    models.join(" / ")
+                )
+            })
+            .collect();
+        frames.push(json!({
+            "models": step["step"],
+            "groups": groups,
+            "default": line(&[&v["default"]["provider"], &v["default"]["model"]]),
+            "connect": line(&[&v["connectLabel"], &v["empty"]]),
+        }));
+    }
     for os in ["macos", "linux"] {
         let s = c(h, "connectors.importSheet", json!({ "hostOs": os }))?;
         let options: Vec<String> = s["options"]

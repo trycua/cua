@@ -200,6 +200,7 @@ pub const METHODS: &[&str] = &[
     "connectors.connectPlan",
     "connectors.providerSheet",
     "connectors.providerPicker",
+    "connectors.models",
     "connectors.importSheet",
     "connectors.appDetail",
     "connectors.setupCard",
@@ -1014,6 +1015,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<String>>("query")?.unwrap_or_default(),
             a.get::<Option<bool>>("expanded")?.unwrap_or(false),
         )),
+        "connectors.models" => out(connectors::models_view(&a.get("input")?)),
         "connectors.importSheet" => out(connectors::import_sheet_on(
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),

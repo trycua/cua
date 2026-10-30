@@ -522,7 +522,7 @@ pub struct AppListView {
     /// not empty yet (an app update restarting the daemon must not show it).
     pub empty: bool,
     /// One quiet line where the Spaces go while the list is not complete
-    /// ("Reaching 6 computers…"), below what is known so far.
+    /// ("Reaching 6 machines…"), below what is known so far.
     pub reaching_line: Option<String>,
 }
 
@@ -1391,7 +1391,7 @@ pub struct AppStreamRow {
     pub id: String,
     /// Desktop or window.
     pub kind: AppStreamRowKind,
-    /// The one line ("Desktop (1280×800)", a window's title).
+    /// The one line ("Desktop", a window's title).
     pub label: String,
     /// The full label, for the tooltip when it is truncated.
     pub help: String,
@@ -1838,6 +1838,16 @@ pub struct AppNotchTile {
     pub progress_label: Option<String>,
     /// Signed in through the Keyvault (and not dismissed): the key badge.
     pub signed_in: bool,
+    /// One of your other machines' desktops, not a Space it provides: the
+    /// tile reads "Desktop" and opens the same desktop the machine's page
+    /// does, creating nothing.
+    pub desktop: bool,
+    /// Pinned to the notch (Pin to notch in the Space's "..." menu): the
+    /// tiles list pinned ones first.
+    pub pinned: bool,
+    /// Why a pinned desktop cannot be opened now ("Offline", "Not
+    /// shared"); `None` while it can. The tile stays, dimmed, and says it.
+    pub note: Option<String>,
 }
 
 /// What the panel shows.
@@ -1880,6 +1890,9 @@ pub struct AppNotchState {
     /// dismissed ([`crate::keyvault::view::signed_in_spaces`]): their tiles
     /// carry the key.
     pub signed_in: Vec<String>,
+    /// The Spaces and desktops pinned to the notch, in the order they were
+    /// pinned (`AppSettings::notch_pinned`): their tiles come first.
+    pub pinned: Vec<String>,
     /// "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
     /// the notch, and hover, clicks and window drags do nothing.
     pub hidden: bool,
@@ -1941,6 +1954,12 @@ pub enum AppNotchEvent {
         label: Option<String>,
         /// The Space ids signed in (their tiles carry the key).
         signed_in: Vec<String>,
+    },
+    /// The pinned Spaces and desktops changed (Pin to notch, Unpin from
+    /// notch, or settings read at start): their ids in pin order.
+    Pinned {
+        /// The pinned ids.
+        ids: Vec<String>,
     },
 }
 
@@ -4332,6 +4351,59 @@ pub struct KvInventory {
     pub notes: Vec<String>,
 }
 
+/// One thing a teleport needs from the OS, as the setup sheet shows it
+/// (`cua_keyvault::broker::ReadinessCheck`).
+pub type KvReadinessCheck = core::keyvault::wire::KvReadinessCheck;
+#[uniffi::remote(Record)]
+pub struct KvReadinessCheck {
+    /// `granted`, `denied` or `unknown` (only known by trying).
+    pub state: String,
+    /// What it means and what to do, in plain words (empty when nothing).
+    pub say: String,
+}
+
+/// A browser profile to choose from (`cua_keyvault::broker::BrowserProfile`).
+pub type KvBrowserProfile = core::keyvault::wire::KvBrowserProfile;
+#[uniffi::remote(Record)]
+pub struct KvBrowserProfile {
+    /// Directory name (`Default`, `Profile 1`).
+    pub dir: String,
+    /// The name the person gave it.
+    pub name: String,
+    /// The account signed in to it.
+    pub account: Option<String>,
+    /// The browser used it last.
+    pub last_used: bool,
+}
+
+/// Whether a teleport of an app can work now: the Keyvault, what the OS
+/// allows and the profiles to choose from. Reads no value and asks for no
+/// presence (`cua_keyvault::broker::Readiness`, plus the Keyvault's state).
+pub type KvReadiness = core::keyvault::wire::KvReadiness;
+#[uniffi::remote(Record)]
+pub struct KvReadiness {
+    /// Provider id.
+    pub provider_id: String,
+    /// App name.
+    pub app_display: String,
+    /// The Keyvault exists.
+    pub keyvault_initialized: bool,
+    /// The Keyvault is unlocked.
+    pub keyvault_unlocked: bool,
+    /// The profile checked: the one asked for, else the last used.
+    pub profile: Option<String>,
+    /// The profile a teleport reads when none is named.
+    pub default_profile: Option<String>,
+    /// Every profile.
+    pub profiles: Vec<KvBrowserProfile>,
+    /// Reading the app's files (Full Disk Access).
+    pub files: KvReadinessCheck,
+    /// Reading the app's open tabs (Automation).
+    pub tabs: KvReadinessCheck,
+    /// The checked profile has no sign-in data.
+    pub profile_empty: bool,
+}
+
 /// How a caller is signed (`cua_keyvault::caller::Signing`: tagged by
 /// `kind`, snake_case).
 pub type KvSigning = core::keyvault::wire::KvSigning;
@@ -6669,6 +6741,15 @@ pub struct AppAgentKeyInput {
     pub last4: String,
     /// When it was added (Unix ms).
     pub added_ms: u64,
+    /// A sign-in past its expiry: not used by any run until reconnected.
+    pub expired: bool,
+    /// A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+    pub label: Option<String>,
+    /// The plan or region chosen for it (Z.AI), when the provider has them.
+    pub region: Option<String>,
+    /// Non-secret values saved with it: a custom endpoint's `base_url`, `model`
+    /// and `wire`, or a `model`. Never the key.
+    pub fields: std::collections::HashMap<String, String>,
 }
 
 /// What the section shows.
@@ -6889,6 +6970,94 @@ pub struct AppExperiments {
     pub web_ui: bool,
 }
 
+/// A runtime the host found for one kind (the SDK's `RuntimeDetected`).
+pub type AppDetectedRuntime = core::runtimes::DetectedRuntime;
+#[uniffi::remote(Record)]
+pub struct AppDetectedRuntime {
+    /// `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+    pub tool: String,
+    /// As people know it (`Docker`, `Apple container`).
+    pub name: String,
+    pub path: String,
+    /// As its `--version` says it (`27.3.1`).
+    pub version: Option<String>,
+    /// The one guest system it runs, when only one (`macOS`, `Linux`).
+    pub guests: Option<String>,
+}
+
+/// What a binary is for one kind (the SDK's `RuntimePathProbe`).
+pub type AppRuntimePathCheck = core::runtimes::RuntimePathCheck;
+#[uniffi::remote(Record)]
+pub struct AppRuntimePathCheck {
+    pub path: String,
+    /// A file is there.
+    pub exists: bool,
+    /// It can be run.
+    pub executable: bool,
+    /// The tool it is, when it is one the kind takes.
+    pub tool: Option<String>,
+    pub name: Option<String>,
+    pub version: Option<String>,
+    /// The oldest version Cua runs on.
+    pub min_version: Option<String>,
+    /// The tools the kind takes here (`Docker`, `Podman`).
+    pub expected: Vec<String>,
+    pub guests: Option<String>,
+}
+
+/// One kind as the host read it (the SDK's `RuntimeKindState`).
+pub type AppRuntimeKindInput = core::runtimes::RuntimeKindInput;
+#[uniffi::remote(Record)]
+pub struct AppRuntimeKindInput {
+    /// `container`, `vm` or `microvm`.
+    pub kind: String,
+    /// `runtime.<kind>`: `auto`, `builtin`, `system` (none: auto).
+    pub source: Option<String>,
+    /// `runtime.<kind>_path`, when set.
+    pub path: Option<String>,
+    /// What is installed for the kind, the one used first (none: not
+    /// looked for yet).
+    pub detected: Option<Vec<AppDetectedRuntime>>,
+    /// The path in use, probed.
+    pub check: Option<AppRuntimePathCheck>,
+    /// The tools the kind takes on this machine (`Docker`, `Podman`).
+    pub expected: Vec<String>,
+}
+
+/// What Settings knows about this machine's runtimes.
+pub type AppRuntimesInput = core::runtimes::RuntimesInput;
+#[uniffi::remote(Record)]
+pub struct AppRuntimesInput {
+    /// This machine's system (none: not said; every option is offered).
+    pub os: Option<AppSpaceOs>,
+    /// `arm64`, `amd64`.
+    pub host_arch: Option<String>,
+    /// The runtime doctor's ready backends (none: not read yet).
+    pub local_backends: Option<Vec<String>>,
+    /// Why each other backend is not ready.
+    pub local_details: Option<std::collections::HashMap<String, String>>,
+    /// Each kind's setting and what is installed for it (none: not read).
+    pub kinds: Option<Vec<AppRuntimeKindInput>>,
+}
+
+/// A path's one line: whether it can be used, and what it is.
+pub type AppRuntimePathVerdict = core::runtimes::RuntimePathVerdict;
+#[uniffi::remote(Record)]
+pub struct AppRuntimePathVerdict {
+    pub ok: bool,
+    pub line: String,
+}
+
+/// What a row in the section changes: the setting and its new value
+/// (`None`: unset it, back to the default or the detected path).
+pub type AppRuntimeSettingChange = core::runtimes::RuntimeSettingChange;
+#[uniffi::remote(Record)]
+pub struct AppRuntimeSettingChange {
+    /// `runtime.container`, `runtime.vm_path`.
+    pub key: String,
+    pub value: Option<String>,
+}
+
 /// Notch island or glass.
 pub type AppSwitcherTheme = core::settings::SwitcherTheme;
 #[uniffi::remote(Enum)]
@@ -6940,6 +7109,11 @@ pub struct AppSettings {
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
     pub dismissed_access: Vec<String>,
+    /// The Spaces and the machines' desktops pinned to the notch ("Pin to
+    /// notch" in a Space's "..." menu), in the order they were pinned: the
+    /// notch lists them first ([`crate::notch::tiles_pinned`]). Ids only,
+    /// nothing secret; an id whose Space is gone is kept and draws nothing.
+    pub notch_pinned: Vec<String>,
     /// Keyvault rows may load a site's icon from Google's favicon service
     /// when the source browser had none (Settings, Keyvault; on by default).
     /// Off, only icons read locally are shown.
@@ -7017,21 +7191,6 @@ pub struct AppTelemetryInput {
     pub notice_shown: bool,
 }
 
-/// This machine's runtime doctor, for Settings, Advanced, Runtimes'
-/// MicroVM row (the same facts New Space's MicroVM tile follows).
-pub type AppMicrovmInput = core::settings::MicrovmInput;
-#[uniffi::remote(Record)]
-pub struct AppMicrovmInput {
-    /// This machine's system (`macos`, `linux`, `windows`).
-    pub os: Option<AppSpaceOs>,
-    /// Ready backends (none: not read yet).
-    pub local_backends: Option<Vec<String>>,
-    /// Why each other backend is not ready, by backend name.
-    pub local_details: Option<std::collections::HashMap<String, String>>,
-    /// This machine's architecture (`arm64`, `amd64`).
-    pub host_arch: Option<String>,
-}
-
 /// What the Settings page shows.
 pub type AppSettingsInput = core::settings::SettingsInput;
 #[uniffi::remote(Record)]
@@ -7078,18 +7237,13 @@ pub struct AppSettingsInput {
     /// "Connect to the desktop automatically" (none: no row; a shell
     /// without the preview cover leaves it out).
     pub auto_connect: Option<bool>,
-    /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
-    /// `system`); none: no Runtimes section.
-    pub lume_source: Option<String>,
-    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
-    /// `builtin`, `system`); none: no Linux row.
-    pub linux_source: Option<String>,
     /// Overflow into your clouds when this machine is full
     /// (`placement.overflow`); none: no row.
     pub overflow: Option<bool>,
-    /// What this machine's runtime doctor said, for Runtimes' MicroVM row
-    /// (whether microVMs run here, and why not); none: no MicroVM row.
-    pub microvm: Option<AppMicrovmInput>,
+    /// Settings, Advanced's runtimes: each kind's setting, what is
+    /// installed for it and whether it runs here. None: nothing read yet
+    /// (the rows still show, "Checking…").
+    pub runtimes: Option<AppRuntimesInput>,
     /// Settings, General's Show tips switch: tips are on
     /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
     pub show_tips: bool,
@@ -7395,6 +7549,8 @@ pub struct AppMenuInput {
 }
 
 /// The parts of the host status the summary reads (`cua-host`'s status).
+/// The summary is about this machine's own desktop (its row in the Spaces
+/// list), so `sharing` is on only while the desktop is shared.
 pub type AppHostSummaryInput = core::host::HostSummaryInput;
 #[uniffi::remote(Record)]
 pub struct AppHostSummaryInput {
@@ -7430,16 +7586,15 @@ pub struct AppHostSetupRequest {
     pub name: Option<String>,
     /// Accounts (ids or emails) allowed besides the owner.
     pub allow: Option<Vec<String>>,
-    /// What the machine is for: `desktop` (share this desktop, and
-    /// provide Spaces on a new relay setup; the default) or `spare` (only
-    /// run Spaces for your other devices).
+    /// What the machine is for: `spare` (the default: other machines
+    /// create Spaces here, its desktop stays private) or `desktop` (also
+    /// let other machines control this desktop).
     pub profile: Option<String>,
     /// Share this machine's own desktop (overrides the profile).
     pub share_desktop: Option<bool>,
-    /// Create Spaces for your other devices (overrides the profile).
-    /// `None` with the desktop profile: on for a new relay setup; a
-    /// machine set up before keeps its setting (the host decides,
-    /// `cua_host::default_provide_spaces`).
+    /// Let other machines create Spaces here (overrides the profile).
+    /// `None`: on for a new relay setup; a machine set up before keeps
+    /// its setting (the host decides, `cua_host::default_provide_spaces`).
     pub provide_spaces: Option<bool>,
 }
 
@@ -7568,6 +7723,21 @@ pub struct AppHostState {
     pub max_spaces: u32,
     /// macOS VMs at once (at most two; 0 off a Mac).
     pub max_macos_vms: u32,
+    /// Memory the Spaces other machines create here may use in total, in GB
+    /// (0: no limit).
+    pub max_memory_gb: u32,
+    /// Disk the Spaces other machines create here may use in total, in GB
+    /// (0: no limit).
+    pub max_disk_gb: u32,
+    /// How long a Space created here by another machine may run, in minutes
+    /// (0: no limit).
+    pub max_run_minutes: u32,
+    /// What those Spaces were given now, in GB.
+    pub used_memory_gb: u32,
+    pub used_disk_gb: u32,
+    /// This machine's own memory and disk in GB (0: not known).
+    pub total_memory_gb: u32,
+    pub total_disk_gb: u32,
     /// The Spaces this machine provides now.
     pub provided_spaces: Vec<AppHostProvidedSpace>,
     /// Remote creates, deletes and refusals, and settings changes, newest
@@ -7645,6 +7815,34 @@ pub struct AppHostSettingChange {
     pub share_desktop: Option<bool>,
     /// Provide Spaces.
     pub provide_spaces: Option<bool>,
+}
+
+/// One limit on the Spaces other machines create here, drawn as a number
+/// row under the switch (Settings, Sharing).
+pub type AppHostLimitRow = core::host::HostLimitRow;
+#[uniffi::remote(Record)]
+pub struct AppHostLimitRow {
+    /// `max-spaces`, `max-memory`, `max-disk` or `max-run`.
+    pub id: String,
+    /// "Most Spaces at once".
+    pub label: String,
+    /// One line under it.
+    pub help: String,
+    /// The limit (0: no limit).
+    pub value: u32,
+    /// What the number counts: `Spaces`, `GB` or `minutes`.
+    pub unit: String,
+    /// What is in use now ("2 of 4 Spaces", "12 of 32 GB"; "2 Spaces" with
+    /// no limit); none for a limit that is about time.
+    pub use_text: Option<String>,
+    /// This machine's own total in `unit` (memory and disk), 0 when not
+    /// known.
+    pub total: u32,
+    /// Use is above the limit (it was lowered below what runs): nothing
+    /// is stopped, new Spaces are refused.
+    pub over: bool,
+    /// "Over limit" while `over`.
+    pub over_text: Option<String>,
 }
 
 /// One of the two settings, drawn as a switch.
@@ -7778,6 +7976,9 @@ pub struct AppHostPanelView {
     /// The limits, one line ("Up to 4 Spaces \u{b7} 2 macOS VMs"), while
     /// providing Spaces.
     pub limits: Option<String>,
+    /// The limits as number rows (Settings, Sharing), while providing
+    /// Spaces: most Spaces, memory and disk in total, longest running time.
+    pub limit_rows: Vec<AppHostLimitRow>,
     /// "Spaces for your devices", while providing Spaces.
     pub provided_title: Option<String>,
     /// One row per Space this machine provides.
@@ -10273,7 +10474,7 @@ pub struct AppMachinesViewRelay {
     pub team: Option<String>,
     /// Its owner's email, when the relay says.
     pub owner_email: Option<String>,
-    /// It creates Spaces for your devices (`None`: it did not say).
+    /// It lets your other machines create Spaces (`None`: it did not say).
     pub provides_spaces: Option<bool>,
 }
 
@@ -10324,7 +10525,8 @@ pub type AppMachinesViewToggle = core::machines_view::MachinesViewToggle;
 pub struct AppMachinesViewToggle {
     /// `spaces` or `desktop`.
     pub id: String,
-    /// "Provide Spaces", "Share this desktop".
+    /// "Let other machines create Spaces here", "Let other machines control
+    /// this desktop".
     pub label: String,
     /// One line under it.
     pub help: String,
@@ -10479,7 +10681,8 @@ pub struct AppMachinesViewMachine {
     pub notice: Option<String>,
     /// The notice's button (Sign In).
     pub notice_action: Option<AppHostAction>,
-    /// Provide Spaces, then Share this desktop.
+    /// Create Spaces here, then control this desktop (This Mac: the
+    /// desktop switch only).
     pub toggles: Vec<AppMachinesViewToggle>,
     /// Under read-only switches: where they change.
     pub toggles_note: Option<String>,
@@ -10944,6 +11147,10 @@ pub struct AppSpaceMenuInput {
     pub can_delete: bool,
     /// You may leave it.
     pub can_leave: bool,
+    /// It can be pinned to the notch (not This machine).
+    pub can_pin: bool,
+    /// It is pinned to the notch now (Unpin from notch).
+    pub pinned: bool,
 }
 
 /// What an item does.
@@ -10966,6 +11173,8 @@ pub enum AppSpaceMenuItemId {
     Delete,
     /// Leaves it (asks first: `spaces.bulkConfirm`).
     Leave,
+    /// Pins it to the notch, or unpins it (the label says which).
+    Pin,
 }
 
 /// One menu item.
@@ -11407,8 +11616,10 @@ pub struct AppGuestUsage {
     pub memory_limited: bool,
     /// Disk in use, bytes.
     pub disk_used: u64,
-    /// Disk size, bytes.
-    pub disk_total: u64,
+    /// Disk size, bytes; none when the guest's file system has no size of
+    /// its own. A sentinel (`i64::MAX`, `u64::MAX`, -1) or 0 reads as none
+    /// ([`known_size`]), so no shell ever shows one.
+    pub disk_total: Option<u64>,
     /// `disk_total` is the guest's own disk.
     pub disk_limited: bool,
 }
@@ -11423,6 +11634,21 @@ pub struct AppDiskOnHost {
     pub allocated: u64,
     /// Part of it is shared with other copies.
     pub shares_space: bool,
+}
+
+/// A base image several Spaces share copy-on-write.
+pub type AppSharedBase = core::resources::SharedBase;
+#[uniffi::remote(Record)]
+pub struct AppSharedBase {
+    /// Spaces with the same key share the same blocks.
+    pub key: String,
+    /// The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+    pub image: String,
+    /// What it takes on this Mac, once; none when the runtime cannot tell
+    /// it apart from the Spaces' own data.
+    pub bytes: Option<u64>,
+    /// Local Spaces that use it, this one included.
+    pub shared_with: u32,
 }
 
 /// One extra Space on this Mac.
@@ -11441,8 +11667,10 @@ pub struct AppSpaceResources {
     pub disk_allocated: u64,
     /// The guest's own numbers; none while it is off or unreachable.
     pub usage: Option<AppGuestUsage>,
-    /// What it costs this Mac; none for a container.
+    /// What it costs this Mac: its own data only, never the base it shares.
     pub disk_on_host: Option<AppDiskOnHost>,
+    /// The base image it is a copy-on-write copy of, counted once.
+    pub base: Option<AppSharedBase>,
 }
 
 /// One sample of everything (`Spaces.resources`).

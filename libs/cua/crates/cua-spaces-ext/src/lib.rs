@@ -118,6 +118,8 @@ pub const BUDGET_KIND: &str = "budget";
 pub struct DriveExtension {
     drive: cua_volume::Drive,
     live: Arc<tokio::sync::Mutex<persistent::Live>>,
+    /// What working sessions have said so far this turn (the thread's streaming rows).
+    partials: persistent::Partials,
     owner: Arc<std::sync::RwLock<thread::Author>>,
     team_admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     pub(crate) runtime: drive_runtime::DriveRuntime,
@@ -129,6 +131,7 @@ impl DriveExtension {
         DriveExtension {
             drive,
             live: Default::default(),
+            partials: Default::default(),
             owner: Arc::new(std::sync::RwLock::new(thread::Author::owner())),
             team_admins: Default::default(),
             runtime: Default::default(),
@@ -174,6 +177,10 @@ impl DriveExtension {
 
     pub(crate) fn live(&self) -> Arc<tokio::sync::Mutex<persistent::Live>> {
         self.live.clone()
+    }
+
+    pub(crate) fn partials(&self) -> persistent::Partials {
+        self.partials.clone()
     }
 }
 

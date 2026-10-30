@@ -32,7 +32,7 @@ export const tablesAsLists = (t: string) => {
       continue;
     }
     const cells = line.trim().slice(1, -1).split("|").map((c) => c.trim()).filter(Boolean);
-    out.push(`- ${cells.join(" · ")}`);
+    out.push(`- ${cells.join(", ")}`);
   }
   return out.join("\n");
 };

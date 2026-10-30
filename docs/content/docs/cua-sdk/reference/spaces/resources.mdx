@@ -180,7 +180,8 @@ One extra Space on this Mac.
 | `memory_allocated` / `memoryAllocated` | `u64` |  | Memory given to it, bytes (0: unknown). |
 | `disk_allocated` / `diskAllocated` | `u64` |  | Its disk's size limit, bytes (0: unknown). |
 | `usage` | [`Option<GuestUsage>`](#guestusage-record) |  | The guest's own numbers; absent while it is off or unreachable. |
-| `disk_on_host` / `diskOnHost` | [`Option<DiskOnHost>`](#diskonhost-record) |  | What it costs this Mac; absent for a container. |
+| `disk_on_host` / `diskOnHost` | [`Option<DiskOnHost>`](#diskonhost-record) |  | What it costs this Mac: its own data only, never the base it shares; absent when there is nothing to measure. |
+| `base` | [`Option<SharedBase>`](/cua-sdk/reference/spaces/space#sharedbase-record) |  | The base image it is a copy-on-write copy of, counted once for all the Spaces that share it; absent when it has none or the runtime cannot tell it apart. |
 
 ## `GuestUsage` record
 
@@ -195,7 +196,7 @@ What `SystemService.Metrics` reports from inside a Space.
 | `memory_total` / `memoryTotal` | `u64` |  | Memory size, bytes. |
 | `memory_limited` / `memoryLimited` | `bool` |  | `memory_total` is the guest's own limit. |
 | `disk_used` / `diskUsed` | `u64` |  | Disk in use, bytes. |
-| `disk_total` / `diskTotal` | `u64` |  | Disk size, bytes. |
+| `disk_total` / `diskTotal` | `Option<u64>` |  | Disk size, bytes; absent when the guest's file system has no size of its own (gVisor's root overlay) or did not say. Never a sentinel. |
 | `disk_limited` / `diskLimited` | `bool` |  | `disk_total` is the guest's own disk. |
 
 ## `DiskOnHost` record

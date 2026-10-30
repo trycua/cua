@@ -1,0 +1,67 @@
+---
+title: Machines and Spaces
+description: 'How machines, their shared desktops and Spaces relate: one list of machines, the state on each row, and the sandbox Space you actually work in.'
+---
+
+Cua Spaces has two things to know: **machines** and **Spaces**. A machine
+provides Spaces. A Space is the isolated sandbox where work happens.
+
+| Name | What it is | Where you see or use it |
+| --- | --- | --- |
+| Machine | A Mac, Windows or Linux computer you added to your account, by signing in on it or with **Add a machine**. It can provide Spaces, share its own desktop, or both. | The **Machines** tab. `--on host:<machine-id>` creates new Spaces on it. |
+| Space | An isolated sandbox: an image plus a kind (`container`, `vm` or `microvm`; containers use gVisor where installed). See [Space kinds](/spaces/concepts/space-kinds). | The **Spaces** tab. `local:<name>` on this machine, or its own `relay:` id when it runs on another machine, with `host` naming the machine that runs it. A machine you added by address (set up with `--direct`, no relay) has a `direct:<host:port>` id. |
+| A machine's shared desktop | The machine's own screen, input, shell and files, shown as a Space while **Let other machines control this desktop** is on. It is not a sandbox. | `relay:<machine-id>` for a machine set up on the relay. A direct host is its own `direct:<host:port>` Space, added with `cua spaces add <host:port> --host`. |
+
+## One list of machines
+
+Sign in on a machine and it joins your account. Every machine you own appears
+in the **Machines** tab on all the others. There is no second list to keep in
+step: a machine's state is a line on its row, and what you can do to it is on its page.
+
+The state on a row is one of these:
+
+- **Online** or **Offline**.
+- **Desktop shared**, or **Desktop and 2 Spaces** when it also provides Spaces.
+  The shared desktop is not counted among the Spaces.
+- **Signed in, not sharing**: you signed in on it, but it neither shares its
+  desktop nor provides Spaces. **New Space** never offers it as a place to run.
+- **Waiting for you**: a machine asking to join your account. Its page asks
+  **Add this machine?** with **Add machine** and **Not me**.
+
+Machines you have not seen for 30 days collapse into **Offline for 30+ days**,
+and machines your team shares appear under **Team machines**.
+
+Open a machine to rename it, to turn its two switches on or off, to see the
+Spaces on it, to press **New Space here**, to read its **Details**, or to remove
+it with **Remove from account**. Another machine's switches are read only: change
+them on that machine.
+
+## What a machine provides
+
+Two switches decide what a machine does, and each works on its own:
+
+- **Let other machines control this desktop** shows the machine's own screen as
+  a Space for your other machines.
+- **Let other machines create Spaces here** lets your other machines, and
+  teammates you share it with as editors, create sandbox Spaces on it.
+
+A machine that only provides Spaces keeps its own desktop private. A machine
+that shares nothing is simply signed in.
+
+## One machine, two records
+
+Behind the list, a machine can have two records: the relay's record of a machine
+that shares its desktop or provides Spaces (set up with **Add a machine** or
+`cua host setup`), and the record of a sign-in on it (made by `cua auth login`
+or the app). They describe one machine, and the **Machines** tab joins them into
+one row when it can match them safely, for example by the same id or matching
+names. If the match is unclear, such as two Macs with the same name, they stay as
+separate rows. The `cua devices` commands manage the sign-in record, and
+`cua machines rm` removes a machine that is gone.
+
+A machine that only hosts, set up with `--direct` or with its own token, can't
+reach your other machines: signing in is what lets a machine see them.
+
+See [Add a machine](/spaces/guides/add-a-computer) for the two switches and how
+to add one, and [How Spaces works](/spaces/concepts/how-spaces-works#space-ids)
+for Space ids.

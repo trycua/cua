@@ -239,6 +239,10 @@ pub struct PendingSpace {
     pub phase: &'static str,
 }
 
+/// How long a connection made without the cua-spacesd its image publishes
+/// is kept before the next use dials again.
+const SPACESD_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Builder for [`Spaces`].
 #[derive(Default)]
 pub struct SpacesBuilder {
@@ -1228,6 +1232,13 @@ impl Spaces {
         {
             self.forget_relay_machine(machine_id).await?;
         }
+        // A Space this device attached to the relay as a machine of its own
+        // takes that machine with it (as `delete` does): `rm` must not leave
+        // a stale record the owner has to remove by hand (CUA-2841).
+        #[cfg(feature = "spaces-agents")]
+        if !matches!(id, SpaceId::Relay { .. }) {
+            let _ = self.release_attached(&id.to_string()).await;
+        }
         // A direct host leaves the direct-host list with the Spaces it
         // created here (nothing reaches them without it; a host that is
         // gone leaves no rows behind), and a Space one created leaves its
@@ -1607,6 +1618,16 @@ impl Spaces {
         // Bound first: the cache's guard must be gone before the lock is
         // taken again below.
         let cached = self.inner.connections.lock().await.get(&key).cloned();
+        // Connected while its cua-spacesd didn't answer (the Space was still
+        // waking, as after a daemon restart): dial again, or the Space stays
+        // without spacesd until it is restarted and agents can't start there.
+        if let Some(s) = &cached
+            && s.spacesd_retry_due(SPACESD_RETRY_AFTER)
+        {
+            tracing::info!(space = %key, "no cua-spacesd answered when this connected; reconnecting");
+            self.inner.connections.lock().await.remove(&key);
+            return None;
+        }
         if let Some(s) = cached {
             let policy = |provided| {
                 if provided {
@@ -2023,6 +2044,12 @@ impl Spaces {
                         return Err(crate::host_spaces::stopped_sharing(
                             label.as_deref().unwrap_or(&id.to_string()),
                         ));
+                    }
+                    if let SpaceId::Relay { .. } = &id
+                        && let Some(message) = crate::host_spaces::team_device_refusal(&reason)
+                    {
+                        // Refused by the team, not a Space still starting.
+                        return Err(crate::host_spaces::team_device_refused(message));
                     }
                     if !generic_ok {
                         return Err(Error::SpacesdNotAvailable {
@@ -2864,6 +2891,16 @@ impl Spaces {
                 return Err(e);
             }
         };
+        // A container Space reads the repo cache through a read-only mount:
+        // its git gets the helper (best effort, bounded, silent).
+        let guest_os = crate::host_spaces::resolve_image(&image).1;
+        if opts.kind != Kind::Vm
+            && opts.kind != Kind::MicroVm
+            && guest_os != "macos"
+            && guest_os != "windows"
+        {
+            crate::repo_cache::install(&space, &name).await;
+        }
         self.store(&space, credential)?;
         self.inner
             .connections
@@ -3095,6 +3132,12 @@ impl Spaces {
 
     async fn delete_copy_of(&self, id: SpaceId) -> Result<String> {
         self.learn_usage_before_delete(&id.to_string()).await;
+        if let SpaceId::Local { name } = &id {
+            if let Ok(space) = self.space(&id.to_string()).await {
+                crate::repo_cache::collect(&space, name).await;
+            }
+            crate::repo_cache::forget(name);
+        }
         // A Space added by address keeps running: if it is attached to the
         // relay, its driver is asked to leave while it is still reachable.
         #[cfg(feature = "spaces-agents")]

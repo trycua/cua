@@ -93,8 +93,8 @@ fn word(s: &str) -> &str {
         "linux" => "Linux",
         "windows" => "Windows",
         "macos" => "macOS",
-        "local" => "this computer",
-        "relay" => "another of my computers",
+        "local" => "this machine",
+        "relay" => "another of my machines",
         "container" => "container",
         "vm" => "VM",
         _ => s,
@@ -948,7 +948,7 @@ mod tests {
     fn keeps_the_apps_words_for_this_machine() {
         // The machine row is named "This Mac" ("This PC", "This computer"),
         // so it is among the names to hide. The phrase stays: it names no one.
-        for phrase in ["This Mac", "This PC", "This computer", "This machine"] {
+        for phrase in ["This Mac", "This PC", "This machine", "This machine"] {
             let names = vec![phrase.to_string(), "Studio".to_string()];
             assert_eq!(
                 redact_with(&format!("{phrase} can't reach Studio."), &names),

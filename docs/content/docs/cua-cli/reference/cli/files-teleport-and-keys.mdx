@@ -41,6 +41,7 @@ description: "Cua Volume files and sharing, moving an app session into a sandbox
 | [`cua teleport providers`](#cua-teleport-providers) | List the apps this computer can teleport (JSON). |
 | [`cua teleport manifest`](#cua-teleport-manifest) | Describe what teleporting an app would move (JSON). |
 | [`cua teleport push`](#cua-teleport-push) | Teleport an app session into a sandbox. |
+| [`cua teleport doctor`](#cua-teleport-doctor) | Check, in plain words, that a teleport can work now: the Keyvault, permission to read the browser's files and tabs, and the profile. |
 | [`cua keyvault`](#cua-keyvault) | The Cua Keyvault the daemon hosts: status, init, unlock, lock, saved passwords and approvals. |
 | [`cua keyvault status`](#cua-keyvault-status) | Whether the Keyvault exists and is unlocked, and which protectors (Touch ID with the OS key store, a passphrase) the daemon can use. |
 | [`cua keyvault init`](#cua-keyvault-init) | Create the Keyvault and print its recovery key once. |
@@ -584,9 +585,10 @@ cua teleport push [OPTIONS] --app <APP>
 | <span id="cua-teleport-push--profile"></span>`--profile` |  | string |  |  | Chrome profile to capture: a name ("Profile 1") or a path. |
 | <span id="cua-teleport-push--display-name"></span>`--display-name` |  | string |  |  | Display name for the app (UI only). |
 | <span id="cua-teleport-push--sandbox"></span>`--sandbox` | `-s` | string |  |  | Destination sandbox (name). |
-| <span id="cua-teleport-push--url"></span>`--url` |  | string |  |  | Destination cua-spacesd URL instead of a sandbox. |
+| <span id="cua-teleport-push--url"></span>`--url` |  | string |  |  | Destination cua-spacesd URL instead of a sandbox: another daemon's API, or any machine you can reach. The browser is read by the local Cua daemon with the same Keyvault consent, audit record and wipe as `--sandbox`; `--url` only names where it goes. |
 | <span id="cua-teleport-push--token"></span>`--token` |  | string |  | `CUA_ENV_TOKEN` | Token for `--url`. |
 | <span id="cua-teleport-push--include"></span>`--include` |  | string |  |  | Send exactly this manifest item (repeatable; see `manifest`). Default: the provider's default selection, which leaves credentials-heavy or bulky items (cookies, transcripts) out unless named here. |
+| <span id="cua-teleport-push--read-as-caller"></span>`--read-as-caller` |  | boolean | `false` |  | With `--url`, read the app in this command's own process instead of the Cua daemon. Consent, the audit record and the wipe are skipped, and macOS uses this process's permissions, not Cua's. Scheduled for removal; use `--url` alone. |
 | <span id="cua-teleport-push--all"></span>`--all` |  | boolean | `false` |  | Send every item the scope offers. |
 | <span id="cua-teleport-push--no-launch"></span>`--no-launch` |  | boolean | `false` |  | Do not launch the app in the sandbox after importing. |
 | <span id="cua-teleport-push--progress"></span>`--progress` |  | boolean | `false` |  | Print `progress <sent> <total>` lines while uploading. |
@@ -600,6 +602,26 @@ cua teleport push --app com.google.Chrome --scope tabs --sandbox dev
 
 # The whole Slack profile, every item
 cua teleport push --app Slack --sandbox dev --all
+```
+
+### `cua teleport doctor`
+
+Check, in plain words, that a teleport can work now: the Keyvault, permission to read the browser's files and tabs, and the profile.
+
+```text output
+cua teleport doctor [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-teleport-doctor--app"></span>`--app` | string | `chrome` | Browser to check (`chrome` or `edge`). |
+| <span id="cua-teleport-doctor--profile"></span>`--profile` | string |  | Profile to check: a name ("Profile 1"). Default: the one used last. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-teleport-doctor"
+cua teleport doctor
+cua teleport doctor --app chrome --profile "Profile 1"
 ```
 
 ## `cua keyvault`

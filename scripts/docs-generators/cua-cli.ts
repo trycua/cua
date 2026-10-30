@@ -98,7 +98,7 @@ export const CLI_GROUPS: CliGroup[] = [
     title: 'Spaces, computers and teams',
     summary:
       'Your Spaces and machines, unattended access on this machine, devices, teams, your remote use this month, and a cua-spacesd by URL',
-    commands: ['spaces', 'host', 'devices', 'team', 'usage', 'spacesd', 'share'],
+    commands: ['spaces', 'machines', 'host', 'devices', 'team', 'usage', 'spacesd', 'share'],
   },
   {
     slug: 'files-teleport-and-keys',
@@ -127,8 +127,8 @@ export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'agents',
     title: 'Agents, MCP and skills',
-    summary: 'Agents in a Space, connecting your AI agents, the stdio MCP server, and recorded skills',
-    commands: ['agent', 'thread', 'join', 'connect', 'agents', 'mcp', 'skills'],
+    summary: 'Agents in a Space, connecting your AI agents and the AI providers they use, the stdio MCP server, and recorded skills',
+    commands: ['agent', 'thread', 'join', 'connect', 'connections', 'agents', 'mcp', 'skills'],
   },
   {
     slug: 'account-and-setup',
@@ -140,7 +140,7 @@ export const CLI_GROUPS: CliGroup[] = [
     slug: 'pool',
     title: 'Your pool',
     summary:
-      'Run Python functions on your pool, each member in a Space (`cua run`, `cua jobs`). Computers join with `cua host setup --no-desktop --provide-spaces` (or `--pair CODE` from `cua host pair`) and `cua cloud add aws`; `cua computers` lists them',
+      'Run Python functions on your pool, each member in a Space (`cua run`, `cua jobs`). Computers join with `cua host setup --share spaces` (or `--pair CODE` from `cua host pair`) and `cua cloud add aws`; `cua computers` lists them',
     commands: ['computers', 'run', 'jobs', 'compat'],
   },
   {

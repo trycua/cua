@@ -1,10 +1,10 @@
 ---
 title: Connect a cloud
-description: Steps an agent follows to link the user's AWS, Google Cloud or Azure account to Cua Spaces with no stored key, or Hetzner and Modal with an API token sealed to their devices, set a budget and a largest machine, and verify it.
+description: Steps an agent follows to link the user's AWS, Google Cloud or Azure account to Cua Spaces with no stored key, or Hetzner and Modal with an API token sealed to their machines, set a budget and a largest machine, and verify it.
 ---
 
 Link your AWS, Google Cloud or Azure account once, with no stored key, and
-Spaces can run there from every device and agent on your Cua account. This page is written for
+Spaces can run there from every machine and agent on your Cua account. This page is written for
 the coding agent that does it for you. The Cua Spaces app gives you a prompt
 like this one to paste into your agent:
 
@@ -171,9 +171,9 @@ is.
 ## Hetzner and Modal
 
 Hetzner and Modal have no OIDC, so they use an API token. Cua seals the
-token to the person's devices: the device you run on encrypts it with the
-account's pool key, and only devices of the person's Cua account can open
-it. Cua's servers keep only the ciphertext. Any of the person's devices then
+token to the person's machines: the machine you run on encrypts it with the
+account's pool key, and only machines of the person's Cua account can open
+it. Cua's servers keep only the ciphertext. Any of the person's machines then
 opens it in memory when it calls the cloud. No tool returns it, not to you
 and not to any other agent.
 
@@ -215,45 +215,45 @@ sealed.
 cua cloud status hetzner
 ```
 
-The line under Hetzner names the devices that can open the token ("can open
+The line under Hetzner names the machines that can open the token ("can open
 it: ..."). At least one of them must be online for Cua to make machines
 there while the person is away.
 
-### On the person's other devices
+### On the person's other machines
 
-They do not paste the token again. On another device of the same Cua
+They do not paste the token again. On another machine of the same Cua
 account, link the account's sealed token:
 
 ```bash test="cli-shape" id="agents-connect-hetzner-other-device"
 cua cloud connect hetzner --sealed --region fsn1 --budget 50
 ```
 
-### Sealed or kept on this device
+### Sealed or kept on this machine
 
-Without `--sealed` or `--no-sealed`, the token is sealed when this device has
+Without `--sealed` or `--no-sealed`, the token is sealed when this machine has
 the account's pool keys (the `cua` of the Cua Spaces app, signed in) and a
 budget is given, or when the link is sealed already. Otherwise the Hetzner
-token is kept in this device's Cua credential store, as in earlier
+token is kept in this machine's Cua credential store, as in earlier
 versions.
 
 - `--sealed` insists on sealing. Without a token on standard input, it seals
-  the token this device already has (the saved one, `HCLOUD_TOKEN`, the
+  the token this machine already has (the saved one, `HCLOUD_TOKEN`, the
   hcloud CLI's, or for Modal `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` or the
   `~/.modal.toml` profile). This is how a link from an earlier version moves
   to a sealed token.
-- `--no-sealed` keeps the Hetzner token on this device only.
+- `--no-sealed` keeps the Hetzner token on this machine only.
 
 ### Replace or revoke the token
 
 - Replace it: run the connect command again with the new token on standard
-  input. It is sealed and swapped in for every device.
+  input. It is sealed and swapped in for every machine.
 - Revoke it: delete the token in the Hetzner Cloud console (or with
   `modal token`), or run `cua cloud disconnect hetzner`, which deletes the
   sealed token on Cua's servers.
 
-When the person removes a device from their Cua account, the account's pool
-key moves to a new generation. The next device that uses the token seals it
-again under the new key, so the removed device cannot open it any more. To be
+When the person removes a machine from their Cua account, the account's pool
+key moves to a new generation. The next machine that uses the token seals it
+again under the new key, so the removed machine cannot open it any more. To be
 sure, replace the token as well.
 
 ## Google Cloud
@@ -365,9 +365,9 @@ cua cloud status azure
 
 ## Other clouds
 
-Hetzner and Modal link with a token sealed to the person's devices (see
+Hetzner and Modal link with a token sealed to the person's machines (see
 [Hetzner and Modal](#hetzner-and-modal)), or with their own sign-in on this
-device, and Google Cloud too if the person prefers `gcloud` on this device to
+machine, and Google Cloud too if the person prefers `gcloud` on this machine to
 a link without a key. The budget and largest machine work the same way:
 
 ```bash test="cli-shape" id="agents-connect-other"
@@ -375,7 +375,7 @@ cua cloud connect gcp --project my-project --region us-central1 --budget 100 --m
 cua cloud connect modal --environment spaces --budget 50
 ```
 
-The second command links Modal with the Modal CLI's sign-in on this device
+The second command links Modal with the Modal CLI's sign-in on this machine
 (`~/.modal.toml`) instead of a sealed token.
 
 ## What to ask the person, and what not to

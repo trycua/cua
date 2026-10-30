@@ -18,7 +18,7 @@ import type { AgentRunStatus, HostStatus, Space, SpaceOs, TranscriptItem } from 
 import type { DataAdapter } from "@/bridge/adapter";
 import { threadOpAvailable } from "@/bridge/ops/thread";
 
-import { isMachineDesktop, spaceState } from "./spaces";
+import { isMachineDesktop, orderSpaces, spaceState } from "./spaces";
 
 export type TaskEnding = "kept" | "thrown";
 
@@ -46,6 +46,8 @@ export interface AskTask {
   lastStatus: AgentRunStatus | null;
   /** It runs on this Mac itself (its own Space id is in `spaceId`): nothing to throw away. */
   onHost?: boolean;
+  /** Started in its Space's thread: the job is the Space's first message, @mentioning the agent. */
+  inSpace?: boolean;
 }
 
 const KEY = "cua.askFirst.tasks";
@@ -227,7 +229,7 @@ export interface NewKind {
 
 /** The Spaces you already have that a job can use: running ones, not a machine's own desktop (this Mac has its own row). */
 export function pickableSpaces(spaces: readonly Space[] | undefined): Space[] {
-  return (spaces ?? []).filter((s) => !isMachineDesktop(s) && spaceState(s) === "running");
+  return orderSpaces((spaces ?? []).filter((s) => !isMachineDesktop(s) && spaceState(s) === "running"));
 }
 
 /** Where a job runs unless you pick: a new Linux computer on this Mac (or the first kind this Mac can make). */
@@ -312,13 +314,13 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   if (e.includes("isn't shared"))
     return {
       title: "This Mac isn't set up for tasks yet",
-      body: "Turn on sharing for this Mac on the Computers page, then try again. Or pick another computer.",
+      body: "Turn on sharing for this Mac on the Machines page, then try again. Or pick another machine.",
       action: "set-up-host",
       retry: true,
     };
   // A task from before this Mac was turned into its own Space id: trying again now works.
   if (e.includes(`"${THIS_MAC_ID}"`))
-    return { title: "Couldn't start on this Mac", body: "Try again to start it on this Mac, or pick another computer.", action: "retry", retry: true };
+    return { title: "Couldn't start on this Mac", body: "Try again to start it on this Mac, or pick another machine.", action: "retry", retry: true };
   if (/cloud has ended/.test(e))
     return { title: "That computer is no longer available", body: "Cua Cloud has ended. Pick a computer on this Mac instead.", action: "change-computer", retry: false };
   if (/more than one|ambiguous/.test(e))
@@ -331,7 +333,7 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
     return { title: "Couldn't reach that computer", body: "Check it's on, then try again. Or pick another one.", action: "retry", retry: true };
   if (/disk|space left|no room|memory|quota|limit/.test(e))
     return { title: "This Mac doesn't have room for a new computer", body: "Free some disk space or turn off a computer you're not using, then try again.", action: "retry", retry: true };
-  return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another computer.", action: "retry", retry: true };
+  return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another machine.", action: "retry", retry: true };
 }
 
 /** Where a task stands, in the words Home and the thread use. */
@@ -378,7 +380,7 @@ export const SUGGESTIONS: { title: string; detail: string; os: SpaceOs; prompt: 
     title: "Run my project's tests on a clean Linux computer",
     detail: "Find out if it works on a computer that has never seen your code.",
     os: "linux",
-    prompt: "Copy my project onto this computer, install what it needs and run its tests. Tell me what passed and what failed: ",
+    prompt: "Copy my project onto this machine, install what it needs and run its tests. Tell me what passed and what failed: ",
   },
   {
     title: "Try a pull request before merging",

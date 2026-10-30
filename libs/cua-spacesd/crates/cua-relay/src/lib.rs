@@ -41,6 +41,7 @@ pub mod directory;
 pub mod grants;
 pub mod handover;
 pub mod ident;
+pub mod join_limit;
 pub mod mesh;
 pub mod mux;
 pub mod oidc;

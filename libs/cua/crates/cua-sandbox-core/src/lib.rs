@@ -29,6 +29,8 @@ pub use cua_vmm::cleanup;
 pub use cua_vmm::error::failure_kind as runtime_failure_kind;
 /// GPU options per runtime ([`gpu::GpuSupport`]).
 pub use cua_vmm::gpu;
+/// Which software runs each kind of Space here (`runtime.<kind>`).
+pub use cua_vmm::kinds as runtime_kinds;
 /// Create progress: what a create is doing (pulling, booting, waiting for
 /// the guest), reported to the [`progress::scope`] that started it.
 pub use cua_vmm::progress;
@@ -49,6 +51,7 @@ pub mod profile;
 pub mod provider;
 pub mod proxy;
 pub mod refs;
+pub mod repo_cache;
 mod runtime;
 mod sandbox;
 pub mod settings;

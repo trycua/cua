@@ -3,20 +3,22 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { MonitorIcon, PlusIcon, SearchIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { emptyHome, listView, spaceDiskBytes, useBridge, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaces, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
 import { useFirstSpaceMilestones } from "@/components/first-run-guide";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { ComputerWarnings } from "@/components/resources/computer-resources";
-import type { SpaceItem } from "@/components/spaces/model";
+import { useListedSpaces } from "@/components/spaces/listed";
+import { desktopOf, hasHideButton, hasMenu, type SpaceItem } from "@/components/spaces/model";
 import { BulkConfirmDialog, useBulkRemove } from "@/components/spaces/bulk-remove";
 import { SpaceList } from "@/components/spaces/space-list";
 import { SpaceContextMenu, SpaceMoreMenu, type MenuActions } from "@/components/spaces/space-menu";
 import { SelectAllBox, SelectBox, SelectionBar, stoppedDeletable, useSelection } from "@/components/spaces/selection";
 import { SpaceTile, TILE_CELL } from "@/components/spaces/space-tile";
 import { CreatingElsewhereTile } from "@/components/spaces/creating-elsewhere-tile";
+import { WindowedGrid, type WindowedGridHandle } from "@/components/spaces/windowed-grid";
 import { SpacesToolbar } from "@/components/spaces/spaces-toolbar";
 import { PageTip, useTipsLoaded } from "@/components/tips";
 import { useNewSpace } from "@/hooks/use-new-space";
@@ -27,13 +29,12 @@ import { thisComputerText } from "@/lib/host-labels";
 import { plural } from "@/lib/plural";
 import { cn } from "@/lib/utils";
 import { accessOf, isMine } from "@/lib/space-access";
-import { creatingElsewhereLine, machineName, matchesQuery, realSpaces, spaceState } from "@/lib/spaces";
+import { creatingElsewhereLine, machineName, matchesQuery, spaceState } from "@/lib/spaces";
+import { hideDesktop, showHiddenDesktops } from "@/lib/hidden-desktops";
 import { computerChoices, gridArea, nextSearch, shownSpaces, spaceMachineId, validateSpacesSearch, type SpacesSearch } from "@/lib/spaces-page";
-import { useFlag } from "@/bridge/flags";
-import { LegacySpacesPage } from "@/legacy/routes/spaces/index";
 
 export const Route = createFileRoute("/spaces/")({
-  component: SpacesPageSwitch,
+  component: SpacesPage,
   // `view`, `sort`, `on`, `state`, `owner`, `select` (lib/spaces-page). The low-disk warning's "See what's using
   // space" opens `?view=list&on=<this computer>&sort=size`; `?sort=size` alone sorts the grid biggest first.
   validateSearch: (s: Record<string, unknown>): SpacesSearch => validateSpacesSearch(s),
@@ -45,8 +46,9 @@ function SpacesPage() {
   const setSearch = (next: Partial<Record<keyof SpacesSearch, string | undefined>>) =>
     void navigate({ search: (prev: SpacesSearch) => nextSearch(prev, next), replace: true });
   const { data: all = [], isLoading, error, listNotice, listStatus, startSpace, stopSpace, creatingElsewhere } = useSpaces();
-  // Machines' own desktops are on Machines, not here.
-  const spaces = realSpaces(all);
+  // Your Spaces and the machines' desktops: this Mac's reads "Not sharing" while its switch is off (never counted).
+  // Stable while the list is: the tiles below redraw only when their own item changes.
+  const { listed: spaces, counted, hiddenCount } = useListedSpaces(all);
   const { data: machines = [] } = useMachines();
   const resources = useResources();
   const [query, setQuery] = useState("");
@@ -63,20 +65,27 @@ function SpacesPage() {
         spaces.map((space) => {
           const machine = machineName(machines, space);
           const mine = isMine(space);
-          return [space.id, { space, state: spaceState(space), access: accessOf(space, machine), mine, bytes: mine ? spaceDiskBytes(resources, space.id) : null, machine }];
+          return [space.id, { space, state: spaceState(space), access: accessOf(space, machine), mine, bytes: mine ? spaceDiskBytes(resources, space.id) : null, machine, desktop: desktopOf(space) }];
         }),
       ),
     [spaces, machines, resources],
   );
   const item = (s: Space) => items.get(s.id)!;
-  const shown = shownSpaces({
-    spaces,
-    search,
-    mine: (s) => item(s).mine,
-    machineOf: (s) => spaceMachineId(s, machines),
-    bytes: (s) => item(s).bytes,
-    matches: (s) => matchesQuery(core, s, item(s).machine, query),
-  }).map(item);
+  // Only when the list, the filters or the numbers change: a pick or a menu redraws the page without
+  // filtering and sorting thousands of Spaces again.
+  const shown = useMemo(
+    () =>
+      shownSpaces({
+        spaces,
+        search,
+        mine: (s) => item(s).mine,
+        machineOf: (s) => spaceMachineId(s, machines),
+        bytes: (s) => item(s).bytes,
+        matches: (s) => matchesQuery(core, s, item(s).machine, query),
+      }).map(item),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `item` reads `items`
+    [spaces, search, items, machines, query, core],
+  );
   const filter = search.state ?? "all";
   // Spaces your other computers are creating (CUA-2349): first in the grid, until they are ready.
   const elsewhere =
@@ -89,7 +98,7 @@ function SpacesPage() {
     </li>
   ));
   const keyvault = useSpaceAccess(spaces);
-  const running = spaces.filter((s) => spaceState(s) === "running").length;
+  const running = counted.filter((s) => spaceState(s) === "running").length;
   // No Spaces yet (or the list could not be read): the SwiftUI app's empty home, as the first-run guide.
   // The core decides: "Create your first Space" only for a complete list with no Space. A daemon still
   // starting (an app update) or computers still answering show what is known and one quiet line instead.
@@ -99,7 +108,7 @@ function SpacesPage() {
   const empty = !error && !isLoading && (listed.empty || unread) && creatingElsewhere.length === 0;
   const guide = empty && home && home.tiles.length > 0 ? home : null;
   const reachingLine = error || unread ? null : listed.reachingLine;
-  useFirstSpaceMilestones(spaces);
+  useFirstSpaceMilestones(counted);
   const tipsLoaded = useTipsLoaded();
   // The warnings above the list and the list come from separate host reads. Draw them together once those have
   // answered, not one by one with the page jumping at each (CUA-1951).
@@ -115,12 +124,21 @@ function SpacesPage() {
   const power = (list: readonly SpaceItem[], on: boolean) => {
     for (const it of list) void (on ? startSpace : stopSpace)(it.space.id).catch(toastError(`Couldn't turn ${on ? "on" : "off"} ${it.space.name}`));
   };
-  const actions: MenuActions = { power: (it, on) => power([it], on), remove: (it) => bulk.ask([it]) };
+  const actions: MenuActions = { power: (it, on) => power([it], on), remove: (it) => bulk.ask([it]), hide: (it) => hideDesktop(it.space.id) };
+  // The grid's tiles read the selection and the menus' actions through this,
+  // so a tile redraws only when its own Space, pick or state changes (picking
+  // one of 3,000 Spaces redrew all 3,000).
+  const grid = useRef<WindowedGridHandle>(null);
+  const live = useRef<GridLive>({ selection, actions });
+  live.current = { selection, actions };
   // `?select=stopped` (the cleanup tip, a link): every stopped Space shown of yours, once the list is in.
   const ready = !isLoading && shown.length > 0;
   useEffect(() => {
     if (search.select !== "stopped" || !ready) return;
     selection.selectStopped();
+    // The first one picked, on screen (a long grid draws only what is on screen).
+    const first = shown.findIndex(stoppedDeletable);
+    if (first >= 0) grid.current?.scrollToIndex(elsewhereTiles.length + first);
     setSearch({ select: undefined });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the list is in
   }, [search.select, ready]);
@@ -132,7 +150,7 @@ function SpacesPage() {
     <Page>
       <PageHeader
         title="Spaces"
-        description={isLoading || !listStatus.loaded ? "Loading Spaces…" : `${plural(spaces.length, "Space")} on ${plural(machines.length, "computer")}, ${running} running`}
+        description={isLoading || !listStatus.loaded ? "Loading Spaces…" : `${plural(counted.length, "Space")} on ${plural(machines.length, "machine")}, ${running} running`}
         actions={
           <Button onClick={newSpace}>
             <PlusIcon /> New Space
@@ -143,7 +161,7 @@ function SpacesPage() {
         <>
       <PageTip place="spaces" />
       {/* The page's tip goes here, above the warnings (the tips' own change places it). Then, in this order:
-          the computers' warnings, the toolbar, the grid's place. */}
+          the machines' warnings, the toolbar, the grid's place. */}
       <ComputerWarnings snapshot={resources} machines={machines} />
       {/* Then the toolbar, and under it the grid's place: the Spaces, or what stands in for them. */}
       {picked.length || bulk.progress ? (
@@ -164,6 +182,7 @@ function SpacesPage() {
           onView={(v) => setSearch({ view: v === "grid" ? undefined : v })}
           query={query}
           onQuery={setQuery}
+          hidden={hiddenCount > 0 ? { count: hiddenCount, onShow: showHiddenDesktops } : undefined}
           lead={
             view === "list" && shown.some(stoppedDeletable) ? (
               <button
@@ -241,35 +260,29 @@ function SpacesPage() {
                   </SpaceContextMenu>
                 )}
                 more={(it) => <SpaceMoreMenu item={it} actions={actions} />}
+                hide={actions.hide}
               />
               </>
             ) : (
-              <ul className="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-x-5 gap-y-7">
-                {elsewhereTiles}
-                {shown.map((it) => (
-                  // Off-screen tiles skip layout and paint until they scroll in (with room for the selected ring).
-                  <li key={it.space.id} className={TILE_CELL}>
-                    <SpaceContextMenu item={it} actions={actions}>
-                      <SpaceTile
-                        item={it}
-                        accessKey={keyvault.signedIn.has(it.space.id) ? keyvault.accessKey(it.space.id) : undefined}
-                        selected={selection.has(it.space.id)}
-                        busy={bulk.running.has(it.space.id)}
-                        onClick={(e) => selection.onClick(it, e)}
-                        topLeft={
-                          <SelectBox
-                            item={it}
-                            selection={selection}
-                            onPicture
-                            className={selection.ids.size ? undefined : "opacity-0 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100"}
-                          />
-                        }
-                        more={<SpaceMoreMenu item={it} actions={actions} />}
-                      />
-                    </SpaceContextMenu>
-                  </li>
-                ))}
-              </ul>
+              <WindowedGrid
+                ref={grid}
+                picking={selection.ids.size > 0}
+                count={elsewhereTiles.length + shown.length}
+                renderAt={(i) => {
+                  if (i < elsewhereTiles.length) return elsewhereTiles[i];
+                  const it = shown[i - elsewhereTiles.length]!;
+                  return (
+                    <GridTile
+                      key={it.space.id}
+                      item={it}
+                      selected={selection.has(it.space.id)}
+                      busy={bulk.running.has(it.space.id)}
+                      accessKey={keyvault.signedIn.has(it.space.id) ? keyvault.accessKey(it.space.id) : undefined}
+                      live={live}
+                    />
+                  );
+                }}
+              />
             );
         }
       })()}
@@ -285,7 +298,60 @@ function SpacesPage() {
   );
 }
 
-/** The redesign behind `spaces_redesign` (Settings → Advanced → Labs); off, the page as it was. */
-function SpacesPageSwitch() {
-  return useFlag("spaces_redesign") ? <SpacesPage /> : <LegacySpacesPage />;
+interface GridLive {
+  selection: ReturnType<typeof useSelection>;
+  actions: MenuActions;
 }
+
+/** One tile of the grid, redrawn only when its own props change (`live` is a
+ * stable ref to what every tile shares). */
+const GridTile = memo(function GridTile({
+  item,
+  selected,
+  busy,
+  accessKey,
+  live,
+}: {
+  item: SpaceItem;
+  selected: boolean;
+  busy: boolean;
+  accessKey: string | null | undefined;
+  live: RefObject<GridLive>;
+}) {
+  const actions = useMemo<MenuActions>(
+    () => ({ power: (it, on) => live.current.actions.power(it, on), remove: (it) => live.current.actions.remove(it), hide: (it) => live.current.actions.hide?.(it) }),
+    [live],
+  );
+  // The checkbox reads whether it is picked and toggles it (the latest selection).
+  const selection = useMemo(
+    () => ({ ...live.current.selection, has: (id: string) => live.current.selection.has(id), toggle: (it: SpaceItem, e?: { shiftKey?: boolean }) => live.current.selection.toggle(it, e) }),
+    [live],
+  );
+  return (
+    // Off-screen tiles skip layout and paint until they scroll in (with room for the selected ring).
+    <li className={TILE_CELL}>
+      <SpaceContextMenu item={item} actions={actions}>
+        <SpaceTile
+          item={item}
+          accessKey={accessKey}
+          selected={selected}
+          busy={busy}
+          onClick={(e) => live.current.selection.onClick(item, e)}
+          topLeft={
+            <SelectBox
+              item={item}
+              selection={selection}
+              picked={selected}
+              onPicture
+              // Hidden until hovered, unless something is picked (the grid's `data-picking`): a
+              // CSS group, so the first pick doesn't redraw every tile.
+              className="opacity-0 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100 group-data-[picking]/grid:opacity-100"
+            />
+          }
+          hide={hasHideButton(item) ? () => actions.hide?.(item) : undefined}
+          more={hasMenu(item) ? <SpaceMoreMenu item={item} actions={actions} /> : undefined}
+        />
+      </SpaceContextMenu>
+    </li>
+  );
+});

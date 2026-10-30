@@ -140,7 +140,7 @@ public struct HostSetupFailure: Equatable, Sendable {
                     "Your Cua account isn\u{2019}t signed in on this Mac. Sign in, then try again.")
         case .service:
             return ("Couldn\u{2019}t start the Cua host service",
-                    "macOS didn\u{2019}t start the service your other devices connect to. Try again; "
+                    "macOS didn\u{2019}t start the service your other machines connect to. Try again; "
                         + "if it keeps failing, restart this Mac.")
         case .other:
             return ("Couldn\u{2019}t set up this Mac for access",

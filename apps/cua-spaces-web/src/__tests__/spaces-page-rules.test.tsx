@@ -15,7 +15,7 @@ import { computerChoices, gridArea, lastUsedText, namesText, nextSearch, shownSp
 
 afterEach(cleanup);
 
-const GB = 1_000_000_000;
+const GB = 1024 ** 3;
 const NOW = 1_800_000_000_000;
 const MIN = 60_000;
 
@@ -93,8 +93,8 @@ describe("which Spaces, in which order", () => {
   it("grid by last used: running first, most recent first in each", () => {
     expect(names({})).toEqual(["alpha", "charlie", "bravo", "delta"]);
   });
-  it("list by last used: strictly by the column", () => {
-    expect(names({ view: "list" })).toEqual(["bravo", "delta", "alpha", "charlie"]);
+  it("list by last used: the same order, running first", () => {
+    expect(names({ view: "list" })).toEqual(["alpha", "charlie", "bravo", "delta"]);
   });
   it("name A to Z, size biggest first with unknown sizes last", () => {
     expect(names({ sort: "name" })).toEqual(["alpha", "bravo", "charlie", "delta"]);

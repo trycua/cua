@@ -137,16 +137,38 @@ describe.skipIf(!wasmBuilt)("resources on Home and a Space's page", () => {
     const card = (label: string) => panel.querySelector(`[data-resource-card="${label}"]`)?.textContent ?? "";
     expect(card("Processor")).toContain("Given 4 of this Mac’s 12 cores");
     expect(card("Memory")).toContain("Given 8 GB of this Mac’s 64 GB");
-    expect(card("Space for files")).toContain("34 of 80 GB");
-    expect(card("Space for files")).toContain("Uses about 19 GB on this Mac (shares space with other copies).");
+    // Its own data on this Mac, of the size it was given.
+    expect(card("Space for files")).toBe("Space for files19 of 80 GB");
+    // Title, number, the one "Given" line and the bar: no explanations, no footer.
+    expect(panel.textContent).not.toMatch(/Busy means|free for its apps|Uses about|Updates every|file names/);
     const fit = panel.querySelector("[data-disk-fit]")!;
     expect(fit.textContent).toContain("How it fits on this Mac");
-    expect(fit.querySelector('[data-disk-part="own"]')?.textContent).toBe("Your own files and apps · 934 GB");
+    expect(fit.querySelector('[data-disk-part="yours"]')?.textContent).toBe("Your own files and apps · 929 GB");
+    expect(fit.querySelector('[data-disk-part="space"]')?.textContent).toMatch(/ · 19 GB$/);
+    expect(fit.querySelector('[data-disk-part="others"]')?.textContent).toBe("Other Spaces · 6 GB");
+    // Each shared base once, with who shares it.
+    const bases = Array.from(fit.querySelectorAll('[data-disk-part="base"]')).map((b) => b.textContent);
+    expect(bases).toHaveLength(2);
+    expect(bases[0]).toMatch(/ image · 25 GB, only this Space uses it$/);
+    expect(bases[1]).toBe("linux 24.04 image · 4.1 GB, used by 1 Space");
     expect(fit.querySelector('[data-disk-part="free"]')?.textContent).toBe("Free · 41 GB");
     expect(fit.querySelector("[data-low-disk]")).not.toBeNull();
   });
 
-  it("another computer's running Space has no panel with only its size there", async () => {
+  it("a container's page: its own data with no fake total", async () => {
+    await mountApp(`/spaces/${encodeURIComponent("local:agent-sandbox")}`, { failsCreates: false, listsGhost: false, answer: lowDisk, noThread: true });
+    const panel = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>("[data-space-resources]");
+      if (!el) throw new Error("no panel");
+      return el;
+    });
+    const files = panel.querySelector('[data-resource-card="Space for files"]')!;
+    expect(files.textContent).toBe("Space for files6 GB");
+    expect(files.querySelector("[data-bar-fill]")).toBeNull();
+    expect(panel.querySelector('[data-resource-card="Memory"]')?.textContent).toContain("Given 4 GB of this Mac’s 64 GB");
+  });
+
+  it("another machine's running Space has no panel with only its size there", async () => {
     await mountApp(`/spaces/${encodeURIComponent("relay:mac-mini/qa-windows")}`, { failsCreates: false, listsGhost: false, noThread: true });
     await waitFor(() => expect(document.querySelector("[data-detail-title]")).not.toBeNull());
     await act(() => new Promise((r) => setTimeout(r, 50)));

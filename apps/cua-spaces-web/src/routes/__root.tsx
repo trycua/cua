@@ -9,10 +9,7 @@ import { useBridge, useSavedOnboarding, useSession, useStartup } from "@/bridge"
 import { NewSpace } from "@/components/new-space";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { DevicesBanner } from "@/components/shell/devices-banner";
-import { useFlag } from "@/bridge/flags";
 import { Sidebar } from "@/components/shell/sidebar";
-import { ChecklistTracker } from "@/legacy/components/getting-started";
-import { Sidebar as LegacySidebar } from "@/legacy/components/shell/sidebar";
 import { PlanLimitToastAction } from "@/components/shell/plan-limit-toast-action";
 import { RelayAllowanceNotice } from "@/components/shell/relay-allowance-notice";
 import { ShareRemovalNotice } from "@/components/shell/share-removal-notice";
@@ -33,8 +30,6 @@ export const Route = createRootRoute({ component: RootLayout });
 const StartupScreen = lazy(() => import("@/components/startup/StartupScreen").then((m) => ({ default: m.StartupScreen })));
 
 function RootLayout() {
-  // `spaces_redesign` off: the sidebar and the getting-started checklist as they were.
-  const redesign = useFlag("spaces_redesign");
   useThemeSync();
   useThemeHostSync();
   const { mode } = useBridge();
@@ -73,7 +68,7 @@ function RootLayout() {
 
   return (
     <div className="flex h-full bg-chrome">
-      {sidebarOpen ? redesign ? <Sidebar /> : <LegacySidebar /> : null}
+      {sidebarOpen ? <Sidebar /> : null}
       <div className="flex min-w-0 flex-1 flex-col bg-background">
         <TopBar />
         <DevicesBanner />
@@ -86,7 +81,6 @@ function RootLayout() {
       </div>
       <PlanLimitToastAction />
       <CommandPalette />
-      {redesign ? null : <ChecklistTracker />}
       <NewSpace />
       <SpaceSheets />
       <ThisMacNudges />

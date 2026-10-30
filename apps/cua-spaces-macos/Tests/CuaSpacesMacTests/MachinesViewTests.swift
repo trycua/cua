@@ -134,7 +134,7 @@ struct MachinesViewTests {
             view.groups.flatMap(\.ids).contains(id)
         })
         let me = view.machines.first { $0.current }
-        #expect(me?.toggles.map(\.label) == ["Let my other devices use this Mac"])
+        #expect(me?.toggles.map(\.label) == ["Let other machines control this desktop"])
         #expect(me?.toggles.allSatisfy(\.editable) == true)
         #expect(view.summary.contains("online"))
         // Another machine's switches are read-only.
@@ -142,9 +142,14 @@ struct MachinesViewTests {
         // A device of its own leaves the account by revoking it.
         let work = view.machines.first { $0.name == "Work laptop" }
         #expect(work?.remove?.device == "dev_work")
-        #expect(work?.remove?.label == "Remove from account")
+        #expect(work?.remove?.label == "Revoke")
+        #expect(work?.line == "Signed in, not sharing")
+        // One list: no separate group for it.
+        #expect(view.groups.first { $0.id == "devices" } == nil)
+        #expect(view.groups.contains { $0.ids.contains("dev_work") })
         // No Space actions on a machine: its Spaces only lead to the Space.
-        #expect(view.machines.allSatisfy { $0.newSpace.label == "New Space here" })
+        #expect(view.machines.filter { $0.line != "Signed in, not sharing" }.allSatisfy { $0.newSpace.label == "New Space here" })
+        #expect(work?.newSpace.label == "")
 
         let bridge = WebUIBridge(model: m, allowedOrigins: [])
         let answer = bridge.machines()["view"] as? [String: Any]

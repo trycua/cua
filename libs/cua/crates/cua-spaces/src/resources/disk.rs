@@ -189,6 +189,71 @@ pub struct Footprint {
     /// full (0: not reported). The fallback when [`Footprint::dir`] cannot
     /// be read.
     pub reported: u64,
+    /// The image reference it was made from (`ghcr.io/trycua/linux:24.04`).
+    pub image: String,
+    /// What identifies that image's blocks: its digest when the state file
+    /// has one, else the reference.
+    pub image_key: String,
+}
+
+/// A Space's base image as measured: which one, and what it takes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BaseMeasure {
+    /// Spaces with the same key share the same blocks.
+    pub key: String,
+    /// Bytes it takes; `None` when it cannot be told apart.
+    pub bytes: Option<u64>,
+}
+
+/// The image reference and its key, from a state file's `image` and
+/// `image_info`.
+pub fn image_of(l: &cua_sandbox_core::state::LocalState) -> (String, String) {
+    let info = l.extra.get("image_info");
+    let text = |v: Option<&serde_json::Value>| {
+        v.and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let reference = text(info.and_then(|i| i.get("reference")))
+        .or_else(|| text(l.image.get("registry")))
+        .or_else(|| text(Some(&l.image)))
+        .unwrap_or_default();
+    let key = text(info.and_then(|i| i.get("digest"))).unwrap_or_else(|| reference.clone());
+    (reference, key)
+}
+
+/// What a copy-on-write clone shares with its base: the blocks its files
+/// occupy beyond the ones only it holds. `None` when the private bytes
+/// could not be measured (it cannot tell its own data from the base's).
+pub fn shared_blocks(d: &DiskOnHost) -> Option<u64> {
+    d.bytes.map(|own| d.allocated.saturating_sub(own))
+}
+
+/// A qcow2 file's backing file (the base image it was made from), from its
+/// header: relative names are relative to the file's directory.
+pub fn qcow2_backing_file(path: &Path) -> Option<PathBuf> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut hdr = [0u8; 24];
+    f.read_exact(&mut hdr).ok()?;
+    if &hdr[..4] != b"QFI\xfb" {
+        return None;
+    }
+    let offset = u64::from_be_bytes(hdr[8..16].try_into().ok()?);
+    let size = u32::from_be_bytes(hdr[16..20].try_into().ok()?) as usize;
+    if offset == 0 || size == 0 || size > 1023 {
+        return None;
+    }
+    f.seek(SeekFrom::Start(offset)).ok()?;
+    let mut name = vec![0u8; size];
+    f.read_exact(&mut name).ok()?;
+    let name = PathBuf::from(String::from_utf8(name).ok()?);
+    Some(if name.is_absolute() {
+        name
+    } else {
+        path.parent()?.join(name)
+    })
 }
 
 /// What `lume serve` says about one VM.
@@ -245,7 +310,10 @@ pub fn footprints(
                 runtime: l.runtime_type.clone(),
                 dir: None,
                 engine: false,
+                image: String::new(),
+                image_key: String::new(),
             };
+            (f.image, f.image_key) = image_of(&l);
             match l.runtime_type.as_str() {
                 "gvisor" | "runsc" | "container" | "docker" | "runc" | "managed"
                 | "qemu-docker" | "qemu_docker" => f.engine = true,
@@ -326,6 +394,24 @@ pub fn container_volumes(
     out
 }
 
+/// The image Space `name`'s own container runs, for its shared base.
+pub fn container_image<'a>(
+    name: &str,
+    home_tag: &str,
+    containers: &'a [cua_disk::docker::DockerContainer],
+) -> Option<&'a str> {
+    containers
+        .iter()
+        .find(|c| {
+            c.name == name
+                && c.labels
+                    .get(cua_disk::docker::LABEL_HOME)
+                    .is_none_or(|h| h == home_tag)
+        })
+        .map(|c| c.image_id.as_str())
+        .filter(|id| !id.is_empty())
+}
+
 /// What container Space `name` costs: the writable layers of its
 /// containers plus the anonymous volumes they mount (what deleting it
 /// frees). Its image's layers are shared and not counted, nor are named
@@ -354,6 +440,39 @@ pub fn container_disk(
         allocated: bytes,
         shares_space: false,
     })
+}
+
+/// Each Space's shared base, from what was measured of it (`image`, the
+/// reference it came from, and the measure, by Space): Spaces with the same
+/// key share one base, counted once. Its bytes are the largest any of them
+/// measured (a clone that shares fewer blocks has changed more of them);
+/// `None` when none could tell.
+pub fn shared_bases(items: &[(String, Option<BaseMeasure>)]) -> Vec<Option<super::SharedBase>> {
+    use std::collections::HashMap;
+    let mut groups: HashMap<&str, (u32, Option<u64>)> = HashMap::new();
+    for (_, m) in items {
+        if let Some(m) = m.as_ref().filter(|m| !m.key.is_empty()) {
+            let g = groups.entry(m.key.as_str()).or_insert((0, None));
+            g.0 += 1;
+            g.1 = match (g.1, m.bytes) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            };
+        }
+    }
+    items
+        .iter()
+        .map(|(image, m)| {
+            let m = m.as_ref().filter(|m| !m.key.is_empty())?;
+            let (shared_with, bytes) = groups[m.key.as_str()];
+            Some(super::SharedBase {
+                key: m.key.clone(),
+                image: image.clone(),
+                bytes,
+                shared_with,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

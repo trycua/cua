@@ -6,9 +6,9 @@
 //!
 //! | Agent | Signed in | Copied to Keyvault |
 //! |---|---|---|
-//! | Codex | `$CODEX_HOME/auth.json` (`tokens`, `OPENAI_API_KEY`); with keyring storage, `codex login status`'s exit code | the whole `auth.json` (OpenAI's documented headless route), as `CODEX_AUTH_JSON` |
-//! | Claude Code | `claude auth status` (exit 0, `authMethod`), else `.credentials.json` / `.claude.json` | the token `claude setup-token` prints after one browser approval, as `CLAUDE_CODE_OAUTH_TOKEN`; never the Keychain item `Claude Code-credentials` |
-//! | Hermes | `$HERMES_HOME/.env` provider keys, `auth.json` `providers` | the key of the provider `config.yaml` uses (OpenRouter, Anthropic, OpenAI); OAuth providers: not yet |
+//! | Codex | `$CODEX_HOME/auth.json` (`tokens`, `OPENAI_API_KEY`); with keyring storage, `codex login status`'s exit code | a sign-in made for Cua: `codex login --device-auth` in a folder Cua owns ([`DeviceSignIn`]), as `CODEX_AUTH_JSON`; never your own `auth.json` |
+//! | Claude Code | `claude auth status` (exit 0, `authMethod`), else `.credentials.json` / `.claude.json` | the access token of the sign-in Claude Code already has ([`crate::claude_login`]: the Keychain item `Claude Code-credentials` or `<config dir>/.credentials.json`, who it is from `.claude.json`), as `CLAUDE_CODE_OAUTH_TOKEN`; never the refresh token, and Claude Code's own files and Keychain item are only read |
+//! | Hermes | `$HERMES_HOME/.env` provider keys, `auth.json` `providers` (whether a key is there; never its value) | nothing: it uses the providers connected in Settings, Connections |
 //! | Cursor | `~/.config/cursor/auth.json`, `~/.cursor/auth.json`, `CURSOR_API_KEY`; else unknown | nothing (no supported export) |
 //! | OpenClaw | legacy `auth-profiles.json`; else unknown (profiles are in SQLite) | nothing yet |
 //! | T3 Code | uses the agents it controls | nothing (it uses Codex's and Claude's own) |
@@ -21,7 +21,7 @@
 //! Cursor cursor.com/docs/cli/reference/authentication.
 
 use crate::{
-    Error, HostEnv, Result,
+    Error, HostEnv, Result, claude_login,
     connection::{SignInCopy, run_with_timeout},
     registry,
 };
@@ -161,63 +161,12 @@ fn codex_check(env: &HostEnv) -> Check {
     }
 }
 
-fn codex_copy(env: &HostEnv) -> Result<SignInCopy, CopyRefusal> {
-    let file = codex_home(env).join("auth.json");
-    let text = match std::fs::read_to_string(&file) {
-        Ok(t) if !t.trim().is_empty() => t,
-        _ if codex_uses_keyring(env) => {
-            return Err(CopyRefusal::NotYet(
-                "Codex keeps its sign-in in the Keychain here; Cua can't copy it yet.".into(),
-            ));
-        }
-        _ => {
-            return Err(CopyRefusal::NotSignedIn(
-                "No ChatGPT sign-in on This Mac yet.".into(),
-            ));
-        }
-    };
-    let v: Value = serde_json::from_str(&text).map_err(|_| {
-        CopyRefusal::Failed(format!(
-            "{} can't be read.",
-            crate::connection::tilde(env, &file)
-        ))
-    })?;
-    let tokens = v.get("tokens");
-    if tokens.is_some_and(|t| non_empty(t.get("refresh_token")) || non_empty(t.get("access_token")))
-    {
-        // One line: the store keeps single-line values.
-        let value = serde_json::to_string(&v).map_err(|e| CopyRefusal::Failed(e.to_string()))?;
-        let expires_ms = if tokens.is_some_and(|t| non_empty(t.get("refresh_token"))) {
-            None
-        } else {
-            tokens
-                .and_then(|t| t.get("access_token"))
-                .and_then(Value::as_str)
-                .and_then(jwt_exp_ms)
-        };
-        return Ok(SignInCopy {
-            source: "codex".into(),
-            env: CODEX_AUTH_ENV.into(),
-            label: "Codex · ChatGPT sign-in".into(),
-            value,
-            expires_ms,
-        });
-    }
-    if let Some(key) = v
-        .get("OPENAI_API_KEY")
-        .and_then(Value::as_str)
-        .filter(|k| !k.trim().is_empty())
-    {
-        return Ok(SignInCopy {
-            source: "codex".into(),
-            env: "OPENAI_API_KEY".into(),
-            label: "Codex · OpenAI key".into(),
-            value: key.trim().into(),
-            expires_ms: None,
-        });
-    }
-    Err(CopyRefusal::NotSignedIn(
-        "No ChatGPT sign-in on This Mac yet.".into(),
+/// Codex's sign-in for a run in a Space: one made for Cua with Codex's own
+/// device-code login ([`DeviceSignIn`]); your own `auth.json` is never read.
+fn codex_copy() -> Result<SignInCopy, CopyRefusal> {
+    Err(CopyRefusal::NotYet(
+        "Connected. Codex signs in with a code: run `cua connect setup --agents codex --sign-in`, or use Connect in Cua Spaces."
+            .into(),
     ))
 }
 
@@ -321,69 +270,173 @@ fn claude_says_signed_out(env: &HostEnv, bin: &Path) -> bool {
     })
 }
 
-/// How long `claude setup-token` waits for the browser approval.
-pub const SETUP_TOKEN_WAIT: Duration = Duration::from_secs(600);
+/// How long Connect waits for Claude Code to refresh its own sign-in when the
+/// copy it finds has run out (one tiny request through `claude -p`).
+pub const CLAUDE_IMPORT_WAIT: Duration = Duration::from_secs(30);
+
+/// The shortest string taken as a pasted `claude setup-token` token. Real ones
+/// are about 108 characters (`sk-ant-oat01-` and 95 more); a shorter run is
+/// output cut off by a wrapped line or a redraw, and Claude answers it with
+/// a 401.
+const SETUP_TOKEN_MIN: usize = 100;
+/// The longest a token is taken to be (stops a joined line from running on).
+const SETUP_TOKEN_MAX: usize = 200;
+
+fn token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
+/// `s` without terminal escape sequences (colors, cursor moves, erases) and
+/// carriage returns.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        match c {
+            '\u{1b}' => match it.peek() {
+                // CSI: parameters, then a final byte in @..~.
+                Some('[') => {
+                    it.next();
+                    for d in it.by_ref() {
+                        if ('@'..='~').contains(&d) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: up to BEL or ESC \.
+                Some(']') => {
+                    it.next();
+                    while let Some(d) = it.next() {
+                        if d == '\u{7}' {
+                            break;
+                        }
+                        if d == '\u{1b}' {
+                            it.next();
+                            break;
+                        }
+                    }
+                }
+                Some(_) => {
+                    it.next();
+                }
+                None => {}
+            },
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
 
 /// A `claude setup-token` token (`sk-ant-oat01-…`) in its output.
+///
+/// The output comes from a terminal: it holds color codes, and a token
+/// longer than the terminal is wide is wrapped onto the next line. Escape
+/// sequences are dropped, and lines that run on as one unbroken word are
+/// joined. Anything shorter than a real token is refused (`None`) rather
+/// than saved cut off.
 pub fn find_setup_token(out: &str) -> Option<String> {
-    let start = out.find("sk-ant-oat")?;
-    let tok: String = out[start..]
+    let clean = strip_ansi(out);
+    let start = clean.find("sk-ant-oat")?;
+    let mut lines = clean[start..].lines();
+    let mut tok: String = lines
+        .next()?
         .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take_while(|c| token_char(*c))
         .collect();
-    (tok.len() > 20).then_some(tok)
+    // The first line ran to its end: the token goes on if the next line is
+    // one unbroken word.
+    let mut ran_to_end = clean[start..]
+        .lines()
+        .next()
+        .is_some_and(|l| l.chars().all(token_char));
+    for line in lines {
+        if !ran_to_end || tok.len() >= SETUP_TOKEN_MAX {
+            break;
+        }
+        let l = line.trim_end();
+        if l.is_empty() || !l.chars().all(token_char) {
+            break;
+        }
+        tok.push_str(l);
+        ran_to_end = true;
+    }
+    (tok.len() >= SETUP_TOKEN_MIN && tok.len() <= SETUP_TOKEN_MAX).then_some(tok)
 }
 
-fn claude_copy(env: &HostEnv, wait: Duration) -> Result<SignInCopy, CopyRefusal> {
-    let bin = crate::connection::binary(env, registry::find("claude-code").unwrap())
-        .ok_or_else(|| CopyRefusal::Failed("Claude Code isn't installed on This Mac.".into()))?;
-    if !env.run_agent_clis {
-        return Err(CopyRefusal::Failed(
-            "agent commands are off in this environment".into(),
-        ));
+/// The sign-in Claude Code already has, read from where Claude Code keeps it
+/// ([`crate::claude_login`]) and copied as its access token only. Claude
+/// Code's own files and Keychain item are never changed, and its refresh
+/// token is never taken: a refresh token works once, so a second holder that
+/// refreshed would sign Claude Code out.
+///
+/// When the copy found has run out, Claude Code is asked to refresh its own
+/// sign-in (a one-line request through `claude -p`, up to `wait`) and the
+/// sign-in is read again.
+fn claude_import(
+    env: &HostEnv,
+    keychain: &dyn claude_login::Keychain,
+    wait: Duration,
+) -> Result<SignInCopy, CopyRefusal> {
+    use claude_login::{Lookup, Source};
+    let mut lookup = claude_login::lookup(env, keychain, now_ms());
+    if let Lookup::Found(f) = &lookup
+        && f.oauth.expired(now_ms())
+        && claude_login::ask_claude_to_refresh(env, wait)
+    {
+        lookup = claude_login::lookup(env, keychain, now_ms());
     }
-    // `setup-token` draws in a terminal; `script` gives it one where the
-    // system has it. The browser opens for the one approval.
-    let script = Path::new("/usr/bin/script");
-    let bin_s = bin.display().to_string();
-    let out = match env.os {
-        crate::Os::MacOs if script.exists() => crate::connection::run_capture(
-            env,
-            script,
-            &["-q", "/dev/null", &bin_s, "setup-token"],
-            wait,
-        ),
-        crate::Os::Linux if script.exists() => {
-            let cmd = format!("{} setup-token", shell_quote(&bin_s));
-            crate::connection::run_capture(env, script, &["-qec", &cmd, "/dev/null"], wait)
-        }
-        _ => crate::connection::run_capture(env, &bin, &["setup-token"], wait),
-    };
-    let Some((code, stdout)) = out else {
-        return Err(CopyRefusal::Cancelled(
-            "Connected. Sign-in not copied: the browser approval didn't finish.".into(),
-        ));
-    };
-    match find_setup_token(&stdout) {
-        Some(token) => Ok(SignInCopy {
+    match lookup {
+        Lookup::Found(f) if f.oauth.expired(now_ms()) => Err(CopyRefusal::NotSignedIn(
+            "Your Claude Code sign-in has run out. Open Claude Code once, or run `claude auth login`, then try again.".into(),
+        )),
+        Lookup::Found(f) => Ok(SignInCopy {
             source: "claude-code".into(),
             env: "CLAUDE_CODE_OAUTH_TOKEN".into(),
-            label: "Claude Code · Claude sign-in".into(),
-            value: token,
-            // A setup-token token lasts a year.
-            expires_ms: Some(now_ms() + 365 * 24 * 3600 * 1000),
+            label: f.label(),
+            origin: Some(
+                match f.source {
+                    Source::Keychain { .. } => "claude-login-keychain",
+                    Source::File(_) => "claude-login-file",
+                }
+                .into(),
+            ),
+            expires_ms: f.oauth.expires_ms,
+            value: f.oauth.access_token,
         }),
-        None if code == Some(0) => Err(CopyRefusal::Failed(
-            "Connected. Sign-in not copied: claude setup-token printed no token.".into(),
+        Lookup::NotSignedIn => Err(CopyRefusal::NotSignedIn(
+            "Claude Code isn't signed in on This Mac. Run `claude auth login` in Terminal, then try again.".into(),
         )),
-        None => Err(CopyRefusal::Cancelled(
-            "Connected. Sign-in not copied: the browser approval was cancelled.".into(),
+        Lookup::Denied => Err(CopyRefusal::Cancelled(
+            "macOS didn't let Cua read your Claude Code sign-in. Try again and choose Allow.".into(),
         )),
+        Lookup::Unusable(line) => Err(CopyRefusal::Failed(line)),
     }
 }
 
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
+/// A `claude setup-token` token the person pasted (or the whole text it
+/// printed), saved as a sign-in for Claude Code. A setup token lasts a year
+/// and has no refresh token.
+pub fn claude_pasted_token(pasted: &str) -> Result<SignInCopy, CopyRefusal> {
+    let token = find_setup_token(pasted)
+        .or_else(|| {
+            let t = pasted.trim();
+            claude_login::token_shaped(t).then(|| t.to_string())
+        })
+        .ok_or_else(|| {
+            CopyRefusal::Failed(
+                "That doesn't look like a Claude token. It starts with sk-ant-oat01- and is one long line.".into(),
+            )
+        })?;
+    Ok(SignInCopy {
+        source: "claude-code".into(),
+        env: "CLAUDE_CODE_OAUTH_TOKEN".into(),
+        label: "Signed in with a Claude token".into(),
+        value: token,
+        // A setup-token token lasts a year.
+        expires_ms: Some(now_ms() + 365 * 24 * 3600 * 1000),
+        origin: Some("token".into()),
+    })
 }
 
 // --------------------------------------------------------------- Hermes
@@ -451,18 +504,9 @@ const HERMES_KEYS: &[&str] = &[
     "AI_GATEWAY_API_KEY",
 ];
 
-/// Hermes providers that sign in with OAuth (`hermes auth`): not copied yet.
-const HERMES_OAUTH: &[&str] = &[
-    "nous",
-    "openai-codex",
-    "xai-oauth",
-    "qwen-oauth",
-    "minimax-oauth",
-];
-
-/// The providers a Hermes run in a Space can use, with the key each reads
-/// and what the row calls it.
-const HERMES_COPYABLE: &[(&str, &str, &str)] = &[
+/// Hermes' providers Cua names, with the key each reads and what the row
+/// calls it.
+const HERMES_NAMED: &[(&str, &str, &str)] = &[
     ("openrouter", "OPENROUTER_API_KEY", "OpenRouter key"),
     ("anthropic", "ANTHROPIC_API_KEY", "Anthropic key"),
     ("openai", "OPENAI_API_KEY", "OpenAI key"),
@@ -496,28 +540,28 @@ fn hermes_oauth_providers(env: &HostEnv) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// What Hermes' `.env` key for `provider` is: `(env, label, value)`.
-fn hermes_key(env: &HostEnv) -> Option<(&'static str, &'static str, String)> {
-    let keys = dotenv(&hermes_home(env).join(".env"));
-    let get = |k: &str| keys.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+/// Which of Hermes' `.env` keys its provider uses: `(env, label)`. Only
+/// whether the name is there; the value is never kept.
+fn hermes_key(env: &HostEnv) -> Option<(&'static str, &'static str)> {
+    let names: Vec<String> = dotenv(&hermes_home(env).join(".env"))
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+    let has = |k: &str| names.iter().any(|n| n == k);
     let provider = hermes_provider(env);
-    if provider == "auto" {
-        return HERMES_COPYABLE
-            .iter()
-            .find_map(|(_, k, l)| get(k).map(|v| (*k, *l, v)));
-    }
-    HERMES_COPYABLE
+    HERMES_NAMED
         .iter()
-        .find(|(p, _, _)| *p == provider)
-        .and_then(|(_, k, l)| get(k).map(|v| (*k, *l, v)))
+        .filter(|(p, _, _)| provider == "auto" || *p == provider)
+        .find(|(_, k, _)| has(k))
+        .map(|(_, k, l)| (*k, *l))
 }
 
 fn hermes_label(env: &HostEnv) -> Option<&'static str> {
     let provider = hermes_provider(env);
-    if let Some((_, l, _)) = hermes_key(env) {
+    if let Some((_, l)) = hermes_key(env) {
         return Some(l);
     }
-    HERMES_COPYABLE
+    HERMES_NAMED
         .iter()
         .find(|(p, _, _)| *p == provider)
         .map(|(_, _, l)| *l)
@@ -538,35 +582,12 @@ fn hermes_check(env: &HostEnv) -> Check {
     }
 }
 
-fn hermes_copy(env: &HostEnv) -> Result<SignInCopy, CopyRefusal> {
-    let provider = hermes_provider(env);
-    if HERMES_OAUTH.contains(&provider.as_str()) {
-        return Err(CopyRefusal::NotYet(format!(
-            "Hermes signs in to {provider} with OAuth; Cua can't copy that sign-in yet."
-        )));
-    }
-    match hermes_key(env) {
-        Some((k, l, v)) => Ok(SignInCopy {
-            source: "hermes".into(),
-            env: k.into(),
-            label: format!("Hermes · {l}"),
-            value: v,
-            expires_ms: None,
-        }),
-        None if provider == "auto" && !hermes_oauth_providers(env).is_empty() => {
-            Err(CopyRefusal::NotYet(
-                "Hermes signs in with OAuth; Cua can't copy that sign-in yet.".into(),
-            ))
-        }
-        None if provider != "auto" && !HERMES_COPYABLE.iter().any(|(p, _, _)| *p == provider) => {
-            Err(CopyRefusal::NotYet(format!(
-                "Runs in a Space can't use Hermes' {provider} key yet."
-            )))
-        }
-        None => Err(CopyRefusal::NotSignedIn(
-            "No provider key in Hermes' .env on This Mac yet.".into(),
-        )),
-    }
+/// Hermes uses the provider keys connected in Settings, Connections; its own
+/// `.env` is never copied.
+fn hermes_copy() -> Result<SignInCopy, CopyRefusal> {
+    Err(CopyRefusal::NotYet(
+        "Connected. Hermes uses your Anthropic or OpenAI connection: connect one in Settings, Connections.".into(),
+    ))
 }
 
 // ------------------------------------------------- Cursor, OpenClaw, T3
@@ -637,9 +658,10 @@ pub fn check(env: &HostEnv, agent: &str) -> Check {
     }
 }
 
-/// Whether Connect copies this agent's sign-in at all.
+/// Whether Connect makes a sign-in for this agent at all (Claude Code's own
+/// sign-in, imported; Codex's device code).
 pub fn importable(agent: &str) -> bool {
-    matches!(agent, "codex" | "claude-code" | "hermes")
+    matches!(agent, "codex" | "claude-code")
 }
 
 /// Whether Cua can start the agent's own sign-in (`codex login`).
@@ -657,19 +679,237 @@ pub fn copy_label(env: &HostEnv, agent: &str) -> Option<String> {
     }
 }
 
-/// Where the sign-in is read from, as Advanced shows it.
-pub fn copy_source(env: &HostEnv, agent: &str) -> Option<String> {
+/// How the sign-in is made, as Advanced shows it.
+pub fn copy_source(_env: &HostEnv, agent: &str) -> Option<String> {
     match agent {
-        "codex" => Some(crate::connection::tilde(
-            env,
-            &codex_home(env).join("auth.json"),
-        )),
-        "claude-code" => Some("claude setup-token".into()),
-        "hermes" => Some(crate::connection::tilde(
-            env,
-            &hermes_home(env).join(".env"),
-        )),
+        "codex" => Some("codex login --device-auth".into()),
+        "claude-code" => Some("Claude Code's own sign-in".into()),
         _ => None,
+    }
+}
+
+// ------------------------------------------------------- device sign-in
+
+/// How long the device code waits for the person to enter it (Codex's own is 15 minutes).
+pub const DEVICE_SIGN_IN_WAIT: Duration = Duration::from_secs(15 * 60);
+
+/// How long Codex has to print its link and code.
+const DEVICE_CODE_WAIT: Duration = Duration::from_secs(30);
+
+/// Codex's ChatGPT sign-in made for Cua: `codex login --device-auth` run with
+/// `CODEX_HOME` in a folder Cua owns, so your own Codex sign-in is never read
+/// or changed. [`start_device_sign_in`] answers the link and the one-time
+/// code to show; [`DeviceSignIn::wait`] waits for the approval, copies the
+/// new sign-in and deletes the folder. Dropped unfinished, the login is
+/// stopped and the folder deleted.
+pub struct DeviceSignIn {
+    pub url: String,
+    pub code: String,
+    child: Option<std::process::Child>,
+    home: PathBuf,
+}
+
+impl std::fmt::Debug for DeviceSignIn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceSignIn")
+            .field("url", &self.url)
+            .field("code", &self.code)
+            .finish()
+    }
+}
+
+/// Text without terminal colors.
+fn plain(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // CSI: ESC [ ... final byte in @..~
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for d in chars.by_ref() {
+                    if ('@'..='~').contains(&d) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The link and the one-time code in what Codex printed.
+pub fn find_device_code(out: &str) -> Option<(String, String)> {
+    let text = plain(out);
+    let url = text
+        .split_whitespace()
+        .find(|w| w.starts_with("https://"))?
+        .trim_end_matches(['.', ','])
+        .to_string();
+    let code = text.split_whitespace().find(|w| {
+        let parts: Vec<&str> = w.split('-').collect();
+        parts.len() == 2
+            && parts.iter().all(|p| {
+                (4..=5).contains(&p.len())
+                    && p.chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+            })
+    })?;
+    Some((url, code.to_string()))
+}
+
+/// Whether `agent` signs in for Cua with a code entered in the browser
+/// (its device sign-in) rather than a token command or a copy.
+pub fn signs_in_with_a_code(agent: &str) -> bool {
+    agent == "codex"
+}
+
+/// Starts Codex's device-code sign-in in `dir` (a folder Cua owns, emptied first).
+pub fn start_device_sign_in(
+    env: &HostEnv,
+    dir: &Path,
+    agent: &str,
+) -> Result<DeviceSignIn, CopyRefusal> {
+    if !signs_in_with_a_code(agent) {
+        return Err(CopyRefusal::NotYet(format!(
+            "{} has no device sign-in.",
+            registry::find(agent)
+                .map(crate::connection::display_name)
+                .unwrap_or(agent)
+        )));
+    }
+    let bin = crate::connection::binary(env, registry::find("codex").unwrap())
+        .ok_or_else(|| CopyRefusal::Failed("Codex isn't installed on This Mac.".into()))?;
+    if !env.run_agent_clis {
+        return Err(CopyRefusal::Failed(
+            "agent commands are off in this environment".into(),
+        ));
+    }
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir)
+        .map_err(|e| CopyRefusal::Failed(format!("Couldn't make {}: {e}", dir.display())))?;
+    let mut child = crate::connection::base_command(env, &bin)
+        .args(["login", "--device-auth"])
+        .env("CODEX_HOME", dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| CopyRefusal::Failed(format!("Couldn't start Codex's sign-in: {e}")))?;
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    for pipe in [
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 1024];
+            let mut pipe = pipe;
+            while let Ok(n) = pipe.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+            }
+        });
+    }
+    drop(tx);
+    let start = std::time::Instant::now();
+    let mut seen = String::new();
+    let mut login = DeviceSignIn {
+        url: String::new(),
+        code: String::new(),
+        child: Some(child),
+        home: dir.to_path_buf(),
+    };
+    while start.elapsed() < DEVICE_CODE_WAIT {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(chunk) => {
+                seen.push_str(&chunk);
+                if let Some((url, code)) = find_device_code(&seen) {
+                    login.url = url;
+                    login.code = code;
+                    return Ok(login);
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    Err(CopyRefusal::Failed(
+        "Codex didn't show a sign-in code. Try again.".into(),
+    ))
+}
+
+use std::io::Read as _;
+
+impl DeviceSignIn {
+    /// Waits up to `wait` for the code to be entered and approved, then
+    /// copies the sign-in Codex made in the folder and deletes the folder.
+    pub fn wait(mut self, wait: Duration) -> Result<SignInCopy, CopyRefusal> {
+        let mut child = self.child.take().expect("waited once");
+        let start = std::time::Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break Some(s),
+                Ok(None) if start.elapsed() < wait => {
+                    std::thread::sleep(Duration::from_millis(250))
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+            }
+        };
+        let file = self.home.join("auth.json");
+        let text = std::fs::read_to_string(&file).ok();
+        let _ = std::fs::remove_dir_all(&self.home);
+        let Some(status) = status else {
+            return Err(CopyRefusal::Cancelled(
+                "The sign-in code expired before it was entered.".into(),
+            ));
+        };
+        let text = match (status.success(), text) {
+            (true, Some(t)) if !t.trim().is_empty() => t,
+            _ => {
+                return Err(CopyRefusal::Cancelled(
+                    "The ChatGPT sign-in didn't finish.".into(),
+                ));
+            }
+        };
+        let v: Value = serde_json::from_str(&text)
+            .map_err(|_| CopyRefusal::Failed("Codex's sign-in couldn't be read.".into()))?;
+        let value = serde_json::to_string(&v).map_err(|e| CopyRefusal::Failed(e.to_string()))?;
+        Ok(SignInCopy {
+            source: "codex".into(),
+            env: CODEX_AUTH_ENV.into(),
+            label: "ChatGPT sign-in for Codex".into(),
+            value,
+            expires_ms: None,
+            origin: Some("device-code".into()),
+        })
+    }
+}
+
+impl Drop for DeviceSignIn {
+    fn drop(&mut self) {
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+            let _ = std::fs::remove_dir_all(&self.home);
+        }
     }
 }
 
@@ -706,13 +946,23 @@ impl CopyRefusal {
     }
 }
 
-/// Reads the sign-in Connect copies. Claude Code's needs one browser
-/// approval (`claude setup-token`, waiting up to `wait`).
+/// Reads the sign-in Connect copies. Claude Code's is the one it already has
+/// ([`claude_import`]); `wait` is how long Claude Code may take to refresh it.
 pub fn read_copy(env: &HostEnv, agent: &str, wait: Duration) -> Result<SignInCopy, CopyRefusal> {
+    read_copy_with(env, agent, &*claude_login::default_keychain(env), wait)
+}
+
+/// [`read_copy`] with the Keychain to read (a fake in tests).
+pub fn read_copy_with(
+    env: &HostEnv,
+    agent: &str,
+    keychain: &dyn claude_login::Keychain,
+    wait: Duration,
+) -> Result<SignInCopy, CopyRefusal> {
     match agent {
-        "codex" => codex_copy(env),
-        "claude-code" => claude_copy(env, wait),
-        "hermes" => hermes_copy(env),
+        "codex" => codex_copy(),
+        "claude-code" => claude_import(env, keychain, wait),
+        "hermes" => hermes_copy(),
         other => Err(CopyRefusal::NotYet(format!(
             "{} has no sign-in Cua can copy.",
             registry::find(other)
@@ -733,13 +983,53 @@ mod tests {
 
     #[test]
     fn setup_token_is_found_in_terminal_output() {
-        let out = "\u{1b}[2K Your token:\r\n\r\n  sk-ant-oat01-AbC_d3f-xyz0123456789AAAA\r\n\r\nStore it safely.";
-        assert_eq!(
-            find_setup_token(out).as_deref(),
-            Some("sk-ant-oat01-AbC_d3f-xyz0123456789AAAA")
+        // A realistic token: `sk-ant-oat01-` and 95 more characters (108).
+        let token = format!(
+            "sk-ant-oat01-{}",
+            "AbC_d3f-xyZ0123456789"
+                .repeat(5)
+                .chars()
+                .take(95)
+                .collect::<String>()
         );
+        assert_eq!(token.len(), 108);
+        let out =
+            format!("\x1b[2K Your token:\r\n\r\n  \x1b[1m{token}\x1b[0m\r\n\r\nStore it safely.");
+        assert_eq!(find_setup_token(&out).as_deref(), Some(token.as_str()));
         assert_eq!(find_setup_token("Login cancelled"), None);
         assert_eq!(find_setup_token("sk-ant-oat"), None);
+    }
+
+    #[test]
+    fn a_wrapped_token_is_joined_and_a_cut_one_refused() {
+        let token = format!(
+            "sk-ant-oat01-{}",
+            "Qw3_rT-yUi0pAsDfGh"
+                .repeat(6)
+                .chars()
+                .take(95)
+                .collect::<String>()
+        );
+        // Wrapped at 80 columns by the terminal.
+        let (a, b) = token.split_at(80);
+        let out = format!("Your OAuth token:\r\n\r\n{a}\r\n{b}\r\n\r\nStore this token securely.");
+        assert_eq!(find_setup_token(&out).as_deref(), Some(token.as_str()));
+        // Wrapped at 40: three pieces.
+        let out = format!(
+            "{}\r\n{}\r\n{}\r\n\r\nDone",
+            &token[..40],
+            &token[40..80],
+            &token[80..]
+        );
+        assert_eq!(find_setup_token(&out).as_deref(), Some(token.as_str()));
+        // Only the first fragment printed (a redraw cut it): refused, not saved.
+        assert_eq!(find_setup_token(&format!("{a}\r\n")), None);
+        assert_eq!(find_setup_token(&format!("{}\r\n", &token[..60])), None);
+        // The old 36-character fake is not a plausible token.
+        assert_eq!(
+            find_setup_token("sk-ant-oat01-AbC_d3f-xyz0123456789AAAA"),
+            None
+        );
     }
 
     #[test]

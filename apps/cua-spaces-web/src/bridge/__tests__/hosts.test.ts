@@ -584,14 +584,14 @@ describe("webkit adapter", () => {
   });
 
   it("maps this Mac's own desktop (status local) to a local, running row", async () => {
-    const here = { id: "local", name: "This computer", os: "macos", status: "local", detail: "", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const here = { id: "local", name: "This machine", os: "macos", status: "local", detail: "", lastUsedAt: 1, provider: null, sdk: null, power: null };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: here, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: true, powerState: "running" });
   });
 
   it("keeps this Mac local while it is not set up for access", async () => {
-    const mac = { id: "this-mac", name: "This computer", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const mac = { id: "this-mac", name: "This machine", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: mac, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: false, powerState: "suspended" });
@@ -856,12 +856,21 @@ describe("webkit adapter", () => {
   it("reads the host's own settings rows and picks their options with settings.choose", async () => {
     const choice = (id: string, active: string) => ({ id, kind: "choice", label: "", enabled: true, options: ["auto", "builtin", "system"].map((o) => ({ id: o, label: o, active: o === active })) });
     const toggle = (id: string, on: boolean) => ({ id, kind: "toggle", label: "", enabled: true, options: [{ id: "on", label: "On", active: on }, { id: "off", label: "Off", active: !on }] });
+    // The host's runtimes, as read (`runtimes::RuntimesInput`): passed through for the core.
+    const runtimes = {
+      os: "macos",
+      hostArch: "arm64",
+      localBackends: ["lume", "managed"],
+      localDetails: {},
+      kinds: [{ kind: "container", source: "system", path: null, detected: [{ tool: "docker", name: "Docker", path: "/usr/local/bin/docker", version: "27.3.1" }], check: null, expected: ["Docker", "Podman"] }],
+    };
     const page = {
+      runtimes,
       page: {
         title: "Settings",
         sections: [
-          { id: "general", rows: [toggle("auto-connect", false)] },
-          { id: "runtimes", rows: [choice("macos-runtime", "builtin"), choice("linux-runtime", "system")] },
+          { id: "general", rows: [toggle("auto-connect", false), toggle("placement-overflow", true)] },
+          { id: "runtimes", rows: [choice("runtime:container", "system"), choice("runtime:vm", "builtin"), choice("runtime:microvm", "auto")] },
           {
             id: "keyvault",
             rows: [
@@ -877,25 +886,25 @@ describe("webkit adapter", () => {
     const { win, sent } = webkitHost(() => ok(page));
     const a = createWebkitAdapter(win);
     expect((await a.call("settings.get", {})).hostSettings).toEqual({
-      lumeSource: "builtin",
-      linuxSource: "system",
+      runtimes: runtimes,
       autoConnect: false,
+      overflow: true,
       keyvaultAutoWipe: true,
       keyvaultUnlockPrompt: false,
       keyvaultSiteIcons: true,
       keyvaultProtection: [{ label: "Unlock", value: "Mac login" }],
     });
-    await a.call("settings.choose", { row: "macos-runtime", option: "system" });
+    await a.call("settings.choose", { row: "runtime:vm", option: "system" });
     expect(sent.slice(-2).map((r) => [r.method, r.args])).toEqual([
-      ["settings.choose", { row: "macos-runtime", option: "system" }],
+      ["settings.choose", { row: "runtime:vm", option: "system" }],
       ["settings.get", {}],
     ]);
     // A host without these rows has none of them.
     const { win: bare } = webkitHost(() => ok(settingsPage));
     expect((await createWebkitAdapter(bare).call("settings.get", {})).hostSettings).toEqual({
-      lumeSource: null,
-      linuxSource: null,
+      runtimes: null,
       autoConnect: null,
+      overflow: null,
       keyvaultAutoWipe: null,
       keyvaultUnlockPrompt: null,
       keyvaultSiteIcons: null,
@@ -935,8 +944,40 @@ describe("webkit adapter", () => {
       ["teleport.catalog", { spaceId: "s1" }],
       ["teleport.plan", { spaceId: "s1", entry: { id: "com.apple.Safari" }, move: "app_with_state", files: [], sensitiveGroups: ["sign_ins"] }],
       ["teleport.run", { spaceId: "s1", plan: { json: "plan-1" }, consent: { approved: true, acknowledgeSensitive: true }, runId: "r1" }],
-      ["teleport.sites", { providerId: "safari" }],
+      ["teleport.sites", { providerId: "safari", profile: null }],
     ]);
+  });
+
+  it("maps the teleport readiness check onto the core's words", async () => {
+    const { win, sent } = webkitHost((req) =>
+      req.method === "teleport.readiness"
+        ? ok({
+            providerId: "chrome",
+            appDisplay: "Google Chrome",
+            keyvaultInitialized: true,
+            keyvaultUnlocked: false,
+            profile: "Profile 1",
+            defaultProfile: "Default",
+            profiles: [
+              { dir: "Default", name: "Personal", lastUsed: false },
+              { dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true },
+            ],
+            files: { state: "denied", say: "Turn on Full Disk Access." },
+            tabs: { state: "unknown", say: "" },
+            profileEmpty: false,
+          })
+        : ok(null),
+    );
+    const got = await createWebkitAdapter(win).call("teleport.readiness", { providerId: "chrome" });
+    expect(got).toMatchObject({
+      provider_id: "chrome",
+      keyvault_initialized: true,
+      default_profile: "Default",
+      profiles: [{ dir: "Default", last_used: false }, { dir: "Profile 1", account: "ada@work.example", last_used: true }],
+      files: { state: "denied" },
+      profile_empty: false,
+    });
+    expect(sent.map((r) => [r.method, r.args])).toEqual([["teleport.readiness", { providerId: "chrome", profile: null }]]);
   });
 
   it("sends only clean usage events, and opens only System Settings panes", async () => {

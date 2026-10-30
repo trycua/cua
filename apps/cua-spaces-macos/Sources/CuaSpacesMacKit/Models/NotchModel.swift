@@ -81,6 +81,13 @@ public final class NotchModel {
         send(.keyvault(label: label, signedIn: signedIn))
     }
 
+    /// The pinned Spaces and desktops changed (Pin to notch, Unpin from
+    /// notch, or the settings read at start): their ids in pin order.
+    public func setPinned(_ ids: [String]) {
+        guard ids != state.pinned else { return }
+        send(.pinned(ids: ids))
+    }
+
     /// The header's search text.
     public func search(_ query: String) {
         guard query != state.query else { return }

@@ -24,12 +24,12 @@ const planName = (label: string) => label.replace(/ plan$/i, "");
 /** 6.5, 20 and 6 hours: one decimal at most, none when whole. */
 const hours = (n: number) => String(Math.round(n * 10) / 10);
 
-/** The team the core names ("Acme Robotics", "Owner · Pro plan"), as "Acme Robotics · Owner". */
+/** The team the core names ("Acme Robotics", "Owner · Pro plan"), as "Acme Robotics, Owner". */
 function teamLine(teams: SettingsSection | undefined): string | null {
   const head = teams?.rows.find((r) => /^team:[^:]+$/.test(r.id));
   if (!head) return null;
   const role = head.value?.split(" · ")[0];
-  return role ? `${head.label} · ${role}` : head.label;
+  return role ? `${head.label}, ${role}` : head.label;
 }
 
 /** One bar of the usage meter: `used` of `limit` (no bar without a limit). */
@@ -60,9 +60,9 @@ function UsageBar({ id, label, text, used, limit }: { id: string; label: string;
 
 /** What the plan gives, in one line, from the limits the relay reports. */
 function allowanceLine(plan: string, usage: RelayUsage): string | null {
-  const { liveSessionsLimit: computers, hoursLimit: away } = usage;
-  if (!computers || !away) return null;
-  return `${plan}: ${computers} computers at once and ${hours(away)} hours a month away from the computer you're using.`;
+  const { liveSessionsLimit: machines, hoursLimit: away } = usage;
+  if (!machines || !away) return null;
+  return `${plan}: ${machines} machines at once and ${hours(away)} hours a month away from the machine you're using.`;
 }
 
 /**
@@ -127,14 +127,14 @@ export function AccountTab() {
           <div data-relay-usage="">
             <UsageBar
               id="Remote hours"
-              label="Time away from this computer"
+              label="Time away from this machine"
               text={`${hours(usage.hoursUsed)} of ${usage.hoursLimit ?? 0} hours`}
               used={usage.hoursUsed}
               limit={usage.hoursLimit}
             />
             <UsageBar
               id="Live sessions"
-              label="Computers in use right now"
+              label="Machines in use right now"
               text={`${usage.liveSessions} of ${usage.liveSessionsLimit ?? 0}`}
               used={usage.liveSessions}
               limit={usage.liveSessionsLimit}

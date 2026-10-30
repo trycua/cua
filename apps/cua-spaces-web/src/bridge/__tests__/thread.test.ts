@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { HostError, UnsupportedOperationError } from "../adapter";
 import { createDemoAdapter } from "../adapters/demo";
 import { DEMO_THREAD_SPACE } from "../adapters/demo/thread";
-import { agentMembersFromTool, isMissingThreadTool, threadEntryFromTool, threadPageFromTool, threadPostArgs, threadReadArgs, threadSetRightsArgs, threadViewFromTool, webkitThreadOps, type ThreadEntry } from "../ops/thread";
+import { agentMembersFromTool, isMissingThreadTool, threadEntryFromTool, threadLiveFromTool, threadPageFromTool, threadPostArgs, threadReadArgs, threadSetRightsArgs, threadViewFromTool, webkitThreadOps, type ThreadEntry } from "../ops/thread";
 import { foldThread, readSeqFrom } from "../thread";
 
 let seq = 0;
@@ -133,6 +133,9 @@ describe("the thread tools' JSON", () => {
   it("builds the tools' arguments, bounding the long poll", () => {
     expect(threadReadArgs({ spaceId: "local:dev", after: 0, limit: 100, markRead: true, followMs: 90_000 })).toEqual({ space: "local:dev", after: 0, limit: 100, mark_read: true, follow_ms: 25_000 });
     expect(threadReadArgs({ spaceId: "local:dev" })).toEqual({ space: "local:dev" });
+    // The stage key rides only a follow, so the wait ends when an agent's stage changes.
+    expect(threadReadArgs({ spaceId: "local:dev", after: 3, followMs: 25_000, liveAfter: "claude=thinking" })).toEqual({ space: "local:dev", after: 3, follow_ms: 25_000, live_after: "claude=thinking" });
+    expect(threadReadArgs({ spaceId: "local:dev", after: 3, liveAfter: "claude=thinking" })).toEqual({ space: "local:dev", after: 3 });
     expect(threadReadArgs({ spaceId: "local:dev", before: 40, limit: 100 })).toEqual({ space: "local:dev", before: 40, limit: 100 });
     expect(threadPostArgs({ spaceId: "local:dev", text: "Denied", answer: { approval: 9, approve: false } })).toEqual({ space: "local:dev", text: "Denied", answer: { approval: 9, approve: false } });
   });
@@ -157,7 +160,7 @@ describe("the thread tools' JSON", () => {
 });
 
 describe("folding the thread", () => {
-  it("folds a task's state from its updates and nests its replies", () => {
+  it("folds a task's state from its updates, and its reply is its own row, in order", () => {
     seq = 0;
     const task = entry({ text: "@claude run the suite", task: { to: "claude", session: null } });
     const entries = [
@@ -169,10 +172,32 @@ describe("folding the thread", () => {
       entry({ author: GRACE, text: "nice" }),
     ];
     const items = foldThread(entries);
-    expect(items.map((i) => i.type)).toEqual(["task", "message"]);
+    // Flat: the task, its reply, then the next message, one row each, nothing nested.
+    expect(items.map((i) => i.type)).toEqual(["task", "message", "message"]);
     const t = items[0] as Extract<(typeof items)[number], { type: "task" }>;
     expect(t.state).toBe("done");
-    expect(t.replies.map((r) => r.text)).toEqual(["146 passed, 2 failed"]);
+    expect("replies" in t || "notes" in t).toBe(false);
+    const reply = items[1] as Extract<(typeof items)[number], { type: "message" }>;
+    expect(reply.entry.text).toBe("146 passed, 2 failed");
+    // The reply knows what it answers (for a quote, and for Retry); an ordinary message does not.
+    expect(reply.quote).toMatchObject({ seq: task.seq, text: "@claude run the suite" });
+    expect(reply.taskText).toBe("@claude run the suite");
+    expect((items[2] as Extract<(typeof items)[number], { type: "message" }>).quote).toBeNull();
+  });
+
+  it("draws a message that tasks several agents once, and reads its copy's marker from the tools' JSON", () => {
+    seq = 0;
+    const first = entry({ text: "@claude @hermes review", task: { to: "claude", session: null } });
+    const copy = entry({ text: "@claude @hermes review", task: { to: "hermes", session: null }, fanoutOf: first.seq });
+    const reply = entry({ author: { kind: "agent", id: "agent:hermes", name: "hermes" }, replyTo: copy.seq, text: "Looks good" });
+    const items = foldThread([first, copy, update(copy.seq, "working"), reply]);
+    expect(items.map((i) => i.type)).toEqual(["task", "message"]);
+    expect((items[1] as Extract<(typeof items)[number], { type: "message" }>).entry.text).toBe("Looks good");
+    const page = threadPageFromTool({
+      entries: [{ seq: 3, kind: "message", author: { kind: "person", id: "a", name: "A" }, text: "x", task: { to: "hermes" }, fanout_of: 2 }, { seq: 2, kind: "message", author: { kind: "person", id: "a", name: "A" }, text: "x" }],
+    });
+    expect(page.entries.find((e) => e.seq === 3)?.fanoutOf).toBe(2);
+    expect(page.entries.find((e) => e.seq === 2)?.fanoutOf).toBeUndefined();
   });
 
   it("keeps a task queued until it is picked up, and shows a failure", () => {
@@ -194,14 +219,13 @@ describe("folding the thread", () => {
       entry({ author: SYSTEM, kind: "system", text: "Hermes woke up and joined" }),
       entry({ author: GRACE, kind: "answer", text: "Approved", answer: { approval: ask.seq, approve: true, note: null } }),
     ]);
-    // The update's note belongs to its task; a note about no task stands alone.
-    expect(items.map((i) => (i.type === "system" ? i.text : i.type))).toEqual(["approval", "task", "Hermes woke up and joined"]);
-    expect((items[1] as Extract<(typeof items)[number], { type: "task" }>).notes.map((n) => n.text)).toEqual(["Session 2 picked this up"]);
+    // Notes are muted lines in sequence, whether or not they are about a task.
+    expect(items.map((i) => (i.type === "system" ? i.text : i.type))).toEqual(["approval", "task", "Session 2 picked this up", "Hermes woke up and joined"]);
     const a = items[0] as Extract<(typeof items)[number], { type: "approval" }>;
     expect(a.answer).toMatchObject({ approve: true, by: GRACE });
   });
 
-  it("shows a note about a task inside that task, in order with its replies", () => {
+  it("puts a note about a task, and its reply, in sequence with everything else", () => {
     seq = 0;
     const task = entry({ author: CLAUDE, task: { to: "hermes", session: null } });
     const woke = entry({ author: SYSTEM, kind: "system", text: "Hermes woke up and joined", noteFor: task.seq });
@@ -209,10 +233,7 @@ describe("folding the thread", () => {
     const claimed = update(task.seq, "claimed", "Session 2 picked this up");
     const elsewhere = entry({ author: SYSTEM, kind: "system", text: "about a task not on this page", noteFor: 999 });
     const items = foldThread([task, woke, reply, claimed, elsewhere]);
-    expect(items.map((i) => i.type)).toEqual(["task", "system"]);
-    const t = items[0] as Extract<(typeof items)[number], { type: "task" }>;
-    expect(t.notes.map((n) => n.text)).toEqual(["Hermes woke up and joined", "Session 2 picked this up"]);
-    expect(t.replies).toEqual([reply]);
+    expect(items.map((i) => (i.type === "system" ? i.text : i.type))).toEqual(["task", "Hermes woke up and joined", "message", "Session 2 picked this up", "about a task not on this page"]);
   });
 
   it("puts the unread divider before the first entry someone else wrote after the cursor", () => {
@@ -222,8 +243,8 @@ describe("folding the thread", () => {
     const task = entry({ task: { to: "claude", session: null } });
     const reply = entry({ author: CLAUDE, replyTo: task.seq, text: "done" });
     const items = foldThread([read, mine, task, reply], { readSeq: read.seq, me: "acct_ada" });
-    // Mine and my task are not unread; Claude's reply nested in the task is.
-    expect(items.map((i) => i.type)).toEqual(["message", "message", "unread", "task"]);
+    // Mine and my task are not unread; Claude's reply (its own row now) is, and the divider sits before it.
+    expect(items.map((i) => i.type)).toEqual(["message", "message", "task", "unread", "message"]);
     expect(foldThread([read], { readSeq: read.seq, me: "acct_ada" }).some((i) => i.type === "unread")).toBe(false);
     expect(foldThread([read, mine], { readSeq: null }).some((i) => i.type === "unread")).toBe(false);
   });
@@ -250,7 +271,7 @@ describe("the demo host's thread", () => {
     expect(states).toEqual(expect.arrayContaining(["done", "working", "queued"]));
     expect(items.some((i) => i.type === "approval" && i.answer === null)).toBe(true);
     expect(items.some((i) => i.type === "unread")).toBe(true);
-    expect(items.some((i) => i.type === "task" && i.notes.some((n) => n.text === "Hermes woke up and joined"))).toBe(true);
+    expect(items.some((i) => i.type === "system" && i.text === "Hermes woke up and joined")).toBe(true);
     expect(page.hasMoreBefore).toBe(false);
     const posted = await demo.call("thread.post", { spaceId: "local:design-review", text: "hello" });
     expect(posted?.text).toBe("hello");
@@ -384,5 +405,19 @@ describe("the view a post was sent from", () => {
     expect(threadEntryFromTool({ seq: 5, kind: "message", text: "hi", author: { kind: "person", id: "o", name: "A" } })).not.toHaveProperty("view");
     expect(threadViewFromTool({ kind: "tab" })).toBeNull();
     expect(threadViewFromTool({ kind: "desktop" })).toEqual({ kind: "desktop", app: null, title: null, windowId: null });
+  });
+});
+
+describe("the live rows' JSON", () => {
+  it("reads who is at work and the key that changes with it; a daemon without it says nobody", () => {
+    expect(threadLiveFromTool({ key: "ada=using Bash;bo=thinking", agents: [{ agent: "ada", stage: "using Bash" }, { agent: "bo", stage: "thinking" }, { agent: "", stage: "x" }, { stage: "y" }] })).toEqual({
+      key: "ada=using Bash;bo=thinking",
+      agents: [
+        { agent: "ada", stage: "using Bash" },
+        { agent: "bo", stage: "thinking" },
+      ],
+    });
+    expect(threadPageFromTool({ entries: [], cursor: 0 }).live).toEqual({ key: "", agents: [] });
+    expect(threadPageFromTool({ entries: [], cursor: 0, live: { key: "k", agents: [{ agent: "a", stage: "starting" }] } }).live.agents).toEqual([{ agent: "a", stage: "starting" }]);
   });
 });

@@ -91,7 +91,7 @@ struct AgentsPagesTests {
         await m.send(.select(name: "ada"))
         #expect(m.agentsView().detail?.memory.map(\.text) == ["hermes/MEMORY.md"])
         await m.send(.allowComputer(machine: "relay:0123"))
-        #expect(m.agentsView().detail?.access.map(\.text) == ["This computer"])
+        #expect(m.agentsView().detail?.access.map(\.text) == ["This machine"])
 
         var posted: [AppSystemNote] = []
         var seen: UInt64 = 0

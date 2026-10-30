@@ -106,7 +106,7 @@ export function joinMethods(ctx: BridgeContext, run: typeof runCua = runCua): Ha
       if (!code) throw Failure.badArgs("code: 12 letters and digits, like K7QM-4XPB-2RHD");
       const named = typeof args.relay === "string" && args.relay.trim() ? args.relay.trim() : null;
       if (named && !/^https?:\/\//i.test(named)) throw Failure.badArgs("relay: an http(s) URL");
-      if (!supervisor) throw Failure.unsupported("This build has no bundled cua to join with a code. Use the install command on this computer.");
+      if (!supervisor) throw Failure.unsupported("This build has no bundled cua to join with a code. Use the install command on this machine.");
       const result = await run(supervisor.cua, joinArgs(code, named ?? linkRelay(input)), { ...env });
       if (!result.ok) throw Failure.failed(failureText(result.stderr, result.status));
       await model.host.refresh();

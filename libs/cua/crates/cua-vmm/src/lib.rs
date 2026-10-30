@@ -42,6 +42,7 @@ pub mod host;
 pub mod hostvms;
 pub mod identity_gate;
 pub mod inject;
+pub mod kinds;
 pub mod local_network;
 #[cfg(feature = "lume")]
 pub mod lume;

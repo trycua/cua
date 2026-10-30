@@ -126,6 +126,47 @@ pub fn find_uefi_with(arch: Arch, qemu_bin: &Path, exists: impl Fn(&Path) -> boo
     None
 }
 
+/// Environment variable naming the only directory searched for the Windows
+/// on ARM Secure Boot firmware pair.
+pub const AAVMF_DIR_ENV: &str = "CUA_QEMU_AAVMF_DIR";
+
+/// Directories searched for the Secure Boot pair, best first. A set
+/// override is exclusive.
+pub fn windows_arm_dirs(
+    override_dir: Option<&Path>,
+    cua_dir: &Path,
+    bin: &Path,
+    real_bin: &Path,
+) -> Vec<PathBuf> {
+    if let Some(d) = override_dir {
+        return vec![d.to_path_buf()];
+    }
+    let mut dirs = vec![cua_dir.to_path_buf()];
+    for b in [real_bin, bin] {
+        if let Some(prefix) = b.parent().and_then(Path::parent) {
+            let d = prefix.join("share/AAVMF");
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+    }
+    dirs.push(PathBuf::from("/usr/share/AAVMF"));
+    dirs
+}
+
+/// The first directory holding both `AAVMF_CODE.secboot.fd` and
+/// `AAVMF_VARS.ms.fd`.
+pub fn find_windows_arm(dirs: &[PathBuf], exists: impl Fn(&Path) -> bool) -> Option<Uefi> {
+    dirs.iter().find_map(|dir| {
+        let code = dir.join("AAVMF_CODE.secboot.fd");
+        let vars = dir.join("AAVMF_VARS.ms.fd");
+        (exists(&code) && exists(&vars)).then_some(Uefi {
+            code,
+            vars_template: Some(vars),
+        })
+    })
+}
+
 /// Find UEFI firmware on the real filesystem.
 pub fn find_uefi(arch: Arch, qemu_bin: &Path) -> Option<Uefi> {
     // Resolve symlinks: Homebrew's /opt/homebrew/bin/qemu-system-* links into
@@ -171,6 +212,64 @@ mod tests {
     fn fs(paths: &[&str]) -> impl Fn(&Path) -> bool {
         let set: HashSet<PathBuf> = paths.iter().map(PathBuf::from).collect();
         move |p: &Path| set.contains(p)
+    }
+
+    #[test]
+    fn windows_arm_lookup_order() {
+        let d = |s: &str| PathBuf::from(s);
+        let bin = Path::new("/opt/homebrew/bin/qemu-system-aarch64");
+        let real = Path::new("/opt/homebrew/Cellar/qemu/11/bin/qemu-system-aarch64");
+        let cua = Path::new("/h/.cua/firmware/aavmf");
+        let pair = |dir: &str| {
+            [
+                format!("{dir}/AAVMF_CODE.secboot.fd"),
+                format!("{dir}/AAVMF_VARS.ms.fd"),
+            ]
+        };
+        let find = |over: Option<&Path>, dirs: &[&str]| {
+            let files: Vec<String> = dirs.iter().flat_map(|x| pair(x)).collect();
+            let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+            find_windows_arm(&windows_arm_dirs(over, cua, bin, real), fs(&refs))
+                .map(|u| u.code.parent().unwrap().to_path_buf())
+        };
+        // An override is exclusive.
+        let over = Path::new("/o");
+        assert_eq!(windows_arm_dirs(Some(over), cua, bin, real), vec![d("/o")]);
+        assert_eq!(find(Some(over), &["/h/.cua/firmware/aavmf"]), None);
+        assert_eq!(find(Some(over), &["/o"]), Some(d("/o")));
+        // The cua directory beats the prefixes and the system one.
+        assert_eq!(
+            find(
+                None,
+                &[
+                    "/usr/share/AAVMF",
+                    "/opt/homebrew/share/AAVMF",
+                    "/h/.cua/firmware/aavmf"
+                ]
+            ),
+            Some(d("/h/.cua/firmware/aavmf"))
+        );
+        // Homebrew's as-invoked prefix, when the Cellar lacks the pair.
+        assert_eq!(
+            find(None, &["/opt/homebrew/share/AAVMF"]),
+            Some(d("/opt/homebrew/share/AAVMF"))
+        );
+        assert_eq!(
+            find(
+                None,
+                &[
+                    "/opt/homebrew/Cellar/qemu/11/share/AAVMF",
+                    "/usr/share/AAVMF"
+                ]
+            ),
+            Some(d("/opt/homebrew/Cellar/qemu/11/share/AAVMF"))
+        );
+        // Halves from different directories never mix.
+        let split = fs(&[
+            "/h/.cua/firmware/aavmf/AAVMF_CODE.secboot.fd",
+            "/usr/share/AAVMF/AAVMF_VARS.ms.fd",
+        ]);
+        assert!(find_windows_arm(&windows_arm_dirs(None, cua, bin, real), split).is_none());
     }
 
     #[test]

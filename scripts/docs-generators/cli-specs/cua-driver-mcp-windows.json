@@ -764,7 +764,7 @@
    "read_only": false
   },
   {
-   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate WM_MOUSEMOVE events along the path. Background delivery does not steal focus; delivery_mode:\"foreground\" activates the target and refuses with foreground_unavailable, sending nothing, when another window still covers the start point. After a zoom call, pass from_zoom=true. Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\". Limits and fallbacks: `get_guide({topic:\"drag\"})`.",
+   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate WM_MOUSEMOVE events along the path. Background delivery does not steal focus; delivery_mode:\"foreground\" activates the target and refuses with foreground_unavailable, sending nothing, when another window still covers the start point. After a zoom call, pass from_zoom=true. Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\". `modifier` holds keys from press to release in delivery_mode:\"foreground\" and scope:\"desktop\" via SendInput. Background drags with modifiers return background_unavailable because posted messages and pen injection cannot carry live modifier-key state. Limits and fallbacks: `get_guide({topic:\"drag\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -1817,7 +1817,7 @@
    "read_only": true
   },
   {
-   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n\nReturns the full updated config in the same shape as `get_config`.",
+   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n- `cursor.float` (resting float): `on` (default), `off`, or `default`. `cursor.marks` (action marks), `cursor.rotate` (turn toward travel): `on`, `off` (default), or `default`. All apply to every cursor at once.\n\nReturns the full updated config in the same shape as `get_config`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1836,6 +1836,24 @@
       "enum": [
        "minimal",
        "verbose",
+       "off",
+       "default"
+      ],
+      "type": "string"
+     },
+     "cursor.float": {
+      "description": "Agent cursor resting float: a slow up-and-down bob while the cursor rests; the arrow stays upright. on (default). off: the cursor stays still at rest and the overlay stops redrawing. Applies immediately to every cursor.",
+      "enum": [
+       "on",
+       "off",
+       "default"
+      ],
+      "type": "string"
+     },
+     "cursor.marks": {
+      "description": "Agent cursor action marks: the small cue next to the arrow for observe, click, type, keys, scroll, drag, apps, files, recording and system calls, plus the focus box around a clicked element on macOS. off (default): a plain arrow. Applies immediately to every cursor.",
+      "enum": [
+       "on",
        "off",
        "default"
       ],
@@ -1915,6 +1933,15 @@
        "steady",
        "calm",
        "deliberate"
+      ],
+      "type": "string"
+     },
+     "cursor.rotate": {
+      "description": "Agent cursor rotation: the arrow turns toward the direction it moves and settles upright on arrival. off (default): the arrow always stays upright. Applies immediately to every cursor.",
+      "enum": [
+       "on",
+       "off",
+       "default"
       ],
       "type": "string"
      },

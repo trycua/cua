@@ -121,7 +121,7 @@ public final class AppModel {
     public let checklist: ChecklistModel
     /// Settings, Storage: the Cua Volume's store, Finder volume and cache.
     public internal(set) var storage: StorageModel
-    /// Settings, Connectors: the provider keys agents get (kept by the daemon).
+    /// Settings, Connections: the provider keys agents get (kept by the daemon).
     public let agentKeys: AgentKeysModel
     /// The user's own clouds: the "Your cloud" tile and "Connect a cloud".
     public let cloud: CloudModel
@@ -231,6 +231,8 @@ public final class AppModel {
             hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: nil, nameSeed: nil))
         self.notch = NotchModel()
+        // Pinned Spaces and desktops come first in the notch, across restarts.
+        notch.setPinned(settings.notchPinned)
         // The notch tiles and the preview cover read one thumbnail store,
         // filled from the SDK's shared cache.
         notch.thumbnails.fetch = { [backend] id, maxAgeMs in await backend.thumbnail(id: id, maxAgeMs: maxAgeMs) }
@@ -524,7 +526,7 @@ public final class AppModel {
         if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
         if let device {
             guard let relay = devices.devices else {
-                throw CuaError.InvalidArgument(message: "Revoking a device needs a signed-in Cua account")
+                throw CuaError.InvalidArgument(message: "Revoking a machine needs a signed-in Cua account")
             }
             try await relay.revoke(id: device)
         }
@@ -926,7 +928,7 @@ public final class AppModel {
             // Your other computers could not be read: their rows are the
             // last known ones (this Mac's are current).
             rosterError = list.notice.isEmpty ? nil
-                : "Could not reach your other computers. Their Spaces may be out of date."
+                : "Could not reach your other machines. Their Spaces may be out of date."
             await hostRead
             // Your machines' load for their sidebar lines, every so often
             // (each machine is asked; never holds up the list).
@@ -1606,6 +1608,21 @@ public final class AppModel {
 
     // MARK: - Settings and banners
 
+    /// Pin to notch / Unpin from notch: the Spaces and machine desktops the
+    /// notch lists first (`AppSettings.notchPinned`, in pin order). Saved
+    /// with the settings, so a pin survives a restart; it grants nothing.
+    public func setNotchPinned(_ ids: [String]) {
+        guard ids != settings.notchPinned else { return }
+        settings.notchPinned = ids
+        saveSettings()
+        notch.setPinned(ids)
+    }
+
+    /// Pins `id` to the notch, or unpins it when it is pinned.
+    public func togglePin(_ id: String) {
+        setNotchPinned(appNotchTogglePin(pinned: settings.notchPinned, id: id))
+    }
+
     public func saveSettings() {
         try? appSettingsSave(path: settingsPath, settings: settings)
     }
@@ -1807,12 +1824,72 @@ public final class AppModel {
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
-            autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource,
+            autoConnect: settings.autoConnect,
             overflow: placementOverflow,
-            // Runtimes' MicroVM row: the runtime doctor New Space's MicroVM tile follows.
-            microvm: AppMicrovmInput(os: .macos, localBackends: wizard.env.localBackends,
-                                     localDetails: wizard.env.localDetails, hostArch: wizard.env.hostArch),
+            runtimes: runtimesInput,
             showTips: !settings.tips.off))
+    }
+
+    // MARK: - Runtimes (Settings, Advanced)
+
+    /// Each kind of Space's runtime setting and what is installed for it,
+    /// once read (`runtime_kinds`).
+    public private(set) var runtimeKinds: [AppRuntimeKindInput]?
+    /// The runtime doctor's answer for Settings (ready backends, why not),
+    /// once read.
+    public private(set) var runtimeDoctor: (ready: [String], details: [String: String])?
+    /// When the runtimes were last read.
+    @ObservationIgnored private var runtimesReadAt: Date?
+    @ObservationIgnored private var runtimesReading = false
+    /// How long a read of the runtimes stands before the page's next
+    /// `settings.get` reads them again.
+    static let runtimesRefreshInterval: TimeInterval = 15
+
+    /// What Settings, Advanced's runtime rows are laid out from
+    /// (`runtimes::section`): every kind, "Checking…" until read.
+    public var runtimesInput: AppRuntimesInput {
+        AppRuntimesInput(os: .macos, hostArch: Self.hostArch,
+                         localBackends: runtimeDoctor?.ready, localDetails: runtimeDoctor?.details,
+                         kinds: runtimeKinds)
+    }
+
+    /// Reads the runtimes again when the last read is older than
+    /// `runtimesRefreshInterval` (or `force`), in the background: the page
+    /// hears `settings.changed` when they come in.
+    public func refreshRuntimesIfStale(force: Bool = false) {
+        guard servicesIn, !runtimesReading else { return }
+        if !force, let at = runtimesReadAt, Date().timeIntervalSince(at) < Self.runtimesRefreshInterval { return }
+        runtimesReading = true
+        Task { @MainActor in
+            await readRuntimes()
+            runtimesReading = false
+        }
+    }
+
+    /// Reads each kind's setting, what is installed and the doctor.
+    public func readRuntimes() async {
+        async let doctor = backend.localRuntimes()
+        async let kinds = backend.runtimeKinds()
+        let (d, k) = await (doctor, kinds)
+        runtimesReadAt = Date()
+        if let d, runtimeDoctor.map({ $0.ready != d.ready || $0.details != d.details }) ?? true { runtimeDoctor = d }
+        if let k, k != runtimeKinds { runtimeKinds = k }
+    }
+
+    /// A runtime row's choice (`runtime:<kind>`, `runtime-detected:<kind>`,
+    /// `runtime-path:<kind>`): the setting the core names, written; the
+    /// runtimes read again. Whether `row` was one.
+    func chooseRuntime(row: String, option: String) async -> Bool {
+        guard let change = appRuntimesChoose(input: runtimesInput, row: row, option: option) else { return false }
+        do {
+            try await backend.setRuntimeSetting(key: change.key, value: change.value)
+        } catch {
+            show(error: LiveSpacesBackend.words(error))
+        }
+        await readRuntimes()
+        // New Space's "Use built-in" switches read the same settings.
+        await loadRuntimeSettings()
+        return true
     }
 
     /// Teams for Settings: the account's organizations with their people
@@ -1978,15 +2055,28 @@ public final class AppModel {
 
     /// Reads what Settings shows (telemetry, the coding agents).
     public func loadSettings() async {
-        lumeSource = await backend.lumeSource()
-        linuxSource = await backend.linuxSource()
-        placementOverflow = await backend.placementOverflow()
+        await loadRuntimeSettings()
         telemetryInput = telemetry?.status()
         readLoginItem()
         await storage.load()
         await reloadTeams()
         await reloadAgents()
         await keyvault.refresh()
+    }
+
+    /// Reads the settings Settings, Advanced shows from the config file
+    /// (`runtime.lume`, `runtime.linux`, `placement.overflow`). The page's
+    /// `settings.get` asks for them each time: without this read the
+    /// runtime choices were missing from the page (only New Space's probe
+    /// read them). Each one changes only when its value does, so the
+    /// `settings.changed` it causes never loops.
+    public func loadRuntimeSettings() async {
+        let lume = await backend.lumeSource()
+        let linux = await backend.linuxSource()
+        let overflow = await backend.placementOverflow()
+        if lume != lumeSource { lumeSource = lume }
+        if linux != linuxSource { linuxSource = linux }
+        if overflow != placementOverflow { placementOverflow = overflow }
     }
 
     /// Opens a website page (the account app's Teams page and billing).
@@ -2020,20 +2110,8 @@ public final class AppModel {
         case "notch":
             settings.menuBar = option == "hide"
             saveSettings()
-        case "macos-runtime":
-            do {
-                try await backend.setLumeSource(option)
-                lumeSource = await backend.lumeSource() ?? option
-            } catch {
-                show(error: LiveSpacesBackend.words(error))
-            }
-        case "linux-runtime":
-            do {
-                try await backend.setLinuxSource(option)
-                linuxSource = await backend.linuxSource() ?? option
-            } catch {
-                show(error: LiveSpacesBackend.words(error))
-            }
+        case _ where row.hasPrefix("runtime"):
+            _ = await chooseRuntime(row: row, option: option)
         case "placement-overflow":
             do {
                 try await backend.setPlacementOverflow(option == "on")

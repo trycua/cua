@@ -34,7 +34,10 @@ pub mod identity;
 pub mod join;
 pub mod members;
 pub mod notify;
+pub mod phases;
+pub(crate) use phases::DISPATCH_BUDGET;
 pub mod rights;
+pub mod wake;
 
 use crate::DriveResult as _;
 use crate::SpacesDrive as _;
@@ -119,7 +122,13 @@ pub struct Recreate {
 /// One persistent agent.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentRecord {
+    /// The record's key on this machine: unique across Spaces.
     pub name: String,
+    /// What its Space calls it (`@claude`), when that is not `name`: a
+    /// second Space's `claude` is stored as `claude-2` and still answers to
+    /// `@claude` there. Absent: the name is the handle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
     /// Harness id (`claude-code`, `openai-codex`, `hermes`, `openclaw`, ...).
     pub harness: String,
     /// The Space it works in (a Space id).
@@ -269,6 +278,11 @@ pub struct SessionRun {
 pub const MAX_SESSIONS: u32 = 8;
 
 impl AgentRecord {
+    /// What its Space calls it: the `@handle`.
+    pub fn handle(&self) -> &str {
+        self.handle.as_deref().unwrap_or(&self.name)
+    }
+
     /// The session this record shows (1-based).
     pub fn k(&self) -> u32 {
         self.session_k.max(1)
@@ -441,6 +455,8 @@ pub struct TickReport {
 pub(crate) struct Live {
     leases: HashMap<String, cua_volume::lease::Lease>,
     agents: HashMap<String, Agents>,
+    /// Spaces whose runs did not answer a status read, and when: not asked again for a while.
+    unreachable: HashMap<String, std::time::Instant>,
     bridges: HashMap<String, bridge::BridgeState>,
     routines: Option<Arc<tokio::sync::Mutex<RoutineStore>>>,
     routines_mtime: Option<std::time::SystemTime>,
@@ -455,6 +471,11 @@ pub(crate) struct Live {
     setups: std::collections::HashSet<String>,
     /// Journal shippers of durable runs, by `<run>#<epoch>`.
     shippers: HashMap<String, crate::session_journal::Shipper>,
+    /// Runs started for a task whose "woke up and joined" note waits until
+    /// the agent is up: run id to the task's seq.
+    joining: HashMap<String, u64>,
+    /// Agent-to-agent wakes per Space ([`wake`]).
+    wake: wake::LiveWake,
 }
 
 /// The persistent agents of one cua home. Cheap to clone.
@@ -468,7 +489,27 @@ pub struct Persistent {
     owner: Arc<std::sync::RwLock<crate::thread::Author>>,
     /// Account ids of the admins of the owner's teams.
     admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
+    /// What each working session has said so far this turn, for the thread's streaming row
+    /// (`live_rows`); gone when the turn ends (the reply is then the real entry).
+    partials: Partials,
+    /// The supervisor serves each member's queued tasks on a task of its
+    /// own instead of inside its pass (see [`Persistent::detached`]).
+    detach_dispatch: bool,
 }
+
+/// What each working session has said so far this turn, by `<space>/<name>#<session>`; shared by every
+/// handle on one runtime (the tools and the supervisor each hold their own).
+pub(crate) type Partials = Arc<std::sync::Mutex<HashMap<String, Partial>>>;
+
+/// A turn's message so far.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Partial {
+    turn: u32,
+    text: String,
+}
+
+/// The longest streaming text a live row carries (characters): the whole message follows as the reply.
+const MAX_PARTIAL: usize = 8_000;
 
 impl std::fmt::Debug for Persistent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -490,6 +531,7 @@ impl Persistent {
         spaces: Spaces,
         drive: cua_volume::Drive,
         live: Arc<tokio::sync::Mutex<Live>>,
+        partials: Partials,
         owner: Arc<std::sync::RwLock<crate::thread::Author>>,
         admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     ) -> Persistent {
@@ -499,9 +541,19 @@ impl Persistent {
             drive,
             dir,
             live,
+            partials,
             owner,
             admins,
+            detach_dispatch: false,
         }
+    }
+
+    /// This handle with queued tasks served on tasks of their own: a pass
+    /// of [`Persistent::tick`] starts each member's delivery and goes on
+    /// (the daemon's supervisor), where the default pass waits for them.
+    pub fn detached(mut self) -> Persistent {
+        self.detach_dispatch = true;
+        self
     }
 
     pub fn dir(&self) -> &Path {
@@ -589,12 +641,13 @@ impl Persistent {
         for k in &spec.env_from_host {
             if !allowed.contains(&k.as_str()) && !saved.contains(k) {
                 return Err(Error::invalid(format!(
-                    "{k} is not a provider key variable (or a key saved in Cua Spaces → Settings → Connectors)"
+                    "{k} is not a provider key variable (or a key saved in Cua Spaces → Settings → Connections)"
                 )));
             }
         }
         let rec = AgentRecord {
             name: spec.name.clone(),
+            handle: None,
             harness: h.id.into(),
             space,
             model: spec.model,
@@ -716,6 +769,17 @@ impl Persistent {
             return Ok(a.clone());
         }
         self.agents_for(space).await
+    }
+
+    /// What the Space runs on, as a telemetry word.
+    pub(crate) fn runtime_word(&self, space: &str) -> String {
+        self.spaces
+            .list()
+            .ok()
+            .and_then(|l| l.into_iter().find(|s| s.id == space))
+            .map(|s| phases::runtime_word(&s.os, &s.kind))
+            .unwrap_or("other")
+            .to_string()
     }
 
     async fn forget_space(&self, space: &str) {
@@ -853,7 +917,7 @@ impl Persistent {
         if restore.is_some() && !rec.policy.durable {
             return Err(Error::invalid(format!("{name} is not durable")));
         }
-        self.start_session(&rec, prompt, entry, restore).await
+        Box::pin(self.start_session(&rec, prompt, entry, restore)).await
     }
 
     /// Starts a run of the session `view` shows. Session 1 is the home's
@@ -889,6 +953,20 @@ impl Persistent {
             }
         };
         let t0 = Instant::now();
+        let woke = phases::take_woke(&self.dir, &format!("{}#{k}", view.name));
+        let posted_ms = woke
+            .as_ref()
+            .map(|w| w.posted_ms)
+            .unwrap_or_else(phases::now_ms);
+        let picked_ms = woke.as_ref().map(|w| w.picked_ms).unwrap_or(posted_ms);
+        // A prewarm of this agent's tools that is running now finishes first.
+        phases::wait_for_prewarm(
+            &self.dir,
+            &rec.space,
+            &rec.harness,
+            Duration::from_secs(300),
+        )
+        .await;
         let mounted = if k == 1 {
             self.mounted_home(&rec).await
         } else {
@@ -905,9 +983,21 @@ impl Persistent {
                 let dir = home_dir
                     .clone()
                     .unwrap_or_else(|| agents.agent_home_dir(&rec.name));
-                home::restore(agents.guest(), &self.session(&rec), &rec.name, &dir).await
+                // The home comes back while the files every start shares
+                // (bridge, runner, skills) go in: they do not depend on it.
+                let (restored, _) = futures_util::future::join(
+                    home::restore(agents.guest(), &self.session(&rec), &rec.name, &dir),
+                    async {
+                        if let Some(h) = cua_agents::harness::harness(&rec.harness) {
+                            let _ = agents.prewarm(h, true).await;
+                        }
+                    },
+                )
+                .await;
+                restored
             }
         };
+        let prepared_ms = phases::now_ms();
         let restored = match restored {
             Ok(t) => t,
             Err(e) => {
@@ -965,6 +1055,25 @@ impl Persistent {
         let started = match started {
             Ok(s) => {
                 cua_spaces::agents::telemetry::started(&agents, &rec.space, entry, &s);
+                let spawned_ms = phases::now_ms();
+                let since = |t: u64| t.saturating_sub(posted_ms);
+                phases::follow(
+                    agents.clone(),
+                    phases::Join {
+                        run_id: s.run_id.clone(),
+                        harness: rec.harness.clone(),
+                        runtime: self.runtime_word(&rec.space),
+                        cold: true,
+                        posted_ms,
+                    },
+                    vec![
+                        ("posted", 0),
+                        ("dispatch_picked", since(picked_ms)),
+                        ("host_prepared", since(prepared_ms)),
+                        ("guest_spawned", since(spawned_ms)),
+                    ],
+                    since(spawned_ms),
+                );
                 s
             }
             Err(e) => {
@@ -1025,6 +1134,46 @@ impl Persistent {
                         "{name} is in the middle of a turn (it crashed and is being resumed); try again when it ends"
                     )));
                 }
+                // An idle run whose credentials are not the ones forwarded
+                // now (the person reconnected in Settings), or whose last
+                // turn failed to authenticate, ends and starts again: it
+                // would otherwise keep using what it began with.
+                Ok(st)
+                    if st.accepts_message
+                        && st.status == RunStatus::Idle
+                        && self.credentials_changed(&rec, &agents, run, &st).await =>
+                {
+                    tracing::info!(
+                        agent = name,
+                        "credentials changed or rejected: starting a fresh run"
+                    );
+                    if rec.k() == 1 {
+                        let _ = self.save(name).await;
+                    }
+                    if let Err(e) = agents.stop(run).await {
+                        tracing::warn!(agent = name, "the old run did not stop: {e}");
+                    }
+                    self.release_writer(&rec).await;
+                }
+                // An idle run whose home is not where this agent's home is
+                // now (it was on the mounted Volume, which shows the agent's
+                // view only while the agent holds it): sending would start
+                // its runner again in a folder that is not there. The home
+                // is taken first (the Volume shows this agent's view), and a
+                // run on another home ends and starts again.
+                Ok(st)
+                    if st.accepts_message
+                        && st.status == RunStatus::Idle
+                        && rec.k() == 1
+                        && self.home_moved(&rec, &st).await =>
+                {
+                    tracing::info!(agent = name, "the run's home moved: starting a fresh run");
+                    let _ = self.save(name).await;
+                    if let Err(e) = agents.stop(run).await {
+                        tracing::warn!(agent = name, "the old run did not stop: {e}");
+                    }
+                    self.release_writer(&rec).await;
+                }
                 Ok(st) if st.accepts_message && st.status == RunStatus::Idle => {
                     if rec.k() == 1 && !self.live.lock().await.leases.contains_key(name) {
                         self.take_lease(&rec).await?;
@@ -1041,7 +1190,58 @@ impl Persistent {
                 _ => {}
             }
         }
-        self.start_session(&rec, text, entry, None).await
+        Box::pin(self.start_session(&rec, text, entry, None)).await
+    }
+
+    /// Whether the idle run `st` of `rec` works on the mounted Volume in a
+    /// home other than the one `rec` has now (or the Volume is not its to
+    /// hold). Takes the Volume for the agent when it has one, so a
+    /// run on the mounted home finds its folders where it left them.
+    async fn home_moved(&self, rec: &AgentRecord, st: &ag::RunInfo) -> bool {
+        let Some(cwd) = st.meta.as_ref().map(|m| m.cwd.as_str()) else {
+            return false;
+        };
+        // Only a run on the mounted Volume can lose its folders this way.
+        let on_volume = cwd.starts_with("/volume/");
+        match self.mounted_home(rec).await {
+            Some(m) => on_volume && !Self::in_home(cwd, &m),
+            None => on_volume,
+        }
+    }
+
+    /// Whether `cwd` is `home` or inside it.
+    fn in_home(cwd: &str, home: &str) -> bool {
+        let home = home.trim_end_matches('/');
+        cwd == home || cwd.strip_prefix(home).is_some_and(|r| r.starts_with('/'))
+    }
+
+    /// Whether the idle run `run` of `rec` must not take another message:
+    /// it was started with other credentials than the ones forwarded now, or
+    /// its last turn failed to authenticate.
+    async fn credentials_changed(
+        &self,
+        rec: &AgentRecord,
+        agents: &cua_spaces::agents::Agents,
+        run: &str,
+        st: &ag::RunInfo,
+    ) -> bool {
+        if let Some(started) = st.meta.as_ref().and_then(|m| m.cred_hash.as_deref())
+            && let Ok((env, _)) = cua_spaces::agents::run_env(
+                &rec.harness,
+                &rec.env,
+                &rec.env_from_host,
+                rec.base_url.is_some(),
+            )
+            && ag::runs::credential_hash(&rec.harness, &env) != started
+        {
+            return true;
+        }
+        if st.stop_reason.as_deref() == Some("error")
+            && let Ok(r) = agents.result(run).await
+        {
+            return r.error.as_deref().is_some_and(ag::failure::is_auth_failure);
+        }
+        false
     }
 
     async fn stop_run(&self, rec: &AgentRecord) -> Result<Option<String>> {
@@ -1596,6 +1796,49 @@ impl Persistent {
         r
     }
 
+    /// Keeps what the session's turn has said so far (`message` events), so the thread can show it
+    /// as one live entry that is replaced whole; clears it when the turn ends or fails, because the
+    /// reply then lands as the entry. Wakes the thread's followers when the text changed.
+    fn note_partial(
+        &self,
+        rec: &AgentRecord,
+        events: &[ag::AgentEvent],
+        ended: Option<u32>,
+        failed: Option<&(u32, String)>,
+    ) {
+        let key = format!("{}/{}#{}", rec.space, rec.name, rec.k());
+        let mut changed = false;
+        {
+            let mut map = self.partials.lock().unwrap_or_else(|p| p.into_inner());
+            for e in events.iter().filter(|e| e.kind == "message") {
+                let Some(text) = e.text.as_deref().filter(|t| !t.is_empty()) else {
+                    continue;
+                };
+                let p = map.entry(key.clone()).or_default();
+                if p.turn != e.turn {
+                    *p = Partial {
+                        turn: e.turn,
+                        text: String::new(),
+                    };
+                }
+                if p.text.chars().count() < MAX_PARTIAL {
+                    p.text.push_str(text);
+                    changed = true;
+                }
+            }
+            let over = |turn: u32| {
+                ended.is_some_and(|t| t >= turn) || failed.is_some_and(|(t, _)| *t >= turn)
+            };
+            if map.get(&key).is_some_and(|p| over(p.turn)) {
+                map.remove(&key);
+                changed = true;
+            }
+        }
+        if changed {
+            self.thread_store(&rec.space).wake();
+        }
+    }
+
     async fn tick_agent_inner(&self, rec: AgentRecord, report: &mut TickReport) -> Result<()> {
         let run = rec.run_id.clone().expect("filtered");
         let agents = self.cached_agents(&rec.space).await?;
@@ -1623,6 +1866,20 @@ impl Persistent {
         self.renew_claims(&rec, &agents, &run).await?;
         let rec = self.get(&rec.name)?.session(rec.k());
         let (ended, failed) = turn_outcome(&page.events);
+        self.note_partial(&rec, &page.events, ended, failed.as_ref());
+        // A harness may answer a refused credential as an ordinary turn (Hermes does, with its own
+        // advice): read the reply as the failed turn it is, so the person's message is not "Done",
+        // the reply is the standard Connect card and the credential reads as needing a reconnect.
+        let failed = match (&failed, ended) {
+            (None, Some(turn)) if turn > rec.saved_turn => agents
+                .result(&run)
+                .await
+                .ok()
+                .map(|r| r.text)
+                .filter(|text| ag::failure::is_auth_failure_reply(&rec.harness, text))
+                .map(|text| (turn, text.trim().to_string())),
+            _ => failed,
+        };
         // The thread task this run's turn worked on: its reply and state.
         let mut anchor = None;
         let mut task_ended = false;
@@ -1652,6 +1909,9 @@ impl Persistent {
                 anchor = self.finish_task(&rec, &inflight, None, Some(why)).await?;
                 task_ended = true;
             }
+        }
+        if let Some((_, err)) = &failed {
+            members::note_rejected(&rec, &members::failure_for(&rec, err));
         }
         if let Some((turn, err)) = &failed {
             // One notification per failed turn, posted before anything
@@ -1703,7 +1963,25 @@ impl Persistent {
             };
             if line != rec.activity {
                 self.update_in(&rec, |r| r.activity = line)?;
+                // The thread's followers show it at once.
+                self.thread_store(&rec.space).wake();
             }
+        }
+        // "woke up and joined" says so once the agent is up (an agent that
+        // never gets there fails instead, and says that).
+        if agent_ready(&page.events)
+            && let Some(seq) = self.live.lock().await.joining.remove(&run)
+        {
+            let _ = self
+                .thread_store(&rec.space)
+                .append(crate::thread::Draft::note(
+                    "dispatch",
+                    Some(seq),
+                    format!("{} woke up and joined", members::session_name(&rec)),
+                ));
+        }
+        if failed.is_some() || ended.is_some() {
+            self.live.lock().await.joining.remove(&run);
         }
         if let Some(turn) = ended
             && turn > rec.saved_turn
@@ -1798,45 +2076,57 @@ enum Activity {
     Line(String),
 }
 
-/// The latest tool title or plan step in `events` (one line, at most 80
-/// characters, never a secret), `Cleared` when the turn ended after it.
+/// The stage `events` put the turn in, in a few plain words: `installing`,
+/// `starting`, `thinking`, `replying` or `using <tool>` (never the task's
+/// text, never a secret). `Cleared` when the turn ended or failed after it.
 fn activity_line(events: &[ag::AgentEvent]) -> Activity {
     for e in events.iter().rev() {
         let line = match e.kind {
-            "turn_ended" | "exited" => return Activity::Cleared,
-            "tool_call" => e
-                .tool_title
-                .clone()
-                .filter(|t| !t.trim().is_empty())
-                .or_else(|| e.tool_kind.clone()),
-            "plan" => {
-                let entries = e.raw["update"]["entries"]
-                    .as_array()
-                    .cloned()
+            "turn_ended" | "exited" | "error" => return Activity::Cleared,
+            "tool_call" => {
+                let title = e
+                    .tool_title
+                    .clone()
+                    .filter(|t| !t.trim().is_empty())
+                    .or_else(|| e.tool_kind.clone())
                     .unwrap_or_default();
-                let pick = |status: &str| {
-                    entries
-                        .iter()
-                        .find(|x| x["status"] == status)
-                        .and_then(|x| x["content"].as_str())
-                        .map(str::to_string)
-                };
-                pick("in_progress").or_else(|| pick("pending"))
+                let one: String = title.split_whitespace().collect::<Vec<_>>().join(" ");
+                Some(if one.is_empty() {
+                    "working".to_string()
+                } else if !cua_volume::scan::scan(one.as_bytes()).is_empty() {
+                    "using a tool".to_string()
+                } else {
+                    format!("using {}", members::clip_line(&one, 48))
+                })
+            }
+            "message" => Some("replying".to_string()),
+            "thought" | "plan" | "turn_started" | "user_message" => Some("thinking".to_string()),
+            "session" | "initialized" | "authenticated" => Some("starting".to_string()),
+            "install" => {
+                let phase = e.raw["phase"].as_str().unwrap_or_default();
+                Some(
+                    if matches!(phase, "done" | "cached" | "skipped" | "ready") {
+                        "starting"
+                    } else {
+                        "installing"
+                    }
+                    .to_string(),
+                )
             }
             _ => None,
         };
         if let Some(l) = line {
-            let one: String = l.split_whitespace().collect::<Vec<_>>().join(" ");
-            if one.is_empty() {
-                continue;
-            }
-            if !cua_volume::scan::scan(one.as_bytes()).is_empty() {
-                return Activity::Line("Working (a step that looked like a secret)".into());
-            }
-            return Activity::Line(members::clip_line(&one, 80));
+            return Activity::Line(l);
         }
     }
     Activity::Unchanged
+}
+
+/// Whether `events` show the agent up and ready (past install and start).
+fn agent_ready(events: &[ag::AgentEvent]) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e.kind, "initialized" | "session" | "turn_started"))
 }
 
 /// In a page of a run's events: the last turn that ended, and the last
@@ -1923,13 +2213,21 @@ pub trait SpacesPersistent {
     /// aborted (the daemon runs one for its lifetime).
     fn spawn_supervisor(&self, every: Duration) -> tokio::task::JoinHandle<()> {
         let p = self.persistent();
+        // Members are served on their own tasks (a cold start never holds
+        // up the pass), and a posted task wakes the pass at once; `every`
+        // is the longest the supervisor sleeps.
+        let p = p.detached();
+        let wake = crate::thread::supervisor_wake();
         tokio::spawn(async move {
             loop {
                 let r = p.tick().await;
                 for e in &r.errors {
                     tracing::warn!("persistent agents: {e}");
                 }
-                tokio::time::sleep(every).await;
+                tokio::select! {
+                    () = tokio::time::sleep(every) => {}
+                    () = wake.notified() => {}
+                }
             }
         })
     }
@@ -1944,6 +2242,7 @@ impl SpacesPersistent for Spaces {
             self.clone(),
             ext.drive().clone(),
             ext.live(),
+            ext.partials(),
             ext.owner(),
             ext.team_admins(),
         )
@@ -2023,6 +2322,20 @@ mod tests {
         let line =
             serde_json::json!({"seq": 1, "ts": 0, "turn": turn, "type": kind, "message": text});
         ag::AgentEvent::parse(&line.to_string()).unwrap()
+    }
+
+    #[test]
+    fn a_run_in_another_home_is_not_in_this_one() {
+        // The run started on the mounted Volume; the Volume is not the
+        // agent's now (or the home is copied in): its folders are not there.
+        let vol = "/volume/agents/claude-2";
+        assert!(Persistent::in_home("/volume/agents/claude-2/work", vol));
+        assert!(Persistent::in_home(vol, "/volume/agents/claude-2/"));
+        assert!(!Persistent::in_home(
+            "/volume/agents/claude-2/work",
+            "/home/cua/.cua/homes/claude-2"
+        ));
+        assert!(!Persistent::in_home("/volume/agents/claude-22/work", vol));
     }
 
     #[test]

@@ -1107,6 +1107,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_notch_toggle_pin": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_notch_view": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -1404,6 +1409,16 @@ const DEFINITIONS = {
     },
     "uniffi_cua_spaces_ffi_fn_func_app_rows_to_spaces": {
       args: [FfiType.RustBuffer, FfiType.Int64],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_runtime_path_verdict": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_runtimes_choose": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
@@ -2139,6 +2154,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_spaces_ffi_fn_method_keyvaultclient_overview": {
       args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_fn_method_keyvaultclient_readiness": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -3017,6 +3037,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_notch_toggle_pin": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_notch_view": {
       args: [],
       ret: FfiType.UInt16,
@@ -3313,6 +3338,16 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_rows_to_spaces": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_runtime_path_verdict": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_runtimes_choose": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4052,6 +4087,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_readiness": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_setup_with_passphrase": {
       args: [],
       ret: FfiType.UInt16,
@@ -4547,6 +4587,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_notch_radii(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_notch_reduce(state: Uint8Array, event: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_notch_tile_at(layout: Uint8Array, tiles: Uint8Array, row: number, x: number, y: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_notch_toggle_pin(pinned: Uint8Array, id: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_notch_view(state: Uint8Array, spaces: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_notifications_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_notifications_plan(feed: Uint8Array, seenMs: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4607,6 +4648,8 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_roster_initial(spaces: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_roster_reduce(state: Uint8Array, action: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_rows_to_spaces(rows: Uint8Array, nowMs: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_runtime_path_verdict(check: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_runtimes_choose(input: Uint8Array, row: Uint8Array, option: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_sensitive_group_sdk(group: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_sent_file(report: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_sent_files_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4754,6 +4797,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_method_keyvaultclient_inventory(uniffiSelf: bigint, app: Uint8Array, profile: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_method_keyvaultclient_lock(uniffiSelf: bigint): bigint;
     uniffi_cua_spaces_ffi_fn_method_keyvaultclient_overview(uniffiSelf: bigint): bigint;
+    uniffi_cua_spaces_ffi_fn_method_keyvaultclient_readiness(uniffiSelf: bigint, app: Uint8Array, profile: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_method_keyvaultclient_setup_with_passphrase(uniffiSelf: bigint, passphrase: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_method_keyvaultclient_unlock_with_passphrase(uniffiSelf: bigint, passphrase: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_method_pcmsink_on_pcm(uniffiSelf: bigint, audio: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
@@ -4929,6 +4973,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_notch_radii(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_notch_reduce(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_notch_tile_at(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_notch_toggle_pin(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_notch_view(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_notifications_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_notifications_plan(): number;
@@ -4989,6 +5034,8 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_roster_initial(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_roster_reduce(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_rows_to_spaces(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_runtime_path_verdict(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_runtimes_choose(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_sensitive_group_sdk(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_sent_file(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_sent_files_from_json(): number;
@@ -5136,6 +5183,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_inventory(): number;
     uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_lock(): number;
     uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_overview(): number;
+    uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_readiness(): number;
     uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_setup_with_passphrase(): number;
     uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_unlock_with_passphrase(): number;
     uniffi_cua_spaces_ffi_checksum_method_pcmsink_on_pcm(): number;

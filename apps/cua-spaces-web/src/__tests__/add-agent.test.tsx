@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BridgeProvider } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
-import { DEMO_THREAD_SPACE } from "@/bridge/adapters/demo/thread";
+import { DEMO_THREAD_SPACE, JOIN_LINE_STEPS } from "@/bridge/adapters/demo/thread";
 import { testCore } from "@/bridge/__tests__/testCore";
 import { threadOpAvailable } from "@/bridge/ops/thread";
 import { AddAgentSheet, freeHandle } from "@/components/add-agent/add-agent-sheet";
@@ -24,7 +24,7 @@ stubBrowserApis();
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
 const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
-const LINE = 'Join my Cua Space "ubuntu-build": https://cua.ai/join/7KQ2-9FXA';
+const LINE = `Join my Cua Space "ubuntu-build": https://cua.ai/join/7KQ2-9FXA ${JOIN_LINE_STEPS}`;
 
 let clipboard: string[] = [];
 beforeEach(() => {
@@ -68,10 +68,10 @@ describe("Add an agent", () => {
     expect(qa("[data-add-agent-marks] [data-harness-mark]").map((m) => m.dataset.harnessMark)).toEqual(["hermes", "claude-code", "codex", "cursor", "openclaw", "t3code"]);
   });
 
-  it("Start an agent here: Hermes, Claude Code, Codex, Cursor, then OpenClaw; a free name; it joins asleep", async () => {
+  it("Start an agent here: Hermes, Claude Code, Codex, then OpenClaw; a free name; it joins asleep", async () => {
     await app({ joinRedeemMs: null });
     await openSheet("start");
-    expect(qa("[data-start-harness]").map((h) => h.dataset.startHarness)).toEqual(["hermes", "claude-code", "codex", "cursor", "openclaw"]);
+    expect(qa("[data-start-harness]").map((h) => h.dataset.startHarness)).toEqual(["hermes", "claude-code", "openai-codex", "openclaw"]);
     // Hermes is taken: the name moves on.
     expect((q("[data-start-name]") as HTMLInputElement).value).toBe("hermes-2");
     await click(q("[data-start-harness='openclaw']")!);
@@ -121,7 +121,7 @@ describe("Add an agent", () => {
     await found("[data-join-expired]", 5000);
     expect(q("[data-prompt-copy]")?.hasAttribute("disabled")).toBe(true);
     await click(q("[data-join-renew]")!);
-    await waitFor(() => expect(line()?.value).toMatch(/^Join my Cua Space "ubuntu-build": https:\/\/cua\.ai\/join\/[2-9A-Z]{4}-[2-9A-Z]{4}$/));
+    await waitFor(() => expect(line()?.value).toMatch(/^Join my Cua Space "ubuntu-build": https:\/\/cua\.ai\/join\/[2-9A-Z]{4}-[2-9A-Z]{4} After you join: /));
     expect(line()?.value).not.toBe(LINE);
     expect(q("[data-join-expired]")).toBeNull();
   });

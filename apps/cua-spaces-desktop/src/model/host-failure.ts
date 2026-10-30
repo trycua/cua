@@ -22,7 +22,7 @@ export const SIGN_IN_LABEL = "Sign In";
 /** What the app calls the computer it runs on, mid-sentence. */
 export function thisComputer(platform: NodeJS.Platform): string {
   if (platform === "darwin") return "this Mac";
-  return platform === "win32" ? "this PC" : "this computer";
+  return platform === "win32" ? "this PC" : "this machine";
 }
 
 const SYSTEM: Partial<Record<NodeJS.Platform, string>> = { darwin: "macOS", win32: "Windows", linux: "Linux" };

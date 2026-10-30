@@ -388,7 +388,7 @@
     },
     {
      "abstract": "Install the default cua skills and configure the cua MCP server",
-     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
+     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -455,7 +455,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Also copy each agent's sign-in to Keyvault on This Mac, so its runs in your Spaces use it: Codex's ChatGPT sign-in (`~/.codex/auth.json`), Claude Code's `claude setup-token` (one browser approval), Hermes' provider key (`~/.hermes/.env`). The agent's own sign-in is never changed",
+       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connections). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
        "hidden": false,
        "name": "sign-in",
        "repeatable": false,
@@ -662,7 +662,7 @@
     },
     {
      "abstract": "Install the default cua skills and configure the cua MCP server",
-     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
+     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -729,7 +729,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Also copy each agent's sign-in to Keyvault on This Mac, so its runs in your Spaces use it: Codex's ChatGPT sign-in (`~/.codex/auth.json`), Claude Code's `claude setup-token` (one browser approval), Hermes' provider key (`~/.hermes/.env`). The agent's own sign-in is never changed",
+       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connections). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
        "hidden": false,
        "name": "sign-in",
        "repeatable": false,
@@ -2424,7 +2424,7 @@
      "usage": "cua agent harnesses [OPTIONS]"
     },
     {
-     "abstract": "The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connectors). Values are read from stdin and never printed",
+     "abstract": "The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connections). Values are read from stdin and never printed",
      "after_help": "Examples:\n  cua agent keys\n  cua agent keys set anthropic\n  cua agent keys rm OPENAI_API_KEY",
      "aliases": [],
      "arguments": [],
@@ -2490,6 +2490,20 @@
        "subcommand_optional": false,
        "subcommands": [],
        "usage": "cua agent keys set [OPTIONS] <PROVIDER>"
+      },
+      {
+       "abstract": "Ask each provider whether the saved API keys still work (a cheap read-only request; nothing is sent that is not a key's own request). A key the provider refuses is listed as needing a reconnect, and runs are not given it until it is saved again",
+       "after_help": "Examples:\n  cua agent keys check",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "check",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent keys check [OPTIONS]"
       },
       {
        "abstract": "Remove the key a run gets as ENV",
@@ -12938,6 +12952,57 @@
    "usage": "cua computers [OPTIONS]"
   },
   {
+   "abstract": "Your computers on the relay: remove one that is gone",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "machines",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "Remove a computer that is gone: its row leaves your relay directory, then the signed-in device with exactly its name is revoked (never this device; nothing when several match). A computer that is connected now is refused: run `cua host remove` on it",
+     "after_help": "Examples:\n  cua machines rm old-laptop\n  cua machines rm relay:0123abcd4567ef89 --yes --json",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The computer's name, machine id or `relay:<id>` (`cua spaces ls`)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "NAME",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Remove without asking",
+       "hidden": false,
+       "name": "yes",
+       "repeatable": false,
+       "short_name": "y",
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "rm",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua machines rm [OPTIONS] <NAME>"
+    }
+   ],
+   "usage": "cua machines [OPTIONS] <COMMAND>"
+  },
+  {
    "abstract": "Unattended access to this computer (setup, status, stop, start, remove)",
    "aliases": [],
    "arguments": [],
@@ -12949,8 +13014,8 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. By default (the `desktop` profile) it shares this computer's desktop and, on a computer set up for the first time through the relay, provides Spaces to your devices (a host in your pool: `cua run` jobs and `--on auto` Spaces can run here, within its limits); `--no-provide-spaces` leaves that off, and `cua host config --provide-spaces off` turns it off later. A computer set up before keeps what it provides. `--profile spare` or `--no-desktop` provides Spaces only, so its own desktop stays private. Running it again with the same options changes nothing (a stopped service starts again)",
-     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop and\n  # provides Spaces to your devices)\n  cua host setup\n  # Share this desktop only\n  cua host setup --no-provide-spaces\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only):\n  # run setup with CUA_MESH=off in the environment\n  # Self-hosting teams: cua help advanced",
+     "abstract": "Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. By default it shares this computer's desktop and, on a computer set up for the first time through the relay, provides Spaces to your devices (a host in your pool: `cua run` jobs and `--on auto` Spaces can run here, within its limits). `--share` picks what it shares: `desktop`, `spaces` (its own desktop stays private), `both` or `none`; `cua host config` changes it later. A computer set up before keeps what it provides. Running it again with the same options changes nothing (a stopped service starts again)",
+     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop and\n  # provides Spaces to your devices)\n  cua host setup\n  # Share this desktop only\n  cua host setup --share desktop\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --share spaces --name \"Mac mini (spare)\"\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only):\n  # run setup with CUA_MESH=off in the environment\n  # Self-hosting teams: cua help advanced",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -12969,8 +13034,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Share this computer's own desktop as a Space",
-       "hidden": false,
+       "help": "Hidden alias of the desktop half of `--share`",
+       "hidden": true,
        "name": "desktop",
        "repeatable": false,
        "short_name": null,
@@ -12980,8 +13045,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Do not share this computer's own desktop (screen, input, shell, files): relayed callers reach only the Spaces it provides",
-       "hidden": false,
+       "help": "Hidden alias of `--share spaces` with `--provide-spaces`",
+       "hidden": true,
        "name": "no-desktop",
        "repeatable": false,
        "short_name": null,
@@ -12991,8 +13056,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Create Spaces for your enrolled devices on this computer's runtimes (Lume macOS VMs, Docker Linux containers). The default for a new relay setup; a computer set up before keeps its setting unless this (or `--no-provide-spaces`) is given. On its own it keeps the default `desktop` profile, so this computer's desktop is shared too; add `--no-desktop` (or use `--profile spare`) to provide Spaces only",
-       "hidden": false,
+       "help": "Hidden alias: with the default profile, `--share both`",
+       "hidden": true,
        "name": "provide-spaces",
        "repeatable": false,
        "short_name": null,
@@ -13002,8 +13067,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Do not create Spaces for other devices (only share this desktop)",
-       "hidden": false,
+       "help": "Hidden alias: with the default profile, `--share desktop`",
+       "hidden": true,
        "name": "no-provide-spaces",
        "repeatable": false,
        "short_name": null,
@@ -13163,8 +13228,29 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "What this computer is for: `desktop` (share this desktop, and provide Spaces on a new relay setup; the default) or `spare` (do not share the desktop; provide Spaces)",
+       "help": "What this computer shares: its own desktop (screen, input, shell, files), the Spaces it creates for your enrolled devices (Lume macOS VMs, Docker Linux containers), both, or neither (refused). Default: the desktop, plus Spaces on a new relay setup; a computer set up before keeps what it provides",
        "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "share",
+       "possible_values": [
+        "desktop",
+        "spaces",
+        "both",
+        "none"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "desktop | spaces | both | none",
+       "value_name": "WHAT"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Hidden alias: `--share spaces` is `--profile spare`",
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "profile",
@@ -13319,7 +13405,7 @@
     },
     {
      "abstract": "Show or change what this computer shares: its own desktop, and whether it creates Spaces for your other devices",
-     "after_help": "Examples:\n  cua host config\n  # Stop sharing this desktop; keep providing Spaces\n  cua host config --desktop off --provide-spaces on\n  cua host config --max-spaces 6",
+     "after_help": "Examples:\n  cua host config\n  # Stop sharing this desktop; keep providing Spaces\n  cua host config --desktop off --provide-spaces on\n  cua host config --max-spaces 6\n  # Give the Spaces other machines create here at most 32 GB of memory and\n  # 200 GB of disk in total, and stop each after 8 hours (0: no limit)\n  cua host config --max-memory 32 --max-disk 200 --max-run-time 480\n  # Keep no copies of public git repositories on this machine, or at most 2 GB\n  cua host config --repo-cache off\n  cua host config --repo-cache on --repo-cache-size 2",
      "aliases": [],
      "arguments": [],
      "flags": [],
@@ -13396,11 +13482,161 @@
        "takes_value": true,
        "type": "integer",
        "value_name": "MAX_MACOS_VMS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Memory in GB the Spaces other machines create here may use in total (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-memory",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "GB"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Disk in GB the Spaces other machines create here may use in total (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-disk",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "GB"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Minutes a Space created here by another machine may run before it is stopped (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-run-time",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "MINUTES"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The repo cache: on | off. It keeps verified copies of public git repositories on this machine so a repeat `git clone` in a Space starts from one (never private repositories, never anything off this machine's disk)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "repo-cache",
+       "possible_values": [
+        "on",
+        "off"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "on | off",
+       "value_name": "REPO_CACHE"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The most disk the repo cache may use, in GB (`auto`: the smaller of 5 GB and a tenth of the free disk). The least recently used repositories go first",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "repo-cache-size",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "GB"
       }
      ],
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua host config [OPTIONS]"
+    },
+    {
+     "abstract": "What the repo cache holds, and empty it",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "cache",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [
+      {
+       "abstract": "What the repo cache holds: repositories, size and what the last week saved",
+       "after_help": "Examples:\n  cua host cache status",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "status",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache status [OPTIONS]"
+      },
+      {
+       "abstract": "Copy one public repository into the cache now, instead of when a Space first clones it (or bring a copy up to date). A repository that needs a sign-in is never cached",
+       "after_help": "Examples:\n  cua host cache fill https://github.com/vitejs/vite",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "The repository's `https` address",
+         "hidden": false,
+         "is_optional": false,
+         "name": "URL",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "fill",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache fill [OPTIONS] <URL>"
+      },
+      {
+       "abstract": "Delete every repository the cache holds. They are copied again the next time a Space clones them",
+       "after_help": "Examples:\n  cua host cache clear",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "clear",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache clear [OPTIONS]"
+      }
+     ],
+     "usage": "cua host cache [OPTIONS] <COMMAND>"
     },
     {
      "abstract": "Show whether this computer is set up, the service, and who is connected",
@@ -13716,7 +13952,7 @@
     },
     {
      "abstract": "Register a Space after a capabilities handshake with its cua-spacesd (or, for another URL, an MCP initialize). Re-adding an address updates it. The token is stored apart from the registry, 0600",
-     "after_help": "Examples:\n  cua spaces add 10.0.0.5:3211 --token \"$TOKEN\" --name studio\n  cua spaces add local:my-sandbox\n  cua spaces add http://127.0.0.1:8765/mcp --service tools\n  # A computer that provides Spaces over Tailscale, without the relay\n  # (`cua host setup --direct ... --provide-spaces` on it prints this)\n  cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"",
+     "after_help": "Examples:\n  cua spaces add 10.0.0.5:3211 --token \"$TOKEN\" --name studio\n  cua spaces add local:my-sandbox\n  cua spaces add http://127.0.0.1:8765/mcp --service tools\n  # A computer that provides Spaces over Tailscale, without the relay\n  # (`cua host setup --direct ... --share both` on it prints this)\n  cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"",
      "aliases": [],
      "arguments": [
       {
@@ -13801,7 +14037,7 @@
      "usage": "cua spaces add [OPTIONS] <URL>"
     },
     {
-     "abstract": "Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --no-desktop --provide-spaces` there), or in your own cloud account",
+     "abstract": "Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --share spaces` there), or in your own cloud account",
      "after_help": "Examples:\n  cua spaces create linux\n  # On the least-loaded of your machines\n  cua spaces create linux --on auto\n  # Two macOS VMs on your spare Mac mini (matched by name)\n  cua spaces create macos:26 --on \"spare mac mini\" --count 2\n  cua spaces create --on host:0123abcd4567ef89 linux --json\n  # Kept on your machines: created again on another one if its machine goes away\n  cua spaces create linux --on auto --durable --name research\n  # In your AWS account, on a pool host of exactly this type and region\n  cua spaces create linux --on aws --instance-type c7g.xlarge --region us-west-2\n  # Labels are kept with the Space; `cua spaces ls --label team=research` filters\n  cua spaces create linux --label team=research --label run=7",
      "aliases": [],
      "arguments": [
@@ -16519,7 +16755,7 @@
      "usage": "cua devices approve [OPTIONS] [CODE]"
     },
     {
-     "abstract": "Your devices and their state",
+     "abstract": "Your signed-in machines and their state",
      "after_help": "Examples:\n  cua devices ls\n  cua devices ls --json",
      "aliases": [
       "list"
@@ -17289,6 +17525,204 @@
    "usage": "cua usage [OPTIONS]"
   },
   {
+   "abstract": "The AI providers connected once for every app that can use them: list, add (a key from stdin), test, remove. What Cua Spaces shows in Settings, Connections. (`cua connect` connects your coding apps to Cua.)",
+   "after_help": "Examples:\n  cua connections list\n  cua connections add deepseek\n  cua connections test\n  cua connections remove deepseek",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "connections",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "List the providers with their state (Connected, Needs reconnect, Not connected) and the apps each works with. Never prints a key",
+     "after_help": "Examples:\n  cua connections list\n  cua connections list --all\n  cua --json connections list",
+     "aliases": [],
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also list every provider that is not connected (by default: the ones up front and the ones with something saved)",
+       "hidden": false,
+       "name": "all",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "list",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections list [OPTIONS]"
+    },
+    {
+     "abstract": "Connect a provider. The key is read from stdin (pipe it in; a terminal is refused so it isn't echoed). Saving never waits on the provider: `cua connections test` asks it afterwards",
+     "after_help": "Examples:\n  cua connections add deepseek\n  cua connections add zai --region coding-global\n  cua connections add deepinfra --model meta-llama/Meta-Llama-3.1-70B-Instruct\n  cua connections add custom --base-url http://host:1234/v1 --model qwen",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The provider id (`cua connections list --all`)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "PROVIDER",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "discussion": ".\n\nThe provider is one of the ids `cua connections list --all` prints. Pipe the key in: `pbpaste | cua connections add deepseek`. Sign-ins another app made on this machine are imported with `cua connect setup <app> --sign-in`.",
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "add",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "How: `key` (an API key from stdin; the default) or `endpoint` (a custom endpoint: its base URL, model and API style; a key is optional)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "method",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "METHOD"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The plan or region, for a provider that has them (Z.AI: global, cn, coding-global, coding-cn)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "region",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "REGION"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The model to use, for a provider with no default model or to choose another",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "model",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "MODEL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "A custom endpoint's base URL",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "base-url",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "BASE_URL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "A custom endpoint's API style: openai-chat (default), openai-responses or anthropic",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "wire",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "WIRE"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections add [OPTIONS] <PROVIDER>"
+    },
+    {
+     "abstract": "Ask each provider whether its saved key still works (a read-only request on the provider's own host, bounded in time; offline is not a failure). A key the provider refuses is listed as Needs reconnect",
+     "after_help": "Examples:\n  cua connections test\n  cua connections test openrouter",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Only this provider",
+       "hidden": false,
+       "is_optional": true,
+       "name": "PROVIDER",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "test",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections test [OPTIONS] [PROVIDER]"
+    },
+    {
+     "abstract": "Disconnect a provider: remove what is saved for it",
+     "after_help": "Examples:\n  cua connections remove deepseek",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": false,
+       "name": "PROVIDER",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "remove",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections remove [OPTIONS] <PROVIDER>"
+    }
+   ],
+   "usage": "cua connections [OPTIONS] <COMMAND>"
+  },
+  {
    "abstract": "Move a desktop app session (tabs, profile, sign-in) into a sandbox",
    "aliases": [],
    "arguments": [],
@@ -17398,6 +17832,17 @@
      "aliases": [],
      "arguments": [],
      "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "With `--url`, read the app in this command's own process instead of the Cua daemon. Consent, the audit record and the wipe are skipped, and macOS uses this process's permissions, not Cua's. Scheduled for removal; use `--url` alone",
+       "hidden": false,
+       "name": "read-as-caller",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
       {
        "aliases": [],
        "default_value": false,
@@ -17531,7 +17976,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Destination cua-spacesd URL instead of a sandbox",
+       "help": "Destination cua-spacesd URL instead of a sandbox: another daemon's API, or any machine you can reach. The browser is read by the local Cua daemon with the same Keyvault consent, audit record and wipe as `--sandbox`; `--url` only names where it goes",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -17579,6 +18024,53 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua teleport push [OPTIONS] --app <APP>"
+    },
+    {
+     "abstract": "Check, in plain words, that a teleport can work now: the Keyvault, permission to read the browser's files and tabs, and the profile",
+     "after_help": "Examples:\n  cua teleport doctor\n  cua teleport doctor --app chrome --profile \"Profile 1\"",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "doctor",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "chrome",
+       "env": null,
+       "help": "Browser to check (`chrome` or `edge`)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "app",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "APP"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Profile to check: a name (\"Profile 1\"). Default: the one used last",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "profile",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "PROFILE"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua teleport doctor [OPTIONS]"
     }
    ],
    "usage": "cua teleport [OPTIONS] <COMMAND>"

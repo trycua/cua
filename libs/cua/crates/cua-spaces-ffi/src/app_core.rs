@@ -507,6 +507,13 @@ pub fn app_host_state(status: cua_sdk::HostStatus) -> AppHostState {
         provide_spaces: status.provide_spaces,
         max_spaces: status.max_spaces,
         max_macos_vms: status.max_macos_vms,
+        max_memory_gb: status.max_memory_gb,
+        max_disk_gb: status.max_disk_gb,
+        max_run_minutes: status.max_run_minutes,
+        used_memory_gb: status.used_memory_gb,
+        used_disk_gb: status.used_disk_gb,
+        total_memory_gb: status.total_memory_gb,
+        total_disk_gb: status.total_disk_gb,
         provided_spaces: status
             .provided_spaces
             .into_iter()
@@ -1515,6 +1522,13 @@ pub fn app_notch_view(state: AppNotchState, spaces: Vec<AppSpace>) -> AppNotchVi
     core::notch::view(&state, &spaces)
 }
 
+/// `pinned` (the notch's pins, in pin order) with `id` pinned or, when it
+/// already is, unpinned: Pin to notch and Unpin from notch.
+#[uniffi::export]
+pub fn app_notch_toggle_pin(pinned: Vec<String>, id: String) -> Vec<String> {
+    core::notch::toggle_pin(&pinned, &id)
+}
+
 /// The springs and delays every shell animates with.
 #[uniffi::export]
 pub fn app_notch_motion() -> AppNotchMotion {
@@ -1949,6 +1963,15 @@ impl KeyvaultClient {
         cua_sdk::support::run(async move { inner.inventory(&app, profile).await.map_err(kv_error) })
             .await
     }
+
+    /// Whether a teleport of `app` can work now: the Keyvault's state, what
+    /// macOS lets the daemon read, and the profiles. Reads no value and asks
+    /// for no presence.
+    pub async fn readiness(&self, app: String, profile: Option<String>) -> Result<KvReadiness> {
+        let inner = self.inner.clone();
+        cua_sdk::support::run(async move { inner.readiness(&app, profile).await.map_err(kv_error) })
+            .await
+    }
 }
 
 // ---- Onboarding and settings ---------------------------------------------
@@ -2192,6 +2215,25 @@ pub fn app_settings_choose_experiment(
 #[uniffi::export]
 pub fn app_settings_page(input: AppSettingsInput) -> AppSettingsPage {
     core::settings::page(&input)
+}
+
+/// A runtime binary's one line in Settings, Advanced ("Docker 27.3 found",
+/// "Not a Docker or Podman binary").
+#[uniffi::export]
+pub fn app_runtime_path_verdict(check: AppRuntimePathCheck) -> AppRuntimePathVerdict {
+    core::runtimes::path_verdict(&check)
+}
+
+/// The setting a runtime row's choice changes (`runtime.<kind>` or
+/// `runtime.<kind>_path`; a `None` value unsets it), or none for any other
+/// row.
+#[uniffi::export]
+pub fn app_runtimes_choose(
+    input: Option<AppRuntimesInput>,
+    row: String,
+    option: String,
+) -> Option<AppRuntimeSettingChange> {
+    core::runtimes::choose(input.as_ref(), &row, &option)
 }
 
 /// The Settings page with Settings, Storage after General while the Cua
@@ -3110,8 +3152,8 @@ pub(crate) fn setup_options_for_request(
     request: AppHostSetupRequest,
 ) -> Result<cua_sdk::HostSetupOptions> {
     let request = core::host::validate_setup(request).map_err(CuaError::InvalidArgument)?;
-    // The default choice is "let my other devices use this computer": its
-    // screen and Spaces. Pass what the core resolved, not the SDK's own
+    // The default setup lets other machines create Spaces here and keeps
+    // the desktop private. Pass what the core resolved, not the SDK's own
     // (CLI) profile defaults, so both agree.
     let (share_desktop, provide_spaces) = request.settings();
     Ok(cua_sdk::HostSetupOptions {
@@ -3182,13 +3224,20 @@ mod host_setup_tests {
             (o.share_desktop, o.provide_spaces),
             (Some(false), Some(true))
         );
-        // The default choice, "let my other devices use this computer",
-        // turns on the screen and leaves Spaces to the host's default
-        // (cua_host::default_provide_spaces: on for a new relay setup, kept
-        // as it was on a machine set up before); a direct connection only
-        // the screen.
+        // The default setup keeps the desktop private and leaves Spaces to
+        // the host's default (cua_host::default_provide_spaces: on for a
+        // new relay setup, kept as it was on a machine set up before); a
+        // direct connection always shares the screen.
         let o = setup_options_for_request(AppHostSetupRequest {
             mode: "relay".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!((o.share_desktop, o.provide_spaces), (Some(false), None));
+        // The desktop choice also lets other machines control this desktop.
+        let o = setup_options_for_request(AppHostSetupRequest {
+            mode: "relay".into(),
+            profile: Some("desktop".into()),
             ..Default::default()
         })
         .unwrap();
@@ -3475,6 +3524,7 @@ mod resources_tests {
                     allocated: 87 * GIB,
                     shares_space: true,
                 }),
+                base: None,
             }],
             computers: vec![rt::ComputerResources {
                 id: "mini".into(),

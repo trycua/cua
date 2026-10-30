@@ -34,6 +34,10 @@ cua-telemetry = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["sync"] }
 
+# The provider registry: which providers exist, how each connects, who receives what.
+[dependencies.cua-connections]
+workspace = true
+
 [dev-dependencies]
 # Sign-in drift test (`tests/sign_in_failures.rs`): every real cua-auth
 # sign-in failure maps to a reason with words.
@@ -45,5 +49,7 @@ base64.workspace = true
 cua-keyvault.workspace = true
 # Drift guard: the first run lists every agent the setup's registry knows.
 cua-agent-setup.workspace = true
+# Drift guard: every agent the @ picker offers to start is a real harness.
+cua-agents.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tempfile.workspace = true

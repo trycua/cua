@@ -26,7 +26,7 @@ function host({ signedIn, configured }: { signedIn: boolean; configured: boolean
   return { adapter, setups };
 }
 
-describe.skipIf(!wasmBuilt)("signing in adds this computer", () => {
+describe.skipIf(!wasmBuilt)("signing in adds this machine", () => {
   it("a sign-in on a computer that isn't set up sets it up to provide Spaces, its screen private", async () => {
     const { adapter, setups } = host({ signedIn: false, configured: false });
     const store = new BridgeStore(adapter, await testCore());

@@ -60,7 +60,11 @@ extension AppModel {
             // until it does.
             canRename: false,
             canDelete: a.canDelete && offers(.delete),
-            canLeave: a.canLeave)
+            canLeave: a.canLeave,
+            // Pin to notch is in the web UI's menus (the only Spaces UI); this
+            // model-level menu keeps to the actions the classic window had.
+            canPin: false,
+            pinned: settings.notchPinned.contains(space.id))
     }
 
     /// A Space's right-click menu (none for this Mac's own row).
@@ -81,6 +85,7 @@ extension AppModel {
         case .share, .manageSharing: open(space, then: .share)
         case .teleport: open(space, then: .teleport)
         case .rename: break
+        case .pin: togglePin(space.id)
         case .delete, .leave:
             if removable(space) {
                 askRemove([space])

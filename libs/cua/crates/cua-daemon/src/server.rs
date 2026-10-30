@@ -213,6 +213,30 @@ const MAINTENANCE_EVERY: Duration = Duration::from_secs(3600);
 /// once a minute after start, then hourly while no request is in flight
 /// and none arrived for five minutes. `CUA_DAEMON_MAINTENANCE=0` turns it
 /// off.
+/// How often the repo cache is tidied and its mirrors refreshed, and how
+/// old a mirror used in the last week may get before it is.
+const REPO_CACHE_EVERY: Duration = Duration::from_secs(15 * 60);
+const REPO_CACHE_REFRESH_AFTER: Duration = Duration::from_secs(60 * 60);
+
+/// Keeps the repo cache within its cap and its mirrors up to date, in the
+/// background and one repository at a time (`cua-repo-cache`). Nothing
+/// happens while the cache is off.
+async fn repo_cache_loop(mut shutdown: watch::Receiver<bool>) {
+    let mut next = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => return,
+            _ = tokio::time::sleep_until(next) => {}
+        }
+        let cache = cua_sandbox_core::repo_cache::current();
+        tokio::select! {
+            _ = shutdown.changed() => return,
+            () = cache.maintain(REPO_CACHE_REFRESH_AFTER) => {}
+        }
+        next = tokio::time::Instant::now() + REPO_CACHE_EVERY;
+    }
+}
+
 async fn maintenance_loop(shared: Arc<Shared>, mut shutdown: watch::Receiver<bool>) {
     use std::sync::atomic::Ordering::SeqCst;
     let Ok(vmm) = shared.runtime.vmm().cloned() else {
@@ -672,6 +696,7 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             shared.clone(),
             shared.shutdown.subscribe(),
         )));
+        tasks.push(tokio::spawn(repo_cache_loop(shared.shutdown.subscribe())));
     }
     // The automatic cloud sweep (`CUA_CLOUD_SWEEP_SECS`, 0: off).
     #[cfg(feature = "byoc")]

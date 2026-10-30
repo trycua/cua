@@ -59,6 +59,8 @@ pub struct LaunchConfig {
     pub seed_iso: Option<PathBuf>,
     /// Installer ISO attached as CD-ROM and booted first.
     pub install_iso: Option<PathBuf>,
+    /// Optional swtpm control socket.
+    pub tpm_socket: Option<PathBuf>,
     pub firmware: Firmware,
     /// `(host_port, guest_port)` TCP forwards on 127.0.0.1.
     pub forwards: Vec<(u16, u16)>,
@@ -134,6 +136,7 @@ impl LaunchConfig {
 
 /// Build the argv (excluding the binary itself).
 pub fn build(cfg: &LaunchConfig) -> Vec<String> {
+    let windows_arm = cfg.os == GuestOs::Windows && cfg.arch == Arch::Aarch64;
     let mut a: Vec<String> = Vec::new();
     let mut push = |xs: &[&str]| a.extend(xs.iter().map(|s| s.to_string()));
 
@@ -235,7 +238,10 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
     // virtio storage driver is not a boot driver there, so over virtio-blk
     // it cannot find its system volume and lands in WinRE. Everything else
     // boots virtio.
-    if cfg.os == GuestOs::Windows {
+    if windows_arm {
+        push(&["-device", "nvme,drive=disk0,serial=cua-disk0,bootindex=1"]);
+        push(&["-device", "qemu-xhci,id=xhci"]);
+    } else if cfg.os == GuestOs::Windows {
         push(&[
             "-device",
             "ahci,id=ahci",
@@ -266,12 +272,12 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
                         iso.display()
                     ),
                 ]);
-                push(&[
-                    "-device",
-                    "virtio-scsi-pci,id=scsi0",
-                    "-device",
-                    "scsi-cd,drive=cd0,bootindex=0",
-                ]);
+                if windows_arm {
+                    push(&["-device", "usb-storage,drive=cd0,bus=xhci.0,bootindex=0"]);
+                } else {
+                    push(&["-device", "virtio-scsi-pci,id=scsi0"]);
+                    push(&["-device", "scsi-cd,drive=cd0,bootindex=0"]);
+                }
             }
         }
     }
@@ -328,6 +334,22 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
         display(&mut a, cfg);
     }
 
+    // The TPM is independent of the display: a headless restart keeps it.
+    if let Some(socket) = &cfg.tpm_socket {
+        a.extend([
+            "-chardev".to_string(),
+            format!("socket,id=chrtpm,path={}", socket.display()),
+            "-tpmdev".into(),
+            "emulator,id=tpm0,chardev=chrtpm".into(),
+            "-device".into(),
+            match cfg.arch {
+                Arch::Aarch64 => "tpm-tis-device,tpmdev=tpm0",
+                Arch::X86_64 => "tpm-tis,tpmdev=tpm0",
+            }
+            .into(),
+        ]);
+    }
+
     // Management.
     let mut push = |xs: &[&str]| a.extend(xs.iter().map(|s| s.to_string()));
     push(&[
@@ -357,22 +379,20 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
 
 /// The display and input devices, VNC and the display backend.
 fn display(a: &mut Vec<String>, cfg: &LaunchConfig) {
+    let windows_arm = cfg.os == GuestOs::Windows && cfg.arch == Arch::Aarch64;
     let mut push = |xs: &[&str]| a.extend(xs.iter().map(|s| s.to_string()));
     match (&cfg.virgl_render_node, cfg.arch) {
+        _ if windows_arm => push(&["-device", "ramfb"]),
         // virgl: the guest's 3D goes to the host GPU; the headless EGL
         // display still feeds VNC and screendump.
         (Some(_), _) => push(&["-device", "virtio-gpu-gl-pci"]),
         (None, Arch::Aarch64) => push(&["-device", "virtio-gpu-pci"]),
         (None, Arch::X86_64) => push(&["-vga", "std"]),
     }
-    push(&[
-        "-device",
-        "qemu-xhci,id=xhci",
-        "-device",
-        "usb-kbd",
-        "-device",
-        "usb-tablet",
-    ]);
+    if !windows_arm {
+        push(&["-device", "qemu-xhci,id=xhci"]);
+    }
+    push(&["-device", "usb-kbd", "-device", "usb-tablet"]);
     match &cfg.virgl_render_node {
         Some(node) => push(&[
             "-display",
@@ -419,6 +439,7 @@ mod tests {
             disk_format: "qcow2".into(),
             seed_iso: Some(PathBuf::from("/s/vm1/seed.iso")),
             install_iso: None,
+            tpm_socket: None,
             firmware: Firmware::Bios,
             forwards: vec![(40022, 22), (40080, 8080)],
             restrict_network: false,
@@ -546,6 +567,94 @@ mod tests {
             assert!(!has(&a, ["-vga", "std"]));
         }
         assert!(has(&build(&cfg(Arch::X86_64, "kvm")), ["-display", "none"]));
+    }
+
+    #[test]
+    fn windows_arm_devices_and_tpm() {
+        let mut c = cfg(Arch::Aarch64, "hvf");
+        c.os = GuestOs::Windows;
+        c.seed_iso = None;
+        c.install_iso = Some("/install.iso".into());
+        let a = build(&c);
+        assert_eq!(
+            a,
+            serde_json::from_str::<Vec<String>>(include_str!("../../tests/argv/windows-arm.json"))
+                .unwrap()
+        );
+        for device in [
+            "ramfb",
+            "nvme,drive=disk0,serial=cua-disk0,bootindex=1",
+            "virtio-net-pci,netdev=net0",
+            "usb-storage,drive=cd0,bus=xhci.0,bootindex=0",
+        ] {
+            assert!(has(&a, ["-device", device]));
+        }
+        let controller = a.iter().position(|s| s == "qemu-xhci,id=xhci").unwrap();
+        for (i, arg) in a.iter().enumerate() {
+            if arg.contains("bus=xhci.0") {
+                assert!(controller < i);
+            }
+            assert!(
+                !arg.contains("virtio-gpu")
+                    && !arg.contains("virtio-scsi")
+                    && !arg.contains("ahci")
+            );
+            assert!(!arg.contains("tpm") && arg != "-chardev");
+        }
+        c.seed_iso = Some("/seed.iso".into());
+        let seeded = build(&c);
+        assert!(has(&seeded, ["-device", "virtio-blk-pci,drive=cidata"]));
+        assert_eq!(
+            seeded.iter().filter(|s| *s == "qemu-xhci,id=xhci").count(),
+            1
+        );
+        for arch in [Arch::Aarch64, Arch::X86_64] {
+            c.arch = arch;
+            c.tpm_socket = Some("/vm/tpm/swtpm.sock".into());
+            let a = build(&c);
+            assert!(has(
+                &a,
+                ["-chardev", "socket,id=chrtpm,path=/vm/tpm/swtpm.sock"]
+            ));
+            assert!(has(&a, ["-tpmdev", "emulator,id=tpm0,chardev=chrtpm"]));
+            let mut h = c.clone();
+            h.headless = true;
+            assert!(has(
+                &build(&h),
+                ["-tpmdev", "emulator,id=tpm0,chardev=chrtpm"]
+            ));
+            assert!(has(
+                &a,
+                [
+                    "-device",
+                    if arch == Arch::Aarch64 {
+                        "tpm-tis-device,tpmdev=tpm0"
+                    } else {
+                        "tpm-tis,tpmdev=tpm0"
+                    }
+                ]
+            ));
+        }
+    }
+
+    #[test]
+    fn unchanged_vectors() {
+        for (name, arch, os, iso, virgl) in [
+            ("windows-x86", Arch::X86_64, GuestOs::Windows, true, false),
+            ("linux-arm", Arch::Aarch64, GuestOs::Linux, true, false),
+            ("linux-x86", Arch::X86_64, GuestOs::Linux, false, false),
+            ("virgl-arm", Arch::Aarch64, GuestOs::Linux, false, true),
+            ("virgl-x86", Arch::X86_64, GuestOs::Linux, false, true),
+        ] {
+            let mut c = cfg(arch, "kvm");
+            c.os = os;
+            c.install_iso = iso.then(|| "/install.iso".into());
+            c.virgl_render_node = virgl.then(|| "/dev/dri/renderD128".into());
+            let actual = serde_json::to_string_pretty(&build(&c)).unwrap();
+            let path =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/argv/{name}.json"));
+            assert_eq!(actual, std::fs::read_to_string(path).unwrap(), "{name}");
+        }
     }
 
     fn has(args: &[String], pair: [&str; 2]) -> bool {

@@ -241,7 +241,7 @@ I kept the structure and only changed the words. Three screens change:
 + <h1>Welcome to Cua Spaces</h1>
 + <p>Set up takes about a minute.</p>
 
-- <p>Sign in to sync your Spaces across all your devices!</p>
+- <p>Sign in to sync your Spaces across all your machines!</p>
 + <p>Sign in to see your Spaces on every computer you use.</p>
 \`\`\`
 
@@ -398,7 +398,7 @@ export function demoStartedRun(space: string, runId: string, agent: string, prom
     space,
     live: true,
     events: s.events,
-    asks: { title: "Sign in to GitHub", detail: "The agent needs a GitHub sign-in on this computer to post the result." },
+    asks: { title: "Sign in to GitHub", detail: "The agent needs a GitHub sign-in on this machine to post the result." },
     run: {
       runId,
       agent,
@@ -418,7 +418,7 @@ export function demoReply(rec: DemoRunRecord, text: string, t: number): void {
   const s = Script.after(written, t).prompt(text);
   if (/sign|signed|logged|done|go ahead|yes/i.test(text)) {
     s.tool("execute", "gh pr comment --body-file result.md", "completed", "Posted a comment", 2200)
-      .say("Posted the result on your pull request. You can keep this computer for the next check, or throw it away.", 80);
+      .say("Posted the result on your pull request. You can keep this machine for the next check, or throw it away.", 80);
   } else {
     s.thought("Read the reply and carry on.", 800).say("Got it. I'll go on with that.", 80);
   }

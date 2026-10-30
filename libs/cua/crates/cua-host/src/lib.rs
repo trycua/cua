@@ -43,6 +43,7 @@ mod helper_migration_tests;
 mod host;
 pub mod machine;
 pub mod pairing;
+pub mod ports;
 pub mod preflight;
 pub mod provided;
 pub mod relay;
@@ -50,6 +51,7 @@ pub mod service;
 #[cfg(test)]
 mod setup_tests;
 pub mod spaces_api;
+mod sysinfo_gb;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]

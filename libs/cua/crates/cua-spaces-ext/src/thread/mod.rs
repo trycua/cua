@@ -551,9 +551,28 @@ pub struct ThreadEntry {
     /// What the person was looking at when they posted ([`ViewContext`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<ViewContext>,
+    /// On an agent's reply to a task that failed: what failed
+    /// (`needs_connect` with the provider to connect, or an error), with
+    /// the complete text. `text` says it in plain words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<cua_agents::failure::Failure>,
+    /// On a task an agent gave another agent: how many agent-to-agent hops
+    /// it is from the person who started the chain (a person's own tasks
+    /// carry none). The daemon stops a chain at [`crate::persistent::wake::MAX_HOPS`].
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub hops: u32,
+    /// On the copy of a message that tasks one more agent when it names
+    /// several (`@a @b`, `@everyone`): the entry it copies. Clients draw
+    /// the original only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fanout_of: Option<u64>,
     /// Fields of a newer format, kept as they are.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// An entry before the store numbers it.
@@ -579,6 +598,9 @@ pub struct Draft {
     pub event: Option<Value>,
     pub join_request: Option<JoinRequest>,
     pub view: Option<ViewContext>,
+    pub failure: Option<cua_agents::failure::Failure>,
+    pub hops: u32,
+    pub fanout_of: Option<u64>,
 }
 
 impl Draft {
@@ -602,6 +624,9 @@ impl Draft {
             event: None,
             join_request: None,
             view: None,
+            failure: None,
+            hops: 0,
+            fanout_of: None,
         }
     }
 
@@ -770,6 +795,13 @@ pub struct ThreadStore {
 fn notifiers() -> &'static Mutex<HashMap<PathBuf, Arc<tokio::sync::Notify>>> {
     static N: OnceLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Notify>>>> = OnceLock::new();
     N.get_or_init(Default::default)
+}
+
+/// Wakes the agent supervisor of this process: a task was posted, so its
+/// member is served now instead of at the next poll.
+pub fn supervisor_wake() -> Arc<tokio::sync::Notify> {
+    static W: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
+    W.get_or_init(Default::default).clone()
 }
 
 fn fold_cache() -> &'static Mutex<HashMap<PathBuf, Fold>> {
@@ -945,6 +977,7 @@ impl ThreadStore {
         }
         let mut head = self.recovered_head()?;
         let mut out = vec![];
+        let wakes = drafts.iter().any(|d| d.task.is_some());
         for d in drafts {
             let e = ThreadEntry {
                 v: VERSION,
@@ -968,6 +1001,9 @@ impl ThreadStore {
                 event: d.event,
                 join_request: d.join_request,
                 view: d.view,
+                failure: d.failure,
+                hops: d.hops,
+                fanout_of: d.fanout_of,
                 extra: Map::new(),
             };
             self.write_entry(&mut head, &e)?;
@@ -975,6 +1011,9 @@ impl ThreadStore {
         }
         self.write_head(&head)?;
         self.notifier().notify_waiters();
+        if wakes {
+            supervisor_wake().notify_one();
+        }
         Ok(out)
     }
 
@@ -1116,11 +1155,27 @@ impl ThreadStore {
     /// Waits up to `for_` for an entry after `after` (in-process writers
     /// wake it at once; other processes' writes are seen within 250 ms).
     pub async fn wait_after(&self, after: u64, for_: Duration) -> Result<()> {
+        self.wait_after_or(after, for_, || false).await
+    }
+
+    /// Wakes the readers that follow this thread (what they show besides
+    /// its entries changed: an agent's live stage).
+    pub fn wake(&self) {
+        self.notifier().notify_waiters();
+    }
+
+    /// [`Self::wait_after`], also returning as soon as `changed` says so.
+    pub async fn wait_after_or(
+        &self,
+        after: u64,
+        for_: Duration,
+        changed: impl Fn() -> bool,
+    ) -> Result<()> {
         let deadline = tokio::time::Instant::now() + for_.min(MAX_FOLLOW);
         let n = self.notifier();
         loop {
             let notified = n.notified();
-            if self.last_seq()? > after {
+            if self.last_seq()? > after || changed() {
                 return Ok(());
             }
             let now = tokio::time::Instant::now();
@@ -1382,6 +1437,9 @@ pub struct TaskInfo {
     /// What the person who gave it was looking at ([`ViewContext`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub view: Option<ViewContext>,
+    /// Agent-to-agent hops from the person who started the chain (0: a person gave it).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub hops: u32,
 }
 
 /// What the entries add up to.
@@ -1436,6 +1494,7 @@ impl Fold {
                     replied: false,
                     holder: None,
                     view: e.view.clone(),
+                    hops: e.hops,
                 },
             );
         }

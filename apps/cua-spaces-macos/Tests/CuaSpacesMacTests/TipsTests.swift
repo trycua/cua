@@ -19,7 +19,7 @@ struct TipsTests {
         #expect(AppModel.sidebarTip(machinesOnline: 1, tips: none) == nil)
         let tip = AppModel.sidebarTip(machinesOnline: 2, tips: none)
         #expect(tip?.id == "on-auto")
-        #expect(tip?.text == "New Spaces can go to whichever computer has room.")
+        #expect(tip?.text == "New Spaces can go to whichever machine has room.")
         #expect(tip?.code == "cua create --on auto")
         #expect(tip?.action.value == "cua create --on auto")
         #expect(tip?.action.doneLabel == "Copied")
@@ -83,5 +83,29 @@ struct TipsTests {
         // The core's rows through `settings.choose`, as the New UI's Settings page may send them.
         _ = try await bridge.handle("settings.choose", ["row": "reset-tips", "option": "press"])
         #expect(m.settings.tips == AppTipsState(off: false, done: []))
+    }
+
+    /// The notch's pins ride the same settings path as the tips: the page reads
+    /// and saves them (`notchPinned`), the notch lists the pinned first at once,
+    /// and they survive a restart.
+    @Test func theNewUISavesTheNotchPinsThroughTheBridge() async throws {
+        let m = ViewModelTests().makeModel()
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        let before = try #require(try await bridge.handle("settings.get", [:]) as? [String: Any])
+        #expect(before["notchPinned"] as? [String] == [])
+
+        let after = try #require(try await bridge.handle("settings.update", [
+            "notchPinned": ["relay:wsl", "local:aurora"],
+        ]) as? [String: Any])
+        #expect(after["notchPinned"] as? [String] == ["relay:wsl", "local:aurora"])
+        #expect(settingsOnDisk(m).notchPinned == ["relay:wsl", "local:aurora"])
+        #expect(m.notch.state.pinned == ["relay:wsl", "local:aurora"], "the notch follows at once")
+        #expect(m.settings.tips == AppTipsState(off: false, done: []), "the tips are untouched")
+
+        // A key left out stays; a wrong one is refused.
+        _ = try await bridge.handle("settings.update", [:])
+        #expect(m.settings.notchPinned == ["relay:wsl", "local:aurora"])
+        await #expect(throws: (any Error).self) { try await bridge.handle("settings.update", ["notchPinned": "relay:wsl"]) }
+        await #expect(throws: (any Error).self) { try await bridge.handle("settings.update", ["notchPinned": [1]]) }
     }
 }

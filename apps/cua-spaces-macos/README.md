@@ -119,7 +119,7 @@ at the matching page (`MainUIRouter`): a launch (the first run at
 `/onboarding?due=1` while it is due; never at login), the Dock icon, the menu
 bar item, the notch, File, New Space (⌘N), the View menu, Help, Getting
 Started, ⌘⇧Space and the app's notifications (a Space that came up: its page;
-a device asking to join: Settings, Devices; an agent: Agents). A Space's
+a machine asking to be added: Machines; an agent: Agents). A Space's
 desktop opens in its own native window (video stays native).
 
 There is no native main window and no switch back: the "Use classic UI"
@@ -531,8 +531,11 @@ reads the state with `update.get` (`{status, currentVersion, version,
 percent, notesUrl, message}`; status is `idle`, `checking`, `available`,
 `downloading`, `downloaded` or `error`) and refetches on the `update.changed`
 event. Check Now (Settings, About) is quiet too: nothing found ends silently,
-and only an error from a check the user started shows a small "Update Error!"
-alert; background errors are logged. Usage telemetry records `found`,
+an error is logged and kept in the state (a plain line in the menus; no dialog).
+"Check for Updates…" is in the app menu and the menu bar menu too; both menus,
+the menu bar icon's up-arrow badge and Settings read the one `UpdatesModel`
+(`UpdateMenuItem`): a found update reads "Version X available" with "Click to
+install" or "Restart to update" under it. Usage telemetry records `found`,
 `not_found`, `downloaded`, `installed` and `failed`.
 
 Channels: an `X.Y.Z-suffix` release is a `beta` item, which only apps set to

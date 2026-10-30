@@ -423,13 +423,14 @@ pub fn durable_driver_spec(
         }
         e
     });
-    let mut launch = harness::launch_with_home(
+    let mut launch = harness::launch_with_config(
         h,
         endpoint.as_ref(),
         opts.model.as_deref(),
         run_dir,
         &cwd,
         None,
+        opts.hermes_config.as_deref(),
     )?;
     if d.guard {
         launch.env.extend(guard_env(h));

@@ -235,6 +235,145 @@ describe.skipIf(!wasmBuilt)("teleport picker", () => {
   });
 });
 
+describe.skipIf(!wasmBuilt)("teleport setup sheet", () => {
+  /** A demo adapter that records what the host was asked. */
+  function spy() {
+    const base = createDemoAdapter({ latencyMs: 0, stepMs: 2 });
+    const calls: [string, unknown][] = [];
+    const adapter = Object.assign(Object.create(base) as DataAdapter, {
+      call: ((op: string, args: unknown) => {
+        calls.push([op, args]);
+        return (base.call as (o: string, a: unknown) => Promise<unknown>).call(base, op, args);
+      }) as DataAdapter["call"],
+    });
+    return { adapter, calls, ops: (op: string) => calls.filter(([o]) => o === op).map(([, a]) => a) };
+  }
+
+  /** Chrome's sign-ins as far as the plan. */
+  async function planChrome(t: TeleportStore) {
+    t.open(space);
+    await until(() => expect(t.getSession()!.state.step).toBe("pick"));
+    t.setQuery("chrome");
+    await t.activate(t.getSession()!.grid.sections.flatMap((x) => x.tiles)[0]);
+    t.send({ type: "move", move: "app_with_state" });
+    t.send({ type: "sensitive", group: "sign_ins", value: true });
+    await t.plan();
+  }
+
+  const mode = (m: string | null) => {
+    if (m) localStorage.setItem("cua.demo.teleportSetup", m);
+    else localStorage.removeItem("cua.demo.teleportSetup");
+  };
+
+  it("has nothing to say when one profile is ready: the review comes straight up", async () => {
+    mode(null);
+    const h = spy();
+    const t = new TeleportStore(h.adapter, await testCore());
+    await planChrome(t);
+    await until(() => expect(t.getSession()!.frame.review!.needsDomains).toBe(false));
+    expect(t.getSession()!.setup).toBeNull();
+    expect(h.ops("teleport.readiness")).toEqual([{ providerId: "chrome", profile: null }]);
+  });
+
+  it("stops at the sheet when Full Disk Access is off: nothing is read, no Touch ID is asked, until it is on", async () => {
+    mode("blocked");
+    try {
+      const h = spy();
+      const t = new TeleportStore(h.adapter, await testCore());
+      await planChrome(t);
+      const sheet = await until(() => {
+        const s = t.getSession()!.setup;
+        expect(s?.open).toBe(true);
+        return s!;
+      });
+      expect(sheet.blocked).toBe(true);
+      expect(sheet.readiness!.files.state).toBe("denied");
+      expect(sheet.readiness!.files.say).toContain("Full Disk Access");
+      // The sites (which asks for Touch ID) and the saved items are not read yet.
+      expect(h.ops("teleport.sites")).toEqual([]);
+      // Continue is refused while blocked.
+      await t.finishSetup();
+      expect(t.getSession()!.setup?.open).toBe(true);
+      expect(h.ops("teleport.sites")).toEqual([]);
+      // Turned on: checked again, the last used profile is the one to read, Continue works.
+      await t.recheckSetup();
+      const ready = t.getSession()!.setup!;
+      expect(ready.blocked).toBe(false);
+      expect(ready.profile).toBe("Profile 1");
+      await t.finishSetup();
+      await until(() => expect(t.getSession()!.frame.review!.needsDomains).toBe(false));
+      expect(t.getSession()!.setup).toBeNull();
+      expect(h.ops("teleport.sites")).toEqual([{ providerId: "chrome", profile: "Profile 1" }]);
+    } finally {
+      mode(null);
+    }
+  });
+
+  it("reads the profile that was chosen, and carries it to the run", async () => {
+    mode("profiles");
+    try {
+      const h = spy();
+      const t = new TeleportStore(h.adapter, await testCore());
+      await planChrome(t);
+      await until(() => expect(t.getSession()!.setup?.open).toBe(true));
+      expect(t.getSession()!.setup!.blocked).toBe(false);
+      expect(t.getSession()!.setup!.readiness!.profiles.map((p) => p.name)).toEqual(["Personal", "Work", "Side project"]);
+      await t.chooseProfile("Profile 2");
+      expect(h.ops("teleport.readiness").at(-1)).toEqual({ providerId: "chrome", profile: "Profile 2" });
+      await t.finishSetup();
+      await until(() => expect(t.getSession()!.frame.review!.needsDomains).toBe(false));
+      expect(h.ops("teleport.sites")).toEqual([{ providerId: "chrome", profile: "Profile 2" }]);
+      t.send({ type: "acknowledge", value: true });
+      await t.confirm();
+      await until(() => expect(t.getSession()!.state.step).toBe("done"));
+      const run = h.ops("teleport.run")[0] as { consent: { profile?: string } };
+      expect(run.consent.profile).toBe("Profile 2");
+    } finally {
+      mode(null);
+    }
+  });
+
+  it("offers open tabs only when Full Disk Access is off: signed-in sites are left out", async () => {
+    mode("blocked");
+    try {
+      const h = spy();
+      const t = new TeleportStore(h.adapter, await testCore());
+      await planChrome(t);
+      await until(() => expect(t.getSession()!.setup?.open).toBe(true));
+      t.useTabsOnly();
+      const s = t.getSession()!;
+      expect(s.setup).toBeNull();
+      expect(s.state.step).toBe("options");
+      expect(s.frame.planSensitive).toEqual([]);
+      expect(h.ops("teleport.sites")).toEqual([]);
+    } finally {
+      mode(null);
+    }
+  });
+
+  it("says a macOS refusal as the sentence alone, without the prefixes it travelled with", async () => {
+    const base = createDemoAdapter({ latencyMs: 0, stepMs: 2 });
+    const adapter = Object.assign(Object.create(base) as DataAdapter, {
+      call: ((op: string, args: unknown) =>
+        op === "teleport.run"
+          ? Promise.reject(new Error("teleport refused: chrome: macOS is not letting Cua read this browser's files. Turn on Full Disk Access."))
+          : (base.call as (o: string, a: unknown) => Promise<unknown>).call(base, op, args)) as DataAdapter["call"],
+    });
+    mode(null);
+    const t = new TeleportStore(adapter, await testCore());
+    await planChrome(t);
+    await until(() => expect(t.getSession()!.frame.review!.needsDomains).toBe(false));
+    t.send({ type: "acknowledge", value: true });
+    await t.confirm();
+    const failed = await until(() => {
+      const s = t.getSession()!;
+      expect(s.state.step).toBe("error");
+      return s;
+    });
+    expect(failed.state.error).toBe("macOS is not letting Cua read this browser's files. Turn on Full Disk Access.");
+  });
+});
+
 describe.skipIf(!wasmBuilt)("share sheet", () => {
   it("shares, changes nothing while busy, and removes", async () => {
     const s = new ShareStore(createDemoAdapter({ latencyMs: 0, stepMs: 2 }), await testCore());

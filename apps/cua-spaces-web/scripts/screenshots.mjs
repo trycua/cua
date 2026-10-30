@@ -16,7 +16,7 @@ import { chromium } from "@playwright/test";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const outDir = process.env.OUT_DIR ?? `${root}docs/screenshots`;
-const ROUTES = ["spaces", "machines", "agents", "volume", "keyvault", "settings", "settings/devices", "settings/experiments", "settings/about", "notifications", "onboarding"];
+const ROUTES = ["spaces", "machines", "agents", "volume", "keyvault", "settings", "settings/experiments", "settings/about", "notifications", "onboarding"];
 // Pages under a parameter: [path, file name].
 const DETAIL_ROUTES = [
   [`spaces/${encodeURIComponent("relay:mac-mini/qa-windows")}`, "space-detail"],
@@ -137,13 +137,13 @@ async function newSpaceSteps(theme) {
   await context.close();
 }
 
-/** Devices' approval sheet, then General with Storage (the Cua Volume experiment on). */
+/** A machine waiting to be added ("Add this machine?"), then General with Storage (the Cua Volume experiment on). */
 async function settingsStates(page, theme) {
-  await page.goto(`${base}/settings/devices`, { waitUntil: "networkidle" });
-  await page.locator('[data-device-row="dev_work"] [data-device-approve]').click();
+  await page.goto(`${base}/machines`, { waitUntil: "networkidle" });
+  await page.locator('[data-pending-machine="dev_work"] button').first().click();
+  await page.locator('[data-pending-detail="dev_work"]').waitFor();
   await page.waitForTimeout(300);
-  await page.screenshot({ path: `${outDir}/settings-devices-approve-${theme}.png` });
-  await page.keyboard.press("Escape");
+  await page.screenshot({ path: `${outDir}/machines-add-this-machine-${theme}.png` });
   await page.goto(`${base}/settings/experiments`, { waitUntil: "networkidle" });
   // The demo starts with Cua Volume on (the Volume page's demo); turn it on only if it's off.
   const volumeSwitch = page.locator('[data-setting-row="experiment:cua_volume"] [data-slot="switch"]');

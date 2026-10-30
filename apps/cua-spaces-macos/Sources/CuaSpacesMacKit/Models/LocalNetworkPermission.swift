@@ -236,7 +236,9 @@ public enum LiveLocalNetworkPermission {
         for cursor in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let ifa = cursor.pointee
             let flags = Int32(ifa.ifa_flags)
-            let name = String(cString: ifa.ifa_name)
+            // An interface with no name cannot be one of ours: skip it.
+            guard let cname = ifa.ifa_name else { continue }
+            let name = String(cString: cname)
             guard flags & IFF_UP != 0, flags & IFF_RUNNING != 0, flags & IFF_LOOPBACK == 0,
                   !isTunnelOrBridge(name),
                   let addr = ifa.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET),

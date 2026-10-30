@@ -8,8 +8,9 @@
 //! - The Desktop row's icon is the Space's OS mark ([`crate::notch::os_icon`]):
 //!   the label already says "Desktop", so a generic display glyph would say
 //!   it twice, while the OS mark tells an Ubuntu desktop from a Windows one.
-//!   Its label carries the resolution of the Space's primary display
-//!   ("Desktop (1280×800)"), from the display list.
+//!   Its label is "Desktop"; the resolution of the Space's primary display
+//!   ("1280×800", from the display list) is the row's quiet right-hand
+//!   detail ([`StreamRow::resolution`]), said once, never in the label too.
 //! - A window row's label is the window's title (the app name only when the
 //!   title is empty) and its icon is the app's own, from the SDK's
 //!   `Space.app_icon`; a Space with no icon for the app shows none, never a
@@ -126,7 +127,7 @@ pub struct StreamRow {
     pub id: String,
     /// Desktop or window.
     pub kind: StreamRowKind,
-    /// The one line ("Desktop (1280×800)", a window's title).
+    /// The one line ("Desktop", a window's title).
     pub label: String,
     /// The full label, for the tooltip when it is truncated.
     pub help: String,
@@ -186,12 +187,12 @@ pub fn stream_section(input: &StreamSectionInput) -> StreamSection {
     let resolution = input
         .display
         .and_then(|d| resolution_text(d.width_px, d.height_px));
-    let label = desktop_label(resolution.as_deref());
+    // The resolution shows once, as the row's detail; the tooltip has both.
     let mut rows = vec![StreamRow {
         id: DESKTOP_ROW_ID.into(),
         kind: StreamRowKind::Desktop,
-        help: label.clone(),
-        label,
+        help: desktop_label(resolution.as_deref()),
+        label: "Desktop".into(),
         resolution,
         icon: StreamRowIcon::Os {
             id: os_icon(input.os, input.os_name.as_deref()).into(),
@@ -391,8 +392,10 @@ mod tests {
     fn desktop_row_carries_the_resolution_and_the_os_mark() {
         let s = stream_section(&input(Some(vec![])));
         let d = &s.rows[0];
-        assert_eq!(d.label, "Desktop (1280\u{d7}800)");
+        // Said once: the label is "Desktop", the resolution its detail.
+        assert_eq!(d.label, "Desktop");
         assert_eq!(d.resolution.as_deref(), Some("1280\u{d7}800"));
+        assert_eq!(d.help, "Desktop (1280\u{d7}800)");
         assert_eq!(
             d.icon,
             StreamRowIcon::Os {
@@ -417,10 +420,7 @@ mod tests {
         i.open = vec!["w2".into()];
         let s = stream_section(&i);
         let labels: Vec<&str> = s.rows.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(
-            labels,
-            ["Desktop (1280\u{d7}800)", "Mozilla Firefox", "xterm"]
-        );
+        assert_eq!(labels, ["Desktop", "Mozilla Firefox", "xterm"]);
         assert_eq!(
             s.rows[1].icon,
             StreamRowIcon::App {

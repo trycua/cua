@@ -3,14 +3,15 @@
 from cua_sandbox._sdk import Unsupported
 
 CLOUD_ENDED = (
-    "Cua Cloud has ended; use a local sandbox or your own machine. "
+    "Cua Cloud has ended; use a local sandbox or your own computer. "
     "See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended"
 )
 
 
 class CloudEnded(Unsupported):
-    """Raised by every Cua Cloud (Fleet-backed ``on="cloud"``) entry point.
-    A ``NotImplementedError``, like the other unsupported operations."""
+    """Raised wherever a caller still asks for Cua Cloud (``on="cloud"``,
+    ``local=False``, ``pool=``, a ``cloud:`` ref). A ``NotImplementedError``,
+    like the other unsupported operations."""
 
     def __init__(self) -> None:
         super().__init__(CLOUD_ENDED)

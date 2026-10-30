@@ -57,7 +57,7 @@ function host(usage: RelayUsage, opened: string[] = [], tracked: unknown[] = [],
 const features = (tracked: unknown[]) => tracked.map((s) => (s as { feature?: string }).feature).filter(Boolean);
 
 describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm core)", () => {
-  it("Settings always shows the plan card: Free offers Pro and a team, each to its checkout", async () => {
+  it("Account on Free says what Free gives and has an Upgrade button to Pro's checkout", async () => {
     const opened: string[] = [];
     const tracked: unknown[] = [];
     const { router } = await mountApp("/settings", host(idle({ liveSessions: 1 }), opened, tracked));
@@ -68,15 +68,45 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
       return el as HTMLElement;
     });
     expect(card.getAttribute("data-plan-card")).toBe("free");
-    expect(card.textContent).toContain("Free plan");
-    expect(card.textContent).toContain("2 live sessions and 20 remote hours a month");
-    fireEvent.click(card.querySelector("[data-plan-primary]")!);
-    fireEvent.click(card.querySelector("[data-plan-secondary]")!);
-    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_plan_card", "https://app.cua.ai/buy/teams?from=app_plan_card"]));
+    expect(card.textContent).toBe("Free: 2 machines at once and 20 hours a month away from the machine you're using.");
+    // "Free plan" shows once, in the plan row.
+    const tab = document.querySelector<HTMLElement>('[data-settings-tab="account"]')!;
+    expect(tab.textContent).not.toContain("Free plan");
+    // One Upgrade; the old "use Free plan · Upgrade at the bottom left" helper is gone.
+    expect(tab.textContent).not.toContain("Upgrade at the bottom");
+    fireEvent.click(document.querySelector("[data-plan-primary]")!);
+    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_plan_card"]));
     await waitFor(() => expect(features(tracked)).toContain("upsell_plan_card_click"));
   });
 
-  it("Settings shows Pro's plan card with Manage plan and Teams", async () => {
+  it("Settings shows the usage meter: Pro at 5 of 5 live sessions says so, with Upgrade to Teams", async () => {
+    const opened: string[] = [];
+    const { router } = await mountApp("/settings", host(idle({ plan: "pro", liveSessions: 5, liveSessionsLimit: 5, hoursUsed: 12, hoursLimit: 200 }), opened));
+    await router.load();
+    const sessions = await waitFor(() => {
+      const el = document.querySelector('[data-usage-meter="Live sessions"]');
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(sessions.getAttribute("aria-valuenow")).toBe("5");
+    expect(sessions.getAttribute("aria-valuemax")).toBe("5");
+    expect(sessions.hasAttribute("data-full")).toBe(true);
+    const hours = document.querySelector('[data-usage-meter="Remote hours"]')!;
+    expect(document.body.textContent).toContain("Machines in use right now");
+    expect(document.body.textContent).toContain("Time away from this machine");
+    expect(hours.getAttribute("aria-valuenow")).toBe("12");
+    expect(hours.hasAttribute("data-full")).toBe(false);
+    const notice = await waitFor(() => {
+      const el = document.querySelector("[data-relay-allowance]");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(notice.textContent).toContain("You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.");
+    fireEvent.click(notice.querySelector("[data-relay-upgrade]")!);
+    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams?from=app_meter"]));
+  });
+
+  it("Account on Pro has no Upgrade button, only the web account", async () => {
     const { router } = await mountApp("/settings", host(idle({ plan: "pro", liveSessionsLimit: 5, hoursLimit: 200 })));
     await router.load();
     const card = await waitFor(() => {
@@ -84,22 +114,28 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(card.textContent).toContain("Pro plan");
-    expect(card.querySelector("[data-plan-primary]")?.textContent).toBe("Manage plan");
-    expect(card.querySelector("[data-plan-secondary]")?.textContent).toBe("See Teams");
+    expect(card.textContent).toBe("Pro: 5 machines at once and 200 hours a month away from the machine you're using.");
+    expect(document.querySelector("[data-plan-primary]")).toBeNull();
+    expect(document.querySelector("[data-manage-account]")?.textContent).toBe("Manage account on the web");
   });
 
-  it("the account name carries the plan; on Free it opens Pro's checkout", async () => {
+  it("the account menu's Plan names the plan; on Free it opens Pro's checkout", async () => {
     const opened: string[] = [];
     const tracked: unknown[] = [];
     const { router } = await mountApp("/spaces", host(idle(), opened, tracked));
     await router.load();
-    const plan = await waitFor(() => {
-      const el = document.querySelector("[data-account-plan]");
+    const line = await waitFor(() => {
+      const el = document.querySelector("[data-account-line]");
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(plan.textContent).toBe("Free plan · Upgrade");
+    fireEvent.click(line);
+    const plan = await waitFor(() => {
+      const el = document.querySelector("[data-account-item=plan]");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(plan.textContent).toBe("PlanFree");
     fireEvent.click(plan);
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_account_menu"]));
     await waitFor(() => expect(features(tracked)).toContain("upsell_account_menu_click"));
@@ -115,7 +151,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(prompt.textContent).toContain("Two machines now. Free includes 2 live sessions and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month.");
+    expect(prompt.textContent).toContain("Two computers now. Free includes 2 live sessions and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month.");
     await waitFor(() => expect(features(tracked)).toContain("upsell_machine_shown"));
     fireEvent.click(document.querySelector("[data-upsell=machine] [data-upsell-cta]")!);
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_machine"]));
@@ -184,7 +220,7 @@ describe.skipIf(!wasmBuilt)("<UpsellPrompt surface=share>", () => {
     const opened: string[] = [];
     view(idle(), true, opened);
     const note = await screen.findByRole("note");
-    expect(note.textContent).toContain("Sharing with people you work with? Teams adds team-owned machines, roles and device approval, from $30 a seat.");
+    expect(note.textContent).toContain("Sharing with people you work with? Teams adds team-owned computers, roles and device approval, from $30 a seat.");
     fireEvent.click(screen.getByRole("button", { name: "See Teams" }));
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams?from=app_share"]));
   });

@@ -101,11 +101,33 @@ async fn stdio_speaks_mcp_and_publishes_the_contract() {
     // tools/list is the manifest, schema for schema, in order.
     let list = c.request("tools/list", json!({})).await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    let manifest = cua_spaces::contract::tools();
+    let all = cua_spaces::contract::tools();
+    // A person-only tool (cloud_approve) is in the contract, never on MCP.
+    let manifest: Vec<_> = all
+        .iter()
+        .filter(|t| !cua_spaces::contract::person_only(t.name))
+        .cloned()
+        .collect();
     assert_eq!(tools.len(), manifest.len());
     for (got, want) in tools.iter().zip(&manifest) {
         assert_eq!(got["name"], want.name);
-        assert_eq!(got["inputSchema"], want.input_schema, "{}", want.name);
+        // The tools an agent connected to a Space may call also take its member
+        // credential as `_member` (after `thread_join_redeem`); everything
+        // else is the contract's schema.
+        let mut schema = got["inputSchema"].clone();
+        if cua_spaces::extension::MEMBER_TOOLS.contains(&want.name) {
+            let member = schema["properties"]
+                .as_object_mut()
+                .and_then(|p| p.remove("_member"))
+                .unwrap_or_else(|| panic!("{} takes _member", want.name));
+            assert_eq!(
+                member["required"],
+                json!(["member_id", "key"]),
+                "{}",
+                want.name
+            );
+        }
+        assert_eq!(schema, want.input_schema, "{}", want.name);
         assert_eq!(
             got["annotations"]["readOnlyHint"],
             want.annotations.read_only
@@ -120,14 +142,15 @@ async fn stdio_speaks_mcp_and_publishes_the_contract() {
     )
     .unwrap();
     // The checked-in manifest is the contract, name for name.
-    assert_eq!(checked_in["tool_count"], manifest.len());
+    assert_eq!(checked_in["tool_count"], all.len());
     let checked_in_names: Vec<&str> = checked_in["tools"]
         .as_array()
         .unwrap()
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(checked_in_names, contract_tool_names());
+    let all_names: Vec<&str> = all.iter().map(|t| t.name).collect();
+    assert_eq!(checked_in_names, all_names);
 
     // Protocol errors.
     let unknown = c
@@ -172,13 +195,13 @@ async fn stdio_speaks_mcp_and_publishes_the_contract() {
         "host_capability_missing"
     );
     // Cua Cloud has ended: a cloud create fails with the one message.
-    let fleet = c.call("create_space", json!({"on": "cloud"})).await;
-    assert_eq!(fleet["structuredContent"]["error"]["kind"], "sandbox");
+    let cloud = c.call("create_space", json!({"on": "cloud"})).await;
+    assert_eq!(cloud["structuredContent"]["error"]["kind"], "sandbox");
     assert!(
-        fleet["structuredContent"]["error"]["message"]
+        cloud["structuredContent"]["error"]["message"]
             .as_str()
             .is_some_and(|m| m.contains("Cua Cloud has ended")),
-        "{fleet}"
+        "{cloud}"
     );
 }
 

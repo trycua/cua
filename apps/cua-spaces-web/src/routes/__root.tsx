@@ -6,17 +6,20 @@ import { lazy, Suspense, useEffect, useRef } from "react";
 
 import { useBridge, useSavedOnboarding, useSession, useStartup } from "@/bridge";
 
-import { ChecklistTracker } from "@/components/getting-started";
 import { NewSpace } from "@/components/new-space";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { DevicesBanner } from "@/components/shell/devices-banner";
 import { Sidebar } from "@/components/shell/sidebar";
+import { PlanLimitToastAction } from "@/components/shell/plan-limit-toast-action";
 import { RelayAllowanceNotice } from "@/components/shell/relay-allowance-notice";
+import { ShareRemovalNotice } from "@/components/shell/share-removal-notice";
 import { SpacesNotice } from "@/components/shell/spaces-notice";
 import { SpaceSheets } from "@/components/space-sheets";
+import { UsageLinkNotice } from "@/components/usage-link-notice";
 import { TopBar } from "@/components/shell/top-bar";
 import { ThisMacNudges } from "@/components/this-mac-nudges";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
+import { useAgentSync } from "@/hooks/use-connected-apps";
 import { useNotificationToasts } from "@/hooks/use-notification-toasts";
 import { useThemeHostSync, useThemeSync } from "@/lib/theme";
 import { useUiStore } from "@/stores/ui";
@@ -37,6 +40,7 @@ function RootLayout() {
   useGlobalKeybindings();
   useFirstRun();
   useNotificationToasts();
+  useAgentSync();
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const { pathname } = useLocation();
   // The app shows as usual until the host says it is still starting.
@@ -69,16 +73,18 @@ function RootLayout() {
         <TopBar />
         <DevicesBanner />
         <SpacesNotice />
+        <ShareRemovalNotice />
         <RelayAllowanceNotice />
         <main className="min-h-0 flex-1">
           <Outlet />
         </main>
       </div>
+      <PlanLimitToastAction />
       <CommandPalette />
-      <ChecklistTracker />
       <NewSpace />
       <SpaceSheets />
       <ThisMacNudges />
+      <UsageLinkNotice />
     </div>
   );
 }

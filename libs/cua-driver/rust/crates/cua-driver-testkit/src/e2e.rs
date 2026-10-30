@@ -318,6 +318,8 @@ pub enum RefusalCode {
     BrowserActionUnavailable,
     ModifiedPointerUnavailable,
     WindowMinimized,
+    ElementNotVisible,
+    ForegroundUnavailable,
 }
 
 impl RefusalCode {
@@ -344,6 +346,8 @@ impl RefusalCode {
             "browser_action_unavailable" => Some(Self::BrowserActionUnavailable),
             "modified_pointer_unavailable" => Some(Self::ModifiedPointerUnavailable),
             "window_minimized" => Some(Self::WindowMinimized),
+            "element_not_visible" => Some(Self::ElementNotVisible),
+            "foreground_unavailable" => Some(Self::ForegroundUnavailable),
             _ => None,
         }
     }
@@ -591,28 +595,37 @@ impl CaseSpec {
             let desktop_modifier_refusal = self.delivery == Delivery::Foreground
                 && self.scope == Scope::Desktop
                 && allowed_codes == &[RefusalCode::ModifiedPointerUnavailable];
+            // A coordinate-routed foreground pointer action whose target cannot
+            // be brought over a covering window must refuse before dispatch.
+            // The covering window's journal proves nothing leaked into it.
+            let covered_target_refusal = self.delivery == Delivery::Foreground
+                && self.scope == Scope::Window
+                && self.driver_route == DriverRoute::WindowsSendInput
+                && allowed_codes == &[RefusalCode::ForegroundUnavailable];
             if self.delivery != Delivery::Background
                 && !exact_activation_refusal
                 && !desktop_modifier_refusal
+                && !covered_target_refusal
             {
                 return Err(format!(
-                    "{}: only background delivery, exact-window activation, or a desktop modified-pointer limitation may declare refusal",
+                    "{}: only background delivery, exact-window activation, a covered foreground target, or a desktop modified-pointer limitation may declare refusal",
                     self.cell_id
                 ));
             }
             if allowed_codes.is_empty() {
                 return Err(format!("{}: refusal has no allowed code", self.cell_id));
             }
-            let required_oracles: &[OracleKind] =
-                if exact_activation_refusal || desktop_modifier_refusal {
-                    &[OracleKind::FixtureState]
-                } else {
-                    &[
-                        OracleKind::Focus,
-                        OracleKind::ZOrder,
-                        OracleKind::NoLeakedInput,
-                    ]
-                };
+            let required_oracles: &[OracleKind] = if covered_target_refusal {
+                &[OracleKind::FixtureState, OracleKind::NoLeakedInput]
+            } else if exact_activation_refusal || desktop_modifier_refusal {
+                &[OracleKind::FixtureState]
+            } else {
+                &[
+                    OracleKind::Focus,
+                    OracleKind::ZOrder,
+                    OracleKind::NoLeakedInput,
+                ]
+            };
             for required in required_oracles {
                 if !self.oracles.contains(required) {
                     return Err(format!(

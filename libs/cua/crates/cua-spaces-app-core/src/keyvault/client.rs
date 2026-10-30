@@ -27,7 +27,9 @@ use cua_keyvault::model::Grant;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::wire::{KeyvaultOverview, KvCommand, KvFavicon, KvGrant, KvInventory, KvItem};
+use super::wire::{
+    KeyvaultOverview, KvCommand, KvFavicon, KvGrant, KvInventory, KvItem, KvReadiness,
+};
 
 /// How many audit entries the page reads.
 pub const AUDIT_TAIL: usize = 200;
@@ -318,7 +320,7 @@ impl KeyvaultCommands {
         } else if !status.initialized {
             Some((
                 "no_vault",
-                "It keeps the sessions teleport moves, encrypted on this computer.".to_string(),
+                "It keeps the sessions teleport moves, encrypted on this machine.".to_string(),
             ))
         } else if !status.unlocked {
             Some(("locked", "Unlock it to see and approve items.".to_string()))
@@ -570,6 +572,27 @@ impl KeyvaultCommands {
             })
             .await?;
         mirror(&inv)
+    }
+
+    /// Whether a teleport of `app` can work now: the Keyvault's state, what
+    /// the OS allows the daemon to read and the profiles to choose from. The
+    /// daemon reads no value and asks for no presence.
+    pub async fn readiness(
+        &self,
+        app: &str,
+        profile: Option<String>,
+    ) -> Result<KvReadiness, KvFailure> {
+        let status: Status = self.typed(Request::Status).await?;
+        let ready: cua_keyvault::broker::Readiness = self
+            .typed(Request::Readiness {
+                app: app.into(),
+                profile,
+            })
+            .await?;
+        let mut out: KvReadiness = mirror(&ready)?;
+        out.keyvault_initialized = status.initialized;
+        out.keyvault_unlocked = status.unlocked;
+        Ok(out)
     }
 
     /// Imports a browser's saved passwords (`browser`: `chrome`), one item

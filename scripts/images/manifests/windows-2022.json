@@ -39,7 +39,9 @@
     "teleport.*",
     "audio.desktop",
     "audio.opus",
-    "volume.mount"
+    "volume.mount",
+    "files.multipart",
+    "process.exec_ledger"
   ],
   "feature_attributes": {
     "presence.cursor_shape": {

@@ -1,0 +1,9 @@
+{
+  "errors.viewer.stream_unreachable": "No se pudo acceder a la transmisión del escritorio.",
+  "errors.viewer.agent_open_failed": "No se pudo abrir {agent}: {reason}",
+  "errors.viewer.stop_hotspot_failed": "No se pudo detener el uso compartido",
+  "errors.spaces.create_failed": "No se pudo crear un Space",
+  "errors.spaces.refresh_failed": "No se pudieron actualizar los Spaces. Es posible que las filas cargadas antes estén desactualizadas.",
+  "errors.spaces.load_failed": "No se pudieron cargar los Spaces. Intenta actualizar de nuevo.",
+  "errors.settings.sign_in_start_failed": "No se pudo iniciar sesión"
+}

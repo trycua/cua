@@ -1,0 +1,21 @@
+id = "arcee"
+name = "Arcee AI"
+icon = "arcee"
+tier = "more"
+rank = 200
+kind = "hosted"
+aliases = ["trinity"]
+wire = "openai-chat"
+base_url = "https://api.arcee.ai/api/v1"
+base_url_env = "ARCEE_BASE_URL"
+default_model = "trinity-large-thinking"
+hermes_id = "arcee"
+key_help = "Create a key at chat.arcee.ai."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "ARCEEAI_API_KEY"
+
+[delivery]
+hermes = ["ARCEEAI_API_KEY"]

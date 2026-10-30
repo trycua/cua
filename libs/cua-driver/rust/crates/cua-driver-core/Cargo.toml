@@ -14,6 +14,8 @@ rego = ["dep:regorus"]
 # offered unless the operator turns it off at runtime. Without this feature
 # the tool is not offered at all.
 script = ["dep:rquickjs"]
+# OS credential-store history key provider (Linux Secret Service, Windows Credential Manager).
+keyring = ["dep:keyring"]
 
 [dependencies]
 cua-driver-contract = { path = "../cua-driver-contract" }
@@ -52,6 +54,7 @@ coset = { workspace = true }
 ciborium = { workspace = true }
 time = { workspace = true }
 getrandom = { workspace = true }
+keyring = { version = "4.1.6", default-features = false, features = ["v1"], optional = true }
 fs2 = { workspace = true }
 hmac = { workspace = true }
 # Validate the raw wire payload; serde permits some shapes the schema rejects.

@@ -1,0 +1,404 @@
+---
+title: Connect a cloud
+description: Steps an agent follows to link the user's AWS, Google Cloud or Azure account to Cua Spaces with no stored key, or Hetzner and Modal with an API token sealed to their machines, set a budget and a largest machine, and verify it.
+---
+
+Link your AWS, Google Cloud or Azure account once, with no stored key, and
+Spaces can run there from every machine and agent on your Cua account. This page is written for
+the coding agent that does it for you. The Cua Spaces app gives you a prompt
+like this one to paste into your agent:
+
+> Connect my AWS account to Cua Spaces: region us-west-2, $200 monthly
+> budget, machines up to 4 vCPU and 16 GB. Follow `cua cloud connect aws --help`
+> and https://cua.ai/docs/spaces/guides/connect-a-cloud until `cua cloud status aws`
+> says connected.
+
+## How every run ends
+
+`cua cloud connect` never prompts and is safe to run again. Each run ends
+with these fields (`--json` prints them as one object):
+
+| Field | What it holds |
+| --- | --- |
+| `status` | `connected`, `needs-trust`, `checking`, `waiting-for-approval` or `failed` |
+| `next.run` | The exact command you run next |
+| `next.open` | A page the person opens (with `next.paste`, a command they paste there) |
+| `next.why` | What the step is for, in plain words |
+| `verify` | The command that confirms it: `cua cloud status aws` |
+| `checks` | What the check found (`name`, `ok`, `detail`) |
+
+The exit code says whose turn it is:
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Connected |
+| `10` | The next step is yours: run `next.run` |
+| `11` | The next step is a person's: send them `next.open` (and `next.paste`) |
+| `1` | Error: read `next.why` |
+
+## AWS
+
+AWS is linked without any key. Cua signs 15-minute tokens for the person's
+Cua account, and their AWS account trusts those tokens through one
+CloudFormation stack, `cua-spaces`. The stack holds an OIDC provider and a
+role that can create, stop and delete only machines tagged
+`cua-managed=true`. It holds no keys, and Cua never stores AWS credentials.
+
+### 1. Ask the person for the limits
+
+Ask for three things, unless the prompt already gave them:
+
+- the region (for example `us-west-2`);
+- a monthly budget in US dollars (required: Cua refuses new machines once it
+  is reached, and stopping and deleting always works);
+- the largest machine, as vCPUs and GB (for example 4 vCPU and 16 GB).
+
+Then run:
+
+```bash test="cli-shape" id="agents-connect-aws-start"
+cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16
+```
+
+### 2. The person creates the trust
+
+The status is `needs-trust`, and the exit code is 11. Send the person
+`next.open` and `next.paste`, and tell them:
+
+- open the link while signed in to their AWS account (it opens AWS
+  CloudShell);
+- paste the command there and press Enter. It creates the `cua-spaces` stack,
+  which takes about a minute;
+- reply with their 12-digit AWS account id once the stack shows
+  `CREATE_COMPLETE`. The id is in the top right of the AWS console.
+
+If the link is a CloudFormation quick-create page instead, they tick "I
+acknowledge that AWS CloudFormation might create IAM resources with custom
+names" and press **Create stack**.
+
+### 3. Check it
+
+Run the command in `next.run`. It adds the account id and `--check`:
+
+```bash test="cli-shape" id="agents-connect-aws-check"
+cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16 --account-id 123456789012 --check
+```
+
+The check gets a check token from Cua, exchanges it with AWS STS and dry-runs
+a machine. Nothing is created, and nothing is billed.
+
+- `connected` (exit code 0): done. Go to step 4.
+- `needs-trust` again: the stack is missing, still being created, or was made
+  in another AWS account. Show the person `next.open` again, and confirm the
+  account id.
+- `waiting-for-approval` (exit code 11): because an agent made the link, a
+  person approves it in the Cua Spaces app before machines can be created.
+  Ask them to approve it.
+- `failed`: read `checks` and `next.why`, fix what they say, and run the
+  check again.
+
+### 4. Verify
+
+```bash test="cli-shape" id="agents-connect-aws-verify"
+cua cloud status aws
+```
+
+The AWS line says `connected`. The line under it shows the budget, what was
+spent this month, the largest machine, and "Signs in through Cua". Spaces can
+now go there:
+
+```bash test="cli-shape" id="agents-connect-aws-use"
+cua spaces create --on aws
+```
+
+### Change the limits later
+
+Run the same command with the new values. You can lower a budget or a size
+right away. When an agent raises one, the change waits for the person's
+approval (`waiting-for-approval`), and the old limit stays in force until
+then.
+
+### Approve what an agent asked for
+
+The person approves in the Cua Spaces app, or in their own terminal:
+
+```bash test="cli-shape" id="agents-connect-approve"
+cua cloud approve aws
+cua cloud approve aws --deny
+```
+
+`cua cloud status aws` names the agent and what it asked for. Denying a raise
+keeps the limits in force; denying a link the person never approved
+disconnects it. An agent cannot approve: the command refuses in an agent's
+shell, and no MCP server offers it.
+
+## What it costs
+
+Cua estimates what its machines cost from each one's list price and how long
+it ran. The cloud's own bill is the final word. To see the month so far by
+Space, by agent, by day or by cloud:
+
+```bash test="cli-shape" id="agents-connect-cost"
+cua cloud cost
+cua cloud cost --by agent
+cua cloud cost --cloud aws --by day --since 2026-10-01 --format csv
+```
+
+The CSV starts with the header `key,usd,hours,machines`. When a cloud has a
+budget, Cua tells the person once each month when its spend passes half the
+budget, then 80%, then all of it. The note shows in the Cua Spaces app and in
+`cua cloud audit`. At the full budget, new machines are refused until the
+next month; stopping and deleting still work.
+
+## Already connected?
+
+A cloud linked before this, through the AWS CLI, gcloud, a Hetzner token or a
+Modal profile, keeps working as it is. There is nothing to do after an
+update: the link, its region, its budget, the machines Cua made there and
+the cleanup of them all carry over. `cua cloud status aws` shows one line
+offering the switch:
+
+```bash test="cli-shape" id="agents-connect-switch"
+cua cloud connect aws --oidc
+```
+
+The switch keeps the region, budget, largest machine and lifetime the link
+had. The AWS CLI sign-in stays in force until the check passes. Switching to
+a different AWS account is refused while Cua still has machines in the old
+one, so none are left out of reach. Running `cua cloud connect aws` again
+without `--oidc`, for example to change the budget, keeps an OIDC link as it
+is.
+
+## Hetzner and Modal
+
+Hetzner and Modal have no OIDC, so they use an API token. Cua seals the
+token to the person's machines: the machine you run on encrypts it with the
+account's pool key, and only machines of the person's Cua account can open
+it. Cua's servers keep only the ciphertext. Any of the person's machines then
+opens it in memory when it calls the cloud. No tool returns it, not to you
+and not to any other agent.
+
+### 1. Ask the person for the limits and the token
+
+Ask for the location (Hetzner: for example `fsn1`), a monthly budget in US
+dollars and the largest machine. Then ask for the token:
+
+- Hetzner: a Read & Write API token. In the Hetzner Cloud console, open the
+  project, then **Security**, **API tokens**, **Generate API token**.
+- Modal: run `modal token new`, and give the token id and secret as one line,
+  `<token id>:<token secret>`.
+
+Pipe the token in on standard input. Never print it, put it in a command
+line or write it to a file:
+
+```bash test="cli-shape" id="agents-connect-hetzner"
+cua cloud connect hetzner --token-stdin --region fsn1 --budget 50 --max-size 4x8
+```
+
+```bash test="cli-shape" id="agents-connect-modal"
+cua cloud connect modal --token-stdin --budget 50
+```
+
+The command checks the token first: it reads the project and dry-runs a
+create. Nothing is created and nothing is billed. Only a token that passes is
+sealed.
+
+- `connected` (exit code 0): done.
+- `waiting-for-approval` (exit code 11): because an agent gave the token, a
+  person approves it in the Cua Spaces app first. Machines are refused until
+  then.
+- `failed`: read `checks` and `next.why`. A read-only Hetzner token fails the
+  `permissions` check; ask for a Read & Write one.
+
+### 2. Verify
+
+```bash test="cli-shape" id="agents-connect-hetzner-verify"
+cua cloud status hetzner
+```
+
+The line under Hetzner names the machines that can open the token ("can open
+it: ..."). At least one of them must be online for Cua to make machines
+there while the person is away.
+
+### On the person's other machines
+
+They do not paste the token again. On another machine of the same Cua
+account, link the account's sealed token:
+
+```bash test="cli-shape" id="agents-connect-hetzner-other-device"
+cua cloud connect hetzner --sealed --region fsn1 --budget 50
+```
+
+### Sealed or kept on this machine
+
+Without `--sealed` or `--no-sealed`, the token is sealed when this machine has
+the account's pool keys (the `cua` of the Cua Spaces app, signed in) and a
+budget is given, or when the link is sealed already. Otherwise the Hetzner
+token is kept in this machine's Cua credential store, as in earlier
+versions.
+
+- `--sealed` insists on sealing. Without a token on standard input, it seals
+  the token this machine already has (the saved one, `HCLOUD_TOKEN`, the
+  hcloud CLI's, or for Modal `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` or the
+  `~/.modal.toml` profile). This is how a link from an earlier version moves
+  to a sealed token.
+- `--no-sealed` keeps the Hetzner token on this machine only.
+
+### Replace or revoke the token
+
+- Replace it: run the connect command again with the new token on standard
+  input. It is sealed and swapped in for every machine.
+- Revoke it: delete the token in the Hetzner Cloud console (or with
+  `modal token`), or run `cua cloud disconnect hetzner`, which deletes the
+  sealed token on Cua's servers.
+
+When the person removes a machine from their Cua account, the account's pool
+key moves to a new generation. The next machine that uses the token seals it
+again under the new key, so the removed machine cannot open it any more. To be
+sure, replace the token as well.
+
+## Google Cloud
+
+Google Cloud is linked without any key too. The person's project trusts
+Cua's tokens through a workload identity pool named `cua`. Its provider
+accepts only tokens for their Cua account, and one custom role, `cuaSpaces`,
+holds the 15 Compute Engine permissions Cua uses. There is no service account
+and no key.
+
+### 1. Ask for the limits and the project
+
+Ask for the project id (for example `my-project`), the region, the monthly
+budget and the largest machine. Then run:
+
+```bash test="cli-shape" id="agents-connect-gcp-start"
+cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200 --max-size 4x16
+```
+
+### 2. The person creates the trust
+
+The status is `needs-trust`. Send the person `next.open` and `next.paste`:
+
+- `next.open` opens Google Cloud Shell with Cua's trust script,
+  `cua-trust.sh`. They sign in with an account that can manage IAM in the
+  project.
+- They paste `next.paste` (`bash cua-trust.sh --project my-project --account
+  <their Cua account id> --issuer-host oidc.cua.ai`) and press Enter. It is
+  safe to run again.
+- They reply with the project number the script prints (it is also on the
+  project's dashboard).
+
+When you run on a machine that is signed in to `gcloud` with rights to manage
+IAM in the project, `next.run` is the same script instead
+(`cua cloud trust gcp | bash -s -- …`), and the exit code is 10. Run it only
+when the person asked you to set up the trust.
+
+### 3. Check it
+
+Run `next.run`. It adds the project number and `--check`:
+
+```bash test="cli-shape" id="agents-connect-gcp-check"
+cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200 --max-size 4x16 --project-number 123456789012 --check
+```
+
+The check gets a check token from Cua, exchanges it at Google's Security
+Token Service and checks the role's permissions with `testIamPermissions`.
+Nothing is created. The statuses mean the same as for AWS. `needs-trust`
+again means the pool is missing, still being set up, or trusts another Cua
+account.
+
+### 4. Verify
+
+```bash test="cli-shape" id="agents-connect-gcp-verify"
+cua cloud status gcp
+```
+
+## Azure
+
+Azure is always linked without a key. A user-assigned managed identity,
+`cua-spaces`, trusts Cua's tokens for the person's Cua account through a
+federated credential. It holds two built-in roles, Virtual Machine Contributor
+and Network Contributor, on one resource group only (`cua-spaces` unless
+you say otherwise). Everything Cua creates stays in that group.
+
+### 1. Ask for the limits
+
+Ask for the region (for example `westus2`), the monthly budget and the
+largest machine. Then run:
+
+```bash test="cli-shape" id="agents-connect-azure-start"
+cua cloud connect azure --region westus2 --budget 200 --max-size 4x16
+```
+
+### 2. The person creates the trust
+
+The status is `needs-trust`. Send the person `next.open`, a Deploy to Azure
+link, and tell them:
+
+- sign in to Azure, pick the subscription, and create (or pick) the resource
+  group `cua-spaces` in the region;
+- enter their Cua account id in **Cua Account** (`next.why` has it) and press
+  **Review + create**. They need Owner or User Access Administrator on the
+  group, because the template assigns roles;
+- reply with the deployment's outputs `subscriptionId`, `tenantId` and
+  `clientId` (**Deployments**, **cua-spaces**, **Outputs**).
+
+When you run on a machine signed in to the `az` CLI, `next.run` deploys the
+same template with `az deployment group create` and prints those outputs.
+Run it only when the person asked you to set up the trust.
+
+### 3. Check it
+
+Run `next.run`. It adds the three ids and `--check`:
+
+```bash test="cli-shape" id="agents-connect-azure-check"
+cua cloud connect azure --region westus2 --budget 200 --max-size 4x16 --subscription 00000000-0000-0000-0000-000000000000 --tenant 11111111-1111-1111-1111-111111111111 --client-id 22222222-2222-2222-2222-222222222222 --check
+```
+
+The check gets a check token from Cua, exchanges it with Microsoft Entra,
+reads the resource group and its permissions, and validates a machine
+deployment. Nothing is created.
+
+### 4. Verify
+
+```bash test="cli-shape" id="agents-connect-azure-verify"
+cua cloud status azure
+```
+
+## Other clouds
+
+Hetzner and Modal link with a token sealed to the person's machines (see
+[Hetzner and Modal](#hetzner-and-modal)), or with their own sign-in on this
+machine, and Google Cloud too if the person prefers `gcloud` on this machine to
+a link without a key. The budget and largest machine work the same way:
+
+```bash test="cli-shape" id="agents-connect-other"
+cua cloud connect gcp --project my-project --region us-central1 --budget 100 --max-size 4x16
+cua cloud connect modal --environment spaces --budget 50
+```
+
+The second command links Modal with the Modal CLI's sign-in on this machine
+(`~/.modal.toml`) instead of a sealed token.
+
+## What to ask the person, and what not to
+
+- Ask for: the region, the monthly budget, the largest machine, the AWS
+  account id, the Google Cloud project id and number, the Azure ids the
+  template prints, the Hetzner or Modal API token, and an approval in the Cua
+  Spaces app when the status says so.
+- Never ask for access keys, service account keys, client secrets or a
+  password. These links use none.
+- Never print, log or store a Hetzner or Modal token yourself. Pipe it to
+  `cua cloud connect --token-stdin` and nothing else.
+- Never set up the trust yourself with the person's cloud credentials (the
+  CloudFormation stack, the trust script, the Azure template) unless they
+  ask you to. It is theirs to create and delete.
+
+## Remove it
+
+```bash test="cli-shape" id="agents-disconnect"
+cua cloud disconnect aws
+```
+
+Disconnecting stops new tokens at once. A person who also wants to remove
+the trust deletes it in the cloud: the `cua-spaces` stack in CloudFormation,
+the `cua` workload identity pool in Google Cloud, or the `cua-spaces` managed
+identity in Azure. Cua never deletes IAM resources.

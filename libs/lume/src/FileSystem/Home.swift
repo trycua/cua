@@ -222,9 +222,9 @@ final class Home {
         }
     }
 
-    /// Clones a complete VM state using APFS clonefile for disk.img and regular copies for
-    /// auxiliary files. macOS disk and auxiliary storage must remain paired because boot
-    /// policy state spans both files.
+    /// Clones a complete VM state using APFS clonefile for disk.img (and a saved machine
+    /// state, when `includeSavedState`) and regular copies for auxiliary files. macOS disk
+    /// and auxiliary storage must remain paired because boot policy state spans both files.
     /// - Parameters:
     ///   - sourceName: Name of the source VM
     ///   - destName: Name for the destination VM
@@ -235,7 +235,8 @@ final class Home {
         from sourceName: String,
         to destName: String,
         sourceLocation: String? = nil,
-        destLocation: String? = nil
+        destLocation: String? = nil,
+        includeSavedState: Bool = false
     ) throws {
         let sourceDir = try getVMDirectory(sourceName, storage: sourceLocation)
         let destDir = try getVMDirectory(destName, storage: destLocation)
@@ -272,7 +273,14 @@ final class Home {
             let fileName = fileURL.lastPathComponent
             let destFileURL = destURL.appendingPathComponent(fileName)
 
-            if fileName == "disk.img" {
+            // A saved machine state is cloned only when asked for (the clone
+            // then keeps the source's MAC address and machine identifier,
+            // which the state is bound to); a half-written one never.
+            if fileName.hasPrefix(sourceDir.statePath.name) {
+                guard includeSavedState, fileName == sourceDir.statePath.name else { continue }
+            }
+
+            if fileName == "disk.img" || fileName == sourceDir.statePath.name {
                 // Use clonefile(2) for disk.img (instant APFS copy-on-write)
                 let result = Darwin.clonefile(
                     fileURL.path,

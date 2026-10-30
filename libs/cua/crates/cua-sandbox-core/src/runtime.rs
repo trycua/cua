@@ -36,6 +36,11 @@ pub enum RuntimeError {
     /// space (`cua cache prune`).
     #[error("{0}")]
     InsufficientDisk(String),
+    /// This host has no room for another VM now (its VMs are at their
+    /// memory or CPU limit, or the machine is low on memory); the message
+    /// says which and what to do.
+    #[error("{0}")]
+    HostCapacity(String),
     /// The kind or runtime asked for does not fit the image or this host;
     /// the error lists what would.
     #[error("{0}")]
@@ -89,7 +94,7 @@ pub struct LocalStartSpec {
     /// How long the backend may take to report running.
     pub ready_timeout: Duration,
     /// Boot firmware for VM backends (`bios` / `efi`); `None` lets the
-    /// backend decide. Set from a Fleet template's `firmware`.
+    /// backend decide. Set from an image's `firmware`.
     #[serde(default)]
     pub firmware: Option<String>,
     /// Extra containers sharing the instance's network namespace
@@ -116,6 +121,25 @@ pub struct LocalStartSpec {
     /// it refuse it.
     #[serde(default)]
     pub restrict_network: bool,
+    /// No desktop: only cua-spacesd runs in the guest (see
+    /// `CreateSandboxRequest.headless`). The backend sets the guest
+    /// environment that says so and, for a container or microVM without
+    /// its own command, runs cua-spacesd as the command.
+    #[serde(default)]
+    pub headless: bool,
+    /// Whether the image gets a static cua-spacesd injected when it has
+    /// none (containers and microVMs of any OCI image). `None`: yes where
+    /// the kind can; `Some(false)` runs the image as it is.
+    #[serde(default)]
+    pub spacesd: Option<bool>,
+    /// Egress policy ([`cua_vmm::egress`]), enforced by the host before
+    /// the guest's first instruction; empty: none. Runtimes with no
+    /// host-side point for it refuse it.
+    #[serde(
+        default,
+        skip_serializing_if = "cua_vmm::egress::EgressPolicy::is_empty"
+    )]
+    pub egress: cua_vmm::egress::EgressPolicy,
     /// A GPU option of the runtime (see [`crate::gpu`]); `None`: no GPU.
     #[serde(default)]
     pub gpu: Option<String>,
@@ -128,6 +152,24 @@ pub struct LocalStartSpec {
     /// process dies). Container backends label it `ai.cua.ephemeral=true`.
     #[serde(default)]
     pub ephemeral: bool,
+    /// Whether this start may claim a warm-pool member of its shape
+    /// (runtimes that keep warm pools, such as `cua daemon`'s). `None`: the
+    /// runtime decides (it does for plain Spaces); `Some(false)`: always
+    /// start cold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warm: Option<bool>,
+    /// Host directories mounted into the guest (containers bind them, a
+    /// macOS VM on Lume shares them); backends that cannot refuse them. A
+    /// start with mounts never claims a warm-pool member.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<cua_vmm::Mount>,
+    /// A fork source (a "bake" sandbox): a local QEMU VM's guest RAM is a
+    /// shared file, so its checkpoints take milliseconds and forks of them
+    /// share its pages. Never claims a warm-pool member. Other backends
+    /// ignore it (and an external runtime's start request carries it only
+    /// when set).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forkable: bool,
 }
 
 /// A readiness probe handed to the local backend.
@@ -159,6 +201,10 @@ pub struct LocalEndpoints {
     /// Container id (container backends), for the engine's logs.
     #[serde(default)]
     pub container_id: Option<String>,
+    /// Host file of the bulk-lane disk shared with the guest (QEMU Linux
+    /// VMs): a client on this machine moves file content through it.
+    #[serde(default)]
+    pub bulk: Option<String>,
 }
 
 /// A started instance.
@@ -202,6 +248,11 @@ pub struct ImageInfo {
     /// Readiness waits for spacesd only when this is `Some(true)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spacesd: Option<bool>,
+    /// Whether the runtime put a static cua-spacesd into this image, which
+    /// carries none (container and microVM Spaces of any OCI image): it
+    /// serves whatever command the Space runs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub injected: bool,
 }
 
 impl From<&cua_image::ResolvedImage> for ImageInfo {
@@ -215,6 +266,7 @@ impl From<&cua_image::ResolvedImage> for ImageInfo {
             os: r.os.clone(),
             emulated: r.emulated,
             spacesd: r.spacesd,
+            injected: false,
         }
     }
 }
@@ -289,6 +341,43 @@ pub struct LocalSummary {
 }
 
 /// A local VM / container runtime.
+/// Capacity a host is short of.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Shortfall {
+    /// CPU (thousandths).
+    pub millicpus: u32,
+    /// Memory (MiB).
+    pub memory_mb: u64,
+}
+
+/// Capacity one idle warm-pool member holds on this machine
+/// ([`LocalRuntime::warm_held`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WarmHeld {
+    /// A container (its vCPUs share CPUs), not a VM.
+    pub container: bool,
+    /// Its vCPUs.
+    pub cpus: u32,
+    /// Its memory (MiB).
+    pub memory_mb: u64,
+}
+
+/// What [`LocalRuntime::reclaim`] freed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Reclaimed {
+    /// Idle warm-pool members removed.
+    pub warm_members: u32,
+    /// VMs nobody used removed (lifetime passed, orphaned).
+    pub ended: Vec<String>,
+}
+
+impl Reclaimed {
+    /// Whether anything was freed.
+    pub fn any(&self) -> bool {
+        self.warm_members > 0 || !self.ended.is_empty()
+    }
+}
+
 #[async_trait]
 pub trait LocalRuntime: Send + Sync {
     /// Backend identifier (persisted as `runtime_type`).
@@ -314,6 +403,24 @@ pub trait LocalRuntime: Send + Sync {
         Vec::new()
     }
 
+    /// The idle warm-pool members this runtime keeps ready, one row each:
+    /// they are not Spaces until claimed, yet they hold CPU and memory a
+    /// create may need ([`LocalRuntime::reclaim`] gives them back). Default:
+    /// none.
+    async fn warm_held(&self) -> Vec<WarmHeld> {
+        Vec::new()
+    }
+
+    /// Frees capacity held by what nobody uses: idle warm-pool members
+    /// first, then VMs whose lifetime passed or whose owner is gone. A
+    /// create that would be refused for lack of CPU or memory calls this
+    /// first and looks again. Never touches a Space somebody uses. Default:
+    /// nothing is reclaimable.
+    async fn reclaim(&self, need: Shortfall) -> Reclaimed {
+        let _ = need;
+        Reclaimed::default()
+    }
+
     /// Stops, keeping disk and state.
     async fn stop(&self, name: &str) -> RuntimeResult<()>;
 
@@ -327,6 +434,17 @@ pub trait LocalRuntime: Send + Sync {
 
     /// Resumes a paused (or starts a stopped) instance.
     async fn resume(&self, name: &str) -> RuntimeResult<LocalInstance>;
+
+    /// Gives an instance another shape (vCPUs, memory, a larger disk): it
+    /// is stopped if it runs and boots again from its own disk, so its
+    /// processes and memory do not survive. Default: unsupported.
+    async fn resize(&self, name: &str, shape: &cua_vmm::Resize) -> RuntimeResult<LocalInstance> {
+        let _ = shape;
+        Err(RuntimeError::Unsupported {
+            backend: self.backend(),
+            op: format!("resize {name}"),
+        })
+    }
 
     /// How an instance of `runtime_type` (the state file's engine word:
     /// `lume`, `runc`, `gvisor`, `qemu`, ...) turns off and on again
@@ -363,6 +481,104 @@ pub trait LocalRuntime: Send + Sync {
             backend: self.backend(),
             op: format!("checkpoint {name} -> {checkpoint}"),
         })
+    }
+
+    /// [`LocalRuntime::checkpoint`], saying whether the checkpoint's forks
+    /// map its RAM copy-on-write and share the pages they do not write (a
+    /// QEMU memory checkpoint). Default: the plain checkpoint, not shared.
+    async fn checkpoint_shared(&self, name: &str, checkpoint: &str) -> RuntimeResult<bool> {
+        self.checkpoint(name, checkpoint).await.map(|()| false)
+    }
+
+    /// Pins (`pinned`) or unpins checkpoint `checkpoint`, made on the engine
+    /// `runtime_type` names, where the engine keeps pins of its own (QEMU
+    /// refuses to delete a pinned checkpoint). Default: nothing to do (the
+    /// checkpoint record's pin still guards prune and delete).
+    async fn pin_checkpoint(
+        &self,
+        runtime_type: &str,
+        checkpoint: &str,
+        pinned: bool,
+    ) -> RuntimeResult<()> {
+        let _ = (runtime_type, checkpoint, pinned);
+        Ok(())
+    }
+
+    /// [`LocalRuntime::fork`] on the engine `runtime_type` names (the
+    /// state file's word), for a source the engine cannot be asked about by
+    /// name (a checkpoint). Default: [`LocalRuntime::fork`].
+    async fn fork_on(&self, runtime_type: &str, source: &str, new_name: &str) -> RuntimeResult<()> {
+        let _ = runtime_type;
+        self.fork(source, new_name).await
+    }
+
+    /// Deletes a checkpoint made on the engine `runtime_type` names.
+    async fn delete_checkpoint(&self, runtime_type: &str, checkpoint: &str) -> RuntimeResult<()> {
+        let _ = runtime_type;
+        Err(RuntimeError::Unsupported {
+            backend: self.backend(),
+            op: format!("delete checkpoint {checkpoint}"),
+        })
+    }
+
+    /// Checkpoint `checkpoint` of the engine `runtime_type` names, as files
+    /// (to copy it to another host). Default: unsupported.
+    async fn export_checkpoint_on(
+        &self,
+        runtime_type: &str,
+        checkpoint: &str,
+    ) -> RuntimeResult<cua_vmm::CheckpointExport> {
+        Err(RuntimeError::Unsupported {
+            backend: self.backend(),
+            op: format!("copy {runtime_type} checkpoint {checkpoint} to another host"),
+        })
+    }
+
+    /// Where the engine `runtime_type` names wants the files of a copied
+    /// checkpoint of manifest `digest` (`None`: it takes no copies).
+    async fn import_dir_on(&self, runtime_type: &str, digest: &str) -> Option<std::path::PathBuf> {
+        let _ = (runtime_type, digest);
+        None
+    }
+
+    /// Makes a copied checkpoint one of the engine's
+    /// ([`cua_vmm::Runtime::import_checkpoint`]). Default: unsupported.
+    async fn import_checkpoint_on(
+        &self,
+        runtime_type: &str,
+        checkpoint: &str,
+        state: serde_json::Value,
+        qcow2_rebase: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    ) -> RuntimeResult<()> {
+        let _ = (state, qcow2_rebase);
+        Err(RuntimeError::Unsupported {
+            backend: self.backend(),
+            op: format!("import {runtime_type} checkpoint {checkpoint}"),
+        })
+    }
+
+    /// The checkpoint ABIs this machine restores (`qemu/hvf/aarch64`, ...).
+    async fn snapshot_abis(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Starts an instance [`LocalRuntime::fork`] made, with `spec`'s
+    /// environment (its token), ports and probes. Default: resume it.
+    async fn start_fork(
+        &self,
+        runtime_type: &str,
+        spec: &LocalStartSpec,
+    ) -> RuntimeResult<LocalInstance> {
+        let _ = runtime_type;
+        self.resume(&spec.name).await
+    }
+
+    /// Whether a fork made on `runtime_type` gets an identity of its own
+    /// (a new Spaces token) when it starts. Otherwise it keeps its
+    /// source's (a container's environment is fixed when it is created).
+    fn fork_has_own_identity(&self, runtime_type: &str) -> bool {
+        let _ = runtime_type;
+        false
     }
 
     /// All managed instances.
@@ -435,6 +651,27 @@ pub trait LocalRuntime: Send + Sync {
             backend: self.backend(),
             op: format!("an agentless display for {name}"),
         })
+    }
+
+    /// Replaces instance `name`'s egress policy ([`cua_vmm::egress`];
+    /// empty removes it), enforced by the host outside the guest, and says
+    /// where. Runtimes with no host-side point refuse it.
+    async fn set_egress(
+        &self,
+        name: &str,
+        policy: &cua_vmm::egress::EgressPolicy,
+    ) -> RuntimeResult<cua_vmm::egress::Enforcement> {
+        let _ = (name, policy);
+        Err(RuntimeError::Unsupported {
+            backend: self.backend(),
+            op: "an egress policy (this runtime has no host-side point to enforce one)".into(),
+        })
+    }
+
+    /// The egress policy kept with instance `name` (empty: none).
+    async fn egress(&self, name: &str) -> RuntimeResult<cua_vmm::egress::EgressPolicy> {
+        let _ = name;
+        Ok(Default::default())
     }
 
     /// Builds `spec` (image layers on the container image `spec.from`)

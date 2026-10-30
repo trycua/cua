@@ -20,7 +20,7 @@ import { notchActivity } from "../model/notch";
 import { rowToSpace } from "../model/spaces";
 import { createFallbackBridge } from "../native/bridge";
 import { createFakeHostBridge, unconfiguredStatus, type HostStatus } from "../native/host";
-import { fakeFleetBridge } from "../test/fakeFleet";
+import { fakeSpacesBridge } from "../test/fakeSpacesBridge";
 import { ThisMachinePanel } from "./ThisMachinePanel";
 
 const sharing: HostStatus = {
@@ -86,8 +86,7 @@ describe("host model", () => {
       FIXTURE_NOW,
     );
     expect(space.provider).toBe("relay");
-    expect(space.detail).toBe("My machines · via relay");
-    expect(space.fleetId).toBe("relay");
+    expect(space.detail).toBe("My machines");
   });
 });
 
@@ -157,20 +156,20 @@ describe("ThisMachinePanel: a spare machine", () => {
     const host = createFakeHostBridge({ platform: "macos" });
     render(<ThisMachinePanel host={host} />);
     fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
-    fireEvent.click(screen.getByRole("radio", { name: "Run Spaces here and keep its screen private" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Let other machines create Spaces here" }));
     expect(screen.getByText(/Its own screen stays private/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Start running Spaces" }));
-    const desktop = await screen.findByRole("switch", { name: /Share this desktop/ });
+    const desktop = await screen.findByRole("switch", { name: /Let other machines control this desktop/ });
     expect(desktop).not.toBeChecked();
-    expect(screen.getByRole("switch", { name: /Provide Spaces/ })).toBeChecked();
+    expect(screen.getByRole("switch", { name: /Let other machines create Spaces here/ })).toBeChecked();
     // Both may be off (sharing then stops), so the only one on can go off.
-    expect(screen.getByRole("switch", { name: /Provide Spaces/ })).not.toBeDisabled();
+    expect(screen.getByRole("switch", { name: /Let other machines create Spaces here/ })).not.toBeDisabled();
     expect(screen.getByText(/Up to 4 Spaces · 2 macOS VMs$/)).toBeInTheDocument();
     expect(screen.getByText("None yet")).toBeInTheDocument();
     // No desktop, so no screen permissions to grant.
     expect(screen.queryByText("Screen Recording")).toBeNull();
     fireEvent.click(desktop);
-    await waitFor(() => expect(screen.getByRole("switch", { name: /Share this desktop/ })).toBeChecked());
+    await waitFor(() => expect(screen.getByRole("switch", { name: /Let other machines control this desktop/ })).toBeChecked());
     expect(host.calls.find((c) => c.startsWith("configure:"))).toMatch(/"shareDesktop":true/);
   });
 
@@ -204,7 +203,7 @@ describe("ThisMachinePanel: a spare machine", () => {
       onboarding: { completed: true },
     });
     render(<ThisMachinePanel host={host} />);
-    const provided = await screen.findByRole("generic", { name: "Spaces for your devices" });
+    const provided = await screen.findByRole("generic", { name: "Spaces from your other machines" });
     expect(within(provided).getByText(/mac-1 · macOS · Ada/)).toBeInTheDocument();
     const activity = screen.getByRole("generic", { name: "Spaces activity" });
     expect(within(activity).getByText(/Refused space-2 · Bob · already runs 2 macOS VMs/)).toBeInTheDocument();
@@ -217,7 +216,7 @@ describe("roster", () => {
   it("always lists This machine in the live roster, next to relay machines", async () => {
     const user = userEvent.setup();
     const host = createFakeHostBridge({ status: sharing, onboarding: { completed: true } });
-    const fleet = fakeFleetBridge({
+    const spacesBridge = fakeSpacesBridge({
       isNative: true,
       listSpaces: async () => [
         {
@@ -231,7 +230,7 @@ describe("roster", () => {
         },
       ],
     });
-    render(<App bridge={createFallbackBridge("notched")} fleet={fleet} host={host} now={() => FIXTURE_NOW} />);
+    render(<App bridge={createFallbackBridge("notched")} spacesBridge={spacesBridge} host={host} now={() => FIXTURE_NOW} />);
     await user.click(await screen.findByRole("button", { name: /Spaces/ }));
     const listbox = await screen.findByRole("listbox");
     await waitFor(() => {
@@ -239,10 +238,10 @@ describe("roster", () => {
         .getAllByRole("option")
         .filter((el) => !el.classList.contains("tile-new"))
         .map((el) => el.getAttribute("aria-label")?.split(",")[0]);
-      expect([...names].sort()).toEqual(["This machine", "office-pc"]);
+      expect([...names].sort()).toEqual(["This Mac", "office-pc"]);
     });
     // This machine's page opens in the main window, not inside the notch.
-    await user.click(within(listbox).getByRole("option", { name: /This machine/ }));
+    await user.click(within(listbox).getByRole("option", { name: /This Mac/ }));
     expect(screen.queryByRole("button", { name: "Stop sharing" })).toBeNull();
   });
 });

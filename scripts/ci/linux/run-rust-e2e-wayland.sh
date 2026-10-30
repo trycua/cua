@@ -18,12 +18,12 @@ if [[ "${SESSION_KIND}" == sway-xwayland ]]; then
   # their established Sway paths while this wrapper additionally enables XWayland.
   export CUA_E2E_WAYLAND_SESSION=sway
 fi
-COMPOSITOR_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/${SESSION_KIND}.log"
-ATSPI_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/at-spi-bus.log"
+COMPOSITOR_LOG="${CUA_E2E_ARTIFACT_DIR:-${REPO_ROOT}/artifacts/cua-driver/linux}/${SESSION_KIND}.log"
+ATSPI_LOG="${CUA_E2E_ARTIFACT_DIR:-${REPO_ROOT}/artifacts/cua-driver/linux}/at-spi-bus.log"
 # cage serves only niri's winit window. Its private runtime directory keeps its
 # Wayland socket out of the directory the tests search and inherit.
 CAGE_RUNTIME_DIR="${RUNTIME_DIR}/cage"
-CAGE_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/cage.log"
+CAGE_LOG="${CUA_E2E_ARTIFACT_DIR:-${REPO_ROOT}/artifacts/cua-driver/linux}/cage.log"
 CAGE_PID=""
 COMPOSITOR_PID=""
 DBUS_PID=""

@@ -1,6 +1,6 @@
 //! User defaults (`$CUA_HOME/config.toml`, `cua config`) for every
 //! language: where sandboxes and Spaces run when `on` is not given, the
-//! default kind and runtime, and the cloud defaults. Each value comes with
+//! default kind and runtime, and the runtime sources. Each value comes with
 //! where it came from (the environment, the config file, or the built-in
 //! default); an explicit argument always wins over all three.
 //!
@@ -15,8 +15,9 @@ use cua_sandbox_core::settings::{self, Entry, Settings};
 /// One setting's effective value.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ConfigEntry {
-    /// `default.on`, `default.kind`, `default.runtime`, `cloud.warm`,
-    /// `cloud.max_pool_size` or `cloud.claim_ttl`.
+    /// `default.on`, `default.kind`, `default.runtime`, `runtime.container`,
+    /// `runtime.vm`, `runtime.microvm` (and their `_path`) or
+    /// `telemetry.enabled`.
     pub key: String,
     /// The effective value.
     pub value: String,
@@ -69,7 +70,7 @@ pub fn config_get(key: String) -> Result<ConfigEntry> {
 }
 
 /// Writes a setting to the config file (checked and normalised: `default.on`
-/// takes `local`, `cloud` or a provider). Returns its effective value, which
+/// takes `local` or a provider). Returns its effective value, which
 /// an environment variable may still override.
 #[uniffi::export]
 pub fn config_set(key: String, value: String) -> Result<ConfigEntry> {
@@ -95,7 +96,7 @@ pub fn config_path() -> String {
     settings::config_path().display().to_string()
 }
 
-/// The locations `on` accepts: `local`, `cloud`, then registered providers.
+/// The locations `on` accepts: `local`, then registered providers.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LocationInfo {
     /// The location's name.
@@ -173,7 +174,12 @@ mod tests {
             config_set("default.on".into(), "qemu".into()),
             Err(CuaError::InvalidArgument(_))
         ));
-        assert!(config_list().unwrap().iter().any(|e| e.key == "cloud.warm"));
+        assert!(
+            config_list()
+                .unwrap()
+                .iter()
+                .any(|e| e.key == "runtime.container")
+        );
         assert!(config_path().ends_with("config.toml"));
     }
 
@@ -187,4 +193,75 @@ mod tests {
         assert!(!l.iter().any(|l| l.name == "cloud"));
         check_placement("".into(), "".into(), "".into()).unwrap();
     }
+}
+
+/// What the repo cache holds and what it saved, in plain words for
+/// Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+/// changed with [`config_set`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct RepoCacheStatus {
+    /// The cache is on (`cache.repos`).
+    pub enabled: bool,
+    /// Repositories held.
+    pub repos: u32,
+    /// What they take on disk.
+    pub bytes: u64,
+    /// The size cap in force.
+    pub cap_bytes: u64,
+    /// The size setting: `auto`, or the number of GB.
+    pub size_setting: String,
+    /// `Repos: 3, 1.2 GB of 5 GB`.
+    pub summary: String,
+    /// `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+    pub week: String,
+    /// Clones served from the cache in the last week.
+    pub hits: u32,
+    /// Clones that downloaded in the last week.
+    pub misses: u32,
+    /// Seconds the hits saved.
+    pub seconds_saved: u64,
+}
+
+fn repo_cache_status_of(s: &Settings) -> RepoCacheStatus {
+    let cache = cua_sandbox_core::repo_cache::RepoCache::at_default({
+        let (enabled, cap_bytes) = s.repo_cache();
+        cua_sandbox_core::repo_cache::Config { enabled, cap_bytes }
+    });
+    cache.sync_config();
+    let st = cache.status();
+    RepoCacheStatus {
+        enabled: st.enabled,
+        repos: st.repos,
+        bytes: st.bytes,
+        cap_bytes: st.cap_bytes,
+        size_setting: s
+            .configured(settings::key("cache.repos_size_gb").expect("known key"))
+            .unwrap_or_else(|| "auto".into()),
+        summary: st.size_line(),
+        week: st.week_line(),
+        hits: st.hits,
+        misses: st.misses,
+        seconds_saved: st.seconds_saved,
+    }
+}
+
+/// The repo cache now: on or off, how much it holds of its cap, and what
+/// the last week saved.
+#[uniffi::export]
+pub fn repo_cache_status() -> Result<RepoCacheStatus> {
+    Ok(repo_cache_status_of(&load()?))
+}
+
+/// Deletes every repository the repo cache holds (they are copied again the
+/// next time a Space clones them). Returns the cache after.
+#[uniffi::export]
+pub fn repo_cache_clear() -> Result<RepoCacheStatus> {
+    let s = load()?;
+    let (enabled, cap_bytes) = s.repo_cache();
+    cua_sandbox_core::repo_cache::RepoCache::at_default(cua_sandbox_core::repo_cache::Config {
+        enabled,
+        cap_bytes,
+    })
+    .clear();
+    Ok(repo_cache_status_of(&s))
 }

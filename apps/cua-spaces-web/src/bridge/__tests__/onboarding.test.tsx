@@ -67,7 +67,7 @@ describe.each([
     s = onboardingReduce(core, s, { type: "start" }, ctx);
     expect(s.step).toBe("signin");
     expect(onboardingView(core, s, "linux").canSkip).toBe(true);
-    expect(onboardingView(core, s, "linux").lede).toBe("Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.");
+    expect(onboardingView(core, s, "linux").lede).toBe("Sign in to reach your machines and Spaces from any of your machines. You can skip this and sign in later.");
     s = onboardingReduce(core, s, { type: "signin-done" }, ctx);
     expect(s.step).toBe("agents");
     s = onboardingReduce(core, s, { type: "agents-done", configured: ["Codex"] }, ctx);

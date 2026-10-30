@@ -52,22 +52,25 @@ const found = <T extends Element>(selector: string) =>
   });
 
 describe.skipIf(!wasmBuilt)("the shell as the SwiftUI main window (real routes, wasm core)", () => {
-  it("shows the enroll bar above every page while this device is not enrolled, and Enroll… opens the sheet", async () => {
+  it("shows the trust bar above every page while this machine is not trusted, and its button opens the sheet", async () => {
     const { router } = await mount("/spaces", { unenrolled: true });
     const bar = await found<HTMLElement>("[data-shell-devices-banner]");
-    expect(bar.textContent).toMatch(/Enroll this device/);
+    expect(bar.textContent).toMatch(/Trust this machine/);
 
     await router.navigate({ to: "/keyvault" });
     await found("[data-shell-devices-banner]");
 
     fireEvent.click(await found("[data-shell-banner-enroll]"));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/devices"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
     await found("[data-enroll]");
-    // The Devices page says it under its own row: no second bar there.
+    // This machine's page says it under its own name: no second bar there.
     expect(document.querySelector("[data-shell-devices-banner]")).toBeNull();
 
     fireEvent.click(await found('[data-enroll-option="sign-in"]'));
-    await waitFor(() => expect(document.querySelector('[data-this-device-status="enrolled"]')).toBeTruthy());
+    await waitFor(() => expect(document.querySelector("[data-machine-details-toggle]")).toBeTruthy());
+    const details = document.querySelector<HTMLElement>("[data-machine-details-toggle]")!;
+    if (details.getAttribute("aria-expanded") !== "true") fireEvent.click(details);
+    await waitFor(() => expect(document.querySelector('[data-machine-trust="enrolled"]')).toBeTruthy());
     await router.navigate({ to: "/spaces" });
     await found("[data-space-id]");
     expect(document.querySelector("[data-shell-devices-banner]")).toBeNull();
@@ -94,14 +97,17 @@ describe.skipIf(!wasmBuilt)("the shell as the SwiftUI main window (real routes, 
     await waitFor(() => expect(calls.some(([op, a]) => op === "spaces.setPower" && (a as { on: boolean }).on === false)).toBe(true));
   });
 
-  it("lays out every Keyvault row the host reports, and changes its switches", async () => {
-    const { calls } = await mount("/settings", { macHost: true });
-    const section = await found<HTMLElement>('[data-settings-section="keyvault"]');
-    const row = (id: string) => section.querySelector<HTMLElement>(`[data-setting-row="${id}"]`);
+  it("lays out every Keyvault option the host reports, on the Keyvault page, and changes its switches", async () => {
+    const { calls } = await mount("/keyvault", { macHost: true });
+    fireEvent.click(await found<HTMLElement>("[data-keyvault-options]"));
+    const dialog = await found<HTMLElement>("[data-keyvault-options-dialog]");
+    const row = (id: string) => dialog.querySelector<HTMLElement>(`[data-setting-row="${id}"]`);
     await waitFor(() => expect(row("keyvault-unlock-prompt")).toBeTruthy());
     expect(row("keyvault-auto-wipe")).toBeTruthy();
     expect(row("keyvault-site-icons")).toBeTruthy();
     expect(row("keyvault-protection:Unlock")?.textContent).toContain("Mac login");
+    // Plain words, not the core's.
+    expect(within(row("keyvault-auto-wipe")!).getByText("Remove saved sign-ins from Spaces after an hour")).toBeTruthy();
 
     fireEvent.click(within(row("keyvault-unlock-prompt")!).getByRole("switch"));
     await waitFor(() => expect(calls).toContainEqual(["settings.choose", { row: "keyvault-unlock-prompt", option: "off" }]));

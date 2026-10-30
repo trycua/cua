@@ -229,11 +229,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2026.7.22"
+version = "2026.10.19"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz", hash = "sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55", size = 138112, upload-time = "2026-07-22T03:35:12.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/bd/1436c50cc46699de0230fbaacc1d1de7bfec413176099949e9d5112e88f2/certifi-2026.10.19.tar.gz", hash = "sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae", size = 137598, upload-time = "2026-10-20T02:24:16.604Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl", hash = "sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775", size = 136983, upload-time = "2026-07-22T03:35:11.276Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/51/29046e48f693c54e5b7412216d447a1d8362c9653148d98c02cdf65fa733/certifi-2026.10.19-py3-none-any.whl", hash = "sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b", size = 136464, upload-time = "2026-10-20T02:24:15.072Z" },
 ]
 
 [[package]]
@@ -422,7 +422,7 @@ wheels = [
 
 [[package]]
 name = "cua"
-version = "0.5.0"
+version = "0.9.0"
 source = { editable = "../cua/python" }
 
 [package.metadata]
@@ -549,8 +549,7 @@ requires-dist = [
     { name = "cssselect", marker = "extra == 'osworld'", specifier = ">=1.2" },
     { name = "cua-agent", editable = "../python/agent" },
     { name = "cua-agent", marker = "extra == 'agents'", editable = "../python/agent" },
-    { name = "cua-bench", extras = ["browser", "agents", "cloud", "otel", "spice"], marker = "extra == 'all'" },
-    { name = "cua-bench", extras = ["otel"], marker = "extra == 'cloud'" },
+    { name = "cua-bench", extras = ["browser", "agents", "otel", "spice"], marker = "extra == 'all'" },
     { name = "cua-sandbox", editable = "../python/cua-sandbox" },
     { name = "datasets", specifier = ">=3.0.0" },
     { name = "fastdtw", marker = "extra == 'osworld'", specifier = ">=0.3" },
@@ -598,7 +597,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.66.0" },
     { name = "xmltodict", marker = "extra == 'osworld'", specifier = ">=0.13" },
 ]
-provides-extras = ["all", "packaging", "browser", "agents", "otel", "cloud", "spice", "server", "windows", "osworld", "dev", "rl"]
+provides-extras = ["all", "packaging", "browser", "agents", "otel", "spice", "server", "windows", "osworld", "dev", "rl"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -690,12 +689,10 @@ dependencies = [
     { name = "cua-core" },
     { name = "grpcio" },
     { name = "httpx" },
-    { name = "jsonschema" },
     { name = "oras" },
     { name = "paramiko" },
     { name = "protobuf" },
     { name = "pycdlib" },
-    { name = "pydantic" },
     { name = "vncdotool" },
 ]
 
@@ -703,16 +700,14 @@ dependencies = [
 requires-dist = [
     { name = "cua", editable = "../cua/python" },
     { name = "cua-core", specifier = ">=0.1.18,<0.4.0" },
-    { name = "cua-driver", marker = "extra == 'driver'", specifier = "==0.28.2" },
+    { name = "cua-driver", marker = "extra == 'driver'", specifier = "==0.37.0" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "jsonschema", specifier = ">=4.23,<5.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.10" },
     { name = "oras", specifier = ">=0.2.40" },
     { name = "paramiko", specifier = ">=5.0.0" },
     { name = "protobuf", specifier = "==6.33.6" },
     { name = "pycdlib", specifier = ">=1.14.0" },
-    { name = "pydantic", specifier = ">=2.11,<3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
@@ -724,11 +719,9 @@ provides-extras = ["driver", "auth", "mcp", "dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "cua-agent", editable = "../python/agent" },
-    { name = "datamodel-code-generator", specifier = "==0.74.0" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-timeout", specifier = ">=2.3.1" },
-    { name = "pyyaml", specifier = ">=6.0,<7.0" },
     { name = "ruff", specifier = ">=0.9.2" },
 ]
 

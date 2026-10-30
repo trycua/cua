@@ -149,6 +149,27 @@ public final class PersistentModel {
         return try await call("agent_events", args)
     }
 
+    /// Starts a coding agent in a Space (`agent_start`): its answer as is
+    /// (`run_id`, `agent`, `space`, ...). Saved provider keys the harness
+    /// reads are forwarded by the daemon without being named here.
+    func startRun(space: String, agent: String, prompt: String, repo: String?, branch: String?, model: String?,
+                  envFromHost: [String]) async throws -> [String: Any] {
+        var args: [String: Any] = ["space": space, "agent": agent, "prompt": prompt]
+        if let repo { args["repo"] = repo }
+        if let branch { args["branch"] = branch }
+        if let model { args["model"] = model }
+        if !envFromHost.isEmpty { args["env_from_host"] = envFromHost }
+        return try await call("agent_start", args)
+    }
+
+    /// Sends a reply to a run (`agent_message`): queued while a turn runs,
+    /// or the turn is interrupted first with `force`.
+    func sendMessage(space: String, runId: String, text: String, force: Bool) async throws -> [String: Any] {
+        var args: [String: Any] = ["space": space, "run_id": runId, "text": text]
+        if force { args["force"] = true }
+        return try await call("agent_message", args)
+    }
+
     /// The selected agent's home (`agents/<name>/`, recursively, files only),
     /// its routines, every computer grant and the recent audit: the core's
     /// input records (`AgentsInput`). The web UI's `agents.detail` answers it.
@@ -348,7 +369,6 @@ public final class PersistentModel {
 @MainActor
 final class AgentNotifier {
     static let shared = AgentNotifier()
-    private var authorized: Bool?
 
     func post(_ note: AppSystemNote) {
         guard DeviceNotifier.available else { return }
@@ -360,10 +380,7 @@ final class AgentNotifier {
         content.body = note.body
         let request = UNNotificationRequest(identifier: "agent-\(note.id)", content: content, trigger: nil)
         Task {
-            if authorized == nil {
-                authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-            }
-            guard authorized == true else { return }
+            guard await PermissionRequester.notificationsAuthorized(center) else { return }
             try? await center.add(request)
         }
     }

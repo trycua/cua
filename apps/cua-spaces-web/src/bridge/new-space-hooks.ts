@@ -3,20 +3,20 @@
 
 /** New Space and "Connect a cloud" for components (see `new-space.ts`). */
 
-import { useContext, useEffect, useState, useSyncExternalStore } from "react";
+import { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isUnsupported } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { CloudConnectAction, CloudConnectView, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
+import type { CloudConnectWire, CloudSheetAction, CloudSheetView, CloudTarget, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
-import { useMachines, useSession, useSettings, useSpaces } from "./hooks";
+import { useMachines, useSettings, useSpaces } from "./hooks";
 import { newPendingId } from "./store";
 import {
   CLOSED_NEW_SPACE,
-  cloudConnectInitial,
-  cloudConnectReduce,
-  cloudConnectView,
-  connectInput,
+  cloudSheetInitial,
+  cloudSheetInput,
+  cloudSheetReduce,
+  cloudSheetView,
   firstSpaceOffers,
   localBlocked,
   loadNewSpaceHostData as loadHostData,
@@ -39,7 +39,6 @@ function useNewSpaceEnv(): { core: CoreClient; env: WizardEnv; s: NewSpaceSessio
   if (!ctx) throw new Error("bridge hooks need a <BridgeProvider> above them");
   const s = useSyncExternalStore(subscribe, read, read);
   const { data: settings } = useSettings();
-  const { data: sessionData } = useSession();
   const { data: machines } = useMachines();
   const core = ctx.core;
   const env =
@@ -49,10 +48,9 @@ function useNewSpaceEnv(): { core: CoreClient; env: WizardEnv; s: NewSpaceSessio
           options: s.options,
           clouds: s.clouds,
           defaultLocation: settings?.values.defaultLocation,
-          cloudAvailable: Boolean(sessionData?.fleet.configured),
           machines,
         })
-      : ({ defaultLocation: "local", cloudAvailable: false, localAvailable: true, maxCpus: 8 } as WizardEnv));
+      : ({ defaultLocation: "local", localAvailable: true, maxCpus: 8 } as WizardEnv));
   return { core, env, s };
 }
 
@@ -87,7 +85,7 @@ export interface NewSpaceWizardHook {
 }
 
 /** The Settings, Runtimes row a New Space runtime switch changes. */
-export const RUNTIME_SWITCH_ROW: Record<string, string> = { "runtime.lume": "macos-runtime", "runtime.linux": "linux-runtime" };
+export const RUNTIME_SWITCH_ROW: Record<string, string> = { "runtime.lume": "runtime:vm", "runtime.linux": "runtime:container" };
 
 /** New Space: the core's wizard over the bridge's data. */
 export function useNewSpaceWizard(): NewSpaceWizardHook {
@@ -236,59 +234,147 @@ export function useNewSpaceRequests(): void {
 
 export interface ConnectCloudHook {
   open: boolean;
-  view: CloudConnectView | null;
-  show(): void;
+  view: CloudSheetView | null;
+  /** Opens the sheet: the picker, or one cloud's sheet (`show("aws")`, from a cloud's page);
+   * with `limits`, the sheet that changes a connected cloud's budget and size. */
+  show(cloud?: string, options?: { limits?: boolean }): void;
   close(): void;
-  /** Sends an action; Test and Connect run the host's request the core asks for. */
-  send(action: CloudConnectAction): Promise<void>;
+  /** Sends an action; Press runs the host's request the core asks for. */
+  send(action: CloudSheetAction): Promise<void>;
+  /** Hetzner's API token as typed: memory only, dropped when Connect finishes or the sheet closes. */
+  token: string;
+  setToken(text: string): void;
+  /** Opens a page in the person's browser. */
+  openPage(url: string): void;
 }
 
-/** "Connect a cloud": the core's sheet over `clouds.*`. */
+/** The core's request target, with the held token attached when it asks (and `uses_token` removed). */
+export function withToken(target: CloudTarget, token: string): CloudTarget {
+  const out: CloudTarget = { ...target };
+  delete out.uses_token;
+  if (target.uses_token && token) out.token = token;
+  return out;
+}
+
+/** The first check that did not pass, as one line ("permissions: ec2:RunInstances was denied"). */
+const failedCheck = (r: CloudConnectWire) => {
+  const c = r.checks?.find((x) => !x.ok);
+  return c ? (c.detail ? `${c.name}: ${c.detail}` : c.name) : "";
+};
+
+/** "Connect a cloud": the core's picker and sheets over `clouds.*`. */
 export function useConnectCloud(): ConnectCloudHook {
   const ctx = useContext(BridgeContext)!;
   const { core, s } = useNewSpaceEnv();
   const { refresh: refreshSettings } = useSettings();
   const ready = core.status === "ready";
-  const input = s.connect.pinnedInput ?? (ready ? connectInput(core, s.clouds) : { providers: [] });
-  const view = s.connect.open && s.connect.state && ready ? cloudConnectView(core, input, s.connect.state) : null;
-  const close = () => update((x) => ({ ...x, connect: { ...CLOSED_NEW_SPACE.connect } }));
-  const reduce = (action: CloudConnectAction) =>
-    update((x) => (x.connect.state ? { ...x, connect: { ...x.connect, state: cloudConnectReduce(core, input, x.connect.state, action) } } : x));
+  const input = s.connect.pinnedInput ?? (ready ? cloudSheetInput(core, s.clouds) : { providers: [] });
+  const view = s.connect.open && s.connect.state && ready ? cloudSheetView(core, input, s.connect.state) : null;
+  // The token never enters the core, the session store or any saved state.
+  const [token, setTokenState] = useState("");
+  const tokenRef = useRef("");
+  const setToken = (text: string) => {
+    const was = tokenRef.current !== "";
+    tokenRef.current = text;
+    setTokenState(text);
+    if (was !== (text !== "")) reduce({ type: "set-token-entered", entered: text !== "" });
+  };
+  const dropToken = () => {
+    tokenRef.current = "";
+    setTokenState("");
+  };
+  const close = () => {
+    dropToken();
+    update((x) => ({ ...x, connect: { ...CLOSED_NEW_SPACE.connect } }));
+  };
+  const reduce = (action: CloudSheetAction) =>
+    update((x) => (x.connect.state ? { ...x, connect: { ...x.connect, state: cloudSheetReduce(core, input, x.connect.state, action) } } : x));
+  const openPage = (url: string) => void ctx.adapter?.call("session.openExternal", { url }).catch(() => {});
 
   return {
     open: s.connect.open,
     view,
-    show() {
+    token,
+    setToken,
+    openPage,
+    show(cloud, options) {
       if (!ready) return;
-      update((x) => ({ ...x, connect: { open: true, state: cloudConnectInitial(core), pinnedInput: null } }));
-      void ctx.ready.then(loadHostData);
+      dropToken();
+      const limits = options?.limits === true;
+      const first = cloudSheetInitial(core, input, cloud ?? null, limits);
+      update((x) => ({ ...x, connect: { open: true, state: first, pinnedInput: x.connect.pinnedInput } }));
+      // A cloud's sheet starts from what the link is set to (its region, budget and size). Opened from a page
+      // before the clouds were read here, it fills in once they are, unless the person changed something.
+      void ctx.ready.then(loadHostData).then(() => {
+        const now = read();
+        if (!cloud || !now.connect.open || now.connect.pinnedInput || JSON.stringify(now.connect.state) !== JSON.stringify(first)) return;
+        const state = cloudSheetInitial(core, cloudSheetInput(core, now.clouds), cloud, limits);
+        update((x) => ({ ...x, connect: { ...x.connect, state } }));
+      });
     },
     close,
     async send(action) {
       reduce(action);
-      if (action.type !== "test" && action.type !== "connect") return;
+      if (action.type !== "press") return;
       const state = read().connect.state;
       if (!state) return;
-      const next = cloudConnectView(core, input, state);
-      // "No cloud" finishes on the spot, with no request at all.
-      if (next.done) return close();
-      const request = next.request;
+      const request = cloudSheetView(core, input, state).request;
       if (!request || !ctx.adapter) return;
       try {
-        if (request.kind === "test") {
-          const r = await ctx.adapter.call("clouds.test", { target: request.target });
-          reduce({ type: "tested", ok: r.ok, account: r.account ?? "", checks: r.checks.map((c) => ({ name: c.name, ok: c.ok, detail: c.detail ?? "" })) });
-        } else {
-          const r = await ctx.adapter.call("clouds.connect", { target: request.target, makeDefault: request.make_default });
-          reduce({ type: "connected", label: r.label ?? r.title });
+        const r = await ctx.adapter.call("clouds.connect", { target: withToken(request, tokenRef.current), makeDefault: false });
+        const status = r.status ?? (r.connected ? "connected" : "failed");
+        if (status === "connected" || status === "waiting-for-approval") dropToken();
+        reduce({
+          type: "answered",
+          status,
+          open: r.next?.open ?? "",
+          paste: r.next?.paste ?? "",
+          why: r.next?.why ?? "",
+          failedCheck: failedCheck(r),
+        });
+        // AWS opens its console where the trust is made: once, when the sheet gets there.
+        if (status === "needs-trust" && r.next?.open && !request.check) openPage(r.next.open);
+        if (status === "connected" || status === "waiting-for-approval") {
           const store = await ctx.ready;
-          await Promise.all([loadHostData(store), refreshSettings()]);
+          await Promise.all([loadHostData(store), refreshSettings(), store.refresh("machines")]);
           close();
         }
       } catch (e) {
+        dropToken();
         reduce({ type: "failed", error: isUnsupported(e) ? "This app can't connect a cloud yet." : e instanceof Error ? e.message : String(e) });
       }
     },
+  };
+}
+
+export interface CloudActionsHook {
+  /** Forgets a cloud; with `deleteResources`, deletes what Cua created there first. Rejects with the host's words. */
+  disconnect(provider: string, deleteResources: boolean): Promise<void>;
+  /** Approves (or denies) what an agent set up. Only where the host can (`can_approve`). */
+  approve(provider: string, approve: boolean): Promise<void>;
+  /** Opens a page in the person's browser. */
+  openPage(url: string): void;
+}
+
+/** What a cloud's page does: Disconnect, Approve and Deny, links. The clouds are read again after each. */
+export function useCloudActions(): CloudActionsHook {
+  const ctx = useContext(BridgeContext)!;
+  const again = async () => {
+    const store = await ctx.ready;
+    await Promise.all([loadHostData(store), store.refresh("machines")]);
+  };
+  return {
+    async disconnect(provider, deleteResources) {
+      if (!ctx.adapter) return;
+      await ctx.adapter.call("clouds.disconnect", { provider, deleteResources });
+      await again();
+    },
+    async approve(provider, approve) {
+      if (!ctx.adapter) return;
+      await ctx.adapter.call("clouds.approve", { provider, approve });
+      await again();
+    },
+    openPage: (url) => void ctx.adapter?.call("session.openExternal", { url }).catch(() => {}),
   };
 }
 
@@ -343,3 +429,4 @@ export function useRuntimeFix(): RuntimeFixHook {
     },
   };
 }
+

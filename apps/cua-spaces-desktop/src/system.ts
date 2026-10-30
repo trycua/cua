@@ -73,5 +73,6 @@ export function makeSystem(o: {
     updater: ElectronUpdater.start(),
     home: process.env.HOME || os.homedir(),
     globalShortcut: () => o.globalShortcut?.ensure() ?? null,
+    setGlobalShortcut: o.globalShortcut ? (accelerator) => o.globalShortcut!.change(accelerator) : undefined,
   };
 }

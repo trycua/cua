@@ -20,6 +20,7 @@
 //! | `volume_ls`, `volume_read`, `volume_write`, `volume_request_access`, `volume_sync_status` | the Cua Volume, as `agent:<name>` in its Space (sync as this host sees it) |
 //! | `computer_list`, `computer_list_tools`, `computer_call` | the user's computers this agent was granted by name |
 //! | `request_site_login` | sign in to a site with a password from the user's Keyvault, after the user approves; the agent never sees it |
+//! | `thread_read`, `thread_post`, `thread_inbox`, `thread_claim`, `thread_reply` | its Space's thread, always as `agent:<name>` and only in its own Space |
 
 use crate::SpacesDrive as _;
 use std::collections::HashMap;
@@ -29,7 +30,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use cua_spacesd_client::{DownloadOptions, SpacesdClient, UploadOptions, pb};
 use serde_json::{Map, Value, json};
 
+use super::members::PostArgs;
 use super::{AgentRecord, Persistent};
+use cua_spaces::extension::Caller;
 use cua_spaces::mcp::{McpServer, ToolExtension, ToolOutcome};
 use cua_spaces::{Error, Result, Spaces};
 
@@ -37,7 +40,7 @@ use cua_spaces::{Error, Result, Spaces};
 const MAX_LINE: usize = 16 * 1024 * 1024;
 
 /// Server instructions the agent sees.
-pub const INSTRUCTIONS: &str = "Cua: tools for a persistent agent. notify_user tells your user something in the Cua app (use it for results they asked for, or when you need them). The Cua Volume keeps files beyond this Space: your home is agents/<you>/ (your memory lives there too), public/ is shared reference (read only), spaces/<this space>/ is this Space's folder; anything else needs volume_request_access, which the user approves. computer_list shows the user's own computers you were allowed to use; computer_list_tools and computer_call use them. Never put secrets in the drive: the user's Keyvault holds them.";
+pub const INSTRUCTIONS: &str = "Cua: tools for a persistent agent. Your Space has a thread where people and other agents talk: thread_read reads it, thread_post posts (an @name of another agent gives it a task), thread_inbox lists the tasks addressed to you, thread_claim takes one and thread_reply answers it and marks it done. notify_user tells your user something in the Cua app (use it for results they asked for, or when you need them). The Cua Volume keeps files beyond this Space: your home is agents/<you>/ (your memory lives there too), public/ is shared reference (read only), spaces/<this space>/ is this Space's folder; anything else needs volume_request_access, which the user approves. computer_list shows the user's own computers you were allowed to use; computer_list_tools and computer_call use them. Never put secrets in the drive: the user's Keyvault holds them.";
 
 /// Per-run pipe state kept by the supervisor.
 #[derive(Default)]
@@ -64,6 +67,8 @@ pub fn server(
             agent: rec.name.clone(),
             space: rec.space.clone(),
             run_id: run_id.to_string(),
+            session: rec.k(),
+            task: rec.task.as_ref().map(|t| t.seq),
         }))
 }
 
@@ -198,6 +203,11 @@ struct AgentTools {
     agent: String,
     space: String,
     run_id: String,
+    /// The member's session this run is.
+    session: u32,
+    /// The task the run's turn works on (an approval it asks belongs to
+    /// it unless it says otherwise).
+    task: Option<u64>,
 }
 
 fn schema(props: Value, required: &[&str]) -> Value {
@@ -367,7 +377,96 @@ impl AgentTools {
                 }
                 Ok(ToolOutcome::json(&v))
             }
+            "thread_read" | "thread_post" | "thread_inbox" | "thread_claim" | "thread_reply" => {
+                self.thread_tool(tool, a).await
+            }
             other => Err(Error::NotFound(format!("tool {other}"))),
+        }
+    }
+
+    /// The thread tools, as this agent in its own Space (the author and
+    /// the Space are fixed here, whatever the arguments say).
+    async fn thread_tool(&self, tool: &str, a: Value) -> Result<ToolOutcome> {
+        let caller = Caller::Agent {
+            name: self.agent.clone(),
+            space: self.space.clone(),
+        };
+        let t = self
+            .persistent
+            .thread(&caller, &self.space)
+            .await?
+            .as_session(self.session);
+        let u64_arg = |k: &str| a.get(k).and_then(Value::as_u64);
+        let strings = |k: &str| -> Vec<String> {
+            a.get(k)
+                .and_then(Value::as_array)
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        match tool {
+            "thread_read" => {
+                let after = u64_arg("after");
+                if let (Some(after), Some(ms)) = (after, u64_arg("follow_ms").filter(|m| *m > 0)) {
+                    t.store()
+                        .wait_after(after, std::time::Duration::from_millis(ms))
+                        .await?;
+                }
+                Ok(ToolOutcome::json(&t.read(
+                    after,
+                    u64_arg("before"),
+                    u64_arg("limit").unwrap_or(50) as usize,
+                    a.get("mark_read").and_then(Value::as_bool).unwrap_or(true),
+                    None,
+                )?))
+            }
+            "thread_post" => Ok(ToolOutcome::json(&json!({"entry":
+                t.post(PostArgs {
+                    text: str_arg(&a, "text")?.to_string(),
+                    reply_to: u64_arg("reply_to").or(if a.get("approval").is_some() {
+                        self.task
+                    } else {
+                        None
+                    }),
+                    to_session: u64_arg("to_session").map(|k| k as u32),
+                    view: a
+                        .get("view")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                    attachments: strings("attachments"),
+                    approval: a.get("approval").and_then(|x| {
+                        Some((
+                            x.get("action")?.as_str()?.to_string(),
+                            x.get("details")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                        ))
+                    }),
+                    answer: None,
+                })
+                .await?}))),
+            "thread_inbox" => Ok(ToolOutcome::json(&json!({"tasks": t.inbox(None)?}))),
+            "thread_claim" => {
+                let task = u64_arg("task").ok_or_else(|| Error::invalid("`task` is required"))?;
+                Ok(ToolOutcome::json(&t.claim(task, None, None)?))
+            }
+            _ => {
+                let task = u64_arg("task").ok_or_else(|| Error::invalid("`task` is required"))?;
+                let (reply, update) = t
+                    .reply(
+                        task,
+                        str_arg(&a, "text")?,
+                        &strings("attachments"),
+                        a.get("state").and_then(Value::as_str),
+                    )
+                    .await?;
+                Ok(ToolOutcome::json(
+                    &json!({"reply": reply, "update": update}),
+                ))
+            }
         }
     }
 }
@@ -383,6 +482,11 @@ const NAMES: &[&str] = &[
     "computer_list_tools",
     "computer_call",
     "request_site_login",
+    "thread_read",
+    "thread_post",
+    "thread_inbox",
+    "thread_claim",
+    "thread_reply",
 ];
 
 #[async_trait::async_trait]
@@ -419,7 +523,7 @@ impl ToolExtension for AgentTools {
             ),
             tool(
                 "volume_sync_status",
-                "Sync state of the Cua Volume as this machine sees it: `feed` (`live`, `off` for storage on this machine, `offline` with `last_error`), each device's last sync, your files still uploading (`pending`), `conflicts` (each `path` and the kept `conflict_path`) and the volume mounted in this Space. Check it before relying on a file another device just wrote.",
+                "Sync state of the Cua Volume as this computer sees it: `feed` (`live`, `off` for storage on this computer, `offline` with `last_error`), each device's last sync, your files still uploading (`pending`), `conflicts` (each `path` and the kept `conflict_path`) and the volume mounted in this Space. Check it before relying on a file another device just wrote.",
                 schema(json!({}), &[]),
                 true,
             ),
@@ -468,6 +572,55 @@ impl ToolExtension for AgentTools {
                     json!({"machine": {"type": "string"}, "tool": {"type": "string"},
                               "arguments": {"type": "object"}, "service": {"type": "string"}}),
                     &["machine", "tool"],
+                ),
+                false,
+            ),
+            tool(
+                "thread_read",
+                "Read your Space's thread: what people and other agents said, and the open tasks. Without `after`, the newest entries; pass the returned cursor as `after` to read on (follow_ms waits for the next entry, up to 25000), or `before` to page back.",
+                schema(
+                    json!({"after": {"type": "integer", "description": "Entries after this seq."},
+                              "before": {"type": "integer", "description": "The newest entries before this seq."},
+                              "limit": {"type": "integer", "description": "Default 50."},
+                              "mark_read": {"type": "boolean", "description": "Move your read cursor. Default true."},
+                              "follow_ms": {"type": "integer"}}),
+                    &[],
+                ),
+                true,
+            ),
+            tool(
+                "thread_post",
+                "Post to your Space's thread, as yourself. An explicit @name of another agent member gives it a task, within limits: a chain stops after 3 agent to agent hops from a person's message and a Space allows 20 such wakes a minute. Never post secrets.",
+                schema(
+                    json!({"text": {"type": "string"},
+                              "reply_to": {"type": "integer", "description": "The seq this answers."},
+                              "attachments": {"type": "array", "items": {"type": "string"}, "description": "Cua Volume paths you can read (your home, this Space's folder)."},
+                              "approval": {"type": "object", "properties": {"action": {"type": "string"}, "details": {"type": "string"}}, "required": ["action"], "description": "Ask the people to approve something; their answer is a later entry."},
+                              "to_session": {"type": "integer", "description": "With an @name: which of that agent's sessions takes the task (default: any free one)."}}),
+                    &["text"],
+                ),
+                false,
+            ),
+            tool(
+                "thread_inbox",
+                "The open tasks addressed to you, oldest first.",
+                schema(json!({}), &[]),
+                true,
+            ),
+            tool(
+                "thread_claim",
+                "Claim a queued task of yours for this session before you work on it. A task another session holds is refused (task_claimed); leave it alone.",
+                schema(json!({"task": {"type": "integer"}}), &["task"]),
+                false,
+            ),
+            tool(
+                "thread_reply",
+                "Reply under a task of yours and set its state (done by default; working when more is coming).",
+                schema(
+                    json!({"task": {"type": "integer"}, "text": {"type": "string"},
+                              "attachments": {"type": "array", "items": {"type": "string"}},
+                              "state": {"type": "string", "enum": ["done", "failed", "working"]}}),
+                    &["task", "text"],
                 ),
                 false,
             ),

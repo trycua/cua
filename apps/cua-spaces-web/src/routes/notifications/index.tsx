@@ -9,6 +9,7 @@ import { useNotifications, type NotificationInput, type NotificationLine } from 
 import { CuaKey } from "@/components/cua-key";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { Button } from "@/components/ui/button";
+import { PlainList, plainRowClass } from "@/components/ui/grouped";
 import { toastError } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +43,7 @@ function NotificationsPage() {
         title={view?.title ?? "Notifications"}
         actions={
           view?.markAllLabel ? (
-            <Button variant="outline" size="sm" onClick={() => void markAllRead().catch(toastError("Couldn't mark them read"))} data-mark-all>
+            <Button variant="secondary" size="sm" onClick={() => void markAllRead().catch(toastError("Couldn't mark them read"))} data-mark-all>
               {view.markAllLabel}
             </Button>
           ) : null
@@ -59,7 +60,7 @@ function NotificationsPage() {
       ) : !view ? null : view.rows.length === 0 ? (
         <EmptyState icon={<BellIcon />} title={view.emptyText} />
       ) : (
-        <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs" data-notifications>
+        <PlainList data-notifications>
           {view.rows.map((row) => (
             <NotificationRow
               key={row.id}
@@ -69,7 +70,7 @@ function NotificationsPage() {
               onToggle={() => toggle(row)}
             />
           ))}
-        </div>
+        </PlainList>
       )}
     </Page>
   );
@@ -85,7 +86,7 @@ function NotificationRow({ row, entry, open, onToggle }: { row: NotificationLine
         aria-expanded={open}
         aria-controls={open ? detailId : undefined}
         onClick={onToggle}
-        className="flex min-h-11 w-full cursor-default items-center gap-3 px-4 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
+        className={plainRowClass(open, "min-h-11 gap-3 px-3 py-2.5")}
         data-notification-toggle
       >
         <span className={cn("size-1.5 shrink-0 rounded-full", row.on ? "bg-brand" : "bg-transparent")} aria-hidden />
@@ -98,14 +99,14 @@ function NotificationRow({ row, entry, open, onToggle }: { row: NotificationLine
         </span>
       </button>
       {open ? (
-        <div id={detailId} className="space-y-2.5 pr-4 pb-3 pl-[4.125rem]" data-notification-detail>
+        <div id={detailId} className="space-y-2.5 pr-4 pb-3 pl-[3.625rem]" data-notification-detail>
           {entry && body ? (
             <p className="whitespace-pre-wrap break-words text-[13px] text-muted-foreground" data-notification-body>
               {body}
             </p>
           ) : null}
           {entry?.space ? (
-            <Button variant="outline" size="sm" render={<Link to="/spaces/$spaceId" params={{ spaceId: entry.space }} />} data-notification-open-space>
+            <Button variant="secondary" size="sm" render={<Link to="/spaces/$spaceId" params={{ spaceId: entry.space }} />} data-notification-open-space>
               Open Space
             </Button>
           ) : null}

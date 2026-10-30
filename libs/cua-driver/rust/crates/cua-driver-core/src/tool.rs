@@ -766,6 +766,13 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
             .entry("session")
             .or_insert_with(crate::tool_schema::session_schema);
     }
+    // Dispatch reads `post_action_wait` for every action that waits for the
+    // post-action window-change report (see `crate::post_action_wait`).
+    if crate::post_action_wait::accepts(tool_name) {
+        properties
+            .entry(crate::post_action_wait::POST_ACTION_WAIT_ARG)
+            .or_insert_with(crate::post_action_wait::schema);
+    }
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
@@ -1447,6 +1454,10 @@ impl ToolRegistry {
         self.tools.insert(name, tool);
     }
 
+    pub fn is_known_tool(&self, name: &str) -> bool {
+        name == "type_text_chars" || self.tools.contains_key(renamed_tool(name).unwrap_or(name))
+    }
+
     pub fn retain_session_end_hook(
         &mut self,
         registration: crate::session::SessionEndHookRegistration,
@@ -1840,10 +1851,25 @@ impl ToolRegistry {
             .and_then(Value::as_str)
             .map(str::to_owned);
         let in_batch = crate::step_pacing::in_batch();
-        let mut result = self
-            .invoke_authorized_unannotated(name, args, context, evidence)
-            .await;
-        let tool = renamed_tool(name).unwrap_or(name);
+        let tool = match name {
+            "type_text_chars" => "type_text",
+            other => renamed_tool(other).unwrap_or(other),
+        };
+        let wait = if crate::post_action_wait::accepts(tool) {
+            crate::post_action_wait::from_args(tool, &args)
+        } else {
+            Ok(crate::post_action_wait::PostActionWait::Default)
+        };
+        let mut result = match wait {
+            Ok(wait) => {
+                crate::post_action_wait::scope(
+                    wait,
+                    self.invoke_authorized_unannotated(name, args, context, evidence),
+                )
+                .await
+            }
+            Err((message, structured)) => ToolResult::error(message).with_structured(structured),
+        };
         crate::recovery_hint::annotate(tool, &seed, &mut result);
         crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
         result
@@ -3819,6 +3845,27 @@ mod runtime_isolation_tests {
         def: super::ToolDef,
     }
 
+    /// Records the post-action wait each invocation runs under.
+    struct WaitProbe {
+        seen: Arc<Mutex<Vec<crate::post_action_wait::PostActionWait>>>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for WaitProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(crate::post_action_wait::current());
+            crate::protocol::ToolResult::text("input delivered")
+        }
+    }
+
     struct AttestedProbe {
         hits: Arc<AtomicUsize>,
         scope: serde_json::Value,
@@ -5099,6 +5146,150 @@ resources:
         assert_eq!(
             hits.load(Ordering::SeqCst),
             1,
+            "must refuse before invocation"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_resolves_type_text_chars_before_reading_the_wait() {
+        use crate::post_action_wait::{PostActionWait, SKIP_SUPPORTED};
+        use serde_json::json;
+        if !SKIP_SUPPORTED {
+            return;
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "type_text".into(),
+                description: "test input".into(),
+                input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let ok = registry
+            .invoke_with_context(
+                "type_text_chars",
+                json!({"post_action_wait": "none"}),
+                standard_context(),
+            )
+            .await;
+        assert_ne!(ok.is_error, Some(true), "{ok:?}");
+        assert_eq!(seen.lock().unwrap().as_slice(), &[PostActionWait::None]);
+        for value in [json!(null), json!("off")] {
+            let r = registry
+                .invoke_with_context(
+                    "type_text_chars",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            assert_eq!(r.structured_content.unwrap()["code"], "invalid_arguments");
+        }
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_runs_the_action_under_its_post_action_wait() {
+        use crate::post_action_wait::{
+            current, PostActionWait, POST_ACTION_WAIT_ARG, POST_ACTION_WAIT_TOOLS, SKIP_SUPPORTED,
+        };
+        use serde_json::json;
+        let schema = json!({"type": "object", "properties": {}, "additionalProperties": false});
+        for tool in POST_ACTION_WAIT_TOOLS {
+            let advertised = super::advertised_runtime_input_schema(tool, &schema);
+            assert_eq!(
+                advertised["properties"].get(POST_ACTION_WAIT_ARG).is_some(),
+                SKIP_SUPPORTED,
+                "{tool}"
+            );
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: schema,
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let refusal_code = |result: crate::protocol::ToolResult| {
+            assert_eq!(result.is_error, Some(true), "{result:?}");
+            let structured = result.structured_content.expect("structured refusal");
+            if SKIP_SUPPORTED {
+                structured["code"].clone()
+            } else {
+                structured["refusal"]["code"].clone()
+            }
+        };
+
+        // Omitted keeps the wait.
+        let result = registry
+            .invoke_with_context("click", json!({}), standard_context())
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+
+        // "default" and "none" reach the adapter through the task-local scope
+        // on macOS; elsewhere the closed schema refuses the argument.
+        for value in ["default", "none"] {
+            let result = registry
+                .invoke_with_context(
+                    "click",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            if SKIP_SUPPORTED {
+                assert_ne!(result.is_error, Some(true), "{result:?}");
+            } else {
+                assert_eq!(refusal_code(result), "invalid_arguments", "{value}");
+            }
+        }
+        let expected: &[PostActionWait] = if SKIP_SUPPORTED {
+            &[
+                PostActionWait::Default,
+                PostActionWait::Default,
+                PostActionWait::None,
+            ]
+        } else {
+            &[PostActionWait::Default]
+        };
+        assert_eq!(seen.lock().unwrap().as_slice(), expected);
+        assert_eq!(
+            current(),
+            PostActionWait::Default,
+            "the choice must not leak"
+        );
+
+        // Values outside the enum, null included, never reach the tool.
+        for value in [json!(null), json!("off"), json!(0)] {
+            let result = registry
+                .invoke_with_context(
+                    "click",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            if SKIP_SUPPORTED {
+                assert!(result.structured_content.as_ref().unwrap()["hint"].is_string());
+            }
+            assert_eq!(refusal_code(result), "invalid_arguments", "{value}");
+        }
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            expected,
             "must refuse before invocation"
         );
     }

@@ -47,14 +47,33 @@ It exposes `org.cua.WinRects` on the session bus:
 It runs in the shell's privileged context, so **no xdg-desktop-portal grant** is
 needed (unlike libei/RemoteDesktop).
 
+## GNOME Shell compatibility
+
+GNOME 45–49 remain supported. GNOME 50 and newer are temporarily refused
+for session safety following reports of session-ending crashes. This is
+containment, not a fix for the underlying native crash. Without the helper,
+window geometry, capture, activation, and the agent cursor are unavailable.
+
+Existing v8/v10 users on GNOME 50 must run
+`gnome-extensions disable winrects@cua` before further diagnostics and keep
+it disabled. Replacing files does not unload an already-active extension.
+
+API 10 is retained because the method set is unchanged. T3 Code's v10 does
+not have this safety guard. Both installers overwrite an installed helper
+of the same version, so whichever app installed last determines whether the
+guard is present. Keep `winrects@cua` disabled on GNOME 50 regardless.
+
 ## Install
 
 ```
 ~/.cua-driver/packages/current/wayland-helper/install.sh
 # From a source checkout, use ./install.sh in this directory.
 # then log out/in once (GNOME loads extensions only at session startup)
-gnome-extensions info winrects@cua   # -> State: ACTIVE
+gnome-extensions info winrects@cua
 ```
+
+On GNOME 45–49, expect State: ACTIVE. On GNOME 50 and newer, expect
+OUT OF DATE or ERROR instead.
 
 cua-driver auto-detects it at runtime (`wayland::shell_helper`). AX operations
 still work when it is absent, but pixel geometry, the Shell cursor, and safe
@@ -97,7 +116,7 @@ any copy serve every client:
   first defined in T3 Code's Linux patch to Cua Driver 0.34.0
   ([pingdotgg/t3code#16975](https://github.com/pingdotgg/t3code/pull/16975))
   and are adopted here unchanged, so T3 Code's v10 and this v10 are
-  interchangeable. Coordinate any new number with apps that bundle the helper.
+  API-compatible (the safety restriction above differs). Coordinate any new number with apps that bundle the helper.
 - Installers never downgrade. `install.sh` and the cua-driver installers keep
   an installed helper whose version is newer than the bundled one, and say so.
   `install.sh --force` replaces it anyway.

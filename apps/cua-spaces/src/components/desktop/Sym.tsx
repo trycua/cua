@@ -26,6 +26,7 @@ const PATHS: Record<string, string> = {
   cpu: "M7 7h10v10H7zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4",
   memorychip: "M3 8h18v8H3zM7 16v3M11 16v3M15 16v3M7 11h2M11 11h2M15 11h2",
   checkmark: "m5 12.5 4.5 4.5L19 7.5",
+  "info.circle": "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v5.5M12 7.5v.01",
   "exclamationmark.triangle": "M12 4.5 21 19.5H3zM12 10v4.5M12 17v.01",
   "doc.on.doc": "M8 8h11v12H8zM5 16V4h11",
   xmark: "M6 6l12 12M18 6 6 18",

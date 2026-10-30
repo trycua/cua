@@ -13,7 +13,7 @@ use clap::{Args, Subcommand};
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum TeleportCmd {
-    /// List the apps this machine can teleport (JSON).
+    /// List the apps this computer can teleport (JSON).
     #[command(after_help = "Examples:
   cua teleport providers")]
     Providers,
@@ -28,6 +28,22 @@ pub enum TeleportCmd {
   # The whole Slack profile, every item
   cua teleport push --app Slack --sandbox dev --all")]
     Push(PushArgs),
+    /// Check, in plain words, that a teleport can work now: the Keyvault,
+    /// permission to read the browser's files and tabs, and the profile.
+    #[command(after_help = "Examples:
+  cua teleport doctor
+  cua teleport doctor --app chrome --profile \"Profile 1\"")]
+    Doctor(DoctorArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct DoctorArgs {
+    /// Browser to check (`chrome` or `edge`).
+    #[arg(long, default_value = "chrome")]
+    pub app: String,
+    /// Profile to check: a name ("Profile 1"). Default: the one used last.
+    #[arg(long)]
+    pub profile: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -59,9 +75,18 @@ pub struct PushArgs {
         required_unless_present = "url"
     )]
     pub sandbox: Option<String>,
-    /// Destination cua-spacesd URL instead of a sandbox.
+    /// Destination cua-spacesd URL instead of a sandbox: another daemon's
+    /// API, or any machine you can reach. The browser is read by the local
+    /// Cua daemon with the same Keyvault consent, audit record and wipe as
+    /// `--sandbox`; `--url` only names where it goes.
     #[arg(long)]
     pub url: Option<String>,
+    /// With `--url`, read the app in this command's own process instead of
+    /// the Cua daemon. Consent, the audit record and the wipe are skipped, and
+    /// macOS uses this process's permissions, not Cua's. Scheduled for
+    /// removal; use `--url` alone.
+    #[arg(long, requires = "url")]
+    pub read_as_caller: bool,
     /// Token for `--url`.
     #[arg(long, env = "CUA_ENV_TOKEN", hide_env_values = true, requires = "url")]
     pub token: Option<String>,

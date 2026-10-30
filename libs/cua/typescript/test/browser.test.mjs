@@ -28,7 +28,7 @@ test(
   "browser build: env over gRPC-Web and typed errors",
   { skip: !built ? "browser build missing (npm run build:browser)" : !binary("CUA_TEST_FIXTURES", "cua-test-fixtures") },
   async () => {
-    const cua = sdk.Cua.embedded(sdk.CuaConfig.create({}))
+    const cua = sdk.Cua.embedded()
     const env = await cua.spacesd(fx.env_url, fx.env_token)
     const caps = await env.capabilities()
     assert.ok(caps.version.length > 0)
@@ -41,11 +41,5 @@ test(
     await assert.rejects(cua.spacesd(fx.env_url, "wrong"), (e) =>
       sdk.CuaError.Unauthenticated.instanceOf(e),
     )
-    // Cua Cloud has ended: the browser Fleet client never connects.
-    assert.throws(() => cua.fleet(), (e) => {
-      assert.ok(sdk.CuaError.Unsupported.instanceOf(e), String(e))
-      assert.match(e.message, /Cua Cloud has ended/)
-      return true
-    })
   },
 )

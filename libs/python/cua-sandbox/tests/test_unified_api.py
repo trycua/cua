@@ -10,7 +10,7 @@ import warnings
 from typing import Any
 
 import pytest
-from cua_sandbox import CloudOptions, Image, Sandbox, http, tcp
+from cua_sandbox import Image, Sandbox, http, tcp
 from cua_sandbox.options import check_services, parse_memory, probes
 from cua_sandbox.runtime.native import NativeRuntime
 
@@ -145,23 +145,6 @@ async def test_quiet_default_hides_the_notice(monkeypatch, fresh_notice, caplog)
     assert not [r for r in caplog.records if "defaulting to a local" in r.message]
 
 
-async def test_local_true_with_cloud_options_is_a_typed_error():
-    from cua_sandbox import InvalidArgument
-
-    with pytest.raises(InvalidArgument, match="contradict"):
-        await Sandbox.create(
-            Image.linux(kind="container"),
-            local=True,
-            cloud=CloudOptions(warm=True),
-            telemetry_enabled=False,
-        )
-    with pytest.raises(ValueError):
-        async with Sandbox.ephemeral(
-            Image.linux(kind="container"), local=True, cloud=CloudOptions()
-        ):
-            pass
-
-
 async def test_native_runtime_start_builds_the_sdk_options(monkeypatch):
     seen: dict = {}
 
@@ -276,7 +259,7 @@ async def test_local_layers_on_a_vm_need_spacesd(monkeypatch):
     with pytest.raises(Unsupported, match="app_install"):
         from cua_sandbox.containers import image_build
 
-        image_build(Image.linux().app_install("firefox"), where="local")
+        image_build(Image.linux().app_install("firefox"))
 
     # ...on a container image they are applied after boot when it runs
     # cua-spacesd (Image.linux()), and refused when it does not.

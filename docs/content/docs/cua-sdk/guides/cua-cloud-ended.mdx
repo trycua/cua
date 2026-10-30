@@ -17,7 +17,7 @@ The same SDK calls, images and `cua` CLI commands run anywhere else:
 | Where | How | Guide |
 | --- | --- | --- |
 | This machine | `Sandbox.create(...)` (the default), `cua sb create` | [Choose where sandboxes run](/cua-sdk/guides/local-runtimes#this-machine) |
-| Your own AWS, Google Cloud or Modal account | `on="aws"`, `on="gcp"`, `on="modal"`; `--on aws` in the CLI | [Choose where sandboxes run](/cua-sdk/guides/local-runtimes#your-own-cloud) |
+| Your own AWS, Google Cloud or Modal account | `on="aws"`, `on="gcp"`, `on="modal"`; `--on aws` in the CLI | [Choose where sandboxes run](/cua-sdk/guides/your-cloud) |
 | A machine you run, shared with your team and agents | Cua Spaces | [Cua Spaces](/spaces) |
 
 ### In your code
@@ -26,7 +26,7 @@ The same SDK calls, images and `cua` CLI commands run anywhere else:
 with this message:
 
 ```text output
-Cua Cloud has ended; use a local sandbox or your own machine. See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended
+Cua Cloud has ended; use a local sandbox or your own computer. See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended
 ```
 
 `Cua.fleet()`, `cua fleet`, `cua pools`, `--pool`, `FLEETS_TOKEN`, cloud image
@@ -40,7 +40,7 @@ services, secrets and images work the same way there:
 
 Fleet pool names, claim TTLs and warm-replica settings have no replacement.
 Your own cloud gives each sandbox a time limit and cleans up after it
-([Time limits and cleanup](/cua-sdk/guides/local-runtimes#time-limits-and-cleanup)).
+([Time limits and cleanup](/cua-sdk/guides/your-cloud#time-limits-and-cleanup)).
 
 Questions: [GitHub issues](https://github.com/trycua/cua/issues) or
 [Discord](https://discord.com/invite/mVnXXpdE85).

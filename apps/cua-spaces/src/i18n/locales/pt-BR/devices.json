@@ -1,0 +1,8 @@
+{
+  "devices.banner.label": "Registro de dispositivo",
+  "devices.section.label": "Dispositivos",
+  "devices.section.title": "Dispositivos",
+  "devices.recent.not_yours_label": "Não é um dos seus dispositivos",
+  "devices.enroll.code_label": "Código de uso único",
+  "devices.approve.passphrase_label": "Frase secreta do Keyvault"
+}

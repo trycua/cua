@@ -73,13 +73,15 @@ impl HealthCheckProvider for MacosHealthProvider {
 
 // ── Individual checks ────────────────────────────────────────────────────────
 
-/// True when this daemon is neither embedded in a host app nor inside
-/// CuaDriver.app: it relaunched itself disclaimed, as its own responsible
-/// process (CUA-1777).
+/// True when this daemon is neither embedded in a host app nor running from
+/// inside an app bundle: a bare binary relaunches itself disclaimed, as its
+/// own responsible process with no usable WindowServer connection (CUA-1777).
+/// Any `.app/Contents/MacOS/` executable counts as bundled: CuaDriver.app and
+/// hosts that link the driver in-process, such as Cua Spacesd.app (the macOS
+/// Space image's daemon). A real invalid connection is still caught by the
+/// runtime 1002 detector, which `windowserver_connection_entry` checks first.
 pub fn is_unbundled(embedded: bool, exe_path: &str) -> bool {
-    !embedded
-        && !(exe_path.contains("/CuaDriver.app/Contents/MacOS/")
-            || exe_path.contains("/CuaDriverLocal.app/Contents/MacOS/"))
+    !embedded && !exe_path.contains(".app/Contents/MacOS/")
 }
 
 fn check_windowserver_connection() -> CheckEntry {
@@ -422,6 +424,14 @@ mod tests {
             false,
             "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
         ));
+        // A host app that links the driver in-process (the macOS image's daemon).
+        assert!(!is_unbundled(
+            false,
+            "/Applications/Cua Spacesd.app/Contents/MacOS/cua-spacesd"
+        ));
+        // Not a bundle: a path that merely mentions an app, or a bare binary.
+        assert!(is_unbundled(false, "/tmp/Foo.app/cua-driver"));
+        assert!(is_unbundled(false, "/usr/local/bin/cua-spacesd"));
     }
 
     #[test]

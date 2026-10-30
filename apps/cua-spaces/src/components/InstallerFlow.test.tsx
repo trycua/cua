@@ -62,6 +62,7 @@ function fakeTelemetry() {
       view.enabled = on;
       return view;
     },
+    setUiLocale: () => {},
     recordFeature: () => {},
     recordStep: () => {},
     recordStream: () => {},
@@ -119,6 +120,15 @@ describe("InstallerFlow", () => {
     expect(document.querySelector(".ob-footer")).toBeNull();
   });
 
+  it("Welcome has one clear action: a plain line, and Get started has focus so Enter works (CUA-1959)", () => {
+    render(<InstallerFlow installer={createFakeInstallerBridge()} host={createFakeHostBridge()} onDone={vi.fn()} />);
+    expect(screen.getByText("Computers for you and your AI agents. Setup takes about a minute.")).toBeInTheDocument();
+    const start = screen.getByRole("button", { name: "Get started" });
+    expect(start).toHaveFocus();
+    // The only button on the page; the usage switch never blocks it.
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
   it("walks welcome → sign in → agents → where it shows up → Cua Volume → mode → done, installing cua silently", async () => {
     const installer = createFakeInstallerBridge();
     const host = createFakeHostBridge();
@@ -142,13 +152,13 @@ describe("InstallerFlow", () => {
     expect(screen.getByText("Welcome to Cua Spaces")).toBeInTheDocument();
     // The telemetry notice is on Welcome: it is recorded as shown before
     // anything is recorded.
-    expect(screen.getByTestId("telemetry-notice")).toHaveTextContent("Change it here or in Settings, Privacy.");
+    expect(screen.getByTestId("telemetry-notice")).toHaveTextContent("Change this here or in Settings, Privacy.");
     expect(screen.getByRole("link", { name: "What is collected" })).toHaveAttribute(
       "href",
       "https://cua.ai/docs/cua-sdk/concepts/telemetry",
     );
     // Nothing is recorded while Welcome shows; the switch is on.
-    expect(screen.getByRole("switch", { name: "Share anonymous usage data" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Share usage data to help improve Cua" })).toBeChecked();
     expect(telemetry.signals).toEqual([]);
     // First launch installs the bundled cua (PATH line added): no page.
     await waitFor(() => expect(installer.calls).toEqual(["cliPlan", "installCli:path"]));
@@ -257,7 +267,7 @@ describe("InstallerFlow", () => {
         onDone={vi.fn()}
       />,
     );
-    const toggle = screen.getByRole("switch", { name: "Share anonymous usage data" });
+    const toggle = screen.getByRole("switch", { name: "Share usage data to help improve Cua" });
     await waitFor(() => expect(toggle).toBeChecked());
     fireEvent.click(toggle);
     expect(toggle).not.toBeChecked();
@@ -415,7 +425,7 @@ describe("InstallerFlow", () => {
     click("Turn on remote access");
     // Signed in, no agent yet: honest, with the fix.
     expect(await screen.findByText("Almost done")).toBeInTheDocument();
-    expect(screen.getByText("Your other devices can reach it")).toBeInTheDocument();
+    expect(screen.getByText("Your other machines can reach it")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect an AI agent" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
     expect(screen.queryByText("Grant in System Settings")).toBeNull();

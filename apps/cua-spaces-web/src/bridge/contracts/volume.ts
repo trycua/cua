@@ -30,7 +30,7 @@ export interface Experiments {
   webUi?: boolean;
 }
 
-export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, yourCloud: false, sharing: true, webUi: false };
+export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, yourCloud: true, sharing: true, webUi: false };
 
 /* ---- The daemon's answers (volume_*) ---------------------------------------- */
 

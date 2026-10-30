@@ -14,10 +14,6 @@ use cua_driver_core::browser::{
 use crate::atspi::AtspiNode;
 use crate::interaction::{with_target_foreground, RestoreMode};
 
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
-}
-
 fn field_equals(node: &AtspiNode, expected: &str) -> bool {
     [
         node.name.as_deref(),
@@ -91,7 +87,7 @@ fn exact_setup_checkbox<'a>(
     match matches.as_slice() {
         [] => Ok(None),
         [node] => Ok(Some(*node)),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "multiple exact remote-debugging checkboxes were exposed",
         )),
@@ -134,7 +130,7 @@ fn exact_omnibox<'a>(
     match matches.as_slice() {
         [] => Ok(None),
         [node] => Ok(Some(*node)),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
                 "{} exposed multiple exact address-and-search fields",
@@ -316,14 +312,14 @@ fn window_scoped_tree(
 ) -> Result<crate::atspi::AtspiTreeResult, BrowserRefusal> {
     let tree = crate::atspi::walk_tree(pid, window_id, None);
     if !tree.trusted {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "no trusted AT-SPI tree for the approved browser window; \
              the accessibility bus must be reachable to prove which window a control belongs to",
         ));
     }
     if !tree.window_scoped {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
             format!(
                 "could not prove which of pid {pid}'s accessibility top-levels renders window \
@@ -359,9 +355,10 @@ impl SetupUiHandle {
             exact_setup_checkbox(&tree.nodes, self.descriptor, self.trusted_setup_navigation)
                 .ok()
                 .flatten()
-                .filter(|node| node.checked == Some(true))
-                .and_then(|node| node.element_index)
-                .is_some_and(|index| crate::atspi::perform_action(self.pid, index).is_ok());
+                .filter(|node| node.checked == Some(true) && node.element_index.is_some())
+                .is_some_and(|node| {
+                    crate::atspi::perform_action_walked(self.pid, self.window_id, node).is_ok()
+                });
         if restored {
             self.enabled_remote_debugging = false;
         }
@@ -398,14 +395,14 @@ impl SetupUiHandle {
         }
         let tree = crate::atspi::walk_tree(self.pid, self.window_id, None);
         if !setup_page_proven(&tree.nodes, self.descriptor, self.trusted_setup_navigation) {
-            let error = refusal(
+            let error = BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the temporary setup page was no longer exact before cleanup",
             );
             return Err(self.abort(error));
         }
         if let Err(error) = close_tab(self.pid, self.window_id) {
-            let error = refusal(
+            let error = BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("could not close the exact temporary setup tab: {error}"),
             );
@@ -442,7 +439,7 @@ pub fn retain_pending(
     let mut pending = pending_setups().lock().unwrap();
     if pending.contains_key(&(pid, window_id)) {
         drop(pending);
-        return Err(handle.abort(refusal(
+        return Err(handle.abort(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
             "another approved browser setup is already pending for this exact window",
         )));
@@ -457,7 +454,7 @@ pub fn commit_pending(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> 
         .unwrap()
         .remove(&(pid, window_id))
         .ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
                 "the exact pending browser setup cleanup handle is missing",
             )
@@ -486,7 +483,7 @@ fn open_setup_page(
     clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
     if on_niri {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!(
                 "existing-profile {} setup has no niri foreground route: it would focus the \
@@ -510,7 +507,7 @@ fn open_setup_page(
         injected_global_input: true,
     };
     if let Err(error) = trusted_setup_navigation(pid, window_id, descriptor, clipboard) {
-        return Err(handle.abort(refusal(
+        return Err(handle.abort(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
                 "could not navigate the exact {} window to its fixed setup page: {error}",
@@ -570,9 +567,8 @@ fn set_remote_debugging(
                     return Ok(handle);
                 }
                 Some(_) if !handle.enable_attempted => {
-                    let index = node.element_index.expect("actionable checkbox index");
-                    if let Err(error) = crate::atspi::perform_action(pid, index) {
-                        return Err(handle.abort(refusal(
+                    if let Err(error) = crate::atspi::perform_action_walked(pid, window_id, node) {
+                        return Err(handle.abort(BrowserRefusal::new(
                             BrowserRefusalCode::BrowserWrongTargetRefused,
                             format!("the exact checkbox action failed: {error}"),
                         )));
@@ -613,8 +609,18 @@ fn set_remote_debugging(
                             );
                             }
                             let index = checkbox.element_index.expect("actionable checkbox index");
-                            let (x, y, width, height) =
-                                crate::atspi::get_element_bounds(pid, index)?;
+                            // The frame this walk recorded for the checkbox, not a
+                            // lookup of its index in another snapshot.
+                            let (x, y, width, height) = tree
+                                .bounds
+                                .iter()
+                                .find(|(bounded, ..)| *bounded == index)
+                                .map(|&(_, x, y, width, height)| (x, y, width, height))
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "the exact Microsoft Edge remote-debugging checkbox had no screen bounds"
+                                    )
+                                })?;
                             if width <= 1 || height <= 1 {
                                 anyhow::bail!(
                                 "the exact Microsoft Edge remote-debugging checkbox had empty screen bounds"
@@ -641,7 +647,7 @@ fn set_remote_debugging(
                     match clicked {
                         Ok(injected) => handle.injected_global_input |= injected,
                         Err(error) => {
-                            return Err(handle.abort(refusal(
+                            return Err(handle.abort(BrowserRefusal::new(
                                 BrowserRefusalCode::BrowserWrongTargetRefused,
                                 format!(
                                     "could not toggle the exact Microsoft Edge remote-debugging checkbox: {error}"
@@ -652,7 +658,7 @@ fn set_remote_debugging(
                 }
                 Some(_) => {}
                 None => {
-                    return Err(handle.abort(refusal(
+                    return Err(handle.abort(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         "AT-SPI did not expose the exact checkbox checked state",
                     )))
@@ -662,7 +668,7 @@ fn set_remote_debugging(
             Err(error) => return Err(handle.abort(error)),
         }
         if Instant::now() >= deadline {
-            return Err(handle.abort(refusal(
+            return Err(handle.abort(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 setup_not_ready_message(descriptor),
             )));

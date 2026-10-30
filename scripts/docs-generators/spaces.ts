@@ -57,6 +57,12 @@ export const PAGES: Array<{ slug: string; title: string; description: string; ca
     description: 'Run agents in a Space, teleport apps, and use Keyvault and Cua Volume: the tools with their parameters, results and errors.',
     categories: ['agents', 'persistent-agents', 'teleport', 'keyvault', 'volume'],
   },
+  {
+    slug: 'threads',
+    title: 'Thread and member tools',
+    description: "Each Space's conversation: post, read and mention, join as a member, and the view a message was sent from.",
+    categories: ['thread'],
+  },
 ];
 
 /** Category id -> the page that documents it. */
@@ -162,7 +168,7 @@ const PROVIDER_ID: Record<string, string> = {
   cloud: '`cloud:<name>`',
   local: '`local:<name>`',
   direct: '`direct:<host:port>`',
-  relay: '`relay:<machine-id>`',
+  relay: '`relay:<computer-id>`',
 };
 
 function effect(a: Annotations): string {
@@ -227,7 +233,7 @@ function toolSection(tool: Tool, manifest: Manifest): string[] {
         ? 'all (cloud, local, direct, relay)'
         : tool.providers.map((p) => `${p} only (${PROVIDER_ID[p] ?? p})`).join(', '),
     ],
-    ['Platforms', tool.platforms.length === 3 ? 'all (macos, windows, linux)' : `${tool.platforms.join(', ')} (the operator's machine)`],
+    ['Platforms', tool.platforms.length === 3 ? 'all (macos, windows, linux)' : `${tool.platforms.join(', ')} (the operator's computer)`],
     ['Metering', tool.metering],
     [
       'Approval',
@@ -235,7 +241,7 @@ function toolSection(tool: Tool, manifest: Manifest): string[] {
     ],
   ];
   if (tool.requires.length) facts.push(['Requires (spacesd)', tool.requires.map((r) => codeCell(r)).join(', ')]);
-  if (tool.host_requires.length) facts.push(['Requires (this machine)', tool.host_requires.map((r) => codeCell(r)).join(', ')]);
+  if (tool.host_requires.length) facts.push(['Requires (this computer)', tool.host_requires.map((r) => codeCell(r)).join(', ')]);
   if (tool.sdk_symbol) facts.push(['Swift SDK', codeCell(tool.sdk_symbol)]);
   facts.push(['Rust', codeCell(tool.rust_symbol)]);
   out.push('| | |', '| --- | --- |');

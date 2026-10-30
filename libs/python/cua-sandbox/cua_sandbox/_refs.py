@@ -1,10 +1,10 @@
 """Sandbox references: one scheme for sandboxes and Spaces.
 
-``local:<name>``, ``cloud:<name>``, ``direct:<host:port>`` and
-``relay:<machine-id>``; a bare name is searched across locations and must be
-unique (else :class:`AmbiguousSandbox`). Parsing is the Rust core's
-(``cua.parse_sandbox_ref``), so legacy spellings (``space://fleet/<ns>/<c>``,
-``fleet:<ns>:<c>``, ``url:<addr>``) parse the same way on every surface.
+``local:<name>``, ``direct:<host:port>`` and ``relay:<machine-id>``; a bare
+name is a local sandbox. A ``cloud:<name>`` ref still parses, and resolving it
+raises :class:`~cua_sandbox._ended.CloudEnded`: Cua Cloud has ended. Parsing is
+the Rust core's (``cua.parse_sandbox_ref``), so legacy spellings parse the same
+way on every surface.
 """
 
 from __future__ import annotations
@@ -18,16 +18,12 @@ from cua_sandbox._sdk import InvalidArgument, Unsupported
 
 logger = logging.getLogger(__name__)
 
-#: How long a bare-name lookup waits for the cloud (the same bound as a
-#: listing) before it resolves without the account's cloud sandboxes.
-LOOKUP_CLOUD_TIMEOUT = 5.0
-
 
 class AmbiguousSandbox(LookupError):
     """A bare sandbox name matches sandboxes in more than one location.
 
     ``candidates`` are the qualified refs it matches (``local:box``,
-    ``cloud:box``); pass one of them, or ``local=True``/``local=False``.
+    ``relay:<id>``); pass one of them.
     The native SDK raises ``cua.CuaError.AmbiguousSandbox`` for the same
     case."""
 
@@ -85,24 +81,15 @@ def _narrowed(ref: Ref, local: Optional[bool]) -> Ref:
     return ref
 
 
-async def _cloud_has(name: str) -> bool:
-    """Whether the account has a live cloud sandbox (Fleet claim) ``name``.
-    Only asked when cloud credentials can be read without the OS keychain;
-    bounded, and a failing cloud answers "no"."""
-    # Cua Cloud has ended (CUA-1854): there is nothing to search.
-    return False
-
-
 async def resolve(
     name: str, local: Optional[bool], *, is_local: Optional[Callable[[str], bool]] = None
 ) -> tuple[str, Optional[bool], Optional[str]]:
     """``(plain name, local, url)`` for a sandbox ref or name.
 
     A qualified ref decides the location (``direct:`` becomes a URL). A bare
-    name with ``local=None`` is the local sandbox when one exists and no
-    cloud sandbox has the name too (else :class:`AmbiguousSandbox`), and the
-    cloud otherwise. ``relay:`` machines are Spaces
-    (:class:`~cua_sandbox.Unsupported` here).
+    name is the local sandbox when one exists. A ``cloud:`` ref, or
+    ``local=False``, raises :class:`~cua_sandbox._ended.CloudEnded`.
+    ``relay:`` machines are Spaces (:class:`~cua_sandbox.Unsupported` here).
     """
     ref = _narrowed(parse(name), local)
     if ref.location == "local":
@@ -113,13 +100,8 @@ async def resolve(
         return ref.name, None, f"http://{ref.name}"
     if ref.location == "relay":
         raise Unsupported(
-            f"{ref.id}: relay machines are Spaces; open it with cua.embedded().spaces()"
+            f"{ref.id}: relay computers are Spaces; open it with cua.embedded().spaces()"
         )
     if is_local is None:
         from cua_sandbox.sandbox import _is_local_sandbox as is_local
-    here = bool(is_local(ref.name))
-    if here and await _cloud_has(ref.name):
-        raise AmbiguousSandbox(
-            ref.name, [qualified("local", ref.name), qualified("cloud", ref.name)]
-        )
-    return ref.name, here, None
+    return ref.name, bool(is_local(ref.name)), None

@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cua"
-version = "0.5.0"
-description = "The cua SDK: sandboxes (Fleet, local, direct), cua-spacesd, media streaming and the cua daemon, on a Rust core"
+version = "0.9.0"
+description = "The cua SDK: sandboxes (local, direct, your own cloud), cua-spacesd, media streaming and the cua daemon, on a Rust core"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "TryCua", email = "hello@trycua.com" }]
@@ -25,6 +25,12 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 requires-python = ">=3.10"
+# The released wheel also requires `cua-cli==<its version>`: the Rust `cua`
+# CLI as its own platform wheel (cli/), since PyPI caps a file at 100 MB and
+# the CLI and the library together are over it. build_wheel.py adds that
+# pin (hatch_build.py), so a source or editable install of this directory
+# needs nothing that is not on an index. `pip install --no-deps cua` is the
+# SDK alone.
 dependencies = []
 
 [project.optional-dependencies]
@@ -45,7 +51,8 @@ Repository = "https://github.com/trycua/cua"
 Issues = "https://github.com/trycua/cua/issues"
 
 [project.scripts]
-# The Rust `cua` CLI, bundled as src/cua/bin/cua[.exe] by build_wheel.py.
+# Runs the Rust `cua` CLI at cua_cli/bin/cua[.exe], which the `cua-cli`
+# wheel installs; without it (`--no-deps`), prints how to install it.
 cua = "cua._cli:main"
 
 [tool.hatch.build.targets.wheel]

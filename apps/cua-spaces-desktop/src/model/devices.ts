@@ -169,6 +169,14 @@ export class DevicesModel {
     await this.refresh();
   }
 
+  /** Renames one of your machines on the relay (this machine's host setup takes the name too). */
+  async renameMachine(machineId: string, name: string): Promise<void> {
+    const clean = this.native.appDevicesCleanName(name);
+    if (!clean) throw new RangeError("name");
+    await this.relay().renameMachine(machineId, clean);
+    await this.refresh();
+  }
+
   async revoke(id: string): Promise<void> {
     await this.relay().revoke(id);
     await this.refresh();
@@ -207,6 +215,6 @@ export class DevicesUnavailable extends Error {
 /** Only say "approved" when the relay says the device is enrolled: anything else would leave the other device waiting while this one reads success. */
 export function requireEnrolled(device: RelayDevice): void {
   if (device.state !== "enrolled") {
-    throw new Error(`The relay did not enroll ${device.name} (${device.id}): it is ${device.state}. Ask that device for a new code and try again.`);
+    throw new Error(`The relay did not enroll ${device.name} (${device.id}): it is ${device.state}. Ask that machine for a new code and try again.`);
   }
 }

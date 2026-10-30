@@ -3,17 +3,19 @@
   "pages": [
     "---Sandboxes---",
     "cua",
+    "runtime-kinds",
+    "repo-cache",
     "sandbox",
+    "share",
     "image",
     "os-image-catalog",
     "image-software",
     "services",
     "runtime-support",
-    "---Cloud capacity---",
-    "fleet",
     "---Inside a sandbox---",
     "spacesd",
     "agents",
+    "agent-setup",
     "---Spaces---",
     "spaces",
     "---Account---",
@@ -26,6 +28,11 @@
     "typescript",
     "rust",
     "---Protocol---",
-    "protocol"
+    "protocol",
+    "---Telemetry---",
+    "../concepts/telemetry",
+    "../concepts/telemetry-events",
+    "../concepts/telemetry-counting",
+    "../concepts/telemetry-error-kinds"
   ]
 }

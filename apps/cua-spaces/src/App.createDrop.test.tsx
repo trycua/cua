@@ -8,11 +8,11 @@ import { App } from "./App";
 import { FIXTURE_NOW } from "./model/fixtures";
 import type { SpaceRow } from "./model/spaces";
 import type { NativeBridge } from "./native/bridge";
-import type { FleetBridge } from "./native/fleet";
+import type { SpacesBridge } from "./native/spacesBridge";
 import type { TeleportBridge } from "./native/teleport";
 import type { PortalEnvironment, PortalGeometry, WindowMode } from "./native/types";
 import type { WindowDragBridge, WindowDragEvent } from "./native/windowDrag";
-import { fakeFleetBridge } from "./test/fakeFleet";
+import { fakeSpacesBridge } from "./test/fakeSpacesBridge";
 
 // The native drag effect reaches for a couple of Tauri window APIs; stub them.
 vi.mock("@tauri-apps/api/window", () => ({
@@ -31,7 +31,7 @@ const SIZES: Record<WindowMode, { w: number; h: number }> = {
   ambient: { w: 420, h: 38 },
   "ambient-teleport": { w: 420, h: 96 },
   switcher: { w: 760, h: 320 },
-  "create-fleet": { w: 600, h: 700 },
+  "create-space": { w: 600, h: 700 },
 };
 function geom(mode: WindowMode): PortalGeometry {
   const s = SIZES[mode];
@@ -96,12 +96,12 @@ const NEW_SPACE: SpaceRow = {
   reachable: true,
 };
 
-function fakeFleet(
-  createSpace: FleetBridge["createSpace"],
-  defaultLocation: FleetBridge["defaultLocation"] = async () => ({ value: "local", source: "config", path: "/tmp/cua/config.toml" }),
-): FleetBridge {
+function makeFakeBridge(
+  createSpace: SpacesBridge["createSpace"],
+  defaultLocation: SpacesBridge["defaultLocation"] = async () => ({ value: "local", source: "config", path: "/tmp/cua/config.toml" }),
+): SpacesBridge {
   let created = false;
-  return fakeFleetBridge({
+  return fakeSpacesBridge({
     isNative: true,
     status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
     listSpaces: async () => (created ? [NEW_SPACE] : []),
@@ -148,7 +148,7 @@ describe("drag an app onto the + tile", () => {
     render(
       <App
         bridge={nativeNotchedBridge()}
-        fleet={fakeFleet(createSpace, defaultLocation)}
+        spacesBridge={makeFakeBridge(createSpace, defaultLocation)}
         teleport={fakeTeleport(openPicker)}
         windowDrag={drag.bridge}
         now={() => (clock += 1000)}
@@ -204,7 +204,7 @@ describe("drag an app onto the + tile", () => {
     render(
       <App
         bridge={nativeNotchedBridge()}
-        fleet={fakeFleet(createSpace)}
+        spacesBridge={makeFakeBridge(createSpace)}
         teleport={fakeTeleport(openPicker)}
         windowDrag={drag.bridge}
         now={() => (clock += 1000)}

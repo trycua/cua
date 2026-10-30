@@ -112,7 +112,7 @@ export interface OnboardingView {
   notice: string | null;
   noticeLinkLabel: string | null;
   noticeLinkUrl: string | null;
-  /** Welcome's "Share anonymous usage data" switch (Welcome only). */
+  /** Welcome's "Share usage data to help improve Cua" switch (Welcome only). */
   usage: { label: string; on: boolean; enabled: boolean; help: string | null } | null;
   /** The Cua Volume page's card. */
   drive: DriveCard | null;

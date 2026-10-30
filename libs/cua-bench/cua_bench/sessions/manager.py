@@ -110,7 +110,7 @@ def list_sessions(provider: Optional[str] = None) -> List[Dict[str, Any]]:
     """List all stored sessions.
 
     Args:
-        provider: Optional provider filter ("docker", "cua-cloud", etc.)
+        provider: Optional provider filter ("docker", etc.)
 
     Returns:
         List of session metadata dicts

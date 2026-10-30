@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cursor-motion"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1256,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-bindgen"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "cbindgen",
  "uniffi",
@@ -1264,7 +1264,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "schemars",
  "serde",
@@ -1274,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1290,6 +1290,7 @@ dependencies = [
  "hmac",
  "image",
  "jsonschema",
+ "keyring",
  "libc",
  "regex",
  "regorus",
@@ -1313,7 +1314,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-e2e"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "base64",
  "core-foundation",
@@ -1342,7 +1343,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "async-trait",
  "core-foundation",
@@ -1366,7 +1367,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-testkit"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "arbitrary",
  "async-trait",
@@ -1387,7 +1388,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -1417,7 +1418,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -1429,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -1449,7 +1450,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-theme-cli"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "cursor-overlay",
@@ -3464,7 +3465,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "serde_json",
 ]
@@ -3522,7 +3523,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -3541,9 +3542,7 @@ dependencies = [
  "enumflags2",
  "evdev",
  "futures-util",
- "getrandom 0.4.2",
  "image",
- "keyring",
  "libc",
  "libspa",
  "memmap2",
@@ -3562,7 +3561,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "uuid",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
@@ -3572,12 +3570,11 @@ dependencies = [
  "x11rb",
  "xkbcommon",
  "zbus",
- "zeroize",
 ]
 
 [[package]]
 name = "platform-macos"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3617,7 +3614,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.36.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3628,7 +3625,6 @@ dependencies = [
  "cursor-overlay",
  "getrandom 0.4.2",
  "image",
- "keyring",
  "pip-preview",
  "serde",
  "serde_json",
@@ -4144,9 +4140,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -4608,7 +4604,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5518,9 +5514,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.7"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]

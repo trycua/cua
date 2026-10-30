@@ -86,9 +86,10 @@ pub struct NoAccount;
 #[async_trait::async_trait]
 impl AccountTokens for NoAccount {
     async fn access_token(&self) -> Result<String> {
-        Err(Error::Unauthenticated(
-            "not signed in to cua.ai (run `cua auth login` or sign in from the app)".into(),
-        ))
+        Err(Error::Unauthenticated(format!(
+            "not signed in to cua.ai (run `{} auth login` or sign in from the app)",
+            crate::cli()
+        )))
     }
 }
 
@@ -151,7 +152,9 @@ pub struct Machine {
     /// Unix seconds of the current session.
     #[serde(default)]
     pub connected_at: Option<u64>,
-    /// `<relay>/m/<id>`: the spacesd URL clients connect to.
+    /// The machine's spacesd URL as the relay lists it: `https://<id>.<host
+    /// domain>` on a relay with a host domain (cua.ai: `m.cua.sh`), else
+    /// `<relay>/m/<id>`. `<relay>/m/<id>` works on the hosted relay too.
     #[serde(default)]
     pub url: String,
     /// Allowlist (owner view only): accounts with full use (editors).
@@ -208,6 +211,30 @@ pub struct RegisterRequest {
     pub meta: std::collections::BTreeMap<String, String>,
 }
 
+/// `POST /v1/machines/{id}/leave` response.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaveReply {
+    /// The machine left.
+    #[serde(default)]
+    pub id: String,
+    /// The caller's own entries taken off its allowlist and viewers.
+    #[serde(default)]
+    pub removed: Vec<String>,
+    /// The team the caller reaches it through, when it is now hidden from
+    /// their listing (the team keeps it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_team: Option<String>,
+}
+
+/// What a call the relay does not know yet fails with
+/// ([`RelayClient::leave`] on a relay that predates it).
+pub const RELAY_NEEDS_UPDATE: &str = "the Cua relay needs an update";
+
+/// Whether `e` says the relay is too old for the call.
+pub fn is_relay_outdated(e: &Error) -> bool {
+    matches!(e, Error::Relay(m) if m == RELAY_NEEDS_UPDATE)
+}
+
 /// `POST /v1/machines` response.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Registration {
@@ -239,6 +266,19 @@ pub struct MachinePatch {
     /// empty value removes the key). Older relays ignore it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// What opening a link once returned (see [`RelayClient::open_link`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkProbe {
+    /// HTTP status of the final response.
+    pub status: u16,
+    /// Its content type.
+    pub content_type: String,
+    /// Body bytes read (capped).
+    pub bytes: usize,
+    /// `Location`, when the final response was a redirect.
+    pub location: Option<String>,
 }
 
 /// `GET /v1/info`.
@@ -432,6 +472,9 @@ pub struct RelayUsage {
     pub soft_limit_reached: bool,
     /// What is past it: `sessions` and/or `hours`.
     pub reasons: Vec<String>,
+    /// Free plan only: `free_limit_sessions` and/or `free_limit_relay_hours`
+    /// when at or over that allowance (CUA-1745). Older relays send none.
+    pub warnings: Vec<String>,
     /// Where to get more.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upgrade_url: Option<String>,
@@ -467,6 +510,45 @@ pub struct DeviceSession {
     pub expires_at: u64,
 }
 
+/// Most times one request is sent while the proxy throttles this client.
+const THROTTLE_ATTEMPTS: u32 = 8;
+/// Most time spent waiting between those attempts.
+const THROTTLE_BUDGET: Duration = Duration::from_secs(60);
+
+/// How long to wait before sending again after the `attempt`th throttled
+/// answer: the proxy's `Retry-After` (`retry_after_secs`) or a capped
+/// exponential backoff (1 s, 2 s, 4 s, 8 s), whichever is longer, plus up to
+/// a quarter of that as jitter so many clients do not return together.
+fn throttle_wait(retry_after_secs: u64, attempt: u32) -> Duration {
+    let backoff = 1u64 << attempt.saturating_sub(1).min(3);
+    // Clamped before jitter so a absurd `Retry-After` cannot overflow
+    // `Duration`; anything past the budget makes the caller give up anyway.
+    let secs = retry_after_secs
+        .max(backoff)
+        .min(THROTTLE_BUDGET.as_secs() + 1);
+    let base = Duration::from_secs(secs);
+    base + base.mul_f64(rand::random::<f64>() * 0.25)
+}
+
+/// The proxy's own 429 has the generic body `Too Many Requests` (or none).
+fn is_proxy_throttle(body: &str) -> bool {
+    let b = body.trim();
+    b.is_empty() || b.eq_ignore_ascii_case("too many requests")
+}
+
+/// `Retry-After` as a wait: whole seconds or an HTTP date.
+fn retry_after(h: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let v = h.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?.trim();
+    if let Ok(secs) = v.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+    let at = httpdate::parse_http_date(v).ok()?;
+    Some(
+        at.duration_since(std::time::SystemTime::now())
+            .unwrap_or_default(),
+    )
+}
+
 /// Times a machine registration is tried again after a transient failure.
 const REGISTER_RETRIES: u32 = 3;
 /// The first wait before trying again (doubling each time).
@@ -491,6 +573,27 @@ pub struct RelayClient {
     base: String,
     pub(crate) http: reqwest::Client,
     device_session: Option<String>,
+    sleeper: Sleeper,
+}
+
+/// Waits between throttled attempts. Unit tests of this crate record the
+/// waits instead of sleeping them.
+#[derive(Clone, Debug, Default)]
+struct Sleeper {
+    #[cfg(test)]
+    waits: std::sync::Arc<std::sync::Mutex<Vec<Duration>>>,
+}
+
+impl Sleeper {
+    #[cfg(not(test))]
+    async fn sleep(&self, d: Duration) {
+        tokio::time::sleep(d).await;
+    }
+
+    #[cfg(test)]
+    async fn sleep(&self, d: Duration) {
+        self.waits.lock().unwrap().push(d);
+    }
 }
 
 impl RelayClient {
@@ -498,15 +601,20 @@ impl RelayClient {
     /// `wss://…` is accepted and mapped to `https://…`).
     pub fn new(base: &str) -> Result<Self> {
         let base = normalize_base(base)?;
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| Error::Relay(e.to_string()))?;
+        // One client per process (cua_auth::http): a client per call read
+        // the OS roots and opened a new TLS connection for every relay call
+        // (F53). Its pool keeps connections to the relay alive between calls.
+        let http = cua_auth::http::shared(cua_auth::http::Shape {
+            connect_timeout: Duration::from_secs(10),
+            timeout: Duration::from_secs(30),
+            user_agent: None,
+        })
+        .map_err(|e| Error::Relay(e.to_string()))?;
         Ok(Self {
             base,
             http,
             device_session: None,
+            sleeper: Sleeper::default(),
         })
     }
 
@@ -530,6 +638,72 @@ impl RelayClient {
         format!("{}{path}", self.base)
     }
 
+    /// Opens `url` once the way a signed-in device would: GET with the
+    /// account token (when given) and this client's device session, and
+    /// redirects followed only within the same host (the credentials never
+    /// leave it). Reads at most `max_body` bytes. Used to confirm a shared
+    /// link loads before it is handed to anyone.
+    pub async fn open_link(
+        &self,
+        url: &str,
+        bearer: Option<&str>,
+        max_body: usize,
+    ) -> Result<LinkProbe> {
+        let start =
+            reqwest::Url::parse(url).map_err(|e| Error::InvalidArgument(format!("{url}: {e}")))?;
+        let host = start.host_str().map(str::to_owned);
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                if attempt.previous().len() >= 5 {
+                    attempt.error("too many redirects")
+                } else if attempt.url().host_str().map(str::to_owned) == host {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            }))
+            .build()
+            .map_err(|e| Error::Relay(e.to_string()))?;
+        let mut req = http.get(start);
+        if let Some(b) = bearer {
+            req = req.bearer_auth(b);
+            if let Some(session) = &self.device_session {
+                req = req.header(DEVICE_SESSION_HEADER, session);
+            }
+        }
+        let mut resp = req
+            .send()
+            .await
+            .map_err(|e| Error::Relay(format!("{url}: {e}")))?;
+        let status = resp.status().as_u16();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let location = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let mut bytes = 0usize;
+        while let Ok(Some(chunk)) = resp.chunk().await {
+            bytes += chunk.len();
+            if bytes >= max_body {
+                break;
+            }
+        }
+        Ok(LinkProbe {
+            status,
+            content_type,
+            bytes,
+            location,
+        })
+    }
+
     pub(crate) async fn send<T: serde::de::DeserializeOwned>(
         &self,
         req: reqwest::RequestBuilder,
@@ -538,29 +712,94 @@ impl RelayClient {
         self.send_once(req, bearer).await.map_err(|(e, _)| e)
     }
 
-    /// One request. On failure, also whether the relay certainly did not
-    /// act on it and it may be sent again: the connection never opened, or
-    /// the relay (or the proxy in front of it) answered 429, 502 or 503.
+    /// One request, sent again while the proxy in front of the relay is
+    /// throttling this client (see [`throttle_wait`]). On failure, also
+    /// whether the relay certainly did not act on it and it may be sent
+    /// again: the connection never opened, or the relay (or the proxy in
+    /// front of it) answered 502 or 503. A throttled request never reached
+    /// the relay, so sending it again is safe for any method.
     async fn send_once<T: serde::de::DeserializeOwned>(
         &self,
         req: reqwest::RequestBuilder,
         bearer: &str,
     ) -> std::result::Result<T, (Error, bool)> {
-        let mut req = req.bearer_auth(bearer);
-        if let Some(session) = &self.device_session {
-            req = req.header(DEVICE_SESSION_HEADER, session);
+        self.send_with(req, Some(bearer)).await
+    }
+
+    async fn send_with<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+        bearer: Option<&str>,
+    ) -> std::result::Result<T, (Error, bool)> {
+        let mut waited = Duration::ZERO;
+        let mut attempt = 0u32;
+        let mut req = req;
+        loop {
+            // A body that cannot be copied (a stream) is sent once.
+            let next = req.try_clone();
+            let result = self.send_attempt(req, bearer).await;
+            let (Err((Error::Throttled { retry_after_secs }, _)), Some(next)) = (&result, next)
+            else {
+                return result;
+            };
+            attempt += 1;
+            let wait = throttle_wait(*retry_after_secs, attempt);
+            if attempt >= THROTTLE_ATTEMPTS || waited + wait > THROTTLE_BUDGET {
+                return result;
+            }
+            tracing::debug!(attempt, ?wait, "relay is throttling this client, retrying");
+            self.sleeper.sleep(wait).await;
+            waited += wait;
+            req = next;
+        }
+    }
+
+    async fn send_attempt<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+        bearer: Option<&str>,
+    ) -> std::result::Result<T, (Error, bool)> {
+        let mut req = req;
+        if let Some(b) = bearer {
+            req = req.bearer_auth(b);
+            if let Some(session) = &self.device_session {
+                req = req.header(DEVICE_SESSION_HEADER, session);
+            }
         }
         let resp = req
             .send()
             .await
             .map_err(|e| (Error::Relay(format!("{}: {e}", self.base)), e.is_connect()))?;
         let status = resp.status();
+        let limit = plan_limit(resp.headers());
+        let retry_after = retry_after(resp.headers());
         let body = resp
             .text()
             .await
             .map_err(|e| (Error::Relay(e.to_string()), false))?;
         if !status.is_success() {
-            let retry = matches!(status.as_u16(), 429 | 502 | 503);
+            // A plan limit is a decision, not a hiccup: sending it again
+            // gets the same answer.
+            if let (429, Some(l)) = (status.as_u16(), limit) {
+                return Err((Error::PlanLimit(l.sentence()), false));
+            }
+            if status.as_u16() == 429 {
+                // Only the proxy's bare answer is a throttle. The relay's
+                // own 429s (quotas, pairing-code caps) say why in the body
+                // and sending them again gets the same answer.
+                if is_proxy_throttle(&body) {
+                    // An hour at most, so the message and any countdown stay sane.
+                    let secs = retry_after.map_or(1, |d| d.as_secs().clamp(1, 3600));
+                    return Err((
+                        Error::Throttled {
+                            retry_after_secs: secs,
+                        },
+                        false,
+                    ));
+                }
+                return Err((http_error(429, &body), false));
+            }
+            let retry = matches!(status.as_u16(), 502 | 503);
             return Err((http_error(status.as_u16(), &body), retry));
         }
         let body = if body.trim().is_empty() {
@@ -609,35 +848,17 @@ impl RelayClient {
 
     /// `GET /v1/info` (no auth).
     pub async fn info(&self) -> Result<RelayInfo> {
-        let resp = self
-            .http
-            .get(self.url("/v1/info"))
-            .send()
+        self.send_with(self.http.get(self.url("/v1/info")), None)
             .await
-            .map_err(|e| Error::Relay(format!("{}: {e}", self.base)))?;
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(http_error(status.as_u16(), &body));
-        }
-        serde_json::from_str(&body).map_err(|e| Error::Relay(format!("bad relay response: {e}")))
+            .map_err(|(e, _)| e)
     }
 
     /// `GET /.well-known/jwks.json` (no auth): the relay's assertion
     /// signing keys, as a registration returns them (a machine pins them).
     pub async fn jwks(&self) -> Result<serde_json::Value> {
-        let resp = self
-            .http
-            .get(self.url("/.well-known/jwks.json"))
-            .send()
+        self.send_with(self.http.get(self.url("/.well-known/jwks.json")), None)
             .await
-            .map_err(|e| Error::Relay(format!("{}: {e}", self.base)))?;
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(http_error(status.as_u16(), &body));
-        }
-        serde_json::from_str(&body).map_err(|e| Error::Relay(format!("bad relay response: {e}")))
+            .map_err(|(e, _)| e)
     }
 
     /// Registers (or re-registers, rotating the machine token) a machine
@@ -859,6 +1080,32 @@ impl RelayClient {
         Ok(())
     }
 
+    /// Takes the caller off machine `id` shared with them
+    /// (`POST /v1/machines/{id}/leave`): their own allowlist or viewer
+    /// entry goes, a team machine is hidden from their listing. Not for
+    /// the owner. A relay that predates it answers
+    /// [`RELAY_NEEDS_UPDATE`] ([`is_relay_outdated`]).
+    pub async fn leave(&self, account_token: &str, id: &str) -> Result<LeaveReply> {
+        let url = self.url(&format!("/v1/machines/{id}/leave"));
+        match self
+            .send_once::<LeaveReply>(
+                self.http.post(url).json(&serde_json::json!({})),
+                account_token,
+            )
+            .await
+        {
+            Ok(r) => Ok(r),
+            // No such route: a 404 without the relay's JSON error, or 405.
+            Err((Error::NotFound(m), _)) if m.trim_end() == "relay:" => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((Error::Relay(m), _)) if m.starts_with("HTTP 405") => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((e, _)) => Err(e),
+        }
+    }
+
     /// Cuts every client and refuses new ones (owner or machine token).
     pub async fn stop_sharing(&self, credential: &str, id: &str) -> Result<Machine> {
         self.send(
@@ -878,6 +1125,18 @@ impl RelayClient {
         )
         .await
     }
+}
+
+/// The plan-limit refusal the relay's headers describe, if it is one.
+fn plan_limit(h: &reqwest::header::HeaderMap) -> Option<cua_home::plan_limit::PlanLimit> {
+    use cua_home::plan_limit as pl;
+    let get = |k: &str| h.get(k).and_then(|v| v.to_str().ok());
+    pl::PlanLimit::from_headers(
+        get(pl::ERROR_HEADER),
+        get(pl::PLAN_HEADER),
+        get(pl::USED_HEADER),
+        get(pl::LIMIT_HEADER),
+    )
 }
 
 fn http_error(status: u16, body: &str) -> Error {
@@ -1013,5 +1272,303 @@ mod tests {
         assert_eq!(u.reasons, ["hours"]);
         let bare: RelayUsage = serde_json::from_str("{}").unwrap();
         assert!(!bare.metered && bare.live_sessions_limit.is_none());
+    }
+
+    #[tokio::test]
+    async fn leaving_takes_only_your_own_entry_and_an_old_relay_says_it_needs_an_update() {
+        let relay = crate::testing::FakeRelay::start().await;
+        relay.add_account("ada-tok", "ada", Some("ada@example.com"));
+        relay.add_account("bob-tok", "bob", Some("bob@example.com"));
+        relay.add_account("eve-tok", "eve", Some("eve@example.com"));
+        let client = RelayClient::new(&relay.url).unwrap();
+        let id = "space-0000leave0001";
+        client
+            .register(
+                "ada-tok",
+                &RegisterRequest {
+                    id: id.into(),
+                    name: "qa-shared".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        client
+            .patch(
+                "ada-tok",
+                id,
+                &MachinePatch {
+                    allow: Some(vec!["Bob@example.com".into(), "cat@example.com".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let left = client.leave("bob-tok", id).await.unwrap();
+        assert_eq!(left.removed, vec!["Bob@example.com".to_string()]);
+        assert_eq!(
+            relay.machine(id).unwrap().allow,
+            vec!["cat@example.com".to_string()]
+        );
+        // The owner deletes instead; a stranger finds nothing to leave.
+        assert!(matches!(
+            client.leave("ada-tok", id).await.unwrap_err(),
+            Error::PermissionDenied(m) if m.contains("delete it instead")
+        ));
+        let e = client.leave("eve-tok", id).await.unwrap_err();
+        assert!(matches!(&e, Error::NotFound(_)), "{e:?}");
+        assert!(!is_relay_outdated(&e));
+        // A relay that predates the route.
+        relay.without_leave(true);
+        let e = client.leave("bob-tok", id).await.unwrap_err();
+        assert!(is_relay_outdated(&e), "{e:?}");
+        assert_eq!(e.to_string(), "relay: the Cua relay needs an update");
+    }
+
+    #[tokio::test]
+    async fn a_plan_limit_refusal_is_one_plain_sentence_and_is_not_retried() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/machines",
+            axum::routing::get(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async {
+                    (
+                        axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        [
+                            ("x-cua-relay-error", "plan_limit_sessions"),
+                            ("x-cua-relay-plan", "pro"),
+                            ("x-cua-relay-used", "5"),
+                            ("x-cua-relay-limit", "5"),
+                        ],
+                        "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams: https://x",
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = RelayClient::new(&format!("http://{addr}")).unwrap();
+        let e = client.machines("tok").await.unwrap_err();
+        assert!(matches!(e, Error::PlanLimit(_)), "{e:?}");
+        assert_eq!(
+            e.to_string(),
+            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+        );
+        assert_eq!(e.http_status(), Some(429));
+        assert!(!e.is_transient());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// A relay that answers the first `throttled` calls to `/v1/machines`
+    /// with the proxy's bare 429 (`retry_after` as the header), then `[]`.
+    async fn throttling_relay(
+        throttled: usize,
+        retry_after: &'static str,
+        body: &'static str,
+    ) -> (RelayClient, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/machines",
+            axum::routing::get(move || {
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n < throttled {
+                        (
+                            axum::http::StatusCode::TOO_MANY_REQUESTS,
+                            [("retry-after", retry_after)],
+                            body,
+                        )
+                            .into_response()
+                    } else {
+                        (axum::http::StatusCode::OK, "[]").into_response()
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (RelayClient::new(&format!("http://{addr}")).unwrap(), hits)
+    }
+
+    use axum::response::IntoResponse;
+
+    #[tokio::test]
+    async fn proxy_throttling_is_retried_until_it_succeeds() {
+        let (client, hits) = throttling_relay(2, "1", "Too Many Requests").await;
+        let machines = client.machines("tok").await.unwrap();
+        assert!(machines.is_empty());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 3);
+        // Two waits: Retry-After (1 s) and the backoff (2 s), plus jitter.
+        let waits = client.sleeper.waits.lock().unwrap().clone();
+        assert_eq!(waits.len(), 2);
+        assert!(waits[0] >= Duration::from_secs(1) && waits[0] <= Duration::from_millis(1250));
+        assert!(waits[1] >= Duration::from_secs(2) && waits[1] <= Duration::from_millis(2500));
+    }
+
+    #[tokio::test]
+    async fn retry_after_is_honoured_in_seconds_and_as_a_date() {
+        let (client, _) = throttling_relay(1, "7", "").await;
+        client.machines("tok").await.unwrap();
+        assert!(client.sleeper.waits.lock().unwrap()[0] >= Duration::from_secs(7));
+
+        let date = httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(9));
+        let (client, _) = throttling_relay(1, Box::leak(date.into_boxed_str()), "").await;
+        client.machines("tok").await.unwrap();
+        let wait = client.sleeper.waits.lock().unwrap()[0];
+        assert!(wait >= Duration::from_secs(7), "{wait:?}");
+    }
+
+    #[tokio::test]
+    async fn it_gives_up_after_the_cap_with_a_plain_message() {
+        let (client, hits) = throttling_relay(usize::MAX, "2", "Too Many Requests").await;
+        let e = client.machines("tok").await.unwrap_err();
+        assert!(
+            matches!(
+                e,
+                Error::Throttled {
+                    retry_after_secs: 2
+                }
+            ),
+            "{e:?}"
+        );
+        assert_eq!(
+            e.to_string(),
+            "Too many attempts right now. Wait 2 seconds, then try again."
+        );
+        assert_eq!(e.http_status(), Some(429));
+        assert!(e.is_transient());
+        // Waits of about 2, 2, 4, 8, 8, ... s stop at the 60 s cap.
+        let total: Duration = client.sleeper.waits.lock().unwrap().iter().sum();
+        assert!(total <= Duration::from_secs(60), "{total:?}");
+        assert!(total >= Duration::from_secs(30), "{total:?}");
+        let tries = hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert!((4..=8).contains(&tries), "{tries}");
+        assert_eq!(client.sleeper.waits.lock().unwrap().len(), tries - 1);
+    }
+
+    #[tokio::test]
+    async fn a_post_is_retried_too_because_a_throttled_call_never_arrived() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/devices",
+            axum::routing::post(move |body: String| {
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n == 0 {
+                        (
+                            axum::http::StatusCode::TOO_MANY_REQUESTS,
+                            "Too Many Requests",
+                        )
+                            .into_response()
+                    } else {
+                        assert!(body.contains("\"k\""), "{body}");
+                        (
+                            axum::http::StatusCode::OK,
+                            r#"{"device_id":"d","user_id":"u"}"#,
+                        )
+                            .into_response()
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = RelayClient::new(&format!("http://{addr}")).unwrap();
+        let r = client
+            .send_json::<_, serde_json::Value>(
+                reqwest::Method::POST,
+                "/v1/devices",
+                Some(&serde_json::json!({"k": 1})),
+                "tok",
+            )
+            .await;
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn the_backoff_doubles_to_a_cap_and_never_undercuts_retry_after() {
+        for (retry_after, attempt, floor) in [
+            (1, 1, 1),
+            (1, 2, 2),
+            (1, 3, 4),
+            (1, 4, 8),
+            (1, 9, 8),
+            (30, 1, 30),
+        ] {
+            let w = throttle_wait(retry_after, attempt);
+            let floor = Duration::from_secs(floor);
+            assert!(
+                w >= floor && w <= floor.mul_f64(1.25),
+                "{retry_after} {attempt} {w:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_huge_retry_after_is_clamped_and_never_panics() {
+        let w = throttle_wait(u64::MAX, 1);
+        assert!(w > THROTTLE_BUDGET && w <= THROTTLE_BUDGET * 2, "{w:?}");
+    }
+
+    #[tokio::test]
+    async fn a_huge_retry_after_gives_up_at_once_with_a_sane_wait() {
+        let (client, hits) = throttling_relay(usize::MAX, "18446744073709551615", "").await;
+        let e = client.machines("tok").await.unwrap_err();
+        assert!(
+            matches!(
+                e,
+                Error::Throttled {
+                    retry_after_secs: 3600
+                }
+            ),
+            "{e:?}"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(client.sleeper.waits.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn retry_after_parses_seconds_dates_and_junk() {
+        let h = |v: &str| {
+            let mut m = reqwest::header::HeaderMap::new();
+            m.insert(reqwest::header::RETRY_AFTER, v.parse().unwrap());
+            m
+        };
+        assert_eq!(retry_after(&h("5")), Some(Duration::from_secs(5)));
+        assert_eq!(retry_after(&h(" 12 ")), Some(Duration::from_secs(12)));
+        assert_eq!(
+            retry_after(&h("Wed, 21 Oct 2015 07:28:00 GMT")),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(retry_after(&h("soon")), None);
+        assert_eq!(retry_after(&reqwest::header::HeaderMap::new()), None);
+    }
+
+    #[tokio::test]
+    async fn the_relays_own_429s_are_not_retried() {
+        for body in [
+            "computer limit for this token reached",
+            "at most 5 unused pairing codes",
+        ] {
+            let (client, hits) = throttling_relay(usize::MAX, "1", body).await;
+            let e = client.machines("tok").await.unwrap_err();
+            assert!(matches!(e, Error::Relay(_)), "{e:?}");
+            assert!(e.to_string().contains(body), "{e}");
+            assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
     }
 }

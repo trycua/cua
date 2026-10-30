@@ -5,12 +5,12 @@ import CuaSpacesFFI
 import Foundation
 import Observation
 
-/// Settings → Agents: the provider keys agents get. The cua daemon keeps
+/// Settings → Connections: the provider keys agents get. The cua daemon keeps
 /// them in the Keychain (`agent_keys.list/set/remove`, its app methods; no
 /// MCP tool reaches them) and answers only the provider, the variable, the
 /// last four characters and when each was added. Every word and rule is the
 /// app core's (`appAgentKeysView`, `appAgentKeyForm`); the web UI's
-/// Settings → Agents draws the same.
+/// Settings → Connections draws the same.
 ///
 /// A key passes through here once, in `save`, and is never kept.
 @MainActor @Observable
@@ -34,7 +34,8 @@ public final class AgentKeysModel {
     func call(_ method: String, _ args: [String: Any] = [:]) async throws -> Any {
         guard let tools else { throw AgentsToolError(message: "Agent keys need the cua daemon") }
         let r = try await tools.agentsTool(method, args)
-        if let r = r as? [String: Any] {
+        // Every method answers the list after it, except agent_keys.shell (names your shell has).
+        if method != "agent_keys.shell", let r = r as? [String: Any] {
             report = r
             error = nil
         }
@@ -49,10 +50,15 @@ public final class AgentKeysModel {
         }
     }
 
-    /// Adds or replaces a key (`env` names an Other key).
-    public func save(provider: String, env: String?, value: String) async throws {
+    /// Adds or replaces a key (`env` names an Other key; `provider` is a provider
+    /// of the registry otherwise). `region` and `fields` are the non-secret
+    /// choices a connection carries (a plan, a model, a custom endpoint's URL).
+    public func save(provider: String, env: String?, value: String,
+                     region: String? = nil, fields: [String: String] = [:]) async throws {
         var args: [String: Any] = ["provider": provider, "value": value]
         if provider == "other", let env, !env.isEmpty { args["env"] = env }
+        if let region, !region.isEmpty { args["region"] = region }
+        if !fields.isEmpty { args["fields"] = fields }
         try await call("agent_keys.set", args)
     }
 
@@ -66,10 +72,15 @@ public final class AgentKeysModel {
     }
 
     static func input(report: [String: Any]?, error: String?) -> AppAgentKeysInput {
-        let keys = (report?["keys"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }.map { k in
+        // Keys saved beside the first one for a variable (they have a slot) are the web page's; a native row is the first.
+        let keys = (report?["keys"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }.filter { $0["slot"] == nil }.map { k in
             AppAgentKeyInput(provider: k["provider"] as? String ?? "other", env: k["env"] as? String ?? "",
                              last4: k["last4"] as? String ?? "",
-                             addedMs: (k["added_ms"] as? NSNumber)?.uint64Value ?? 0)
+                             addedMs: (k["added_ms"] as? NSNumber)?.uint64Value ?? 0,
+                             expired: k["expired"] as? Bool ?? false,
+                             label: k["label"] as? String,
+                             region: k["region"] as? String,
+                             fields: (k["fields"] as? [String: String]) ?? [:])
         }
         let unavailable = report?["available"] as? Bool == false
             ? (report?["unavailable"] as? String ?? "this machine can't keep keys") : nil

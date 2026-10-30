@@ -55,7 +55,7 @@ describe.skipIf(!wasmBuilt)("a create's stages (wasm core)", () => {
 
     progress("pulling", [Math.round(12.4 * GB), 30 * GB, 85 * 2 ** 20]);
     await waitFor(() => expect(tile()?.textContent).toContain("Downloading macOS (first time only)…"));
-    expect(tile()!.textContent).toContain("Another machine");
+    expect(tile()!.textContent).toContain("Another computer");
     expect(tile()!.querySelector("[data-create-transfer]")?.textContent).toBe("12.4 of 30.0 GB · 85 MB/s · about 4 min");
     const row = hooks.spaces.data!.find((s) => s.id === pendingId)!;
     expect(row.progress!.permille).toBeGreaterThan(10);
@@ -85,5 +85,13 @@ describe("a create's stages without the core", () => {
     expect(transferText({ bytesDone: 12.4 * GB, bytesTotal: 30 * GB, bytesPerSecond: 85 * 2 ** 20 })).toBe("12.4 of 30.0 GB · 85 MB/s · about 4 min");
     expect(transferText({ bytesDone: 420 * 2 ** 20, bytesTotal: 900 * 2 ** 20 })).toBe("420 of 900 MB");
     expect(transferText({})).toBeNull();
+    // Nothing is promised without a rate; work after the download counts in the time left.
+    const MB = 2 ** 20;
+    expect(transferText({ bytesDone: 440 * MB, bytesTotal: 456 * MB, bytesPerSecond: 20 * MB })).toMatch(/less than a minute$/);
+    expect(
+      transferText({ bytesDone: 440 * MB, bytesTotal: 456 * MB, bytesPerSecond: 20 * MB }, { bytes: 1100 * MB, secs: 26 }),
+    ).toMatch(/about 1 min$/);
+    expect(transferText({ bytesDone: 0, bytesTotal: 1100 * MB }, { bytes: 0, secs: 26, pace: 9_100_000 })).toMatch(/about 3 min$/);
+    expect(transferText({ bytesDone: MB, bytesTotal: 10 * MB })).toBe("1.0 of 10.0 MB");
   });
 });

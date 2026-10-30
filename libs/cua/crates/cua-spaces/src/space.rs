@@ -64,6 +64,9 @@ pub fn unreported_feature_limitation(version: &str, feature: &str) -> String {
 }
 
 /// How a declared service is reached.
+// One value per declared service of a Space, never in a hot path: boxing the
+// sandbox variant would only move the size difference to the next variant.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum ServiceSource {
     /// A sandbox service (local loopback or any other sandbox route).
@@ -130,9 +133,23 @@ pub(crate) struct SpaceInner {
     pub(crate) image: std::sync::OnceLock<(String, String)>,
     /// `(kind, arch)` from the local sandbox's record, when it has one.
     pub(crate) platform: std::sync::OnceLock<(String, String)>,
+    /// Which way the spacesd connection goes ([`Space::route`]).
+    pub(crate) route: std::sync::OnceLock<crate::ChannelRoute>,
+    /// Why the connection took the relay's HTTPS path although the mesh
+    /// was wanted ([`Space::fallback_reason`]).
+    pub(crate) fallback: std::sync::OnceLock<String>,
+    /// Host file of the bulk lane its spacesd connection uses, once proven.
+    pub(crate) bulk: std::sync::OnceLock<std::path::PathBuf>,
+    /// What the connection needs kept alive (a routed Space's forward
+    /// through its host).
+    pub(crate) keepalive: std::sync::OnceLock<Arc<dyn std::any::Any + Send + Sync>>,
+    /// The image configuration of a Space made from a build.
+    pub(crate) image_config: std::sync::OnceLock<crate::build::ImageConfig>,
     /// Why no cua-spacesd answered when this connected (`endpoint`,
     /// `reason`), for a Space connected without one.
     pub(crate) spacesd_unavailable: std::sync::OnceLock<(String, String)>,
+    /// When that was noted ([`Space::spacesd_retry_due`]).
+    pub(crate) spacesd_unavailable_at: std::sync::OnceLock<std::time::Instant>,
 }
 
 /// A connected Space. Cheap to clone; every clone shares one spacesd
@@ -183,7 +200,13 @@ impl Space {
                 mcp: Default::default(),
                 image: Default::default(),
                 platform: Default::default(),
+                route: Default::default(),
+                fallback: Default::default(),
+                bulk: Default::default(),
+                keepalive: Default::default(),
+                image_config: Default::default(),
                 spacesd_unavailable: Default::default(),
+                spacesd_unavailable_at: Default::default(),
             }),
         }
     }
@@ -245,7 +268,7 @@ impl Space {
             Err(shared) => {
                 let mut all = shared.services.clone();
                 all.extend(services);
-                Self::new(
+                let space = Self::new(
                     shared.id.clone(),
                     shared.name.clone(),
                     shared.env.clone(),
@@ -253,9 +276,89 @@ impl Space {
                     shared.token.clone(),
                     shared.gateway.clone(),
                     all,
-                )
+                );
+                if let Some(route) = shared.route.get() {
+                    space.set_route(route.clone());
+                }
+                if let Some(reason) = shared.fallback.get() {
+                    space.set_fallback_reason(reason.clone());
+                }
+                space
             }
         }
+    }
+
+    /// The environment, working directory and user of the build this Space
+    /// was made from; commands run through [`Space::shell_command`] get
+    /// them.
+    pub fn image_config(&self) -> Option<&crate::build::ImageConfig> {
+        self.inner.image_config.get()
+    }
+
+    /// Records the image configuration of a Space made from a build (the
+    /// `cua daemon` reports it in the Space's record).
+    pub fn with_image_config(self, config: crate::build::ImageConfig) -> Self {
+        self.set_image_config(config);
+        self
+    }
+
+    pub(crate) fn set_image_config(&self, config: crate::build::ImageConfig) {
+        let _ = self.inner.image_config.set(config);
+    }
+
+    /// Which way this Space's spacesd calls go (see [`crate::ChannelRoute`]),
+    /// when known: set by [`crate::Spaces`] on connect, or by whoever
+    /// attached the connection ([`Space::with_route`]).
+    pub fn route(&self) -> Option<&crate::ChannelRoute> {
+        self.inner.route.get()
+    }
+
+    /// Records the route of a connection someone else established (for
+    /// example the route a `cua daemon` reported for its passthrough).
+    pub fn with_route(self, route: crate::ChannelRoute) -> Self {
+        self.set_route(route);
+        self
+    }
+
+    /// What carries this Space's connection (see [`crate::Transport`]):
+    /// `relay_https` means the relay can read the session in transit.
+    pub fn transport(&self) -> crate::Transport {
+        self.route()
+            .map(crate::ChannelRoute::transport)
+            .unwrap_or(crate::Transport::Unknown)
+    }
+
+    /// Why this Space took the relay's HTTPS path although the mesh was
+    /// wanted (the relay or the computer has no mesh, or the mesh did not
+    /// answer); `None` on the mesh, and when the HTTPS path was chosen
+    /// (`CUA_MESH=off`).
+    pub fn fallback_reason(&self) -> Option<&str> {
+        self.inner.fallback.get().map(String::as_str)
+    }
+
+    /// Records why another process's connection fell back to the relay's
+    /// HTTPS path (the `cua daemon` reports it next to the route).
+    pub fn with_fallback_reason(self, reason: impl Into<String>) -> Self {
+        self.set_fallback_reason(reason.into());
+        self
+    }
+
+    pub(crate) fn set_fallback_reason(&self, reason: String) {
+        let _ = self.inner.fallback.set(reason);
+    }
+
+    /// The host file of the bulk lane this Space's large file transfers use
+    /// (a Linux VM on this machine), when there is one.
+    pub fn bulk_path(&self) -> Option<&std::path::Path> {
+        self.inner.bulk.get().map(std::path::PathBuf::as_path)
+    }
+
+    pub(crate) fn set_bulk_path(&self, path: std::path::PathBuf) {
+        let _ = self.inner.bulk.set(path);
+    }
+
+    pub(crate) fn set_route(&self, route: crate::ChannelRoute) {
+        let _ = self.inner.route.set(route);
     }
 
     /// The image the sandbox runs (as requested) and the digest of the
@@ -332,6 +435,24 @@ impl Space {
 
     pub(crate) fn set_spacesd_unavailable(&self, endpoint: String, reason: String) {
         let _ = self.inner.spacesd_unavailable.set((endpoint, reason));
+        let _ = self
+            .inner
+            .spacesd_unavailable_at
+            .set(std::time::Instant::now());
+    }
+
+    /// Whether this connection was made without the cua-spacesd its image
+    /// publishes (it didn't answer then: the Space or its runtime was still
+    /// waking, as after a daemon restart) at least `after` ago, so a new
+    /// connection may find it. A Space whose image runs no cua-spacesd is
+    /// never due.
+    pub(crate) fn spacesd_retry_due(&self, after: std::time::Duration) -> bool {
+        self.inner.env.is_none()
+            && self
+                .inner
+                .spacesd_unavailable_at
+                .get()
+                .is_some_and(|at| at.elapsed() >= after)
     }
 
     /// When no cua-spacesd answered because this host has no route to a
@@ -470,7 +591,13 @@ pub struct SpaceInfo {
     pub id: String,
     /// Display name.
     pub name: String,
-    /// `fleet`, `local` or `direct`.
+    /// The name it was given with [`crate::Spaces::rename`], which apps
+    /// show in place of [`Self::name`]; empty when it keeps the one it was
+    /// created with. A relay machine is renamed on the relay, so its
+    /// `name` changes instead.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
+    /// `local`, `direct` or `relay`.
     pub provider: Provider,
     /// spacesd version at the last handshake.
     pub spacesd_version: String,
@@ -524,7 +651,7 @@ pub struct SpaceInfo {
     /// while it runs).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub power_state: String,
-    /// A Space in your own cloud: the provider (`aws`, `gcp`, `modal`);
+    /// A Space in your own cloud: the provider (`aws`, `gcp`, `hetzner`, `modal`);
     /// empty otherwise.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cloud: String,
@@ -542,19 +669,73 @@ pub struct SpaceInfo {
     /// sharing it). Empty when reachable, and for other Spaces.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub status: String,
+    /// A durable Space ([`crate::durable`]): its name. It is created again
+    /// on another of your machines when its machine goes away. Empty for
+    /// other Spaces.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub durable: String,
     /// Why a local Space stopped without being asked to, in plain words
     /// ("out of memory", "killed", "exited with code 1"); empty otherwise,
     /// and once it is started again.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub stop_reason: String,
+    /// Named volumes mounted in the Space ([`crate::named_volumes`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<crate::named_volumes::VolumeMount>,
+    /// Labels set when it was created (`SpaceCreate::labels`): up to 64
+    /// pairs, keys up to 63 bytes, values up to 256. Kept by the device
+    /// that created the Space.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub labels: std::collections::BTreeMap<String, String>,
+    /// When the Space ends (Unix seconds), as set by
+    /// [`crate::Spaces::set_lifetime`]; 0 when it has no lifetime.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub expires_at_unix: u64,
+    /// What happens then: `delete` or `suspend`; empty without a lifetime.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub on_expire: String,
+    /// When the Space was created (Unix seconds): the moment a create
+    /// finished, or for a Space added by address the time it was added. 0
+    /// when unknown (a machine only the relay lists).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub created_at_unix: u64,
+    /// The egress policy last set on the Space ([`crate::egress`]); empty
+    /// when it has none.
+    #[serde(default, skip_serializing_if = "crate::egress::EgressPolicy::is_empty")]
+    pub egress: crate::egress::EgressPolicy,
+    /// Where that policy is enforced: [`crate::egress::Enforcement::Host`]
+    /// (outside the guest, by the host the Space runs on); `None` without
+    /// one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress_enforced: Option<crate::egress::Enforcement>,
+    /// A Space that is a machine on the relay: who owns it and who else
+    /// has it, as this account sees it ([`crate::sharing`]). `None` for
+    /// other Spaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<crate::sharing::SpaceSharing>,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 impl SpaceInfo {
+    /// The name people see: [`Self::display_name`] when it was renamed,
+    /// else [`Self::name`].
+    pub fn shown_name(&self) -> &str {
+        if self.display_name.is_empty() {
+            &self.name
+        } else {
+            &self.display_name
+        }
+    }
+
     pub(crate) fn from_record(record: &cua_proto::daemon::v1::Space) -> Result<Self> {
         let id = SpaceId::parse(&record.id)?;
         Ok(Self {
             id: record.id.clone(),
             name: record.name.clone(),
+            display_name: record.display_name.clone(),
             provider: id.provider(),
             spacesd_version: record.spacesd_version.clone(),
             features: record.features.clone(),
@@ -580,7 +761,23 @@ impl SpaceInfo {
             cloud_place: record.cloud_place.clone(),
             cloud_delete: record.cloud_delete.clone(),
             status: String::new(),
+            durable: record.durable.clone(),
             stop_reason: record.stop_reason.clone(),
+            volumes: record.volumes.iter().cloned().map(Into::into).collect(),
+            expires_at_unix: 0,
+            on_expire: String::new(),
+            egress: Default::default(),
+            egress_enforced: None,
+            created_at_unix: record
+                .added_at
+                .as_ref()
+                .map_or(0, |t| t.seconds.max(0) as u64),
+            labels: record
+                .labels
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            sharing: record.sharing.clone().map(Into::into),
         })
     }
 }
@@ -598,6 +795,21 @@ pub struct SpacePower {
     pub message: String,
 }
 
+/// What [`crate::Spaces::resize`] did: the shape the Space has now.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SpaceResize {
+    /// The Space.
+    pub space: String,
+    /// vCPUs.
+    pub cpus: Option<u32>,
+    /// Memory, MiB.
+    pub memory_mb: Option<u64>,
+    /// Disk, GiB (when it was grown).
+    pub disk_gb: Option<u32>,
+    /// What happened, for people.
+    pub message: String,
+}
+
 impl SpacePower {
     /// The report for `space`, now in `state`, turned off with `control`.
     pub fn new(
@@ -609,8 +821,12 @@ impl SpacePower {
         let message = match (state, control) {
             (PowerState::Running, PowerControl::Suspend) => format!("Resumed {space}."),
             (PowerState::Running, PowerControl::Stop) => format!("Started {space}."),
-            (PowerState::Suspended, _) => format!("Suspended {space} (its memory is kept)."),
-            (PowerState::Stopped, _) => format!("Stopped {space} (its disk is kept)."),
+            (PowerState::Suspended, _) => {
+                format!("Suspended {space} (its memory is kept, and still in use).")
+            }
+            (PowerState::Stopped, _) => {
+                format!("Stopped {space} (its disk is kept; its memory is free).")
+            }
         };
         Self {
             space: space.into(),
@@ -628,6 +844,32 @@ fn humantime_rfc3339(at: std::time::SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn no_spacesd() -> Space {
+        Space::new(
+            SpaceId::Local {
+                name: "pipbox".into(),
+            },
+            "pipbox".into(),
+            None,
+            Default::default(),
+            None,
+            None,
+            BTreeMap::new(),
+        )
+    }
+
+    #[test]
+    fn a_space_connected_while_its_spacesd_was_waking_is_dialed_again() {
+        // Its image publishes cua-spacesd, which didn't answer then (the
+        // daemon restarted while the Space was still waking).
+        let s = no_spacesd();
+        s.set_spacesd_unavailable("127.0.0.1:7000".into(), "connection refused".into());
+        assert!(s.spacesd_retry_due(std::time::Duration::ZERO));
+        assert!(!s.spacesd_retry_due(std::time::Duration::from_secs(3600)));
+        // An image that runs no cua-spacesd is never dialed again for it.
+        assert!(!no_spacesd().spacesd_retry_due(std::time::Duration::ZERO));
+    }
 
     #[test]
     fn versions_compare_against_a_floor() {

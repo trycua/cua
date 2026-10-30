@@ -249,6 +249,9 @@ async fn cua_host_backend_runs_the_relay_flow_end_to_end() {
             relay_url: Some(relay.url.clone()),
             name: Some("Studio".into()),
             allow: Some(vec!["grace@example.com".into()]),
+            // The screen is shared, with Spaces off to walk the off-to-on switch below.
+            profile: Some("desktop".into()),
+            provide_spaces: Some(false),
             ..Default::default()
         })
         .await

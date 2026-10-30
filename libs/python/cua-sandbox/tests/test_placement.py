@@ -17,7 +17,6 @@ from typing import Any
 
 import pytest
 from cua_sandbox import (
-    CloudOptions,
     Image,
     InvalidArgument,
     InvalidPlacement,
@@ -130,10 +129,6 @@ async def test_on_and_a_contradicting_local_is_invalid(local_sdk):
         await Sandbox.create(ROOTFS, on="cloud", local=True)
     with pytest.raises(InvalidArgument, match="contradict"):
         await Sandbox.create(ROOTFS, on="local", local=False)
-    with pytest.raises(InvalidArgument, match="contradict"):
-        await Sandbox.create(ROOTFS, on="local", cloud=CloudOptions(warm=True))
-    with pytest.raises(InvalidArgument, match="contradict"):
-        await Sandbox.create(ROOTFS, local=True, cloud=CloudOptions(warm=True))
     assert not local_sdk
     with pytest.raises(_Captured):
         await Sandbox.create(ROOTFS, on="local", local=True, telemetry_enabled=False)
@@ -170,9 +165,6 @@ async def test_ephemeral_takes_the_same_placement(local_sdk):
 async def test_invalid_combinations_list_the_valid_values(local_sdk):
     with pytest.raises(InvalidPlacement, match="valid runtime: auto, gvisor, runc"):
         await Sandbox.create(ROOTFS, on="local", kind="container", runtime="qemu")
-    with pytest.raises(InvalidPlacement, match="not available locally") as info:
-        await Sandbox.create(ROOTFS, on="local", runtime="kubevirt")
-    assert isinstance(info.value, InvalidArgument)
     with pytest.raises(InvalidPlacement, match="valid kind: auto, container, vm"):
         await Sandbox.create(ROOTFS, on="local", kind="pod")
     # The image's own kind against the engine.
@@ -219,7 +211,7 @@ async def test_a_runtime_object_still_runs_locally(monkeypatch, notice):
     assert len(calls) == 2 and not notice()
     for _, opts in calls:
         assert "kind" not in opts and "runtime" not in opts, "the adapter decides"
-    with pytest.raises(InvalidArgument, match="on this machine"):
+    with pytest.raises(InvalidArgument, match="on this computer"):
         await Sandbox.create(ROOTFS, runtime=_Recorder(calls), on="cloud")
 
 

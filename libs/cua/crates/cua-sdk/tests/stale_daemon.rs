@@ -55,7 +55,6 @@ fn embedded_config(home: &Path) -> CuaConfig {
         state_dir: Some(home.join("sandboxes").display().to_string()),
         spaces_home: Some(home.display().to_string()),
         teleport_home: Some(home.join("teleport").display().to_string()),
-        fleet_from_env: false,
         ..Default::default()
     }
 }

@@ -8,7 +8,7 @@
 /libs/lume/ @f-trycua
 /libs/python/ @ddupont808
 /libs/cua-bench/ @ddupont808
-/benchmarks/cua-driver-bench/ @f-trycua @injaneity
+/libs/cua-driver-bench/ @f-trycua @injaneity
 
 # Cua Driver documentation and driver-only release/CI automation.
 /docs/content/docs/cua-driver/reference/ @f-trycua @injaneity
@@ -36,7 +36,6 @@
 /.github/workflows/e2e-rust-windows.yml @f-trycua @injaneity
 
 # Platform infrastructure.
-/libs/fleet/ @ddupont808
 /nix/ @ddupont808
 /flake.nix @ddupont808
 /flake.lock @ddupont808

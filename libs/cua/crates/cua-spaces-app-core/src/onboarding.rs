@@ -206,7 +206,7 @@ pub struct OnboardingState {
     #[serde(default = "ticked")]
     pub launch_at_login: bool,
     /// The usage-data switch on Welcome: the machine's telemetry setting
-    /// (Settings' "Share anonymous usage data", `cua telemetry off`), none
+    /// (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
     /// until the shell read it (then it shows on).
     #[serde(default)]
     pub telemetry: Option<TelemetryInput>,
@@ -355,7 +355,7 @@ pub enum OnboardingAction {
     /// On a machine that already showed the usage notice, with usage data
     /// on, the run's start counts now rather than when Welcome is left.
     WelcomeShown,
-    /// Welcome's "Share anonymous usage data" switch (not while the
+    /// Welcome's "Share usage data to help improve Cua" switch (not while the
     /// environment decides). The shell writes the setting.
     UsageDataToggled {
         /// On.
@@ -1007,11 +1007,11 @@ fn drive_fact(s: &OnboardingState) -> String {
 }
 
 /// One answer on the This machine page.
-/// Welcome's "Share anonymous usage data" switch.
+/// Welcome's "Share usage data to help improve Cua" switch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageToggle {
-    /// "Share anonymous usage data".
+    /// "Share usage data to help improve Cua".
     pub label: String,
     /// On.
     pub on: bool,
@@ -1237,7 +1237,7 @@ fn this_computer(os: SpaceOs) -> &'static str {
     match os {
         SpaceOs::Macos => "this Mac",
         SpaceOs::Windows => "this PC",
-        _ => "this computer",
+        _ => "this machine",
     }
 }
 
@@ -1271,7 +1271,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
     let (title, lede, primary) = match s.step {
         Welcome => (
             "Welcome to Cua Spaces",
-            "Computers for you and your agents.",
+            "Computers for you and your AI agents. Setup takes about a minute.",
             "Get started",
         ),
         Cli => (
@@ -1294,7 +1294,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
         ),
         Signin => (
             "Sign in",
-            "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
+            "Sign in to reach your machines and Spaces from any of your machines. You can skip this and sign in later.",
             "Continue",
         ),
         Agents => (
@@ -1315,7 +1315,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
         ),
         Mode => (
             mode_title.as_str(),
-            "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+            "Use it only to open your other machines, or let your other machines reach it too. You can change this later.",
             "Continue",
         ),
         Done => ("", "", "Start using Cua Spaces"),
@@ -1351,9 +1351,9 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
             Fact {
                 label: "This machine".into(),
                 value: if s.mode == Some(OnboardingMode::Host) {
-                    "Your other devices can reach it"
+                    "Your other machines can reach it"
                 } else {
-                    "Opens your other computers"
+                    "Opens your other machines"
                 }
                 .into(),
                 copy: None,
@@ -1389,11 +1389,11 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
             [
                 (
                     OnboardingMode::Client,
-                    format!("Just use {here} to open my other computers"),
+                    format!("Just use {here} to open my other machines"),
                 ),
                 (
                     OnboardingMode::Host,
-                    format!("Let my other devices reach {here}"),
+                    format!("Let my other machines reach {here}"),
                 ),
             ]
             .into_iter()
@@ -1417,7 +1417,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
             vec![]
         },
         notice: (s.step == Welcome).then(|| {
-            "Cua collects anonymous usage data (features used, sandbox types, durations, error categories), never file paths, names, prompts or screen content. Change it here or in Settings, Privacy."
+            "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy."
                 .into()
         }),
         notice_link_label: (s.step == Welcome).then(|| "What is collected".into()),
@@ -1429,7 +1429,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
                 .and_then(|t| t.locked_by.clone())
                 .filter(|b| !b.is_empty());
             UsageToggle {
-                label: "Share anonymous usage data".into(),
+                label: "Share usage data to help improve Cua".into(),
                 on: s.shares_usage(),
                 enabled: locked.is_none(),
                 help: locked.map(|by| format!("Set by {by}")),
@@ -1468,7 +1468,7 @@ pub fn done_heading(left: usize, os: SpaceOs) -> (String, String) {
 /// The Cua CLI's one plain line (next to its name everywhere it shows).
 pub const CLI_HINT: &str = "Command-line tools for you and your agents.";
 /// Cua Volume's one plain line.
-pub const VOLUME_HINT: &str = "Shared folder: files your agents can share across your computers.";
+pub const VOLUME_HINT: &str = "Shared folder: files your agents can share across your machines.";
 
 /// Done's to-do list, in page order. Cua Volume shows wherever it can
 /// mount (its experiment need not be on: "Turn on" turns it on).
@@ -1496,7 +1496,7 @@ fn done_todos(s: &OnboardingState) -> Vec<OnboardingTodo> {
             "Account",
             match signed_in {
                 Some(id) => format!("Signed in as {id}."),
-                None => "Reach your computers from any device.".into(),
+                None => "Reach your machines from any machine.".into(),
             },
             signed_in.is_some(),
             false,
@@ -1586,7 +1586,7 @@ mod tests {
         assert!(
             v.summary
                 .iter()
-                .any(|f| f.label == "This machine" && f.value == "Opens your other computers")
+                .any(|f| f.label == "This machine" && f.value == "Opens your other machines")
         );
         // Sign in from Done, then back to Done.
         let at = reduce(
@@ -1690,8 +1690,8 @@ mod tests {
         assert_eq!(
             labels,
             [
-                "Just use this Mac to open my other computers",
-                "Let my other devices reach this Mac"
+                "Just use this Mac to open my other machines",
+                "Let my other machines reach this Mac"
             ]
         );
         assert_eq!(
@@ -1700,7 +1700,7 @@ mod tests {
         );
         assert_eq!(
             view_on(&s, SpaceOs::Linux).title,
-            "How do you want to use this computer?"
+            "How do you want to use this machine?"
         );
     }
 
@@ -1712,7 +1712,7 @@ mod tests {
             assert_eq!(v.title, "Sign in");
             assert_eq!(
                 v.lede,
-                "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later."
+                "Sign in to reach your machines and Spaces from any of your machines. You can skip this and sign in later."
             );
             assert!(v.can_skip);
         }

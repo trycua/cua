@@ -24,14 +24,14 @@
         "step": "done",
         "summary": [
           "Shows in: Notch and menu bar",
-          "This machine: Opens your other computers"
+          "This machine: Opens your other machines"
         ],
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
         ],
         "usage": null
       },
@@ -61,14 +61,14 @@
         "step": "done",
         "summary": [
           "Shows in: Notch and menu bar",
-          "This machine: Opens your other computers"
+          "This machine: Opens your other machines"
         ],
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
         ],
         "usage": null
       },
@@ -98,14 +98,14 @@
         "step": "done",
         "summary": [
           "Shows in: Notch and menu bar",
-          "This machine: Opens your other computers"
+          "This machine: Opens your other machines"
         ],
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
         ],
         "usage": null
       },
@@ -135,14 +135,14 @@
         "step": "done",
         "summary": [
           "Shows in: Notch and menu bar",
-          "This machine: Your other devices can reach it"
+          "This machine: Your other machines can reach it"
         ],
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
         ],
         "usage": null
       },
@@ -172,14 +172,14 @@
         "step": "done",
         "summary": [
           "Shows in: Notch and menu bar",
-          "This machine: Your other devices can reach it"
+          "This machine: Your other machines can reach it"
         ],
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
         ],
         "usage": null
       },
@@ -191,7 +191,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "enabled"
     },
@@ -200,7 +202,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "not registered"
     },
@@ -209,7 +213,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
         "- launch-at-login-approve text: Approve in System Settings › Login Items [Open Login Items]",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "requires approval"
     },
@@ -218,7 +224,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off} (disabled)",
         "- launch-at-login-note note: Login items are not available for this copy of Cua Spaces.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "not found"
     },
@@ -227,7 +235,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off} (disabled)",
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "turning on"
     },
@@ -236,7 +246,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
         "- launch-at-login-error error: Operation not permitted",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "failed"
     },
@@ -245,7 +257,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
         "- launch-at-login-note note: This machine provides Spaces, which stop after a restart until you open Cua Spaces.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "off, provides Spaces"
     },
@@ -254,7 +268,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
         "- launch-at-login-note note: This machine runs persistent agents, which stop after a restart until you open Cua Spaces.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "off, runs agents"
     },
@@ -263,7 +279,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
         "- launch-at-login-note note: This machine provides Spaces and runs persistent agents, which stop after a restart until you open Cua Spaces.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "off, both"
     },
@@ -272,7 +290,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "on, both"
     },

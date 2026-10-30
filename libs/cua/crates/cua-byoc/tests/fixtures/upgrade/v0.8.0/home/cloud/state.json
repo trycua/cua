@@ -1,0 +1,140 @@
+{
+  "owner_id": "12744f4370500691",
+  "connections": [
+    {
+      "provider": "aws",
+      "profile": "upgrade-fake",
+      "region": "us-west-2",
+      "zone": "",
+      "project": "",
+      "environment": "",
+      "account": "111122223333",
+      "ttl_hours": 4,
+      "connected_at": "2026-10-24T16:59:01Z"
+    },
+    {
+      "provider": "hetzner",
+      "profile": "",
+      "region": "fsn1",
+      "zone": "",
+      "project": "",
+      "environment": "",
+      "account": "Hetzner Cloud project",
+      "ttl_hours": 6,
+      "connected_at": "2026-10-24T17:01:31Z"
+    }
+  ],
+  "resources": [
+    {
+      "provider": "hetzner",
+      "id": "1002",
+      "type": "instance",
+      "name": "cua-host-hetzner-1-df8358",
+      "region": "fsn1",
+      "zone": "",
+      "project": "",
+      "sandbox": "host:hetzner-1",
+      "machine": "",
+      "created": 1792861291,
+      "expires": 1792947691,
+      "tags": {
+        "cua-created-by": "0-8-0",
+        "cua-expires": "1792947691",
+        "cua-managed": "true",
+        "cua-owner": "12744f4370500691",
+        "cua-role": "host",
+        "cua-space": "host-hetzner-1"
+      },
+      "state": "pending",
+      "extra": {
+        "arch": "amd64",
+        "billing_min_secs": "3600",
+        "billing_step_secs": "3600",
+        "firewall": "5001",
+        "host": "hetzner-1",
+        "instance_type": "cx23",
+        "kvm": "false",
+        "machine_type": "cx23",
+        "memory_mb": "4096",
+        "pair_code_id": "pc_6c928ff23da6246d",
+        "pinned": "false",
+        "public_ipv4": "203.0.113.2",
+        "quota_pool": "shared",
+        "role": "host",
+        "usd_per_hour": "0.0114",
+        "vcpus": "2"
+      }
+    },
+    {
+      "provider": "hetzner",
+      "id": "5001",
+      "type": "firewall",
+      "name": "cua-sb-12744f4370500691",
+      "region": "",
+      "zone": "",
+      "project": "",
+      "sandbox": "",
+      "machine": "",
+      "created": 1792861291,
+      "expires": 0,
+      "tags": {
+        "cua-created-by": "0-8-0",
+        "cua-managed": "true",
+        "cua-owner": "12744f4370500691"
+      },
+      "state": "ready",
+      "extra": {}
+    },
+    {
+      "provider": "aws",
+      "id": "i-2",
+      "type": "instance",
+      "name": "cua-aws-0123456789ab",
+      "region": "us-west-2",
+      "zone": "",
+      "project": "",
+      "sandbox": "aws:research",
+      "machine": "cloud-0123456789abcdef",
+      "created": 1792861292,
+      "expires": 1792875691,
+      "tags": {
+        "cua-created-by": "0-8-0",
+        "cua-expires": "1792875691",
+        "cua-machine": "cloud-0123456789abcdef",
+        "cua-managed": "true",
+        "cua-owner": "12744f4370500691",
+        "cua-space": "research"
+      },
+      "state": "pending",
+      "extra": {
+        "image": "ami-new",
+        "instance_type": "t4g.medium",
+        "machine_type": "t4g.medium",
+        "security_group": "sg-1",
+        "usd_per_hour": "0.0336"
+      }
+    },
+    {
+      "provider": "aws",
+      "id": "sg-1",
+      "type": "security_group",
+      "name": "cua-sandboxes-12744f4370500691",
+      "region": "us-west-2",
+      "zone": "",
+      "project": "",
+      "sandbox": "",
+      "machine": "",
+      "created": 1792861292,
+      "expires": 0,
+      "tags": {
+        "cua-created-by": "0-8-0",
+        "cua-expires": "0",
+        "cua-managed": "true",
+        "cua-owner": "12744f4370500691",
+        "cua-space": ""
+      },
+      "state": "available",
+      "extra": {}
+    }
+  ]
+}

@@ -151,6 +151,42 @@ impl ServerBuilder {
                 )
             },
             feature("fs_watch", true, ""),
+            crate::privilege::run_as_feature(),
+            // `run_as` on file requests and signed URLs. Supported means the
+            // field is understood; whether this agent may take another
+            // user's identity (root, or passwordless sudo) is the
+            // `privilege` attribute, and a call it cannot serve says why.
+            if cfg!(unix) {
+                let mut f = feature(crate::filesystem::runas::RUN_AS_FEATURE, true, "");
+                f.attributes.insert(
+                    "privilege".into(),
+                    match crate::filesystem::runas::privilege() {
+                        Ok(crate::filesystem::runas::Privilege::Root) => "root".to_owned(),
+                        Ok(crate::filesystem::runas::Privilege::Capabilities) => {
+                            "capabilities".to_owned()
+                        }
+                        Ok(crate::filesystem::runas::Privilege::Sudo) => "sudo".to_owned(),
+                        Err(why) => format!("none: {why}"),
+                    },
+                );
+                f
+            } else {
+                feature(
+                    crate::filesystem::runas::RUN_AS_FEATURE,
+                    false,
+                    "acting as another user is not supported on this platform",
+                )
+            },
+            if cfg!(any(target_os = "linux", target_os = "macos")) {
+                feature(crate::filesystem::runas::XATTR_FEATURE, true, "")
+            } else {
+                feature(
+                    crate::filesystem::runas::XATTR_FEATURE,
+                    false,
+                    "this platform has no extended attributes",
+                )
+            },
+            feature(crate::filesystem::runas::MULTIPART_FEATURE, true, ""),
             feature("tunnel.forward", true, ""),
             feature("hotspot", true, ""),
             match crate::services::volume::backend() {
@@ -160,6 +196,11 @@ impl ServerBuilder {
                     f
                 }
                 Err(reason) => feature(crate::services::volume::FEATURE, false, &reason),
+            },
+            // `AttachVolumeRequest.binds`: named volumes at other paths.
+            match crate::services::volume::backend() {
+                Ok(_) => feature(crate::services::volume::BINDS_FEATURE, true, ""),
+                Err(reason) => feature(crate::services::volume::BINDS_FEATURE, false, &reason),
             },
             match &tools {
                 Some(_) => feature("driver", true, ""),
@@ -175,6 +216,9 @@ impl ServerBuilder {
         // `SystemService.AttachRelay` / `DetachRelay`: share a running Space
         // through a relay.
         core_features.push(feature(RELAY_ATTACH_FEATURE, true, ""));
+        // `StartProcessRequest.request_id` / `epoch`, `GetExecRecord` and
+        // `AdvanceEpoch`: idempotent, fenced execs for durable harnesses.
+        core_features.push(feature(crate::process::EXEC_LEDGER_FEATURE, true, ""));
         let system = SystemServiceImpl::new(ctx.clone(), providers.clone(), core_features)
             .with_diagnose(DiagnoseState::new(ctx.clone(), self.diagnoser));
 
@@ -189,7 +233,7 @@ impl ServerBuilder {
 
         let mut routes = tonic::service::Routes::new(system.into_server())
             .add_service(ProcessServiceImpl::new(processes).into_server())
-            .add_service(FilesystemServiceImpl::new(fs).into_server())
+            .add_service(FilesystemServiceImpl::new(fs.clone()).into_server())
             .add_service(DriverServiceImpl::new(tools.clone()).into_server())
             .add_service(teleport.into_server())
             .add_service(TunnelServiceImpl::new(tunnel.clone()).into_server())
@@ -230,19 +274,66 @@ impl ServerBuilder {
             );
             manifest.stubbed_services.insert(HOST_SPACES.to_owned());
         }
+        const HOST_JOBS: &str = "cua.env.v1.HostJobsService";
+        if !manifest.grpc_services.contains(HOST_JOBS) {
+            crate::provider::register_stub_with(
+                &mut routes,
+                HOST_JOBS,
+                crate::host_spaces::HOST_JOBS_FEATURE,
+                crate::provider::NOT_A_SPACES_HOST,
+            );
+            manifest.stubbed_services.insert(HOST_JOBS.to_owned());
+        }
+        const HOST_SNAPSHOTS: &str = "cua.env.v1.HostSnapshotsService";
+        if !manifest.grpc_services.contains(HOST_SNAPSHOTS) {
+            crate::provider::register_stub_with(
+                &mut routes,
+                HOST_SNAPSHOTS,
+                crate::host_spaces::HOST_SPACES_FEATURE,
+                crate::provider::NOT_A_SPACES_HOST,
+            );
+            manifest.stubbed_services.insert(HOST_SNAPSHOTS.to_owned());
+        }
+        const HOST_THREAD: &str = "cua.env.v1.HostThreadService";
+        if !manifest.grpc_services.contains(HOST_THREAD) {
+            crate::provider::register_stub_with(
+                &mut routes,
+                HOST_THREAD,
+                crate::host_spaces::HOST_THREAD_FEATURE,
+                crate::provider::NOT_A_SPACES_HOST,
+            );
+            manifest.stubbed_services.insert(HOST_THREAD.to_owned());
+        }
 
         let grpc = routes.prepare().into_axum_router();
         let grpc = tonic_web::GrpcWebLayer::new()
             .layer(AuthLayer::new(ctx.auth().clone(), ctx.access_mode()).layer(grpc));
 
         // Plain-HTTP routes.
-        let mut http = Router::new()
-            .route(cua_proto::metadata::HEALTH_PATH, get(crate::http::health))
+        let files = Router::new()
             .route(
                 cua_proto::metadata::FILES_PATH,
                 any(crate::http::files::handle),
             )
+            .with_state(crate::http::files::FilesState {
+                ctx: ctx.clone(),
+                fs: fs.clone(),
+            });
+        // `cua share` links (an extension, not part of the env spec's
+        // path list, so not in the manifest): served only while the
+        // host policy turns shares on.
+        let share = Router::new()
+            .route(
+                crate::http::share::SHARE_PATH,
+                any(crate::http::share::handle),
+            )
+            .route("/share/{*rest}", any(crate::http::share::handle))
             .with_state(ctx.clone());
+        let mut http = Router::new()
+            .route(cua_proto::metadata::HEALTH_PATH, get(crate::http::health))
+            .with_state(ctx.clone())
+            .merge(files)
+            .merge(share);
         manifest
             .http_paths
             .insert(cua_proto::metadata::HEALTH_PATH.into());
@@ -483,6 +574,13 @@ impl Server {
                 move |req: http::Request<hyper::body::Incoming>| {
                     let mut req = req.map(axum::body::Body::new);
                     req.extensions_mut().insert(crate::peer::PeerAddr(peer));
+                    // The peer as a header too, for authenticators that see
+                    // only headers (tailnet identity). Never the client's.
+                    let headers = req.headers_mut();
+                    headers.remove(crate::tailnet::PEER_HEADER);
+                    if let Ok(v) = http::HeaderValue::from_str(&peer.to_string()) {
+                        headers.insert(crate::tailnet::PEER_HEADER, v);
+                    }
                     req
                 },
             ));
@@ -492,7 +590,7 @@ impl Server {
             let connection = graceful.watch(connection);
             // Token-file rotation/revocation drops every open connection, so
             // no stream outlives the token that authorized it.
-            let mut revoked = self.ctx.session_revocations();
+            let mut revoked = self.ctx.connection_revocations();
             tokio::spawn(async move {
                 tokio::select! {
                     result = connection => {

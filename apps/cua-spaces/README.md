@@ -64,12 +64,10 @@ view at launch in debug builds (release builds ignore the recording hooks).
 **New Space** (Cmd+N, the sidebar's +, the notch's New, or the menu bar item)
 is a step-by-step sheet:
 
-1. **System**: Linux, Windows or macOS, the image (a dropdown of the published
+1. **System**: Linux, macOS or Windows, the image (a dropdown of the published
    entries of `libs/images/sandbox-images.json`, the same list the docs show),
-   and where it runs: This Mac. Cua Cloud has ended and is not offered (the
-   core's `CLOUD_SPACES_OFFERED` is off); `cloud:` Spaces registered before
-   still list, answer that it has ended on any action, and can be removed from
-   the list. **Advanced** picks the kind (container or virtual
+   and where it runs: This Mac, one of your own computers, or your own cloud
+   account. Cua no longer rents cloud machines. **Advanced** picks the kind (container or virtual
    machine, when the image comes in both) and the runtime, offering only what
    the image runs there: containers `auto`, `gvisor`, `runc`; VMs `auto` and
    the image's `qemu` or `lume`.
@@ -112,7 +110,7 @@ links `/usr/local/bin/cua` to the bundled CLI). Releases
 (`.github/workflows/cd-cua-spaces.yml`) ship this app for Linux and Windows
 only; the macOS release is the SwiftUI app (`apps/cua-spaces-macos`), and
 the release .pkg wraps that app.
-`.github/workflows/ci-cua-spaces.yml` builds them unsigned on pull requests. Silent / MDM installs can preselect the first-run choice
+`.github/workflows/ci-cua-spaces.yml` builds them unsigned on pushes to main and on pull requests labelled `ci:full`; other pull requests run the frontend and Rust command-layer tests only. Silent / MDM installs can preselect the first-run choice
 (the user still confirms in the app):
 
 | Installer | Flag |
@@ -148,9 +146,8 @@ The app signs in with the device grant (Settings → Sign in to Cua); the sessio
 is the credential store shared with the CLI and the daemon, and it drives the
 relay account and this device's enrollment. Cua Cloud has ended, so the app
 builds no Cua Cloud client and reads no Cua Cloud credentials from the
-environment. The default location is `default.on` in `$CUA_HOME/config.toml`
-(Settings → Default location); `CUA_DEFAULT_ON` overrides it and Settings shows
-that read-only. `./run-live.sh` starts the daemon.
+environment. The default location is `default.on` in `$CUA_HOME/config.toml`;
+`CUA_DEFAULT_ON` overrides it. `./run-live.sh` starts the daemon.
 
 The Tauri command contract is listed in `TELEPORT.md`.
 
@@ -254,4 +251,4 @@ only the intent is recorded.
 
 ## License
 
-Source-available under FSL-1.1-MIT ([LICENSE](LICENSE)). Offering it as a hosted or managed service needs a commercial licence: see [COMMERCIAL.md](../../COMMERCIAL.md).
+Source-available under FSL-1.1-MIT ([LICENSE](LICENSE)). Offering it as a hosted or managed service needs a commercial licence: see [COMMERCIAL.md](../../legal/COMMERCIAL.md).

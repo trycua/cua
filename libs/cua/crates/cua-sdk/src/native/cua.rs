@@ -1,43 +1,16 @@
 //! The `Cua` entry object and its configuration.
 
-use super::{Fleet, Sandboxes, SpacesdClient, run, runtime};
+use super::{Sandboxes, SpacesdClient, run, runtime};
 use crate::{CuaError, Result};
 use cua_daemon::{Runtime, RuntimeConfig, client::DaemonAddress, client::DaemonClient};
 use std::{path::PathBuf, sync::Arc};
 
-/// Fleet credentials and endpoints. Ignored: Cua Cloud has ended, so nothing
-/// reads them any more. Kept so existing callers still compile.
-#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
-pub struct FleetSettings {
-    /// Ignored.
-    #[uniffi(default = None)]
-    pub base_url: Option<String>,
-    /// Ignored.
-    #[uniffi(default = None)]
-    pub token_url: Option<String>,
-    /// Ignored.
-    #[uniffi(default = None)]
-    pub client_id: Option<String>,
-    /// Ignored.
-    #[uniffi(default = None)]
-    pub client_secret: Option<String>,
-    /// Ignored.
-    #[uniffi(default = None)]
-    pub token: Option<String>,
-}
-
 /// Configuration of an embedded SDK runtime.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct CuaConfig {
     /// State directory for sandbox state files (default `~/.cua/sandboxes`).
     #[uniffi(default = None)]
     pub state_dir: Option<String>,
-    /// Ignored: Cua Cloud has ended.
-    #[uniffi(default = None)]
-    pub fleet: Option<FleetSettings>,
-    /// Ignored: Cua Cloud has ended.
-    #[uniffi(default = true)]
-    pub fleet_from_env: bool,
     /// spacesd probe timeout (default 15 s).
     #[uniffi(default = None)]
     pub env_probe_timeout_ms: Option<u32>,
@@ -50,29 +23,9 @@ pub struct CuaConfig {
     pub teleport_home: Option<String>,
     /// Use the signed-in session (`Cua.auth()`, `cua auth login`) from the
     /// shared credential store, refreshed as needed, for the relay account
-    /// the runtime lists the account's machines with ("My machines"). The
-    /// name is historical: it no longer builds a Fleet client, because Cua
-    /// Cloud has ended.
+    /// the runtime lists the account's machines with ("My machines").
     #[uniffi(default = false)]
-    pub fleet_from_session: bool,
-    /// Ignored: Cua Cloud has ended, so there are no managed pools.
-    #[uniffi(default = None)]
-    pub fleet_pool_home: Option<String>,
-}
-
-impl Default for CuaConfig {
-    fn default() -> Self {
-        Self {
-            state_dir: None,
-            fleet: None,
-            fleet_from_env: true,
-            env_probe_timeout_ms: None,
-            spaces_home: None,
-            teleport_home: None,
-            fleet_from_session: false,
-            fleet_pool_home: None,
-        }
-    }
+    pub account_from_session: bool,
 }
 
 /// Where the SDK runtime lives.
@@ -110,12 +63,7 @@ pub(crate) enum Backend {
 }
 
 pub(crate) fn features() -> Vec<String> {
-    let mut f = vec![
-        "env".to_string(),
-        "fleet".into(),
-        "sandboxes".into(),
-        "daemon".into(),
-    ];
+    let mut f = vec!["env".to_string(), "sandboxes".into(), "daemon".into()];
     if cfg!(feature = "local") {
         f.push("local".into());
     }
@@ -186,9 +134,8 @@ fn session_relay_account(home: &std::path::Path) -> cua_spaces::RelayAccount {
 #[uniffi::export]
 impl Cua {
     /// Runs the SDK runtime in this process. Performs no I/O beyond
-    /// reading the credential store when `fleet_from_session` is set (for
-    /// the relay account). It never builds a Fleet client: Cua Cloud has
-    /// ended.
+    /// reading the credential store when `account_from_session` is set (for
+    /// the relay account).
     #[uniffi::constructor]
     pub fn embedded(config: CuaConfig) -> Result<Arc<Self>> {
         let rc = RuntimeConfig {
@@ -209,13 +156,22 @@ impl Cua {
             Runtime::new(rc)?
         };
         #[cfg(all(feature = "spaces", feature = "host"))]
-        if config.fleet_from_session && std::env::var_os("CUA_DAEMON_NO_RELAY").is_none() {
+        if config.account_from_session && std::env::var_os("CUA_DAEMON_NO_RELAY").is_none() {
             let home = config
                 .spaces_home
                 .clone()
                 .map(PathBuf::from)
                 .unwrap_or_else(cua_daemon::cua_home);
             rt.spaces().set_relay(Some(session_relay_account(&home)));
+        }
+        // With a session: at most every few hours per machine, in the
+        // background, ask the Spaces API for the signed-in account's
+        // usage-data id (CUA-1881); nothing while usage data is off.
+        #[cfg(feature = "host")]
+        if config.account_from_session {
+            runtime().spawn(async {
+                super::telemetry::sync_account_if_due(&cua_auth::Session::from_env()).await;
+            });
         }
         Ok(Arc::new(Self {
             backend: Backend::Embedded(rt),
@@ -317,12 +273,6 @@ impl Cua {
         Arc::new(Sandboxes {
             backend: self.backend.clone(),
         })
-    }
-
-    /// Fleet pools, templates, claims and images. Cua Cloud has ended: this
-    /// always fails with the "Cua Cloud has ended" error and never connects.
-    pub fn fleet(&self) -> Result<Arc<Fleet>> {
-        Err(CuaError::Unsupported(cua_sandbox_core::CLOUD_ENDED.into()))
     }
 
     /// Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a

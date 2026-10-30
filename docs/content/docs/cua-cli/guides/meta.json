@@ -2,6 +2,7 @@
   "title": "Guides",
   "pages": [
     "authentication",
-    "mcp-server"
+    "mcp-server",
+    "share-a-link"
   ]
 }

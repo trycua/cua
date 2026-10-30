@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /** The demo host's telemetry: the events it was sent, kept in memory, and
- * only while its usage-data setting is on (as the SDK's client drops them). */
+ * only while its usage-data setting is on (as the SDK's client drops them).
+ * It links nothing to an account, so it has no linking notice. */
 
 import type { TelemetrySignal } from "../../ops/telemetry";
 import type { DemoContext, DemoHandlers } from "./context";
@@ -14,11 +15,15 @@ export interface DemoTelemetryState {
 
 export const demoTelemetryState = (): DemoTelemetryState => ({ telemetry: [] });
 
-export function demoTelemetryHandlers({ state }: DemoContext): DemoHandlers<"telemetry.track"> {
+export function demoTelemetryHandlers({ state }: DemoContext): DemoHandlers<"telemetry.track" | "telemetry.linkNotice" | "telemetry.acknowledgeLinkNotice" | "crashReporting.config"> {
   return {
     "telemetry.track": ({ signals }) => {
       if (state.settings.telemetry) state.telemetry.push(...signals);
       return null;
     },
+    "telemetry.linkNotice": () => null,
+    "telemetry.acknowledgeLinkNotice": () => null,
+    // The demo host has no app to report for.
+    "crashReporting.config": () => ({ allowed: false, dsn: "", release: "", environment: "", shell: "" }),
   };
 }

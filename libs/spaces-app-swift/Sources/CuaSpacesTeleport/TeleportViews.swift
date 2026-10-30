@@ -26,7 +26,7 @@ public struct TeleportAppPicker: View {
             switch model.step {
             case .loading:
                 header("Teleport an app to \(model.spaceName)")
-                ProgressView("Looking for apps on this machine…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView("Looking for apps on this computer…").frame(maxWidth: .infinity, maxHeight: .infinity)
             case .pick: pick
             case .options: options
             case .planning:
@@ -157,12 +157,12 @@ public struct TeleportAppPicker: View {
                         if item.bytes > 0 { Text(TeleportPickerModel.bytes(item.bytes)).font(.caption) }
                     }
                 }
-                Text(p.totalBytes > 0 ? "\(TeleportPickerModel.bytes(p.totalBytes)) leaves this machine."
-                     : "No files or app data leave this machine.")
+                Text(p.totalBytes > 0 ? "\(TeleportPickerModel.bytes(p.totalBytes)) leaves this computer."
+                     : "No files or app data leave this computer.")
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(p.warnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
                 if p.sensitive {
-                    Toggle("I understand the secrets above leave this machine.", isOn: $model.acknowledged)
+                    Toggle("I understand the secrets above leave this computer.", isOn: $model.acknowledged)
                 }
             }
             HStack {

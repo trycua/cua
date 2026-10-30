@@ -139,6 +139,60 @@ class InstallTelemetry(unittest.TestCase):
         self.assertNotIn(str(self.home), raw)
         self.assertNotIn(os.environ.get("USER", "nobody-here"), raw)
 
+    def test_healthy_qemu_host_sends_completed(self):
+        self.check_runtime_completion(0)
+
+    def test_deferred_runtime_failure_sends_failed_not_completed(self):
+        self.check_runtime_completion(1)
+
+    def test_healthy_docker_host_without_qemu_sends_completed(self):
+        self.check_runtime_completion(0, docker=True)
+
+    def check_runtime_completion(self, doctor_status, docker=False):
+        cli = self.home / "cua"
+        cli.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "cua {VERSION}"; fi\nif [ "$*" = "runtime doctor" ]; then echo "doctor status {doctor_status}"; exit {doctor_status}; fi\necho "$*" >> "{self.home}/cli.log"\nexit 0\n')
+        cli.chmod(0o755)
+        names = ("docker",) if docker else ("qemu-img", f"qemu-system-{os.uname().machine}")
+        for name in names:
+            binary = self.home / name
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o755)
+        script = self.home / "install.sh"
+        script.write_text(SCRIPT.read_text().replace(
+            'main "$@"',
+            f'install_cli() {{ cua_bin="{cli}"; }}\ninstall_app_linux() {{ :; }}\nmain "$@"',
+        ))
+        e = {
+            "PATH": f'{self.home}:{os.environ["PATH"]}',
+            "HOME": str(self.home),
+            "CUA_HOME": str(self.home / ".cua"),
+            "CUA_INSTALL_OS": "linux",
+            "CUA_INSTALL_ARCH": "x86_64",
+            "CUA_INSTALL_MANIFEST_URL": self.manifest,
+            "CUA_TELEMETRY_FORBID_NETWORK": "1",
+            "CUA_TELEMETRY_ENDPOINT": f"{self.base}/batch/",
+            "CUA_POSTHOG_KEY": "phc_test",
+        }
+        if docker:
+            self.assertFalse((self.home / "qemu-img").exists())
+            script.write_text(script.read_text().replace(
+                'main "$@"',
+                'has() { case "$1" in qemu-img|qemu-system-*) return 1;; *) command -v "$1" >/dev/null 2>&1;; esac; }\nmain "$@"',
+            ))
+        p = subprocess.run(["sh", str(script), "--yes", "--verbose", "--no-onboarding", "--select", "spaces"],
+                           env=e, capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, doctor_status, p.stdout + p.stderr)
+        self.assertIn(f"doctor status {doctor_status}", p.stdout)
+        self.assertIn("Next:", p.stdout)
+        if docker:
+            self.assertIn("VM runtime ok", p.stdout + p.stderr)
+            log = self.home / "cli.log"
+            self.assertNotIn("runtime setup qemu", log.read_text() if log.exists() else "")
+        evs = self.events()
+        self.assertEqual([e["properties"]["step"] for e in evs],
+                         ["installer_started", "installer_failed" if doctor_status else "installer_completed"])
+        self.assertEqual(evs[-1]["properties"]["install_stage"], "runtime" if doctor_status else "none")
+
     def test_an_existing_install_id_is_kept(self):
         d = self.home / ".cua" / "telemetry"
         d.mkdir(parents=True)

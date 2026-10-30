@@ -18,6 +18,10 @@ use crate::tool::ToolRegistry;
 #[async_trait::async_trait]
 pub trait ToolProvider: Send + Sync {
     fn tools_list(&self) -> serde_json::Value;
+    fn is_known_tool(&self, _name: &str) -> bool {
+        true
+    }
+
     async fn invoke_tool(
         &self,
         name: &str,
@@ -29,6 +33,10 @@ pub trait ToolProvider: Send + Sync {
 impl ToolProvider for ToolRegistry {
     fn tools_list(&self) -> serde_json::Value {
         ToolRegistry::tools_list(self)
+    }
+
+    fn is_known_tool(&self, name: &str) -> bool {
+        ToolRegistry::is_known_tool(self, name)
     }
 
     async fn invoke_tool(
@@ -603,31 +611,6 @@ pub fn tool_observation_timer(
     ))
 }
 
-/// Build a private aggregate-session context from a valid, known tool call.
-/// Only the public `session` argument is considered; reserved fallback keys
-/// and all other arguments remain outside the observer seam.
-pub fn session_tool_context(
-    req: &Request,
-    is_known_tool: impl Fn(&str) -> bool,
-    transport: crate::session::SessionTransport,
-) -> Option<crate::session::SessionToolContext> {
-    if req.method != "tools/call" {
-        return None;
-    }
-    let call = req.tool_call().ok()?;
-    let known_tool = call.name == "type_text_chars"
-        || crate::tool::renamed_tool(&call.name).is_some()
-        || is_known_tool(&call.name);
-    let client_kind = match transport {
-        crate::session::SessionTransport::Cli => crate::session::SessionClientKind::Cli,
-        crate::session::SessionTransport::Daemon => crate::session::SessionClientKind::Direct,
-        crate::session::SessionTransport::McpStdio | crate::session::SessionTransport::McpHttp => {
-            crate::session::SessionClientKind::Mcp
-        }
-    };
-    crate::session::begin_tool_call(&call.name, &call.args, known_tool, transport, client_kind)
-}
-
 fn notify_session_started(metadata: InitializeMetadata) {
     if let Some(observer) = STDIO_OBSERVER.get() {
         observer.on_session_started(metadata);
@@ -937,6 +920,16 @@ async fn dispatch_request(
                     );
                 }
 
+                if !provider.is_known_tool(&call.name) {
+                    return Response::ok(
+                        id,
+                        tool_error_result(
+                            format!("Unknown tool: {}", call.name),
+                            serde_json::json!({"code": "unknown_tool"}),
+                        ),
+                    );
+                }
+
                 let public_session = call
                     .args
                     .get("session")
@@ -997,6 +990,10 @@ mod dispatch_contract_tests {
 
     #[async_trait::async_trait]
     impl ToolProvider for NeverInvokeProvider {
+        fn is_known_tool(&self, name: &str) -> bool {
+            name == "get_config"
+        }
+
         fn tools_list(&self) -> serde_json::Value {
             serde_json::json!({"tools": [{"name": "get_config"}]})
         }
@@ -1060,6 +1057,10 @@ mod dispatch_contract_tests {
 
     #[async_trait::async_trait]
     impl ToolProvider for StubProvider {
+        fn is_known_tool(&self, _name: &str) -> bool {
+            true
+        }
+
         fn tools_list(&self) -> serde_json::Value {
             serde_json::json!({"tools": []})
         }
@@ -1151,6 +1152,10 @@ mod observation_tests {
     impl ToolProvider for CapturingProvider {
         fn tools_list(&self) -> serde_json::Value {
             serde_json::json!({"tools": []})
+        }
+
+        fn is_known_tool(&self, _name: &str) -> bool {
+            true
         }
 
         async fn invoke_tool(

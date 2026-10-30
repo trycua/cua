@@ -12,6 +12,7 @@
 //! features are checked against the Space's spacesd capabilities, and a
 //! missing one is a `capability_missing` tool error naming it.
 
+pub mod member;
 /// The Cua Volume tools, runnable as any caller context (the MCP server as
 /// the user, the in-Space agent bridge as the run's agent).
 mod tools;
@@ -132,6 +133,15 @@ impl ToolOutcome {
 pub trait ToolBackend: Send + Sync {
     /// Calls one contract tool.
     async fn call(&self, tool: &str, arguments: Value) -> ToolOutcome;
+}
+
+/// A server is a backend for another (a member's server over this
+/// process's own runtime).
+#[async_trait::async_trait]
+impl ToolBackend for McpServer {
+    async fn call(&self, tool: &str, arguments: Value) -> ToolOutcome {
+        McpServer::call(self, tool, arguments).await
+    }
 }
 
 /// Tools served next to the Spaces contract (the `cua` CLI's sandbox,
@@ -265,19 +275,31 @@ impl McpServer {
 
     fn exposes(&self, tool: &str) -> bool {
         let tool = cua_spaces_contract::canonical(tool);
-        cua_spaces_contract::tool(tool).is_some() && self.filter.as_ref().is_none_or(|f| f(tool))
+        // A person-only tool (cloud_approve) is never an MCP tool: every MCP
+        // client is an agent. The apps reach it through the daemon.
+        cua_spaces_contract::tool(tool).is_some()
+            && !cua_spaces_contract::person_only(tool)
+            && self.filter.as_ref().is_none_or(|f| f(tool))
     }
 
     /// `tools/list` result: the contract tools, then the extensions'.
     pub fn tools_list(&self) -> Value {
+        // A Space's runtime may be a local runtime provider installed on
+        // this machine: tools that take one name them.
+        let providers = cua_sandbox_core::external::Registry::global().providers();
         let mut tools: Vec<Value> = cua_spaces_contract::tools()
             .into_iter()
             .filter(|t| self.exposes(t.name))
             .map(|t| {
+                let mut schema = t.input_schema.clone();
+                cua_sandbox_core::external::annotate_runtime_schema(&mut schema, &providers);
+                if crate::extension::MEMBER_TOOLS.contains(&t.name) {
+                    add_member_property(&mut schema);
+                }
                 json!({
                     "name": t.name,
                     "description": t.mcp_description(),
-                    "inputSchema": t.input_schema,
+                    "inputSchema": schema,
                     "annotations": {
                         "readOnlyHint": t.annotations.read_only,
                         "destructiveHint": t.annotations.destructive,
@@ -296,8 +318,45 @@ impl McpServer {
     /// Calls one contract tool (no filter applied).
     pub async fn call(&self, name: &str, arguments: Value) -> ToolOutcome {
         let name = cua_spaces_contract::canonical(name);
+        if let Some(refused) = member_refusal(name) {
+            return refused;
+        }
         match &self.backend {
             Backend::Local(spaces) => {
+                let mut arguments = arguments;
+                // An agent connected from a computer presents its member key
+                // with each call: the call then runs as that member (its
+                // Space's thread tools only), whoever carried it.
+                let credential = arguments
+                    .as_object_mut()
+                    .and_then(|o| o.remove(crate::extension::MEMBER_CREDENTIAL));
+                if let Some(credential) = credential {
+                    let member = match spaces
+                        .call_extension(
+                            "agents connected to a Space",
+                            crate::extension::MEMBER_AUTH_OP,
+                            credential,
+                        )
+                        .await
+                        .and_then(|v| crate::extension::Caller::member_from(&v))
+                    {
+                        Ok(m) => m,
+                        Err(e) => return ToolOutcome::error(&e),
+                    };
+                    if !crate::extension::MEMBER_TOOLS.contains(&name) {
+                        return member
+                            .scope(async { member_refusal(name).expect("a member") })
+                            .await;
+                    }
+                    return member
+                        .scope(Box::pin(tools::call(
+                            spaces,
+                            name,
+                            arguments,
+                            self.broker.as_ref(),
+                        )))
+                        .await;
+                }
                 tools::call(spaces, name, arguments, self.broker.as_ref()).await
             }
             Backend::Remote(b) => b.call(name, arguments).await,
@@ -314,6 +373,9 @@ impl McpServer {
     }
 
     async fn call_any(&self, name: &str, arguments: Value) -> ToolOutcome {
+        if let Some(refused) = member_refusal(name) {
+            return refused;
+        }
         if self.exposes(name) {
             return self.call(name, arguments).await;
         }
@@ -435,8 +497,87 @@ pub const SPACE_SCOPED_TOOLS: &[&str] = &[
 ];
 
 /// Server instructions sent in `initialize`.
-pub const INSTRUCTIONS: &str = "Cua Spaces: isolated sandboxes. Any image is a Space; the computer-use and file tools need one that runs cua-spacesd (the Spaces images), and every Space reaches the MCP servers it declares with list_tools/call_tool(service=...). Start with list_spaces; create one with create_space(on=\"local\" (free) or \"cloud\" (metered); reuse=true returns a reachable one), or add an existing machine with add_space(url, token). delete_space deletes a Space you created. Then work inside it with space_bash, space_write, upload/send_file/download, and its computer-use tools via list_tools/call_tool. agent_start runs a coding agent inside a Space. Tools marked FOR THE HUMAN draw on the user's own desktop; call them only when asked.";
+pub const INSTRUCTIONS: &str = "Cua Spaces: isolated sandboxes. Any image is a Space; the computer-use and file tools need one that runs cua-spacesd (the Spaces images), and every Space reaches the MCP servers it declares with list_tools/call_tool(service=...). Start with list_spaces; create one with create_space(on=\"local\" (free) or \"aws\", \"gcp\" or \"modal\" (your own cloud account); reuse=true returns a reachable one), or add an existing computer with add_space(url, token). delete_space deletes a Space you created. Then work inside it with space_bash, space_write, upload/send_file/download, and its computer-use tools via list_tools/call_tool. agent_start runs a coding agent inside a Space. Tools marked FOR THE HUMAN draw on the user's own desktop; call them only when asked.";
 
 pub(crate) fn error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
+}
+
+/// An agent connected with a member key reaches its Space's thread tools
+/// and nothing else, whatever transport carried the call.
+fn member_refusal(name: &str) -> Option<ToolOutcome> {
+    let member = matches!(
+        crate::extension::Caller::current(),
+        crate::extension::Caller::Member { .. }
+    );
+    (member && !crate::extension::MEMBER_TOOLS.contains(&name)).then(|| {
+        ToolOutcome::error(&crate::Error::extension(
+            "permission_denied",
+            format!("{name}: an agent connected to a Space reaches only that Space's thread"),
+        ))
+    })
+}
+
+/// Lets an agent that joined with `thread_join_redeem` (and so holds a member
+/// key) act as that member through these tools: `_member` is taken out of the
+/// arguments before the tool runs ([`crate::extension::MEMBER_CREDENTIAL`]).
+fn add_member_property(schema: &mut Value) {
+    if let Some(props) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        props.insert(
+            crate::extension::MEMBER_CREDENTIAL.to_string(),
+            json!({
+                "type": "object",
+                "description": "Only for an agent that joined a Space with thread_join_redeem: its member credential from that result (`member_credential`: member_id and key). With it the call posts and reads as the agent, not as the person who signed in. Never show or store it elsewhere.",
+                "properties": {"member_id": {"type": "string"}, "key": {"type": "string"}},
+                "required": ["member_id", "key"],
+            }),
+        );
+    }
+}
+
+#[cfg(test)]
+mod person_only_tests {
+    use super::*;
+
+    struct Recorder(std::sync::Mutex<Vec<String>>);
+
+    #[async_trait::async_trait]
+    impl ToolBackend for Recorder {
+        async fn call(&self, tool: &str, _arguments: Value) -> ToolOutcome {
+            self.0.lock().unwrap().push(tool.to_string());
+            ToolOutcome::text("ran")
+        }
+    }
+
+    #[tokio::test]
+    async fn no_mcp_server_lists_or_runs_a_person_only_tool() {
+        assert!(cua_spaces_contract::person_only("cloud_approve"));
+        assert!(cua_spaces_contract::tool("cloud_approve").is_some());
+        let backend = Arc::new(Recorder(Default::default()));
+        let server = McpServer::remote(backend.clone());
+        let listed = server.tools_list();
+        let names: Vec<&str> = listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .collect();
+        assert!(names.contains(&"cloud_status"));
+        for t in cua_spaces_contract::PERSON_ONLY_TOOLS {
+            assert!(!names.contains(t), "{t} is listed to agents");
+        }
+        let r = server
+            .handle(json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "cloud_approve", "arguments": {"provider": "aws"}}
+            }))
+            .await
+            .unwrap();
+        let refused = r.get("error").is_some() || r["result"]["isError"].as_bool() == Some(true);
+        assert!(refused, "{r}");
+        assert!(
+            backend.0.lock().unwrap().is_empty(),
+            "it reached the daemon"
+        );
+    }
 }

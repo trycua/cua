@@ -2397,3 +2397,20 @@ async fn a_malformed_path_selection_is_refused() {
     }
     assert!(r.broker.list_pending(&r.cua).await.unwrap().is_empty());
 }
+
+/// The readiness check is for the first-party app only, and it needs no
+/// presence: it reads no secret and shows no name from the vault.
+#[tokio::test]
+async fn readiness_is_first_party_and_asks_for_no_presence() {
+    let r = rig().await;
+    r.presence.set(false);
+    let ready = r
+        .broker
+        .readiness(&r.cua, "chrome", Some("Profile 1"))
+        .await
+        .unwrap();
+    assert_eq!(ready.provider_id, "chrome");
+    assert_eq!(ready.profile.as_deref(), Some("Profile 1"));
+    assert!(r.broker.readiness(&r.koala, "chrome", None).await.is_err());
+    assert!(r.broker.readiness(&r.evil, "chrome", None).await.is_err());
+}

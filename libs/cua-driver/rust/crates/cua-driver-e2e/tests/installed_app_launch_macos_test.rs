@@ -136,6 +136,11 @@ fn ensure_finder_frontmost() {
     panic!("could not make Finder stay frontmost for installed-app launch validation");
 }
 
+fn kill_app_process(process_name: &str) {
+    let _ = Command::new("pkill").args(["-x", process_name]).output();
+    sleep(Duration::from_millis(800));
+}
+
 fn launch_and_assert_frontmost_unchanged(
     driver: &mut McpDriver,
     bundle_id: &str,
@@ -171,7 +176,7 @@ fn launch_and_assert_frontmost_unchanged(
     pid as u32
 }
 
-fn run_launch_case(cell_id: &str, bundle_id: &str, label: &str) {
+fn run_launch_case(cell_id: &str, bundle_id: &str, process_name: &str, label: &str) {
     let case = CaseSpec::delivered(
         cell_id,
         label,
@@ -184,6 +189,7 @@ fn run_launch_case(cell_id: &str, bundle_id: &str, label: &str) {
         vec![OracleKind::Focus, OracleKind::Protocol],
     );
     execute_case(case, |evidence| {
+        kill_app_process(process_name);
         ensure_finder_frontmost();
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(cell_id)
             .expect("start installed macOS daemon proxy");
@@ -204,6 +210,7 @@ fn textedit_launch_preserves_finder_frontmost() {
     run_launch_case(
         "macos-textedit-launch-background",
         TEXTEDIT_BUNDLE,
+        "TextEdit",
         "textedit",
     );
 }
@@ -214,6 +221,7 @@ fn calculator_launch_preserves_finder_frontmost() {
     run_launch_case(
         "macos-calculator-launch-background",
         CALCULATOR_BUNDLE,
+        "Calculator",
         "calculator",
     );
 }

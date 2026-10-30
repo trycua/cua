@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.18.0](https://github.com/trycua/cua/compare/cua-spaces-v0.17.0...cua-spaces-v0.18.0) (2026-10-30)
+
+
+### Features
+
+* **spaces:** pin Spaces and shared machine desktops to the notch ([#6163](https://github.com/trycua/cua/issues/6163)) ([b269d38](https://github.com/trycua/cua/commit/b269d38db580afbd7b9f3b1d8409d0df540e1b21))
+
+
+### Bug Fixes
+
+* **cua-spaces:** say "machine" in the macOS app's last device and computer messages ([#6162](https://github.com/trycua/cua/issues/6162)) ([204acb4](https://github.com/trycua/cua/commit/204acb4e5e81fa52affad28f4e9b0b8756f7842a))
+
 ## [0.17.0](https://github.com/trycua/cua/compare/cua-spaces-v0.16.0...cua-spaces-v0.17.0) (2026-10-29)
 
 

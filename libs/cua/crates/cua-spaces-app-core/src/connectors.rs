@@ -1492,6 +1492,146 @@ pub fn provider_picker(
     }
 }
 
+/// One model row of the prompt box's model menu.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelChoice {
+    /// The id the provider's API takes.
+    pub id: String,
+    pub label: String,
+    /// A quick, cheap model (the menu tags it "Fast").
+    pub fast: bool,
+    /// The provider's own default.
+    pub default: bool,
+}
+
+/// The models of one provider the person has connected (or must reconnect).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelGroup {
+    pub provider: String,
+    pub label: String,
+    pub icon: String,
+    /// `connected` or `needs-reconnect` (a sign-in that has expired).
+    pub state: String,
+    /// The coding app that must run these models when only its own sign-in is
+    /// saved (a Claude or ChatGPT sign-in is Claude Code's or Codex's);
+    /// `None`: the general agent with an API key.
+    pub harness: Option<String>,
+    pub models: Vec<ModelChoice>,
+}
+
+/// A model picked by provider and id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelRef {
+    pub provider: String,
+    pub model: String,
+}
+
+/// What the model menu of the prompt box reads (`connectors.models`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelsView {
+    /// Connected providers first (in the registry's order), then those that
+    /// need a reconnect.
+    pub groups: Vec<ModelGroup>,
+    /// What a new prompt starts with: the first fast model of the first
+    /// connected provider that has one, else that provider's default.
+    pub default: Option<ModelRef>,
+    /// The line under the list that opens Connections.
+    pub connect_label: String,
+    /// Said when nothing is connected.
+    pub empty: Option<String>,
+}
+
+/// The harness a credential of `p` may only be used by: the coding app that
+/// owns a saved sign-in, when no key that anything can use is saved.
+fn model_harness(input: &ConnectorsInput, p: &reg::Provider) -> Option<String> {
+    let live: Vec<&'static str> = provider_envs(p)
+        .into_iter()
+        .filter(|e| input.key(e).is_some_and(|k| !k.expired))
+        .collect();
+    if live.iter().any(|e| p.scope_of(e).is_none()) {
+        return None;
+    }
+    live.iter()
+        .find_map(|e| p.scope_of(e))
+        .map(|scope| scope.to_string())
+}
+
+/// The models a person can pick, from the providers they have connected.
+pub fn models_view(input: &ConnectorsInput) -> ModelsView {
+    let mut groups: Vec<ModelGroup> = vec![];
+    let mut reconnect: Vec<ModelGroup> = vec![];
+    for p in reg::visible() {
+        let models: Vec<ModelChoice> = p
+            .model_list()
+            .iter()
+            .map(|m| ModelChoice {
+                id: m.id.into(),
+                label: m.name.into(),
+                fast: m.fast,
+                default: m.id == p.default_model,
+            })
+            .collect();
+        if models.is_empty() {
+            continue;
+        }
+        let connected = provider_credential(input, p).is_some();
+        if !connected && !provider_expired(input, p) {
+            continue;
+        }
+        let g = ModelGroup {
+            provider: p.id.into(),
+            label: p.name.into(),
+            icon: p.icon.into(),
+            state: if connected {
+                "connected"
+            } else {
+                "needs-reconnect"
+            }
+            .into(),
+            harness: if connected {
+                model_harness(input, p)
+            } else {
+                None
+            },
+            models,
+        };
+        if connected {
+            groups.push(g);
+        } else {
+            reconnect.push(g);
+        }
+    }
+    let default = groups
+        .iter()
+        .find_map(|g| g.models.iter().find(|m| m.fast).map(|m| (g, m)));
+    let default = default
+        .or_else(|| {
+            groups.first().and_then(|g| {
+                g.models
+                    .iter()
+                    .find(|m| m.default)
+                    .or_else(|| g.models.first())
+                    .map(|m| (g, m))
+            })
+        })
+        .map(|(g, m)| ModelRef {
+            provider: g.provider.clone(),
+            model: m.id.clone(),
+        });
+    let none_connected = groups.is_empty();
+    groups.extend(reconnect);
+    ModelsView {
+        groups,
+        default,
+        connect_label: "Connect a provider".into(),
+        empty: none_connected.then(|| "Connect a provider to pick a model.".to_string()),
+    }
+}
+
 /// What importing Claude Code's sign-in says before it reads anything, and
 /// what it offers when there is nothing to import.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -17,6 +17,10 @@ id = "key"
 kind = "api_key"
 env = "OPENROUTER_API_KEY"
 
+[[model]]
+id = "anthropic/claude-sonnet-5"
+name = "Claude Sonnet 5"
+
 [delivery]
 opencode = ["OPENROUTER_API_KEY"]
 goose = ["OPENROUTER_API_KEY"]

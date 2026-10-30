@@ -286,6 +286,38 @@ export const importSheet = (core: CoreClient, os: HostOs = hostOs()): ImportShee
 export const providerPicker = (core: CoreClient, input: ConnectorsInput, forApp: string | null = null, query = "", expanded = false): ProviderPickerView | null =>
   core.tryCall<ProviderPickerView>("connectors.providerPicker", { input: input as unknown as Json, forApp, query, expanded }) ?? null;
 
+/** One model row of the prompt box's model menu. */
+export interface ModelChoice {
+  id: string;
+  label: string;
+  /** A quick, cheap model (tagged "Fast"). */
+  fast: boolean;
+  /** The provider's own default. */
+  default: boolean;
+}
+
+export interface ModelGroup {
+  provider: string;
+  label: string;
+  icon: string;
+  state: "connected" | "needs-reconnect";
+  /** The coding app that must run these models (only its own sign-in is saved); null: the general agent. */
+  harness: string | null;
+  models: ModelChoice[];
+}
+
+/** The models of the connected providers (`connectors.models`). */
+export interface ModelsView {
+  groups: ModelGroup[];
+  /** What a new prompt starts with. */
+  default: { provider: string; model: string } | null;
+  connectLabel: string;
+  empty: string | null;
+}
+
+export const modelsView = (core: CoreClient, input: ConnectorsInput): ModelsView | null =>
+  core.tryCall<ModelsView>("connectors.models", { input: input as unknown as Json }) ?? null;
+
 export const appDetail = (core: CoreClient, input: ConnectorsInput, agent: string): AppDetailView | null =>
   core.tryCall<AppDetailView | null>("connectors.appDetail", { input: input as unknown as Json, agent }) ?? null;
 

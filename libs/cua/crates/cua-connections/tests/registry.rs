@@ -556,3 +556,43 @@ fn goose_reads_the_google_key_from_either_saved_name() {
     // OpenCode and Pi read GEMINI_API_KEY only.
     assert!(deliver("opencode", &saved(&[("GOOGLE_API_KEY", "goog")])).is_empty());
 }
+
+#[test]
+fn every_top_provider_with_a_default_model_lists_it_and_the_first_fast_one_is_marked() {
+    for p in visible().filter(|p| p.tier == Tier::Top && !p.default_model.is_empty()) {
+        assert!(
+            p.models.iter().any(|m| m.id == p.default_model),
+            "{}: the default model is in its list",
+            p.id
+        );
+    }
+    // The picker's default for a new prompt is the first fast model.
+    let anthropic = provider("anthropic").unwrap();
+    assert_eq!(
+        anthropic.models.iter().find(|m| m.fast).map(|m| m.id),
+        Some("claude-haiku-4-5")
+    );
+}
+
+#[test]
+fn a_provider_without_a_list_offers_its_default_model_alone() {
+    let zai = provider("zai").unwrap();
+    assert!(zai.models.is_empty());
+    let list = zai.model_list();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, zai.default_model);
+    // A provider with neither lists nothing.
+    assert!(provider("github").unwrap().model_list().is_empty());
+}
+
+#[test]
+fn model_ids_are_unique_and_names_are_plain_words() {
+    for p in PROVIDERS {
+        let mut seen = std::collections::BTreeSet::new();
+        for m in p.models {
+            assert!(seen.insert(m.id), "{}: {} twice", p.id, m.id);
+            assert!(!m.name.contains('\u{b7}'), "{}: no middle dot", m.id);
+            assert!(!m.name.trim().is_empty());
+        }
+    }
+}

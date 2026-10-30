@@ -24,6 +24,7 @@
     {
       "aliases": [],
       "alsoWires": [],
+      "defaultModel": "claude-sonnet-5",
       "delivery": {
         "claude-code": [
           "ANTHROPIC_API_KEY",
@@ -68,6 +69,23 @@
           "scope": ""
         }
       ],
+      "models": [
+        {
+          "fast": true,
+          "id": "claude-haiku-4-5",
+          "name": "Claude Haiku 4.5"
+        },
+        {
+          "fast": false,
+          "id": "claude-sonnet-5",
+          "name": "Claude Sonnet 5"
+        },
+        {
+          "fast": false,
+          "id": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+        }
+      ],
       "name": "Anthropic",
       "rank": 10,
       "regions": [],
@@ -79,6 +97,7 @@
       "alsoWires": [
         "openai-chat"
       ],
+      "defaultModel": "gpt-5.5",
       "delivery": {
         "goose": [
           "OPENAI_API_KEY"
@@ -118,6 +137,13 @@
           "scope": ""
         }
       ],
+      "models": [
+        {
+          "fast": false,
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        }
+      ],
       "name": "OpenAI",
       "rank": 20,
       "regions": [],
@@ -127,6 +153,7 @@
     {
       "aliases": [],
       "alsoWires": [],
+      "defaultModel": "anthropic/claude-sonnet-5",
       "delivery": {
         "goose": [
           "OPENROUTER_API_KEY"
@@ -156,6 +183,13 @@
           "scope": ""
         }
       ],
+      "models": [
+        {
+          "fast": false,
+          "id": "anthropic/claude-sonnet-5",
+          "name": "Claude Sonnet 5"
+        }
+      ],
       "name": "OpenRouter",
       "rank": 30,
       "regions": [],
@@ -169,6 +203,7 @@
         "aistudio"
       ],
       "alsoWires": [],
+      "defaultModel": "gemini-3.8-flash",
       "delivery": {
         "gemini-cli": [
           "GEMINI_API_KEY",
@@ -203,6 +238,13 @@
           "scope": ""
         }
       ],
+      "models": [
+        {
+          "fast": true,
+          "id": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+        }
+      ],
       "name": "Google AI Studio",
       "rank": 40,
       "regions": [],
@@ -216,6 +258,7 @@
       "alsoWires": [
         "openai-chat"
       ],
+      "defaultModel": "grok-4.6",
       "delivery": {
         "hermes": [
           "XAI_API_KEY"
@@ -233,6 +276,13 @@
           "scope": ""
         }
       ],
+      "models": [
+        {
+          "fast": false,
+          "id": "grok-4.6",
+          "name": "Grok 4.6"
+        }
+      ],
       "name": "xAI",
       "rank": 50,
       "regions": [],
@@ -242,6 +292,7 @@
     {
       "aliases": [],
       "alsoWires": [],
+      "defaultModel": "deepseek-flash",
       "delivery": {
         "hermes": [
           "DEEPSEEK_API_KEY"
@@ -259,6 +310,13 @@
           "scope": ""
         }
       ],
+      "models": [
+        {
+          "fast": true,
+          "id": "deepseek-flash",
+          "name": "DeepSeek Flash"
+        }
+      ],
       "name": "DeepSeek",
       "rank": 60,
       "regions": [],
@@ -271,6 +329,7 @@
         "kimi code"
       ],
       "alsoWires": [],
+      "defaultModel": "kimi-k3",
       "delivery": {
         "hermes": [
           "KIMI_API_KEY"
@@ -288,6 +347,13 @@
           "scope": ""
         }
       ],
+      "models": [
+        {
+          "fast": false,
+          "id": "kimi-k3",
+          "name": "Kimi K3"
+        }
+      ],
       "name": "Kimi (Moonshot)",
       "rank": 70,
       "regions": [],
@@ -300,6 +366,7 @@
         "github copilot cli"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {},
       "hermesId": "",
       "hidden": false,
@@ -313,6 +380,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "GitHub Copilot",
       "rank": 80,
       "regions": [],
@@ -324,6 +392,7 @@
         "hf"
       ],
       "alsoWires": [],
+      "defaultModel": "moonshotai/Kimi-K2.5",
       "delivery": {
         "hermes": [
           "HF_TOKEN"
@@ -341,6 +410,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Hugging Face",
       "rank": 100,
       "regions": [],
@@ -354,6 +424,7 @@
         "z.ai"
       ],
       "alsoWires": [],
+      "defaultModel": "glm-5.3",
       "delivery": {
         "hermes": [
           "GLM_API_KEY"
@@ -371,6 +442,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Z.AI (GLM)",
       "rank": 110,
       "regions": [
@@ -387,6 +459,7 @@
         "fw"
       ],
       "alsoWires": [],
+      "defaultModel": "accounts/fireworks/models/kimi-k2p6",
       "delivery": {
         "hermes": [
           "FIREWORKS_API_KEY"
@@ -404,6 +477,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Fireworks AI",
       "rank": 120,
       "regions": [],
@@ -417,6 +491,7 @@
         "build.nvidia.com"
       ],
       "alsoWires": [],
+      "defaultModel": "nvidia/nemotron-3-ultra-550b-a55b",
       "delivery": {
         "hermes": [
           "NVIDIA_API_KEY"
@@ -434,6 +509,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "NVIDIA NIM",
       "rank": 130,
       "regions": [],
@@ -445,6 +521,7 @@
         "ollama"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {
         "hermes": [
           "OLLAMA_API_KEY"
@@ -462,6 +539,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Ollama Cloud",
       "rank": 140,
       "regions": [],
@@ -473,6 +551,7 @@
         "deep infra"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {
         "hermes": [
           "DEEPINFRA_API_KEY"
@@ -490,6 +569,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "DeepInfra",
       "rank": 150,
       "regions": [],
@@ -501,6 +581,7 @@
         "novitaai"
       ],
       "alsoWires": [],
+      "defaultModel": "moonshotai/kimi-k2.5",
       "delivery": {
         "hermes": [
           "NOVITA_API_KEY"
@@ -518,6 +599,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Novita AI",
       "rank": 160,
       "regions": [],
@@ -529,6 +611,7 @@
         "nebius"
       ],
       "alsoWires": [],
+      "defaultModel": "Qwen/Qwen3.5-397B-A17B-fast",
       "delivery": {
         "hermes": [
           "NEBIUS_API_KEY"
@@ -546,6 +629,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Nebius Token Factory",
       "rank": 170,
       "regions": [],
@@ -557,6 +641,7 @@
         "gmicloud"
       ],
       "alsoWires": [],
+      "defaultModel": "zai-org/GLM-5.1-FP8",
       "delivery": {
         "hermes": [
           "GMI_API_KEY"
@@ -574,6 +659,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "GMI Cloud",
       "rank": 180,
       "regions": [],
@@ -585,6 +671,7 @@
         "solar"
       ],
       "alsoWires": [],
+      "defaultModel": "solar-pro3",
       "delivery": {
         "hermes": [
           "UPSTAGE_API_KEY"
@@ -602,6 +689,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Upstage Solar",
       "rank": 190,
       "regions": [],
@@ -613,6 +701,7 @@
         "trinity"
       ],
       "alsoWires": [],
+      "defaultModel": "trinity-large-thinking",
       "delivery": {
         "hermes": [
           "ARCEEAI_API_KEY"
@@ -630,6 +719,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Arcee AI",
       "rank": 200,
       "regions": [],
@@ -641,6 +731,7 @@
         "vercel"
       ],
       "alsoWires": [],
+      "defaultModel": "anthropic/claude-sonnet-5",
       "delivery": {
         "hermes": [
           "AI_GATEWAY_API_KEY"
@@ -658,6 +749,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Vercel AI Gateway",
       "rank": 210,
       "regions": [],
@@ -669,6 +761,7 @@
         "zen"
       ],
       "alsoWires": [],
+      "defaultModel": "x-preview-f-free",
       "delivery": {
         "hermes": [
           "OPENCODE_ZEN_API_KEY"
@@ -686,6 +779,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "OpenCode Zen",
       "rank": 220,
       "regions": [],
@@ -697,6 +791,7 @@
         "go"
       ],
       "alsoWires": [],
+      "defaultModel": "kimi-k3",
       "delivery": {
         "hermes": [
           "OPENCODE_GO_API_KEY"
@@ -714,6 +809,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "OpenCode Go",
       "rank": 230,
       "regions": [],
@@ -725,6 +821,7 @@
         "kilo"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {
         "hermes": [
           "KILOCODE_API_KEY"
@@ -742,6 +839,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Kilo Code",
       "rank": 240,
       "regions": [],
@@ -753,6 +851,7 @@
         "mimo"
       ],
       "alsoWires": [],
+      "defaultModel": "mimo-v2.5-pro",
       "delivery": {
         "hermes": [
           "XIAOMI_API_KEY"
@@ -770,6 +869,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Xiaomi MiMo",
       "rank": 250,
       "regions": [],
@@ -781,6 +881,7 @@
         "step"
       ],
       "alsoWires": [],
+      "defaultModel": "step-3.5-flash",
       "delivery": {
         "hermes": [
           "STEPFUN_API_KEY"
@@ -798,6 +899,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "StepFun",
       "rank": 260,
       "regions": [],
@@ -809,6 +911,7 @@
         "mini-max"
       ],
       "alsoWires": [],
+      "defaultModel": "MiniMax-M3",
       "delivery": {
         "hermes": [
           "MINIMAX_API_KEY"
@@ -826,6 +929,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "MiniMax",
       "rank": 270,
       "regions": [],
@@ -839,6 +943,7 @@
         "alibaba cloud"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {
         "hermes": [
           "DASHSCOPE_API_KEY"
@@ -856,6 +961,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Qwen Cloud (Alibaba)",
       "rank": 280,
       "regions": [],
@@ -868,6 +974,7 @@
         "muse"
       ],
       "alsoWires": [],
+      "defaultModel": "muse-spark-1.2",
       "delivery": {
         "hermes": [
           "MODEL_API_KEY"
@@ -885,6 +992,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Meta Model API",
       "rank": 290,
       "regions": [],
@@ -896,6 +1004,7 @@
         "ramp"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {
         "hermes": [
           "RAMP_ROUTER_API_KEY"
@@ -913,6 +1022,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Ramp Router",
       "rank": 300,
       "regions": [],
@@ -922,6 +1032,7 @@
     {
       "aliases": [],
       "alsoWires": [],
+      "defaultModel": "deepseek/deepseek-v4-pro",
       "delivery": {
         "hermes": [
           "COMMANDCODE_API_KEY"
@@ -939,6 +1050,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "CommandCode",
       "rank": 310,
       "regions": [],
@@ -950,6 +1062,7 @@
         "aci"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {
         "hermes": [
           "ACTUAL_API_KEY"
@@ -967,6 +1080,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Actual Computer",
       "rank": 320,
       "regions": [],
@@ -979,6 +1093,7 @@
         "hunyuan"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {
         "hermes": [
           "TOKENHUB_API_KEY"
@@ -996,6 +1111,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Tencent TokenHub",
       "rank": 330,
       "regions": [],
@@ -1008,6 +1124,7 @@
         "hermes"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {},
       "hermesId": "nous",
       "hidden": true,
@@ -1015,6 +1132,7 @@
       "id": "nous",
       "kind": "aggregator",
       "methods": [],
+      "models": [],
       "name": "Nous Portal",
       "rank": 340,
       "regions": [],
@@ -1027,6 +1145,7 @@
         "qwen code"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {},
       "hermesId": "qwen-oauth",
       "hidden": true,
@@ -1034,6 +1153,7 @@
       "id": "qwen-oauth",
       "kind": "hosted",
       "methods": [],
+      "models": [],
       "name": "Qwen CLI sign-in",
       "rank": 350,
       "regions": [],
@@ -1045,6 +1165,7 @@
         "minimax coding plan"
       ],
       "alsoWires": [],
+      "defaultModel": "MiniMax-M3",
       "delivery": {},
       "hermesId": "minimax-oauth",
       "hidden": true,
@@ -1052,6 +1173,7 @@
       "id": "minimax-oauth",
       "kind": "hosted",
       "methods": [],
+      "models": [],
       "name": "MiniMax sign-in",
       "rank": 360,
       "regions": [],
@@ -1064,6 +1186,7 @@
         "grok subscription"
       ],
       "alsoWires": [],
+      "defaultModel": "grok-4.6",
       "delivery": {},
       "hermesId": "xai-oauth",
       "hidden": true,
@@ -1071,6 +1194,7 @@
       "id": "xai-oauth",
       "kind": "hosted",
       "methods": [],
+      "models": [],
       "name": "SuperGrok sign-in",
       "rank": 370,
       "regions": [],
@@ -1083,6 +1207,7 @@
         "google cloud"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {},
       "hermesId": "vertex",
       "hidden": true,
@@ -1096,6 +1221,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Google Vertex AI",
       "rank": 380,
       "regions": [],
@@ -1108,6 +1234,7 @@
         "amazon"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {},
       "hermesId": "bedrock",
       "hidden": true,
@@ -1121,6 +1248,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Amazon Bedrock",
       "rank": 390,
       "regions": [],
@@ -1134,6 +1262,7 @@
         "microsoft"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {},
       "hermesId": "azure-foundry",
       "hidden": true,
@@ -1147,6 +1276,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Azure AI Foundry",
       "rank": 400,
       "regions": [],
@@ -1166,6 +1296,7 @@
         "proxy"
       ],
       "alsoWires": [],
+      "defaultModel": "",
       "delivery": {
         "hermes": [
           "CUSTOM_ENDPOINT_API_KEY"
@@ -1183,6 +1314,7 @@
           "scope": ""
         }
       ],
+      "models": [],
       "name": "Custom endpoint",
       "rank": 900,
       "regions": [],

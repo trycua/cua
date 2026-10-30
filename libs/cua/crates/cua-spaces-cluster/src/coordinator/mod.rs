@@ -2519,6 +2519,12 @@ impl Coordinator {
         self.sched.lock().expect("sched").nodes.contains_key(name)
     }
 
+    /// Whether a job is running on host `name` now.
+    pub fn node_busy(&self, name: &str) -> bool {
+        let g = self.sched.lock().expect("sched");
+        g.inflight.values().any(|f| f.node == name)
+    }
+
     /// Jobs waiting in memory and in flight.
     pub fn depth(&self) -> (usize, usize) {
         let g = self.sched.lock().expect("sched");

@@ -1685,7 +1685,7 @@ pub struct UseOption {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppUses {
-    /// "Uses".
+    /// The row's heading: the provider in use, "No provider connected" or "Key not found".
     pub title: String,
     /// `connected` (a credential is in use), `not-connected`, or `gone` (the one
     /// chosen is no longer saved or stopped working).
@@ -1798,10 +1798,34 @@ fn app_uses(input: &ConnectorsInput, app: &str, name: &str, can_edit: bool) -> A
                 "The key {name} was told to use isn't saved any more. Choose another or connect one."
             ),
         ),
-        (None, None) => ("not-connected", "Not connected".to_string()),
+        (None, None) => {
+            // Only a sign-in this app cannot read is saved: say what it needs, not a bare "not connected".
+            let sign_in_only = input.keys.keys.iter().any(|k| {
+                matches!(
+                    k.env.as_str(),
+                    "CLAUDE_CODE_OAUTH_TOKEN" | "CODEX_AUTH_JSON"
+                ) && !k.expired
+            });
+            (
+                "not-connected",
+                if sign_in_only {
+                    format!("{name} needs an API key")
+                } else {
+                    format!("Connect a provider to run {name}")
+                },
+            )
+        }
+    };
+    let title = match state {
+        "connected" => current
+            .as_ref()
+            .map(|c| c.provider_name.clone())
+            .unwrap_or_default(),
+        "gone" => "Key not found".to_string(),
+        _ => "No provider connected".to_string(),
     };
     AppUses {
-        title: "Uses".into(),
+        title,
         state: state.into(),
         status,
         current,
@@ -2308,9 +2332,9 @@ mod tests {
         let u = d.uses.as_ref().unwrap();
         assert_eq!(
             (u.title.as_str(), u.state.as_str()),
-            ("Uses", "not-connected")
+            ("No provider connected", "not-connected")
         );
-        assert_eq!(u.status, "Not connected");
+        assert_eq!(u.status, "Connect a provider to run Goose");
         assert_eq!(d.connect.as_ref().unwrap().label, "Connect");
         assert!(d.remove_label.is_none() && d.settings_file.is_none());
         assert!(app_detail(&ConnectorsInput::default(), "vscode").is_none());
@@ -2420,7 +2444,8 @@ mod tests {
         let u = d.uses.unwrap();
         assert_eq!(u.state, "not-connected", "{u:?}");
         assert!(u.current.is_none() && u.options.is_empty());
-        assert_eq!(u.status, "Not connected");
+        assert_eq!(u.title, "No provider connected");
+        assert_eq!(u.status, "Hermes needs an API key");
         assert!(!d.connected);
         assert!(!signed_in(&i, "hermes"));
         i.keys.keys.push(key("OPENAI_API_KEY", "CCCC"));
@@ -3302,6 +3327,37 @@ mod tests {
                 "{app}"
             );
         }
+    }
+
+    #[test]
+    fn no_state_of_the_provider_row_reads_like_an_action_called_uses() {
+        for app in SWITCHABLE {
+            let mut states = vec![];
+            states.push(input());
+            let mut signs = input();
+            signs.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+            states.push(signs);
+            let mut chosen = input();
+            chosen.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
+            states.push(chosen.clone());
+            let (a, c) = using(app, "ANTHROPIC_API_KEY", Some("gone"));
+            chosen.uses.insert(a, c);
+            states.push(chosen);
+            for i in states {
+                let u = app_detail(&i, app).unwrap().uses.unwrap();
+                let words = format!("{} | {}", u.title, u.status);
+                assert!(!words.contains("Uses"), "{app}: {words}");
+                assert!(!u.title.is_empty(), "{app}");
+            }
+        }
+        let u = app_detail(&input(), "opencode").unwrap().uses.unwrap();
+        assert_eq!(
+            (u.title.as_str(), u.status.as_str()),
+            (
+                "No provider connected",
+                "Connect a provider to run OpenCode"
+            )
+        );
     }
 
     #[test]

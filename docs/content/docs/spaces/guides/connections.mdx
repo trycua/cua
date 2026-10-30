@@ -72,7 +72,7 @@ log. Nothing is written to the Space image or its Volume.
 
 Claude Code and Codex read one fixed sign-in, so their page shows it. Hermes,
 OpenCode, Goose, Pi and OpenClaw take any provider, so their page (open it from
-**Coding apps**) has a **Uses** row instead. It shows the provider and the key
+**Coding apps**) has a **Provider** section instead. It shows the provider and the key
 the app runs with, for example **Anthropic, API key ending 4f2a**. Press
 **Change** to point the app at another provider you have connected, or at
 another key of the same provider. The menu lists only what that app can really
@@ -89,7 +89,7 @@ one on its own: its page says so and shows **Connect**, and you pick again.
 Hermes picks a provider by its own order when it is not told which, and can
 borrow the sign-ins of other command line tools it finds. Cua tells it instead:
 each run gets a generated Hermes configuration that names the provider you
-chose in its **Uses** row (or, until you choose, the first one you connected:
+chose in its **Provider** section (or, until you choose, the first one you connected:
 Anthropic, then OpenAI, OpenRouter and the rest), lists the other connected
 providers as fallbacks when you have not chosen one, and turns off borrowing sign-ins. If
 Hermes cannot reach its provider, the run fails and the thread shows the

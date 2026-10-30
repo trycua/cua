@@ -46,7 +46,7 @@ export function UsesRow({ agent, uses, onChoose, onConnect }: { agent: string; u
           </>
         ) : (
           <>
-            <div className="truncate">Uses</div>
+            <div className="truncate">{uses.title}</div>
             <p className={cn("mt-px text-xs", uses.state === "gone" ? "text-destructive" : "text-muted-foreground")} data-uses-status="">
               {uses.status}
             </p>

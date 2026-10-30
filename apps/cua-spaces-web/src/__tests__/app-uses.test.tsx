@@ -60,7 +60,9 @@ describe.skipIf(!wasmBuilt)("an app's Uses row", () => {
     await mountApp(`/settings/connections/${app}`, host([], SIGN_INS_ONLY));
     const row = await found(`[data-connector-uses-app=${app}]`);
     expect(row.dataset.connectorUses).toBe("not-connected");
-    expect(row.textContent).toContain("Not connected");
+    expect(row.textContent).toContain("No provider connected");
+    expect(row.textContent).toContain(`${q(`[data-connector-detail=${app}]`)!.querySelector("h2")!.textContent} needs an API key`);
+    expect(row.textContent).not.toMatch(/\bUses\b/);
     // Never the Claude or ChatGPT sign-in, never Sign out on this page.
     expect(q(`[data-connector-detail=${app}]`)!.textContent).not.toMatch(/ada@example\.com|Claude Max|ChatGPT|Signed in as/);
     expect(q("[data-connector-detail-signin-action]")).toBeNull();
@@ -126,6 +128,8 @@ describe.skipIf(!wasmBuilt)("an app's Uses row", () => {
     });
     const row = await found("[data-connector-uses=gone]");
     expect(row.textContent).toContain("isn't saved any more");
+    expect(row.textContent).toContain("Key not found");
+    expect(row.textContent).not.toMatch(/\bUses\b/);
     expect(row.querySelector("[data-uses-provider]")).toBeNull();
     expect(q("[data-connector-detail-status]")!.textContent).not.toMatch(/Connected/);
     // Anthropic and the rest are still saved and still offered, but none is selected for it.

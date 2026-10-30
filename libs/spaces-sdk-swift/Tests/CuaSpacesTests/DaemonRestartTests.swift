@@ -44,6 +44,18 @@ import Testing
         #expect(await backend.callCount("stream_endpoint") == 2, "and cached for that daemon")
     }
 
+    /// Opening a stream resolves the one Space (`attachForStream`) rather
+    /// than listing every Space on every machine; with no cua SDK behind the
+    /// connection (this fake) it takes `attach`'s path and its errors.
+    @Test func testAttachForStreamWithoutTheSDKFallsBackToAttach() async throws {
+        let space = try await connection.attachForStream(to: "local:cua-space-test")
+        #expect(space.id == "local:cua-space-test")
+        #expect(await backend.callCount("list_spaces") >= 1)
+        await #expect(throws: (any Error).self) {
+            _ = try await connection.attachForStream(to: "local:not-here")
+        }
+    }
+
     @Test func testADaemonThatDoesNotAnswerKeepsNothing() async throws {
         let space = try await connection.attach(to: "local:cua-space-test")
         _ = try await space.streamEndpoint()

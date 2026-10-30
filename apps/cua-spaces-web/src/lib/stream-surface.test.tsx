@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { noCore } from "@/bridge/__tests__/testCore";
 import { BridgeProvider, type Space } from "@/bridge";
-import { CONNECT_TIMEOUT_MS, CONNECT_TIMEOUT_REASON, StreamSurface } from "@/components/space-detail/stream-surface";
+import { CONNECT_TIMEOUT_MS, CONNECT_TIMEOUT_REASON, SLOW_CONNECT_HINT, SLOW_CONNECT_MS, StreamSurface } from "@/components/space-detail/stream-surface";
 import { ToastProvider } from "@/components/ui/toast";
 import { canStreamTile } from "@/components/video/tile-video";
 import { resetVideoSlotLoader } from "@/components/video/use-video-slot";
@@ -584,6 +584,49 @@ describe("<StreamSurface> native video", () => {
     act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
     expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
     expect(container.querySelector("[data-desktop-cover]")).toBeNull();
+  });
+
+  // "Connecting…" alone for many seconds reads as hung: after SLOW_CONNECT_MS
+  // the cover says, in plain words, that it is still going (and the failure
+  // at CONNECT_TIMEOUT_MS still ends it).
+  it("says it is still connecting once the wait is slow, and drops the line with the picture", async () => {
+    expect(SLOW_CONNECT_MS).toBeLessThan(CONNECT_TIMEOUT_MS);
+    expect(SLOW_CONNECT_HINT).not.toContain("\u00b7");
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    hostDrawsVideo();
+    const { container, getByText } = mount();
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    const first = updates()[0]!;
+    expect(getByText("Connecting…")).toBeTruthy();
+    expect(container.querySelector("[data-cover-hint]")).toBeNull();
+    act(() => void vi.advanceTimersByTime(SLOW_CONNECT_MS - 500));
+    expect(container.querySelector("[data-cover-hint]")).toBeNull();
+    act(() => void vi.advanceTimersByTime(500));
+    expect(container.querySelector("[data-cover-hint]")?.textContent).toBe(SLOW_CONNECT_HINT);
+    expect(getByText("Connecting…")).toBeTruthy();
+    act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
+    expect(container.querySelector("[data-cover-hint]")).toBeNull();
+    expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
+  });
+
+  // The warm return: the host's session is still live, so its first word for
+  // the new slot is "live". Leaving and coming back must go from the mount to
+  // live with no wait of the page's own (no fixed delay, no settings round
+  // trip): generous bound, it catches a delay creeping back in.
+  it("goes from mounting to live as soon as the host says so, with no wait of its own", async () => {
+    hostDrawsVideo();
+    const first = mount();
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    first.unmount();
+    expect(posted.some((m) => m.type === "surfaces" && m.remove.length > 0)).toBe(true);
+    posted.length = 0;
+    const started = performance.now();
+    const { container } = mount();
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    act(() => hostEvent("video.surface", { surfaceId: updates()[0]!.surfaceId, state: "live" }));
+    expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
+    expect(container.querySelector("[data-desktop-cover]")).toBeNull();
+    expect(performance.now() - started).toBeLessThan(1_500);
   });
 
   it("starts the wait over on Try again after a timeout", async () => {

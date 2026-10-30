@@ -639,13 +639,14 @@ function label(v: WizardView, id: string): string {
 
 /** A small info icon: the full text as a tooltip on hover and focus, and shown below on click. */
 function InfoTip({ label, text }: { label: string; text: string }) {
+  const t = useT("spaces");
   const [open, setOpen] = useState(false);
   return (
     <span className="wz-info">
       <button
         type="button"
         className="wz-info-btn"
-        aria-label={`${label} details`}
+        aria-label={t("spaces.wizard.info_details", { label })}
         aria-expanded={open}
         title={text}
         onClick={() => setOpen((o) => !o)}
@@ -679,6 +680,7 @@ function SystemField({
   dispatch: (action: WizardAction) => void;
   onConnectCloud?: () => void;
 }) {
+  const t = useT("spaces");
   switch (f.id) {
     case "os":
       return (
@@ -725,12 +727,12 @@ function SystemField({
                 </option>
               ))}
               {onConnectCloud && v.fields.some((x) => x.id === "connect-cloud") && (
-                <option value={ADD_CLOUD} title="AWS, Google Cloud, Hetzner and others">
-                  Add your cloud account…
+                <option value={ADD_CLOUD} title={t("spaces.wizard.add_cloud_hint")}>
+                  {t("spaces.wizard.add_cloud")}
                 </option>
               )}
-              <option value={ADD_ADDRESS} title="A computer you run yourself">
-                Add a computer by its address…
+              <option value={ADD_ADDRESS} title={t("spaces.wizard.add_address_hint")}>
+                {t("spaces.wizard.add_address")}
               </option>
             </select>
           </label>

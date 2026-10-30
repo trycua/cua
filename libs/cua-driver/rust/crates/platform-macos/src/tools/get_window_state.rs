@@ -1130,13 +1130,14 @@ pub(crate) fn build_observation_elements_array(
 
 fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> serde_json::Value {
     // `label` is a best-effort human-readable string: title first,
-    // then description, then value, then identifier. Mirrors what
-    // a human reading the markdown row would call this element.
+    // then description, then value, then placeholder, then identifier.
+    // Mirrors what a human reading the markdown row would call this element.
     let label = node
         .title
         .clone()
         .or_else(|| node.description.clone())
         .or_else(|| node.value.clone())
+        .or_else(|| node.placeholder.clone())
         .or_else(|| node.identifier.clone());
     let frame = node
         .frame
@@ -1182,6 +1183,10 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
         .filter(|v| !v.is_empty())
     {
         entry["value"] = serde_json::Value::String(value);
+    }
+    // The hint an empty field shows (AXPlaceholderValue), never its value.
+    if let Some(placeholder) = node.placeholder.clone() {
+        entry["placeholder"] = serde_json::Value::String(placeholder);
     }
     if let Some(desc) = node.value_description.clone() {
         entry["value_description"] = serde_json::Value::String(desc);
@@ -1656,6 +1661,7 @@ mod tests {
             role: role.into(),
             title: title.map(|s| s.to_string()),
             value: None,
+            placeholder: None,
             description: None,
             identifier: None,
             help: None,
@@ -1912,6 +1918,29 @@ mod tests {
         nodes[0].value = Some(String::new());
         let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert!(entry.get("value").is_none(), "empty value must be omitted");
+    }
+
+    #[test]
+    fn elements_report_placeholder_apart_from_the_value() {
+        // #3786: an empty field's hint is its own field, never its `value`.
+        let mut nodes = vec![
+            node(Some(0), "AXTextField", None, 0, None, None, vec![]),
+            node(Some(1), "AXTextField", None, 0, None, None, vec![]),
+        ];
+        nodes[0].placeholder = Some("Type here…".into());
+        nodes[1].value = Some("hello".into());
+        let elements = build_elements_array_with_token(&nodes, None);
+        assert!(
+            elements[0].get("value").is_none(),
+            "an empty field has no value"
+        );
+        assert_eq!(elements[0]["placeholder"], "Type here…");
+        assert_eq!(
+            elements[0]["label"], "Type here…",
+            "the hint still names it"
+        );
+        assert_eq!(elements[1]["value"], "hello");
+        assert!(elements[1].get("placeholder").is_none());
     }
 
     #[test]

@@ -1,12 +1,12 @@
 ---
 title: 'Space kinds: container, VM, microVM'
-description: 'What a container, a VM and a microVM Space are, which computers run each, how Cua picks one, and how to ask for a kind in the CLI, the SDKs and the app.'
+description: 'What a container, a VM and a microVM Space are, which machines run each, how Cua picks one, and how to ask for a kind in the CLI, the SDKs and the app.'
 ---
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 Every Space is one of three kinds. The kind decides how the Space is kept apart
-from the computer it runs on, how fast it starts, and which images it runs.
+from the machine it runs on, how fast it starts, and which images it runs.
 
 ## The three kinds
 
@@ -31,12 +31,12 @@ exec, files and ports work. A VM needs a Cua disk image. See
 | Checkpoints and forks | Yes | Yes | Yes, except on Apple's Containerization |
 
 Use a container for most Linux work: it starts fastest and runs on the most
-computers. Use a VM for Windows or macOS, or a full Linux desktop OS. Use a
+machines. Use a VM for Windows or macOS, or a full Linux desktop OS. Use a
 microVM to run any Linux image, such as untrusted code, behind its own kernel.
 
-## Which computers run which kind
+## Which machines run which kind
 
-| Computer | `container` | `vm` | `microvm` |
+| Machine | `container` | `vm` | `microvm` |
 | --- | --- | --- | --- |
 | Mac, Apple silicon | Yes | QEMU; Lume for macOS guests | `vz` on macOS 14 or later; `containerization` on macOS 26 or later |
 | Mac, Intel | Yes | QEMU | No |
@@ -64,9 +64,9 @@ The microVM runtimes:
 An [egress policy](/cua-sdk/guides/egress) is enforced on Firecracker
 microVMs. On `vz` and Containerization microVMs it is refused.
 
-### Your own cloud and your other computers
+### Your own cloud and your other machines
 
-- **Another of your computers** runs the kinds it reports to your account.
+- **Another of your machines** runs the kinds it reports to your account.
 - **AWS**: a pool machine needs KVM for VM and microVM Spaces. Of the machine
   types Cua offers, only bare metal (`c6g.metal`) has it. A metal machine costs
   dollars an hour, so a single small request is refused unless you allow it
@@ -100,7 +100,7 @@ or CI job). A default that does not fit an explicit request is skipped. See
 [Change the default](/cua-sdk/guides/local-runtimes#change-the-default).
 
 Some tools have their own default: `cua build` builds a VM, and
-`cua compat serve` makes VMs where this computer can accelerate them, else
+`cua compat serve` makes VMs where this machine can accelerate them, else
 containers.
 
 ## Pick a kind
@@ -158,10 +158,10 @@ const sb = await embedded().sandboxes().create(
 In Cua Spaces, press **New Space**, then open **Advanced** in **Choose a
 system**. **Kind** offers **Container**, **Virtual machine** and **MicroVM**,
 with one line under it that says what the chosen kind is. **Runtime** picks
-the engine: for a microVM, the microVM runtimes ready on this computer.
+the engine: for a microVM, the microVM runtimes ready on this machine.
 
-**MicroVM** is offered only when the computer in **Run on** runs microVMs: this
-computer when its runtime check has one ready, another of your computers when
+**MicroVM** is offered only when the machine in **Run on** runs microVMs: this
+machine when its runtime check has one ready, another of your machines when
 it reports the kind. Otherwise it is greyed out, and the line under **Kind**
 says why (for example `MicroVM needs macOS 26.` or `MicroVM needs KVM.`). The
 app sends the same `kind="microvm"` as the CLI.

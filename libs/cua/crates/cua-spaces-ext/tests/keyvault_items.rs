@@ -407,7 +407,14 @@ fn a_named_browser_profile_is_the_one_captured() {
             .unwrap()
             .iter()
             .filter(|c| c.meta.kind == ItemKind::File)
-            .map(|c| c.payload.record.clone())
+            .map(|c| {
+                use base64::Engine as _;
+                let rec: serde_json::Value = serde_json::from_str(&c.payload.record).unwrap();
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(rec["content"].as_str().unwrap())
+                    .unwrap();
+                String::from_utf8(bytes).unwrap()
+            })
             .collect()
     };
     let default = files(None);

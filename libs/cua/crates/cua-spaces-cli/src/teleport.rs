@@ -270,11 +270,108 @@ async fn push(
 ) -> Result<i32, CuaError> {
     match (&args.sandbox, &args.url) {
         (Some(name), _) => push_through_keyvault(host, name, &args, json, out).await,
-        (None, Some(_)) => push_direct(cua, host, args, json, out).await,
+        (None, Some(_)) if args.read_as_caller => {
+            eprintln!("{READ_AS_CALLER_WARNING}");
+            push_direct(cua, host, args, json, out).await
+        }
+        (None, Some(url)) => {
+            let spaces = cua.spaces();
+            let url = url.clone();
+            let token = args.token.clone();
+            with_destination(spaces.as_ref(), &url, token, |id| {
+                let host = host.clone();
+                let args = &args;
+                async move { push_through_keyvault(&host, &id, args, json, out).await }
+            })
+            .await
+        }
         (None, None) => Err(CuaError::InvalidArgument(
             "pass --sandbox NAME or --url URL".into(),
         )),
     }
+}
+
+/// What `--read-as-caller` costs, said once before it reads.
+const READ_AS_CALLER_WARNING: &str = "warning: --read-as-caller reads the app in this process, \
+not in the Cua daemon: Keyvault consent, the audit record and the wipe are skipped, and macOS \
+uses this process's permissions. This flag is going away; use --url without it.";
+
+/// Where the local daemon keeps Spaces: the part of `with_destination` that
+/// registers and forgets one, so the order of events can be tested.
+#[async_trait::async_trait]
+pub trait DestinationRegistry: Send + Sync {
+    /// The ids of the Spaces registered now.
+    async fn ids(&self) -> Result<Vec<String>, CuaError>;
+    /// Registers the destination at `url`; returns its Space id.
+    async fn add(&self, url: &str, token: Option<String>, name: &str) -> Result<String, CuaError>;
+    /// Forgets a Space (its machine is not touched).
+    async fn remove(&self, id: &str) -> Result<(), CuaError>;
+}
+
+#[async_trait::async_trait]
+impl DestinationRegistry for cua_sdk::Spaces {
+    async fn ids(&self) -> Result<Vec<String>, CuaError> {
+        Ok(self.list().await?.into_iter().map(|s| s.id).collect())
+    }
+    async fn add(&self, url: &str, token: Option<String>, name: &str) -> Result<String, CuaError> {
+        Ok(self
+            .add(url.to_string(), token, Some(name.to_string()))
+            .await?
+            .id)
+    }
+    async fn remove(&self, id: &str) -> Result<(), CuaError> {
+        self.remove(id.to_string()).await
+    }
+}
+
+/// The Space id a `--url` destination has once registered: the address
+/// (`host:port`) without scheme or path, as `direct:<authority>`; an id given
+/// as is stays as it is.
+pub fn destination_id(url: &str) -> String {
+    let url = url.trim();
+    if url.starts_with("space://")
+        || ["local:", "cloud:", "direct:", "relay:"]
+            .iter()
+            .any(|p| url.starts_with(p))
+    {
+        return url.to_string();
+    }
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split('/').next().unwrap_or(rest);
+    format!("direct:{authority}")
+}
+
+/// Runs `push` against the destination `url` as a Space of the local daemon,
+/// so the read, the consent, the audit record and the wipe are the daemon's,
+/// as for `--sandbox`. A destination already registered is used as it is (its
+/// own token, and it stays). Otherwise it is registered for this push and
+/// forgotten after it, whether it worked or not; a destination that does not
+/// answer fails here, before anything is read or asked.
+pub async fn with_destination<R, F, Fut>(
+    registry: &R,
+    url: &str,
+    token: Option<String>,
+    push: F,
+) -> Result<i32, CuaError>
+where
+    R: DestinationRegistry + ?Sized,
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<i32, CuaError>>,
+{
+    let wanted = destination_id(url);
+    if registry.ids().await?.contains(&wanted) {
+        return push(wanted).await;
+    }
+    let name = format!("teleport-destination-{}", std::process::id());
+    let id = registry.add(url, token, &name).await.map_err(|e| match e {
+        CuaError::PermissionDenied(_) | CuaError::InvalidArgument(_) => e,
+        other => CuaError::Unsupported(format!(
+            "the destination {url} did not answer as a Cua Space, so nothing was read: {other}"
+        )),
+    })?;
+    let result = push(id.clone()).await;
+    let _ = registry.remove(&id).await;
+    result
 }
 
 /// `cua teleport push --sandbox NAME`: resolves the selection locally (the
@@ -383,8 +480,9 @@ async fn push_through_keyvault(
     Ok(0)
 }
 
-/// `cua teleport push --url URL`: the direct path, unchanged -- an arbitrary
-/// spacesd endpoint the Keyvault does not manage as a Space.
+/// `cua teleport push --url URL --read-as-caller`: the old direct path, kept
+/// only behind that flag: this process reads the app and uploads to an
+/// arbitrary spacesd endpoint, skipping the Keyvault.
 async fn push_direct(
     cua: &Cua,
     host: &Arc<dyn HostEffects>,
@@ -594,6 +692,7 @@ mod tests {
             &env.url,
             "--token",
             "t",
+            "--read-as-caller",
             "--include",
             "electron/Preferences",
         ]) else {
@@ -608,5 +707,191 @@ mod tests {
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].app, "slack");
         assert!(imports[0].options.launch_after);
+    }
+
+    // --- `--url` is a destination; the daemon reads --------------------
+
+    #[derive(Default)]
+    struct FakeRegistry {
+        existing: Vec<String>,
+        fail_add: bool,
+        events: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl DestinationRegistry for FakeRegistry {
+        async fn ids(&self) -> Result<Vec<String>, CuaError> {
+            Ok(self.existing.clone())
+        }
+        async fn add(
+            &self,
+            url: &str,
+            token: Option<String>,
+            _name: &str,
+        ) -> Result<String, CuaError> {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("add {url} token={}", token.is_some()));
+            if self.fail_add {
+                return Err(CuaError::Internal("connection refused".into()));
+            }
+            Ok(destination_id(url))
+        }
+        async fn remove(&self, id: &str) -> Result<(), CuaError> {
+            self.events.lock().unwrap().push(format!("remove {id}"));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_url_destination_has_the_id_the_registry_gives_it() {
+        assert_eq!(
+            destination_id("http://10.0.0.5:3211"),
+            "direct:10.0.0.5:3211"
+        );
+        assert_eq!(destination_id("10.0.0.5:3211/x"), "direct:10.0.0.5:3211");
+        assert_eq!(
+            destination_id("https://box.example:443"),
+            "direct:box.example:443"
+        );
+        assert_eq!(destination_id("relay:abc"), "relay:abc");
+        assert_eq!(destination_id("direct:h:1"), "direct:h:1");
+    }
+
+    #[tokio::test]
+    async fn a_new_destination_is_registered_for_the_push_and_forgotten_after_it() {
+        let reg = FakeRegistry::default();
+        let seen = std::sync::Mutex::new(None);
+        let code = with_destination(&reg, "http://10.0.0.5:3211", Some("t".into()), |id| {
+            *seen.lock().unwrap() = Some(id);
+            async { Ok(0) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(code, 0);
+        // The daemon's push targets the registered Space id, not the URL.
+        assert_eq!(
+            seen.lock().unwrap().as_deref(),
+            Some("direct:10.0.0.5:3211")
+        );
+        assert_eq!(
+            *reg.events.lock().unwrap(),
+            [
+                "add http://10.0.0.5:3211 token=true",
+                "remove direct:10.0.0.5:3211"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_push_still_forgets_the_destination_and_keeps_its_exact_refusal() {
+        let reg = FakeRegistry::default();
+        let err = with_destination(&reg, "10.0.0.5:3211", None, |_| async {
+            Err::<i32, _>(CuaError::PermissionDenied("chrome: declined".into()))
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&err, CuaError::PermissionDenied(m) if m == "chrome: declined"),
+            "{err:?}"
+        );
+        assert_eq!(
+            reg.events.lock().unwrap().last().unwrap(),
+            "remove direct:10.0.0.5:3211"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_destination_that_is_already_registered_is_used_and_kept() {
+        let reg = FakeRegistry {
+            existing: vec!["direct:10.0.0.5:3211".into()],
+            ..Default::default()
+        };
+        let seen = std::sync::Mutex::new(None);
+        with_destination(&reg, "http://10.0.0.5:3211", Some("other".into()), |id| {
+            *seen.lock().unwrap() = Some(id);
+            async { Ok(0) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            seen.lock().unwrap().as_deref(),
+            Some("direct:10.0.0.5:3211")
+        );
+        assert!(reg.events.lock().unwrap().is_empty(), "no add, no remove");
+    }
+
+    #[tokio::test]
+    async fn a_destination_that_does_not_answer_fails_before_anything_is_read() {
+        let reg = FakeRegistry {
+            fail_add: true,
+            ..Default::default()
+        };
+        let read = std::sync::atomic::AtomicBool::new(false);
+        let err = with_destination(&reg, "10.0.0.5:3211", None, |_| {
+            read.store(true, std::sync::atomic::Ordering::SeqCst);
+            async { Ok(0) }
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            !read.load(std::sync::atomic::Ordering::SeqCst),
+            "nothing was read or asked"
+        );
+        assert!(err.to_string().contains("nothing was read"), "{err}");
+        // Nothing was registered, so nothing is removed.
+        assert!(
+            reg.events
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|e| !e.starts_with("remove"))
+        );
+    }
+
+    #[test]
+    fn read_as_caller_is_explicit_needs_a_url_and_is_not_the_default() {
+        let TeleportCmd::Push(a) = parse(&["teleport", "push", "--app", "chrome", "--url", "x:1"])
+        else {
+            panic!()
+        };
+        assert!(!a.read_as_caller);
+        let TeleportCmd::Push(a) = parse(&[
+            "teleport",
+            "push",
+            "--app",
+            "chrome",
+            "--url",
+            "x:1",
+            "--read-as-caller",
+        ]) else {
+            panic!()
+        };
+        assert!(a.read_as_caller);
+        // The warning names what is skipped.
+        for word in ["consent", "audit", "wipe", "going away"] {
+            assert!(READ_AS_CALLER_WARNING.contains(word), "{word}");
+        }
+        assert!(!READ_AS_CALLER_WARNING.contains('\u{b7}'));
+    }
+
+    #[test]
+    fn a_profile_is_accepted_with_either_destination() {
+        for dest in [["--sandbox", "dev"], ["--url", "10.0.0.5:3211"]] {
+            let TeleportCmd::Push(a) = parse(&[
+                "teleport",
+                "push",
+                "--app",
+                "chrome",
+                dest[0],
+                dest[1],
+                "--profile",
+                "Profile 1",
+            ]) else {
+                panic!()
+            };
+            assert_eq!(a.app.profile.as_deref(), Some("Profile 1"));
+        }
     }
 }

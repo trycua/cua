@@ -161,25 +161,25 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
                 {view.moreEmpty}
               </GroupedRow>
             ) : null}
-            {view.others.map((r) => (
-              <GroupedRow key={r.env} data-agent-key-row={r.env}>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-mono text-[12px]">{r.title}</div>
-                  <div className="truncate text-xs text-muted-foreground">{r.detail}</div>
-                </div>
-                <span className="font-mono text-[12px] text-muted-foreground">{r.status}</span>
-                <Button size="sm" variant="outline" disabled={!view.canEdit} onClick={() => keys.openSheet("other", r.env)}>
-                  {r.actionLabel}
-                </Button>
-                {r.removeLabel ? (
-                  <Button size="sm" variant="ghost" disabled={!view.canEdit} onClick={() => keys.askRemove(r.env)}>
-                    {r.removeLabel}
-                  </Button>
-                ) : null}
-              </GroupedRow>
-            ))}
           </>
         ) : null}
+        {view.others.map((r) => (
+          <GroupedRow key={r.env} data-agent-key-row={r.env}>
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-mono text-[12px]">{r.title}</div>
+              <div className="truncate text-xs text-muted-foreground">{r.detail}</div>
+            </div>
+            <span className="font-mono text-[12px] text-muted-foreground">{r.status}</span>
+            <Button size="sm" variant="outline" disabled={!view.canEdit} onClick={() => keys.openSheet("other", r.env)}>
+              {r.actionLabel}
+            </Button>
+            {r.removeLabel ? (
+              <Button size="sm" variant="ghost" disabled={!view.canEdit} onClick={() => keys.askRemove(r.env)}>
+                {r.removeLabel}
+              </Button>
+            ) : null}
+          </GroupedRow>
+        ))}
         <SettingsRow
           label={view.addOtherLabel}
           description={view.otherHelp}

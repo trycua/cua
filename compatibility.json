@@ -144,34 +144,34 @@
   "current": {
     "arch": {
       "cua-driver-rs-v0.33.2": {
-        "checked_at": "2026-10-29T06:50:07Z",
+        "checked_at": "2026-10-30T06:50:27Z",
         "status": "fail",
         "tree": "5b3d63841bb61cf07d20f964e545bed5e23dd787"
       },
       "cua-driver-rs-v0.38.0": {
-        "checked_at": "2026-10-29T06:50:03Z",
+        "checked_at": "2026-10-30T06:50:14Z",
         "status": "fail",
         "tree": "aa330aebe172dcc6372a23965fd01ab8c50da03f"
       },
       "main": {
-        "checked_at": "2026-10-29T06:50:03Z",
+        "checked_at": "2026-10-30T06:50:14Z",
         "status": "fail",
         "tree": "aa330aebe172dcc6372a23965fd01ab8c50da03f"
       }
     },
     "omarchy-edge": {
       "cua-driver-rs-v0.33.2": {
-        "checked_at": "2026-10-29T06:50:07Z",
+        "checked_at": "2026-10-30T06:50:27Z",
         "status": "fail",
         "tree": "5b3d63841bb61cf07d20f964e545bed5e23dd787"
       },
       "cua-driver-rs-v0.38.0": {
-        "checked_at": "2026-10-29T06:50:03Z",
+        "checked_at": "2026-10-30T06:50:14Z",
         "status": "fail",
         "tree": "aa330aebe172dcc6372a23965fd01ab8c50da03f"
       },
       "main": {
-        "checked_at": "2026-10-29T06:50:03Z",
+        "checked_at": "2026-10-30T06:50:14Z",
         "status": "fail",
         "tree": "aa330aebe172dcc6372a23965fd01ab8c50da03f"
       }
@@ -220,7 +220,7 @@
         "arch",
         "omarchy-edge"
       ],
-      "checked_at": "2026-10-29T06:50:07Z",
+      "checked_at": "2026-10-30T06:50:27Z",
       "checks": {
         "build": {
           "status": "fail",
@@ -260,7 +260,7 @@
         ],
         "tree": "5b3d63841bb61cf07d20f964e545bed5e23dd787"
       },
-      "run_url": "https://github.com/trycua/cua/actions/runs/40831446844",
+      "run_url": "https://github.com/trycua/cua/actions/runs/41016263122",
       "runtime": {
         "basename": "libstdc++.so.6.0.36",
         "packages": {
@@ -274,7 +274,7 @@
           "file": "5.48-1",
           "fontconfig": "2:2.18.3-2",
           "freetype2": "2.15.0-1",
-          "fribidi": "1.0.17-1",
+          "fribidi": "1.0.18-1",
           "gdk-pixbuf2": "2.44.8-1",
           "glib2": "2.90.1-1",
           "glibc": "2.44+r50+g1848099f063e-1",
@@ -326,7 +326,7 @@
           "libzip": "1.11.4-1",
           "lua": "5.5.1-1",
           "lua54": "5.4.9-1",
-          "mesa": "1:26.2.5-1",
+          "mesa": "1:26.2.6-1",
           "mtdev": "1.1.7-1",
           "muparser": "2.3.5-2",
           "openssl": "3.6.5-1",
@@ -373,7 +373,7 @@
         "arch",
         "omarchy-edge"
       ],
-      "checked_at": "2026-10-29T06:50:03Z",
+      "checked_at": "2026-10-30T06:50:14Z",
       "checks": {
         "build": {
           "status": "fail",
@@ -414,7 +414,7 @@
         ],
         "tree": "aa330aebe172dcc6372a23965fd01ab8c50da03f"
       },
-      "run_url": "https://github.com/trycua/cua/actions/runs/40831446844",
+      "run_url": "https://github.com/trycua/cua/actions/runs/41016263122",
       "runtime": {
         "basename": "libstdc++.so.6.0.36",
         "packages": {
@@ -428,7 +428,7 @@
           "file": "5.48-1",
           "fontconfig": "2:2.18.3-2",
           "freetype2": "2.15.0-1",
-          "fribidi": "1.0.17-1",
+          "fribidi": "1.0.18-1",
           "gdk-pixbuf2": "2.44.8-1",
           "glib2": "2.90.1-1",
           "glibc": "2.44+r50+g1848099f063e-1",
@@ -480,7 +480,7 @@
           "libzip": "1.11.4-1",
           "lua": "5.5.1-1",
           "lua54": "5.4.9-1",
-          "mesa": "1:26.2.5-1",
+          "mesa": "1:26.2.6-1",
           "mtdev": "1.1.7-1",
           "muparser": "2.3.5-2",
           "openssl": "3.6.5-1",
@@ -2002,9 +2002,9 @@
       }
     }
   ],
-  "generated_at": "2026-10-29T06:50:40Z",
+  "generated_at": "2026-10-30T06:50:46Z",
   "note": "CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.",
-  "run_url": "https://github.com/trycua/cua/actions/runs/40831446844",
+  "run_url": "https://github.com/trycua/cua/actions/runs/41016263122",
   "schema": 1,
   "tracked_packages": [
     "hyprland",

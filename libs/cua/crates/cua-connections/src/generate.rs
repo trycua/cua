@@ -297,6 +297,19 @@ fn ts(all: &[ProviderDef]) -> String {
             .find(|m| matches!(m.kind.as_str(), "api_key" | "custom_endpoint"))
             .map(|m| m.env.as_str())
             .unwrap_or_default();
+        let models = format!(
+            "[{}]",
+            p.model
+                .iter()
+                .map(|m| format!(
+                    "{{ id: {}, name: {}, fast: {} }}",
+                    s(&m.id),
+                    s(&m.name),
+                    m.fast
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         o.push_str(&format!(
             "  {{ id: {}, name: {}, icon: {}, tier: {}, aliases: {}, keyEnv: {}, defaultModel: {}, models: {} }},\n",
             s(&p.id),
@@ -308,19 +321,7 @@ fn ts(all: &[ProviderDef]) -> String {
                 .replace(',', ", "),
             s(key_env),
             s(&p.default_model),
-            format!(
-                "[{}]",
-                p.model
-                    .iter()
-                    .map(|m| format!(
-                        "{{ id: {}, name: {}, fast: {} }}",
-                        s(&m.id),
-                        s(&m.name),
-                        m.fast
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
+            models
         ));
     }
     o.push_str("];\n\n/** The kinds of way to connect a provider (a closed set). */\nexport const METHOD_KINDS = [");

@@ -84,6 +84,8 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+mod telemetry;
+
 use super::store::{self, NewJob, state as jstate};
 use super::{CoordError, Coordinator, sanitize_name};
 use cua_cluster::model::{JobSpec, now_ms};
@@ -232,6 +234,11 @@ pub struct Hist {
     pub exit_code: Option<i32>,
     /// More.
     pub detail: String,
+    /// Why a drive ended badly, as a fixed word (`process_exit`, `stall`,
+    /// `host_down`, `driver_lost`, `fenced`); empty otherwise. Telemetry
+    /// reads it; it never holds free text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cause: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -254,6 +261,10 @@ pub(crate) struct Row {
     history: Vec<Hist>,
     created_ms: i64,
     updated_ms: i64,
+    /// What [`Row::note`] recorded since this row was loaded: telemetry
+    /// reads it once the row is saved. Never stored.
+    #[serde(skip)]
+    fresh: Vec<Hist>,
 }
 
 /// What `spec` shows back: no environment values, no bundle.
@@ -351,7 +362,17 @@ impl Row {
     }
 
     fn note(&mut self, event: &str, exit_code: Option<i32>, detail: impl Into<String>) {
-        self.history.push(Hist {
+        self.note_cause(event, exit_code, detail, "");
+    }
+
+    fn note_cause(
+        &mut self,
+        event: &str,
+        exit_code: Option<i32>,
+        detail: impl Into<String>,
+        cause: &str,
+    ) {
+        let h = Hist {
             epoch: self.epoch,
             attempt: self.attempts,
             at_ms: now_ms(),
@@ -360,7 +381,10 @@ impl Row {
             job: self.driver_job,
             exit_code,
             detail: detail.into(),
-        });
+            cause: cause.into(),
+        };
+        self.fresh.push(h.clone());
+        self.history.push(h);
         if self.history.len() > HISTORY_MAX {
             let cut = self.history.len() - HISTORY_MAX;
             self.history.drain(..cut);
@@ -441,8 +465,8 @@ pub(crate) fn remove_named(c: &Connection, name: &str) -> Result<bool, String> {
 
 /// The driver of `r`'s epoch ended badly (`event`: `crashed`, `fenced` or
 /// `stalled`): back off for the next drive, or give up at the cap.
-fn mark_crashed(r: &mut Row, event: &str, code: Option<i32>, why: String) {
-    r.note(event, code, why.clone());
+fn mark_crashed(r: &mut Row, event: &str, code: Option<i32>, why: String, cause: &str) {
+    r.note_cause(event, code, why.clone(), cause);
     if r.attempts >= r.max_attempts {
         r.state = sstate::FAILED.into();
         r.reason = reason::EXHAUSTED.into();
@@ -500,7 +524,12 @@ impl Coordinator {
             }])
             .await
             .map_err(CoordError::Store)?;
-        Ok(outs.first().is_some_and(|o| o.applied()).then_some(r))
+        let applied = outs.first().is_some_and(|o| o.applied());
+        if applied && !r.fresh.is_empty() {
+            let machines = self.nodes().len() as u32;
+            telemetry::session_changed(&r, machines);
+        }
+        Ok(applied.then_some(r))
     }
 
     /// A session with its driver's machine filled in.
@@ -807,7 +836,7 @@ impl Coordinator {
         if let Err(e) = self.cancel_job(j.id).await {
             tracing::warn!(session = %name, job = j.id, "cancelling a wedged driver: {e}");
         }
-        mark_crashed(&mut n, "stalled", None, why);
+        mark_crashed(&mut n, "stalled", None, why, "stall");
         let state = n.state.clone();
         let Some(n) = self.session_save(n, rev).await? else {
             return self.session_reload(&name).await;
@@ -860,7 +889,22 @@ impl Coordinator {
             r.note("permanent", code, why);
         } else {
             let fenced = code == Some(EXIT_FENCED);
-            mark_crashed(&mut r, if fenced { "fenced" } else { "crashed" }, code, why);
+            let cause = if fenced {
+                "fenced"
+            } else if j.error.ends_with(" went down") {
+                "host_down"
+            } else if code.is_some() {
+                "process_exit"
+            } else {
+                "driver_lost"
+            };
+            mark_crashed(
+                &mut r,
+                if fenced { "fenced" } else { "crashed" },
+                code,
+                why,
+                cause,
+            );
         }
         let state = r.state.clone();
         let Some(r) = self.session_save(r, rev).await? else {

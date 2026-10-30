@@ -4951,3 +4951,9 @@ li.installer-agent {
 .onboarding-todos li[data-done] strong {
   opacity: 0.6;
 }
+
+/* Summary: a small info icon after a long value; the text shows on hover, focus or click. */
+.wz-info { position: relative; display: inline-block; margin-left: 6px; vertical-align: middle; }
+.wz-info-btn { display: inline-flex; padding: 0; border: 0; background: none; color: inherit; opacity: 0.6; cursor: pointer; }
+.wz-info-btn:hover, .wz-info-btn:focus-visible { opacity: 1; }
+.wz-info-pop { position: absolute; z-index: 5; left: 0; top: 100%; margin-top: 4px; width: max-content; max-width: 280px; padding: 6px 8px; border: 1px solid var(--border, rgba(128, 128, 128, 0.35)); border-radius: 6px; background: var(--surface, Canvas); font-size: 12px; line-height: 1.4; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); }

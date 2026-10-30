@@ -760,6 +760,72 @@ pub fn agent_run_completed(
         .s("duration_bucket", duration_bucket(elapsed))
 }
 
+/// What `cua_durable_agent` is built from. Every text field is a fixed word
+/// chosen from its vocabulary (anything else becomes the fallback), every
+/// number is bounded; no name, path, address or message is ever taken.
+#[derive(Debug, Clone, Default)]
+pub struct DurableAgent<'a> {
+    /// One of [`schema::DURABLE_PHASES`].
+    pub phase: &'a str,
+    /// A cua-agents harness id.
+    pub harness: &'a str,
+    /// The session's placement word (`auto`, anything else is `host`).
+    pub on: &'a str,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    /// One of [`schema::DURABLE_REASONS`].
+    pub reason: &'a str,
+    /// One of [`schema::DURABLE_ENDS`].
+    pub end: &'a str,
+    /// One of [`schema::DURABLE_FAILURES`].
+    pub failure: &'a str,
+    pub failover: bool,
+    pub machines: u32,
+    pub recovery_time_ms: u64,
+    pub interrupted_calls: u32,
+    /// The salted hash of the session (see [`crate::Telemetry::salted_hash`]).
+    pub session: &'a str,
+}
+
+/// `cua_durable_agent`; None for a phase outside the vocabulary or a
+/// session id that is not a salted hash.
+pub fn durable_agent(d: &DurableAgent<'_>) -> Option<Event> {
+    let phase = schema::DURABLE_PHASES
+        .iter()
+        .copied()
+        .find(|p| *p == d.phase)?;
+    schema::is_salted_hash(d.session).then_some(())?;
+    Some(
+        Event::new(event::DURABLE_AGENT)
+            .s("phase", phase)
+            .s("harness", harness(d.harness))
+            .s(
+                "placement",
+                if matches!(d.on.trim(), "" | "auto") {
+                    "auto"
+                } else {
+                    "host"
+                },
+            )
+            .n("attempt", u64::from(d.attempt.min(100)))
+            .n("max_attempts", u64::from(d.max_attempts.min(100)))
+            .s("reason", pick(schema::DURABLE_REASONS, d.reason, "other"))
+            .s("end", pick(schema::DURABLE_ENDS, d.end, "none"))
+            .s(
+                "failure",
+                pick(schema::DURABLE_FAILURES, d.failure, "other"),
+            )
+            .b("failover", d.failover)
+            .n("machines", u64::from(d.machines.min(1000)))
+            .n("recovery_time_ms", d.recovery_time_ms.min(86_400_000))
+            .n(
+                "interrupted_calls",
+                u64::from(d.interrupted_calls.min(10_000)),
+            )
+            .owned("session", d.session.to_string()),
+    )
+}
+
 /// A fixed cause word for a failed agent run, chosen from its recorded
 /// error text: `no_api_key`, `provider_error`, `timeout`, `user_cancelled`,
 /// else `AgentFailed`. The text is only matched, never kept or sent.

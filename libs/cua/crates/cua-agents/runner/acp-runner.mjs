@@ -86,8 +86,8 @@ const expandVars = (s) =>
   typeof s !== "string"
     ? s
     : s
-        .replace(/^~(?=\/|$)/, os.homedir())
-        .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, k) => process.env[k] ?? cfg.env?.[k] ?? m);
+        .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, k) => process.env[k] ?? cfg.env?.[k] ?? m)
+        .replace(/^~(?=\/|$)/, os.homedir());
 
 function loadDurable() {
   if (!cfg.durable) return null;
@@ -133,7 +133,9 @@ if (durable) fs.mkdirSync(durable.stateDir, { recursive: true, mode: 0o700 });
 
 if (durable) {
   process.env.CUA_RUN_DIR ??= path.resolve(dir);
-  process.env.CUA_SESSION_STATE_DIR ||= durable.stateDir;
+  // The expanded directory, never the `~/...` the session was given: `${CUA_SESSION_STATE_DIR}/work`
+  // is the harness's cwd, and a harness refuses a cwd that is not absolute.
+  process.env.CUA_SESSION_STATE_DIR = durable.stateDir;
   cfg.cwd = expandVars(cfg.cwd);
   cfg.agent = { ...cfg.agent, command: expandVars(cfg.agent.command), args: (cfg.agent.args ?? []).map(expandVars) };
   cfg.env = Object.fromEntries(Object.entries(cfg.env ?? {}).map(([k, v]) => [k, expandVars(v)]));

@@ -103,11 +103,15 @@ impl ExportProvider for Browser {
             "Default/Web Data",
         ] {
             if wants(p) {
-                w.add_bytes(p, 0o600, match &self.profile {
-                    Some(profile) => format!("bytes of {p} from {profile}"),
-                    None => format!("bytes of {p}"),
-                }
-                .as_bytes())?;
+                w.add_bytes(
+                    p,
+                    0o600,
+                    match &self.profile {
+                        Some(profile) => format!("bytes of {p} from {profile}"),
+                        None => format!("bytes of {p}"),
+                    }
+                    .as_bytes(),
+                )?;
             }
         }
         if wants("Default/Cookies") {
@@ -296,7 +300,10 @@ fn the_inventory_counts_cookies_per_site_without_decrypting_anything() {
         .build();
     let host: Arc<dyn HostEffects> = Arc::new(FakeHost::new().with_home(home.path()));
     let mut registry = ExportRegistry::new();
-    registry.register(Box::new(Browser { host: host.clone(), profile: None }));
+    registry.register(Box::new(Browser {
+        host: host.clone(),
+        profile: None,
+    }));
     let b = DaemonBackend::new(spaces, Arc::new(AppSessions::from_registry(registry)))
         .with_host(host)
         .with_platform(Platform::MacOS);

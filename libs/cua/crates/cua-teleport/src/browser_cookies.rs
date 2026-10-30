@@ -319,7 +319,10 @@ impl ChromeCookies {
     /// The profile names present next to this reader's profile (a directory
     /// holding `Preferences`), `Default` first.
     pub fn available_profiles(&self) -> Vec<String> {
-        let Some(root) = self.profile_dir().ok().and_then(|d| d.parent().map(Path::to_path_buf))
+        let Some(root) = self
+            .profile_dir()
+            .ok()
+            .and_then(|d| d.parent().map(Path::to_path_buf))
         else {
             return Vec::new();
         };

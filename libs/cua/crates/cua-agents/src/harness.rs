@@ -288,7 +288,10 @@ const ALIASES: &[(&str, &str)] = &[("codex", "openai-codex"), ("claude", "claude
 
 /// A harness by id (or by one of its short names: `codex`, `claude`).
 pub fn harness(id: &str) -> Option<&'static Harness> {
-    let id = ALIASES.iter().find(|(a, _)| *a == id).map_or(id, |(_, c)| c);
+    let id = ALIASES
+        .iter()
+        .find(|(a, _)| *a == id)
+        .map_or(id, |(_, c)| c);
     HARNESSES.iter().find(|h| h.id == id)
 }
 

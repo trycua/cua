@@ -638,7 +638,8 @@ impl Backend for DaemonBackend {
         // or an app's files), turned into records by the app's codec. A
         // consent-gated file is only exported when the user picked it.
         if spec.whole_app {
-            let (scope, name, entries) = self.export_entries(&spec.app, spec.profile.as_deref(), spec.paths.as_deref())?;
+            let (scope, name, entries) =
+                self.export_entries(&spec.app, spec.profile.as_deref(), spec.paths.as_deref())?;
             display = name;
             let exported = record::codec_for(&provider_id).export(
                 entries,

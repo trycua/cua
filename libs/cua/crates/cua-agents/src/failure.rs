@@ -316,13 +316,59 @@ pub fn plain(f: &Failure, harness: &str) -> String {
                 format!("{name} needs an API key for a provider it can use. Your Claude subscription sign-in only works in Claude Code.")
             }
         },
-        FailureClass::Error => "I couldn't finish that.".into(),
+        FailureClass::Error => start_problem(&f.message, harness)
+            .unwrap_or_else(|| "I couldn't finish that.".into()),
     }
+}
+
+/// A start that failed for a reason the person can act on, from the runner's
+/// first line ("Node is not installed in this Space.", "The working folder
+/// ... is not available ..."): what is missing, and that Retry sets it up
+/// again. `None` for any other error.
+fn start_problem(message: &str, harness: &str) -> Option<String> {
+    let first = message.lines().next()?.trim();
+    let name = crate::harness::harness(harness).map_or("This agent", |h| h.name);
+    if first.starts_with("The working folder ") {
+        return Some(format!(
+            "{name} couldn't start: its working folder isn't available in this Space yet (the Cua Volume isn't attached). Retry attaches it again."
+        ));
+    }
+    if first.ends_with(" is not installed in this Space.") {
+        return Some(format!(
+            "{name} couldn't start: {first} Retry sets it up again."
+        ));
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_start_that_failed_for_something_missing_says_what() {
+        let spawn = "spawn /home/cua/.cua/tools/x/dist/index.js ENOENT (code ENOENT)";
+        for (first, want) in [
+            (
+                "The working folder /volume/agents/ada/work is not available in this Space (a folder on the Cua Volume is missing until the Volume is attached again).",
+                "working folder isn't available",
+            ),
+            (
+                "Node is not installed in this Space.",
+                "Node is not installed in this Space. Retry sets it up again.",
+            ),
+        ] {
+            let f = classify("claude-code", &format!("{first}\n{spawn}"));
+            assert_eq!(f.class, FailureClass::Error);
+            assert!(plain(&f, "claude-code").contains(want), "{first}");
+            assert!(plain(&f, "claude-code").starts_with("Claude Code couldn't start"));
+        }
+        // Anything else stays the general sentence.
+        assert_eq!(
+            plain(&classify("claude-code", spawn), "claude-code"),
+            "I couldn't finish that."
+        );
+    }
 
     #[test]
     fn auth_failures_in_every_wording_need_a_connect() {

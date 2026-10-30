@@ -934,6 +934,51 @@ mod tests {
         }
     }
 
+    /// Drift guard: the agent binaries are scripts (`#!/usr/bin/env node`) or
+    /// Python entry points, so a Space only starts them when the interpreter
+    /// is installed by the launcher itself, not assumed from the image. Every
+    /// harness's install list must bring `node` (for npm items) or `uv` (for
+    /// git-uv items) before the item, and the generated launcher must install
+    /// them, so a public image without Node still starts every harness.
+    #[test]
+    fn every_harness_installs_the_interpreter_its_launcher_needs() {
+        use crate::installables::{Source, get, resolve, script};
+        for h in HARNESSES {
+            let order = resolve(h.installs).unwrap();
+            let pos = |id: &str| order.iter().position(|x| x == id);
+            let mut needs_node = false;
+            for (i, id) in order.iter().enumerate() {
+                let it = get(id).unwrap();
+                match &it.how {
+                    Source::Npm { .. } => {
+                        needs_node = true;
+                        assert!(
+                            pos("node").is_some_and(|n| n < i),
+                            "{}: {id} before node",
+                            h.id
+                        );
+                    }
+                    Source::GitUv { .. } => {
+                        assert!(pos("uv").is_some_and(|n| n < i), "{}: {id} before uv", h.id);
+                    }
+                    Source::Archive { .. } => {}
+                }
+            }
+            let sh = script(h.installs).unwrap();
+            if needs_node {
+                assert!(
+                    sh.contains("node-v"),
+                    "{}: the launcher does not install node",
+                    h.id
+                );
+                assert!(
+                    get("node").unwrap().bins.contains_key("node"),
+                    "node links no `node` into ~/.cua/bin"
+                );
+            }
+        }
+    }
+
     #[test]
     fn endpoints_are_applied_per_wire_and_refused_on_the_wrong_one() {
         let e = Endpoint {

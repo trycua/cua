@@ -17,9 +17,9 @@ Call MCP `scroll` or the CLI `call` surface with a window target, delivery mode,
 
 Preconditions: [Launch and Doctor](../SKILL.md) succeed; `scroll-tall` is present in the fixture AX tree.
 
-- **AX:** run `CUA_E2E_CELL_FILTER=linux-electron-scroll-ax-foreground timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. The tool arguments include the `scroll-tall` token, `direction: "down"`, `by: "page"`, `amount: 2`. Require the independent fixture journal to show at least one viewport of movement within two seconds.
-- **Pixels:** run `CUA_E2E_CELL_FILTER=linux-electron-scroll-px-foreground timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require the same distance contract and before/after images.
-- **Background:** run `CUA_E2E_CELL_FILTER=linux-electron-scroll-ax-background timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. On Linux Electron expect `BackgroundUnavailable`, no fixture mutation and no sentinel/native side effects, not delivered scrolling.
+- **AX:** run `CUA_E2E_CELL_FILTER=linux-electron-scroll-ax-foreground timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. The tool arguments include the `scroll-tall` token, `direction: "down"`, `by: "page"`, `amount: 2`. Require the independent fixture journal to show at least one viewport of movement within two seconds.
+- **Pixels:** run `CUA_E2E_CELL_FILTER=linux-electron-scroll-px-foreground timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require the same distance contract and before/after images.
+- **Background:** run `CUA_E2E_CELL_FILTER=linux-electron-scroll-ax-background timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. On Linux Electron expect `BackgroundUnavailable`, no fixture mutation and no sentinel/native side effects, not delivered scrolling.
 - **Proof:** preserve request/response, visible viewport change and `fixture-state.json`. CLI entry is not exercised by these MCP cells.
 
 ## Gotchas

@@ -4,7 +4,7 @@
 # Linux computer-use automation (X11, AT-SPI accessibility, ImageMagick).
 #
 # Usage in a NixOS configuration:
-#   imports = [ ./nix/cua-driver/module.nix ];
+#   imports = [ ./libs/cua-driver/nix/module.nix ];
 #   services.cua-driver = {
 #     enable = true;
 #     package = cuaDriverPackage;

@@ -82,8 +82,8 @@ Update stale internal references before changing behavior.
 
 - Mark stale sections of `libs/cua-driver/docs/test-harness-convergence-plan.md`
   as superseded by current evidence.
-- Rewrite `nix/cua-driver/tests/README.md`; it currently names deleted fixtures.
-- Remove the empty `nix/cua-driver/tests/wayland/` directory if it is still empty.
+- Rewrite `libs/cua-driver/nix/tests/README.md`; it currently names deleted fixtures.
+- Remove the empty `libs/cua-driver/nix/tests/wayland/` directory if it is still empty.
 - Add the experimental nested-compositor row to
   `libs/cua-driver/docs/action-support.md` and link it from the public platform
   support page.

@@ -203,7 +203,7 @@ if __name__ == "__main__":
                 gr.HTML("""
                     <div style="display: flex; justify-content: center; margin-bottom: 0.5em">
                         <img alt="Cua Logo" style="width: 80px;"
-                             src="https://github.com/trycua/cua/blob/main/img/logo_white.png?raw=true" />
+                             src="https://github.com/trycua/cua/blob/main/.github/assets/logo_white.png?raw=true" />
                     </div>
                     """)
 

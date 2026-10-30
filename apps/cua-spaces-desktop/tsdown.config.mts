@@ -2,13 +2,13 @@ import { readFileSync } from "node:fs";
 import { defineConfig, type UserConfig } from "tsdown";
 
 // The crash-reporting DSN (a public ingest key) comes from
-// config/spaces-crash-reporting.json, so every shell reads one file. A build
+// apps/cua-spaces-desktop/config/spaces-crash-reporting.json, so every shell reads one file. A build
 // can override it with CUA_SPACES_CRASH_DSN; an empty DSN leaves crash
 // reporting off.
 function crashConfig(): string {
   let dsn = "";
   try {
-    dsn = String(JSON.parse(readFileSync(new URL("../../config/spaces-crash-reporting.json", import.meta.url), "utf8")).dsn ?? "");
+    dsn = String(JSON.parse(readFileSync(new URL("./config/spaces-crash-reporting.json", import.meta.url), "utf8")).dsn ?? "");
   } catch {
     // No file: off.
   }

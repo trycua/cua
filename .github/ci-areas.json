@@ -20,7 +20,7 @@
   "libs/cua/crates/cua-sandbox-core/**",
   "scripts/ci/**",
   "flake.nix",
-  "nix/**"
+  "libs/cua-driver/nix/**"
  ],
  "areas": {
   "relay": {

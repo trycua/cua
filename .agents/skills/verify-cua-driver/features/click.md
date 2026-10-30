@@ -17,10 +17,10 @@ Call MCP `click`, `right_click` or `double_click`; use the CLI `cua-driver call`
 
 Preconditions: [Launch and Doctor](../SKILL.md) succeed, with the Electron fixture staged.
 
-- **AX background and SDK:** run `timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Both left-click AX background cells must deliver. The MCP request uses the fresh `border-click-target` element token; `fixture-state.json` must contain `last_action=left_click` and observer evidence must show no stolen focus/pointer/input.
-- **Pixel foreground:** run `CUA_E2E_CELL_FILTER=linux-electron-left-click-px-foreground timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require the same marker and screenshot-local targeting in the transcript.
-- **Right click:** run `CUA_E2E_CELL_FILTER=linux-electron-right-click-ax-foreground timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require `last_action=right_click`.
-- **Double click:** run `CUA_E2E_CELL_FILTER=linux-electron-double-click-ax-foreground timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require `last_action=double_click`.
+- **AX background and SDK:** run `timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Both left-click AX background cells must deliver. The MCP request uses the fresh `border-click-target` element token; `fixture-state.json` must contain `last_action=left_click` and observer evidence must show no stolen focus/pointer/input.
+- **Pixel foreground:** run `CUA_E2E_CELL_FILTER=linux-electron-left-click-px-foreground timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require the same marker and screenshot-local targeting in the transcript.
+- **Right click:** run `CUA_E2E_CELL_FILTER=linux-electron-right-click-ax-foreground timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require `last_action=right_click`.
+- **Double click:** run `CUA_E2E_CELL_FILTER=linux-electron-double-click-ax-foreground timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require `last_action=double_click`.
 - **Proof:** inspect both turn screenshots, the tool response and fixture journal. The SDK sibling must reject stale/mismatched targets without fixture mutation, then deliver a valid click. CLI transport remains separately unverified by these commands.
 
 ## Gotchas

@@ -31,7 +31,7 @@ previous stable (the most active non-prerelease version in the week before the s
                (needs --min-update-events)
   incident     no active incident.io incident with "spaces" in its name (needs
                INCIDENT_IO_API_KEY; without it the gate is reported as skipped)
-  crash        Sentry release health (org and project from config/spaces-crash-reporting.json,
+  crash        Sentry release health (org and project from apps/cua-spaces-desktop/config/spaces-crash-reporting.json,
                release cua-spaces-desktop@<version>, environment stable): crash-free sessions of
                the new version since the stage began are at most --max-crash-free-drop points
                below the previous version's over the same window (needs --min-sessions on the
@@ -65,7 +65,7 @@ import release_rollout as rr  # noqa: E402
 
 POSTHOG = "https://eu.posthog.com/api/projects/56041/query/"
 SENTRY_DEFAULT_HOST = "https://de.sentry.io"
-SENTRY_CONFIG = Path(__file__).resolve().parents[2] / "config" / "spaces-crash-reporting.json"
+SENTRY_CONFIG = Path(__file__).resolve().parents[2] / "apps" / "cua-spaces-desktop" / "config" / "spaces-crash-reporting.json"
 NEXT = {"10": "50", "50": "100"}
 
 

@@ -30,7 +30,7 @@ import PackageDescription
 // into Contents/Resources like ours.
 //
 // sentry-cocoa (pinned; Package.resolved) reports crashes (CrashReporting.swift,
-// config/spaces-crash-reporting.json). The `Sentry` product is the static
+// apps/cua-spaces-desktop/config/spaces-crash-reporting.json). The `Sentry` product is the static
 // library: it links into the executable, so the bundle gains no framework to
 // embed or sign. (`Sentry-Dynamic` would; do not switch to it without
 // teaching build-app.sh and build-release.sh to embed and sign it like Sparkle.)

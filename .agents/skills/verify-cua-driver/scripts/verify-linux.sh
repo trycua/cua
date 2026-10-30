@@ -38,7 +38,7 @@ else
 fi 2>&1 | tee "$CUA_E2E_ARTIFACT_DIR/launch.log"
 status=${PIPESTATUS[0]}
 set -e
-"$ROOT/.cursor/skills/verify-cua-driver/scripts/check-evidence.sh" "$CUA_E2E_ARTIFACT_DIR" || { [[ "$status" != 0 ]] || status=1; }
+"$ROOT/.agents/skills/verify-cua-driver/scripts/check-evidence.sh" "$CUA_E2E_ARTIFACT_DIR" || { [[ "$status" != 0 ]] || status=1; }
 test -r "$CUA_E2E_ARTIFACT_DIR/launch.log"
 echo "Evidence retained after cleanup: $CUA_E2E_ARTIFACT_DIR"
 exit "$status"

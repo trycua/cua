@@ -13,7 +13,7 @@
 // same places instead of through `telemetryStatus()`.
 import * as path from "node:path";
 
-/** `config/spaces-crash-reporting.json`, as bundled at build time. */
+/** `apps/cua-spaces-desktop/config/spaces-crash-reporting.json`, as bundled at build time. */
 export interface CrashConfig {
   dsn: string;
 }

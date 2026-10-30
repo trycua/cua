@@ -7,7 +7,7 @@ on:
     paths:
       - "flake.nix"
       - "flake.lock"
-      - "nix/cua-driver/**"
+      - "libs/cua-driver/nix/**"
       - "libs/cua-driver/rust/.cargo/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
@@ -28,7 +28,7 @@ on:
     paths:
       - "flake.nix"
       - "flake.lock"
-      - "nix/cua-driver/**"
+      - "libs/cua-driver/nix/**"
       - "libs/cua-driver/rust/.cargo/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"

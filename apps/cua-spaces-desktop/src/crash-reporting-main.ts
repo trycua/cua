@@ -30,7 +30,7 @@ import {
   type ScrubbableEvent,
 } from "./crash-reporting";
 
-/** The DSN, from config/spaces-crash-reporting.json at build time (tsdown.config.mts). Absent in a test run. */
+/** The DSN, from apps/cua-spaces-desktop/config/spaces-crash-reporting.json at build time (tsdown.config.mts). Absent in a test run. */
 declare const __CUA_CRASH_CONFIG__: string | undefined;
 
 /** Integrations that would record content or the machine's identity: breadcrumbs, local variables and source lines, screenshots, the renderer hooks. */

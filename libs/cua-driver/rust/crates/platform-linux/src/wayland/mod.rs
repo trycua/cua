@@ -2851,7 +2851,7 @@ fn key_to_evdev(key: &str) -> Option<u32> {
 // ── Nested cua-compositor injection ────────────────────────────────────────
 //
 // When cua-driver's nested compositor is `cua-compositor` (our patched wlroots,
-// see nix/cua-driver/compositor/), it exposes a line-protocol control socket at
+// see libs/cua-driver/nix/compositor/), it exposes a line-protocol control socket at
 // $CUA_INJECT_SOCKET for what stock Wayland forbids: focus-FREE per-surface
 // keyboard injection and MULTI-cursor pointer injection, routed by stable PID
 // when available and xdg app_id only as a fallback. These helpers speak that

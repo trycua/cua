@@ -46,6 +46,7 @@ When asked what to work on, follow
 [`MAINTAINERS.md`](docs/contributing/MAINTAINERS.md#pull-model) and the
 [polling skill](.agents/skills/poll-github-work/SKILL.md).
 
+
 ## Repository layout
 
 [`Development.md`](docs/contributing/Development.md) maps components to paths and toolchains;

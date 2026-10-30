@@ -3,9 +3,9 @@ description: >-
   Uploads debug symbols (dSYMs, native debug files) or JavaScript source maps for
   one Cua Spaces release to Sentry (CUA-2343), so crash reports are readable.
   Does nothing, and says so, when the Sentry auth token is empty (a fork, or the
-  secret is not set yet) or config/spaces-crash-reporting.json has no DSN. Never
+  secret is not set yet) or apps/cua-spaces-desktop/config/spaces-crash-reporting.json has no DSN. Never
   fails a release build: an upload error is a warning. Org and project come from
-  config/spaces-crash-reporting.json; the release is cua-spaces-desktop@<version>.
+  apps/cua-spaces-desktop/config/spaces-crash-reporting.json; the release is cua-spaces-desktop@<version>.
 
 inputs:
   token:
@@ -45,12 +45,12 @@ runs:
         SENTRY_CLI: "@sentry/cli@3.8.2"
       run: |
         set -uo pipefail
-        cfg="$GITHUB_WORKSPACE/config/spaces-crash-reporting.json"
+        cfg="$GITHUB_WORKSPACE/apps/cua-spaces-desktop/config/spaces-crash-reporting.json"
         dsn=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("dsn",""))' "$cfg" 2>/dev/null || true)
         org=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["org"])' "$cfg")
         project=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["project"])' "$cfg")
         if [ -z "$SENTRY_AUTH_TOKEN" ] || [ -z "$dsn" ]; then
-          echo "::notice::Sentry upload skipped (${SENTRY_AUTH_TOKEN:+token set, }${dsn:+DSN set}: needs the SENTRY_AUTH_TOKEN secret and a DSN in config/spaces-crash-reporting.json)"
+          echo "::notice::Sentry upload skipped (${SENTRY_AUTH_TOKEN:+token set, }${dsn:+DSN set}: needs the SENTRY_AUTH_TOKEN secret and a DSN in apps/cua-spaces-desktop/config/spaces-crash-reporting.json)"
           exit 0
         fi
         release="cua-spaces-desktop@$VERSION"

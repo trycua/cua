@@ -1,9 +1,9 @@
 <div align="center">
   <a href="https://cua.ai" target="_blank" rel="noopener noreferrer">
     <picture>
-      <source media="(prefers-color-scheme: dark)" alt="Cua logo" width="150" srcset="img/logo_white.svg">
-      <source media="(prefers-color-scheme: light)" alt="Cua logo" width="150" srcset="img/logo_black.svg">
-      <img alt="Cua logo" width="150" src="img/logo_black.svg">
+      <source media="(prefers-color-scheme: dark)" alt="Cua logo" width="150" srcset=".github/assets/logo_white.svg">
+      <source media="(prefers-color-scheme: light)" alt="Cua logo" width="150" srcset=".github/assets/logo_black.svg">
+      <img alt="Cua logo" width="150" src=".github/assets/logo_black.svg">
     </picture>
   </a>
 
@@ -29,24 +29,24 @@
     <tr>
       <td colspan="3" align="center" valign="top">
         <a href="#cua-spaces">
-          <img src="img/card-cua-spaces-wide.webp" alt="Cua Spaces: full desktops for your agents. macOS and Linux Spaces on machines you own." width="100%">
+          <img src=".github/assets/card-cua-spaces-wide.webp" alt="Cua Spaces: full desktops for your agents. macOS and Linux Spaces on machines you own." width="100%">
         </a>
       </td>
     </tr>
     <tr>
       <td align="center" valign="top" width="33.33%">
         <a href="#cua-driver">
-          <img src="img/card-cua-driver.webp" alt="Cua Driver: inspect and operate apps on macOS, Windows, and Linux" width="100%">
+          <img src=".github/assets/card-cua-driver.webp" alt="Cua Driver: inspect and operate apps on macOS, Windows, and Linux" width="100%">
         </a>
       </td>
       <td align="center" valign="top" width="33.33%">
         <a href="#lume">
-          <img src="img/card-cua-lume.webp" alt="Lume: local macOS and Linux VMs on Apple Silicon" width="100%">
+          <img src=".github/assets/card-cua-lume.webp" alt="Lume: local macOS and Linux VMs on Apple Silicon" width="100%">
         </a>
       </td>
       <td align="center" valign="top" width="33.33%">
         <a href="#cua-bench">
-          <img src="img/card-cua-bench.webp" alt="Cua Bench: create tasks, evaluate agents, and export trajectories" width="100%">
+          <img src=".github/assets/card-cua-bench.webp" alt="Cua Bench: create tasks, evaluate agents, and export trajectories" width="100%">
         </a>
       </td>
     </tr>

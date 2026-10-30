@@ -169,8 +169,260 @@ fn initial_setup_tree(
     walk_tree(pid, Some(window_id), None)
 }
 
+/// Dia's AppleScript id for the one AX window in `nodes` (`bigBrowserWindow_<id>`).
+fn dia_window_id(nodes: &[AXNode]) -> Option<String> {
+    let ids = nodes
+        .iter()
+        .filter(|node| node.role == "AXWindow")
+        .filter_map(|node| {
+            node.identifier
+                .as_deref()?
+                .strip_prefix("bigBrowserWindow_")
+        })
+        .collect::<Vec<_>>();
+    match ids.as_slice() {
+        [id] if is_dia_id(id) => Some((*id).to_owned()),
+        _ => None,
+    }
+}
+
+// Ids are interpolated into AppleScript, so only UUID characters are accepted.
+fn is_dia_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+enum DiaScriptError {
+    /// macOS Automation consent for controlling Dia is missing or denied.
+    NotAuthorized,
+    Failed,
+}
+
+/// Run AppleScript against Dia, bounded so a pending Automation consent prompt
+/// or a hung Dia cannot stall setup.
+fn dia_script(lines: &[String]) -> Result<String, DiaScriptError> {
+    const DIA_SCRIPT_TIMEOUT: Duration = Duration::from_secs(5);
+    let mut command = std::process::Command::new("/usr/bin/osascript");
+    for line in lines {
+        command.arg("-e").arg(line);
+    }
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|_| DiaScriptError::Failed)?;
+    let deadline = Instant::now() + DIA_SCRIPT_TIMEOUT;
+    while child
+        .try_wait()
+        .map_err(|_| DiaScriptError::Failed)?
+        .is_none()
+    {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(DiaScriptError::Failed);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|_| DiaScriptError::Failed)?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned());
+    }
+    // errAEEventNotPermitted: the user has not allowed controlling Dia.
+    if String::from_utf8_lossy(&output.stderr).contains("-1743") {
+        return Err(DiaScriptError::NotAuthorized);
+    }
+    Err(DiaScriptError::Failed)
+}
+
+fn dia_window_script(window: &str, body: &str) -> Result<String, DiaScriptError> {
+    let lines = std::iter::once(format!(
+        "tell application id \"company.thebrowser.dia\" to tell window id \"{window}\""
+    ))
+    .chain(body.lines().map(str::to_owned))
+    .chain(std::iter::once("end tell".to_owned()))
+    .collect::<Vec<_>>();
+    dia_script(&lines)
+}
+
+/// `(tab id, URL)` of the active tab in the exact Dia window.
+fn dia_active_tab(window: &str) -> Option<(String, String)> {
+    let out = dia_window_script(
+        window,
+        "return (id of active tab) & linefeed & (URL of active tab)",
+    )
+    .ok()?;
+    let (id, url) = out.split_once('\n')?;
+    is_dia_id(id).then(|| (id.to_owned(), url.trim().to_owned()))
+}
+
+fn dia_reads_setup_url(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
+    dia_window_id(nodes)
+        .and_then(|window| dia_active_tab(&window))
+        .is_some_and(|(_, url)| url.eq_ignore_ascii_case(descriptor.setup_url))
+}
+
+fn close_dia_tab(window: &str, tab: &str) -> bool {
+    dia_window_script(window, &format!("close tab id \"{tab}\"")).is_ok()
+}
+
+/// Dia's checkbox exposes neither AXPress nor a checked value, so its state is
+/// read from the listener it controls: the port named by the default
+/// profile's DevToolsActivePort, listening and owned by Dia's pid.
+fn dia_remote_debugging_on(pid: i32) -> bool {
+    let Some(port) = super::platform::default_user_data_dir(BrowserProduct::Dia)
+        .and_then(|dir| std::fs::read_to_string(dir.join("DevToolsActivePort")).ok())
+        .and_then(|text| text.lines().next()?.trim().parse::<u16>().ok())
+    else {
+        return false;
+    };
+    std::process::Command::new("/usr/sbin/lsof")
+        .args(["-nP", "-a", "-t", "-sTCP:LISTEN"])
+        .arg(format!("-p{pid}"))
+        .arg(format!("-iTCP@127.0.0.1:{port}"))
+        .output()
+        .is_ok_and(|output| {
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).trim() == pid.to_string()
+        })
+}
+
+/// Bring the approved window in front, confirm it stayed there, resolve the
+/// screen point, click it, and hand the user's app back. Returns whether the
+/// foreground assist ran.
+fn foreground_click(
+    pid: i32,
+    window_id: u32,
+    lost_foreground: &'static str,
+    point: impl FnOnce() -> anyhow::Result<(f64, f64)>,
+) -> anyhow::Result<bool> {
+    crate::input::skylight::with_foreground_assist(pid, window_id, || {
+        std::thread::sleep(Duration::from_millis(60));
+        if crate::apps::frontmost_pid() != Some(pid) {
+            anyhow::bail!(lost_foreground);
+        }
+        let (x, y) = point()?;
+        crate::input::mouse::click_at_xy_desktop_preserving_cursor(x, y)?;
+        std::thread::sleep(Duration::from_millis(60));
+        Ok(())
+    })
+}
+
+/// Click the exact Dia checkbox with the window in front; the user's app is
+/// brought back afterwards. The setup tab and the checkbox position are
+/// re-read in front, immediately before the click.
+fn click_dia_checkbox(
+    pid: i32,
+    window_id: u32,
+    element: usize,
+    tab: Option<&(String, String)>,
+    descriptor: &BrowserSetupDescriptor,
+) -> Result<(), BrowserRefusal> {
+    foreground_click(
+        pid,
+        window_id,
+        "Dia lost foreground before the setup click",
+        || {
+            let still_setup_tab = tab.is_none_or(|(window, tab)| {
+                dia_active_tab(window).is_some_and(|(active, url)| {
+                    &active == tab && url.eq_ignore_ascii_case(descriptor.setup_url)
+                })
+            });
+            if !still_setup_tab {
+                anyhow::bail!("the exact Dia setup tab was no longer active");
+            }
+            unsafe { element_screen_center(element as AXUIElementRef) }.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "the exact Dia remote-debugging checkbox had no stable screen center"
+                )
+            })
+        },
+    )
+    .and_then(|fronted| {
+        fronted
+            .then_some(())
+            .ok_or_else(|| anyhow::anyhow!("the bounded Dia foreground assist was unavailable"))
+    })
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!("could not click the exact Dia remote-debugging checkbox: {error}"),
+        )
+    })
+}
+
+/// Open the setup page in a new tab of the exact Dia window and wait until
+/// that exact tab is active on the setup URL. Returns `(window id, tab id)`
+/// for the close; on failure the tab it created is closed.
+fn open_dia_setup_tab(
+    nodes: &[AXNode],
+    descriptor: &BrowserSetupDescriptor,
+) -> Result<(String, String), BrowserRefusal> {
+    let window = dia_window_id(nodes).ok_or_else(|| {
+        refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "Dia did not expose exactly one scriptable window",
+        )
+    })?;
+    let made = dia_window_script(
+        &window,
+        &format!(
+            "set setupTab to make new tab with properties {{URL:\"{}\"}}\nreturn id of setupTab",
+            descriptor.setup_url
+        ),
+    );
+    let tab = match made {
+        Ok(tab) if is_dia_id(&tab) => tab,
+        other => {
+            let message = if matches!(other, Err(DiaScriptError::NotAuthorized)) {
+                "macOS has not allowed Cua Driver to control Dia; allow it in System Settings > Privacy & Security > Automation"
+            } else {
+                "Dia refused to open the setup tab through AppleScript"
+            };
+            return Err(
+                refusal(BrowserRefusalCode::BrowserRouteUnavailable, message).with_detail(
+                    serde_json::json!({
+                        "setup_side_effects": {
+                            "opened_setup_page": "unknown",
+                            "closed_setup_page": false,
+                            "enabled_remote_debugging": false,
+                        }
+                    }),
+                ),
+            );
+        }
+    };
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        let shown = dia_active_tab(&window).is_some_and(|(active, url)| {
+            active == tab && url.eq_ignore_ascii_case(descriptor.setup_url)
+        });
+        if shown {
+            return Ok((window, tab));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let closed = close_dia_tab(&window, &tab);
+    Err(refusal(
+        BrowserRefusalCode::BrowserWrongTargetRefused,
+        "Dia did not show the new setup tab as its active tab",
+    )
+    .with_detail(serde_json::json!({
+        "setup_side_effects": {
+            "opened_setup_page": true,
+            "closed_setup_page": closed,
+            "enabled_remote_debugging": false,
+        }
+    })))
+}
+
 fn setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
-    let exact_url = omnibox_reads_setup_url(nodes, descriptor);
+    let exact_url = if descriptor.product == BrowserProduct::Dia {
+        dia_reads_setup_url(nodes, descriptor)
+    } else {
+        omnibox_reads_setup_url(nodes, descriptor)
+    };
     let exact_page = nodes.iter().any(|node| {
         node.role == "AXWebArea"
             && descriptor
@@ -263,7 +515,13 @@ fn exact_setup_checkbox(
     if !setup_page_proven(nodes, descriptor) {
         return Ok(None);
     }
-    unique_actionable(nodes, "AXCheckBox", descriptor.checkbox_label, "AXPress")
+    // Dia's checkbox has no AXPress; it is clicked, so require what it exposes.
+    let action = if descriptor.product == BrowserProduct::Dia {
+        "AXScrollToVisible"
+    } else {
+        "AXPress"
+    };
+    unique_actionable(nodes, "AXCheckBox", descriptor.checkbox_label, action)
 }
 
 fn unique_omnibox(
@@ -1111,6 +1369,7 @@ fn checkbox_state(value: Option<bool>) -> Result<CheckboxState, BrowserRefusal> 
 pub struct SetupUiHandle {
     descriptor: &'static BrowserSetupDescriptor,
     close_button: Option<usize>,
+    dia_tab: Option<(String, String)>,
     enable_attempted: bool,
     trusted_checkbox_fallback_attempted: bool,
     pixel_checkbox_attempts: u8,
@@ -1145,6 +1404,34 @@ impl SetupUiHandle {
             let tree = walk_tree(pid, Some(window_id), None);
             let checkbox = exact_setup_checkbox(&tree, self.descriptor);
             let result = match checkbox {
+                Ok(Some(_))
+                    if self.descriptor.product == BrowserProduct::Dia
+                        && !dia_remote_debugging_on(pid) =>
+                {
+                    Some(true)
+                }
+                Ok(Some(element)) if self.descriptor.product == BrowserProduct::Dia => {
+                    if pressed_rollback {
+                        None
+                    } else {
+                        pressed_rollback = true;
+                        self.foregrounded_window = true;
+                        self.injected_global_input = true;
+                        let clicked = click_dia_checkbox(
+                            pid,
+                            window_id,
+                            element,
+                            self.dia_tab.as_ref(),
+                            self.descriptor,
+                        );
+                        release_actionable_nodes(&tree.nodes);
+                        if clicked.is_err() {
+                            return false;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                        continue;
+                    }
+                }
                 Ok(Some(element)) => {
                     let value = unsafe { copy_binary_attr(element as AXUIElementRef, "AXValue") };
                     match checkbox_state(value) {
@@ -1171,22 +1458,11 @@ impl SetupUiHandle {
                                 };
                                 self.foregrounded_window = true;
                                 self.injected_global_input = true;
-                                let restored = crate::input::skylight::with_foreground_assist(
+                                let restored = foreground_click(
                                     pid,
                                     window_id,
-                                    || {
-                                        std::thread::sleep(Duration::from_millis(60));
-                                        if crate::apps::frontmost_pid() != Some(pid) {
-                                            anyhow::bail!(
-                                                "the approved browser lost foreground before the rollback click"
-                                            );
-                                        }
-                                        crate::input::mouse::click_at_xy_desktop_preserving_cursor(
-                                            x, y,
-                                        )?;
-                                        std::thread::sleep(Duration::from_millis(60));
-                                        Ok(())
-                                    },
+                                    "the approved browser lost foreground before the rollback click",
+                                    || Ok((x, y)),
                                 )
                                 .unwrap_or(false);
                                 if !restored {
@@ -1299,6 +1575,19 @@ impl SetupUiHandle {
         pid: i32,
         window_id: u32,
     ) -> Result<Option<bool>, BrowserRefusal> {
+        if let Some((window, tab)) = self.dia_tab.take() {
+            if close_dia_tab(&window, &tab) {
+                return Ok(Some(true));
+            }
+            return Err(self.abort(
+                pid,
+                window_id,
+                refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "Dia refused to close the temporary setup tab",
+                ),
+            ));
+        }
         let Some(element) = self.close_button.take() else {
             return Ok(None);
         };
@@ -1324,6 +1613,9 @@ impl SetupUiHandle {
     /// Close the temporary setup tab. `None` means the approved window was
     /// already displaying the exact setup page and no tab was opened.
     pub fn close(mut self) -> Option<bool> {
+        if let Some((window, tab)) = self.dia_tab.take() {
+            return Some(close_dia_tab(&window, &tab));
+        }
         let element = self.close_button.take()?;
         let result = unsafe { perform_action(element as AXUIElementRef, "AXPress") };
         unsafe { CFRelease(element as CFTypeRef) };
@@ -1333,6 +1625,9 @@ impl SetupUiHandle {
 
 impl Drop for SetupUiHandle {
     fn drop(&mut self) {
+        if let Some((window, tab)) = self.dia_tab.take() {
+            close_dia_tab(&window, &tab);
+        }
         if let Some(element) = self.close_button.take() {
             let _ = unsafe { perform_action(element as AXUIElementRef, "AXPress") };
             unsafe { CFRelease(element as CFTypeRef) };
@@ -1403,6 +1698,7 @@ fn set_remote_debugging(
         Ok(Some(_)) => SetupUiHandle {
             descriptor,
             close_button: None,
+            dia_tab: None,
             enable_attempted: false,
             trusted_checkbox_fallback_attempted: false,
             pixel_checkbox_attempts: 0,
@@ -1417,6 +1713,28 @@ fn set_remote_debugging(
             foregrounded_window: false,
             injected_global_input: false,
         },
+        Ok(None) if descriptor.product == BrowserProduct::Dia => {
+            let opened = open_dia_setup_tab(&initial.nodes, descriptor);
+            release_actionable_nodes(&initial.nodes);
+            SetupUiHandle {
+                descriptor,
+                close_button: None,
+                dia_tab: Some(opened?),
+                enable_attempted: false,
+                trusted_checkbox_fallback_attempted: false,
+                pixel_checkbox_attempts: 0,
+                last_pixel_checkbox_attempt: None,
+                setup_navigation_committed: false,
+                remote_debugging_mutation_possible: false,
+                pixel_checkbox: None,
+                opened_setup_page: true,
+                enabled_remote_debugging: false,
+                used_bounded_pixel_fallback: false,
+                focused_setup_address_field: false,
+                foregrounded_window: false,
+                injected_global_input: false,
+            }
+        }
         Ok(None) => {
             let new_tab = new_tab_button(&initial.nodes, descriptor);
             let new_tab = match new_tab {
@@ -1489,6 +1807,7 @@ fn set_remote_debugging(
             let mut handle = SetupUiHandle {
                 descriptor,
                 close_button: Some(close_button),
+                dia_tab: None,
                 enable_attempted: false,
                 trusted_checkbox_fallback_attempted: false,
                 pixel_checkbox_attempts: 0,
@@ -1791,6 +2110,37 @@ fn set_remote_debugging(
         }
         let checkbox = exact_setup_checkbox(&tree, descriptor);
         match checkbox {
+            Ok(Some(element)) if descriptor.product == BrowserProduct::Dia => {
+                if dia_remote_debugging_on(pid) == desired_enabled {
+                    if desired_enabled && handle.enable_attempted {
+                        handle.enabled_remote_debugging = true;
+                    } else if !desired_enabled {
+                        handle.enabled_remote_debugging = false;
+                        handle.remote_debugging_mutation_possible = false;
+                    }
+                    release_actionable_nodes(&tree.nodes);
+                    return Ok(handle);
+                }
+                if !handle.enable_attempted {
+                    handle.enable_attempted = true;
+                    handle.remote_debugging_mutation_possible = true;
+                    handle.foregrounded_window = true;
+                    handle.injected_global_input = true;
+                    let clicked = click_dia_checkbox(
+                        pid,
+                        window_id,
+                        element,
+                        handle.dia_tab.as_ref(),
+                        descriptor,
+                    );
+                    release_actionable_nodes(&tree.nodes);
+                    if let Err(error) = clicked {
+                        return Err(handle.abort(pid, window_id, error));
+                    }
+                    continue;
+                }
+                release_actionable_nodes(&tree.nodes);
+            }
             Ok(Some(element)) => {
                 let value = unsafe { copy_binary_attr(element as AXUIElementRef, "AXValue") };
                 match checkbox_state(value) {
@@ -1842,20 +2192,11 @@ fn set_remote_debugging(
                             };
                             handle.foregrounded_window = true;
                             handle.injected_global_input = true;
-                            let clicked = crate::input::skylight::with_foreground_assist(
+                            let clicked = foreground_click(
                                 pid,
                                 window_id,
-                                || {
-                                    std::thread::sleep(Duration::from_millis(60));
-                                    if crate::apps::frontmost_pid() != Some(pid) {
-                                        anyhow::bail!(
-                                            "the approved browser lost foreground before the setup click"
-                                        );
-                                    }
-                                    crate::input::mouse::click_at_xy_desktop_preserving_cursor(x, y)?;
-                                    std::thread::sleep(Duration::from_millis(60));
-                                    Ok(())
-                                },
+                                "the approved browser lost foreground before the setup click",
+                                || Ok((x, y)),
                             )
                             .and_then(|fronted| {
                                 if fronted {
@@ -3050,5 +3391,29 @@ mod tests {
             checkbox_state(None).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn dia_window_id_requires_one_exact_scriptable_window() {
+        let window = |identifier: &str| {
+            let mut node = node("AXWindow", None, None, &["AXRaise"]);
+            node.identifier = Some(identifier.to_owned());
+            node
+        };
+        assert_eq!(
+            dia_window_id(&[window(
+                "bigBrowserWindow_59A4A2B0-899E-4D12-A680-4B3FBFFBF2A1"
+            )]),
+            Some("59A4A2B0-899E-4D12-A680-4B3FBFFBF2A1".to_owned())
+        );
+        assert_eq!(
+            dia_window_id(&[window("bigBrowserWindow_x\" & quit")]),
+            None
+        );
+        assert_eq!(
+            dia_window_id(&[window("bigBrowserWindow_A"), window("bigBrowserWindow_B")]),
+            None
+        );
+        assert_eq!(dia_window_id(&[window("otherWindow_A")]), None);
     }
 }

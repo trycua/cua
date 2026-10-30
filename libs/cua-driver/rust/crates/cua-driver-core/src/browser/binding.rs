@@ -83,7 +83,25 @@ pub fn cardinality_exact_candidate(
 /// Browsers render "<tab title> - <product>", so containment (not
 /// equality) is the tie-break; empty tab titles never match.
 fn title_matches(native_title: &str, candidate_title: &str) -> bool {
-    !candidate_title.is_empty() && native_title.contains(candidate_title)
+    if candidate_title.is_empty() {
+        return false;
+    }
+    if native_title.contains(candidate_title) {
+        return true;
+    }
+    // Dia renders "<profile>: <tab title>" truncated with an ellipsis. Only that
+    // shape matches, and only when the whole visible remainder after the profile
+    // prefix starts the tab title.
+    // The 8-character floor keeps a near-empty remainder from matching every
+    // tab; duplicate hits still stay ambiguous upstream.
+    const MIN_TRUNCATED_TITLE: usize = 8;
+    native_title
+        .trim_end()
+        .strip_suffix('…')
+        .and_then(|stem| stem.split_once(": "))
+        .is_some_and(|(_, visible)| {
+            visible.chars().count() >= MIN_TRUNCATED_TITLE && candidate_title.starts_with(visible)
+        })
 }
 
 /// Prove the selected page in one already-correlated browser window without
@@ -525,6 +543,48 @@ mod tests {
                 assert_eq!(quality, BindingQuality::Exact);
             }
             other => panic!("expected t2 exact, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn truncated_native_titles_match_the_tab_title_prefix() {
+        assert!(title_matches(
+            "Work: (1) Example account (@…",
+            "(1) Example account (@example) / X"
+        ));
+        assert!(title_matches(
+            "Work: The Thursday Brief…",
+            "The Thursday Brief - October 22"
+        ));
+        // Too little visible overlap, or no ellipsis, is not a match.
+        assert!(!title_matches("Work: (1) U…", "(1) Unrelated"));
+        assert!(!title_matches(
+            "Work: The Thursday Brief",
+            "The Thursday Brief - October 22"
+        ));
+        assert!(!title_matches("Work: The Thursday Brief…", "Amazon.co.uk"));
+        // A Chrome title like "Loading…" has no profile prefix, and a tail
+        // that starts mid-title is not the visible remainder.
+        assert!(!title_matches("Loading…", "Loading the dashboard"));
+        assert!(!title_matches(
+            "Work: The Thursday Brief…",
+            "Thursday Brief - October 22"
+        ));
+
+        let n = native("Work: (1) Example account (@…", B);
+        let cands = [
+            CdpWindowCandidate {
+                cdp_window_id: Some(1),
+                ..cand("t1", "(1) Example account (@example) / X", B)
+            },
+            CdpWindowCandidate {
+                cdp_window_id: Some(2),
+                ..cand("t2", "Amazon.co.uk: Low Prices", B)
+            },
+        ];
+        match correlate(&n, &cands, 4.0) {
+            BindingOutcome::Bound { candidate, .. } => assert_eq!(candidate.cdp_target_id, "t1"),
+            other => panic!("expected t1, got {other:?}"),
         }
     }
 }

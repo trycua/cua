@@ -48,7 +48,8 @@ fn consent_surface_ids(
         .filter(|window| {
             window.pid == pid
                 && window.title != "Allow remote debugging?"
-                && !window.title.trim().is_empty()
+                // Dia hosts its prompt in an untitled floating window.
+                && (!window.title.trim().is_empty() || window.layer > 0)
                 && window.bounds.width > 0.0
                 && window.bounds.height > 0.0
         })
@@ -60,6 +61,8 @@ fn consent_surface_ids(
         .filter(|window_id| seen.insert(*window_id))
         .collect()
 }
+
+const DIA_PROMPT: &str = "Allow debugging connection?";
 
 pub(super) const CHINESE_PROMPT: &str = "要允许远程调试吗？";
 const CHINESE_WARNING: &str = "为进行调试，一款外部应用请求完全控制此 Chrome 会话，包括访问您保存的数据、Cookie 和网站数据，以及前往任意网址。";
@@ -92,6 +95,10 @@ fn chinese_sheet(sheet: &[AXNode]) -> bool {
             .any(|node| has_text(node, CHINESE_WARNING))
 }
 
+fn dia_sheet(sheet: &[AXNode]) -> bool {
+    sheet.iter().any(|node| has_text(node, DIA_PROMPT))
+}
+
 fn consent_sheets(nodes: &[AXNode]) -> impl Iterator<Item = &[AXNode]> {
     nodes
         .iter()
@@ -101,6 +108,7 @@ fn consent_sheets(nodes: &[AXNode]) -> impl Iterator<Item = &[AXNode]> {
         .filter(|sheet| !sheet.iter().any(|node| node.in_web_content))
         .filter(|sheet| {
             chinese_sheet(sheet)
+                || dia_sheet(sheet)
                 || sheet.iter().any(|node| {
                     let text = normalized_text(node);
                     text.contains("remote debugging") || text.contains("remote-debugging")
@@ -116,6 +124,7 @@ fn exact_button(nodes: &[AXNode], allow: bool) -> Result<Option<usize>, BrowserR
     let mut matches = Vec::new();
     for sheet in consent_sheets(nodes) {
         let chinese = chinese_sheet(sheet);
+        let dia = dia_sheet(sheet);
         let mut allows = Vec::new();
         let mut cancels = Vec::new();
         for node in sheet.iter().filter(|node| {
@@ -134,7 +143,7 @@ fn exact_button(nodes: &[AXNode], allow: bool) -> Result<Option<usize>, BrowserR
                     matches!(text.as_str(), "allow" | "allow remote debugging")
                         || (id.contains("allow")
                             && (id.contains("debug") || id.contains("confirm"))),
-                    text == "cancel",
+                    text == "cancel" || (dia && text == "deny"),
                 )
             };
             if (is_allow && is_cancel)
@@ -204,7 +213,18 @@ impl Drop for ConsentTrees {
 
 fn read_consent_trees(pid: i32, window_id: u32) -> Result<ConsentTrees, BrowserRefusal> {
     let mut trees = ConsentTrees(Vec::new());
-    for candidate in consent_surface_ids(crate::windows::all_windows(), pid, window_id) {
+    // all_windows() is layer-0 only; Dia's prompt floats above it.
+    let dia = crate::apps::bundle_id_for_pid(pid)
+        .is_some_and(|bundle_id| bundle_id == "company.thebrowser.dia");
+    let floating = if dia {
+        crate::windows::pid_on_screen_windows_any_layer(pid)
+    } else {
+        Vec::new()
+    };
+    let windows = crate::windows::all_windows()
+        .into_iter()
+        .chain(floating.into_iter().filter(|window| window.layer > 0));
+    for candidate in consent_surface_ids(windows, pid, window_id) {
         trees.push(walk_native_chrome_bounded(
             pid,
             candidate,
@@ -532,6 +552,56 @@ mod tests {
                 7,
             ),
             vec![7, 8]
+        );
+    }
+
+    #[test]
+    fn dia_prompt_matches_its_own_wording_and_untitled_floating_window() {
+        // Captured from Dia 1.53: a full-screen untitled window hosts the sheet.
+        let mut prompt = node("AXTextArea", 2, None, &["AXShowMenu"]);
+        prompt.value = Some("Allow debugging connection?".to_owned());
+        let mut allow = node("AXButton", 2, Some("Allow"), &["AXPress"]);
+        allow.element_ptr = 11;
+        let mut deny = node("AXButton", 2, Some("Deny"), &["AXPress"]);
+        deny.element_ptr = 12;
+        let nodes = vec![
+            node("AXWindow", 0, None, &["AXRaise"]),
+            node("AXSheet", 1, None, &["AXRaise"]),
+            prompt,
+            allow,
+            deny.clone(),
+        ];
+        assert_eq!(exact_allow_button(&nodes).unwrap(), Some(11));
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), Some(12));
+
+        // "Deny" only declines inside Dia's own prompt.
+        let chrome = vec![
+            node("AXSheet", 1, Some("Allow remote debugging?"), &[]),
+            deny,
+        ];
+        assert_eq!(exact_cancel_button(&chrome).unwrap(), None);
+
+        let window = |window_id, title: &str, layer| crate::windows::WindowInfo {
+            window_id,
+            pid: 42,
+            app_name: "Dia".to_owned(),
+            title: title.to_owned(),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 300.0,
+            },
+            layer,
+            z_index: window_id as usize,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: Some(true),
+            space_ids: None,
+        };
+        assert_eq!(
+            consent_surface_ids([window(8, "", 0), window(9, "", 3)], 42, 7),
+            vec![7, 9]
         );
     }
 

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The Rust `cua` CLI as its own platform wheel, a dependency of `cua`. It
+# installs `cua_cli/bin/cua[.exe]`; the `cua` console command (cua._cli)
+# runs it. Its own package, not cua/bin/: upgrading from a `cua` that
+# shipped cua/bin/cua would otherwise delete the new binary when pip
+# removes the old `cua`. No dependency back on `cua`: it is only installed
+# through it. Built by ../build_wheel.py.
+[project]
+name = "cua-cli"
+version = "0.9.0"
+description = "The cua command line (the Rust `cua` CLI) for the cua Python package"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "TryCua", email = "hello@trycua.com" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+]
+requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cua_cli"]
+artifacts = ["src/cua_cli/bin/*"]
+pure-python = false
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "../hatch_build.py"

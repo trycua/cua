@@ -105,9 +105,23 @@
       "description": "Case-insensitive substring filter: returns matching rows plus ancestors; element_index values are not renumbered. Try this before a full read.",
       "type": "string"
      },
-     "screenshot_out_file": {
-      "description": "When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead.",
+     "screenshot_format": {
+      "description": "Encoding of the returned screenshot. Default \"png\". \"jpeg\" is smaller, drops alpha, and mints no capture_id (capture_id-bound tools need a PNG read); pixel coordinates are unchanged.",
+      "enum": [
+       "png",
+       "jpeg"
+      ],
       "type": "string"
+     },
+     "screenshot_out_file": {
+      "description": "When set, write the screenshot (PNG, or JPEG with screenshot_format:\"jpeg\") to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead.",
+      "type": "string"
+     },
+     "screenshot_quality": {
+      "description": "JPEG quality, 1-95, with screenshot_format:\"jpeg\" only. Default 85.",
+      "maximum": 95,
+      "minimum": 1,
+      "type": "integer"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
@@ -545,6 +559,14 @@
       "description": "Target process ID. Optional with element_token (it carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "description": "Default \"window\". \"desktop\": x,y with no pid/window_id are true screen pixels from get_desktop_state.",
       "enum": [
@@ -632,6 +654,14 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -685,6 +715,14 @@
      "pid": {
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
@@ -761,6 +799,14 @@
      "pid": {
       "description": "Target process ID.",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
      },
      "scope": {
       "default": "window",
@@ -867,6 +913,14 @@
       "description": "Target process ID.",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "\"desktop\" with no pid/window_id types into the frontmost app.",
@@ -972,6 +1026,14 @@
       "description": "Target process ID.",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "\"desktop\" with no pid/window_id sends to the frontmost app.",
@@ -1070,6 +1132,14 @@
       "description": "Target process ID. Required with x, y; optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "Use desktop with no pid/window_id to send the chord to the frontmost application.",
@@ -1152,6 +1222,14 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
@@ -1220,6 +1298,14 @@
      "pid": {
       "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied.",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
      },
      "scope": {
       "default": "window",
@@ -1773,7 +1859,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).\n\nNote: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.\n\nCursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to ~/.cua-driver/config.json and seed sessions started afterwards. start_session cursor_motion and set_agent_cursor_motion override them; reduced motion always wins.\n\nAgent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.",
+   "description": "Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).\n\nNote: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.\n\nCursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to ~/.cua-driver/config.json and seed sessions started afterwards. start_session cursor_motion and set_agent_cursor_motion override them; reduced motion always wins.\n\nAgent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.\n\nAgent cursor extras: cursor.float (resting float) is on (default), off or default; cursor.marks (action marks) and cursor.rotate (turn toward travel) are on, off (default) or default. All are saved to ~/.cua-driver/config.json and applied to every cursor at once.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1784,6 +1870,24 @@
       "enum": [
        "minimal",
        "verbose",
+       "off",
+       "default"
+      ],
+      "type": "string"
+     },
+     "cursor.float": {
+      "description": "Agent cursor resting float: a slow up-and-down bob while the cursor rests; the arrow stays upright. on (default). off: the cursor stays still at rest and the overlay stops redrawing. Applies immediately to every cursor.",
+      "enum": [
+       "on",
+       "off",
+       "default"
+      ],
+      "type": "string"
+     },
+     "cursor.marks": {
+      "description": "Agent cursor action marks: the small cue next to the arrow for observe, click, type, keys, scroll, drag, apps, files, recording and system calls, plus the focus box around a clicked element on macOS. off (default): a plain arrow. Applies immediately to every cursor.",
+      "enum": [
+       "on",
        "off",
        "default"
       ],
@@ -1863,6 +1967,15 @@
        "steady",
        "calm",
        "deliberate"
+      ],
+      "type": "string"
+     },
+     "cursor.rotate": {
+      "description": "Agent cursor rotation: the arrow turns toward the direction it moves and settles upright on arrival. off (default): the arrow always stays upright. Applies immediately to every cursor.",
+      "enum": [
+       "on",
+       "off",
+       "default"
       ],
       "type": "string"
      },

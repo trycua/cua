@@ -19,7 +19,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -41,7 +40,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -63,7 +61,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -79,17 +76,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -99,20 +95,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.running] - - <power spaces.power.suspend>",
           "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Running - -",
           "os-macos mac, macOS, This Mac, Running - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [],
@@ -136,7 +132,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Suspending…",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -158,7 +153,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -180,7 +174,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -196,17 +189,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -216,20 +208,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.suspending] - - <power spaces.status.suspending busy>",
           "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Suspending… - -",
           "os-macos mac, macOS, This Mac, Running - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -255,7 +247,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Suspending…",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -277,7 +268,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -299,7 +289,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -315,17 +304,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -335,20 +323,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.suspending] - - <power spaces.status.suspending busy>",
           "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Suspending… - -",
           "os-macos mac, macOS, This Mac, Running - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -374,7 +362,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Suspending…",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -396,7 +383,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -418,7 +404,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -434,17 +419,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -454,20 +438,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.suspending] - - <power spaces.status.suspending busy>",
           "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Suspending… - -",
           "os-macos mac, macOS, This Mac, Running - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -493,7 +477,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Suspending…",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -515,7 +498,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -537,7 +519,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -553,17 +534,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -573,20 +553,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.suspending] - - <power spaces.status.suspending busy>",
           "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Suspending… - -",
           "os-macos mac, macOS, This Mac, Running - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -612,7 +592,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -634,7 +613,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -656,7 +634,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -672,17 +649,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -692,20 +668,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - - <power spaces.power.resume on>",
           "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Running - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [],
@@ -729,7 +705,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Resuming…",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -751,7 +726,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -773,7 +747,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -789,17 +762,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -809,20 +781,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.resuming] - - <power spaces.status.resuming on busy>",
           "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Resuming… - -",
           "os-macos mac, macOS, This Mac, Running - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -848,7 +820,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -871,7 +842,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -893,7 +863,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -909,17 +878,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -929,20 +897,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
           "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Running - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -968,7 +936,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -991,7 +958,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Turning off…",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1013,7 +979,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1029,17 +994,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -1049,20 +1013,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
           "os-macos mac [spaces.status.turning_off] - - <power spaces.status.turning_off busy>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Turning off… - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -1089,7 +1053,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1112,7 +1075,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Turning off…",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1134,7 +1096,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1150,17 +1111,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -1170,20 +1130,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
           "os-macos mac [spaces.status.turning_off] - - <power spaces.status.turning_off busy>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Turning off… - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -1210,7 +1170,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1233,7 +1192,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1255,7 +1213,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1271,17 +1228,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -1291,20 +1247,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
           "os-macos mac [spaces.status.stopped] - - <power spaces.power.turn_on on>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Stopped - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -1330,7 +1286,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1353,7 +1308,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1375,7 +1329,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Turning off…",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1391,17 +1344,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -1411,20 +1363,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
           "os-macos mac [spaces.status.stopped] - - <power spaces.power.turn_on on>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.turning_off] - - <power spaces.status.turning_off busy>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Stopped - -",
           "os-linux studio, Linux, Mac mini, Turning off… - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -1451,7 +1403,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1474,7 +1425,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1496,7 +1446,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Turning off…",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1512,17 +1461,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -1532,20 +1480,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
           "os-macos mac [spaces.status.stopped] - - <power spaces.power.turn_on on>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.turning_off] - - <power spaces.status.turning_off busy>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Stopped - -",
           "os-linux studio, Linux, Mac mini, Turning off… - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -1572,7 +1520,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1595,7 +1542,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1617,7 +1563,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1633,17 +1578,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -1653,20 +1597,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
           "os-macos mac [spaces.status.stopped] - - <power spaces.power.turn_on on>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Stopped - -",
           "os-linux studio, Linux, Mac mini, Stopped - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -1692,7 +1636,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1715,7 +1658,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Turning on…",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1737,7 +1679,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1753,17 +1694,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -1773,20 +1713,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
           "os-macos mac [spaces.status.turning_on] - - <power spaces.status.turning_on on busy>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Turning on… - -",
           "os-linux studio, Linux, Mac mini, Stopped - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -1813,7 +1753,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1835,7 +1774,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1857,7 +1795,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1873,17 +1810,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -1893,20 +1829,20 @@
           "local:box",
           "local:mac",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
           "os-macos mac [spaces.status.deleting] - -",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Deleting… - Deleting…",
           "os-linux studio, Linux, Mac mini, Stopped - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [
@@ -1933,7 +1869,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1956,7 +1891,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1972,17 +1906,16 @@
               "Teleport an app",
               "Picture in picture",
               "Share",
-              "Delete Space",
+              "Remove",
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: direct:pool-c [copy direct:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
-            "id": "cloud:pool-c",
+            "id": "direct:pool-c",
             "previewText": "Loading the desktop…",
             "progress": null,
             "progressText": null
@@ -1991,18 +1924,18 @@
         "ids": [
           "local:box",
           "relay:space-0123456789abcdef",
-          "cloud:pool-c"
+          "direct:pool-c"
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [spaces.status.running] - -",
           "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-linux pool-c [spaces.status.running] - -",
           "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-linux studio, Linux, Mac mini, Stopped - -",
-          "os-linux pool-c, Linux, Cua Cloud, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -"
         ]
       },
       "powering": [

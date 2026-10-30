@@ -1,0 +1,114 @@
+{
+  "name": "connectors",
+  "about": "Settings, Connections and summoning agents in a Space: the coding apps with Connect and Connected, the Connections list (up front, then the searchable More providers) with state, works-with chips and Connect, Reconnect or Disconnect, each provider's Connect sheet (only the methods that apply: an app's own sign-in, a pasted token or key, a key from your shell, a custom endpoint), the provider choice an app opens, the words around importing Claude Code's sign-in, what one Connect on an app does (importing the sign-in it already has, its device code, or the provider's sheet), an app's page, what sending an @mention does (add, wake, or why it can't be woken), and the one agent list Home and the Agents page draw (agents in Spaces and this device's runs that haven't started).",
+  "connectors": [
+    {
+      "step": "nothing connected",
+      "input": {
+        "apps": [
+          { "agent": "claude-code", "name": "Claude Code", "installed": true, "configured": false, "skills": false, "mcp": false, "mcpConfig": "~/.claude.json" },
+          { "agent": "codex", "name": "OpenAI Codex", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": "~/.codex/config.toml" },
+          { "agent": "vscode", "name": "VS Code (Copilot agent mode)", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": null }
+        ],
+        "keys": { "keys": [] },
+        "shellKeys": ["ANTHROPIC_API_KEY"]
+      }
+    },
+    {
+      "step": "Claude Code signed in, an OpenAI key pasted, Codex connecting",
+      "input": {
+        "apps": [
+          { "agent": "claude-code", "name": "Claude Code", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": "~/.claude.json" },
+          { "agent": "codex", "name": "OpenAI Codex", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": "~/.codex/config.toml" }
+        ],
+        "keys": { "keys": [
+          { "provider": "other", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000000000, "label": "Signed in as ada@example.com (Claude Max)" },
+          { "provider": "openai", "env": "OPENAI_API_KEY", "last4": "3f9a", "addedMs": 1790000100000 }
+        ] },
+        "busy": [{ "id": "app:codex", "step": "signing-in" }]
+      }
+    },
+    {
+      "step": "Claude Code sign-in ran out (needs reconnect)",
+      "input": {
+        "apps": [
+          { "agent": "claude-code", "name": "Claude Code", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": "~/.claude.json" }
+        ],
+        "keys": { "keys": [
+          { "provider": "other", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000000000, "label": "Signed in as ada@example.com (Claude Max)", "expired": true }
+        ] }
+      }
+    },
+    {
+      "step": "Claude Code is reading its sign-in",
+      "input": {
+        "apps": [
+          { "agent": "claude-code", "name": "Claude Code", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": "~/.claude.json" }
+        ],
+        "keys": { "keys": [] },
+        "busy": [{ "id": "app:claude-code", "step": "signing-in" }]
+      }
+    },
+    {
+      "step": "DeepSeek key and a custom endpoint, More providers searched",
+      "input": {
+        "apps": [
+          { "agent": "opencode", "name": "OpenCode", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": "~/.config/opencode/opencode.json" }
+        ],
+        "keys": { "keys": [
+          { "provider": "deepseek", "env": "DEEPSEEK_API_KEY", "last4": "9c2e", "addedMs": 1790000200000 },
+          { "provider": "zai", "env": "GLM_API_KEY", "last4": "7d1f", "addedMs": 1790000300000, "region": "coding-global" },
+          { "provider": "custom", "env": "CUSTOM_ENDPOINT_API_KEY", "last4": "", "addedMs": 1790000400000, "fields": { "base_url": "http://127.0.0.1:1234/v1", "model": "qwen", "wire": "openai-chat" } },
+          { "provider": "huggingface", "env": "HF_TOKEN", "last4": "1a2b", "addedMs": 1790000500000, "expired": true }
+        ] },
+        "moreOpen": true,
+        "query": "fire"
+      }
+    }
+  ],
+  "sheets": ["anthropic", "openai", "openrouter", "zai", "custom", "deepinfra", "github"],
+  "pickers": [
+    { "forApp": "hermes", "query": "", "expanded": false },
+    { "forApp": "claude-code", "query": "", "expanded": false },
+    { "forApp": null, "query": "kimi", "expanded": false }
+  ],
+  "models": [
+    { "step": "nothing connected", "input": { "keys": { "keys": [] } } },
+    { "step": "an Anthropic key, an OpenAI key and a DeepSeek key", "input": { "keys": { "keys": [
+      { "provider": "anthropic", "env": "ANTHROPIC_API_KEY", "last4": "aa11", "addedMs": 1790000100000 },
+      { "provider": "openai", "env": "OPENAI_API_KEY", "last4": "bb22", "addedMs": 1790000200000 },
+      { "provider": "deepseek", "env": "DEEPSEEK_API_KEY", "last4": "cc33", "addedMs": 1790000300000 } ] } } },
+    { "step": "only a Claude sign-in and a ChatGPT sign-in (each is its own app's)", "input": { "keys": { "keys": [
+      { "provider": "anthropic", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000100000 },
+      { "provider": "openai", "env": "CODEX_AUTH_JSON", "last4": "", "addedMs": 1790000200000 } ] } } },
+    { "step": "a Claude sign-in that ran out and an OpenAI key", "input": { "keys": { "keys": [
+      { "provider": "anthropic", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000100000, "expired": true },
+      { "provider": "openai", "env": "OPENAI_API_KEY", "last4": "bb22", "addedMs": 1790000200000 } ] } } },
+    { "step": "a provider with no list falls back to its default", "input": { "keys": { "keys": [
+      { "provider": "zai", "env": "GLM_API_KEY", "last4": "7d1f", "addedMs": 1790000300000, "region": "coding-global" } ] } } }
+  ],
+  "plans": ["claude-code", "codex", "hermes", "vscode", "copilot-cli"],
+  "details": ["claude-code", "vscode"],
+  "summon": {
+    "input": {
+      "members": [{ "handle": "hermes", "harness": "hermes", "label": "Hermes" }],
+      "people": ["grace"],
+      "canAdd": true,
+      "connectors": { "apps": [{ "agent": "claude-code", "name": "Claude Code", "installed": true }], "keys": { "keys": [{ "provider": "openai", "env": "OPENAI_API_KEY", "last4": "3f9a", "addedMs": 1 }] } }
+    },
+    "texts": ["@claude fix the build", "@codex bump the timeout, @hermes review it", "cc @grace and @nobody"]
+  },
+  "agentList": {
+    "spaces": [
+      { "spaceId": "relay:a/b", "spaceName": "ubuntu-build", "members": [
+        { "handle": "hermes", "harness": "hermes", "displayName": "Hermes", "ownerId": "acct_ada", "status": "working", "activity": "bumping the retry timeout", "lastMs": 5 },
+        { "handle": "claude", "harness": "claude-code", "displayName": "Claude Code", "ownerId": "acct_grace", "status": "idle", "needsMs": [9] }
+      ] }
+    ],
+    "attempts": [
+      { "id": "a", "spaceId": "relay:x/y", "spaceName": "space-1", "harness": "claude-code", "label": "Claude Code", "job": "fix the build", "atMs": 10, "state": "not-connected", "note": "Claude Code isn't connected yet", "connectLabel": "Connect Claude Code", "app": "claude-code" },
+      { "id": "b", "spaceId": "pending:b", "spaceName": "space-2", "harness": "codex", "label": "Codex", "job": "update the README", "atMs": 11, "state": "creating" },
+      { "id": "c", "spaceId": "", "spaceName": "", "harness": "hermes", "label": "Hermes", "job": "tidy the repo", "atMs": 3, "state": "failed" }
+    ]
+  }
+}

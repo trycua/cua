@@ -1,0 +1,20 @@
+id = "azure-foundry"
+name = "Azure AI Foundry"
+icon = "azure"
+tier = "more"
+rank = 400
+kind = "cloud"
+hidden = true
+hidden_reason = "Not built yet: needs the Entra ID method with a resource URL."
+aliases = ["azure", "azure openai", "microsoft"]
+wire = "openai-chat"
+base_url = ""
+default_model = ""
+hermes_id = "azure-foundry"
+key_help = "Use an Azure AI Foundry key with your resource URL."
+
+[[method]]
+id = "adc"
+kind = "adc"
+label = "Use your Microsoft sign-in"
+help = "Uses Entra ID on this machine."

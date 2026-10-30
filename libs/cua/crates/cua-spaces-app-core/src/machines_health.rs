@@ -72,6 +72,10 @@ pub struct MachinesViewIssueAction {
     /// A host action to run (`host.action`).
     #[serde(default)]
     pub host_action: Option<HostActionId>,
+    /// Restart into the Cua Spaces update this app already downloaded
+    /// (the shell's own update flow, the sidebar's "Restart to update").
+    #[serde(default)]
+    pub app_update: bool,
 }
 
 /// One issue on a machine's page.
@@ -80,7 +84,8 @@ pub struct MachinesViewIssueAction {
 pub struct MachinesViewIssue {
     /// The check it comes from (`machine.disk`, `service`, `version`).
     pub id: String,
-    /// `warn` or `fail`.
+    /// `warn` or `fail`; `info` for a note that is no problem (it does not
+    /// tint the row's dot).
     pub level: String,
     /// One plain sentence.
     pub text: String,
@@ -120,6 +125,9 @@ pub struct Subject<'a> {
     pub os: &'a str,
     /// The Cua version This Mac's daemon reported, for the version check.
     pub local_version: Option<&'a str>,
+    /// The Cua Spaces update this Mac's app found: `(version, ready)`, ready
+    /// once downloaded. `None` when this app is the newest release.
+    pub app_update: Option<(&'a str, bool)>,
 }
 
 /// The issues for one machine (pure). `host` is This Mac's host state,
@@ -137,24 +145,25 @@ pub fn issues(
         && let Some(h) = host
         && h.configured
     {
-        if h.service_installed && !h.service_running {
+        if crate::machines_view::service_down(h) {
             out.push(issue(
                 "service",
                 "fail",
-                "The Cua service isn\u{2019}t running, so your other devices can\u{2019}t reach \
+                "The Cua service isn\u{2019}t running, so your other machines can\u{2019}t reach \
                  this Mac."
                     .into(),
                 Some(MachinesViewIssueAction {
                     label: "Restart service".into(),
                     url: None,
                     host_action: Some(HostActionId::ResumeSharing),
+                    app_update: false,
                 }),
             ));
         } else if h.service_running && h.sharing && h.online == Some(false) {
             out.push(issue(
                 "relay",
                 "warn",
-                "This Mac can\u{2019}t reach the Cua relay, so your other devices can\u{2019}t \
+                "This Mac can\u{2019}t reach the Cua relay, so your other machines can\u{2019}t \
                  reach it. Check its internet connection."
                     .into(),
                 None,
@@ -194,6 +203,7 @@ pub fn issues(
                     label: label.into(),
                     url: Some(u.into()),
                     host_action: None,
+                    app_update: false,
                 })
         };
         // This Mac's page already lists its permissions, each with its
@@ -260,33 +270,67 @@ pub fn issues(
         && let (Some(a), Some(b)) = (minor(local), minor(theirs))
         && a != b
     {
-        out.push(issue(
-            "version",
-            "warn",
-            if b < a {
+        out.push(if b < a {
+            issue(
+                "version",
+                "warn",
                 format!(
                     "It runs Cua {theirs}, older than this Mac\u{2019}s {local}. Update Cua on it."
-                )
-            } else {
-                format!(
-                    "It runs Cua {theirs}, newer than this Mac\u{2019}s {local}. Update Cua here."
-                )
-            },
-            None,
-        ));
+                ),
+                None,
+            )
+        } else {
+            newer_peer(theirs, local, subject.app_update)
+        });
     }
     out
 }
 
-/// `fail` when any issue fails, `warn` when any warns, else empty: the
-/// tint of the row's dot.
+/// The peer runs a newer Cua than this Mac. Only a Cua Spaces update fixes
+/// that here (the app bundles its Cua), so the row offers exactly what
+/// exists: the downloaded update to restart into, a download in progress,
+/// or, when this app is already the newest release, a plain note.
+fn newer_peer(theirs: &str, local: &str, update: Option<(&str, bool)>) -> MachinesViewIssue {
+    let head = format!("It runs Cua {theirs}, newer than this Mac\u{2019}s {local}.");
+    match update {
+        Some((v, true)) => issue(
+            "version",
+            "warn",
+            format!("{head} Cua Spaces {v} is ready to install."),
+            Some(MachinesViewIssueAction {
+                label: "Restart to update".into(),
+                url: None,
+                host_action: None,
+                app_update: true,
+            }),
+        ),
+        Some((v, false)) => issue(
+            "version",
+            "warn",
+            format!("{head} Cua Spaces {v} is downloading and will update this Mac."),
+            None,
+        ),
+        None => issue(
+            "version",
+            "info",
+            format!(
+                "{head} Cua Spaces will update this Mac in its next release; there is nothing \
+                 to install yet."
+            ),
+            None,
+        ),
+    }
+}
+
+/// `fail` when any issue fails, `warn` when any warns, else empty (a note
+/// does not count): the tint of the row's dot.
 pub fn health_level(issues: &[MachinesViewIssue]) -> String {
     if issues.iter().any(|i| i.level == "fail") {
         "fail".into()
-    } else if issues.is_empty() {
-        String::new()
-    } else {
+    } else if issues.iter().any(|i| i.level == "warn") {
         "warn".into()
+    } else {
+        String::new()
     }
 }
 
@@ -355,12 +399,14 @@ mod tests {
         live: true,
         os: "macos",
         local_version: Some("0.4.1"),
+        app_update: None,
     };
     const OTHER: Subject<'static> = Subject {
         current: false,
         live: true,
         os: "macos",
         local_version: Some("0.4.1"),
+        app_update: None,
     };
 
     #[test]
@@ -476,9 +522,19 @@ mod tests {
             configured: true,
             service_installed: true,
             service_running: false,
+            sharing: true,
+            provide_spaces: true,
             ..HostState::default()
         };
         let i = issues(&THIS, None, Some(&host));
+        // Nothing to share (both switches off): the stopped service is
+        // expected, so it is no issue.
+        let nothing = HostState {
+            provide_spaces: false,
+            share_desktop: false,
+            ..host.clone()
+        };
+        assert!(issues(&THIS, None, Some(&nothing)).is_empty());
         assert_eq!(i[0].id, "service");
         let a = i[0].action.as_ref().unwrap();
         assert_eq!(
@@ -512,6 +568,38 @@ mod tests {
             issues(&OTHER, Some(&h), None)[0].text,
             "Couldn\u{2019}t check it: Studio runs an older Cua that can't be checked; update Cua on it."
         );
+    }
+
+    #[test]
+    fn a_newer_peer_offers_only_the_update_that_exists() {
+        let h = health(vec![], "0.5.0");
+        // This app is the newest release: a plain note, no warning, no button.
+        let i = issues(&OTHER, Some(&h), None);
+        assert_eq!((i[0].id.as_str(), i[0].level.as_str()), ("version", "info"));
+        assert!(i[0].action.is_none());
+        assert!(!i[0].text.contains("Update Cua here"));
+        assert_eq!(health_level(&i), "");
+        // The update is downloading: a warning, no button yet.
+        let downloading = Subject {
+            app_update: Some(("0.12.2", false)),
+            ..OTHER
+        };
+        let i = issues(&downloading, Some(&h), None);
+        assert_eq!(i[0].level, "warn");
+        assert!(i[0].action.is_none());
+        assert_eq!(health_level(&i), "warn");
+        // Downloaded: "Restart to update".
+        let ready = Subject {
+            app_update: Some(("0.12.2", true)),
+            ..OTHER
+        };
+        let i = issues(&ready, Some(&h), None);
+        let a = i[0].action.as_ref().unwrap();
+        assert_eq!(
+            (a.label.as_str(), a.app_update),
+            ("Restart to update", true)
+        );
+        assert!(i[0].text.contains("Cua Spaces 0.12.2"));
     }
 
     #[test]

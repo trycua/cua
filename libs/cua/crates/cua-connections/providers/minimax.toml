@@ -1,0 +1,21 @@
+id = "minimax"
+name = "MiniMax"
+icon = "minimax"
+tier = "more"
+rank = 270
+kind = "hosted"
+aliases = ["mini-max"]
+wire = "anthropic"
+base_url = "https://api.minimax.io/anthropic"
+base_url_env = "MINIMAX_BASE_URL"
+default_model = "MiniMax-M3"
+hermes_id = "minimax"
+key_help = "Create a key at platform.minimax.io. This is the API key, not the MiniMax sign-in."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "MINIMAX_API_KEY"
+
+[delivery]
+hermes = ["MINIMAX_API_KEY"]

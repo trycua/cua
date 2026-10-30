@@ -48,7 +48,7 @@ export function validateInventory(value: unknown, file: string): SoftwareInvento
     if (typeof record[key] !== 'string' || !record[key]) throw new Error(`${file}: ${key} must be a string`);
   }
   const inv = record as unknown as SoftwareInventory;
-  if (!/^ghcr\.io\/trycua\/[a-z0-9-]+:[0-9][0-9.]*(-(slim|xcode(-[0-9.]+)?))?$/.test(inv.image)) {
+  if (!/^ghcr\.io\/trycua\/[a-z0-9-]+:[0-9][0-9.]*(-(slim|docker|xcode(-[0-9.]+)?))?$/.test(inv.image)) {
     throw new Error(`${file}: image ${inv.image} is not a canonical tier tag`);
   }
   if (path.basename(file) !== `${inv.os}-${inv.version}-${inv.tier}.json`) {

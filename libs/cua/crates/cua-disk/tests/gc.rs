@@ -84,12 +84,25 @@ fn qemu_sandbox(l: &Layout, name: &str, backing: &Path) {
         accel: String::new(),
         ssh: None,
         restrict_network: false,
+        egress: None,
+        netns: false,
+        pasta_pid: None,
         extra_args: vec![],
         snapshots: vec![],
         paused: false,
         source: None,
         created_at: 1,
         gpu: None,
+        restore_from: None,
+        memory: None,
+        last_start: None,
+        free_page_reporting: false,
+        ram_file: None,
+        headless: false,
+        shared_memory: false,
+        pinned: false,
+        bulk: false,
+        tpm: false,
     };
     std::fs::write(dir.join("state.json"), serde_json::to_vec(&st).unwrap()).unwrap();
 }
@@ -237,6 +250,50 @@ async fn orphans_go_and_in_progress_downloads_stay() {
     // Even --all leaves a locked extraction and a live download alone.
     collect(&s, opts(None, true, false)).await;
     assert!(locked.exists() && live.exists());
+}
+
+/// QEMU warm-start memory snapshots (`_golden/<key>/`) are cache: counted
+/// against the budget and evicted oldest first, but never one a sandbox's
+/// disk is backed by, and never by a plain (budget-less) collection.
+#[tokio::test]
+async fn qemu_goldens_are_cache_evicted_by_lru_unless_in_use() {
+    let d = tempfile::tempdir().unwrap();
+    let l = Layout::new(d.path());
+    let golden = |key: &str, used: SystemTime| {
+        let dir = l.qemu().join("_golden").join(key);
+        std::fs::create_dir_all(&dir).unwrap();
+        let disk = dir.join("disk.qcow2");
+        cua_disk::qcow2::write_header(&disk, None).unwrap();
+        std::fs::write(dir.join("memory"), vec![1u8; 2 * MIB as usize]).unwrap();
+        mark_used_at(&dir, used);
+        dir
+    };
+    let in_use = golden("aaa", days_ago(30));
+    let old = golden("bbb", days_ago(20));
+    let fresh = golden("ccc", days_ago(1));
+    qemu_sandbox(&l, "fork-of-aaa", &in_use.join("disk.qcow2"));
+
+    let s = Scanner::new(l.clone(), config(Budget::Off), None, None);
+    let report = s.scan_at(now()).await;
+    let goldens: Vec<_> = report
+        .items
+        .iter()
+        .filter(|i| i.kind == "qemu-golden")
+        .collect();
+    assert_eq!(goldens.len(), 3);
+    assert!(
+        goldens
+            .iter()
+            .all(|i| i.category == Category::Images && !i.orphan)
+    );
+    // A plain collection removes no golden.
+    collect(&s, opts(None, false, false)).await;
+    assert!(in_use.exists() && old.exists() && fresh.exists());
+    // Over a tiny budget: the oldest unused one goes first; the one a fork
+    // is backed by stays.
+    collect(&s, opts(Some(Budget::Bytes(3 * MIB)), false, false)).await;
+    assert!(in_use.exists(), "a golden a sandbox is backed by is kept");
+    assert!(!old.exists(), "the least recently used golden is evicted");
 }
 
 // ------------------------------------------------------------ fake engine
@@ -558,6 +615,47 @@ async fn lume_bases_the_sdk_pulled_are_evicted_and_nothing_else() {
     assert_eq!(left, vec!["cua-base-busy", "my-mac", "users-vm"], "{g:?}");
     assert!(!owned.owns("cua-base-old") && !owned.owns("deleted-elsewhere"));
     assert!(owned.owns("my-mac"));
+}
+
+#[tokio::test]
+async fn a_warm_macos_state_stays_while_spaces_of_its_image_exist() {
+    use cua_vmm::lume::{OwnedKind, OwnedVms, warm_vm_names};
+    let d = tempfile::tempdir().unwrap();
+    let l = Layout::new(d.path());
+    let owned = OwnedVms::new(l.lume_owned());
+    let [used, _] = warm_vm_names("cua-base-aaaaaaaaaaaa");
+    let [unused, _] = warm_vm_names("cua-base-bbbbbbbbbbbb");
+    owned.mark(&used, OwnedKind::Base, Some("ghcr.io/trycua/macos:26"));
+    owned.mark(&unused, OwnedKind::Base, Some("ghcr.io/trycua/macos:15"));
+    // A Space (cold, resumed from the state, or a warm-pool member) of the
+    // first image.
+    owned.mark("my-mac", OwnedKind::Instance, Some("cua-base-aaaaaaaaaaaa"));
+    for n in [used.as_str(), unused.as_str(), "my-mac"] {
+        mark_used_at(&owned.dir().join(format!("{n}.json")), days_ago(30));
+    }
+    let vm = |n: &str| LumeVm {
+        name: n.into(),
+        status: "stopped".into(),
+        allocated: 27 * GIB,
+    };
+    let fake = Arc::new(FakeLume {
+        vms: Mutex::new(vec![vm(&used), vm(&unused), vm("my-mac")]),
+    });
+    let s = Scanner::new(
+        l.clone(),
+        config(Budget::Bytes(GIB)),
+        None,
+        Some(fake.clone() as Arc<dyn LumeApi>),
+    );
+    let g = collect(&s, opts(None, false, false)).await;
+    let left: Vec<String> = fake
+        .vms
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|v| v.name.clone())
+        .collect();
+    assert_eq!(left, vec![used.clone(), "my-mac".to_string()], "{g:?}");
 }
 
 #[tokio::test]

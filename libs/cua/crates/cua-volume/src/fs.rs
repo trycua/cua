@@ -25,12 +25,39 @@ use crate::{Error, Result, now_ms, sha256_hex};
 #[derive(Clone, Debug)]
 pub struct FsBackend {
     root: PathBuf,
+    /// The store existed at some point in this process (it was there when
+    /// opened, or a write created it). A store that was there and is gone
+    /// was removed on purpose (its home was deleted): a later write must
+    /// not bring the whole directory chain back.
+    seen: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FsBackend {
     /// A store rooted at `root` (created on first write).
     pub fn new(root: impl Into<PathBuf>) -> FsBackend {
-        FsBackend { root: root.into() }
+        let root = root.into();
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(root.is_dir()));
+        FsBackend { root, seen }
+    }
+
+    /// Refuses (as `NotFound`) when the store was there and was removed;
+    /// otherwise the store directory exists afterwards.
+    fn ensure_root(&self) -> Result<()> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.root.is_dir() {
+            self.seen.store(true, SeqCst);
+            return Ok(());
+        }
+        if self.seen.load(SeqCst) {
+            return Err(Error::NotFound(format!(
+                "the store {} was removed",
+                self.root.display()
+            )));
+        }
+        cua_home::guard_write(&self.root)?;
+        fs::create_dir_all(&self.root)?;
+        self.seen.store(true, SeqCst);
+        Ok(())
     }
 
     pub fn root(&self) -> &Path {
@@ -71,7 +98,7 @@ impl FsBackend {
     }
 
     fn lock(&self) -> Result<File> {
-        fs::create_dir_all(&self.root)?;
+        self.ensure_root()?;
         let path = self.root.join(".lock");
         cua_home::guard_write(&path)?;
         let f = OpenOptions::new()
@@ -122,7 +149,19 @@ impl FsBackend {
     }
 
     fn new_version() -> String {
-        format!("{:013}-{:08x}", now_ms(), rand::random::<u32>())
+        // Strictly increasing within the process: two writes in the same
+        // millisecond must still sort in write order, so the random suffix
+        // only keeps ids apart across processes.
+        static LAST_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let now = now_ms();
+        let ms = LAST_MS
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |last| Some(now.max(last + 1)),
+            )
+            .map_or(now, |last| now.max(last + 1));
+        format!("{:013}-{:08x}", ms, rand::random::<u32>())
     }
 
     fn check(cond: &Condition, current: Option<&ObjectMeta>, key: &str) -> Result<()> {
@@ -374,6 +413,7 @@ impl FsBackend {
         use sha2::Digest as _;
         use std::io::Read as _;
         let dir = self.versions_dir(key)?;
+        self.ensure_root()?;
         fs::create_dir_all(&dir)?;
         let tmp = dir.join(format!(".tmp-{}", crate::new_id()));
         cua_home::guard_write(&tmp)?;
@@ -429,6 +469,7 @@ impl FsBackend {
             .read_head(from)?
             .ok_or_else(|| Error::NotFound(from.to_string()))?;
         let dir = self.versions_dir(to)?;
+        self.ensure_root()?;
         fs::create_dir_all(&dir)?;
         let version = Self::new_version();
         let dst = dir.join(&version);
@@ -602,6 +643,53 @@ impl Backend for FsBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A store whose home was deleted stays deleted: a device heartbeat
+    /// (a write every 30 s) must not bring the directory chain back, and a
+    /// store that never existed is still created on its first write.
+    #[tokio::test]
+    async fn a_removed_store_is_not_brought_back_by_a_later_write() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home
+            .path()
+            .join("env")
+            .join("home")
+            .join("volume")
+            .join("data");
+        let b = FsBackend::new(&root);
+        // First write on a store that never existed creates it.
+        b.put(".cua-devices/d1.json", b"{}".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        assert!(root.is_dir());
+        // Its home is torn down.
+        std::fs::remove_dir_all(home.path().join("env")).unwrap();
+        for _ in 0..2 {
+            let e = b
+                .put(".cua-devices/d1.json", b"{}".to_vec(), Condition::None)
+                .await
+                .unwrap_err();
+            assert_eq!(e.tag(), "not_found", "{e}");
+        }
+        assert!(
+            !home.path().join("env").exists(),
+            "nothing was recreated, not even a lock file"
+        );
+        // A clone shares the knowledge; a store opened on the path later
+        // starts fresh (a home that is set up again is a new home).
+        assert!(
+            b.clone()
+                .put("k", b"v".to_vec(), Condition::None)
+                .await
+                .is_err()
+        );
+        assert!(!home.path().join("env").exists());
+        FsBackend::new(&root)
+            .put("k", b"v".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        assert!(root.is_dir());
+    }
 
     #[tokio::test]
     async fn versions_preconditions_and_s3_shaped_keys() {

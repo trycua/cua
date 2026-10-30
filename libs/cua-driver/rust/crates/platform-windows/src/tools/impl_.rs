@@ -147,10 +147,13 @@ pub(crate) fn resolve_onscreen_point_with_scroll(
     // authoritative for that case; without it a foreground tap can land on the
     // visible control covering the stale point (for example a bottom toolbar).
     if let Some(retained) = admitted.as_ref() {
+        // Geometry read while minimized is stale even when it happens to land
+        // inside the restored window rect.
+        let trust_cached = cached_center_in_window && !retained.read_while_minimized;
         if retained.is_uia() {
             let is_offscreen =
                 unsafe { crate::uia::scroll::element_is_offscreen(retained.as_ptr()) };
-            if cached_center_in_window && is_offscreen != Some(true) {
+            if trust_cached && is_offscreen != Some(true) {
                 return Ok((cx, cy));
             }
             if let Some((nx, ny)) = unsafe {
@@ -160,7 +163,7 @@ pub(crate) fn resolve_onscreen_point_with_scroll(
                     return Ok((nx, ny));
                 }
             }
-        } else if cached_center_in_window {
+        } else if trust_cached {
             return Ok((cx, cy));
         }
         // `retained` drops here → COM Release.

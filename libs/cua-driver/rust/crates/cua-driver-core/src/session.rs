@@ -1138,22 +1138,6 @@ impl Drop for SessionReviveHookRegistration {
     }
 }
 
-/// Notify session-owned subsystems after `start_session` has successfully
-/// revived and rebound a recycled id. Unlike [`revive_session`], this does not
-/// alter core lifecycle state; it fans the completed transition out to
-/// platform-owned tombstones.
-pub fn fire_session_revive(session_id: &str) {
-    let owner = lifecycle_records()
-        .lock()
-        .unwrap()
-        .get(session_id)
-        .map(|record| record.owner_transport.clone());
-    if let Some(owner) = owner {
-        let _ = fire_session_revive_for_owner(session_id, &owner);
-    }
-}
-
-/// Notify render-side owners only while the revived episode is still live and
 /// owned by the same transport. Holding the tombstone lock across callbacks
 /// orders a racing end after revival, so its cleanup cannot be followed by a
 /// late overlay resurrection.

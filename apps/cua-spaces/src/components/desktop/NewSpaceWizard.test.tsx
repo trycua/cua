@@ -18,7 +18,6 @@ import {
 
 function renderWizard(overrides: Partial<NewSpaceWizardProps> = {}) {
   const props: NewSpaceWizardProps = {
-    cloudAvailable: true,
     localAvailable: true,
     onCreate: vi.fn(),
     onAddByAddress: vi.fn(async () => {}),
@@ -53,6 +52,7 @@ const entries = () =>
     .getAllByRole("option")
     .map((o) => `${o.textContent}${(o as HTMLOptionElement).disabled ? " (disabled)" : ""}`);
 const YOUR_CLOUD = { cuaVolume: false, yourCloud: true, sharing: false };
+const NO_CLOUD = { cuaVolume: false, yourCloud: false, sharing: false };
 const MINI: SpaceHost = { id: "m-mini", name: "Mac mini", via: "relay", online: true, os: "macos", limits: [] };
 const STUDIO: SpaceHost = { id: "m-studio", name: "Studio", via: "relay", online: false, os: "", limits: [] };
 const suggestionRefs = () =>
@@ -66,7 +66,7 @@ describe("the image field", () => {
   const offeredGroups = new Set(list.groups.filter((g) => !("picker" in g) || g.picker !== false).map((g) => g.id));
   const offered = list.images.filter((image) => image.published && offeredGroups.has(image.group));
   const pressedOs = () =>
-    ["Linux", "Windows", "macOS"].filter(
+    ["Linux", "macOS", "Windows"].filter(
       (name) => screen.getByRole("button", { name: new RegExp(`^${name}`) }).getAttribute("aria-pressed") === "true",
     );
 
@@ -189,17 +189,18 @@ describe("New Space wizard", () => {
     );
   });
 
-  it("lists This Mac and your machines; your clouds and Connect a cloud only with Your cloud", () => {
+  it("lists This Mac and your machines; your clouds and Connect a cloud unless Your cloud is off", () => {
     const onConnectCloud = vi.fn();
-    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud });
-    expect(entries()).toEqual(["This Mac", "Mac mini", "Studio (offline) (disabled)"]);
+    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: NO_CLOUD });
+    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "Add a computer by its address…"]);
     expect(runOnMenu()).toHaveValue("local");
     expect(screen.queryByText(/Cua Cloud/)).toBeNull();
+    expect(screen.queryByText(/Add your cloud account/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
     cleanup();
     renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: YOUR_CLOUD });
-    expect(entries()).toEqual(["This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2"]);
-    fireEvent.click(screen.getByRole("button", { name: /Connect a cloud/ }));
+    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2", "Add your cloud account…", "Add a computer by its address…"]);
+    runOn("add:cloud");
     expect(onConnectCloud).toHaveBeenCalled();
   });
 
@@ -245,7 +246,7 @@ describe("New Space wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    fireEvent.click(screen.getByRole("button", { name: /Connect by address/ }));
+    runOn("add:address");
     expect(screen.queryByLabelText("Cost")).toBeNull();
     expect(screen.queryByText(/Free/)).toBeNull();
   });
@@ -318,7 +319,7 @@ describe("the Resources step", () => {
     next();
     const p = size("ghcr.io/trycua/linux:24.04", "arm64");
     const gb = (b: number) => (b / GB < 10 ? (b / GB).toFixed(1) : Math.round(b / GB)) + " GB";
-    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked)}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
+    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked).replace(" GB", "")}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
     expect(screen.queryByRole("slider", { name: "Disk" })).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   });
@@ -334,10 +335,15 @@ describe("the Resources step", () => {
     expect(screen.queryByText("Linux runtime")).toBeNull();
     next();
     next();
-    expect(screen.getByText(/includes 455 MB one-time Linux runtime download/)).toBeInTheDocument();
+    // The Summary shows one short value; the breakdown is the info icon's tooltip.
+    expect(screen.queryByText(/includes 455 MB one-time Linux runtime download/)).toBeNull();
     expect(screen.queryByText("Linux runtime")).toBeNull();
     expect(screen.getAllByText("Disk")).toHaveLength(1);
-    expect(screen.getByText(/GB–.*GB initially; grows with use/)).toBeInTheDocument();
+    expect(screen.getByText(/^About \d+(–\d+)? GB/)).toBeInTheDocument();
+    const info = screen.getByRole("button", { name: "Disk details" });
+    expect(info).toHaveAttribute("title", expect.stringContaining("includes 455 MB one-time Linux runtime download"));
+    fireEvent.click(info);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/includes 455 MB one-time Linux runtime download/);
   });
 
   it("blocks Continue in one line when the Space does not fit", () => {
@@ -393,7 +399,7 @@ describe("Connect by address", () => {
   it("adds host:port with a token and dismisses on success", async () => {
     const onAddByAddress = vi.fn(async () => {});
     const { onCancel } = renderWizard({ onAddByAddress });
-    fireEvent.click(screen.getByRole("button", { name: "Connect by address…" }));
+    runOn("add:address");
     expect(screen.getByRole("button", { name: "Add Space" })).toBeDisabled();
     fireEvent.change(screen.getByPlaceholderText("10.0.0.5:3211"), {
       target: { value: "127.0.0.1:3211" },
@@ -411,7 +417,7 @@ describe("Connect by address", () => {
       throw new Error("cua-spacesd is not available at 127.0.0.1:1");
     });
     const { onCancel } = renderWizard({ onAddByAddress });
-    fireEvent.click(screen.getByRole("button", { name: "Connect by address…" }));
+    runOn("add:address");
     fireEvent.change(screen.getByPlaceholderText("10.0.0.5:3211"), {
       target: { value: "127.0.0.1:1" },
     });
@@ -493,7 +499,6 @@ describe("QEMU VMs", () => {
 describe("default placement", () => {
   it("starts on This Mac when not signed in but a local runtime is ready, even if that is known late", () => {
     const props: NewSpaceWizardProps = {
-      cloudAvailable: false,
       localAvailable: false,
       onCreate: vi.fn(),
       onAddByAddress: vi.fn(async () => {}),

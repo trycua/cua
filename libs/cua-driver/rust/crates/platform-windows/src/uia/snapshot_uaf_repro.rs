@@ -114,6 +114,7 @@ fn snapshot_with(ptrs: Vec<usize>) -> UiaSnapshot {
                 center: (0, 0),
                 rect: None,
                 msaa_role: None,
+                read_while_minimized: false,
             })
             .collect(),
     }
@@ -254,6 +255,7 @@ fn exact_snapshot_retains_matching_identity_and_geometry() {
     payload.elements[0].center = (31, 47);
     payload.elements[0].rect = Some((11, 27, 51, 67));
     payload.elements[0].msaa_role = Some(0x38);
+    let payload = payload.with_read_while_minimized(true);
     let first = cache.publish(PID as i32, HWND, payload);
     let guard = acquire(&cache, first, 0).unwrap();
     let second = cache.publish(PID as i32, HWND, snapshot_with(vec![make_fake(hits)]));
@@ -265,8 +267,12 @@ fn exact_snapshot_retains_matching_identity_and_geometry() {
     assert_eq!(guard.msaa_role, Some(0x38));
     assert!(guard.focus_element().is_err());
     assert_eq!(guard.element_has_keyboard_focus(), None);
-    assert_eq!(acquire(&cache, second, 0).unwrap().center, (0, 0));
+    assert!(guard.read_while_minimized);
+    let replacement = acquire(&cache, second, 0).unwrap();
+    assert_eq!(replacement.center, (0, 0));
+    assert!(!replacement.read_while_minimized);
     let cloned = guard.clone();
+    assert!(cloned.read_while_minimized);
     drop(guard);
     unsafe { touch_vtable(cloned.as_ptr()) };
     drop(cloned);

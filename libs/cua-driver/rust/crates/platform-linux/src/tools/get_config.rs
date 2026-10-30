@@ -37,10 +37,7 @@ impl Tool for GetConfigTool {
             "platform": "linux",
             "capture_mode": cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
-            "cursor": {
-                "motion": cursor_overlay::motion_defaults::read_saved().config_json(),
-                "badges": cursor_overlay::badge_mode::read_saved().as_str(),
-            },
+            "cursor": cursor_overlay::cursor_options::saved_config_json(),
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry
         }))

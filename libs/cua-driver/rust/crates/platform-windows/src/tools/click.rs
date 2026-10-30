@@ -329,7 +329,7 @@ impl Tool for ClickTool {
             // swap and UIPI checks needed for Chromium and retained-mode apps.
             let send_result = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
                 let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::send_click_synthesized_active_mods(
+                crate::input::send_click_synthesized_desktop_mods(
                     hwnd_u, sx, sy, count, &button, &mod_refs,
                 )?;
                 Ok(hwnd_u)
@@ -540,6 +540,16 @@ impl Tool for ClickTool {
                         }
                     }
                 };
+                if admitted
+                    .as_ref()
+                    .is_some_and(|element| element.read_while_minimized)
+                {
+                    if let Err(refusal) =
+                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, tx, ty, "clicking")
+                    {
+                        return refusal;
+                    }
+                }
                 pin_overlay_above(&cursor_key, hwnd);
                 overlay_glide_to_target(
                     &cursor_key,
@@ -781,6 +791,27 @@ impl Tool for ClickTool {
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
             {
+                // This route posts at the cached center without
+                // `resolve_onscreen_point_with_scroll`, so check it here.
+                if admitted
+                    .as_ref()
+                    .is_some_and(|element| element.read_while_minimized)
+                {
+                    let message = format!(
+                        "Element [{idx}] resolves to ({cx},{cy}), which was read while \
+                         window 0x{hwnd:x} was minimized. Re-snapshot with get_window_state \
+                         before retrying."
+                    );
+                    return ToolResult::error(message.clone()).with_structured(json!({
+                        "status": "refused",
+                        "code": "element_not_visible",
+                        "effect": "refused",
+                        "refusal": {
+                            "code": "element_not_visible",
+                            "message": message,
+                        }
+                    }));
+                }
                 let posted = tokio::task::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
@@ -940,6 +971,12 @@ impl Tool for ClickTool {
                     )
                     .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
                     return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
+                }
+                if admitted.as_ref().is_some_and(|element| element.read_while_minimized) {
+                    let (x, y) =
+                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, cx, cy, "clicking")
+                            .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
+                    return Ok(BackgroundElementClick::Post { x, y, failed_calls });
                 }
                 Ok(BackgroundElementClick::Post { x: cx, y: cy, failed_calls })
             } }).await;

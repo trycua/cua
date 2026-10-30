@@ -369,3 +369,127 @@ private func createTempDirectory() throws -> URL {
     try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     return tempDir
 }
+
+@MainActor
+@Test("clone with the saved state keeps the identity the state needs; a plain clone drops the state")
+func testCloneWithSavedState() throws {
+    let tempConfigDir = try createTempDirectory()
+    let tempHomeDir = try createTempDirectory()
+
+    defer {
+        try? FileManager.default.removeItem(at: tempConfigDir)
+        try? FileManager.default.removeItem(at: tempHomeDir)
+    }
+
+    let previousXDGConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+    setenv("XDG_CONFIG_HOME", tempConfigDir.path, 1)
+    defer {
+        if let previousXDGConfigHome {
+            setenv("XDG_CONFIG_HOME", previousXDGConfigHome, 1)
+        } else {
+            unsetenv("XDG_CONFIG_HOME")
+        }
+    }
+
+    let settingsManager = SettingsManager(fileManager: .default)
+    try settingsManager.setHomeDirectory(path: tempHomeDir.path)
+    let home = Home(settingsManager: settingsManager, fileManager: .default)
+    let controller = LumeController(home: home, vmFactory: TestVMFactory())
+
+    let sourceDir = try home.getVMDirectory("warm")
+    try FileManager.default.createDirectory(
+        at: sourceDir.dir.url,
+        withIntermediateDirectories: true
+    )
+    try Data(repeating: 0xA5, count: 4096).write(to: sourceDir.diskPath.url)
+    try Data(repeating: 0x5A, count: 4096).write(to: sourceDir.nvramPath.url)
+    let state = Data("saved machine state".utf8)
+    try state.write(to: sourceDir.statePath.url)
+    try Data("half written".utf8).write(
+        to: URL(fileURLWithPath: sourceDir.statePath.path + ".partial"))
+    let sourceMachineIdentifier = Data(repeating: 0x11, count: 32)
+    let sourceMacAddress = "02:00:00:00:00:01"
+    try sourceDir.saveConfig(
+        VMConfig(
+            os: "macOS",
+            cpuCount: 4,
+            memorySize: 8 * 1024 * 1024 * 1024,
+            diskSize: 4096,
+            macAddress: sourceMacAddress,
+            display: "1024x768",
+            hardwareModel: Data(repeating: 0x22, count: 32),
+            machineIdentifier: sourceMachineIdentifier
+        ))
+
+    try controller.clone(name: "warm", newName: "space-1", withSavedState: true)
+    let stateful = try home.getVMDirectory("space-1")
+    let statefulConfig = try stateful.loadConfig()
+    #expect(try Data(contentsOf: stateful.statePath.url) == state)
+    #expect(statefulConfig.macAddress == sourceMacAddress)
+    #expect(statefulConfig.machineIdentifier == sourceMachineIdentifier)
+    #expect(!FileManager.default.fileExists(atPath: stateful.statePath.path + ".partial"))
+    #expect(try controller.getDetails(name: "space-1").savedState == true)
+
+    try controller.clone(name: "warm", newName: "space-2")
+    let plain = try home.getVMDirectory("space-2")
+    let plainConfig = try plain.loadConfig()
+    #expect(!plain.hasSavedState())
+    #expect(plainConfig.macAddress != sourceMacAddress)
+    #expect(plainConfig.machineIdentifier != sourceMachineIdentifier)
+    #expect(try controller.getDetails(name: "space-2").savedState == false)
+
+    // Asking for a state the source does not have is refused.
+    #expect(throws: (any Error).self) {
+        try controller.clone(name: "space-2", newName: "space-3", withSavedState: true)
+    }
+}
+
+@MainActor
+@Test("rename moves a stopped VM's directory and keeps it usable under the new name")
+func testRenameStoppedVM() throws {
+    let tempConfigDir = try createTempDirectory()
+    let tempHomeDir = try createTempDirectory()
+
+    defer {
+        try? FileManager.default.removeItem(at: tempConfigDir)
+        try? FileManager.default.removeItem(at: tempHomeDir)
+    }
+
+    let previousXDGConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+    setenv("XDG_CONFIG_HOME", tempConfigDir.path, 1)
+    defer {
+        if let previousXDGConfigHome {
+            setenv("XDG_CONFIG_HOME", previousXDGConfigHome, 1)
+        } else {
+            unsetenv("XDG_CONFIG_HOME")
+        }
+    }
+
+    let settingsManager = SettingsManager(fileManager: .default)
+    try settingsManager.setHomeDirectory(path: tempHomeDir.path)
+    let home = Home(settingsManager: settingsManager, fileManager: .default)
+    let controller = LumeController(home: home, vmFactory: TestVMFactory())
+
+    for name in ["pool-1", "taken"] {
+        let dir = try home.getVMDirectory(name)
+        try FileManager.default.createDirectory(at: dir.dir.url, withIntermediateDirectories: true)
+        try Data(repeating: 0, count: 1024).write(to: dir.diskPath.url)
+        try Data(repeating: 0, count: 1024).write(to: dir.nvramPath.url)
+        try dir.saveConfig(
+            VMConfig(
+                os: "macOS", cpuCount: 2, memorySize: 1 << 30, diskSize: 1024,
+                macAddress: "02:00:00:00:00:02", display: "1024x768",
+                hardwareModel: Data(repeating: 0x22, count: 32),
+                machineIdentifier: Data(repeating: 0x11, count: 32)))
+    }
+
+    #expect(throws: (any Error).self) {
+        try controller.renameVM(name: "pool-1", newName: "taken")
+    }
+    #expect(throws: (any Error).self) {
+        try controller.renameVM(name: "pool-1", newName: "../escape")
+    }
+    try controller.renameVM(name: "pool-1", newName: "space-1")
+    #expect(!(try home.getVMDirectory("pool-1")).exists())
+    #expect(try controller.getDetails(name: "space-1").name == "space-1")
+}

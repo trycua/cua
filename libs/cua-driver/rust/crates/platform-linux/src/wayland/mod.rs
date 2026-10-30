@@ -21,15 +21,15 @@ pub mod persistent_vptr;
 pub(crate) mod portal;
 pub mod portal_screenshot;
 mod primary_seat;
+#[cfg(any(feature = "portal-input", test))]
+mod region_route;
 pub mod shell_helper;
 pub mod sway_ipc;
 mod virtual_keyboard;
 // RemoteDesktop/libei input is portable and ships in release binaries.
-// PipeWire ScreenCast capture remains separately gated for modern/Nix builds.
+// PipeWire ScreenCast capture is no longer built here (the portal-capture feature is kept for downstream forwarding).
 #[cfg(feature = "portal-input")]
 pub mod libei;
-#[cfg(feature = "portal-capture")]
-pub mod portal_screencast;
 
 /// Whether the GNOME/KDE RemoteDesktop + libei input backend is compiled in.
 pub const PORTAL_INPUT_ENABLED: bool = cfg!(feature = "portal-input");
@@ -1698,11 +1698,10 @@ pub fn with_target_foreground<T>(
     )
 }
 
-/// Query the first `wl_output`'s pixel dimensions via a short Wayland
-/// roundtrip, independent of the virtual-pointer protocol. Used by the libei
-/// fallback (which never opens a `VptrSession`) to reproduce the vptr path's
-/// default-to-centre and clamp behaviour so both backends treat coordinates
-/// identically. Falls back to `(1, 1)` when no output reports a mode.
+/// Query one `wl_output`'s pixel dimensions via a short Wayland roundtrip,
+/// independent of the virtual-pointer protocol. Only used by the libei click to
+/// resolve its `(0, 0)` centre default; it is not the desktop layout, so it
+/// must not bound coordinates. Falls back to `(1, 1)` when no output reports a mode.
 #[cfg(feature = "portal-input")]
 fn output_dimensions() -> anyhow::Result<(u32, u32)> {
     let conn = Connection::connect_to_env()?;
@@ -1715,23 +1714,6 @@ fn output_dimensions() -> anyhow::Result<(u32, u32)> {
         queue.roundtrip(&mut state)?;
     }
     Ok((state.output_w.max(1), state.output_h.max(1)))
-}
-
-/// Reproduce the wlroots vptr path's coordinate handling for the libei
-/// fallback: `(0, 0)` defaults to the output centre, and any value is clamped
-/// to `[0, dim-1]`. Keeps `click(.., 0, 0, ..)` landing on centre rather than
-/// the top-left corner across both backends.
-#[cfg(feature = "portal-input")]
-fn normalize_click_xy(x: i32, y: i32, w: u32, h: u32) -> (i32, i32) {
-    let (px, py) = if x == 0 && y == 0 {
-        ((w / 2) as i32, (h / 2) as i32)
-    } else {
-        (x, y)
-    };
-    (
-        px.clamp(0, (w as i32).saturating_sub(1)),
-        py.clamp(0, (h as i32).saturating_sub(1)),
-    )
 }
 
 /// Map a cua/X11 pointer button (1=left / 2=middle / 3=right) to its evdev
@@ -2637,9 +2619,24 @@ fn libei_wait_keyboard_ready() -> anyhow::Result<()> {
 
 #[cfg(feature = "portal-input")]
 fn libei_click(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    libei_click_with(x, y, count, button, output_dimensions)
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_click_with(
+    x: i32,
+    y: i32,
+    count: u32,
+    button: u8,
+    dimensions: impl FnOnce() -> anyhow::Result<(u32, u32)>,
+) -> anyhow::Result<()> {
     let btn = cua_button_to_libei(button);
-    let (w, h) = output_dimensions()?;
-    let (px, py) = normalize_click_xy(x, y, w, h);
+    let (px, py) = if (x, y) == (0, 0) {
+        let (w, h) = dimensions()?;
+        ((w / 2) as i32, (h / 2) as i32)
+    } else {
+        (x, y)
+    };
     libei::move_absolute(px as f64, py as f64)?;
     for i in 0..count.max(1) {
         if i > 0 {
@@ -2672,13 +2669,8 @@ fn libei_scroll(direction: &str, amount: u32) -> anyhow::Result<()> {
 
 #[cfg(feature = "portal-input")]
 fn libei_move_absolute(x: i32, y: i32) -> anyhow::Result<()> {
-    // Match `move_cursor_absolute_vptr`: clamp to output bounds (no
-    // default-to-centre — an explicit (0,0) move means the top-left corner).
-    let (w, h) = output_dimensions()?;
-    let px = x.clamp(0, (w as i32).saturating_sub(1));
-    let py = y.clamp(0, (h as i32).saturating_sub(1));
-    libei::move_absolute(px as f64, py as f64)?;
-    record_synth_cursor(px, py);
+    libei::move_absolute(x as f64, y as f64)?;
+    record_synth_cursor(x, y);
     Ok(())
 }
 
@@ -2694,24 +2686,18 @@ fn libei_drag(
 ) -> anyhow::Result<()> {
     // ei_button exposes separate Press/Released states, so the libei worker can
     // hold the button across the interpolated motion — a genuine
-    // press→move→release drag. Clamp both endpoints to the output — but NOT via
-    // `normalize_click_xy`, whose (0,0)→centre convention (for coordinate-free
-    // clicks) is wrong here: a drag endpoint is always explicit and (0,0) is a
-    // valid top-left corner target.
+    // press→move→release drag.
     let btn = cua_button_to_libei(button);
-    let (w, h) = output_dimensions()?;
-    let cx = |x: i32| x.clamp(0, (w as i32).saturating_sub(1));
-    let cy = |y: i32| y.clamp(0, (h as i32).saturating_sub(1));
     libei::drag(
-        cx(from_x) as f64,
-        cy(from_y) as f64,
-        cx(to_x) as f64,
-        cy(to_y) as f64,
+        from_x as f64,
+        from_y as f64,
+        to_x as f64,
+        to_y as f64,
         steps,
         duration_ms,
         btn,
     )?;
-    record_synth_cursor(cx(to_x), cy(to_y));
+    record_synth_cursor(to_x, to_y);
     Ok(())
 }
 
@@ -2779,6 +2765,20 @@ fn key_to_evdev(key: &str) -> Option<u32> {
         "end" => 107,                    // KEY_END
         "pageup" | "page_up" => 104,     // KEY_PAGEUP
         "pagedown" | "page_down" => 109, // KEY_PAGEDOWN
+        // Raw evdev shortcuts need physical punctuation keys too (e.g. Ctrl+,).
+        // Shifted symbols require an explicit Shift modifier; mapping them to
+        // an unshifted key here would silently emit a different shortcut.
+        "-" | "minus" | "dash" => 12,            // KEY_MINUS
+        "=" | "equal" | "equals" => 13,          // KEY_EQUAL
+        "[" | "bracketleft" => 26,               // KEY_LEFTBRACE
+        "]" | "bracketright" => 27,              // KEY_RIGHTBRACE
+        ";" | "semicolon" => 39,                 // KEY_SEMICOLON
+        "'" | "apostrophe" | "quoteright" => 40, // KEY_APOSTROPHE
+        "`" | "grave" | "quoteleft" => 41,       // KEY_GRAVE
+        "\\" | "backslash" => 43,                // KEY_BACKSLASH
+        "," | "comma" => 51,                     // KEY_COMMA
+        "." | "period" | "dot" => 52,            // KEY_DOT
+        "/" | "slash" => 53,                     // KEY_SLASH
         // Letters a-z. evdev codes follow the QWERTY scancode layout, not the
         // alphabet, so each is listed explicitly (linux/input-event-codes.h).
         "a" => 30, // KEY_A
@@ -3865,6 +3865,164 @@ mod tests {
     }
 
     use super::*;
+
+    fn region(offset_x: f32) -> region_route::RegionRect {
+        region_route::RegionRect {
+            offset_x,
+            offset_y: 0.0,
+            width: 3840.0,
+            height: 2160.0,
+        }
+    }
+
+    #[test]
+    fn absolute_point_on_second_monitor_routes_to_its_region() {
+        let (l, r) = ([region(0.0)], [region(3840.0)]);
+        let one = [("abs", &[l[0], r[0]][..])];
+        assert_eq!(
+            region_route::route_absolute(one, 6237.0, 1014.0).unwrap(),
+            Some("abs")
+        );
+        let two = [("left", &l[..]), ("right", &r[..])];
+        assert_eq!(
+            region_route::route_absolute(two, 6237.0, 1014.0).unwrap(),
+            Some("right")
+        );
+    }
+
+    #[test]
+    fn point_outside_announced_regions_is_an_error() {
+        let both = [region(0.0), region(3840.0)];
+        for x in [8000.0, 7680.0] {
+            let err = region_route::route_absolute([("abs", &both[..])], x, 100.0).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("libei: ({x}, 100) lies outside every announced pointer region")
+            );
+        }
+    }
+
+    #[test]
+    fn unmatched_point_cannot_escape_through_an_empty_candidate() {
+        let l = [region(0.0)];
+        let none: [region_route::RegionRect; 0] = [];
+        let mixed = [("empty", &none[..]), ("left", &l[..])];
+        let err = region_route::route_absolute(mixed, 6237.0, 1014.0).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "libei: (6237, 1014) lies outside every announced pointer region"
+        );
+    }
+
+    #[cfg(feature = "portal-input")]
+    mod libei_adapters {
+        use super::super::*;
+        use libei::local_eis::{record, Emitted};
+
+        fn motion(x: f32, y: f32) -> Emitted {
+            Emitted::Motion("wide".into(), x, y)
+        }
+
+        #[test]
+        fn click_adapter_does_not_clamp_or_shift_second_monitor_point() {
+            let (result, events) = record(|| libei_click(6237, 1014, 1, 1));
+            result.unwrap();
+            assert_eq!(events[0], motion(6237.0, 1014.0));
+            assert_eq!(events[1], motion(6237.0, 1014.0));
+        }
+
+        #[test]
+        fn click_at_origin_means_output_centre_not_literal_origin() {
+            let (result, events) = record(|| libei_click_with(0, 0, 1, 1, || Ok((3840, 2160))));
+            result.unwrap();
+            assert!(!events.contains(&motion(0.0, 0.0)));
+            assert_eq!(events.first(), Some(&motion(1920.0, 1080.0)));
+            let buttons: Vec<bool> = events
+                .iter()
+                .filter_map(|e| match e {
+                    Emitted::Button(_, down) => Some(*down),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(buttons, vec![true, false]);
+        }
+
+        #[test]
+        fn move_adapter_keeps_second_monitor_point_and_literal_origin() {
+            let (result, events) = record(|| libei_move_absolute(6237, 1014));
+            result.unwrap();
+            assert_eq!(events, vec![motion(6237.0, 1014.0)]);
+            let (result, events) = record(|| libei_move_absolute(0, 0));
+            result.unwrap();
+            assert_eq!(events, vec![motion(0.0, 0.0)]);
+        }
+
+        #[test]
+        fn drag_adapter_keeps_endpoints_and_literal_origin() {
+            let (result, events) = record(|| libei_drag(0, 0, 6237, 1014, 2, 0, 1));
+            result.unwrap();
+            assert_eq!(events.first(), Some(&motion(0.0, 0.0)));
+            assert_eq!(events[events.len() - 2], motion(6237.0, 1014.0));
+        }
+
+        #[test]
+        fn positioned_scroll_scrolls_after_a_valid_move() {
+            let (result, events) = record(|| {
+                libei_move_absolute(6237, 1014)?;
+                libei_scroll("down", 1)
+            });
+            result.unwrap();
+            assert_eq!(
+                events,
+                vec![motion(6237.0, 1014.0), Emitted::Scroll(0.0, 10.0)]
+            );
+        }
+
+        #[test]
+        fn positioned_scroll_to_an_invalid_point_emits_no_scroll() {
+            let (result, events) = record(|| {
+                libei_move_absolute(8000, 100)?;
+                libei_scroll("down", 1)
+            });
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "libei: (8000, 100) lies outside every announced pointer region"
+            );
+            assert_eq!(events, vec![]);
+        }
+    }
+
+    #[test]
+    fn no_announced_regions_falls_back() {
+        let none: [region_route::RegionRect; 0] = [];
+        assert_eq!(
+            region_route::route_absolute([("abs", &none[..])], 6237.0, 1.0).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn punctuation_shortcuts_preserve_modifiers_without_implicit_shift() {
+        for (keys, expected_mods, physical_key) in [
+            (vec!["Ctrl", ","], vec!["ctrl"], evdev::Key::KEY_COMMA),
+            (vec!["Ctrl", "Comma"], vec!["ctrl"], evdev::Key::KEY_COMMA),
+            (vec!["Ctrl", "/"], vec!["ctrl"], evdev::Key::KEY_SLASH),
+            (
+                vec!["Ctrl", "Shift", "/"],
+                vec!["ctrl", "shift"],
+                evdev::Key::KEY_SLASH,
+            ),
+        ] {
+            let keys = keys.into_iter().map(String::from).collect::<Vec<_>>();
+            let (mods, key) = partition_modifiers(&keys).unwrap();
+            assert_eq!(mods, expected_mods);
+            assert_eq!(key_to_evdev(&key), Some(u32::from(physical_key.code())));
+        }
+
+        for shifted in ["?", ":", "+"] {
+            assert_eq!(key_to_evdev(shifted), None);
+        }
+    }
 
     fn window(xid: u64, pid: Option<u32>, title: &str) -> WindowInfo {
         WindowInfo {

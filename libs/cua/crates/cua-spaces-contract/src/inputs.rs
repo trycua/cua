@@ -65,8 +65,10 @@ pub struct SpaceWorkload {
     #[serde(default)]
     pub services: Option<BTreeMap<String, u16>>,
     /// Whether the image runs cua-spacesd. Default: true for the canonical
-    /// images (and no image), false for any other image. A Space without it
-    /// has an empty capability set: only its services work.
+    /// images (and no image) and, on this machine's containers and microVMs,
+    /// for any other image (a static cua-spacesd is put into it); false
+    /// elsewhere. false runs the image as it is. A Space without it has an
+    /// empty capability set: only its services work.
     #[serde(default)]
     pub spacesd: Option<bool>,
 }
@@ -79,9 +81,14 @@ pub struct RemoveSpace {
     pub space: SpaceArg,
 }
 
-/// `list_spaces`: takes no arguments.
+/// `list_spaces`: every registered Space and relay machine.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct ListSpaces {}
+pub struct ListSpaces {
+    /// Only the Spaces that carry every one of these labels (set by
+    /// `create_space`).
+    #[serde(default)]
+    pub labels: Option<std::collections::BTreeMap<String, String>>,
+}
 
 /// The cloud runtime a cloud Space's pool is named after (internal; the
 /// tools take `runtime` as a string).
@@ -117,6 +124,10 @@ pub enum SpaceKind {
     Container,
     /// A virtual machine (QEMU or Lume locally, KubeVirt in the cloud).
     Vm,
+    /// A microVM: the image's container rootfs booted with its own kernel
+    /// (Firecracker on Linux with KVM; on a Mac, Virtualization.framework or
+    /// Apple's Containerization).
+    Microvm,
 }
 
 impl SpaceKind {
@@ -126,6 +137,7 @@ impl SpaceKind {
             SpaceKind::Auto => "auto",
             SpaceKind::Container => "container",
             SpaceKind::Vm => "vm",
+            SpaceKind::Microvm => "microvm",
         }
     }
 }
@@ -137,13 +149,17 @@ pub struct CreateSpace {
     /// (`ghcr.io/trycua/linux:24.04`), whose variant follows the kind.
     #[serde(default)]
     pub image: Option<String>,
-    /// Where it runs: `local` (this computer, free), `aws`, `gcp` or `modal` (your own
-    /// cloud account, billed there), or `host:<computer>`: one of the user's own computers that
-    /// provides Spaces (`cua host setup --provide-spaces` on it), named by
+    /// Where it runs: `local` (this computer, free), `auto` (the
+    /// least-loaded of the user's computers that can take it: this one and
+    /// the ones signed in to the user's account that provide Spaces, Modal
+    /// only when connected and no computer has room), `aws`, `gcp` or
+    /// `modal` (your own cloud account, billed there), or `host:<computer>`:
+    /// one of the user's own computers that
+    /// provides Spaces (`cua host setup --share both` on it), named by
     /// id or by words from its name ("host:spare mac mini" matches "Mac
     /// mini (spare)" or `dillons-mac-mini`). Default: the user's default
     /// location (`cua config set default.on`, `CUA_DEFAULT_ON`), else
-    /// `local`. Not `direct:<addr>`: that is one already-running Space at a
+    /// `local`; never `auto` unless asked. Not `direct:<addr>`: that is one already-running Space at a
     /// fixed address, attached with `add_space`, not a host this can create
     /// on. An existing computer is added with `add_space`, not created.
     #[serde(default)]
@@ -177,6 +193,26 @@ pub struct CreateSpace {
     /// the result is an array.
     #[serde(default)]
     pub count: Option<u32>,
+    /// Keep it on the user's machines (with `on` `auto`): when its machine
+    /// goes away it is created again on another one, with the same name
+    /// (its disk starts fresh); `list_spaces` shows it with `durable` (its
+    /// name), and `delete_space` deletes it for good. Default false.
+    #[serde(default)]
+    pub durable: Option<bool>,
+    /// With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type its
+    /// host must be (`c7g.xlarge`, `cax41`). Default: the elastic pool picks
+    /// the cheapest that fits (cloud_plan shows it).
+    #[serde(default)]
+    pub instance_type: Option<String>,
+    /// With `on` a linked cloud: the region (Hetzner location) its host must
+    /// be in. Default: any the cloud offers.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Labels kept with the Space and shown by `list_spaces` (`labels`): up
+    /// to 64 pairs; keys and values are not empty; keys up to 63 bytes,
+    /// values up to 256. Not with `durable` or `reuse`.
+    #[serde(default)]
+    pub labels: Option<std::collections::BTreeMap<String, String>>,
     /// Command, environment and services (see [`SpaceWorkload`]).
     #[serde(flatten)]
     pub workload: SpaceWorkload,
@@ -187,6 +223,35 @@ pub struct CreateSpace {
 pub struct SpaceOnly {
     /// Space id or name.
     pub space: SpaceArg,
+}
+
+/// `stop_space`: turn a Space off.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct StopSpace {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// Suspend it instead: keep its memory so it resumes where it was (a
+    /// local container or QEMU VM). Default false: stop it, keeping its
+    /// disk and giving its memory back to the machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspend: Option<bool>,
+}
+
+/// `resize_space`: give a Space more or fewer vCPUs, more or less memory,
+/// or a bigger disk.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ResizeSpace {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// vCPUs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u32>,
+    /// Memory in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mb: Option<u64>,
+    /// Grow the disk to this many GiB (a disk never shrinks).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_gb: Option<u32>,
 }
 
 /// `space_bash`: run a shell command inside the Space.
@@ -386,7 +451,7 @@ pub struct AgentStart {
     /// The task.
     pub prompt: String,
     /// Provider key variables to forward from this server's environment
-    /// (or from the keys saved in Cua Spaces, Settings → Agents), for
+    /// (or from the keys saved in Cua Spaces, Settings → Connections), for
     /// example ["ANTHROPIC_API_KEY"]. Names only; values never pass through
     /// the conversation. Saved keys the harness reads are added without
     /// being named.
@@ -457,7 +522,12 @@ pub struct AgentMessage {
     /// Space id or name.
     pub space: SpaceArg,
     /// `run_id` from `agent_start`.
+    #[serde(default)]
     pub run_id: String,
+    /// Or an agent member of the Space by name (its current run). Give
+    /// exactly one of `run_id` and `name`.
+    #[serde(default)]
+    pub name: Option<String>,
     /// The message.
     pub text: String,
     /// Interrupt a running turn first instead of queueing. Default false.
@@ -471,7 +541,12 @@ pub struct AgentStatus {
     /// Space id or name.
     pub space: SpaceArg,
     /// `run_id` from `agent_start`.
+    #[serde(default)]
     pub run_id: String,
+    /// Or an agent member of the Space by name (its current run). Give
+    /// exactly one of `run_id` and `name`.
+    #[serde(default)]
+    pub name: Option<String>,
     /// Rendered output lines to return. Default 40.
     #[serde(default)]
     pub tail: Option<u32>,
@@ -483,7 +558,12 @@ pub struct AgentEvents {
     /// Space id or name.
     pub space: SpaceArg,
     /// `run_id` from `agent_start`.
+    #[serde(default)]
     pub run_id: String,
+    /// Or an agent member of the Space by name (its current run). Give
+    /// exactly one of `run_id` and `name`.
+    #[serde(default)]
+    pub name: Option<String>,
     /// `cursor` from the previous call. Default 0 (the start).
     #[serde(default)]
     pub cursor: Option<u64>,
@@ -501,7 +581,12 @@ pub struct AgentInterrupt {
     /// Space id or name.
     pub space: SpaceArg,
     /// `run_id` from `agent_start`.
+    #[serde(default)]
     pub run_id: String,
+    /// Or an agent member of the Space by name (its current run). Give
+    /// exactly one of `run_id` and `name`.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// `agent_stop`: stop a run and verify it died.
@@ -510,14 +595,19 @@ pub struct AgentStop {
     /// Space id or name.
     pub space: SpaceArg,
     /// `run_id` from `agent_start`.
+    #[serde(default)]
     pub run_id: String,
+    /// Or an agent member of the Space by name (its current run). Give
+    /// exactly one of `run_id` and `name`.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// `agent_capabilities`: takes no arguments.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AgentCapabilities {}
 
-/// `persistent_agent_create`: a named agent whose memory outlives its runs.
+/// `agent_add` (formerly `persistent_agent_create`): a named agent whose memory outlives its runs.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PersistentAgentCreate {
     /// The agent's name: 1-63 of a-z, 0-9, `.`, `_`, `-`. Its home is
@@ -525,6 +615,7 @@ pub struct PersistentAgentCreate {
     pub name: String,
     /// Harness id. `agent_capabilities` lists what each needs.
     #[schemars(schema_with = "agent_id_schema")]
+    #[serde(alias = "harness")]
     pub agent: String,
     /// The Space it works in (id or name).
     pub space: SpaceArg,
@@ -542,6 +633,83 @@ pub struct PersistentAgentCreate {
     /// More environment for every run (not secrets; see `env_from_host`).
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Re-drive the agent's runs after a crash. Default false.
+    #[serde(default)]
+    pub durable: Option<bool>,
+    /// Where it runs: `local` (default), `auto` or a machine.
+    #[serde(default)]
+    pub on: Option<String>,
+    /// Remove the member when its first task ends. Default false.
+    #[serde(default)]
+    pub once: Option<bool>,
+    /// Parallel sessions. Default 1.
+    #[serde(default)]
+    pub sessions: Option<u32>,
+    /// A schedule: every N minutes (with `prompt`).
+    #[serde(default)]
+    pub every_minutes: Option<i64>,
+    /// A schedule: every day at `HH:MM` local time (with `prompt`).
+    #[serde(default)]
+    pub daily_at: Option<String>,
+    /// A schedule: every week at `<weekday> HH:MM` local time (with `prompt`).
+    #[serde(default)]
+    pub weekly_on: Option<String>,
+    /// What the schedule asks each time.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// The schedule's title. Default: the first words of `prompt`.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Who can give it tasks, control it and answer its approvals. Default:
+    /// `task` members, `control` admins, `approve` admins (the owner always
+    /// can).
+    #[serde(default)]
+    pub rights: Option<AgentRights>,
+}
+
+/// Who holds one of an agent member's rights.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum RightHolders {
+    /// `owner`, `admins` (the owner and team admins) or `members` (also the
+    /// people the Space is shared with to edit, and its agent members).
+    Group(String),
+    /// These accounts (relay account ids), besides the owner.
+    Accounts(Vec<String>),
+}
+
+/// An agent member's rights. Guests (view-only shares) never hold any.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentRights {
+    /// Who can @mention it to give it a task (also `agent_send` and
+    /// `agent_message`). Default `members`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<RightHolders>,
+    /// Who can interrupt, stop, pause, resume or take control of it.
+    /// Default `admins`; whoever asked for its current task can also stop
+    /// that task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<RightHolders>,
+    /// Who can answer its approval requests. Default `admins`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approve: Option<RightHolders>,
+}
+
+/// `agent_set_rights`: change who can task, control and approve an agent
+/// member. Omitted rights stay as they are.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentSetRights {
+    /// The agent member's name.
+    pub name: String,
+    /// Who can give it tasks: `owner`, `admins`, `members` or account ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<RightHolders>,
+    /// Who can interrupt, stop, pause, resume or take control of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<RightHolders>,
+    /// Who can answer its approval requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approve: Option<RightHolders>,
 }
 
 /// A persistent agent by name.
@@ -555,13 +723,19 @@ pub struct PersistentAgentName {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PersistentAgentList {}
 
-/// `persistent_agent_send`: give a persistent agent a turn.
+/// `agent_send` (formerly `persistent_agent_send`): give a persistent agent a turn.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PersistentAgentSend {
     /// The persistent agent's name.
     pub name: String,
     /// The message (the prompt of a new run, or a follow-up).
     pub text: String,
+    /// The agent's Space (id or name); when given, the agent must be a
+    /// member of it. Needed for an agent in a Space another machine
+    /// provides (a teammate's): the message goes to that machine. Default:
+    /// the agent is found by its name here.
+    #[serde(default)]
+    pub space: Option<SpaceArg>,
 }
 
 /// `agent_resume`.
@@ -575,7 +749,7 @@ pub struct AgentResume {
     pub prompt: Option<String>,
 }
 
-/// `routine_add`: a recurring turn of a persistent agent. Give exactly one
+/// `agent_schedule_add` (formerly `routine_add`): a recurring turn of a persistent agent. Give exactly one
 /// of `every_minutes`, `daily_at` or `weekly_on`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct RoutineAdd {
@@ -599,7 +773,7 @@ pub struct RoutineAdd {
     pub enabled: Option<bool>,
 }
 
-/// `routine_list`.
+/// `agent_schedule_list` (formerly `routine_list`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct RoutineList {
     /// Only this persistent agent's routines. Default: all.
@@ -614,13 +788,318 @@ pub struct RoutineId {
     pub id: String,
 }
 
-/// `routine_set_enabled`.
+/// `agent_schedule_set_enabled` (formerly `routine_set_enabled`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct RoutineSetEnabled {
     /// The routine's id.
     pub id: String,
     /// On or off.
     pub enabled: bool,
+}
+
+/// `thread_read`: a Space's thread after a cursor.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadRead {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// Entries after this `seq` (the `cursor` of the previous call), oldest
+    /// first. Without it: the newest `limit` entries (before `before`).
+    #[serde(default)]
+    pub after: Option<u64>,
+    /// With no `after`: the newest entries before this `seq` (paging back).
+    /// Default: the end of the thread.
+    #[serde(default)]
+    pub before: Option<u64>,
+    /// Most entries to return (1-500). Default 100.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Advance your read cursor to the last entry returned. Default false.
+    #[serde(default)]
+    pub mark_read: Option<bool>,
+    /// With `after`: wait up to this many milliseconds (at most 25000) for
+    /// a new entry when there is none after it. Default 0 (answer at once).
+    #[serde(default)]
+    pub follow_ms: Option<u64>,
+    /// With `follow_ms`: the `live.key` of the previous call. The wait also
+    /// ends when an agent's live stage (`live.agents`) is no longer the one
+    /// that key names, so a reader sees "thinking", "using Bash" as it changes.
+    #[serde(default)]
+    pub live_after: Option<String>,
+    /// Only your DM with this agent member (its handle): its entries, yours
+    /// that task or @mention it, and their replies, task updates, answers
+    /// and notes. Paging, `unread` and `mark_read` then apply to the DM,
+    /// with its own read cursor.
+    #[serde(default)]
+    pub with: Option<String>,
+}
+
+/// An approval request in a thread entry.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadApprovalArg {
+    /// What would happen, in a few words ("buy", "deploy").
+    pub action: String,
+    /// The details the person reads before answering.
+    #[serde(default)]
+    pub details: Option<String>,
+}
+
+/// An answer to an approval entry.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadAnswerArg {
+    /// The `seq` of the approval entry.
+    pub approval: u64,
+    /// Approve (true) or deny (false).
+    pub approve: bool,
+    /// A note for the agent.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// `thread_post`: post to a Space's thread.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadPost {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// The message (up to 32 KiB). `@name` of an agent member of the Space
+    /// makes it a task for that agent.
+    pub text: String,
+    /// The `seq` of the entry this answers.
+    #[serde(default)]
+    pub reply_to: Option<u64>,
+    /// Up to 16 files: Cua Volume paths, or (for this machine's own user)
+    /// local file paths, which are copied into
+    /// `spaces/<space>/thread/files/<entry id>/`.
+    #[serde(default)]
+    pub attachments: Vec<String>,
+    /// Ask the people in the thread to approve something.
+    #[serde(default)]
+    pub approval: Option<ThreadApprovalArg>,
+    /// Answer an approval entry.
+    #[serde(default)]
+    pub answer: Option<ThreadAnswerArg>,
+    /// With an @mention of an agent member that runs several sessions:
+    /// which session (1-based) takes the task. Default: any free session
+    /// (the lowest idle one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_session: Option<u32>,
+    /// What the person is looking at in the Space as they post: its
+    /// desktop, or one of its windows. Stored with the entry (`view` in
+    /// `thread_read` and `thread_inbox`), so an agent knows which window a
+    /// message is about.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<ThreadViewArg>,
+}
+
+/// `thread_post`'s `view`: the Space's desktop or one of its windows.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadViewArg {
+    /// `desktop` or `window`.
+    pub kind: String,
+    /// The window's app ("Firefox"), at most 128 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    /// The window's title ("Pull requests"); longer than 256 characters is cut.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The window's id in the Space (as `computer_window_list` gives it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<String>,
+}
+
+/// `thread_inbox`: open tasks addressed to an agent member.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadInbox {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// The agent member. Default: every agent member of the Space.
+    #[serde(default)]
+    pub member: Option<String>,
+    /// When there is no open task: wait up to this many milliseconds (at
+    /// most 25000) for one. Default 0 (answer at once).
+    #[serde(default)]
+    pub wait_ms: Option<u64>,
+}
+
+/// `thread_join`: an agent member sets how it looks in its Space.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadJoin {
+    /// Space id or name (the agent's own Space).
+    pub space: SpaceArg,
+    /// The name people see (1-32 characters). Not a person's name, another
+    /// member's handle, or "Cua".
+    pub name: String,
+    /// The harness you run in: `hermes`, `claude-code`, `codex`, `cursor`,
+    /// `openclaw`, `t3code` or `other`. Shown as reported by you.
+    #[serde(default)]
+    pub harness: Option<String>,
+    /// Your harness's version (at most 32 characters).
+    #[serde(default)]
+    pub version: Option<String>,
+    /// `harness` (your harness's mark) or an https:// image URL.
+    #[serde(default)]
+    pub icon: Option<String>,
+}
+
+/// `thread_join_code_create`: a one-time code an agent joins the Space with.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadJoinCodeCreate {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// Seconds until the code expires: 900 (15 minutes) to 86400 (1 day).
+    /// Default 3600.
+    #[serde(default)]
+    pub ttl_s: Option<u64>,
+    /// Who can give the agent tasks: `owner` (whoever made the code) or
+    /// `members`. Default `owner`.
+    #[serde(default)]
+    pub can_task: Option<String>,
+    /// Ask the owner or an admin before the agent joins. Default false.
+    #[serde(default)]
+    pub ask_before_join: Option<bool>,
+}
+
+/// A Space's join codes.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadJoinCodeList {
+    /// Space id or name.
+    pub space: SpaceArg,
+}
+
+/// `thread_join_code_cancel`: an unused code stops working.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadJoinCodeCancel {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// The code's `id` (from thread_join_code_create or _list).
+    pub id: String,
+}
+
+/// The computer redeeming a join code.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct JoinDeviceArg {
+    /// This computer's device id.
+    pub id: String,
+    /// Its name ("Ada's MacBook Pro").
+    #[serde(default)]
+    pub name: String,
+    /// Its device public key (base64url), when it has one: later calls are
+    /// signed with it.
+    #[serde(default)]
+    pub public_key: Option<String>,
+}
+
+/// `thread_join_redeem`: redeem a join code on this computer (`cua join`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadJoinRedeem {
+    /// The code (`7KQ2-9FXA`) or the link that ends in it.
+    pub code: String,
+    /// The computer the agent runs on.
+    pub device: JoinDeviceArg,
+}
+
+/// `thread_settings`: a Space's thread settings.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadSettings {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// "Ask before members' agents join". Omit to read the settings.
+    #[serde(default)]
+    pub ask_before_join: Option<bool>,
+}
+
+/// `thread_device_revoke`: remove the agents connected from a computer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadDeviceRevoke {
+    /// The computer's device id.
+    pub device: String,
+}
+
+/// `thread_claim`: claim a task.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadClaim {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// The task's `seq`.
+    pub task: u64,
+    /// The agent member claiming it (for a person acting for an agent).
+    /// An agent's own call always claims as itself.
+    #[serde(default)]
+    pub member: Option<String>,
+    /// The member's session that claims it (1-based; for a person acting
+    /// for an agent). Default: its lowest session with no task. An agent's
+    /// own call always claims for its own session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<u32>,
+}
+
+/// `thread_reply`: reply under a task and update it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadReply {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// The task's `seq`.
+    pub task: u64,
+    /// The reply (up to 32 KiB).
+    pub text: String,
+    /// Files, as in `thread_post`.
+    #[serde(default)]
+    pub attachments: Vec<String>,
+    /// The task's new state: `done`, `failed` or `working` (more to come).
+    /// Default `done`.
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+/// One entry of `thread_import`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadImportEntry {
+    /// A stable id from the source; an id already imported is skipped.
+    pub import_id: String,
+    /// The original time (Unix ms).
+    pub ts_ms: u64,
+    /// `person` (this machine's user) or `agent`.
+    pub author_kind: String,
+    /// For `agent`: the agent member who wrote it (a member of the Space).
+    #[serde(default)]
+    pub agent_name: Option<String>,
+    /// The text.
+    pub text: String,
+    /// `message`, `approval` or `answer`. Default `message`.
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+/// `thread_import`: a one-time import of an app's earlier conversation.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadImport {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// Where they come from (`cua-bots`, `openkoalabots`).
+    pub source: String,
+    /// The entries, oldest first (at most 5000 per call).
+    pub entries: Vec<ThreadImportEntry>,
+}
+
+/// `agent_remove` (formerly `persistent_agent_remove`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentRemove {
+    /// The agent member's name.
+    pub name: String,
+    /// Keep its home (`agents/<name>/`) in the Cua Volume. Default true.
+    #[serde(default)]
+    pub keep_home: Option<bool>,
+}
+
+/// `agent_members`: the agent members of a Space.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentMembers {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// Also each agent's DM with you: `dm {unread, last}` and `needs_you`
+    /// (open approvals you may answer, its latest @mention of you that you
+    /// haven't answered). Default false.
+    #[serde(default)]
+    pub overview: Option<bool>,
 }
 
 /// `notify_user`.
@@ -1143,44 +1622,192 @@ fn drop_null_option(schema: &mut serde_json::Value) {
     }
 }
 
-/// Which cloud a `cloud_*` tool acts on: `aws`, `gcp` or `modal`.
+/// Which cloud a `cloud_*` tool acts on: `aws`, `azure`, `gcp`, `hetzner` or
+/// `modal`.
 pub type CloudArg = String;
 
 /// `cloud_status`: the clouds Spaces can be created in, and what Cua
 /// created in them.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CloudStatus {
-    /// Only this cloud (`aws`, `gcp`, `modal`). Default: every one.
+    /// Only this cloud (`aws`, `azure`, `gcp`, `hetzner`, `modal`). Default:
+    /// every one.
     #[serde(default)]
     pub provider: Option<CloudArg>,
 }
 
-/// Where in a cloud account Spaces go (`cloud_connect`, `cloud_test`).
-/// Credentials are never arguments: each cloud uses its own CLI's
-/// sign-in (the AWS profile, the gcloud account, the Modal profile) and
-/// Cua stores only these names.
+/// `cloud_plan`: what the elastic pool would do for some Spaces (where
+/// each goes, which machines it adds, what they cost), without doing it;
+/// with `apply`, it adds the machines.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudPlan {
+    /// How many Spaces. Default 1.
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// Image (`linux`, `windows`, an OCI reference). Default: linux.
+    #[serde(default)]
+    pub image: Option<String>,
+    /// `container`, `vm` or `microvm`. Default: from the image.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// vCPUs each. Default: what Spaces of this image used before, else
+    /// the image's size.
+    #[serde(default)]
+    pub cpus: Option<u32>,
+    /// Memory each, MiB.
+    #[serde(default)]
+    pub memory_mb: Option<u64>,
+    /// Keep them on one machine (forks of one checkpoint).
+    #[serde(default)]
+    pub together: Option<bool>,
+    /// Who asks: `interactive` (one Space someone waits on), `batch`,
+    /// `compat` or `persistent_agent`. Default: interactive for one Space,
+    /// batch for more.
+    #[serde(default)]
+    pub caller: Option<String>,
+    /// Expected lifetime, seconds.
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
+    /// Only this cloud.
+    #[serde(default)]
+    pub provider: Option<CloudArg>,
+    /// Only this region.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Only this machine type.
+    #[serde(default)]
+    pub instance_type: Option<String>,
+    /// Exactly this many new machines.
+    #[serde(default)]
+    pub hosts: Option<u32>,
+    /// Add no machines (place on what runs).
+    #[serde(default)]
+    pub no_scale: Option<bool>,
+    /// Only the user's own devices.
+    #[serde(default)]
+    pub devices_only: Option<bool>,
+    /// A $/hour cap for this plan (default: the budget's).
+    #[serde(default)]
+    pub max_usd_per_hour: Option<f64>,
+    /// Add the machines the plan needs (they join the pool; create the
+    /// Spaces with on="auto"). Default false: plan only.
+    #[serde(default)]
+    pub apply: Option<bool>,
+}
+
+/// `cloud_hosts`: the hosts the elastic pool added in your clouds.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudHosts {}
+
+/// `cloud_add_host`: adds hosts to your pool in a linked cloud by hand
+/// (the scaler never removes them).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudAddHost {
+    /// `aws`, `azure`, `gcp` or `hetzner`.
+    pub provider: CloudArg,
+    /// Machine type (`cloud_plan` and `cloud_status` list them).
+    pub instance_type: String,
+    /// Region. Default: the connection's.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// How many, 1 to 10. Default 1.
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// Hours until each ends on its own, 1 to 168. Default 24.
+    #[serde(default)]
+    pub ttl_hours: Option<u32>,
+}
+
+/// `cloud_remove_host`: removes hosts this home added.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudRemoveHost {
+    /// Their names (`hetzner-1`).
+    pub names: Vec<String>,
+}
+
+/// `cloud_budget`: the elastic pool's caps and switches; reads them, and
+/// sets those given.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudBudget {
+    /// Most USD per hour your clouds may cost at once.
+    #[serde(default)]
+    pub max_usd_per_hour: Option<f64>,
+    /// Most USD per calendar month on elastic hosts.
+    #[serde(default)]
+    pub monthly_usd: Option<f64>,
+    /// Add and remove cloud hosts by itself.
+    #[serde(default)]
+    pub autoscale: Option<bool>,
+    /// Most hosts one placement adds.
+    #[serde(default)]
+    pub max_new_hosts: Option<u32>,
+    /// Keep an idle host warm when demand predicts a Space soon.
+    #[serde(default)]
+    pub warm: Option<bool>,
+    /// Let one small VM Space buy a KVM metal host (dollars an hour). Off:
+    /// such a request is refused with the reason; batches of forks may
+    /// still buy one.
+    #[serde(default)]
+    pub allow_metal: Option<bool>,
+}
+
+/// `cloud_reconcile`: one scale-in pass now.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudReconcile {}
+
+/// Where in a cloud account Spaces go (`cloud_connect`, `cloud_test`).
+/// AWS, Google Cloud and Modal use their own CLI's sign-in (the AWS
+/// profile, the gcloud account, the Modal profile) and Cua stores only
+/// these names. Hetzner and Modal can take an API token instead: `token`
+/// is checked, then sealed to the account's devices (`auth: sealed`) or,
+/// for Hetzner with `auth: cli`, saved in this device's Cua credential
+/// store.
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CloudTarget {
-    /// `aws`, `gcp` or `modal`.
+    /// `aws`, `azure`, `gcp`, `hetzner` or `modal`.
     pub provider: CloudArg,
     /// AWS: the profile in `~/.aws/config` (default: `default`, or
     /// `AWS_PROFILE`). Modal: the profile in `~/.modal.toml` (default: the
     /// active one).
     #[serde(default)]
     pub profile: Option<String>,
-    /// AWS region (default: the profile's, else `us-west-2`) or GCP region
-    /// (default `us-central1`).
+    /// AWS region (default: the profile's, else `us-west-2`), Hetzner location
+    /// (default `fsn1`), GCP region (default `us-central1`) or Azure region
+    /// (default `westus2`).
     #[serde(default)]
     pub region: Option<String>,
     /// GCP zone in the region (default: its `-a` zone).
     #[serde(default)]
     pub zone: Option<String>,
-    /// GCP project id (default: `gcloud config get project`).
+    /// GCP project id (default: `gcloud config get project`). Hetzner and
+    /// Modal with a sealed token: a name for the project or workspace
+    /// (default `default`), to tell several apart.
     #[serde(default)]
     pub project: Option<String>,
     /// Modal environment (default: the profile's).
     #[serde(default)]
     pub environment: Option<String>,
+    /// Hetzner: the project's Read & Write API token (default:
+    /// `HCLOUD_TOKEN`, the saved token, or the `hcloud` CLI's context).
+    /// Modal: `<token id>:<token secret>`. Secret: never logged or
+    /// returned; sealed to the account's devices on connect (or, Hetzner
+    /// with `auth: cli`, saved in this device's Cua credential store).
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
+impl std::fmt::Debug for CloudTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CloudTarget")
+            .field("provider", &self.provider)
+            .field("profile", &self.profile)
+            .field("region", &self.region)
+            .field("zone", &self.zone)
+            .field("project", &self.project)
+            .field("environment", &self.environment)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// `cloud_connect`: remember where Spaces go in a cloud account, after
@@ -1198,6 +1825,66 @@ pub struct CloudConnect {
     /// a sandbox at 24).
     #[serde(default)]
     pub ttl_hours: Option<u32>,
+    /// How Cua reaches the cloud: `cli` (the cloud CLI's sign-in, or for
+    /// Hetzner a token kept on this device), `oidc` (AWS, Google Cloud,
+    /// Azure: Cua's issuer signs short-lived tokens the account trusts; no
+    /// key is stored anywhere; Azure is always `oidc`) or `sealed` (Hetzner,
+    /// Modal: the API token is sealed to the account's devices and Cua's
+    /// servers keep only ciphertext; with no `token` it seals the one this
+    /// device has, or links the account's sealed token). Default: `sealed`
+    /// for Hetzner and Modal when this device has the account's pool keys
+    /// and a budget is given (or the link is sealed already), else `cli`.
+    #[serde(default)]
+    pub auth: Option<String>,
+    /// The most Cua may spend there per calendar month, US dollars. New
+    /// machines are refused once it is reached; stopping and deleting
+    /// always works. Needed before the first machine of an `oidc` link.
+    #[serde(default)]
+    pub budget_usd_month: Option<f64>,
+    /// The largest machine Cua may create there: `<vCPUs>x<GB>`, for
+    /// example `4x16`.
+    #[serde(default)]
+    pub max_size: Option<String>,
+    /// AWS `oidc`: the 12-digit account id the trust stack is in (the
+    /// person who created it knows it).
+    #[serde(default)]
+    pub account_id: Option<String>,
+    /// AWS `oidc`: the role ARN, only when it is not named `cua-spaces`.
+    #[serde(default)]
+    pub role_arn: Option<String>,
+    /// Google Cloud `oidc`: the project number (the trust script prints
+    /// it; giving it implies `oidc`). The project id is `target.project`.
+    #[serde(default)]
+    pub project_number: Option<String>,
+    /// Google Cloud `oidc`: a service account to act as. Default: none,
+    /// the federated identity calls Google directly.
+    #[serde(default)]
+    pub service_account: Option<String>,
+    /// Azure: the subscription id (the trust template's
+    /// `subscriptionId` output).
+    #[serde(default)]
+    pub subscription_id: Option<String>,
+    /// Azure: the Microsoft Entra tenant id (its `tenantId` output).
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+    /// Azure: the client id of the `cua-spaces` managed identity (its
+    /// `clientId` output).
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Azure: the resource group Cua works in, and the only one its roles
+    /// reach (default `cua-spaces`).
+    #[serde(default)]
+    pub resource_group: Option<String>,
+    /// `oidc`: run the check that proves the link works (a check token,
+    /// the exchange with the cloud, a dry run; nothing is created). The
+    /// link is saved only once it passes.
+    #[serde(default)]
+    pub check: Option<bool>,
+    /// The agent making the change (Cua's agent runtime and the cua CLI
+    /// set it). An agent's link, or a limit it raises, waits for a
+    /// person's approval in Cua Spaces.
+    #[serde(default)]
+    pub agent: Option<String>,
 }
 
 /// `cloud_test`: check a cloud account without creating anything.
@@ -1210,8 +1897,53 @@ pub struct CloudTest {
 /// `cloud_disconnect`: forget a connected cloud.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CloudDisconnect {
-    /// `aws`, `gcp` or `modal`.
+    /// `aws`, `azure`, `gcp`, `hetzner` or `modal`.
     pub provider: CloudArg,
+    /// Delete everything Cua created in that cloud first, and disconnect
+    /// only once the cloud confirms nothing is left. Default false: the
+    /// call is refused (listing them) while Cua resources still run there.
+    #[serde(default)]
+    pub delete: Option<bool>,
+}
+
+/// `cloud_approve`: a person approves (or denies) what an agent asked for
+/// on a cloud: its link, or a raise of its limits.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudApprove {
+    /// `aws`, `gcp`, `hetzner` or `modal`.
+    pub provider: CloudArg,
+    /// Decline instead: an agent's raise is dropped (the limits in force
+    /// stay), an agent's link that was never approved is disconnected.
+    /// Default false.
+    #[serde(default)]
+    pub deny: Option<bool>,
+}
+
+/// `cloud_audit`: what Cua did in your clouds.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudAudit {
+    /// How many of the newest entries (default 50, at most 1000).
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Only this cloud (`aws`, `gcp`, `hetzner`, `modal`). Default: every one.
+    #[serde(default)]
+    pub provider: Option<CloudArg>,
+}
+
+/// `cloud_cost`: what the machines Cua created in your clouds cost,
+/// estimated from list price times runtime.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudCost {
+    /// Only this cloud (`aws`, `gcp`, `hetzner`, `modal`). Default: every one.
+    #[serde(default)]
+    pub provider: Option<CloudArg>,
+    /// One row per `space`, `agent`, `day` (UTC) or `cloud`. Default `space`.
+    #[serde(default)]
+    pub by: Option<String>,
+    /// The first day counted, `YYYY-MM-DD` (UTC). Default: the first of this
+    /// month.
+    #[serde(default)]
+    pub since: Option<String>,
 }
 
 /// `cloud_sweep`: find (and with `dry_run: false`, delete) what Cua
@@ -1229,4 +1961,48 @@ pub struct CloudSweep {
     /// Space refers to any more.
     #[serde(default)]
     pub all: Option<bool>,
+}
+
+/// `prewarm`: keep Spaces of one shape ready where the elastic pool puts
+/// them, so the next creates of that shape start in a fraction of a second.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct Prewarm {
+    /// Image (`linux`, an OCI reference).
+    pub image: String,
+    /// How many to keep ready, 1 to 256. Default 1.
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// Where: `auto` (default: your devices first, then hosts with room,
+    /// then new cloud machines), `local`, a linked cloud or `host:<machine>`.
+    #[serde(default)]
+    pub on: Option<String>,
+    /// `container`, `vm` or `microvm`. Default: the image's.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// vCPUs each. Default: the size Spaces of this image use.
+    #[serde(default)]
+    pub cpus: Option<u32>,
+    /// Memory each, MiB.
+    #[serde(default)]
+    pub memory_mb: Option<u64>,
+    /// Seconds to keep them (default 3600, at most 604800).
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
+    /// Only this cloud machine type.
+    #[serde(default)]
+    pub instance_type: Option<String>,
+    /// Only this cloud region.
+    #[serde(default)]
+    pub region: Option<String>,
+}
+
+/// `prewarm_list`: the prewarms of this home, with how many are ready.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct PrewarmList {}
+
+/// `prewarm_remove`: end a prewarm (its ready Spaces go).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct PrewarmRemove {
+    /// The prewarm (`pw-xxxxxx`).
+    pub id: String,
 }

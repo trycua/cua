@@ -158,4 +158,20 @@ export const source = loader({
   baseUrl: '/',
   source: docs.toFumadocsSource(),
   icon: iconResolver,
+  plugins: [
+    {
+      name: 'sidebar-title',
+      // `sidebarTitle` in a page's frontmatter labels it in the sidebar.
+      transformPageTree: {
+        file(node, filePath) {
+          const file = filePath ? this.storage.read(filePath) : undefined;
+          const label =
+            file?.format === 'page'
+              ? (file.data as { sidebarTitle?: string }).sidebarTitle
+              : undefined;
+          return label ? { ...node, name: label } : node;
+        },
+      },
+    },
+  ],
 });

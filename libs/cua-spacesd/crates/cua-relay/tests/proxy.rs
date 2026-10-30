@@ -19,6 +19,18 @@ const TOKEN: &str = "machine-secret-canary";
 const ID: &str = "proxy-machine";
 const CHILD: &str = "CUA_RELAY_PROXY_TEST_CHILD";
 
+/// Binds the fake proxy inside the child and points `var` at it before
+/// anything reads the variable. The parent never picks a port for the child
+/// to bind later: a port freed in between can be taken by a test running in
+/// parallel ("Address already in use"). The variable is set in the child
+/// only, before its runtime starts.
+fn bind_proxy(var: &str) -> std::net::TcpListener {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    std::env::set_var(var, format!("http://{}", listener.local_addr().unwrap()));
+    listener
+}
+
 #[test]
 fn machine_join_uses_http_proxy() {
     if std::env::var_os(CHILD).is_none() {
@@ -37,14 +49,7 @@ fn machine_join_uses_http_proxy() {
         ] {
             child.env_remove(key);
         }
-        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = proxy.local_addr().unwrap();
-        drop(proxy);
-        let result = child
-            .env(CHILD, addr.to_string())
-            .env("HTTP_PROXY", format!("http://{addr}"))
-            .output()
-            .unwrap();
+        let result = child.env(CHILD, "1").output().unwrap();
         assert!(
             result.status.success(),
             "{}\n{}",
@@ -53,13 +58,14 @@ fn machine_join_uses_http_proxy() {
         );
         return;
     }
+    let proxy = bind_proxy("HTTP_PROXY");
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         let relay = Relay::new(RelayConfig { tokens: vec![TOKEN.into()], ..RelayConfig::default() });
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let serving = relay.clone();
         let relay_task = tokio::spawn(async move { serving.serve(listener, std::future::pending()).await });
-        let proxy = TcpListener::bind(std::env::var(CHILD).unwrap()).await.unwrap();
+        let proxy = TcpListener::from_std(proxy).unwrap();
         let proxy_task = tokio::spawn(async move {
             let (mut inbound, _) = proxy.accept().await.unwrap();
             let mut head = Vec::new();
@@ -115,9 +121,6 @@ fn machine_join_uses_http_proxy() {
 #[test]
 fn proxy_tunnel_keeps_native_tls_verification() {
     if std::env::var_os(CHILD).is_none() {
-        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = proxy.local_addr().unwrap();
-        drop(proxy);
         let mut child = Command::new(std::env::current_exe().unwrap());
         child.args([
             "--exact",
@@ -137,11 +140,7 @@ fn proxy_tunnel_keeps_native_tls_verification() {
         ] {
             child.env_remove(key);
         }
-        let result = child
-            .env(CHILD, addr.to_string())
-            .env("HTTPS_PROXY", format!("http://{addr}"))
-            .output()
-            .unwrap();
+        let result = child.env(CHILD, "1").output().unwrap();
         assert!(
             result.status.success(),
             "{}\n{}",
@@ -150,10 +149,9 @@ fn proxy_tunnel_keeps_native_tls_verification() {
         );
         return;
     }
+    let proxy = bind_proxy("HTTPS_PROXY");
     tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let proxy = TcpListener::bind(std::env::var(CHILD).unwrap())
-            .await
-            .unwrap();
+        let proxy = TcpListener::from_std(proxy).unwrap();
         // This is a public test-only identity, never installed in a trust store.
         let identity = native_tls::Identity::from_pkcs8(
             include_bytes!("fixtures/untrusted-cert.pem"),
@@ -214,9 +212,6 @@ fn proxy_tunnel_keeps_native_tls_verification() {
 #[allow(clippy::result_large_err)] // tungstenite callback fixes the error response type.
 fn reconnect_through_proxy_rereads_token_and_checks_pinned_keys() {
     if std::env::var_os(CHILD).is_none() {
-        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = proxy.local_addr().unwrap();
-        drop(proxy);
         let mut child = Command::new(std::env::current_exe().unwrap());
         child.args([
             "--exact",
@@ -236,11 +231,7 @@ fn reconnect_through_proxy_rereads_token_and_checks_pinned_keys() {
         ] {
             child.env_remove(key);
         }
-        let result = child
-            .env(CHILD, addr.to_string())
-            .env("HTTP_PROXY", format!("http://{addr}"))
-            .output()
-            .unwrap();
+        let result = child.env(CHILD, "1").output().unwrap();
         assert!(
             result.status.success(),
             "{}\n{}",
@@ -249,12 +240,11 @@ fn reconnect_through_proxy_rereads_token_and_checks_pinned_keys() {
         );
         return;
     }
+    let proxy = bind_proxy("HTTP_PROXY");
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         use base64::Engine as _;
         use cua_relay::assertion::{RelayKey, JWKS_HEADER, OWNER_HEADER};
-        let proxy = TcpListener::bind(std::env::var(CHILD).unwrap())
-            .await
-            .unwrap();
+        let proxy = TcpListener::from_std(proxy).unwrap();
         let files = tempfile::tempdir().unwrap();
         let token_path = files.path().join("token");
         std::fs::write(&token_path, "first-token").unwrap();

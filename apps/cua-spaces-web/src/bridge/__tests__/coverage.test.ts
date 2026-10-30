@@ -19,7 +19,11 @@ import { NUDGES_ARGS } from "../ops/nudges";
 import { RESOURCES_ARGS } from "../ops/resources";
 import { MACHINES_ARGS } from "../ops/machines";
 import { CHECKLIST_ARGS } from "../ops/checklist";
+import { LINKS_ARGS } from "../ops/links";
+import { CLI_ARGS } from "../ops/cli";
+import { THREAD_ARGS } from "../ops/thread";
 import { PRESENCE_ARGS } from "../ops/presence";
+import { CLOUD_APPROVE_ARGS } from "../ops/cloud-approve";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import type { HostWindow } from "../detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "../electron-channels";
@@ -34,6 +38,9 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "spaces.open": { spaceId: "s1" },
   "spaces.setPower": { spaceId: "s1", on: true },
   "spaces.delete": { spaceId: "s1" },
+  "spaces.deleteMany": { ids: ["s1"] },
+  "spaces.leave": { ids: ["s1"] },
+  "spaces.rename": { spaceId: "s1", name: "studio-2" },
   "machines.list": {},
   "host.status": {},
   "settings.get": {},
@@ -54,10 +61,18 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.list": {},
   "agents.runs": { spaceId: "s1" },
   "agents.events": { spaceId: "s1", runId: "r1", cursor: 0 },
+  "agents.start": { spaceId: "s1", agent: "claude-code", prompt: "Run the tests" },
+  "agents.message": { spaceId: "s1", runId: "r1", text: "Use Python 3.13" },
   "agents.pause": { name: "ada" },
   "agents.resume": { name: "ada" },
   "agents.setup": {},
   "agents.configure": { agents: null },
+  "agents.signIn": { agent: "codex" },
+  "agents.status": { refresh: true },
+  "agents.connect": { agents: ["codex"], signIn: true },
+  "agents.disconnect": { agents: ["codex"], signIn: true },
+  "agents.signInStart": { agent: "codex" },
+  "agents.signInWait": { id: "codex-1" },
   ...AGENT_DETAIL_ARGS,
   ...NEW_SPACE_ARGS,
   ...AGENT_KEYS_ARGS,
@@ -72,6 +87,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "teleport.plan": { spaceId: "s1", entry: { json: "{}" } as never, move: "app_only", files: [], sensitiveGroups: [] },
   "teleport.run": { spaceId: "s1", plan: { json: "{}" } as never, consent: { approved: true, acknowledgeSensitive: false }, runId: "run-1" },
   "teleport.sites": { providerId: "chrome" },
+  "teleport.readiness": { providerId: "chrome", profile: null },
   "teleport.remembered": { providerId: "chrome", spaceId: "s1" },
   "teleport.streamWindow": { spaceId: "s1", spaceName: "Aurora", windowId: "w-1", appName: "Firefox", title: "Mozilla Firefox" },
   "sharing.list": { spaceId: "s1" },
@@ -100,6 +116,11 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "loginItem.get": {},
   "loginItem.set": { on: true },
   "loginItem.openSettings": {},
+  "runtimes.check": { kind: "container", path: "/usr/local/bin/docker" },
+  "runtimes.browse": { kind: "container" },
+  "repoCache.get": {},
+  "repoCache.set": { enabled: true, sizeGb: 2 },
+  "repoCache.clear": {},
   "devices.get": {},
   "devices.enroll": {},
   "devices.checkEnrolled": {},
@@ -119,6 +140,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
   "telemetry.linkNotice": {},
   "telemetry.acknowledgeLinkNotice": {},
+  "crashReporting.config": {},
   "spaces.usage": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },
   "stream.pip": { spaceId: "s1", command: { type: "open", row: "desktop" } },
@@ -129,6 +151,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
   "host.action": { action: "stop-sharing" },
+  "host.limits": { maxSpaces: 6 },
   "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
   "startup.get": {},
   "startup.act": { action: "allowAccess" },
@@ -138,7 +161,11 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...RESOURCES_ARGS,
   ...MACHINES_ARGS,
   ...CHECKLIST_ARGS,
+  ...LINKS_ARGS,
+  ...CLI_ARGS,
+  ...THREAD_ARGS,
   ...PRESENCE_ARGS,
+  ...CLOUD_APPROVE_ARGS,
   ...RUNTIME_FIX_ARGS,
 };
 
@@ -169,6 +196,11 @@ function webkitResult(method: string): unknown {
       return { app: { id: "app", name: "App" }, spaceId: "s1", moves: "appOnly", steps: [], consent: [], json: "{}" };
     case "spaces.cancelCreate":
       return { id: "pending:1", state: "cancelled", message: "" };
+    case "spaces.deleteMany":
+    case "spaces.leave":
+      return { results: [{ id: "s1", ok: true }] };
+    case "spaces.rename":
+      return {};
     case "onboarding.get":
     case "onboarding.complete":
       return { completed: true, mode: "client" };
@@ -176,6 +208,7 @@ function webkitResult(method: string): unknown {
     case "host.setUp":
     case "host.joinWithCode":
     case "host.action":
+    case "host.limits":
       return { configured: false, sharing: false, serviceInstalled: false, serviceRunning: false, serviceKind: "process", clients: [], permissions: [], shareDesktop: true, provideSpaces: false, maxSpaces: 0 };
     case "keyvault.approve":
       return { id: "grant-1", requestId: "req-1", items: [] };

@@ -1,0 +1,9 @@
+[
+  {
+    "space": "direct:127.0.0.1:50279",
+    "run_id": "run-0000wat1",
+    "agent": "claude-code",
+    "added_ms": 1792859758545,
+    "cursor": 48
+  }
+]

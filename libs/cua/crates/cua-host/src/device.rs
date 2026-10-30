@@ -61,6 +61,37 @@ pub fn session_message(device: &str, ts: u64) -> String {
     format!("cua-device-session/v1\n{device}\n{ts}")
 }
 
+/// What a device signs to prove a Space member key is used from the device
+/// it was bound to (`cua join`): the membership and the time (ms).
+pub fn member_message(member_id: &str, ts_ms: u64) -> String {
+    format!("cua-space-member/v1\n{member_id}\n{ts_ms}")
+}
+
+/// The device id (`dev_…`) of a device public key (uncompressed point,
+/// base64url), as [`DeviceKey::id`] derives it; `None` when it isn't one.
+pub fn device_id_of(public_key: &str) -> Option<String> {
+    let raw = b64().decode(public_key.trim()).ok()?;
+    if raw.len() != 65 || raw[0] != 4 {
+        return None;
+    }
+    let digest = ring::digest::digest(&ring::digest::SHA256, &raw);
+    Some(format!("dev_{}", &hex::encode(digest.as_ref())[..24]))
+}
+
+/// Whether `signature` (base64url, fixed size) is `public_key`'s signature
+/// of `message` (see [`DeviceKey::sign`]).
+pub fn verify_device_signature(public_key: &str, message: &str, signature: &str) -> bool {
+    let (Ok(key), Ok(sig)) = (
+        b64().decode(public_key.trim()),
+        b64().decode(signature.trim()),
+    ) else {
+        return false;
+    };
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, key)
+        .verify(message.as_bytes(), &sig)
+        .is_ok()
+}
+
 /// Where the device key (PKCS#8) is kept.
 pub trait KeySlot: Send + Sync {
     /// The stored key, if any.
@@ -236,7 +267,35 @@ pub struct DeviceAuth {
     name: String,
     machine_id: std::sync::OnceLock<Option<String>>,
     session: tokio::sync::Mutex<Option<(String, u64)>>,
+    /// A hash of the key the cached session was opened with (0: none), when
+    /// the slot was last looked at again (unix milliseconds) and how often
+    /// to (milliseconds); see [`DeviceAuth::key_changed`]. Flat atomics:
+    /// this struct sits inside the SDK's deep futures, whose layout check
+    /// has a fixed depth budget.
+    session_key: std::sync::atomic::AtomicU64,
+    key_checked_ms: std::sync::atomic::AtomicU64,
+    key_recheck_ms: u64,
     pending_file: Option<PathBuf>,
+}
+
+/// How often a long-lived [`DeviceAuth`] (the daemon's) looks at its key
+/// slot again while it holds a session.
+const KEY_RECHECK: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// A nonzero hash of a key id, to tell one key from another in this
+/// process.
+fn key_hash(id: &str) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish() | 1
 }
 
 /// The one-time code this device last showed, remembered (in
@@ -264,13 +323,29 @@ const CODE_REUSE_MARGIN_SECS: u64 = 60;
 /// relay's default bootstrap window).
 const FRESH_SIGN_IN_SECS: u64 = 600;
 
-/// The unverified `auth_time` claim of a JWT access token (display and
-/// local decisions only; the relay verifies).
-fn token_auth_time(token: &str) -> Option<u64> {
+/// The unverified claims of a JWT access token (display and local
+/// decisions only; the relay verifies).
+fn token_claims(token: &str) -> Option<serde_json::Value> {
     let payload = token.split('.').nth(1)?;
     let bytes = b64().decode(payload.trim_end_matches('=')).ok()?;
-    let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    claims.get("auth_time")?.as_u64()
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// The unverified `auth_time` claim of a JWT access token.
+fn token_auth_time(token: &str) -> Option<u64> {
+    token_claims(token)?.get("auth_time")?.as_u64()
+}
+
+/// The unverified `sub` claim of a JWT access token: which account it is
+/// for. A long-running process compares it to the account it started
+/// state for (a mesh node, a pool agent) to notice a sign-in as another
+/// account; the relay still verifies every token.
+pub fn token_subject(token: &str) -> Option<String> {
+    token_claims(token)?
+        .get("sub")?
+        .as_str()
+        .map(str::to_owned)
+        .filter(|s| !s.is_empty())
 }
 
 impl std::fmt::Debug for DeviceAuth {
@@ -300,8 +375,42 @@ impl DeviceAuth {
             name: name.into(),
             machine_id: std::sync::OnceLock::new(),
             session: tokio::sync::Mutex::new(None),
+            session_key: std::sync::atomic::AtomicU64::new(0),
+            key_checked_ms: std::sync::atomic::AtomicU64::new(0),
+            key_recheck_ms: KEY_RECHECK.as_millis() as u64,
             pending_file: None,
         })
+    }
+
+    /// Looks at the key slot again at most every `every` while a session
+    /// is held (default a few seconds).
+    pub fn with_key_recheck(mut self, every: std::time::Duration) -> Self {
+        self.key_recheck_ms = every.as_millis() as u64;
+        self
+    }
+
+    /// Whether the key in the slot is no longer the one the cached session
+    /// was opened with: another process (the app, the CLI) enrolled this
+    /// device again, for instance after a sign-in as another account. The
+    /// relay refuses the old key's session, so the cached one must not be
+    /// used. Looked at most every `key_recheck`.
+    fn key_changed(&self) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let known = self.session_key.load(Relaxed);
+        if known == 0 {
+            return false;
+        }
+        let now = now_ms();
+        if now.saturating_sub(self.key_checked_ms.load(Relaxed)) < self.key_recheck_ms {
+            return false;
+        }
+        self.key_checked_ms.store(now, Relaxed);
+        match self.key() {
+            Ok(Some(k)) => key_hash(&k.id()) != known,
+            Ok(None) => true,
+            // Unreadable now (a locked vault): keep what works.
+            Err(_) => false,
+        }
     }
 
     /// Remembers this device's pending code in `path` (see
@@ -481,6 +590,15 @@ impl DeviceAuth {
         }
         let key = self.key_or_create()?;
         let enrollment = match self.register_key(&token, &key, name).await {
+            // A key the relay holds for another account (a different
+            // sign-in on this computer) can never enroll here either.
+            Err(Error::Conflict(m)) if m.contains("another account") => {
+                let (key, pkcs8) = DeviceKey::generate()?;
+                self.slot.save(&pkcs8)?;
+                // The new key has no record to keep a name from.
+                let name = if name.is_empty() { &self.name } else { name };
+                self.register_key(&token, &key, name).await?
+            }
             Err(Error::PermissionDenied(m))
                 if m.contains("revoked") || m.contains("replaced by") =>
             {
@@ -542,17 +660,22 @@ impl DeviceAuth {
         let mut cached = self.session.lock().await;
         if let Some((token, expires)) = cached.as_ref()
             && *expires > now_secs() + SESSION_MARGIN_SECS
+            && !self.key_changed()
         {
             return Ok(token.clone());
         }
         let key = self.key()?.ok_or_else(|| {
-            Error::PermissionDenied(
-                "this device is not enrolled for your cua.ai account (run `cua devices enroll`)"
-                    .into(),
-            )
+            Error::PermissionDenied(format!(
+                "this device is not enrolled for your cua.ai account (run `{} devices enroll`)",
+                crate::cli()
+            ))
         })?;
         let token = self.tokens.access_token().await?;
         let session = self.open_session(&token, &key).await?;
+        self.session_key
+            .store(key_hash(&key.id()), std::sync::atomic::Ordering::Relaxed);
+        self.key_checked_ms
+            .store(now_ms(), std::sync::atomic::Ordering::Relaxed);
         *cached = Some(session.clone());
         Ok(session.0)
     }
@@ -769,6 +892,24 @@ fn is_session_rejection(e: &Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn member_signatures_verify_only_for_their_key_and_message() {
+        let (key, _) = DeviceKey::generate().unwrap();
+        let (other, _) = DeviceKey::generate().unwrap();
+        let msg = member_message("mem_1", 42);
+        let sig = key.sign(&msg).unwrap();
+        assert_eq!(device_id_of(&key.public_key()), Some(key.id()));
+        assert!(verify_device_signature(&key.public_key(), &msg, &sig));
+        assert!(!verify_device_signature(&other.public_key(), &msg, &sig));
+        assert!(!verify_device_signature(
+            &key.public_key(),
+            &member_message("mem_1", 43),
+            &sig
+        ));
+        assert!(!verify_device_signature("not base64!", &msg, &sig));
+        assert_eq!(device_id_of("AAAA"), None);
+    }
 
     #[test]
     fn refused_state_reads_the_relays_messages() {

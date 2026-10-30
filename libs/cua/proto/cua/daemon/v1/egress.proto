@@ -1,0 +1,34 @@
+// Egress policies of Spaces (cua.daemon.v1): the policy
+// `CreateSpaceRequest.egress` and `SpaceService.SetSpaceEgress` take and
+// `Space.egress` returns. The host the Space runs on enforces it, outside
+// the guest (`Space.egress_enforced`).
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+// Which destinations a Space may open connections to. Everything is
+// allowed unless a rule says otherwise: every `deny` entry blocks that
+// destination, every `allow` entry is an exception that wins over `deny`
+// (deny "all" with allow "1.1.1.1" leaves only 1.1.1.1 reachable), and an
+// `allow` list with no `deny` blocks nothing. Entries are IPv4/IPv6
+// addresses or CIDRs; "all" is 0.0.0.0/0 and ::/0; a hostname is refused.
+// DNS works only while the resolver's address is not blocked (or is
+// allowed). Loopback, replies to connections made to the guest and IPv6
+// neighbor discovery are never filtered.
+message EgressPolicy {
+  // Destinations that stay reachable where `deny` blocks them.
+  repeated string allow = 1;
+  // Destinations that are blocked.
+  repeated string deny = 2;
+}
+
+// Request for `SpaceService.SetSpaceEgress`.
+message SetSpaceEgressRequest {
+  // Space.
+  string space = 1;
+  // The whole policy; empty removes it.
+  EgressPolicy egress = 2;
+}
+
+// Response for `SpaceService.SetSpaceEgress`.
+message SetSpaceEgressResponse {}

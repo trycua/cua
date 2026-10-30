@@ -382,6 +382,7 @@ impl Tool for GetWindowStateTool {
             let tree_task = tokio::task::spawn_blocking(move || {
                 let mut budget =
                     cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements);
+                let iconic_before = crate::input::window_is_iconic(hwnd);
                 let tree =
                     crate::uia::walk_tree_budgeted(hwnd, q.as_deref(), max_depth, &mut budget);
                 let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
@@ -389,7 +390,10 @@ impl Tool for GetWindowStateTool {
                 } else {
                     crate::uia::snapshot::SnapshotKind::Uia
                 };
-                let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&tree.nodes, kind);
+                let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&tree.nodes, kind)
+                    .with_read_while_minimized(
+                        iconic_before || crate::input::window_is_iconic(hwnd),
+                    );
                 (tree, payload, budget.outcome())
             });
             let started = std::time::Instant::now();

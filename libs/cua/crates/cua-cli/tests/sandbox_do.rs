@@ -6,6 +6,7 @@ use common::*;
 use cua_daemon::fixtures;
 use cua_host::testing::FakeRelay;
 use serde_json::json;
+#[cfg(unix)]
 use std::time::Duration;
 
 async fn direct(h: &Home, url: &str, name: &str) {
@@ -121,6 +122,7 @@ async fn sandbox_lifecycle_exec_and_compat_aliases() {
         ])
         .await;
     assert_eq!(o.code, 4, "{o:?}");
+    #[cfg(unix)]
     exec_stream_round_trip(&h, &env).await;
     let o = h
         .run(&["--embedded", "--json", "sb", "exec", "dev", "echo hi"])
@@ -185,11 +187,24 @@ async fn launch_validates_arguments() {
         ])
         .await;
     assert_eq!(o.code, 2, "{o:?}");
+    // `--pool` names a pool on this computer, so it needs no IMAGE (and no
+    // other cloud message): it fails on the missing pool, not on the image.
+    let o = h
+        .run(&[
+            "--embedded",
+            "sb",
+            "launch",
+            "--pool",
+            "nope",
+            "--name",
+            "x",
+        ])
+        .await;
+    assert!(!o.stderr.contains("specify IMAGE"), "{o:?}");
     // The options of the ended Cua Cloud still parse (hidden) and fail with
     // the one message.
     for args in [
-        &["--pool", "p", "--name", "x"][..],
-        &["linux", "--pool", "p"],
+        &["--apply", "--name", "x"][..],
         &["linux", "--warm"],
         &["linux", "--claim-ttl", "15m"],
     ] {
@@ -813,6 +828,8 @@ async fn sandbox_mcp_tools_call_and_content() {
 async fn sb_ls_never_reads_the_credential_vault() {
     let vault = tempfile::tempdir().unwrap();
     let mut h = Home::new();
+    // No local containers: this machine's own Docker Spaces must not show up.
+    h.set("DOCKER_HOST", "unix:///nonexistent/cua-test-no-docker.sock");
     h.set(
         "CUA_CREDENTIAL_STORE",
         format!("test-keychain:{}", vault.path().display()),
@@ -1039,6 +1056,7 @@ async fn sandbox_info_connection_prints_the_spacesd_url_and_token() {
 
 /// `sb exec -i` against the real binary: stdin round trip, signal
 /// forwarding, and the guest process dying with a killed client.
+#[cfg(unix)]
 async fn exec_stream_round_trip(h: &Home, env: &fixtures::SpacesdFixture) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut child = h.spawn(&["--embedded", "sb", "exec", "-i", "dev", "--", "cat"]);
@@ -1094,4 +1112,67 @@ async fn exec_stream_round_trip(h: &Home, env: &fixtures::SpacesdFixture) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(ended.is_some(), "guest process survived its client");
+}
+
+/// J-E7: a Space the daemon has no sandbox of (one on a pool host or a
+/// relay machine) is reached by its name through the Spaces API by
+/// `sb exec`, `sb cp` and `sb shell`, not refused as "not found: sandbox".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sb_exec_and_cp_reach_a_space_by_name() {
+    const MACHINE: &str = "a30ad1ef1e4fea09";
+    let relay = FakeRelay::start().await;
+    relay.add_account("relay-token", "user-1", Some("ada@example.com"));
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "relay-token",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "jw-w1".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let env = fixtures::start_env(None, None).await;
+    relay.tunnel(MACHINE, &env.url);
+    relay.set_online(MACHINE, true, "0.0.0-mock");
+    let mut h = Home::new();
+    h.set("CUA_RELAY_URL", &relay.url);
+    h.set("DOCKER_HOST", "unix:///nonexistent/cua-test-no-docker.sock");
+    std::fs::create_dir_all(h.cua_home()).unwrap();
+    std::fs::write(
+        h.cua_home().join("credentials.json"),
+        json!({"access_token": "relay-token", "expires_at": "2999-01-01T00:00:00Z",
+               "token_type": "Bearer"})
+        .to_string(),
+    )
+    .unwrap();
+
+    let o = h
+        .run(&["--embedded", "sb", "exec", "jw-w1", "echo", "by-name"])
+        .await;
+    o.ok();
+    assert!(o.stdout.contains("by-name"), "{o:?}");
+    assert!(!o.stderr.contains("not found"), "{o:?}");
+
+    // Nothing matches: the sandboxes error stands.
+    let o = h
+        .run(&["--embedded", "sb", "exec", "nope-nope", "echo", "x"])
+        .await;
+    assert_eq!(o.code, 3, "{o:?}");
+    assert!(o.stderr.contains("not found"), "{o:?}");
+
+    let local = h.dir.path().join("up.txt");
+    std::fs::write(&local, "hello").unwrap();
+    let o = h
+        .run(&[
+            "--embedded",
+            "sb",
+            "cp",
+            local.to_str().unwrap(),
+            "jw-w1:/tmp/up.txt",
+        ])
+        .await;
+    o.ok();
 }

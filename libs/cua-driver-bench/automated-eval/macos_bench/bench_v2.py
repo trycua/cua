@@ -73,14 +73,21 @@ def category_of(spec: dict[str, Any]) -> str:
     return str(category)
 
 
-def validate_tasks(specs: dict[str, dict[str, Any]], task_ids: list[str]) -> list[str]:
+def validate_tasks(
+    specs: dict[str, dict[str, Any]], task_ids: list[str], arms: list[str] | None = None
+) -> list[str]:
     """Problems that stop a v2 run: unknown task, missing or unknown category, coding tools."""
     problems: list[str] = []
+    browser_only = "cx-browser-use-cli" in (arms or [])
+    if browser_only and not task_ids:
+        problems.append("cx-browser-use-cli requires a nonempty browser task selection")
     for tid in task_ids:
         spec = specs.get(tid)
         if spec is None:
             problems.append(f"{tid}: unknown task")
             continue
+        if browser_only and spec.get("browser") is not True:
+            problems.append(f"{tid}: cx-browser-use-cli requires browser: true")
         try:
             category_of(spec)
         except ValueError as error:
@@ -96,7 +103,20 @@ def validate_tasks(specs: dict[str, dict[str, Any]], task_ids: list[str]) -> lis
 
 # ------------------------------------------------------------------ GUI-only
 
+LINUX_TERMINALS = (
+    "xterm",
+    "gnome-terminal",
+    "gnome-terminal-server",
+    "gnome-terminal-",
+    "konsole",
+    "xfce4-terminal",
+    "kitty",
+    "alacritty",
+    "Alacritty",
+    "org.gnome.Terminal",
+)
 SIDE_DOOR_BUNDLES = {
+    **{name: name for name in LINUX_TERMINALS},
     "com.apple.Terminal": "Terminal",
     "com.googlecode.iterm2": "iTerm",
     "com.apple.ScriptEditor2": "Script Editor",
@@ -229,7 +249,9 @@ def terminal_session_ttys(rows: list[tuple[int, int, str, str]], exclude_pid: in
     never reads, and any tty its descendants open (agents, MCP servers, apps it starts)."""
     parent = {pid: ppid for pid, ppid, _, _ in rows}
     tty_of = {pid: tty for pid, _, tty, _ in rows}
-    terminals = {pid for pid, _, _, comm in rows if comm.rsplit("/", 1)[-1] == "Terminal"}
+    terminals = {
+        pid for pid, _, _, comm in rows if comm.rsplit("/", 1)[-1] in ("Terminal", *LINUX_TERMINALS)
+    }
 
     def ancestors(pid: int) -> set[int]:
         seen: set[int] = set()
@@ -239,9 +261,9 @@ def terminal_session_ttys(rows: list[tuple[int, int, str, str]], exclude_pid: in
         return seen
 
     def device(tty: str) -> str | None:
-        if tty in ("??", "-", ""):
+        if tty in ("??", "?", "-", ""):
             return None
-        return "/dev/" + (tty if tty.startswith("tty") else "tty" + tty)
+        return "/dev/" + (tty if tty.startswith(("tty", "pts/")) else "tty" + tty)
 
     excluded = {device(tty_of.get(p, "")) for p in ancestors(exclude_pid)} | {
         device(tty_of.get(exclude_pid, ""))

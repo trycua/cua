@@ -1,0 +1,153 @@
+---
+title: Connections
+description: 'Connect an AI provider once in Cua Spaces and every app that can use it works: the providers, how to connect each one, and which apps receive what.'
+---
+
+A connection is a provider you have signed in to or given a key for: Anthropic,
+OpenAI, OpenRouter and the rest. Connect it once in **Settings, Connections**
+(called Connectors before) and every app that can use it works, in every Space,
+with nothing to set up inside the Space.
+
+## Connect a provider
+
+Open **Settings, Connections** and scroll to **Providers**, below **Coding
+apps** and **On another machine**. Each row is one provider on one line: its
+icon, its name, a grey line saying what is saved (for example **Signed in as
+you@example.com (Claude Max)** or **API key ending 4f2a**) or **Not
+connected**, and then either **Connect** or a check and **Connected**.
+
+- **Connected**: Cua has a key or sign-in for it and last saw it work.
+- **Needs reconnect**: the provider refused the key or sign-in, or it ran out.
+  Press **Reconnect** and connect it again.
+- **Not connected**: press **Connect**.
+
+Click a row to open its sheet. It shows when the provider was connected, the
+apps it works with (each opens that app's page), and **Disconnect**. If you have
+more than one key for the provider, it lists them, each with **Remove**, and
+**Add another key** saves a second one beside the first, with a name you pick
+such as **Work key**. The first key is the one the row shows and the one every
+app uses unless you tell an app otherwise (see [Pick which key an app uses](#pick-which-key-an-app-uses)).
+
+The sheet shows only the ways that apply on this machine. For Anthropic that
+can be your Claude sign-in (found on this machine, for Claude Code only) or an
+API key. For OpenAI it is an API key, or your ChatGPT sign-in for Codex.
+Every other provider takes an API key. Anthropic, OpenAI, OpenRouter, Google
+AI Studio, xAI, DeepSeek, Kimi and Custom endpoint are up front; press **Show
+all** for the rest, which you can search by name.
+
+Saving never waits on the provider. Cua checks a key in the background and only
+marks it **Needs reconnect** when the provider says it is invalid.
+
+From the terminal:
+
+```bash skip="no-runner"
+cua connections list
+printf %s "$DEEPSEEK_API_KEY" | cua connections add deepseek
+cua connections test
+cua connections remove deepseek
+```
+
+Keys are read from standard input and are never printed. `cua connect` is
+unchanged: it still connects your coding apps to Cua.
+
+## Which apps get what
+
+A key goes to the apps that can use it and to no others. The sign-ins are
+narrower still: your Claude sign-in only ever goes to Claude Code, and your
+ChatGPT sign-in only to Codex. Other apps use an API key for the same provider.
+
+| App | Receives |
+| --- | --- |
+| Claude Code | Anthropic only: an API key or your Claude sign-in. |
+| Codex | OpenAI only: an API key or your ChatGPT sign-in. |
+| Gemini CLI, Antigravity | Google AI Studio key. |
+| OpenCode, Goose, Pi, OpenClaw | The keys of Anthropic, OpenAI, OpenRouter and (except OpenClaw) Google AI Studio, and for any other provider that serves the API they speak, its base URL and default model. |
+| Hermes | Any connected provider. |
+
+A key reaches a run as an environment variable of that run only, written to a
+file in the run's folder that only the run can read and removed from the event
+log. Nothing is written to the Space image or its Volume.
+
+### Pick which key an app uses
+
+Claude Code and Codex read one fixed sign-in, so their page shows it. Hermes,
+OpenCode, Goose, Pi and OpenClaw take any provider, so their page (open it from
+**Coding apps**) has a **Provider** section instead. It shows the provider and the key
+the app runs with, for example **Anthropic, API key ending 4f2a**. Press
+**Change** to point the app at another provider you have connected, or at
+another key of the same provider. The menu lists only what that app can really
+read: your Claude and ChatGPT sign-ins are never in it. **Connect another
+provider** at the bottom opens the Connect sheet.
+
+Choosing signs nothing out and deletes nothing, and it takes effect the next
+time the app runs. Until you choose, the app uses the first connected provider
+that works. If the key you chose is removed, the app does not move to another
+one on its own: its page says so and shows **Connect**, and you pick again.
+
+### Hermes
+
+Hermes picks a provider by its own order when it is not told which, and can
+borrow the sign-ins of other command line tools it finds. Cua tells it instead:
+each run gets a generated Hermes configuration that names the provider you
+chose in its **Provider** section (or, until you choose, the first one you connected:
+Anthropic, then OpenAI, OpenRouter and the rest), lists the other connected
+providers as fallbacks when you have not chosen one, and turns off borrowing sign-ins. If
+Hermes cannot reach its provider, the run fails and the thread shows the
+**Connect** card for it.
+
+### A server on your own machine
+
+Use **Custom endpoint** with the server's base URL, for example LM Studio or
+Ollama. A Space that is isolated from your machine cannot reach a server on it,
+and Cua does not change that for you: allow the port for that Space in its
+network settings first. The key is optional.
+
+## Providers
+
+The table is generated from the provider files in the Cua repository, so it is
+always current. Providers whose terms for third-party apps are still being
+checked, and providers Cua has not run end to end yet, are not listed.
+
+{/* providers:start (generated by cua-connections-gen) */}
+
+| Provider | How to connect | Works with |
+| --- | --- | --- |
+| Anthropic | Your sign-in on this machine, A pasted Claude token, API key | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
+| OpenAI | Plan sign-in, API key | Codex, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
+| OpenRouter | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| Google AI Studio | API key | Gemini CLI, Antigravity, OpenCode, Goose, Pi, Hermes |
+| xAI | API key | Codex, OpenCode, Goose, Pi, Hermes, OpenClaw |
+| DeepSeek | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| Kimi (Moonshot) | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| GitHub Copilot | API key | GitHub Copilot CLI |
+| Hugging Face | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| Z.AI (GLM) | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| Fireworks AI | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| NVIDIA NIM | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| Ollama Cloud | API key | Hermes |
+| DeepInfra | API key | Hermes |
+| Novita AI | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| Nebius Token Factory | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| GMI Cloud | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| Upstage Solar | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| Arcee AI | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| Vercel AI Gateway | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| OpenCode Zen | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| OpenCode Go | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| Kilo Code | API key | Hermes |
+| Xiaomi MiMo | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| StepFun | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+| MiniMax | API key | Hermes |
+| Qwen Cloud (Alibaba) | API key | Hermes |
+| Custom endpoint | Base URL and key | OpenCode, Goose, Pi, Hermes, OpenClaw |
+
+{/* providers:end */}
+
+## Adding or hiding a provider
+
+Each provider is one small file in
+`libs/cua/crates/cua-connections/providers`. The generator turns the files into
+the tables the app, the CLI and this page read, and a test fails when any of
+them is out of date. Another test compares the provider names, variables and
+base URLs with the Hermes release Cua installs; `providers/README.md` in that
+folder says how to move that pin.

@@ -34,7 +34,7 @@ class Approver(cua.TeleportApprover):
 
 def test_every_contract_tool_maps_to_a_generated_method():
     rows = cua.spaces_tool_methods()
-    assert len(rows) == 86
+    assert len(rows) == 114
     classes = {"Spaces": cua.Spaces, "Space": cua.Space}
     for row in rows:
         cls, method = row.method.split(".")
@@ -73,6 +73,13 @@ async def exercise(c, fx, tmp_path: Path, teleport: bool = False):
     back.mkdir()
     down = await space.download(guest, str(back))
     assert down.verified and (back / "note.txt").read_bytes() == b"from python"
+    # A file big enough for the same-machine bulk lane (over 2 MiB) arrives
+    # byte for byte, whichever way the Space's connection moves it.
+    big = os.urandom(5 * 1024 * 1024 + 17)
+    big_guest = str(Path(fx["spaces_guest_home"]) / "py" / "big.bin")
+    assert (await space.write(big_guest, big)).bytes == len(big)
+    down = await space.download(big_guest, str(back))
+    assert down.verified and (back / "big.bin").read_bytes() == big
 
     tools = await space.list_tools(None)
     assert any(t.name == "get_screen_size" for t in tools)
@@ -81,6 +88,8 @@ async def exercise(c, fx, tmp_path: Path, teleport: bool = False):
 
     with pytest.raises(cua.CuaError.CapabilityMissing):
         await space.open_stream(cua.SpaceStreamOptions())
+
+    await exercise_channel(space)
 
     ok = Approver(cua.TeleportDecision(include=None, acknowledge_sensitive=True))
     if teleport:
@@ -92,6 +101,24 @@ async def exercise(c, fx, tmp_path: Path, teleport: bool = False):
             await space.teleport("firefox", None, Approver(None))
         with pytest.raises(cua.CuaError.TeleportRefused):
             await space.teleport("firefox", None, ok)
+        # Named volumes of Cua Volume: make, list, refuse a duplicate, and
+        # refuse a Space that mounts one that does not exist.
+        assert await spaces.volumes() == []
+        made = await spaces.create_volume("shared")
+        assert made.name == "shared"
+        with pytest.raises(cua.CuaError, match="already exists"):
+            await spaces.create_volume("shared")
+        assert [v.name for v in await spaces.volumes()] == ["shared"]
+        with pytest.raises(cua.CuaError, match="does not exist"):
+            await spaces.create(
+                cua.SpaceCreateOptions(volumes=[cua.VolumeMount(name="ghost", path="/mnt/ghost")])
+            )
+        with pytest.raises(cua.CuaError.InvalidArgument, match="absolute"):
+            await spaces.create(
+                cua.SpaceCreateOptions(volumes=[cua.VolumeMount(name="shared", path="mnt/x")])
+            )
+        assert await spaces.delete_volume("shared", False) == 0
+        assert await spaces.volumes() == []
     else:
         # Without Cua Spaces: missing, and it says where it ships.
         with pytest.raises(cua.CuaError.HostCapabilityMissing) as e:
@@ -99,12 +126,77 @@ async def exercise(c, fx, tmp_path: Path, teleport: bool = False):
         assert "Cua Spaces" in str(e.value)
         with pytest.raises(cua.CuaError.HostCapabilityMissing):
             await space.teleport("firefox", None, ok)
+        # Named volumes are Cua Volume's too.
+        with pytest.raises(cua.CuaError.HostCapabilityMissing) as e:
+            await spaces.volumes()
+        assert "Cua Spaces" in str(e.value)
+        with pytest.raises(cua.CuaError.HostCapabilityMissing):
+            await spaces.create_volume("shared")
+        with pytest.raises(cua.CuaError.HostCapabilityMissing):
+            await spaces.create(
+                cua.SpaceCreateOptions(volumes=[cua.VolumeMount(name="shared", path="/mnt/s")])
+            )
 
     r = await spaces.call_tool_json("list_spaces", None)
     assert not r.is_error and info.id in r.text
 
     assert info.id in await spaces.delete(info.id)
     assert await spaces.list() == []
+
+
+async def exercise_channel(space):
+    """Which way calls go, and a TCP forward over the Space's own connection
+    (cua-spacesd's tunnel), embedded and through the daemon's passthrough."""
+    route = await space.route()
+    # A Space added by its address: reached directly, by that address.
+    assert route.startswith("direct http://127.0.0.1:"), route
+    assert await space.spacesd().route() == route
+
+    import socket
+    import threading
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    guest_port = srv.getsockname()[1]
+
+    def echo():
+        conn, _ = srv.accept()
+        with conn:
+            try:
+                while data := conn.recv(65536):
+                    conn.sendall(data)
+            except OSError:
+                pass  # the test closed its side
+
+    t = threading.Thread(target=echo, daemon=True)
+    t.start()
+    fwd = await space.forward(guest_port)
+    try:
+        assert fwd.guest_port() == guest_port
+        host, port = fwd.local_addr().rsplit(":", 1)
+        assert host == "127.0.0.1" and int(port) != guest_port
+        assert fwd.url() == f"http://{fwd.local_addr()}"
+        payload = os.urandom(256 * 1024)
+
+        def round_trip():
+            with socket.create_connection((host, int(port)), timeout=10) as c:
+                sender = threading.Thread(target=c.sendall, args=(payload,), daemon=True)
+                sender.start()
+                got = b""
+                while len(got) < len(payload) and (chunk := c.recv(65536)):
+                    got += chunk
+                sender.join(10)
+                return got
+
+        import asyncio
+
+        assert await asyncio.get_running_loop().run_in_executor(None, round_trip) == payload
+    finally:
+        await fwd.close()
+        srv.close()
+    with pytest.raises(cua.CuaError):
+        await space.forward(0)
 
 
 def test_spaces_embedded(fixtures, tmp_path):

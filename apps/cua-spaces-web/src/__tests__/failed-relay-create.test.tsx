@@ -41,15 +41,15 @@ describe.skipIf(!wasmBuilt)("a create on another of your machines that fails (re
     const rows = named();
     expect(rows.map((s) => s.id)).toEqual([expect.stringMatching(/^pending:/)]);
     const failed = rows[0]!;
-    expect(failed.progress?.error).toMatch(/^Mac mini can't reach its new VM because Cua doesn't have Local Network access/);
+    expect(failed.progress?.error).toMatch(/^Mac mini can't connect to its new macOS Space. On that Mac, allow Cua Spaces \(or cua-spacesd\) in System Settings › Privacy & Security › Local Network/);
     expect(failed.hostName).toBe("Mac mini");
     await waitFor(() => expect(document.querySelector(`[data-space-id="${failed.id}"]`)).not.toBeNull());
     expect(document.querySelector(`[data-space-id="${GHOST_ID}"]`)).toBeNull();
 
     // The toast after the failure is about that machine, not this Mac.
-    expect(createFailedText(hooks.core, failure)).toMatch(/^Could not create the Space: Mac mini can't reach its new VM/);
+    expect(createFailedText(hooks.core, failure)).toMatch(/^Could not create the Space: Mac mini can't connect to its new macOS Space/);
     // Without where the create ran, the words are about this Mac, as before.
-    expect(createFailedText(hooks.core, new Error(LOCAL_NETWORK))).toMatch(/^Could not create the Space: This Mac can't reach/);
+    expect(createFailedText(hooks.core, new Error(LOCAL_NETWORK))).toMatch(/^Could not create the Space: Cua Spaces can't connect to macOS Spaces on this Mac\. Allow Cua Spaces in System Settings/);
 
     // Removed from the list, the machine's own record is what is left of it.
     await act(() => hooks.spaces.dismissCreate(failed.id));

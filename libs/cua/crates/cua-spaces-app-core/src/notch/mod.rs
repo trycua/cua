@@ -11,7 +11,8 @@
 //!   so every shell expands and collapses at the same moments;
 //! - [`tiles`]: which Spaces the panel shows, filtered by the header's
 //!   search ([`matches`]), each with its OS icon ([`os_icon`]);
-//! - [`tab`]: the "N Spaces" tab (count over word);
+//! - [`tab`]: the "N Spaces" tab (count over word): the Spaces that are on
+//!   or starting; with none, the closed notch shows no tab at all;
 //! - [`activity`]: the indicator left of the closed notch (a transfer, the
 //!   network hotspot, a Space starting), in that priority.
 //!
@@ -29,7 +30,7 @@ pub use geometry::{DisplayStyle, DisplayStyleSource, LogicalRect, Size, WindowMo
 
 use crate::host::THIS_MACHINE_ID;
 use crate::model::{Space, SpaceOs, SpaceStatus};
-use crate::spaces::sort_by_mru;
+use crate::spaces::{DesktopAvailability, desktop_availability, is_remote_desktop, sort_by_mru};
 use crate::teleport::drag::{
     self, DragOverlayEffect, DragOverlayEvent, DragOverlayPhase, DragOverlayState,
 };
@@ -316,6 +317,19 @@ pub struct NotchTile {
     /// Signed in through the Keyvault (and not dismissed): the key badge.
     #[serde(default)]
     pub signed_in: bool,
+    /// One of your other machines' desktops, not a Space it provides: the
+    /// tile reads "Desktop" and opens the same desktop the machine's page
+    /// does, creating nothing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub desktop: bool,
+    /// Pinned to the notch (Pin to notch in the Space's "..." menu): the
+    /// tiles list pinned ones first.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    /// Why a pinned desktop cannot be opened now ("Offline", "Not
+    /// shared"); `None` while it can. The tile stays, dimmed, and says it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Linux distributions with their own icon: a word in the reported OS
@@ -422,9 +436,8 @@ pub fn location(space: &Space, spaces: &[Space]) -> String {
     if space.id == THIS_MACHINE_ID {
         return "This Mac".into();
     }
-    match space.provider.unwrap_or(SpaceProvider::Cloud) {
+    match space.provider.unwrap_or(SpaceProvider::Direct) {
         SpaceProvider::Local => "This Mac".into(),
-        SpaceProvider::Cloud => crate::spaces::sidebar::location_text(space).into(),
         SpaceProvider::Direct => text(&space.host_name).unwrap_or_else(|| {
             space
                 .id
@@ -470,7 +483,6 @@ pub fn matches(space: &Space, query: &str) -> bool {
         space.status.label(),
         &format!("{:?}", space.status),
         space.detail.as_str(),
-        space.fleet_id.as_deref().unwrap_or_default(),
         crate::spaces::sidebar::location_text(space),
         space.host_name.as_deref().unwrap_or_default(),
     ]
@@ -491,49 +503,132 @@ pub fn filter(spaces: &[Space], query: &str) -> Vec<Space> {
 }
 
 /// The Space tiles: the Spaces the user can open
-/// ([`crate::spaces::openable_spaces`], never This machine or another
-/// machine that only provides Spaces, the same Spaces the tab counts), in
-/// MRU order, at most [`MAX_TILES`].
+/// ([`crate::spaces::openable_spaces`]: Spaces, and the desktops of your
+/// other machines that are there to open; never This machine or a machine
+/// that only provides Spaces), in MRU order, at most [`MAX_TILES`]. Stopped
+/// Spaces are tiles too (dimmed, and they take drops), but the tab counts
+/// only the ones that are on.
 pub fn tiles(spaces: &[Space], targeted: Option<&str>) -> Vec<NotchTile> {
     tiles_matching(spaces, targeted, "")
 }
 
 /// [`tiles`] narrowed by the header's search.
 pub fn tiles_matching(spaces: &[Space], targeted: Option<&str>, query: &str) -> Vec<NotchTile> {
-    sort_by_mru(&crate::spaces::openable_spaces(spaces))
+    tiles_pinned(spaces, targeted, query, &[])
+}
+
+/// Whether `space` gets a tile: a Space you can open, and a pinned desktop
+/// of another machine even when it cannot be opened now (offline, or no
+/// longer shared), so a pin is never silently dropped.
+fn has_tile(space: &Space, pinned: &[String]) -> bool {
+    !crate::spaces::is_machine_desktop(space)
+        || (is_remote_desktop(space)
+            && (desktop_availability(space) == DesktopAvailability::Available
+                || pinned.contains(&space.id)))
+}
+
+/// [`tiles_matching`] with the pinned Spaces and desktops (`pinned`, in the
+/// order they were pinned): pinned tiles first, then the rest in MRU order.
+/// A pinned desktop that is offline or no longer shared stays, dimmed, with
+/// its note ([`NotchTile::note`]). A pinned id that is no longer in
+/// `spaces` has nothing to draw and is skipped.
+pub fn tiles_pinned(
+    spaces: &[Space],
+    targeted: Option<&str>,
+    query: &str,
+    pinned: &[String],
+) -> Vec<NotchTile> {
+    let listed: Vec<Space> = spaces
+        .iter()
+        .filter(|s| has_tile(s, pinned))
+        .cloned()
+        .collect();
+    let mut sorted = sort_by_mru(&listed);
+    // Pinned first, in pin order; the rest keep their MRU order.
+    sorted.sort_by_key(|s| pinned.iter().position(|p| *p == s.id).unwrap_or(usize::MAX));
+    sorted
         .into_iter()
         .filter(|s| matches(s, query))
         .take(MAX_TILES)
-        .map(|s| NotchTile {
-            location: location(&s, spaces),
-            dim: !s.status.is_live(),
-            drop_target: accepts_drop(&s),
-            targeted: targeted == Some(s.id.as_str()),
-            symbol: os_icon(s.os, s.os_name.as_deref()).into(),
-            label: format!(
-                "{}, {}, {}, {}",
-                s.name,
-                s.os.label(),
-                location(&s, spaces),
-                crate::spaces::sidebar::status_text(&s)
-            ),
-            progress: s
-                .progress
-                .as_ref()
-                .filter(|p| p.error.is_none())
-                .map(|p| p.permille),
-            progress_label: if s.status == SpaceStatus::Deleting {
-                Some(s.status.label().into())
+        .map(|s| {
+            let desktop = is_remote_desktop(&s);
+            let note = if desktop {
+                match desktop_availability(&s) {
+                    DesktopAvailability::Available => None,
+                    DesktopAvailability::Offline => Some("Offline".to_string()),
+                    DesktopAvailability::NotShared => Some("Not shared".to_string()),
+                }
             } else {
-                s.progress.as_ref().map(|p| p.label.clone())
-            },
-            signed_in: false,
-            id: s.id,
-            name: s.name,
-            os: s.os,
-            status: s.status,
+                None
+            };
+            let status_text = note
+                .clone()
+                .unwrap_or_else(|| crate::spaces::sidebar::status_text(&s));
+            let place = if desktop {
+                "Desktop".to_string()
+            } else {
+                location(&s, spaces)
+            };
+            NotchTile {
+                dim: !s.status.is_live() || note.is_some(),
+                drop_target: accepts_drop(&s) && note.is_none(),
+                targeted: targeted == Some(s.id.as_str()),
+                symbol: os_icon(s.os, s.os_name.as_deref()).into(),
+                label: format!(
+                    "{}, {}, {}, {}{}",
+                    s.name,
+                    s.os.label(),
+                    if desktop { "desktop" } else { place.as_str() },
+                    status_text,
+                    if pinned.contains(&s.id) {
+                        ", pinned"
+                    } else {
+                        ""
+                    }
+                ),
+                location: place,
+                progress: s
+                    .progress
+                    .as_ref()
+                    .filter(|p| p.error.is_none())
+                    .map(|p| p.permille),
+                progress_label: if s.status == SpaceStatus::Deleting {
+                    Some(s.status.label().into())
+                } else {
+                    s.progress.as_ref().map(|p| p.label.clone())
+                },
+                signed_in: false,
+                desktop,
+                pinned: pinned.contains(&s.id),
+                note,
+                id: s.id,
+                name: s.name,
+                os: s.os,
+                status: s.status,
+            }
         })
         .collect()
+}
+
+/// The most Spaces and desktops that stay pinned to the notch.
+pub const MAX_PINNED: usize = 24;
+
+/// `pinned` with `id` pinned (added last) or, when it already is, unpinned.
+/// Only ids the notch can show are pinned: not This machine, and not an
+/// empty id. Beyond [`MAX_PINNED`] the oldest pin makes room.
+pub fn toggle_pin(pinned: &[String], id: &str) -> Vec<String> {
+    if pinned.iter().any(|p| p == id) {
+        return pinned.iter().filter(|p| *p != id).cloned().collect();
+    }
+    if id.is_empty() || id == THIS_MACHINE_ID {
+        return pinned.to_vec();
+    }
+    let mut out = pinned.to_vec();
+    out.push(id.to_string());
+    while out.len() > MAX_PINNED {
+        out.remove(0);
+    }
+    out
 }
 
 /// What the panel shows.
@@ -581,6 +676,10 @@ pub struct NotchState {
     /// carry the key.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub signed_in: Vec<String>,
+    /// The Spaces and desktops pinned to the notch, in the order they were
+    /// pinned (`AppSettings::notch_pinned`): their tiles come first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned: Vec<String>,
     /// "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
     /// the notch, and hover, clicks and window drags do nothing.
     #[serde(default)]
@@ -612,6 +711,7 @@ impl Default for NotchState {
             transfer: None,
             keyvault: None,
             signed_in: vec![],
+            pinned: vec![],
             hidden: false,
         }
     }
@@ -676,6 +776,13 @@ pub enum NotchEvent {
         /// The Space ids signed in (their tiles carry the key).
         #[serde(default, rename = "signedIn")]
         signed_in: Vec<String>,
+    },
+    /// The pinned Spaces and desktops changed (Pin to notch, Unpin from
+    /// notch, or settings read at start): their ids in pin order.
+    Pinned {
+        /// The pinned ids.
+        #[serde(default)]
+        ids: Vec<String>,
     },
 }
 
@@ -825,6 +932,9 @@ pub fn reduce(state: &NotchState, event: &NotchEvent) -> NotchTransition {
             s.keyvault = label.clone();
             s.signed_in = signed_in.clone();
         }
+        NotchEvent::Pinned { ids } => {
+            s.pinned = ids.clone();
+        }
     }
     // A closed panel forgets its search.
     if !s.open && !s.drop_targeted && s.drag.phase == DragOverlayPhase::Idle {
@@ -847,7 +957,7 @@ pub struct NotchView {
     pub prompt: Option<String>,
     /// Accessibility label of the panel.
     pub label: String,
-    /// "N Spaces": the tab's spoken label (remote Spaces only).
+    /// "N Spaces": the tab's spoken label (Spaces on or starting only).
     pub count_label: String,
     /// The tab's two rows: the count over the word.
     pub tab: NotchTab,
@@ -860,7 +970,8 @@ pub struct NotchView {
     pub activity: Option<NotchActivity>,
     /// The notch is hidden (menu bar only): draw nothing.
     pub hidden: bool,
-    /// The tab shows (closed, no drag in flight; a drag tucks it away).
+    /// The tab shows (closed, no drag in flight, at least one Space on or
+    /// starting; a drag tucks it away, and with none the notch is bare).
     pub show_tab: bool,
     /// The pointer rests on the closed notch while the dwell runs: the
     /// shells grow it by [`NotchMotion::hover_scale`].
@@ -909,17 +1020,18 @@ pub struct NotchTab {
     pub word: String,
 }
 
-/// The tab for `spaces`: remote Spaces only (not this machine).
+/// The tab for `spaces`: the Spaces on or starting
+/// ([`crate::spaces::on_count`]), never this machine or a stopped Space.
 pub fn tab(spaces: &[Space]) -> NotchTab {
-    let n = remote_count(spaces);
+    let n = on_count(spaces);
     NotchTab {
         count: n.to_string(),
         word: if n == 1 { "Space" } else { "Spaces" }.into(),
     }
 }
 
-fn remote_count(spaces: &[Space]) -> usize {
-    crate::spaces::openable_count(spaces) as usize
+fn on_count(spaces: &[Space]) -> usize {
+    crate::spaces::on_count(spaces) as usize
 }
 
 /// A button in the open panel's header.
@@ -1051,9 +1163,9 @@ pub fn activity(
         return Some(NotchActivity {
             kind: NotchActivityKind::RemoteAccess,
             label: if connected == 1 {
-                "Someone is connected to this computer".into()
+                "Someone is connected to this machine".into()
             } else {
-                format!("{connected} are connected to this computer")
+                format!("{connected} are connected to this machine")
             },
             symbol: Some(REMOTE_ACCESS_SYMBOL.into()),
             permille: None,
@@ -1187,6 +1299,24 @@ pub fn accepts_drop(space: &Space) -> bool {
         && space.progress.is_none()
 }
 
+/// The open panel's spoken label: how many Spaces it shows and, when there
+/// are any, how many machine desktops ("3 Spaces and 1 desktop"). The tab's
+/// count stays the Spaces and desktops that are on ([`tab`]).
+fn tiles_label(tiles: &[NotchTile]) -> String {
+    let desktops = tiles.iter().filter(|t| t.desktop).count();
+    let spaces = tiles.len() - desktops;
+    let spaces_part = format!("{spaces} {}", if spaces == 1 { "Space" } else { "Spaces" });
+    let desktops_part = format!(
+        "{desktops} {}",
+        if desktops == 1 { "desktop" } else { "desktops" }
+    );
+    match (spaces, desktops) {
+        (_, 0) => spaces_part,
+        (0, _) => desktops_part,
+        _ => format!("{spaces_part} and {desktops_part}"),
+    }
+}
+
 /// The panel as drawn for `spaces`.
 pub fn view(state: &NotchState, spaces: &[Space]) -> NotchView {
     let phase = match state.drag.phase {
@@ -1208,7 +1338,12 @@ pub fn view(state: &NotchState, spaces: &[Space]) -> NotchView {
     // A drag drops on any Space: the search only narrows browsing.
     let query = if drop_mode { "" } else { state.query.trim() };
     let mut visible = if phase == NotchPhase::Tiles {
-        tiles_matching(spaces, state.drag.target_space_id.as_deref(), query)
+        tiles_pinned(
+            spaces,
+            state.drag.target_space_id.as_deref(),
+            query,
+            &state.pinned,
+        )
     } else {
         Vec::new()
     };
@@ -1216,7 +1351,7 @@ pub fn view(state: &NotchState, spaces: &[Space]) -> NotchView {
         t.signed_in = state.signed_in.contains(&t.id);
     }
     let n = visible.len();
-    let remote = remote_count(spaces);
+    let on = on_count(spaces);
     let searching = !query.is_empty();
     let header = (phase == NotchPhase::Tiles && !drop_mode)
         .then(|| header(&state.query, searching.then_some(n as u32)));
@@ -1249,13 +1384,13 @@ pub fn view(state: &NotchState, spaces: &[Space]) -> NotchView {
         (false, false, None)
     } else {
         (
-            phase == NotchPhase::Closed && state.drag.phase == DragOverlayPhase::Idle,
+            phase == NotchPhase::Closed && state.drag.phase == DragOverlayPhase::Idle && on > 0,
             phase == NotchPhase::Closed && state.hovering,
             activity,
         )
     };
     NotchView {
-        count_label: format!("{remote} {}", if remote == 1 { "Space" } else { "Spaces" }),
+        count_label: format!("{on} {}", if on == 1 { "Space" } else { "Spaces" }),
         tab: tab(spaces),
         hidden: state.hidden,
         header,
@@ -1269,7 +1404,7 @@ pub fn view(state: &NotchState, spaces: &[Space]) -> NotchView {
         label: match phase {
             NotchPhase::Closed => "Cua Spaces".into(),
             NotchPhase::Prompt => "Teleport to Cua".into(),
-            NotchPhase::Tiles => format!("{n} {}", if n == 1 { "Space" } else { "Spaces" }),
+            NotchPhase::Tiles => tiles_label(&visible),
         },
         tiles: visible,
         drop_mode,
@@ -1342,6 +1477,7 @@ mod tests {
         s.id = id.into();
         s.name = name.into();
         s.status = status;
+        s.provider = Some(crate::model::SpaceProvider::Local);
         s
     }
 
@@ -1399,7 +1535,7 @@ mod tests {
         assert_eq!(by("b").symbol, "os-windows");
         assert_eq!(by("c").symbol, "os-macos");
         assert_eq!(by("d").symbol, "os-linux", "no distro reported: Tux");
-        assert_eq!(by("b").label, "Lab PC, Windows, Cua Cloud, Suspended");
+        assert_eq!(by("b").label, "Lab PC, Windows, This Mac, Suspended");
         assert!(by("b").targeted && by("b").dim);
     }
 
@@ -1596,6 +1732,102 @@ mod tests {
                 image.image_ref
             );
         }
+    }
+
+    /// The tab counts only the Spaces on or starting: four stopped Spaces
+    /// are no tab at all (no "0", no empty pill), one starting brings it
+    /// back. Stopped Spaces stay tiles in the open panel, and drop targets.
+    #[test]
+    fn the_tab_counts_only_spaces_on_or_starting_and_goes_at_zero() {
+        use crate::model::{PowerControl, SpacePower, SpaceProgress};
+        let stopped = |id: &str| {
+            let mut s = space(id, id, SpaceOs::Linux, SpaceStatus::Suspended);
+            s.provider = Some(crate::model::SpaceProvider::Local);
+            s.power = Some(SpacePower {
+                control: PowerControl::Stop,
+                off: true,
+                turning_on: None,
+                error: None,
+                stop_reason: None,
+            });
+            s
+        };
+        let this_mac = crate::host::this_machine_space(
+            Some(&crate::host::HostSummaryInput {
+                configured: true,
+                service_running: true,
+                sharing: true,
+                ..Default::default()
+            }),
+            0,
+            SpaceOs::Macos,
+        );
+        assert_eq!(this_mac.status, SpaceStatus::Local);
+        let mut spaces = vec![
+            this_mac,
+            stopped("a"),
+            stopped("b"),
+            stopped("c"),
+            stopped("d"),
+        ];
+        let closed = NotchState::default();
+
+        // All four stopped, This Mac sharing: nothing to count, no tab.
+        let v = view(&closed, &spaces);
+        assert_eq!(crate::spaces::on_count(&spaces), 0);
+        assert_eq!(v.tab.count, "0");
+        assert_eq!(v.count_label, "0 Spaces");
+        assert!(!v.show_tab, "collapsed at zero");
+        assert_eq!(v.phase, NotchPhase::Closed);
+        // Hovering still opens it on the stopped Spaces, which take drops.
+        let open = view(&reduce(&closed, &NotchEvent::Click).state, &spaces);
+        assert_eq!(open.tiles.len(), 4);
+        assert!(open.tiles.iter().all(|t| t.dim && t.drop_target));
+
+        // One turned on: it is starting, so the tab comes back with 1.
+        spaces[2].power.as_mut().unwrap().turning_on = Some(true);
+        let v = view(&closed, &spaces);
+        assert!(v.show_tab);
+        assert_eq!((v.tab.count.as_str(), v.tab.word.as_str()), ("1", "Space"));
+        // Up and running: still 1.
+        spaces[2].status = SpaceStatus::Running;
+        spaces[2].power.as_mut().unwrap().turning_on = None;
+        spaces[2].power.as_mut().unwrap().off = false;
+        assert_eq!(view(&closed, &spaces).tab.count, "1");
+
+        // Mixed states: running, waiting for approval and being created
+        // count; stopped, failed and deleting do not.
+        let mut approval = space("e", "e", SpaceOs::Linux, SpaceStatus::Approval);
+        approval.provider = Some(crate::model::SpaceProvider::Local);
+        let creating = space("f", "f", SpaceOs::Linux, SpaceStatus::Provisioning);
+        let mut failed = space("g", "g", SpaceOs::Linux, SpaceStatus::Provisioning);
+        failed.progress = Some(SpaceProgress {
+            phase: "pulling".into(),
+            permille: 300,
+            label: "Failed".into(),
+            error: Some("pull failed".into()),
+            transfer: None,
+            cancellable: false,
+            cancelling: false,
+            retrying: false,
+            fix: None,
+        });
+        let deleting = space("h", "h", SpaceOs::Linux, SpaceStatus::Deleting);
+        spaces.extend([approval, creating, failed, deleting]);
+        let v = view(&closed, &spaces);
+        assert_eq!(v.tab.count, "3");
+        assert_eq!(v.count_label, "3 Spaces");
+        assert!(v.show_tab);
+
+        // Everything stops again: collapsed.
+        let all_stopped: Vec<Space> = spaces
+            .iter()
+            .filter(|s| !matches!(s.id.as_str(), "b" | "e" | "f"))
+            .cloned()
+            .collect();
+        let v = view(&closed, &all_stopped);
+        assert_eq!(v.tab.count, "0");
+        assert!(!v.show_tab);
     }
 
     #[test]
@@ -1824,7 +2056,7 @@ mod tests {
             "before the hotspot"
         );
         assert_eq!(a.symbol.as_deref(), Some(REMOTE_ACCESS_SYMBOL));
-        assert_eq!(a.label, "Someone is connected to this computer");
+        assert_eq!(a.label, "Someone is connected to this machine");
         // A transfer in flight still shows its progress first.
         let t = NotchTransfer {
             sent: Some(1),
@@ -1846,7 +2078,7 @@ mod tests {
         );
         assert_eq!(
             activity(&[two], false, None, None).unwrap().label,
-            "2 are connected to this computer"
+            "2 are connected to this machine"
         );
         let gone = this_machine_space(
             Some(&HostSummaryInput {
@@ -1944,7 +2176,7 @@ mod tests {
             (t.progress, t.progress_label.as_deref()),
             (None, Some("Deleting\u{2026}"))
         );
-        assert_eq!(t.label, "Gone, Linux, Cua Cloud, Deleting\u{2026}");
+        assert_eq!(t.label, "Gone, Linux, This Mac, Deleting\u{2026}");
     }
 
     #[test]
@@ -2054,5 +2286,270 @@ mod tests {
             tile_at(&layout(&mbp14(), false), &t, false, x0 + 10.0, top + 10.0).as_deref(),
             Some("a")
         );
+    }
+
+    // ---- Machine desktops and pins ---------------------------------------
+
+    /// One of your other machines (`relay:<machine>`, no host above it) as
+    /// the registry reads it: `features` it reported, answering or not.
+    fn machine(id: &str, name: &str, features: &[&str], reachable: bool) -> Space {
+        let mut s = space(
+            &format!("relay:{id}"),
+            name,
+            SpaceOs::Linux,
+            if reachable {
+                SpaceStatus::Running
+            } else {
+                SpaceStatus::Suspended
+            },
+        );
+        s.provider = Some(crate::model::SpaceProvider::Relay);
+        s.sdk = Some(crate::model::SpaceSdkRef {
+            features: features.iter().map(|f| f.to_string()).collect(),
+            spacesd_version: "0.9.0".into(),
+            reachable,
+            error: None,
+        });
+        s
+    }
+
+    const SHARES: &[&str] = &["desktop_stream", "window_stream", "host_spaces"];
+    const SPACES_ONLY: &[&str] = &["host_spaces", "files"];
+
+    fn ids(t: &[NotchTile]) -> Vec<String> {
+        t.iter().map(|t| t.id.clone()).collect()
+    }
+
+    /// A machine's shared desktop is a Space and shows by default; a machine
+    /// without a desktop (it only provides Spaces, is off, or has not
+    /// answered) is not one and stays out, as before (CUA-1619).
+    #[test]
+    fn a_shared_desktop_shows_and_a_machine_without_one_does_not() {
+        let wsl = machine("wsl", "WSL", SHARES, true);
+        let studio = machine("studio", "Studio", SPACES_ONLY, true);
+        let off = machine("old", "Old Mac", SHARES, false);
+        let mut silent = machine("new", "New Mac", &[], false);
+        silent.sdk = None;
+        let this_mac = crate::host::this_machine_space(None, 0, SpaceOs::Macos);
+        let spaces = vec![this_mac, wsl, studio, off, silent];
+
+        let t = tiles(&spaces, None);
+        assert_eq!(ids(&t), ["relay:wsl"]);
+        // It reads as a desktop, not a Space, and names nothing unavailable.
+        assert!(t[0].desktop && !t[0].pinned && t[0].note.is_none());
+        assert_eq!(t[0].location, "Desktop");
+        assert_eq!(t[0].label, "WSL, Linux, desktop, Running");
+        assert!(!t[0].dim && t[0].drop_target);
+        // One that answers without saying what it shares has no desktop to list.
+        let silent = machine("mini", "Mini", &[], true);
+        assert!(tiles(&[silent], None).is_empty());
+        // A Space a machine provides is a Space as ever.
+        let mut provided = machine("studio/dev", "Dev", SHARES, true);
+        provided.host = Some("studio".into());
+        assert_eq!(ids(&tiles(&[provided], None)), ["relay:studio/dev"]);
+    }
+
+    /// A shared desktop that is running counts as a Space; one that is off,
+    /// or that no longer shares, counts as nothing. Pinning changes no count.
+    #[test]
+    fn a_running_desktop_counts_like_a_space_and_the_tab_collapses_at_zero() {
+        let wsl = machine("wsl", "WSL", SHARES, true);
+        let tab = |spaces: &[Space]| super::tab(spaces).count;
+        assert_eq!(tab(std::slice::from_ref(&wsl)), "1");
+        assert_eq!(crate::spaces::on_count(std::slice::from_ref(&wsl)), 1);
+        let mut local = space("local:a", "A", SpaceOs::Linux, SpaceStatus::Running);
+        local.provider = Some(crate::model::SpaceProvider::Local);
+        assert_eq!(tab(&[wsl.clone(), local.clone()]), "2");
+
+        let off = machine("wsl", "WSL", SHARES, false);
+        let unshared = machine("wsl", "WSL", SPACES_ONLY, true);
+        let pinned = NotchState {
+            pinned: vec!["relay:wsl".into()],
+            ..Default::default()
+        };
+        for spaces in [vec![off], vec![unshared]] {
+            assert_eq!(tab(&spaces), "0");
+            // The counter collapses: no tab on the closed notch, though the
+            // pinned desktop's tile is there once it opens.
+            let closed = view(&pinned, &spaces);
+            assert!(!closed.show_tab && closed.count_label == "0 Spaces");
+            let open = view(
+                &NotchState {
+                    open: true,
+                    ..pinned.clone()
+                },
+                &spaces,
+            );
+            assert_eq!(ids(&open.tiles), ["relay:wsl"]);
+            assert_eq!(open.count_label, "0 Spaces");
+            assert_eq!(open.label, "1 desktop");
+        }
+        // The desktop is on: the tab shows 1 whether or not it is pinned.
+        let on = view(&pinned, std::slice::from_ref(&wsl));
+        assert!(on.show_tab && on.tab.count == "1");
+        assert_eq!(on.count_label, "1 Space");
+    }
+
+    #[test]
+    fn pinned_tiles_come_first_in_pin_order_then_the_usual_order() {
+        let mut a = space("local:a", "A", SpaceOs::Linux, SpaceStatus::Running);
+        let mut b = space("local:b", "B", SpaceOs::Linux, SpaceStatus::Running);
+        let mut c = space("local:c", "C", SpaceOs::Linux, SpaceStatus::Running);
+        a.last_used_at = 30;
+        b.last_used_at = 20;
+        c.last_used_at = 10;
+        let mut wsl = machine("wsl", "WSL", SHARES, true);
+        wsl.last_used_at = 5;
+        let spaces = vec![a, b, c, wsl];
+        let order = |pinned: &[&str]| {
+            let pinned: Vec<String> = pinned.iter().map(|p| p.to_string()).collect();
+            ids(&tiles_pinned(&spaces, None, "", &pinned))
+        };
+        // MRU alone.
+        assert_eq!(order(&[]), ["local:a", "local:b", "local:c", "relay:wsl"]);
+        // The pinned first, in the order they were pinned.
+        assert_eq!(
+            order(&["relay:wsl", "local:c"]),
+            ["relay:wsl", "local:c", "local:a", "local:b"]
+        );
+        let t = tiles_pinned(&spaces, None, "", &["local:c".into()]);
+        assert!(t[0].pinned && !t[1].pinned);
+        assert!(t[0].label.ends_with(", pinned"));
+        // A pin of a Space that is gone draws nothing and breaks nothing.
+        assert_eq!(order(&["local:gone", "local:b"])[0], "local:b");
+        assert_eq!(order(&["local:gone"]).len(), 4);
+        // The search still narrows the pinned ones.
+        let pinned: Vec<String> = vec!["relay:wsl".into()];
+        assert!(tiles_pinned(&spaces, None, "nothing like it", &pinned).is_empty());
+        // Pinned tiles survive the cap: the seventh Space is the one cut.
+        let many: Vec<Space> = (0..MAX_TILES + 2)
+            .map(|i| {
+                let mut s = space(
+                    &format!("local:{i}"),
+                    &format!("S{i}"),
+                    SpaceOs::Linux,
+                    SpaceStatus::Running,
+                );
+                s.last_used_at = 100 - i as i64;
+                s
+            })
+            .collect();
+        let last = many.last().unwrap().id.clone();
+        let t = tiles_pinned(&many, None, "", std::slice::from_ref(&last));
+        assert_eq!(t.len(), MAX_TILES);
+        assert_eq!(t[0].id, last);
+    }
+
+    /// A pinned desktop that is off or no longer shared stays, dimmed, and
+    /// says why; it takes no drop. Unpinned, it is gone again.
+    #[test]
+    fn a_pinned_desktop_that_is_offline_or_not_shared_says_so() {
+        let pinned = vec!["relay:wsl".to_string(), "relay:mac".to_string()];
+        let off = machine("wsl", "WSL", SHARES, false);
+        let unshared = machine("mac", "Mac", SPACES_ONLY, true);
+        let spaces = vec![off, unshared];
+        assert!(tiles(&spaces, None).is_empty());
+        let t = tiles_pinned(&spaces, None, "", &pinned);
+        assert_eq!(ids(&t), ["relay:wsl", "relay:mac"]);
+        assert_eq!(t[0].note.as_deref(), Some("Offline"));
+        assert_eq!(t[1].note.as_deref(), Some("Not shared"));
+        for tile in &t {
+            assert!(tile.desktop && tile.pinned && tile.dim && !tile.drop_target);
+        }
+        assert_eq!(t[0].label, "WSL, Linux, desktop, Offline, pinned");
+        // It comes back by itself when the machine does.
+        let back = machine("wsl", "WSL", SHARES, true);
+        let t = tiles_pinned(&[back], None, "", &pinned);
+        assert!(t[0].note.is_none() && !t[0].dim);
+        // Its owner stopped sharing it with you.
+        let mut stopped = machine("wsl", "WSL", SHARES, true);
+        stopped.sdk.as_mut().unwrap().error = Some("WSL stopped sharing".into());
+        let t = tiles_pinned(&[stopped], None, "", &pinned);
+        assert_eq!(t[0].note.as_deref(), Some("Not shared"));
+    }
+
+    /// Pinning shows a tile and grants nothing: This machine is never
+    /// pinned in, and a pinned machine that has no desktop is not made one.
+    #[test]
+    fn pinning_does_not_bring_back_this_machine_or_a_machine_without_a_desktop() {
+        let this_mac = crate::host::this_machine_space(None, 0, SpaceOs::Macos);
+        let provider = machine("studio", "Studio", SPACES_ONLY, true);
+        // Studio is pinned, but a machine that only provides Spaces is shown
+        // as a pinned desktop that is not shared: the person sees why.
+        let pinned = vec![THIS_MACHINE_ID.to_string(), "relay:studio".to_string()];
+        let t = tiles_pinned(&[this_mac, provider], None, "", &pinned);
+        assert_eq!(ids(&t), ["relay:studio"]);
+        assert_eq!(t[0].note.as_deref(), Some("Not shared"));
+    }
+
+    #[test]
+    fn pins_toggle_in_order_skip_this_machine_and_are_capped() {
+        let none: Vec<String> = vec![];
+        let one = toggle_pin(&none, "relay:wsl");
+        assert_eq!(one, ["relay:wsl"]);
+        let two = toggle_pin(&one, "local:a");
+        assert_eq!(two, ["relay:wsl", "local:a"]);
+        assert_eq!(toggle_pin(&two, "relay:wsl"), ["local:a"]);
+        assert_eq!(toggle_pin(&none, THIS_MACHINE_ID), none);
+        assert_eq!(toggle_pin(&none, ""), none);
+        let mut many = none;
+        for i in 0..MAX_PINNED + 3 {
+            many = toggle_pin(&many, &format!("local:{i}"));
+        }
+        assert_eq!(many.len(), MAX_PINNED);
+        assert_eq!(many[0], "local:3");
+    }
+
+    #[test]
+    fn the_pinned_ids_travel_through_the_panel_state() {
+        let st = reduce(
+            &NotchState::default(),
+            &NotchEvent::Pinned {
+                ids: vec!["relay:wsl".into()],
+            },
+        )
+        .state;
+        assert_eq!(st.pinned, ["relay:wsl"]);
+        // Saved with the state, absent when nothing is pinned.
+        assert!(
+            serde_json::to_value(NotchState::default())
+                .unwrap()
+                .get("pinned")
+                .is_none()
+        );
+        let ev: NotchEvent =
+            serde_json::from_value(serde_json::json!({"type": "pinned", "ids": ["a"]})).unwrap();
+        assert_eq!(
+            ev,
+            NotchEvent::Pinned {
+                ids: vec!["a".into()]
+            }
+        );
+        // A hidden notch still learns its pins.
+        let hidden = NotchState {
+            hidden: true,
+            ..Default::default()
+        };
+        let t = reduce(
+            &hidden,
+            &NotchEvent::Pinned {
+                ids: vec!["x".into()],
+            },
+        );
+        assert_eq!(t.state.pinned, ["x"]);
+    }
+
+    #[test]
+    fn the_panel_label_names_spaces_and_desktops() {
+        let wsl = machine("wsl", "WSL", SHARES, true);
+        let a = space("local:a", "A", SpaceOs::Linux, SpaceStatus::Running);
+        let open = NotchState {
+            open: true,
+            ..Default::default()
+        };
+        assert_eq!(view(&open, std::slice::from_ref(&a)).label, "1 Space");
+        assert_eq!(view(&open, std::slice::from_ref(&wsl)).label, "1 desktop");
+        assert_eq!(view(&open, &[a, wsl]).label, "1 Space and 1 desktop");
+        assert_eq!(view(&open, &[]).label, "0 Spaces");
     }
 }

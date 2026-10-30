@@ -1,7 +1,6 @@
 {
   "_doc": "Image refs that are not in libs/images/sandbox-images.json (or a bench lock), each with a reason. Checked by scripts/images/check-image-refs.py; an entry or path that matches nothing fails the gate, so this list only shrinks.",
   "exclude": [
-    "libs/fleet/**",
     "blog/**",
     "docs/changelog/**",
     "CHANGELOG*",
@@ -53,7 +52,8 @@
     "public.ecr.aws/example/*": "placeholder namespace in tests",
     "registry.example.com/*": "placeholder registry in tests",
     "123456789012.dkr.ecr.*": "placeholder AWS account in docs and tests (private ECR)",
-    "ghcr.io/acme-corp/*": "fictional private registry ref in the cua-telemetry privacy test (proves image refs are redacted)"
+    "ghcr.io/acme-corp/*": "fictional private registry ref in the cua-telemetry privacy test (proves image refs are redacted)",
+    "*-docker.pkg.dev/p/*": "placeholder GCP Artifact Registry project in tests (private registry refused without credentials)"
   },
   "refs": {
     "docker.io/trycua/cua-qemu-linux:latest": {

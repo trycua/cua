@@ -1,0 +1,21 @@
+id = "deepinfra"
+name = "DeepInfra"
+icon = "deepinfra"
+tier = "more"
+rank = 150
+kind = "hosted"
+aliases = ["deep infra"]
+wire = "openai-chat"
+base_url = "https://api.deepinfra.com/v1/openai"
+base_url_env = "DEEPINFRA_BASE_URL"
+default_model = ""
+hermes_id = "deepinfra"
+key_help = "Create a key at deepinfra.com."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "DEEPINFRA_API_KEY"
+
+[delivery]
+hermes = ["DEEPINFRA_API_KEY"]

@@ -112,7 +112,12 @@ export function machinesMethods({ model }: BridgeContext): Handlers {
     "machines.list": async () => {
       if (model.host.state === null && model.servicesIn) await model.host.refresh();
       // Who the relay sees connected now, not at the last visit; not before the services are in.
-      if (model.servicesIn) await model.devices.refreshIfStale();
+      // With an earlier read the page is answered from it now and the relay's answer follows
+      // (`machines.changed`): a slow relay never holds the Machines page empty.
+      if (model.servicesIn) {
+        if (model.devices.snapshot === null) await model.devices.refreshIfStale();
+        else void model.devices.refreshIfStale().catch(() => undefined);
+      }
       return machinesState(model);
     },
     // Renames one of your machines on the relay; `this-mac` is this

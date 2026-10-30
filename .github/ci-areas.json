@@ -1,0 +1,430 @@
+{
+ "shared": [
+  ".github/**",
+  "*",
+  "**/Cargo.lock",
+  "**/rust-toolchain.toml",
+  "**/pnpm-lock.yaml",
+  "**/pnpm-workspace.yaml",
+  "**/package-lock.json",
+  "**/uv.lock",
+  "libs/cua/Cargo.toml",
+  "libs/cua-driver/rust/Cargo.toml",
+  "libs/cua-spacesd/Cargo.toml",
+  "libs/cua-driver/rust/.cargo/**",
+  "libs/cua/.cargo/**",
+  "libs/cua/proto/**",
+  "libs/cua/crates/cua-proto/**",
+  "libs/cua-driver/rust/crates/cua-driver-core/**",
+  "libs/cua-driver/rust/crates/cua-driver-contract/**",
+  "libs/cua/crates/cua-sandbox-core/**",
+  "scripts/ci/**",
+  "flake.nix",
+  "nix/**"
+ ],
+ "areas": {
+  "relay": {
+   "paths": [
+    "libs/cua-spacesd/crates/cua-relay/**"
+   ],
+   "workflows": [
+    "ci-cua-relay-image.yml",
+    "ci-cua-spacesd.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "license-check.yml"
+   ],
+   "narrowed": true
+  },
+  "spacesd": {
+   "paths": [
+    "libs/cua-spacesd/**"
+   ],
+   "workflows": [
+    "cd-image-linux.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-cua-oci-spacesd.yml",
+    "ci-cua-oidc.yml",
+    "ci-cua-relay-image.yml",
+    "ci-cua-sandbox-doctor.yml",
+    "ci-cua-sdk.yml",
+    "ci-cua-spacesd.yml",
+    "ci-elastic.yml",
+    "ci-images-spacesd-lag.yml",
+    "ci-lockfiles.yml",
+    "ci-openkoalabot-example-tauri.yml",
+    "ci-release-spacesd-pin.yml",
+    "ci-spdx-headers.yml",
+    "ci-test-python.yml",
+    "e2b-core-nightly.yml",
+    "e2e-cua-sdk.yml",
+    "license-check.yml",
+    "perf-cua-channel.yml"
+   ]
+  },
+  "driver-rust": {
+   "paths": [
+    "libs/cua-driver/rust/**"
+   ],
+   "workflows": [
+    "cd-cua-perception.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-driver-contract-clients.yml",
+    "ci-cua-driver-preflight.yml",
+    "ci-cua-driver-quick.yml",
+    "ci-cua-driver-valgrind.yml",
+    "ci-cua-perception-release.yml",
+    "ci-cua-s1-weights.yml",
+    "ci-cua-sandbox-doctor.yml",
+    "ci-cua-spacesd.yml",
+    "ci-driver-mcp-candidate.yml",
+    "ci-lockfiles.yml",
+    "ci-nix-linux.yml",
+    "ci-platform-linux-portability.yml",
+    "ci-rust-format.yml",
+    "ci-rust-linux.yml",
+    "ci-rust-macos.yml",
+    "ci-rust-windows.yml",
+    "ci-spdx-headers.yml",
+    "ci-swift-linker.yml",
+    "ci-test-scripts.yml",
+    "ci-ts-cursor-motion.yml",
+    "clawhub-cua-driver.yml",
+    "e2e-cua-sdk.yml",
+    "e2e-rust-linux.yml",
+    "fuzz-cua-driver.yml",
+    "license-check.yml",
+    "smoke-cua-driver-live.yml"
+   ]
+  },
+  "driver": {
+   "paths": [
+    "libs/cua-driver/**",
+    "libs/cua-driver-bench/**"
+   ],
+   "workflows": [
+    "cd-cua-perception.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-driver-bench.yml",
+    "ci-cua-driver-contract-clients.yml",
+    "ci-cua-driver-preflight.yml",
+    "ci-cua-driver-quick.yml",
+    "ci-cua-driver-valgrind.yml",
+    "ci-cua-perception-release.yml",
+    "ci-cua-s1-weights.yml",
+    "ci-cua-sandbox-doctor.yml",
+    "ci-cua-spacesd.yml",
+    "ci-driver-mcp-candidate.yml",
+    "ci-hyprland-plugin.yml",
+    "ci-jev-use.yml",
+    "ci-lockfiles.yml",
+    "ci-nix-linux.yml",
+    "ci-platform-linux-portability.yml",
+    "ci-rust-format.yml",
+    "ci-rust-linux.yml",
+    "ci-rust-macos.yml",
+    "ci-rust-windows.yml",
+    "ci-spdx-headers.yml",
+    "ci-swift-linker.yml",
+    "ci-test-scripts.yml",
+    "ci-ts-cursor-motion.yml",
+    "clawhub-cua-driver.yml",
+    "docs-driver-first-run-smoke.yml",
+    "e2e-cua-sdk.yml",
+    "e2e-rust-linux.yml",
+    "fuzz-cua-driver.yml",
+    "license-check.yml",
+    "nightly-hyprland-plugin-requalify.yml",
+    "smoke-cua-driver-live.yml"
+   ]
+  },
+  "cua": {
+   "paths": [
+    "libs/cua/**",
+    "tests/e2e/**"
+   ],
+   "workflows": [
+    "cd-image-linux.yml",
+    "cd-image-omarchy.yml",
+    "chaos-cua-compat.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-byoc.yml",
+    "ci-cua-compat-daytona.yml",
+    "ci-cua-compat-modal.yml",
+    "ci-cua-compat.yml",
+    "ci-cua-contrib.yml",
+    "ci-cua-microvm.yml",
+    "ci-cua-oci-spacesd.yml",
+    "ci-cua-oidc.yml",
+    "ci-cua-proto.yml",
+    "ci-cua-relay-image.yml",
+    "ci-cua-sandbox-doctor.yml",
+    "ci-cua-sdk.yml",
+    "ci-cua-spaces-macos.yml",
+    "ci-cua-spaces-web.yml",
+    "ci-cua-spaces.yml",
+    "ci-cua-spacesd-html5.yml",
+    "ci-cua-spacesd.yml",
+    "ci-elastic.yml",
+    "ci-lockfiles.yml",
+    "ci-openkoalabot-example-tauri.yml",
+    "ci-pi-durable-crash.yml",
+    "ci-spdx-headers.yml",
+    "ci-test-python.yml",
+    "ci-vm-density.yml",
+    "docs-compile-lanes.yml",
+    "docs-nightly.yml",
+    "docs-page-tests.yml",
+    "e2b-bindings.yml",
+    "e2b-core-nightly.yml",
+    "e2e-cua-sdk.yml",
+    "license-check.yml",
+    "nightly-build.yml",
+    "nightly-e2b-rollouts.yml",
+    "nightly-fork-batch.yml",
+    "nightly-qemu-fork.yml",
+    "nightly-qemu-ready.yml",
+    "nightly-qemu-vmm.yml",
+    "perf-cua-channel.yml",
+    "space-egress-nightly.yml"
+   ]
+  },
+  "images": {
+   "paths": [
+    "libs/images/**",
+    "scripts/images/**"
+   ],
+   "workflows": [
+    "cd-bench-images.yml",
+    "cd-image-linux.yml",
+    "cd-image-macos.yml",
+    "cd-image-omarchy.yml",
+    "cd-image-runtime-gvisor.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-spaces-macos.yml",
+    "ci-cua-spacesd.yml",
+    "ci-images-chromium-pin.yml",
+    "ci-images-spacesd-lag.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "e2b-core-nightly.yml",
+    "e2e-cua-sdk.yml",
+    "license-check.yml",
+    "nightly-qemu-ready.yml",
+    "perf-cua-channel.yml"
+   ]
+  },
+  "spaces-web": {
+   "paths": [
+    "apps/cua-spaces-web/**",
+    "apps/cua-spaces-desktop/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-cua-spaces-macos.yml",
+    "ci-cua-spaces-web.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "spaces-app": {
+   "paths": [
+    "apps/cua-spaces/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-cua-spaces-web.yml",
+    "ci-cua-spaces.yml",
+    "ci-installers.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "license-check.yml"
+   ]
+  },
+  "spaces-macos": {
+   "paths": [
+    "apps/cua-spaces-macos/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-cua-spaces-macos.yml",
+    "ci-cua-spaces-web.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "python": {
+   "paths": [
+    "libs/python/**",
+    "libs/cua-bench/**",
+    "libs/cua-bench-rl/**",
+    "libs/cua-s1/**"
+   ],
+   "workflows": [
+    "ci-bench-ale-compat.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-contrib.yml",
+    "ci-cua-driver-contract-clients.yml",
+    "ci-cua-s1-weights.yml",
+    "ci-cua-s1.yml",
+    "ci-cua-sdk.yml",
+    "ci-driver-mcp-candidate.yml",
+    "ci-lint-python.yml",
+    "ci-lockfiles.yml",
+    "ci-py-agent.yml",
+    "ci-py-bench-ui.yml",
+    "ci-py-bench.yml",
+    "ci-py-core.yml",
+    "ci-py-som.yml",
+    "ci-spdx-headers.yml",
+    "ci-test-python.yml",
+    "ci-test-scripts.yml",
+    "docs-page-tests.yml",
+    "e2b-conformance.yml",
+    "e2e-cua-sdk.yml",
+    "license-check.yml"
+   ]
+  },
+  "typescript": {
+   "paths": [
+    "libs/typescript/**",
+    "libs/cuabot/**"
+   ],
+   "workflows": [
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-container-cuabot.yml",
+    "ci-lint-typescript.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "ci-ts-core.yml",
+    "ci-ts-cursor-motion.yml",
+    "license-check.yml"
+   ]
+  },
+  "lume": {
+   "paths": [
+    "libs/lume/**",
+    "libs/lumier/**",
+    "libs/spaces-sdk-swift/**"
+   ],
+   "workflows": [
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-container-lumier.yml",
+    "ci-cua-sdk.yml",
+    "ci-cua-spaces-macos.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "ci-swift-lume.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "containers": {
+   "paths": [
+    "libs/kasm/**",
+    "libs/qemu-docker/**",
+    "libs/xfce/**",
+    "libs/xfce-cua/**"
+   ],
+   "workflows": [
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-container-kasm.yml",
+    "ci-container-qemu-android.yml",
+    "ci-container-qemu-linux.yml",
+    "ci-container-qemu-windows.yml",
+    "ci-container-xfce-cua.yml",
+    "ci-container-xfce.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "license-check.yml"
+   ]
+  },
+  "docs": {
+   "paths": [
+    "docs/**",
+    "skills/**"
+   ],
+   "workflows": [
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-contrib.yml",
+    "ci-cua-sandbox-action.yml",
+    "ci-jev-use.yml",
+    "ci-lockfiles.yml",
+    "ci-public-containerdisk-refs.yml",
+    "ci-spdx-headers.yml",
+    "ci-test-scripts.yml",
+    "docs-compile-lanes.yml",
+    "docs-driver-first-run-smoke.yml",
+    "docs-mcp-corpus-parity.yml",
+    "docs-mcp-server-build-push.yml",
+    "docs-page-tests.yml",
+    "e2e-cua-sdk.yml",
+    "license-check.yml"
+   ]
+  },
+  "compat": {
+   "paths": [
+    "tests/compat/**"
+   ],
+   "workflows": [
+    "chaos-cua-compat.yml",
+    "ci-check-docs-links.yml",
+    "ci-cua-compat-daytona.yml",
+    "ci-cua-compat-e2b.yml",
+    "ci-cua-compat-modal.yml",
+    "ci-cua-compat.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "compat-drift.yml",
+    "e2e-compat-examples.yml",
+    "license-check.yml"
+   ]
+  },
+  "installers": {
+   "paths": [
+    "scripts/install/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-installers.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "examples": {
+   "paths": [
+    "examples/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-lockfiles.yml",
+    "ci-openkoalabot-example-tauri.yml",
+    "ci-spdx-headers.yml",
+    "license-check.yml"
+   ]
+  }
+ }
+}

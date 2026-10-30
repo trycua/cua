@@ -1409,7 +1409,6 @@ impl std::fmt::Display for LaunchDaemonError {
 
 impl std::error::Error for LaunchDaemonError {}
 
-#[cfg(target_os = "macos")]
 pub fn launch_daemon_and_wait(
     socket_path: &str,
     timeout_secs: u64,
@@ -1431,6 +1430,20 @@ pub fn launch_daemon_and_wait(
     )
 }
 
+fn wait_for_daemon_listening(socket_path: &str, timeout_secs: u64) -> bool {
+    use std::time::{Duration, Instant};
+
+    // 100ms tick matches Swift's `usleep(100_000)`.
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    while Instant::now() < deadline {
+        if crate::serve::is_daemon_listening(socket_path) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
 #[cfg(target_os = "macos")]
 fn launch_daemon_with_state_and_wait(
     socket_path: &str,
@@ -1440,7 +1453,6 @@ fn launch_daemon_with_state_and_wait(
     _allow_managed_restart: bool,
 ) -> Result<(), LaunchDaemonError> {
     use std::process::{Command as Cmd, Stdio};
-    use std::time::{Duration, Instant};
 
     // Forward `--socket <path>` to the relaunched daemon when the caller
     // passed a non-default socket via `cua-driver mcp --socket /path`.
@@ -1503,13 +1515,8 @@ fn launch_daemon_with_state_and_wait(
     }
 
     // Poll the UDS until the daemon answers a probe or we time out.
-    // 100ms tick matches Swift's `usleep(100_000)`.
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    while Instant::now() < deadline {
-        if crate::serve::is_daemon_listening(socket_path) {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(100));
+    if wait_for_daemon_listening(socket_path, timeout_secs) {
+        return Ok(());
     }
 
     Err(LaunchDaemonError {
@@ -1523,28 +1530,6 @@ fn launch_daemon_with_state_and_wait(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn launch_daemon_and_wait(
-    socket_path: &str,
-    timeout_secs: u64,
-    claude_code_compat: bool,
-    grants: &[String],
-    experimental_history: bool,
-) -> Result<(), LaunchDaemonError> {
-    let state = crate::history_runtime::DaemonLaunchState {
-        claude_code_compat,
-        grants: grants.to_vec(),
-        ..Default::default()
-    };
-    launch_daemon_with_state_and_wait(
-        socket_path,
-        timeout_secs,
-        &state,
-        experimental_history,
-        true,
-    )
-}
-
-#[cfg(not(target_os = "macos"))]
 fn launch_daemon_with_state_and_wait(
     socket_path: &str,
     timeout_secs: u64,
@@ -1552,8 +1537,6 @@ fn launch_daemon_with_state_and_wait(
     experimental_history: bool,
     allow_managed_restart: bool,
 ) -> Result<(), LaunchDaemonError> {
-    use std::time::{Duration, Instant};
-
     let executable = std::env::current_exe().map_err(|error| LaunchDaemonError {
         kind: LaunchDaemonErrorKind::Failed,
         message: format!("current Cua Driver executable is unavailable: {error}"),
@@ -1584,12 +1567,8 @@ fn launch_daemon_with_state_and_wait(
         spawn_detached_windows_daemon(&executable, &arguments)?;
     }
 
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    while Instant::now() < deadline {
-        if crate::serve::is_daemon_listening(socket_path) {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(100));
+    if wait_for_daemon_listening(socket_path, timeout_secs) {
+        return Ok(());
     }
     Err(LaunchDaemonError {
         kind: LaunchDaemonErrorKind::Timeout,
@@ -1870,7 +1849,7 @@ where
             );
         }
         #[cfg(target_os = "macos")]
-        {
+        let experimental_history = {
             let app_name = crate::bundle::app_name();
             eprintln!(
                 "{}: mcp launched without {app_name}.app's TCC grants; \
@@ -1878,29 +1857,10 @@ where
                  and proxying MCP requests through it.",
                 crate::bundle::cli_name()
             );
-            if let Err(error) = launch_daemon_and_wait(
-                &socket_path,
-                10,
-                claude_code_compat,
-                grants,
-                crate::history_runtime::preview_admitted_preference(),
-            ) {
-                if let Some(on_startup) = on_startup.take() {
-                    on_startup(
-                        if error.kind == LaunchDaemonErrorKind::Timeout {
-                            McpDaemonStartup::LaunchTimeout
-                        } else {
-                            McpDaemonStartup::LaunchFailed
-                        },
-                        false,
-                    );
-                }
-                return Err(error.into());
-            }
-            daemon = McpDaemonStartup::Launched;
-        }
+            crate::history_runtime::preview_admitted_preference()
+        };
         #[cfg(not(target_os = "macos"))]
-        {
+        let experimental_history = {
             if !crate::history_runtime::preview_admitted_preference() {
                 if let Some(on_startup) = on_startup.take() {
                     on_startup(McpDaemonStartup::UnsupportedRelaunch, false);
@@ -1913,23 +1873,28 @@ where
                      Then re-run `cua-driver mcp`."
                 );
             }
-            if let Err(error) =
-                launch_daemon_and_wait(&socket_path, 10, claude_code_compat, grants, true)
-            {
-                if let Some(on_startup) = on_startup.take() {
-                    on_startup(
-                        if error.kind == LaunchDaemonErrorKind::Timeout {
-                            McpDaemonStartup::LaunchTimeout
-                        } else {
-                            McpDaemonStartup::LaunchFailed
-                        },
-                        false,
-                    );
-                }
-                return Err(error.into());
+            true
+        };
+        if let Err(error) = launch_daemon_and_wait(
+            &socket_path,
+            10,
+            claude_code_compat,
+            grants,
+            experimental_history,
+        ) {
+            if let Some(on_startup) = on_startup.take() {
+                on_startup(
+                    if error.kind == LaunchDaemonErrorKind::Timeout {
+                        McpDaemonStartup::LaunchTimeout
+                    } else {
+                        McpDaemonStartup::LaunchFailed
+                    },
+                    false,
+                );
             }
-            daemon = McpDaemonStartup::Launched;
+            return Err(error.into());
         }
+        daemon = McpDaemonStartup::Launched;
     }
 
     if let Some(on_startup) = on_startup.take() {
@@ -4594,7 +4559,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": [
                     {"name":"show","abstract":"Print the full config.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (resting float) is on, off or default and on by default; cursor.marks (action marks) and cursor.rotate (turn toward travel) are on, off or default and off by default. All three apply to every cursor at once.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
@@ -5318,7 +5283,7 @@ pub fn run_config_cmd(
                 Some(k) => k,
                 None => {
                     eprintln!("Usage: cua-driver config get <key>");
-                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing, cursor.badges");
+                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing, cursor.badges, cursor.marks, cursor.float, cursor.rotate");
                     process::exit(64);
                 }
             };
@@ -5347,7 +5312,7 @@ pub fn run_config_cmd(
                 );
             } else {
                 eprintln!("Unknown config key: {key}");
-                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges");
+                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges, cursor.marks, cursor.float, cursor.rotate");
                 process::exit(64);
             }
         }
@@ -5396,10 +5361,17 @@ pub fn run_config_cmd(
                 "max_image_dimension": 0
             });
             call("set_config", defaults);
-            // Also clear the saved cursor motion defaults and badge mode.
+            // Also clear the saved cursor motion defaults, badge mode and
+            // opt-in cursor extras.
             exit_on_tool_error(&call(
                 "set_config",
-                serde_json::json!({ "cursor.motion": "default", "cursor.badges": "default" }),
+                serde_json::json!({
+                    "cursor.motion": "default",
+                    "cursor.badges": "default",
+                    "cursor.marks": "default",
+                    "cursor.float": "default",
+                    "cursor.rotate": "default",
+                }),
             ));
             println!("Config reset to defaults.");
             let config = get_config();
@@ -5499,6 +5471,15 @@ fn first_sentence(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn wait_for_daemon_listening_zero_timeout_returns_false() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("missing.sock");
+        assert!(!super::wait_for_daemon_listening(
+            socket.to_str().unwrap(),
+            0
+        ));
+    }
 
     #[test]
     fn cli_docs_json_examples_cover_every_command() {

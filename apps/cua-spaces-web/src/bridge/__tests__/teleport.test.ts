@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { createDemoAdapter } from "../adapters/demo";
 import { ShareStore } from "../share";
 import type { DataAdapter } from "../adapter";
+import type { CatalogEntry } from "../contracts/teleport";
 import type { CoreClient } from "../core";
 import { MAX_IMAGES, MAX_READS, TeleportStore, pickerConsent } from "../teleport";
 import { testCore, until, wasmBuilt } from "./testCore";
@@ -232,6 +233,87 @@ describe.skipIf(!wasmBuilt)("teleport picker", () => {
     expect(t.getSession()!.primary).toEqual({ label: "Stream to This Mac", enabled: true });
     await t.activate();
     expect(t.getSession()).toBeNull();
+  });
+
+  // CUA-1671: a window dropped on a Space opens the sheet at its app; Back
+  // from it is the whole grid, as when the picker opens fresh.
+  const dropped = (over: Partial<CatalogEntry>): CatalogEntry => ({
+    id: "com.apple.TextEdit",
+    name: "TextEdit",
+    hostPath: "/System/Applications/TextEdit.app",
+    hostAppId: "com.apple.TextEdit",
+    version: null,
+    capability: "unsupported",
+    reason: "no Linux build in the install manifest",
+    moves: [],
+    providerId: null,
+    installSource: null,
+    installId: null,
+    installVersion: null,
+    launchBin: null,
+    lastUsedMs: null,
+    json: "{}",
+    ...over,
+  });
+  const grid = (t: TeleportStore) =>
+    t.getSession()!.grid.sections.map((x) => [x.title, x.tiles.map((y) => y.id)] as const);
+
+  /** The demo host, counting its catalog reads; the first `failures` fail. */
+  const counting = (failures = 0) => {
+    const demo = createDemoAdapter({ latencyMs: 0, stepMs: 2 });
+    const reads = { catalog: 0 };
+    const adapter: DataAdapter = {
+      ...demo,
+      mode: demo.mode,
+      subscribe: demo.subscribe.bind(demo),
+      call: ((op: string, args: unknown) => {
+        if (op === "teleport.catalog" && ++reads.catalog <= failures) return Promise.reject(new Error("offline"));
+        return demo.call(op as never, args as never);
+      }) as DataAdapter["call"],
+    };
+    return { adapter, reads };
+  };
+
+  it("goes Back from a dropped app that can't move to the whole grid", async () => {
+    const core = await testCore();
+    const fresh = new TeleportStore(createDemoAdapter({ latencyMs: 0, stepMs: 2 }), core);
+    fresh.open(space);
+    await until(() => expect(fresh.getSession()!.state.step).toBe("pick"));
+
+    const { adapter, reads } = counting();
+    const t = new TeleportStore(adapter, core);
+    t.open(space, dropped({}));
+    expect(t.getSession()!.state.step).toBe("error");
+    expect(t.getSession()!.state.error).toMatch(/^TextEdit cannot be teleported/);
+    t.send({ type: "back" });
+    const s = await until(() => {
+      const x = t.getSession()!;
+      expect(x.state.step).toBe("pick");
+      return x;
+    });
+    expect(reads.catalog).toBe(1);
+    expect(s.query).toBe("");
+    expect(s.state.entry).toBeNull();
+    expect(s.grid.sections.flatMap((x) => x.tiles).length).toBeGreaterThan(0);
+    expect(grid(t)).toEqual(grid(fresh));
+    expect(s.primary).toEqual(fresh.getSession()!.primary);
+  });
+
+  it("goes Back from a dropped app's options to the whole grid, reading a failed catalog again", async () => {
+    const { adapter, reads } = counting(1);
+    const t = new TeleportStore(adapter, await testCore());
+    t.open(space, dropped({ id: "com.google.Chrome", name: "Google Chrome", capability: "full", reason: null, moves: ["app_only"] }));
+    expect(t.getSession()!.state.step).toBe("options");
+    await settle();
+    // The dropped app's options don't read the catalog.
+    expect(reads.catalog).toBe(0);
+    t.send({ type: "back" });
+    await until(() => expect(t.getSession()!.state.step).toBe("error"));
+    t.send({ type: "back" });
+    await until(() => expect(t.getSession()!.state.step).toBe("pick"));
+    expect(reads.catalog).toBe(2);
+    expect(t.getSession()!.state.entry).toBeNull();
+    expect(t.getSession()!.grid.sections.flatMap((x) => x.tiles).length).toBeGreaterThan(0);
   });
 });
 

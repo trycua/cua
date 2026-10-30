@@ -1145,8 +1145,12 @@ async fn apply_machines(coord: &Coordinator, links: &Links, machines: Vec<PoolMa
         let same = |r: &NodeRow| {
             if !row.relay_machine.is_empty() {
                 r.relay_machine == row.relay_machine
-            } else if !row.direct.is_empty() {
-                r.via == row.via && r.direct == row.direct
+            } else if row.via == "direct" {
+                // By its address, else by name: the same host at a new
+                // address keeps its row (and its name) rather than being
+                // added as a second one.
+                r.via == "direct"
+                    && ((!row.direct.is_empty() && r.direct == row.direct) || r.name == wanted)
             } else {
                 r.relay_machine.is_empty() && r.name == wanted
             }
@@ -1211,7 +1215,15 @@ async fn apply_machines(coord: &Coordinator, links: &Links, machines: Vec<PoolMa
             // in a row (removed, or no longer providing Spaces): it leaves
             // the pool, so its name is free again, the coordinator stops
             // polling it and `cua machines` stops showing it.
-            let _ = coord.remove_node(&r.name).await;
+            // A direct host's jobs are not given up on a listing that may
+            // be short (the file read mid-edit): it stays, draining, until
+            // none runs there.
+            if r.via == "direct" && coord.node_busy(&r.name) {
+                continue;
+            }
+            if coord.remove_node(&r.name).await.is_ok() && r.via == "direct" {
+                links.lock().expect("links").remove(&r.name);
+            }
         }
     }
 }
@@ -1495,6 +1507,173 @@ mod tests {
         assert_eq!(coord.node_rows()[0].state, "draining");
         apply_machines(&coord, &links, vec![], true).await;
         assert!(coord.node_rows().is_empty(), "{:?}", coord.node_rows());
+    }
+
+    async fn pool(dir: &Path) -> (Arc<Coordinator>, Links) {
+        let links: Links = Arc::default();
+        let coord = Coordinator::start(
+            crate::coordinator::Config::new(dir.join("c")),
+            Some(factory(&links, None)),
+        )
+        .await
+        .unwrap();
+        (coord, links)
+    }
+
+    /// The same direct host as `base`, listed under another spelling.
+    fn direct_like(base: &PoolMachine, name: &str) -> PoolMachine {
+        let mut m = base.clone();
+        m.row.name = name.into();
+        m
+    }
+
+    fn names(coord: &Coordinator) -> Vec<String> {
+        let mut n: Vec<String> = coord.node_rows().into_iter().map(|r| r.name).collect();
+        n.sort();
+        n
+    }
+
+    #[tokio::test]
+    async fn a_direct_host_with_capitals_or_spaces_keeps_one_row_over_many_passes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (coord, links) = pool(dir.path()).await;
+        for _ in 0..12 {
+            apply_machines(
+                &coord,
+                &links,
+                vec![
+                    direct(dir.path(), "ExampleHost", "100.1.1.1:7000"),
+                    direct(dir.path(), "My Mac Pro", "100.1.1.2:7000"),
+                ],
+                true,
+            )
+            .await;
+        }
+        assert_eq!(names(&coord), ["examplehost", "my-mac-pro"]);
+        assert!(coord.node_rows().iter().all(|r| r.state == "ready"));
+    }
+
+    #[tokio::test]
+    async fn a_direct_host_is_matched_by_its_address_when_its_name_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (coord, links) = pool(dir.path()).await;
+        apply_machines(
+            &coord,
+            &links,
+            vec![direct(dir.path(), "old", "100.1.1.1:7000")],
+            true,
+        )
+        .await;
+        apply_machines(
+            &coord,
+            &links,
+            vec![direct(dir.path(), "New Name", "100.1.1.1:7000")],
+            true,
+        )
+        .await;
+        assert_eq!(names(&coord), ["old"]);
+        // The same name at a new address is the same host.
+        apply_machines(
+            &coord,
+            &links,
+            vec![direct(dir.path(), "old", "100.9.9.9:7000")],
+            true,
+        )
+        .await;
+        let rows = coord.node_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].direct, "100.9.9.9:7000");
+    }
+
+    #[tokio::test]
+    async fn rows_left_by_the_rename_bug_heal_to_the_one_canonical_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let (coord, links) = pool(dir.path()).await;
+        // What an older build left: the original row draining, a copy per pass.
+        let base = direct(dir.path(), "examplehost", "100.1.1.1:7000");
+        for i in 0..2000u32 {
+            let mut row = base.row.clone();
+            row.name = if i == 0 {
+                "examplehost".into()
+            } else {
+                format!("examplehost-{}", i + 1)
+            };
+            row.state = if i == 1999 { "ready" } else { "draining" }.into();
+            row.added_ms = 1000 + i64::from(i);
+            links
+                .lock()
+                .unwrap()
+                .insert(row.name.clone(), base.link.clone());
+            coord.add_node(row).await.unwrap();
+        }
+        let other = direct(dir.path(), "other", "100.2.2.2:7000");
+        let mut gone = other.row.clone();
+        gone.name = "gone".into();
+        gone.direct = "100.3.3.3:7000".into();
+        gone.state = "draining".into();
+        links
+            .lock()
+            .unwrap()
+            .insert(gone.name.clone(), base.link.clone());
+        coord.add_node(gone).await.unwrap();
+        let listed = || vec![direct_like(&base, "ExampleHost"), other.clone()];
+        // One pass drops every draining copy and the unlisted host; the
+        // ready copy drains, and leaves at the next.
+        apply_machines(&coord, &links, listed(), true).await;
+        assert!(coord.node_rows().len() <= 3, "{}", coord.node_rows().len());
+        apply_machines(&coord, &links, listed(), true).await;
+        assert_eq!(names(&coord), ["examplehost", "other"]);
+        let kept = coord
+            .node_rows()
+            .into_iter()
+            .find(|r| r.name == "examplehost")
+            .unwrap();
+        assert_eq!((kept.state.as_str(), kept.added_ms), ("ready", 1000));
+        apply_machines(&coord, &links, listed(), true).await;
+        assert_eq!(names(&coord), ["examplehost", "other"]);
+    }
+
+    #[tokio::test]
+    async fn a_direct_host_gone_from_the_list_drains_then_leaves() {
+        let dir = tempfile::tempdir().unwrap();
+        let (coord, links) = pool(dir.path()).await;
+        apply_machines(
+            &coord,
+            &links,
+            vec![direct(dir.path(), "a", "100.1.1.1:7000")],
+            true,
+        )
+        .await;
+        apply_machines(&coord, &links, vec![], true).await;
+        assert_eq!(coord.node_rows()[0].state, "draining");
+        apply_machines(&coord, &links, vec![], true).await;
+        assert!(coord.node_rows().is_empty());
+        assert!(links.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn relay_rows_are_not_touched_by_direct_matching() {
+        let dir = tempfile::tempdir().unwrap();
+        let (coord, links) = pool(dir.path()).await;
+        for _ in 0..5 {
+            apply_machines(
+                &coord,
+                &links,
+                vec![
+                    machine(dir.path(), "AWS 1", "m1"),
+                    direct(dir.path(), "AWS 1", "100.1.1.1:7000"),
+                ],
+                false,
+            )
+            .await;
+        }
+        assert_eq!(names(&coord), ["aws-1", "aws-1-2"]);
+        let vias: Vec<_> = coord
+            .node_rows()
+            .into_iter()
+            .map(|r| (r.name, r.via))
+            .collect();
+        assert!(vias.contains(&("aws-1".into(), "relay".into())));
     }
 
     #[test]

@@ -592,7 +592,9 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
 
     public func streamProvider(id: String) async throws -> SpaceStreamSourceProviding {
-        let space = try await connection.attach(to: SpaceID(id), requireReady: false)
+        // Not `attach(to:)`: that lists every Space on every machine (and
+        // waits for the relay) before the stream is even asked for.
+        let space = try await connection.attachForStream(to: SpaceID(id))
         return SpaceStreamProvider(space: space)
     }
 

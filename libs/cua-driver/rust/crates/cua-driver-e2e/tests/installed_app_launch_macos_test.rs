@@ -9,7 +9,7 @@
 
 #![cfg(target_os = "macos")]
 
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,47 @@ use cua_driver_testkit::{Driver, McpDriver};
 const FINDER_BUNDLE: &str = "com.apple.finder";
 const CALCULATOR_BUNDLE: &str = "com.apple.calculator";
 const TEXTEDIT_BUNDLE: &str = "com.apple.TextEdit";
+const TEST_APP_BUNDLE: &str = "com.trycua.harness.appkit";
+const TEST_APP_PROCESS: &str = "CuaTestHarness.AppKit";
+
+struct TestOwnedApp {
+    child: Child,
+    pid: u32,
+}
+
+impl TestOwnedApp {
+    fn launch() -> Self {
+        let app = cua_driver_testkit::harness_app("harness-appkit", "CuaTestHarness.AppKit.app");
+        let executable = app.join("Contents/MacOS/CuaTestHarness.AppKit");
+        assert!(
+            executable.exists(),
+            "required AppKit harness is missing at {executable:?}; run the fixture build"
+        );
+        let mut child = Command::new(&executable);
+        child.stdout(Stdio::null()).stderr(Stdio::null());
+        let child = child
+            .spawn()
+            .unwrap_or_else(|error| panic!("launch AppKit harness {executable:?}: {error}"));
+        let pid = child.id();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !cua_driver_testkit::observer::macos::application_presented(pid) {
+            assert!(
+                Instant::now() < deadline,
+                "AppKit harness pid {pid} did not finish launching within 20s"
+            );
+            sleep(Duration::from_millis(50));
+        }
+        Self { child, pid }
+    }
+}
+
+impl Drop for TestOwnedApp {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        sleep(Duration::from_millis(200));
+    }
+}
 
 fn osascript(script: &str) -> Option<String> {
     let out = Command::new("osascript")
@@ -92,12 +133,11 @@ fn ensure_finder_frontmost() {
     panic!("could not make Finder stay frontmost for installed-app launch validation");
 }
 
-fn kill_app_process(process_name: &str) {
-    let _ = Command::new("pkill").args(["-x", process_name]).output();
-    sleep(Duration::from_millis(800));
-}
-
-fn launch_and_assert_frontmost_unchanged(driver: &mut McpDriver, bundle_id: &str, label: &str) {
+fn launch_and_assert_frontmost_unchanged(
+    driver: &mut McpDriver,
+    bundle_id: &str,
+    label: &str,
+) -> u32 {
     let before = frontmost_bundle_id();
     assert_eq!(
         before.as_deref(),
@@ -111,8 +151,9 @@ fn launch_and_assert_frontmost_unchanged(driver: &mut McpDriver, bundle_id: &str
         "{label}: launch_app({bundle_id}) failed: {}",
         launch.text()
     );
+    let pid = launch.structured()["pid"].as_i64().unwrap_or(0);
     assert!(
-        launch.structured()["pid"].as_i64().unwrap_or(0) > 0,
+        pid > 0,
         "{label}: launch_app({bundle_id}) returned no pid: {:?}",
         launch.raw
     );
@@ -124,9 +165,10 @@ fn launch_and_assert_frontmost_unchanged(driver: &mut McpDriver, bundle_id: &str
         Some(FINDER_BUNDLE),
         "{label}: launch_app({bundle_id}) stole focus; frontmost after launch was {after:?}"
     );
+    pid as u32
 }
 
-fn run_launch_case(cell_id: &str, bundle_id: &str, process_name: &str, label: &str) {
+fn run_launch_case(cell_id: &str, bundle_id: &str, label: &str) {
     let case = CaseSpec::delivered(
         cell_id,
         label,
@@ -139,7 +181,6 @@ fn run_launch_case(cell_id: &str, bundle_id: &str, process_name: &str, label: &s
         vec![OracleKind::Focus, OracleKind::Protocol],
     );
     execute_case(case, |evidence| {
-        kill_app_process(process_name);
         ensure_finder_frontmost();
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(cell_id)
             .expect("start installed macOS daemon proxy");
@@ -160,7 +201,6 @@ fn textedit_launch_preserves_finder_frontmost() {
     run_launch_case(
         "macos-textedit-launch-background",
         TEXTEDIT_BUNDLE,
-        "TextEdit",
         "textedit",
     );
 }
@@ -171,16 +211,15 @@ fn calculator_launch_preserves_finder_frontmost() {
     run_launch_case(
         "macos-calculator-launch-background",
         CALCULATOR_BUNDLE,
-        "Calculator",
         "calculator",
     );
 }
 
 #[test]
 #[ignore]
-fn textedit_launch_reopens_hidden_running_app_without_focus_steal() {
+fn appkit_launch_reopens_hidden_running_app_without_focus_steal() {
     let case = CaseSpec::delivered(
-        "macos-textedit-reopen-hidden",
+        "macos-appkit-reopen-hidden",
         "reopen a hidden running app",
         "appkit",
         "launch_app",
@@ -191,30 +230,39 @@ fn textedit_launch_reopens_hidden_running_app_without_focus_steal() {
         vec![OracleKind::Focus, OracleKind::Protocol],
     );
     execute_case(case, |evidence| {
-        kill_app_process("TextEdit");
+        let app = TestOwnedApp::launch();
         ensure_finder_frontmost();
-        let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-textedit-reopen-hidden")
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-appkit-reopen-hidden")
             .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
         driver.start_behavior_recording();
 
-        launch_and_assert_frontmost_unchanged(&mut driver, TEXTEDIT_BUNDLE, "initial launch");
-        set_process_visible("TextEdit", false);
+        let initial_pid =
+            launch_and_assert_frontmost_unchanged(&mut driver, TEST_APP_BUNDLE, "initial launch");
         assert_eq!(
-            process_visible("TextEdit"),
+            initial_pid, app.pid,
+            "launch_app should target the test-owned AppKit harness"
+        );
+        set_process_visible(TEST_APP_PROCESS, false);
+        assert_eq!(
+            process_visible(TEST_APP_PROCESS),
             Some(false),
-            "TextEdit should be hidden before the reopen request"
+            "AppKit harness should be hidden before the reopen request"
         );
         ensure_finder_frontmost();
 
-        launch_and_assert_frontmost_unchanged(&mut driver, TEXTEDIT_BUNDLE, "reopen");
+        let reopened_pid =
+            launch_and_assert_frontmost_unchanged(&mut driver, TEST_APP_BUNDLE, "reopen");
+        assert_eq!(
+            reopened_pid, app.pid,
+            "launch_app should reopen the existing test-owned AppKit harness"
+        );
         sleep(Duration::from_millis(1200));
         assert_eq!(
-            process_visible("TextEdit"),
+            process_visible(TEST_APP_PROCESS),
             Some(true),
             "launch_app should make an already-running hidden app visible"
         );
-        kill_app_process("TextEdit");
 
         Observation::delivered(
             vec![OracleKind::Focus, OracleKind::Protocol],

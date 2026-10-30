@@ -944,8 +944,40 @@ describe("webkit adapter", () => {
       ["teleport.catalog", { spaceId: "s1" }],
       ["teleport.plan", { spaceId: "s1", entry: { id: "com.apple.Safari" }, move: "app_with_state", files: [], sensitiveGroups: ["sign_ins"] }],
       ["teleport.run", { spaceId: "s1", plan: { json: "plan-1" }, consent: { approved: true, acknowledgeSensitive: true }, runId: "r1" }],
-      ["teleport.sites", { providerId: "safari" }],
+      ["teleport.sites", { providerId: "safari", profile: null }],
     ]);
+  });
+
+  it("maps the teleport readiness check onto the core's words", async () => {
+    const { win, sent } = webkitHost((req) =>
+      req.method === "teleport.readiness"
+        ? ok({
+            providerId: "chrome",
+            appDisplay: "Google Chrome",
+            keyvaultInitialized: true,
+            keyvaultUnlocked: false,
+            profile: "Profile 1",
+            defaultProfile: "Default",
+            profiles: [
+              { dir: "Default", name: "Personal", lastUsed: false },
+              { dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true },
+            ],
+            files: { state: "denied", say: "Turn on Full Disk Access." },
+            tabs: { state: "unknown", say: "" },
+            profileEmpty: false,
+          })
+        : ok(null),
+    );
+    const got = await createWebkitAdapter(win).call("teleport.readiness", { providerId: "chrome" });
+    expect(got).toMatchObject({
+      provider_id: "chrome",
+      keyvault_initialized: true,
+      default_profile: "Default",
+      profiles: [{ dir: "Default", last_used: false }, { dir: "Profile 1", account: "ada@work.example", last_used: true }],
+      files: { state: "denied" },
+      profile_empty: false,
+    });
+    expect(sent.map((r) => [r.method, r.args])).toEqual([["teleport.readiness", { providerId: "chrome", profile: null }]]);
   });
 
   it("sends only clean usage events, and opens only System Settings panes", async () => {

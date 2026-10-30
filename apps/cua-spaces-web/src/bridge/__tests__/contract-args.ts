@@ -87,6 +87,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
     runId: "run-contract",
   },
   "teleport.sites": { providerId: "chrome" },
+  "teleport.readiness": { providerId: "chrome", profile: null },
   "teleport.remembered": { providerId: "chrome", spaceId: SPACE },
   "teleport.streamWindow": { spaceId: SPACE, spaceName: "design-review", windowId: "w-1", appName: "Firefox", title: "Mozilla Firefox" },
   "sharing.list": { spaceId: SPACE },

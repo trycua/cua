@@ -1963,6 +1963,15 @@ impl KeyvaultClient {
         cua_sdk::support::run(async move { inner.inventory(&app, profile).await.map_err(kv_error) })
             .await
     }
+
+    /// Whether a teleport of `app` can work now: the Keyvault's state, what
+    /// macOS lets the daemon read, and the profiles. Reads no value and asks
+    /// for no presence.
+    pub async fn readiness(&self, app: String, profile: Option<String>) -> Result<KvReadiness> {
+        let inner = self.inner.clone();
+        cua_sdk::support::run(async move { inner.readiness(&app, profile).await.map_err(kv_error) })
+            .await
+    }
 }
 
 // ---- Onboarding and settings ---------------------------------------------

@@ -325,7 +325,7 @@ struct BridgeContractTests {
         "teleport.windows": "lists this Mac's real windows", "teleport.remoteWindows": "needs a Space's stream",
         "teleport.icon": "needs the SDK's teleport handle", "teleport.thumbnail": "needs the SDK's teleport handle",
         "teleport.plan": "needs the SDK's teleport handle", "teleport.run": "needs the SDK's teleport handle",
-        "teleport.sites": "reads a browser's profile through the Keyvault", "teleport.streamWindow": "opens a native window",
+        "teleport.sites": "reads a browser's profile through the Keyvault", "teleport.readiness": "checks a browser through the Keyvault", "teleport.streamWindow": "opens a native window",
         "volume.approve": "the fake has no request", "volume.deny": "the fake has no request",
         "volume.revoke": "the fake has no grant", "volume.resolve": "changes the fake's conflicts",
         "volume.reveal": "opens Finder", "loginItem.openSettings": "opens System Settings",
@@ -427,6 +427,13 @@ struct BridgeContractTests {
             KvDomainCount(domain: "slack.com", cookies: 4, sessionCookies: 1, localStorage: 2, passwords: 0,
                           signin: true, identityProvider: false, unavailable: 0, unavailableReason: ""),
         ], notes: [])
+        let readiness = KvReadiness(
+            providerId: "chrome", appDisplay: "Google Chrome", keyvaultInitialized: true, keyvaultUnlocked: false,
+            profile: "Profile 1", defaultProfile: "Default",
+            profiles: [KvBrowserProfile(dir: "Default", name: "Personal", account: nil, lastUsed: false),
+                       KvBrowserProfile(dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true)],
+            files: KvReadinessCheck(state: "denied", say: "Turn on Full Disk Access."),
+            tabs: KvReadinessCheck(state: "unknown", say: ""), profileEmpty: false)
         let open = AppOpenWindow(windowId: 41, appId: "", appName: "Slack", windowTitle: "general", supported: true,
                                  bundlePath: "/Applications/Slack.app")
         let remote = AppRemoteWindow(id: "w-1", appName: "Firefox", title: "Mozilla Firefox", visible: true, appId: "firefox",
@@ -442,6 +449,7 @@ struct BridgeContractTests {
             ("teleport.plan", BridgeValue.encode(plan)),
             ("teleport.run", WebUIBridge.runReport(report)),
             ("teleport.sites", BridgeValue.encode(sites)),
+            ("teleport.readiness", BridgeValue.encode(readiness)),
             ("teleport.streamWindow", NSNull()),
         ].map { ($0.0, try json($0.1)) }
     }

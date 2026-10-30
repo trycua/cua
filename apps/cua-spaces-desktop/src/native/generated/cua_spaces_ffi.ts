@@ -50305,6 +50305,69 @@ const FfiConverterTypeKvApprovalView = (() => {
     return new FFIConverter();
 })();
 
+export type KvBrowserProfile = {
+    /**
+     * Directory name (`Default`, `Profile 1`).
+     */
+    dir: string,
+    /**
+     * The name the person gave it.
+     */
+    name: string,
+    /**
+     * The account signed in to it.
+     */
+    account?: string,
+    /**
+     * The browser used it last.
+     */
+    lastUsed: boolean
+}
+
+/**
+ * Generated factory for {@link KvBrowserProfile} record objects.
+ */
+export const KvBrowserProfile = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<KvBrowserProfile, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<KvBrowserProfile>,
+    });
+})();
+
+const FfiConverterTypeKvBrowserProfile = (() => {
+    type TypeName = KvBrowserProfile;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                dir: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                account: FfiConverterOptionalString.read(from),
+                lastUsed: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.dir, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterOptionalString.write(value.account, into);
+            FfiConverterBool.write(value.lastUsed, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.dir) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterOptionalString.allocationSize(value.account) +
+             FfiConverterBool.allocationSize(value.lastUsed);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export enum KvCategory {
     /**
      * Every item, grouped by app.
@@ -51422,6 +51485,160 @@ const FfiConverterTypeKvPassphraseCheck = (() => {
             return FfiConverterBool.allocationSize(value.canSubmit) +
              FfiConverterOptionalTypeKvStrength.allocationSize(value.strength) +
              FfiConverterOptionalString.allocationSize(value.hint);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type KvReadinessCheck = {
+    /**
+     * `granted`, `denied` or `unknown` (only known by trying).
+     */
+    state: string,
+    /**
+     * What it means and what to do, in plain words (empty when nothing).
+     */
+    say: string
+}
+
+/**
+ * Generated factory for {@link KvReadinessCheck} record objects.
+ */
+export const KvReadinessCheck = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<KvReadinessCheck, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<KvReadinessCheck>,
+    });
+})();
+
+const FfiConverterTypeKvReadinessCheck = (() => {
+    type TypeName = KvReadinessCheck;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                state: FfiConverterString.read(from),
+                say: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.state, into);
+            FfiConverterString.write(value.say, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.state) +
+             FfiConverterString.allocationSize(value.say);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type KvReadiness = {
+    /**
+     * Provider id.
+     */
+    providerId: string,
+    /**
+     * App name.
+     */
+    appDisplay: string,
+    /**
+     * The Keyvault exists.
+     */
+    keyvaultInitialized: boolean,
+    /**
+     * The Keyvault is unlocked.
+     */
+    keyvaultUnlocked: boolean,
+    /**
+     * The profile checked: the one asked for, else the last used.
+     */
+    profile?: string,
+    /**
+     * The profile a teleport reads when none is named.
+     */
+    defaultProfile?: string,
+    /**
+     * Every profile.
+     */
+    profiles: Array<KvBrowserProfile>,
+    /**
+     * Reading the app's files (Full Disk Access).
+     */
+    files: KvReadinessCheck,
+    /**
+     * Reading the app's open tabs (Automation).
+     */
+    tabs: KvReadinessCheck,
+    /**
+     * The checked profile has no sign-in data.
+     */
+    profileEmpty: boolean
+}
+
+/**
+ * Generated factory for {@link KvReadiness} record objects.
+ */
+export const KvReadiness = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<KvReadiness, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<KvReadiness>,
+    });
+})();
+
+const FfiConverterTypeKvReadiness = (() => {
+    type TypeName = KvReadiness;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                providerId: FfiConverterString.read(from),
+                appDisplay: FfiConverterString.read(from),
+                keyvaultInitialized: FfiConverterBool.read(from),
+                keyvaultUnlocked: FfiConverterBool.read(from),
+                profile: FfiConverterOptionalString.read(from),
+                defaultProfile: FfiConverterOptionalString.read(from),
+                profiles: FfiConverterSequenceTypeKvBrowserProfile.read(from),
+                files: FfiConverterTypeKvReadinessCheck.read(from),
+                tabs: FfiConverterTypeKvReadinessCheck.read(from),
+                profileEmpty: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.providerId, into);
+            FfiConverterString.write(value.appDisplay, into);
+            FfiConverterBool.write(value.keyvaultInitialized, into);
+            FfiConverterBool.write(value.keyvaultUnlocked, into);
+            FfiConverterOptionalString.write(value.profile, into);
+            FfiConverterOptionalString.write(value.defaultProfile, into);
+            FfiConverterSequenceTypeKvBrowserProfile.write(value.profiles, into);
+            FfiConverterTypeKvReadinessCheck.write(value.files, into);
+            FfiConverterTypeKvReadinessCheck.write(value.tabs, into);
+            FfiConverterBool.write(value.profileEmpty, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.providerId) +
+             FfiConverterString.allocationSize(value.appDisplay) +
+             FfiConverterBool.allocationSize(value.keyvaultInitialized) +
+             FfiConverterBool.allocationSize(value.keyvaultUnlocked) +
+             FfiConverterOptionalString.allocationSize(value.profile) +
+             FfiConverterOptionalString.allocationSize(value.defaultProfile) +
+             FfiConverterSequenceTypeKvBrowserProfile.allocationSize(value.profiles) +
+             FfiConverterTypeKvReadinessCheck.allocationSize(value.files) +
+             FfiConverterTypeKvReadinessCheck.allocationSize(value.tabs) +
+             FfiConverterBool.allocationSize(value.profileEmpty);
 
         }
     };
@@ -53051,7 +53268,11 @@ export type TeleportConsent = {
      * The sites whose saved passwords to send (the review's own
      * choice; `None`: those of `cookie_domains`).
      */
-    passwordDomains?: Array<string>
+    passwordDomains?: Array<string>,
+    /**
+     * The browser profile to read (`Profile 1`); `None`: `Default`.
+     */
+    profile?: string
 }
 
 /**
@@ -53066,7 +53287,8 @@ export const TeleportConsent = (() => {
         exclude: [],
         fromVault: undefined,
         includePasswords: false,
-        passwordDomains: undefined
+        passwordDomains: undefined,
+        profile: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<TeleportConsent, ReturnType<typeof defaults>>(defaults);
@@ -53091,7 +53313,8 @@ const FfiConverterTypeTeleportConsent = (() => {
                 exclude: FfiConverterSequenceString.read(from),
                 fromVault: FfiConverterOptionalSequenceString.read(from),
                 includePasswords: FfiConverterBool.read(from),
-                passwordDomains: FfiConverterOptionalSequenceString.read(from)
+                passwordDomains: FfiConverterOptionalSequenceString.read(from),
+                profile: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -53104,6 +53327,7 @@ const FfiConverterTypeTeleportConsent = (() => {
             FfiConverterOptionalSequenceString.write(value.fromVault, into);
             FfiConverterBool.write(value.includePasswords, into);
             FfiConverterOptionalSequenceString.write(value.passwordDomains, into);
+            FfiConverterOptionalString.write(value.profile, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.approved) +
@@ -53114,7 +53338,8 @@ const FfiConverterTypeTeleportConsent = (() => {
              FfiConverterSequenceString.allocationSize(value.exclude) +
              FfiConverterOptionalSequenceString.allocationSize(value.fromVault) +
              FfiConverterBool.allocationSize(value.includePasswords) +
-             FfiConverterOptionalSequenceString.allocationSize(value.passwordDomains);
+             FfiConverterOptionalSequenceString.allocationSize(value.passwordDomains) +
+             FfiConverterOptionalString.allocationSize(value.profile);
 
         }
     };
@@ -67768,6 +67993,12 @@ export interface KeyvaultClientLike {
  */
     overview(asyncOpts_?: { signal: AbortSignal }): Promise<KeyvaultOverview>;
 /**
+ * Whether a teleport of `app` can work now: the Keyvault's state, what
+ * macOS lets the daemon read, and the profiles. Reads no value and asks
+ * for no presence.
+ */
+    readiness(app: string, profile: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<KvReadiness>;
+/**
  * Creates the vault with a passphrase (and a recovery key, returned
  * once). The passphrase goes only to the broker over the verified
  * Keyvault socket; it is never logged or kept, and zeroized here.
@@ -67979,6 +68210,43 @@ export class KeyvaultClient extends UniffiAbstractObject implements KeyvaultClie
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
 
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Whether a teleport of `app` can work now: the Keyvault's state, what
+ * macOS lets the daemon read, and the profiles. Reads no value and asks
+ * for no presence.
+ */
+    async readiness(app: string, profile: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<KvReadiness> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_method_keyvaultclient_readiness(
+                    uniffiTypeKeyvaultClientObjectFactory.clonePointer(this),FfiConverterString.lower(app, nativeModule().rustbuffer_alloc),FfiConverterOptionalString.lower(profile, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeKvReadiness.lift.bind(FfiConverterTypeKvReadiness),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
         );
     } catch (__error: any) {
         if (uniffiIsDebug && __error instanceof Error) {
@@ -70617,6 +70885,9 @@ const FfiConverterOptionalTypeKvCredentialForm = new FfiConverterOptional(FfiCon
 // FfiConverter for KvStrength | undefined
 const FfiConverterOptionalTypeKvStrength = new FfiConverterOptional(FfiConverterTypeKvStrength);
 
+// FfiConverter for Array<KvBrowserProfile>
+const FfiConverterSequenceTypeKvBrowserProfile = new FfiConverterArray(FfiConverterTypeKvBrowserProfile);
+
 // FfiConverter for Array<KvCategoryRow>
 const FfiConverterSequenceTypeKvCategoryRow = new FfiConverterArray(FfiConverterTypeKvCategoryRow);
 
@@ -71899,6 +72170,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_overview() !== 65171) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_overview");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_readiness() !== 1765) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_readiness");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_setup_with_passphrase() !== 6939) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_setup_with_passphrase");
     }
@@ -72511,6 +72785,7 @@ export default Object.freeze({
     FfiConverterTypeKvApprovalState,
     FfiConverterTypeKvApprovalView,
     FfiConverterTypeKvAuditEntry,
+    FfiConverterTypeKvBrowserProfile,
     FfiConverterTypeKvCaller,
     FfiConverterTypeKvCategory,
     FfiConverterTypeKvCategoryRow,
@@ -72537,6 +72812,8 @@ export default Object.freeze({
     FfiConverterTypeKvPassphraseCheck,
     FfiConverterTypeKvPending,
     FfiConverterTypeKvPendingRow,
+    FfiConverterTypeKvReadiness,
+    FfiConverterTypeKvReadinessCheck,
     FfiConverterTypeKvRecentRow,
     FfiConverterTypeKvRule,
     FfiConverterTypeKvRuleCaller,

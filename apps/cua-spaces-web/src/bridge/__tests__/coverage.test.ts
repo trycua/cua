@@ -87,6 +87,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "teleport.plan": { spaceId: "s1", entry: { json: "{}" } as never, move: "app_only", files: [], sensitiveGroups: [] },
   "teleport.run": { spaceId: "s1", plan: { json: "{}" } as never, consent: { approved: true, acknowledgeSensitive: false }, runId: "run-1" },
   "teleport.sites": { providerId: "chrome" },
+  "teleport.readiness": { providerId: "chrome", profile: null },
   "teleport.remembered": { providerId: "chrome", spaceId: "s1" },
   "teleport.streamWindow": { spaceId: "s1", spaceName: "Aurora", windowId: "w-1", appName: "Firefox", title: "Mozilla Firefox" },
   "sharing.list": { spaceId: "s1" },

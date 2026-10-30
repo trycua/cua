@@ -54,7 +54,20 @@ export type {
 } from "./store";
 export { newPendingId } from "./store";
 export type { TranscriptItem, TranscriptStep } from "./transcript";
-export { GRID_COLUMNS, iconKey, thumbnailKey, useTeleport, type TeleportHook, type TeleportSession, type TeleportStore } from "./teleport";
+export {
+  AUTOMATION_PANE,
+  FULL_DISK_ACCESS_PANE,
+  GRID_COLUMNS,
+  iconKey,
+  setupBlocked,
+  setupProfile,
+  thumbnailKey,
+  useTeleport,
+  type TeleportHook,
+  type TeleportSession,
+  type TeleportSetup,
+  type TeleportStore,
+} from "./teleport";
 export { useShareSheet, type ShareHook, type ShareSession } from "./share";
 export { useShareRemovalNote, type ShareRemovalNoteHook } from "./removal-note";
 export {

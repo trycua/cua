@@ -805,6 +805,25 @@ describe.skipIf(!built)("Teleport and the Keyvault on the app core", () => {
       expect(await code("teleport.sites", { providerId: "chrome" })).toBe("unsupported");
     });
 
+    it("checks whether a teleport can work, in plain words, without asking for presence or moving the window", async () => {
+      const ready = await shapes("teleport.readiness", { providerId: "chrome", profile: "Profile 1" });
+      expect(ready).toMatchObject({ providerId: "chrome", keyvaultInitialized: true, files: { state: "denied" } });
+      expect(ready.profiles.map((p: { dir: string }) => p.dir)).toEqual(["Default", "Profile 1"]);
+      expect(fake.readinessAsks).toEqual([{ app: "chrome", profile: "Profile 1" }]);
+      // The last used profile when none is named; it reads nothing, so it never asks.
+      await call("teleport.readiness", { providerId: "chrome" });
+      expect(fake.readinessAsks.at(-1)).toEqual({ app: "chrome", profile: undefined });
+      expect(activations).toBe(0);
+      expect(await code("teleport.readiness", {})).toBe("bad_args");
+      await setUp(parityOverview(native), false);
+      expect(await code("teleport.readiness", { providerId: "chrome" })).toBe("unsupported");
+    });
+
+    it("asks the daemon to read the profile that was chosen", async () => {
+      await shapes("teleport.sites", { providerId: "chrome", profile: "Profile 2" });
+      expect(fake.inventoryAsks.at(-1)).toEqual({ app: "chrome", profile: "Profile 2" });
+    });
+
     it("streams one of the Space's windows onto this machine", async () => {
       expect(await shapes("teleport.streamWindow", { spaceId: aurora, windowId: "w-1" })).toBeNull();
       const name = model.spaces.find((s) => s.id === aurora)!.name;
@@ -847,6 +866,7 @@ describe.skipIf(!built)("Teleport and the Keyvault on the app core", () => {
       ["teleport.icon", { spaceId: SPACE, icon: { kind: "host", path: "/Applications/Slack.app" } }],
       ["teleport.thumbnail", { spaceId: SPACE, thumbnail: { kind: "host-window", windowId: 41 } }],
       ["teleport.sites", { providerId: "chrome" }],
+      ["teleport.readiness", { providerId: "chrome" }],
       ["teleport.remembered", { providerId: "chrome", spaceId: SPACE }],
       ["teleport.streamWindow", { spaceId: SPACE, spaceName: "Aurora", windowId: "w-1", appName: "Firefox", title: "Mozilla Firefox" }],
     ];

@@ -23,6 +23,7 @@ import type { KeyvaultOverview, VaultAction, VaultSource, VaultState, VaultView 
 import type {
   CatalogEntry,
   EntrySection,
+  KvReadiness,
   OpenWindow,
   PickerEvent,
   PickerFrame,
@@ -112,7 +113,38 @@ export interface TeleportSession {
   /** The app's saved Keyvault items as the review lists them (the Keyvault
    * as the source, once read); null while the live app is the source. */
   vault: { view: VaultView; query: string } | null;
+  /** The setup sheet, while a browser teleport has something to set up or a profile to choose. */
+  setup: TeleportSetup | null;
 }
+
+/** The teleport setup sheet: what a browser teleport needs, checked in plain
+ * words before any Touch ID. It stands in for the review while something
+ * needs doing (or a profile has to be chosen), and goes once it is done. */
+export interface TeleportSetup {
+  /** The sheet is showing. */
+  open: boolean;
+  /** A check is running. */
+  checking: boolean;
+  /** The last answer; null before the first. */
+  readiness: KvReadiness | null;
+  /** The profile to read (a directory name such as `Profile 1`). */
+  profile: string | null;
+  /** The check itself could not be made, in words. */
+  error: string | null;
+  /** Something stops the teleport: the Keyvault, Full Disk Access or an empty profile. */
+  blocked: boolean;
+}
+
+/** What stops a browser teleport, from the check's answer. */
+export const setupBlocked = (r: KvReadiness): boolean => !r.keyvault_initialized || r.files.state === "denied" || r.profile_empty;
+
+/** The profile to start from: the one chosen, else the last used, else the default. */
+export const setupProfile = (r: KvReadiness, chosen: string | null): string | null =>
+  chosen ?? r.profiles.find((p) => p.last_used)?.dir ?? r.default_profile ?? r.profiles[0]?.dir ?? null;
+
+/** The privacy panes the sheet opens (System Settings, Privacy and Security). */
+export const FULL_DISK_ACCESS_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
+export const AUTOMATION_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation";
 
 /** The Keyvault as the review lists it: what a teleport can send, with the
  * list's own state (search, selection, open groups). */
@@ -135,6 +167,9 @@ interface Session {
   readingSites: boolean;
   vault: ReviewVault | null;
   runId: string | null;
+  setup: TeleportSetup | null;
+  /** The browser profile chosen in the setup sheet; null reads the default. */
+  profile: string | null;
 }
 
 /** An image the grid shows (an icon or a live preview), by what it asks for. */
@@ -155,7 +190,17 @@ export const MAX_READS = 4;
  * (they sign in through site login), so they are not offered here. */
 const reviewOverview = (o: KeyvaultOverview): KeyvaultOverview => ({ ...o, items: o.items.filter((i) => i.kind !== "password") });
 
-const words = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const words = (e: unknown) => plainWords(e);
+/** A host's failure as the person should read it: a macOS permission refusal is
+ * only the sentence that says what to turn on, without the prefixes it travelled with. */
+function plainWords(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  const i = m.indexOf("macOS is not letting");
+  return i >= 0 ? m.slice(i) : m;
+}
+
+/** The apps the setup sheet is for: browsers that keep sign-ins in a profile. */
+const BROWSERS = new Set(["chrome", "edge", "chromium"]);
 let runs = 0;
 
 export class TeleportStore {
@@ -208,6 +253,7 @@ export class TeleportStore {
       query: s.tab === "apps" ? s.state.query : s.windowQuery,
       remoteError: s.remoteError,
       readingSites: s.readingSites,
+      setup: s.setup,
       vault:
         s.vault && frame.review?.source === "vault"
           ? {
@@ -239,7 +285,7 @@ export class TeleportStore {
   send(event: PickerEvent): void {
     const s = this.session;
     if (!s) return;
-    this.patch({ state: pickerReduce(this.core, s.state, event) });
+    this.patch({ state: pickerReduce(this.core, s.state, event), ...(event.type === "back" && s.setup ? { setup: null } : {}) });
   }
 
   /** Opens the picker for a Space and reads the catalog and both window
@@ -263,6 +309,8 @@ export class TeleportStore {
       readingSites: false,
       vault: null,
       runId: null,
+      setup: null,
+      profile: null,
     };
     this.publish();
     const opened = ++this.generation;
@@ -386,12 +434,52 @@ export class TeleportStore {
     if (!s || !provider) return;
     const opened = this.generation;
     const live = () => this.generation === opened;
+    // A browser that sends its sign-ins: what it needs is checked, in words,
+    // before the sites are listed (which asks for Touch ID) or anything is read.
+    if (this.view?.frame.review?.needsDomains && BROWSERS.has(provider)) {
+      this.patch({ setup: { open: false, checking: true, readiness: null, profile: s.profile, error: null, blocked: false } });
+      const ready = await this.checkSetup(provider, s.profile, live);
+      if (!live()) return;
+      // Something to do, or a profile to choose: the sheet comes first.
+      if (ready && (setupBlocked(ready) || ready.profiles.length > 1)) {
+        this.patch({ setup: { ...this.session!.setup!, open: true } });
+        return;
+      }
+      this.patch({ setup: null });
+    }
+    await this.loadSites(provider, live);
+  }
+
+  /** Asks the host whether a teleport of `provider` can work now. Reads no
+   * value and asks for no Touch ID. Null when the check itself failed. */
+  private async checkSetup(provider: string, profile: string | null, live: () => boolean): Promise<KvReadiness | null> {
+    try {
+      const readiness = await this.adapter.call("teleport.readiness", { providerId: provider, profile });
+      if (!live() || !this.session?.setup) return null;
+      const chosen = setupProfile(readiness, profile);
+      this.patch({
+        profile: chosen,
+        setup: { ...this.session.setup, checking: false, readiness, profile: chosen, error: null, blocked: setupBlocked(readiness) },
+      });
+      return readiness;
+    } catch (e) {
+      if (live() && this.session?.setup) {
+        this.patch({ setup: { ...this.session.setup, checking: false, error: plainWords(e), blocked: false } });
+      }
+      return null;
+    }
+  }
+
+  /** The browser's sites and the saved items, once the setup is done. */
+  private async loadSites(provider: string, live: () => boolean): Promise<void> {
+    const s = this.session;
+    if (!s) return;
     const needsDomains = Boolean(this.view?.frame.review?.needsDomains);
     await this.loadVault(provider, live);
     if (!live() || !needsDomains) return;
     this.patch({ readingSites: true });
     try {
-      const inventory = await this.adapter.call("teleport.sites", { providerId: provider });
+      const inventory = await this.adapter.call("teleport.sites", { providerId: provider, profile: s.profile });
       // Not asked of every host: no remembered choice is a fresh start.
       const remembered = await this.adapter.call("teleport.remembered", { providerId: provider, spaceId: s.spaceId }).catch(() => null);
       if (!live()) return;
@@ -402,6 +490,48 @@ export class TeleportStore {
       this.patch({ readingSites: false });
       this.send({ type: "domains-failed" });
     }
+  }
+
+  /** The setup sheet's Check again: asks again (after Full Disk Access was
+   * turned on, or the Keyvault set up) with the profile chosen. */
+  async recheckSetup(): Promise<void> {
+    const s = this.session;
+    const provider = s?.state.entry?.providerId;
+    if (!s?.setup || !provider) return;
+    const opened = this.generation;
+    this.patch({ setup: { ...s.setup, checking: true } });
+    await this.checkSetup(provider, s.profile, () => this.generation === opened);
+  }
+
+  /** Chooses the browser profile, then checks that one. */
+  async chooseProfile(dir: string): Promise<void> {
+    const s = this.session;
+    if (!s?.setup) return;
+    this.patch({ profile: dir, setup: { ...s.setup, profile: dir } });
+    await this.recheckSetup();
+  }
+
+  /** Continue: the setup is done, so the review reads the sites of the chosen profile. */
+  async finishSetup(): Promise<void> {
+    const s = this.session;
+    const provider = s?.state.entry?.providerId;
+    if (!s?.setup || !provider || s.setup.blocked) return;
+    const opened = this.generation;
+    this.patch({ setup: null });
+    await this.loadSites(provider, () => this.generation === opened);
+  }
+
+  /** Without Full Disk Access, send open tabs only: back to the options with
+   * the signed-in sites left out. */
+  useTabsOnly(): void {
+    this.patch({ setup: null });
+    this.send({ type: "back" });
+    this.send({ type: "sensitive", group: "sign_ins", value: false });
+  }
+
+  /** Opens the System Settings pane for Full Disk Access or Automation. */
+  async openPane(url: string): Promise<void> {
+    await this.adapter.call("host.openSettings", { url }).catch(() => null);
   }
 
   /** The saved items a teleport can send for `provider`: passwords are never
@@ -463,7 +593,7 @@ export class TeleportStore {
     const s = this.session;
     const plan = s?.state.plan;
     if (!s || !plan || !this.view?.frame.review?.canConfirm) return;
-    const consent = pickerConsent(this.core, s.state);
+    const consent = { ...pickerConsent(this.core, s.state), ...(s.profile ? { profile: s.profile } : {}) };
     const runId = `run-${++runs}`;
     this.patch({ runId });
     this.send({ type: "confirm" });
@@ -568,6 +698,8 @@ export class TeleportStore {
       readingSites: false,
       vault: null,
       runId: null,
+      setup: null,
+      profile: null,
     };
     this.publish();
   }

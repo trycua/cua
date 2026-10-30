@@ -1458,7 +1458,7 @@ fn launch_daemon_with_state_and_wait(
     // bundle would start a second daemon in the default mode.
     if allow_managed_restart
         && socket_path == crate::serve::default_socket_path()
-        && restart_managed_daemon_if_present()
+        && restart_managed_daemon_if_present()?
     {
         if wait_for_daemon_listening(socket_path, timeout_secs) {
             return Ok(());
@@ -1759,8 +1759,10 @@ fn launch_agent_label() -> &'static str {
     }
 }
 
+/// An agent that is installed but not loaded is refused rather than loaded, so
+/// `launchctl unload` keeps the daemon off.
 #[cfg(target_os = "macos")]
-fn restart_managed_daemon_if_present() -> bool {
+fn restart_managed_daemon_if_present() -> Result<bool, LaunchDaemonError> {
     use std::process::{Command as Cmd, Stdio};
     let launchctl = |args: &[&str]| {
         Cmd::new("/bin/launchctl")
@@ -1773,25 +1775,26 @@ fn restart_managed_daemon_if_present() -> bool {
     let label = launch_agent_label();
     let uid = rustix::process::getuid().as_raw();
     let service = format!("gui/{uid}/{label}");
-    if !launchctl(&["print", &service]) {
-        let Some(home) = std::env::var_os("HOME") else {
-            return false;
-        };
-        let plist = std::path::PathBuf::from(home)
-            .join("Library/LaunchAgents")
-            .join(format!("{label}.plist"));
-        let Some(plist) = plist.to_str().filter(|_| plist.is_file()) else {
-            return false;
-        };
-        // A failed bootstrap still counts when another one loaded the agent first.
-        if !launchctl(&["bootstrap", &format!("gui/{uid}"), plist])
-            && !launchctl(&["print", &service])
-        {
-            return false;
-        }
+    if launchctl(&["print", &service]) {
+        // Without `-k`, a daemon that is still starting is left alone.
+        return Ok(launchctl(&["kickstart", &service]));
     }
-    // Without `-k`, a daemon that is still starting is left alone.
-    launchctl(&["kickstart", &service])
+    let plist = std::env::var_os("HOME").map(|home| {
+        std::path::PathBuf::from(home)
+            .join("Library/LaunchAgents")
+            .join(format!("{label}.plist"))
+    });
+    match plist {
+        Some(plist) if plist.is_file() => Err(LaunchDaemonError {
+            kind: LaunchDaemonErrorKind::Failed,
+            message: format!(
+                "the {label} LaunchAgent is installed but not loaded; run `launchctl load {}` \
+                 to start the daemon, then re-run `cua-driver mcp`",
+                plist.display()
+            ),
+        }),
+        _ => Ok(false),
+    }
 }
 
 #[cfg(target_os = "macos")]

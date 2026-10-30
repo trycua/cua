@@ -18013,6 +18013,53 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua teleport push [OPTIONS] --app <APP>"
+    },
+    {
+     "abstract": "Check, in plain words, that a teleport can work now: the Keyvault, permission to read the browser's files and tabs, and the profile",
+     "after_help": "Examples:\n  cua teleport doctor\n  cua teleport doctor --app chrome --profile \"Profile 1\"",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "doctor",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "chrome",
+       "env": null,
+       "help": "Browser to check (`chrome` or `edge`)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "app",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "APP"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Profile to check: a name (\"Profile 1\"). Default: the one used last",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "profile",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "PROFILE"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua teleport doctor [OPTIONS]"
     }
    ],
    "usage": "cua teleport [OPTIONS] <COMMAND>"

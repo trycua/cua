@@ -432,3 +432,85 @@ fn a_named_browser_profile_is_the_one_captured() {
     assert!(!default[0].contains("Profile 1"), "{default:?}");
     assert!(named[0].contains("Profile 1"), "{named:?}");
 }
+
+/// The readiness check names the profiles (with the account of each and the
+/// last used one), checks the profile a teleport would read without reading
+/// any value, and says so when a profile has no sign-in data.
+#[test]
+fn readiness_lists_profiles_and_checks_the_chosen_one_without_reading_values() {
+    use cua_keyvault::broker::Access;
+    use cua_teleport::browser_cookies::{TestCookieRow, write_cookies_db_for_tests};
+    let home = tempfile::tempdir().unwrap();
+    let root = home
+        .path()
+        .join(cua_teleport::layout::chrome::user_data_dir_for(
+            Platform::current(),
+        ));
+    for p in ["Default", "Profile 1"] {
+        std::fs::create_dir_all(root.join(p)).unwrap();
+        std::fs::write(root.join(p).join("Preferences"), "{}").unwrap();
+    }
+    write_cookies_db_for_tests(
+        &root.join("Profile 1"),
+        &[TestCookieRow {
+            host_key: ".github.com",
+            name: "user_session",
+            encrypted_value: b"v10-not-decryptable".to_vec(),
+            path: "/",
+            expires_utc: 0,
+            is_secure: true,
+            is_httponly: true,
+            samesite: 1,
+        }],
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Local State"),
+        r#"{"profile":{"last_used":"Profile 1","info_cache":{
+            "Default":{"name":"Personal"},
+            "Profile 1":{"name":"Work","user_name":"me@work.example"}}}}"#,
+    )
+    .unwrap();
+    let reg = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(reg.path())
+        .operator_display(Arc::new(cua_spaces::operator::NoDisplay))
+        .build();
+    let host: Arc<dyn HostEffects> = Arc::new(FakeHost::new().with_home(home.path()));
+    let mut registry = ExportRegistry::new();
+    registry.register(Box::new(Browser {
+        host: host.clone(),
+        profile: None,
+    }));
+    let b = DaemonBackend::new(spaces, Arc::new(AppSessions::from_registry(registry)))
+        .with_host(host)
+        .with_platform(Platform::current());
+    // No profile named: the last used one is checked; Default is what a
+    // push reads without one.
+    let r = b.readiness("chrome", None).unwrap();
+    assert_eq!(r.profile.as_deref(), Some("Profile 1"));
+    assert_eq!(r.default_profile.as_deref(), Some("Default"));
+    assert_eq!(r.files.state, Access::Granted);
+    assert!(!r.profile_empty);
+    let names: Vec<(&str, &str, bool)> = r
+        .profiles
+        .iter()
+        .map(|p| (p.dir.as_str(), p.name.as_str(), p.last_used))
+        .collect();
+    assert_eq!(
+        names,
+        [("Default", "Personal", false), ("Profile 1", "Work", true)]
+    );
+    assert_eq!(r.profiles[1].account.as_deref(), Some("me@work.example"));
+    // A profile with no cookie store says so and lists the real ones.
+    let r = b.readiness("chrome", Some("Default")).unwrap();
+    assert!(r.profile_empty, "{r:?}");
+    assert!(
+        r.files.say.contains("Default") && r.files.say.contains("Profile 1"),
+        "{r:?}"
+    );
+    // An app that has no profiles has nothing to report.
+    let r = b.readiness("firefox", None).unwrap();
+    assert_eq!(r.files.state, Access::Granted);
+    assert!(r.profiles.is_empty());
+}

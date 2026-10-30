@@ -27,12 +27,140 @@ pub async fn run(
     match cmd {
         TeleportCmd::Providers => providers(&host, out),
         TeleportCmd::Manifest(args) => manifest(&host, args, out).await,
+        TeleportCmd::Doctor(args) => doctor(args, json, out).await,
         TeleportCmd::Push(args) => {
             let cua =
                 cua.ok_or_else(|| CuaError::Internal("teleport push needs the SDK".into()))?;
             push(cua, &host, args, json, out).await
         }
     }
+}
+
+/// Says, before a teleport reads or asks anything, what stops it: the
+/// Keyvault not set up, macOS refusing to let the daemon read the browser, or
+/// a profile with no sign-in data. Each is a plain sentence with the next
+/// step; none of them is routed around. An app without profiles passes.
+pub async fn preflight(
+    client: &mut cua_keyvault::client::KeyvaultClient,
+    app: &str,
+    profile: Option<&str>,
+) -> Result<(), CuaError> {
+    use cua_keyvault::broker::Access;
+    let status = client.status().await.map_err(kv_err)?;
+    if !status.initialized {
+        return Err(CuaError::PermissionDenied(
+            "The Keyvault is not set up yet. Open Cua and create it; teleport keeps what it moves in it.".into(),
+        ));
+    }
+    let ready = client.readiness(app, profile).await.map_err(kv_err)?;
+    if ready.files.state == Access::Denied {
+        return Err(CuaError::PermissionDenied(ready.files.say));
+    }
+    if ready.profile_empty {
+        return Err(CuaError::InvalidArgument(ready.files.say));
+    }
+    Ok(())
+}
+
+/// `cua teleport doctor`: what a teleport needs, checked now, in plain words.
+/// Nothing is read from the browser and no presence is asked; the checks run
+/// in the daemon, the process whose permissions matter.
+async fn doctor(
+    args: cua_cli::teleport::DoctorArgs,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    use cua_keyvault::broker::Access;
+    let mut client = cua_keyvault::client::KeyvaultClient::connect_default()
+        .await
+        .map_err(|e| {
+            CuaError::Unsupported(format!(
+                "The Cua daemon is not reachable ({e}). Open Cua, or start it with `cua daemon start`, then try again."
+            ))
+        })?;
+    let status = client.status().await.map_err(kv_err)?;
+    let ready = client
+        .readiness(&args.app, args.profile.as_deref())
+        .await
+        .map_err(kv_err)?;
+    let keyvault = if !status.initialized {
+        "The Keyvault is not set up yet. Open Cua and create it; teleport keeps what it moves in it."
+    } else {
+        ""
+    };
+    let ok = keyvault.is_empty() && ready.files.state != Access::Denied && !ready.profile_empty;
+    if json {
+        util_json(
+            out,
+            serde_json::json!({
+                "ready": ok,
+                "keyvault": { "initialized": status.initialized, "unlocked": status.unlocked, "say": keyvault },
+                "readiness": ready,
+            }),
+        );
+        return Ok(i32::from(!ok));
+    }
+    let word = |ok: bool| if ok { "ready" } else { "needs attention" };
+    line(out, format!("Keyvault        {}", word(status.initialized)));
+    if !keyvault.is_empty() {
+        line(out, format!("                {keyvault}"));
+    }
+    line(
+        out,
+        format!(
+            "{:<15} {}",
+            format!("{} files", ready.app_display),
+            word(ready.files.state != Access::Denied && !ready.profile_empty)
+        ),
+    );
+    if !ready.files.say.is_empty() {
+        line(out, format!("                {}", ready.files.say));
+    }
+    let tabs = match ready.tabs.state {
+        Access::Granted => "ready",
+        Access::Denied => "needs attention",
+        Access::Unknown => "asked the first time",
+    };
+    line(
+        out,
+        format!("{:<15} {tabs}", format!("{} tabs", ready.app_display)),
+    );
+    if !ready.tabs.say.is_empty() {
+        line(out, format!("                {}", ready.tabs.say));
+    }
+    if let Some(p) = &ready.profile {
+        let shown = ready
+            .profiles
+            .iter()
+            .find(|x| &x.dir == p)
+            .map(|x| match &x.account {
+                Some(a) => format!("{} ({a})", x.name),
+                None => x.name.clone(),
+            })
+            .unwrap_or_else(|| p.clone());
+        line(out, format!("Profile         {shown}"));
+    }
+    if ready.profiles.len() > 1 {
+        let all: Vec<String> = ready
+            .profiles
+            .iter()
+            .map(|x| format!("{}{}", x.dir, if x.last_used { " (used last)" } else { "" }))
+            .collect();
+        line(out, format!("Profiles        {}", all.join(", ")));
+        line(
+            out,
+            "Pick one with --profile; without it a push reads Default.",
+        );
+    }
+    Ok(i32::from(!ok))
+}
+
+fn util_json(out: &mut dyn Write, v: serde_json::Value) {
+    line(out, v.to_string());
+}
+
+fn kv_err(e: cua_keyvault::Error) -> CuaError {
+    CuaError::PermissionDenied(e.to_string())
 }
 
 fn scope(args: &AppArgs) -> Result<TransferScope, CuaError> {
@@ -54,7 +182,11 @@ pub fn teleport_err(e: cua_teleport::Error) -> CuaError {
             CuaError::Unsupported(m)
         }
         E::Teleport(T::UnsupportedScope { .. }) => CuaError::Unsupported(m),
-        E::Teleport(T::Provider(p)) if p.contains("not authorized") => {
+        E::Teleport(T::Provider(p))
+            if p.contains("not authorized")
+                || p.contains("Full Disk Access")
+                || p.contains("Automation") =>
+        {
             CuaError::PermissionDenied(m)
         }
         // S1: refused because the destination is a relay: Space and
@@ -157,6 +289,16 @@ async fn push_through_keyvault(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
+    let mut client = cua_keyvault::client::KeyvaultClient::connect_default()
+        .await
+        .map_err(|e| {
+            CuaError::Unsupported(format!(
+                "teleport push goes through the Cua Keyvault, and it is not reachable ({e}); \
+                 install or open Cua, or run this as the signed `cua` app/CLI"
+            ))
+        })?;
+    // Before anything is read or any prompt shown: can this work at all?
+    preflight(&mut client, &args.app.app, args.app.profile.as_deref()).await?;
     let t = teleporter(host, &args.app);
     let app_ref = app_ref(&args.app);
     let scope_v = scope(&args.app)?;
@@ -205,14 +347,6 @@ async fn push_through_keyvault(
         passwords: false,
         password_domains: None,
     };
-    let mut client = cua_keyvault::client::KeyvaultClient::connect_default()
-        .await
-        .map_err(|e| {
-            CuaError::Unsupported(format!(
-                "teleport push goes through the Cua Keyvault, and it is not reachable ({e}); \
-                 install or open Cua, or run this as the signed `cua` app/CLI"
-            ))
-        })?;
     let outcome = client
         .import_and_teleport_launching(spec, sandbox.to_string(), false, !args.no_launch, |_| {})
         .await

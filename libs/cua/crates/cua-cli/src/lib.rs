@@ -1704,7 +1704,9 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             return Ok(i32::from(ended.iter().any(|e| e.error.is_some())));
         }
         Command::Teleport(
-            cmd @ (teleport::TeleportCmd::Providers | teleport::TeleportCmd::Manifest(_)),
+            cmd @ (teleport::TeleportCmd::Providers
+            | teleport::TeleportCmd::Manifest(_)
+            | teleport::TeleportCmd::Doctor(_)),
         ) => {
             return extension::teleport(None, cmd.clone(), json, out).await;
         }

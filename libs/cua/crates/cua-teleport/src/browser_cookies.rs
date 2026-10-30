@@ -390,7 +390,7 @@ impl ChromeCookies {
             // libsecret application); Windows is refused before it matters.
             Platform::Linux | Platform::Windows => "",
         };
-        let rows = read_rows(&db)?;
+        let rows = read_rows(&db).map_err(plain)?;
         let wanted: Vec<String> = sites
             .iter()
             .map(|s| s.trim().to_ascii_lowercase())
@@ -460,7 +460,8 @@ impl ChromeCookies {
         if !db.is_file() {
             return Err(self.missing_store(&dir));
         }
-        Ok(read_rows(&db)?
+        Ok(read_rows(&db)
+            .map_err(plain)?
             .into_iter()
             .map(|r| CookieHostRow {
                 host_key: r.host_key,
@@ -618,6 +619,18 @@ fn tempfile_copy(src: &Path) -> Result<TempCopy, TeleportError> {
         TeleportError::Provider(format!("copying Cookies failed: {e}"))
     })?;
     Ok(TempCopy(dst))
+}
+
+/// A macOS privacy refusal in `e` said in plain words (what to turn on and
+/// that the daemon must restart); any other error as it was.
+fn plain(e: TeleportError) -> TeleportError {
+    match &e {
+        TeleportError::Provider(m) => match crate::privacy::plain_words(m) {
+            Some(say) => TeleportError::Provider(say),
+            None => e,
+        },
+        _ => e,
+    }
 }
 
 /// One row for [`write_cookies_db_for_tests`] (tests and e2e fixtures).

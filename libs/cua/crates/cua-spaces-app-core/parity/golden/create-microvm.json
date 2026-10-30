@@ -603,7 +603,7 @@
           "Architecture: ARM",
           "Runtime: Apple Containerization microVM on this Mac",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Disk: About 3–7 GB ?2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ]

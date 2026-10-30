@@ -198,6 +198,16 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::first_run_step("welcome", s, "none"),
         events::space_wizard(s),
         events::persistent_agent(s, Some(s), Outcome::Ok, Some(s)),
+        events::durable_agent(&DurableAgent {
+            phase: s,
+            session: "0123456789abcdef",
+            ..Default::default()
+        }),
+        events::durable_agent(&DurableAgent {
+            phase: "started",
+            session: s,
+            ..Default::default()
+        }),
         events::share(s, s, Outcome::Ok, "none", "none"),
         events::app_update(s, s, s),
         events::device_enroll(s, Outcome::Ok),
@@ -227,6 +237,26 @@ fn all_builders(s: &str) -> Vec<Event> {
     }
     v.push(events::space_wizard("cancelled").unwrap());
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
+    for phase in schema::DURABLE_PHASES {
+        v.push(
+            events::durable_agent(&DurableAgent {
+                phase,
+                harness: s,
+                on: s,
+                attempt: u32::MAX,
+                max_attempts: u32::MAX,
+                reason: s,
+                end: s,
+                failure: s,
+                failover: true,
+                machines: u32::MAX,
+                recovery_time_ms: u64::MAX,
+                interrupted_calls: u32::MAX,
+                session: "0123456789abcdef",
+            })
+            .unwrap(),
+        );
+    }
     v.push(events::share("share", s, Outcome::Ok, s, s).unwrap());
     v.push(events::share("share", "viewer", Outcome::Error, s, s).unwrap());
     v.push(events::app_update("installed", s, s).unwrap());

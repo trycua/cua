@@ -3317,6 +3317,9 @@ struct DiskView {
     note: Option<String>,
     /// The chosen size is not the image's.
     resized: bool,
+    /// A container Space's Disk as one short line ("About 4\u{2013}8 GB"),
+    /// from the same range as the full row.
+    disk_short: Option<String>,
 }
 
 fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: SpaceOs) -> DiskView {
@@ -3365,10 +3368,17 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: Spa
             size_text(runtime_download)
         )
     });
+    let mut disk_short = None;
     if let Some(s) = size {
         if bounds.is_none() {
             let footprint = if image.local == Some(LocalEngine::Container) {
                 let (low, high) = container_footprint(s, runtime_download);
+                let (a, b) = (low.div_ceil(GIB), high.div_ceil(GIB));
+                disk_short = Some(if a == b {
+                    format!("About {a} GB")
+                } else {
+                    format!("About {a}\u{2013}{b} GB")
+                });
                 format!("{} initially; grows with use", size_range_text(low, high))
             } else {
                 size_text(s.disk)
@@ -3431,6 +3441,7 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: Spa
         arch,
         note,
         resized,
+        disk_short,
     }
 }
 
@@ -3680,8 +3691,8 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     let host_os = os;
     let os_tiles = [
         (SpaceOs::Linux, "Linux", "Ubuntu desktop with cua-spacesd"),
-        (SpaceOs::Windows, "Windows", "Windows Server VM"),
         (SpaceOs::Macos, "macOS", "Apple silicon VM through Lume"),
+        (SpaceOs::Windows, "Windows", "Windows Server VM"),
     ]
     .into_iter()
     .map(|(os, title, detail)| {
@@ -3941,9 +3952,14 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             .filter(|_| local && image.local == Some(LocalEngine::Container))
             .map(|f| Fact {
                 label: f.label.clone(),
-                value: f.value.clone(),
+                // One short line; the full breakdown is the tooltip.
+                value: disk.disk_short.clone().unwrap_or_else(|| f.value.clone()),
                 copy: None,
-                help: f.help.clone(),
+                help: disk
+                    .disk_short
+                    .as_ref()
+                    .map(|_| f.value.clone())
+                    .or_else(|| f.help.clone()),
                 warning: None,
             }),
     );
@@ -4973,26 +4989,30 @@ mod tests {
                 && f.value
                     .contains("includes 455 MB one-time Linux runtime download")
         }));
-        assert!(v.summary.iter().any(|f| {
-            f.label == "Disk"
-                && f.value
-                    .contains("includes 455 MB one-time Linux runtime download")
-        }));
-        assert!(v.summary.iter().any(|f| {
-            f.label == "Disk"
-                && f.value.starts_with(
-                    size_text(p.unpacked + (455 << 20))
-                        .trim_end_matches(" GB")
-                        .trim_end_matches(" MB"),
-                )
-        }));
-        e.storage.as_mut().unwrap().linux_runtime_download_bytes = 0;
-        assert!(
-            !view(&s, &e)
-                .summary
-                .iter()
-                .any(|f| f.value.contains("one-time Linux runtime download"))
+        // The Summary shows one short line; the full breakdown is its tooltip.
+        let disk = v.summary.iter().find(|f| f.label == "Disk").unwrap();
+        let (low, high) = container_footprint(&p, 455 << 20);
+        assert_eq!(
+            disk.value,
+            format!(
+                "About {}\u{2013}{} GB",
+                low.div_ceil(GIB),
+                high.div_ceil(GIB)
+            )
         );
+        assert!(
+            disk.help
+                .as_deref()
+                .unwrap()
+                .contains("includes 455 MB one-time Linux runtime download")
+        );
+        e.storage.as_mut().unwrap().linux_runtime_download_bytes = 0;
+        assert!(!view(&s, &e).summary.iter().any(|f| {
+            f.value.contains("one-time Linux runtime download")
+                || f.help
+                    .as_deref()
+                    .is_some_and(|h| h.contains("one-time Linux runtime download"))
+        }));
         let mac = on("ghcr.io/trycua/macos:15", &e);
         e.storage.as_mut().unwrap().linux_runtime_download_bytes = 455 << 20;
         assert!(

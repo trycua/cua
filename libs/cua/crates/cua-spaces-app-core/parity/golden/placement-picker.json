@@ -44,7 +44,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Disk: About 3–7 GB",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -96,7 +96,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Disk: About 3–7 GB",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -148,7 +148,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Disk: About 3–7 GB",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -457,8 +457,8 @@
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
-          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
         ]
       }
     },
@@ -505,7 +505,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Disk: About 3–7 GB",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -725,7 +725,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Disk: About 3–7 GB",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -764,7 +764,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Disk: About 3–7 GB",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],

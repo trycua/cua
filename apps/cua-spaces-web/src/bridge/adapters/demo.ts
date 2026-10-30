@@ -38,7 +38,7 @@ import {
 } from "./demo-data";
 import { demoNewSpaceState, newSpaceDemoHandlers, type DemoClouds, type DemoNewSpaceState } from "./demo/new-space";
 import { demoShareHandlers } from "./demo/share";
-import { demoThreadHandlers } from "./demo/thread";
+import { DEMO_THREAD_SPACE, demoThreadHandlers, hangingSpace, seedLongDm } from "./demo/thread";
 import { demoAgentDetailHandlers } from "./demo/agent-detail";
 import { demoAgentKeysHandlers, demoKeyStore, type DemoKeyStore } from "./demo/agent-keys";
 import { demoKeyvaultManageHandlers, demoKeyvaultManageState, withDemoCopies, type DemoKeyvaultManageState } from "./demo/keyvault-manage";
@@ -147,6 +147,10 @@ export interface DemoOptions {
   threadAuthFailed?: boolean;
   /** `?demo=thread-paused`: agents wake each other until the daemon pauses agent to agent messages (CUA-2757). */
   threadPaused?: boolean;
+  /** `?demo=thread-slow`: the machine of the demo's thread Space does not answer. */
+  threadSlow?: boolean;
+  /** `?demo=thread-long`: this many more tasks for Hermes in the demo's thread Space. */
+  threadLongDm?: number;
   /** `?demo=thread-stranger`: an agent whose owner is not in the Space (its card opens their profile in place). */
   threadStranger?: boolean;
   /** Join codes: redeemed this long after they are made (null: never, `?demo=thread-join-slow`). */
@@ -253,6 +257,8 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     threadAuthFailed: flags.has("thread-auth-failed"),
     threadStranger: flags.has("thread-stranger"),
     threadPaused: flags.has("thread-paused"),
+    threadSlow: flags.has("thread-slow"),
+    ...(flags.has("thread-long") ? { threadLongDm: 60 } : {}),
     threadRequest: flags.has("thread-request"),
     ...(flags.has("thread-join-slow") || flags.has("thread-join-expire") ? { joinRedeemMs: null } : {}),
     ...(flags.has("thread-join-expire") ? { joinExpireMs: 6_000 } : {}),
@@ -932,11 +938,15 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
     ...demoLinksHandlers(ctx),
-    ...demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false, paused: options.threadPaused ?? false,
+    ...((): ReturnType<typeof demoThreadHandlers> => {
+      const h = demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false, paused: options.threadPaused ?? false,
       joinRedeemMs: options.joinRedeemMs,
       joinExpireMs: options.joinExpireMs,
       request: options.threadRequest ?? false,
-    }),
+    });
+      if (options.threadLongDm && !options.noThread) seedLongDm(h, options.threadLongDm);
+      return options.threadSlow ? hangingSpace(h, DEMO_THREAD_SPACE) : h;
+    })(),
     "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),
     "nudges.answer": ({ id }) => {
       risky = risky.filter((r) => r.id !== id);

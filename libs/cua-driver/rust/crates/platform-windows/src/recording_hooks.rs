@@ -13,10 +13,7 @@ use std::sync::Arc;
 use cua_driver_core::snapshot_store::{current_runtime_store, register_runtime_store};
 
 #[cfg(target_os = "windows")]
-use crate::uia::snapshot::{SnapshotKind, UiaSnapshot};
-
-#[cfg(target_os = "windows")]
-use crate::uia::Snapshots;
+use crate::uia::{snapshot::UiaSnapshot, Snapshots};
 
 use cua_driver_core::recording::ScreenshotCapture;
 
@@ -113,12 +110,6 @@ pub fn app_state_json_for(
     );
     let result =
         crate::uia::walk_tree_budgeted(hwnd, None, crate::uia::DEFAULT_MAX_DEPTH, &mut walk);
-    let kind = if result.nodes.iter().any(|node| node.msaa_role.is_some()) {
-        SnapshotKind::Msaa
-    } else {
-        SnapshotKind::Uia
-    };
-    let _native_payload = UiaSnapshot::from_nodes(&result.nodes, kind);
     let element_count = result
         .nodes
         .iter()

@@ -23,21 +23,6 @@ struct ConsentButtonCandidate {
     has_keyboard_focus: bool,
 }
 
-fn release_nodes(nodes: &[UiaNode]) {
-    for node in nodes.iter().filter(|node| node.element_ptr != 0) {
-        unsafe { drop(IUIAutomationElement::from_raw(node.element_ptr as *mut _)) };
-    }
-}
-
-// Own references before crossing the blocking-task boundary, including cancellation.
-struct ConsentNodes(Vec<UiaNode>);
-
-impl Drop for ConsentNodes {
-    fn drop(&mut self) {
-        release_nodes(&self.0);
-    }
-}
-
 fn is_in_web_content(nodes: &[UiaNode], node: &UiaNode) -> bool {
     let mut parent = node.parent_element_index;
     for _ in 0..nodes.len() {
@@ -412,7 +397,6 @@ pub fn dismiss(pid: u32, hwnd: u64) -> Result<bool, BrowserRefusal> {
         let tree = crate::uia::walk_tree(hwnd, None);
         let prompt_present = native_prompt_surface_present(&tree.nodes);
         if !prompt_present {
-            release_nodes(&tree.nodes);
             return Ok(dismissed);
         }
         let cancel = exact_cancel_button(&tree.nodes);
@@ -424,7 +408,7 @@ pub fn dismiss(pid: u32, hwnd: u64) -> Result<bool, BrowserRefusal> {
             )),
             Err(error) => Err(error),
         };
-        release_nodes(&tree.nodes);
+        drop(tree);
         invoked?;
         dismissed = true;
         if Instant::now() >= deadline {
@@ -452,19 +436,17 @@ pub async fn handle(
     loop {
         prove_window_owner(request.window_id, pid)?;
         let hwnd = request.window_id;
-        let tree = tokio::task::spawn_blocking(move || {
-            ConsentNodes(crate::uia::walk_tree(hwnd, None).nodes)
-        })
-        .await
-        .map_err(|error| {
-            BrowserRefusal::new(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect the browser consent UI: {error}"),
-            )
-        })?;
-        let prompt_present = native_prompt_surface_present(&tree.0);
+        let tree = tokio::task::spawn_blocking(move || crate::uia::walk_tree(hwnd, None).nodes)
+            .await
+            .map_err(|error| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not inspect the browser consent UI: {error}"),
+                )
+            })?;
+        let prompt_present = native_prompt_surface_present(&tree);
         saw_prompt |= prompt_present;
-        match exact_allow_button(&tree.0) {
+        match exact_allow_button(&tree) {
             Ok(Some(element)) => {
                 let invoked = request.action.perform(|| unsafe { invoke(element) });
                 drop(tree);
@@ -512,6 +494,7 @@ mod tests {
             enabled: None,
             selected: None,
             element_ptr: 0,
+            retained_element: None,
             center_x: 0,
             center_y: 0,
             rect: None,
@@ -619,7 +602,12 @@ mod tests {
             }));
             let mut element = node("Button", "Allow", &["Invoke"]);
             element.element_ptr = ptr as usize;
-            let owned = ConsentNodes(vec![element]);
+            element.retained_element = Some(crate::uia::snapshot::RetainedElement::from_uia(
+                unsafe { IUIAutomationElement::from_raw(ptr as *mut _) },
+                (0, 0),
+                None,
+            ));
+            let owned = vec![element];
             ready_tx.send(()).unwrap();
             finish_rx.recv().unwrap();
             owned

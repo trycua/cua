@@ -99,6 +99,11 @@ public partial class MainWindow : Window
         return IntPtr.Zero;
     }
 
+    private void OnEnableAncestorClick(object sender, RoutedEventArgs e)
+    {
+        DisabledAncestor.IsEnabled = true;
+    }
+
     private void OnIncrementClick(object sender, RoutedEventArgs e)
     {
         _counter++;

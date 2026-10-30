@@ -455,6 +455,8 @@ pub struct TickReport {
 pub(crate) struct Live {
     leases: HashMap<String, cua_volume::lease::Lease>,
     agents: HashMap<String, Agents>,
+    /// Spaces whose runs did not answer a status read, and when: not asked again for a while.
+    unreachable: HashMap<String, std::time::Instant>,
     bridges: HashMap<String, bridge::BridgeState>,
     routines: Option<Arc<tokio::sync::Mutex<RoutineStore>>>,
     routines_mtime: Option<std::time::SystemTime>,

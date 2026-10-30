@@ -332,7 +332,16 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // Who the relay sees connected now (a host that rejoined after
             // sign-in is online), not at the last Devices page visit; not
             // before the live services are in (answer from memory then).
-            if model.servicesIn { await model.devices.refreshIfStale() }
+            // With an earlier read the page is answered from it now and the
+            // relay's answer follows (`machines.changed`): a slow relay never
+            // holds the Machines page empty.
+            if model.servicesIn {
+                if model.devices.snapshot == nil {
+                    await model.devices.refreshIfStale()
+                } else {
+                    Task { @MainActor [model] in await model.devices.refreshIfStale() }
+                }
+            }
             return machines()
         case "host.status":
             if model.host.state == nil, model.servicesIn { await model.host.refresh() }

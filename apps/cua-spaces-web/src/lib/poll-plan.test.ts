@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { chatsPollMs, jittered, JobQueue, mapLimit, MissCache } from "./poll-plan";
+import { chatsPollMs, forEachLimit, jittered, JobQueue, mapLimit, MissCache } from "./poll-plan";
 
 describe("chatsPollMs", () => {
   it("is 5 s for a small account and slows as it grows, to a minute", () => {
@@ -104,5 +104,54 @@ describe("JobQueue", () => {
     const next = q.run(async () => "ok");
     await expect(failed).rejects.toThrow("x");
     await expect(next).resolves.toBe("ok");
+  });
+});
+
+describe("forEachLimit", () => {
+  it("runs at most `limit` at once and starts every item", async () => {
+    let active = 0;
+    let peak = 0;
+    const done: number[] = [];
+    await forEachLimit([1, 2, 3, 4, 5, 6], 2, 1000, async (n) => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 5));
+      active--;
+      done.push(n);
+    });
+    expect(peak).toBe(2);
+    expect(done.sort()).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it("a hung item holds its slot for the slot time only, never the rest of the list", async () => {
+    const started: number[] = [];
+    const t0 = Date.now();
+    await forEachLimit([1, 2, 3, 4], 1, 30, async (n) => {
+      started.push(n);
+      if (n === 1) await new Promise(() => undefined);
+    });
+    // One slot, the first never answers: the others still ran, after its 30 ms.
+    expect(started).toEqual([1, 2, 3, 4]);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("a late result still lands: the job keeps running after its slot is freed", async () => {
+    let finished = false;
+    await forEachLimit([1], 1, 10, async () => {
+      await new Promise((r) => setTimeout(r, 40));
+      finished = true;
+    });
+    expect(finished).toBe(false);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(finished).toBe(true);
+  });
+
+  it("a failing job does not stop the others", async () => {
+    const ran: number[] = [];
+    await forEachLimit([1, 2, 3], 3, 100, async (n) => {
+      ran.push(n);
+      if (n === 2) throw new Error("no");
+    });
+    expect(ran).toEqual([1, 2, 3]);
   });
 });

@@ -892,4 +892,22 @@ export function demoThreadHandlers({
   };
 }
 
+/**
+ * `?demo=thread-slow`: the machine that has `space` does not answer, so
+ * every thread call for it waits (the Agents page keeps drawing the other
+ * Spaces and says it is still checking this one).
+ */
+export function hangingSpace(handlers: DemoHandlers<ThreadOpName>, space: string): DemoHandlers<ThreadOpName> {
+  return Object.fromEntries(
+    Object.entries(handlers).map(([op, h]) => [op, (args: { spaceId?: string }) => (args.spaceId === space ? new Promise<never>(() => undefined) : (h as (a: unknown) => unknown)(args))]),
+  ) as unknown as DemoHandlers<ThreadOpName>;
+}
+
+/** `?demo=thread-long`: `count` more tasks for Hermes in the demo's Space, so its DM is long (the agents answer a few steps later). */
+export function seedLongDm(handlers: DemoHandlers<ThreadOpName>, count: number): void {
+  void (async () => {
+    for (let i = 1; i <= count; i++) await handlers["thread.post"]({ spaceId: DEMO_THREAD_SPACE, text: `@hermes check item ${i} of the release list` } as never);
+  })();
+}
+
 const label = (agent: string) => (agent === "claude" ? "Claude Code" : agent.charAt(0).toUpperCase() + agent.slice(1));

@@ -545,7 +545,7 @@ pub fn launch(
 /// | Harness | Memory | How it gets there |
 /// |---|---|---|
 /// | Claude Code | `claude-memory/` | `autoMemoryDirectory` in a per-run `CLAUDE_CONFIG_DIR` |
-/// | Codex | `codex/memories/` | `CODEX_HOME=<home>/codex` with `[features] memories = true` |
+/// | Codex | `codex/memories/` | `CODEX_HOME=<home>/codex` with `[features] memories = true`; SQLite state off the Volume (`sqlite_home`) |
 /// | Hermes | `hermes/memories/` | `HERMES_HOME=<home>/hermes` |
 /// | OpenClaw | `workspace/` (`MEMORY.md`, `memory/`) | `OPENCLAW_WORKSPACE_DIR=<home>/workspace` |
 ///
@@ -558,6 +558,22 @@ pub fn memory_dir(h: &Harness) -> Option<&'static str> {
         "hermes" => Some("hermes/memories"),
         "openclaw" => Some("workspace"),
         _ => None,
+    }
+}
+
+/// Where Codex keeps its SQLite state for the persistent agent whose home is
+/// `home`: guest-local disk, never the Volume. Homes are
+/// `<guest home>/cua-volume/agents/<name>` (see `runs::HOMES_DIR`), so the
+/// state is `<guest home>/.cua/agents/codex-state/<name>`; a home elsewhere
+/// (an explicit `home_dir`) keeps it in its own `.codex-sqlite` sibling.
+pub fn codex_sqlite_dir(home: &str) -> String {
+    let home = home.trim_end_matches('/');
+    let marker = "/cua-volume/agents/";
+    match home.rsplit_once(marker) {
+        Some((guest_home, name)) if !name.contains('/') && !name.is_empty() => {
+            format!("{guest_home}/.cua/agents/codex-state/{name}")
+        }
+        _ => format!("{home}.codex-sqlite"),
     }
 }
 
@@ -666,6 +682,18 @@ pub fn launch_with_config(
                 }
                 toml.push_str("[features]\nmemories = true\n");
             }
+            // Codex keeps its SQLite state (WAL, shared memory) under
+            // CODEX_HOME unless told otherwise, and the home is on the Volume,
+            // which cannot map shared memory ("failed to initialize sqlite
+            // state runtime"). Point it at guest-local disk instead; only
+            // config and memories stay on the Volume. `sqlite_home` is a
+            // top-level key, so it goes before any table, and it is written on
+            // every start with the rest of the generated config.
+            if let Some(dir) = home.map(codex_sqlite_dir) {
+                toml.insert_str(0, &format!("sqlite_home = {dir:?}\n\n"));
+                l.prelude.push(format!("mkdir -p {}", crate::quote(&dir)));
+                env(&mut l, "CODEX_SQLITE_HOME", dir);
+            }
             if let Some(dir) = codex_home {
                 let rel = match home {
                     Some(_) => format!("{dir}/config.toml"),
@@ -675,8 +703,11 @@ pub fn launch_with_config(
                 if home.is_some() {
                     // A signed-in guest keeps its login; auth.json is never
                     // synced to the drive.
+                    // A link left by an earlier Space (its target gone) is
+                    // replaced, or it would hide the fresh sign-in.
                     l.prelude.push(format!(
-                        "[ -e \"$HOME/.codex/auth.json\" ] && [ ! -e {a} ] && ln -s \"$HOME/.codex/auth.json\" {a}; true",
+                        "[ -L {a} ] && [ ! -e {a} ] && rm -f {a}; \
+                         [ -e \"$HOME/.codex/auth.json\" ] && [ ! -e {a} ] && ln -s \"$HOME/.codex/auth.json\" {a}; true",
                         a = crate::quote(&format!("{dir}/auth.json"))
                     ));
                 }
@@ -1033,6 +1064,21 @@ mod tests {
         );
     }
     #[test]
+    fn codex_sqlite_state_is_off_the_volume() {
+        assert_eq!(
+            codex_sqlite_dir("/home/cua/cua-volume/agents/ada/"),
+            "/home/cua/.cua/agents/codex-state/ada"
+        );
+        assert_eq!(
+            codex_sqlite_dir("/srv/agents/ada"),
+            "/srv/agents/ada.codex-sqlite"
+        );
+        // Not the home's own `codex/` (CODEX_HOME), which is on the Volume.
+        let home = "/home/cua/cua-volume/agents/ada";
+        assert!(!codex_sqlite_dir(home).starts_with(home));
+    }
+
+    #[test]
     fn a_home_holds_each_harness_memory() {
         let home = "/home/cua/cua-volume/agents/ada";
         let has = |l: &Launch, k: &str, v: &str| l.env.contains(&(k.to_string(), v.to_string()));
@@ -1068,7 +1114,25 @@ mod tests {
             x.files[0].rel,
             "/home/cua/cua-volume/agents/ada/codex/config.toml"
         );
-        assert_eq!(x.files[0].body, "[features]\nmemories = true\n");
+        // SQLite state is guest-local, never on the Volume; the key is
+        // rewritten with the rest of the config on every start and sits
+        // before the table.
+        let sqlite = "/home/cua/.cua/agents/codex-state/ada";
+        assert_eq!(
+            x.files[0].body,
+            format!("sqlite_home = {sqlite:?}\n\n[features]\nmemories = true\n")
+        );
+        assert!(has(&x, "CODEX_SQLITE_HOME", sqlite));
+        assert!(
+            x.prelude
+                .contains(&format!("mkdir -p {}", crate::quote(sqlite)))
+        );
+        assert!(!sqlite.contains("/cua-volume/"));
+        // The guest's sign-in is linked in, replacing a link left dangling by
+        // an earlier Space, and never copied into the home.
+        let link = x.prelude.iter().find(|p| p.contains("auth.json")).unwrap();
+        assert!(link.contains("rm -f") && link.contains("ln -s"), "{link}");
+        assert!(!link.contains("cp "), "{link}");
         let e = Endpoint {
             base_url: "http://h:1/v1".into(),
             wire: None,
@@ -1085,8 +1149,13 @@ mod tests {
         .unwrap();
         let body = &x.files[0].body;
         assert!(
-            body.starts_with("model = \"m\""),
+            body.starts_with("sqlite_home = ") && body.contains("\nmodel = \"m\""),
             "top-level keys come before tables: {body}"
+        );
+        assert!(
+            body.find("model_provider").unwrap() < body.find("[model_providers.cua]").unwrap()
+                && body.find("sqlite_home").unwrap() < body.find('[').unwrap(),
+            "{body}"
         );
         assert!(body.ends_with("[features]\nmemories = true\n"), "{body}");
         let hm = launch_with_home(

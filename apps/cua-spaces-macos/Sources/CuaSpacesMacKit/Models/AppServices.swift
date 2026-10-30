@@ -219,7 +219,7 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
 
     public func deviceSignInWaitJson(id: String) async throws -> String {
         calls.append("device-wait:\(id)")
-        return #"{"imported":{"source":"codex","env":"CODEX_AUTH_JSON","label":"Codex · ChatGPT sign-in","expires_ms":null,"added_ms":1},"refused":null,"line":null}"#
+        return #"{"imported":{"source":"codex","env":"CODEX_AUTH_JSON","label":"ChatGPT sign-in for Codex","expires_ms":null,"added_ms":1},"refused":null,"line":null}"#
     }
 
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {

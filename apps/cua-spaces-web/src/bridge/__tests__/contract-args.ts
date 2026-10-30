@@ -98,6 +98,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "agentKeys.check": {},
   "agentKeys.set": { provider: "anthropic", value: "sk-ant-test-0000" },
   "agentKeys.remove": { env: "ANTHROPIC_API_KEY" },
+  "agentKeys.use": { app: "hermes", env: "OPENAI_API_KEY" },
   "agentKeys.shell": {},
   "agentKeys.fromShell": { env: "ANTHROPIC_API_KEY" },
   "volume.overview": {},

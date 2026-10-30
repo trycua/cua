@@ -7,6 +7,7 @@ import { CheckIcon, ChevronLeftIcon, Loader2Icon } from "lucide-react";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { useThisAndOthers } from "@/components/agents/other-machine-block";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { UsesRow } from "@/components/settings/connections/uses-row";
 import { Snippet } from "@/components/settings/snippet";
 import { Button } from "@/components/ui/button";
 import { DetailsDisclosure, GroupedRow, SettingRow } from "@/components/ui/grouped";
@@ -82,8 +83,15 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
       </SettingsGroup>
       ) : null}
 
-      <SettingsGroup title={d.signInTitle} footer={d.signIn?.way}>
-        {d.signIn ? (
+      <SettingsGroup title={d.signInTitle} footer={d.uses ? d.uses.note : d.signIn?.way}>
+        {d.uses ? (
+          <UsesRow
+            agent={agent}
+            uses={d.uses}
+            onChoose={(o) => void c.useCredential(agent, { env: o.env, slot: o.slot })}
+            onConnect={() => c.openProvider(null, agent)}
+          />
+        ) : d.signIn ? (
           <GroupedRow className="min-h-12" data-connector-detail-signin={d.signIn.provider}>
             <div className="min-w-0 flex-1">
               <div>{d.signIn.title}</div>

@@ -567,7 +567,8 @@ const NotificationShape = ref(
 const AgentKeysShape = ref(
   "AgentKeysReport",
   obj<AgentKeysReport>()({
-    keys: list(object({ provider: str, env: str, last4: str, addedMs: num, expired: opt(bool), label: opt(str), region: opt(str), fields: opt(dict(str)) })),
+    keys: list(object({ provider: str, env: str, slot: opt(str), last4: str, addedMs: num, expired: opt(bool), label: opt(str), region: opt(str), fields: opt(dict(str)) })),
+    uses: opt(dict(object({ provider: str, env: str, slot: opt(str) }))),
     providers: list(object({ id: str, label: str, env: str })),
     available: bool,
     unavailable: nullable(str),
@@ -1346,6 +1347,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agentKeys.check": AgentKeysShape,
   "agentKeys.set": AgentKeysShape,
   "agentKeys.remove": AgentKeysShape,
+  "agentKeys.use": AgentKeysShape,
   "agentKeys.shell": object({ names: list(str) }),
   "agentKeys.fromShell": AgentKeysShape,
 
@@ -1664,7 +1666,8 @@ const WkMachinesShape = ref(
 
 /** The daemon's `agent_keys.*` answer, which `agentKeysFromWire` reads. */
 const AgentKeysWire = object({
-  keys: list(object({ provider: str, env: str, last4: str, added_ms: num, expired: opt(bool), label: opt(str), region: opt(str), fields: opt(dict(str)) })),
+  keys: list(object({ provider: str, env: str, slot: opt(str), last4: str, added_ms: num, expired: opt(bool), label: opt(str), region: opt(str), fields: opt(dict(str)) })),
+  uses: opt(dict(object({ provider: str, env: str, slot: opt(str) }))),
   providers: list(object({ id: str, env: str, label: opt(str) })),
   available: bool,
   unavailable: optNull(str),
@@ -1784,6 +1787,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agentKeys.check": AgentKeysWire,
   "agentKeys.set": AgentKeysWire,
   "agentKeys.remove": AgentKeysWire,
+  "agentKeys.use": AgentKeysWire,
   "agentKeys.shell": object({ names: list(str) }),
   "agentKeys.fromShell": AgentKeysWire,
   "clouds.status": nullable(OP_SHAPES["clouds.status"]),

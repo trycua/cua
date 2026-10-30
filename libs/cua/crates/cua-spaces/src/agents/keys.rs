@@ -27,6 +27,15 @@ use std::time::{Duration, Instant};
 /// The store's secret name.
 pub const SECRET_NAME: &str = "agent-keys";
 
+/// The store's secret name for which credential each app uses (not a secret:
+/// a provider, a variable name and a slot, kept beside the keys).
+pub const USES_NAME: &str = "agent-uses";
+
+/// The apps that take any provider and so let the person pick which
+/// credential they use (Settings, Connections, the app's page). Claude Code,
+/// Codex, Gemini CLI and Antigravity read one fixed sign-in.
+pub const SWITCHABLE_APPS: &[&str] = &["hermes", "opencode", "goose", "pi", "openclaw"];
+
 /// The app's settings methods (`SpaceService.CallSpaceTool` names). They are
 /// not contract tools: no MCP server lists or calls them, so an agent can
 /// never read or change a key.
@@ -35,6 +44,7 @@ pub const APP_METHODS: &[&str] = &[
     "agent_keys.check",
     "agent_keys.set",
     "agent_keys.remove",
+    "agent_keys.use",
     "agent_keys.shell",
     "agent_keys.from_shell",
 ];
@@ -264,6 +274,10 @@ pub struct KeyInfo {
     pub provider: String,
     /// The variable a run gets it as.
     pub env: String,
+    /// Which of several keys saved for the same variable this is; absent for the
+    /// first one (the key a provider's row shows).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slot: Option<String>,
     /// Its last four characters (empty for a key shorter than 12).
     pub last4: String,
     /// When it was added (Unix ms).
@@ -294,6 +308,9 @@ pub struct KeyInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct KeysReport {
     pub keys: Vec<KeyInfo>,
+    /// Which credential each switchable app uses, by app; an app not listed uses
+    /// the first one that works.
+    pub uses: BTreeMap<String, UseChoice>,
     pub providers: Vec<Provider>,
     /// Keys can be saved here.
     pub available: bool,
@@ -302,9 +319,22 @@ pub struct KeysReport {
     pub unavailable: Option<String>,
 }
 
+/// The credential an app was told to use: a variable and which of its saved
+/// keys. Names only, never a value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UseChoice {
+    pub provider: String,
+    pub env: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<String>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Stored {
     env: String,
+    /// Set on a key added beside the first one for the same variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    slot: Option<String>,
     provider: String,
     value: String,
     added_ms: u64,
@@ -362,6 +392,7 @@ impl Stored {
         KeyInfo {
             provider: self.provider.clone(),
             env: self.env.clone(),
+            slot: self.slot.clone(),
             last4,
             added_ms: self.added_ms,
             label: self.label.clone(),
@@ -453,6 +484,8 @@ pub struct AgentKeys {
     cache: Mutex<Option<(Instant, Vec<Stored>)>>,
     // When Claude Code's own sign-in was last re-read ([`AgentKeys::sync_claude_login`]).
     claude_sync: Mutex<Option<Instant>>,
+    // Which credential each switchable app uses, as last read.
+    uses_cache: Mutex<Option<(Instant, BTreeMap<String, UseChoice>)>>,
 }
 
 impl std::fmt::Debug for AgentKeys {
@@ -486,6 +519,7 @@ impl AgentKeys {
                 unavailable: None,
                 cache: Mutex::new(None),
                 claude_sync: Mutex::new(None),
+                uses_cache: Mutex::new(None),
             }
         } else {
             Self::unavailable(file_store_reason())
@@ -499,6 +533,7 @@ impl AgentKeys {
             unavailable: Some(reason.into()),
             cache: Mutex::new(None),
             claude_sync: Mutex::new(None),
+            uses_cache: Mutex::new(None),
         }
     }
 
@@ -562,6 +597,7 @@ impl AgentKeys {
     pub fn report(&self) -> Result<KeysReport> {
         Ok(KeysReport {
             keys: self.list()?,
+            uses: self.uses(),
             providers: providers(),
             available: self.available(),
             unavailable: self.unavailable.clone(),
@@ -588,11 +624,43 @@ impl AgentKeys {
         region: Option<&str>,
         fields: &BTreeMap<String, String>,
     ) -> Result<KeyInfo> {
+        self.set_slot(provider, env, value, region, fields, None, false)
+    }
+
+    /// [`AgentKeys::set_with`], optionally as another key beside the first one
+    /// saved for the provider (`add`), named `label` ("Work key"). With `add`
+    /// and no first key yet, it is saved as the first. The first key is what a
+    /// provider's row shows; the others are only used by an app that was told
+    /// to use one ([`AgentKeys::set_use`]).
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_slot(
+        &self,
+        provider: &str,
+        env: Option<&str>,
+        value: &str,
+        region: Option<&str>,
+        fields: &BTreeMap<String, String>,
+        label: Option<&str>,
+        add: bool,
+    ) -> Result<KeyInfo> {
+        let label = match label.map(str::trim).filter(|l| !l.is_empty()) {
+            Some(l) if l.chars().count() > 40 || l.chars().any(|c| c.is_control()) => {
+                return Err(Error::InvalidArgument(
+                    "a key's name must be one line of at most 40 characters".into(),
+                ));
+            }
+            other => other,
+        };
         let mut optional_secret = false;
         // A Claude token (`sk-ant-oat...`, from `claude setup-token`) pasted where an API
         // key goes is a sign-in for Claude Code, not an API key: saved as one, so it
         // works for Claude Code and is never offered to another app as a key.
         if provider == "anthropic" && value.trim().contains("sk-ant-oat") {
+            if add {
+                return Err(Error::InvalidArgument(
+                    "a Claude sign-in token is used by Claude Code only; it can't be added as another key".into(),
+                ));
+            }
             let copy = cua_agents::signin::claude_pasted_token(value)
                 .map_err(|r| Error::InvalidArgument(r.line().into()))?;
             return self.import(
@@ -638,13 +706,19 @@ impl AgentKeys {
         }
         let mut g = self.lock();
         let mut keys = self.read(&mut g, true)?;
-        keys.retain(|k| k.env != env);
+        // Another key goes beside the first; saving the first again replaces only it.
+        let slot = (add && keys.iter().any(|k| k.env == env && k.slot.is_none()))
+            .then(|| format!("k{:x}", now_ms()));
+        if slot.is_none() {
+            keys.retain(|k| !(k.env == env && k.slot.is_none()));
+        }
         let stored = Stored {
+            slot,
             provider: id,
             env,
             value: value.into(),
             added_ms: now_ms(),
-            label: None,
+            label: label.map(str::to_string),
             source: None,
             expires_ms: None,
             rejected_ms: None,
@@ -658,12 +732,75 @@ impl AgentKeys {
         };
         let info = stored.info();
         keys.push(stored);
-        keys.sort_by(|a, b| a.env.cmp(&b.env));
+        keys.sort_by(|a, b| (&a.env, &a.slot, a.added_ms).cmp(&(&b.env, &b.slot, b.added_ms)));
         self.write(&mut g, keys)?;
         Ok(info)
     }
 
-    /// Removes the key named `env`; whether there was one.
+    /// Removes one key beside the first, named by its `slot`; whether there was one.
+    /// An app that was told to use it then has no credential (it says so), never
+    /// another one.
+    pub fn remove_slot(&self, env: &str, slot: &str) -> Result<bool> {
+        if self.store.is_none() {
+            return Ok(false);
+        }
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        let before = keys.len();
+        keys.retain(|k| !(k.env == env && k.slot.as_deref() == Some(slot)));
+        if keys.len() == before {
+            return Ok(false);
+        }
+        self.write(&mut g, keys)?;
+        Ok(true)
+    }
+
+    /// Removes the first key saved for `env` and keeps the others: the oldest of them
+    /// becomes the first. Whether there was one.
+    pub fn remove_first(&self, env: &str) -> Result<bool> {
+        if self.store.is_none() {
+            return Ok(false);
+        }
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        let Some(at) = keys.iter().position(|k| k.env == env && k.slot.is_none()) else {
+            return Ok(false);
+        };
+        keys.remove(at);
+        // The oldest key beside it takes its place; a use that named it follows.
+        let next = keys
+            .iter()
+            .enumerate()
+            .filter(|(_, k)| k.env == env && k.slot.is_some())
+            .min_by_key(|(_, k)| k.added_ms)
+            .map(|(i, _)| i);
+        if let Some(i) = next {
+            keys[i].slot = None;
+        }
+        self.write(&mut g, keys)?;
+        drop(g);
+        // An app told to use the key just removed has no credential now (it says so); it is
+        // not moved to the key that took its place.
+        let mut all = self.uses();
+        let mut changed = false;
+        for u in all
+            .values_mut()
+            .filter(|u| u.env == env && u.slot.is_none())
+        {
+            u.slot = Some("removed".into());
+            changed = true;
+        }
+        if changed && let Some(store) = &self.store {
+            store
+                .save_secret(USES_NAME, &serde_json::to_vec(&all)?)
+                .map_err(store_err)?;
+            *self.uses_cache.lock().unwrap_or_else(|p| p.into_inner()) =
+                Some((Instant::now(), all));
+        }
+        Ok(true)
+    }
+
+    /// Removes the key named `env`, and every key saved beside it; whether there was one.
     pub fn remove(&self, env: &str) -> Result<bool> {
         if self.store.is_none() {
             return Ok(false);
@@ -709,6 +846,7 @@ impl AgentKeys {
         }
         keys.retain(|k| k.source.as_deref() != Some(source));
         let stored = Stored {
+            slot: None,
             provider: provider_of(env).into(),
             env: env.into(),
             value: value.into(),
@@ -860,7 +998,7 @@ impl AgentKeys {
         match self.read(&mut g, false) {
             Ok(keys) => keys
                 .into_iter()
-                .filter(Stored::usable)
+                .filter(|k| k.slot.is_none() && k.usable())
                 .map(|k| k.env)
                 .collect(),
             Err(e) => {
@@ -882,7 +1020,7 @@ impl AgentKeys {
                 .into_iter()
                 // A sign-in past its expiry is not forwarded: the run would
                 // only be told 401 by the provider.
-                .filter(|k| names.contains(&k.env.as_str()) && k.usable())
+                .filter(|k| k.slot.is_none() && names.contains(&k.env.as_str()) && k.usable())
                 .map(|k| (k.env, k.value))
                 .collect(),
             Err(e) => {
@@ -890,6 +1028,149 @@ impl AgentKeys {
                 BTreeMap::new()
             }
         }
+    }
+}
+
+/// What an app was told to use, against what is saved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Chosen {
+    /// Nothing was chosen: the app gets every credential it can read, as before.
+    NoChoice,
+    /// It was told to use a credential that is no longer saved or no longer works.
+    /// The app gets no credential from the keys; Settings says so.
+    Gone,
+    /// The credential it was told to use, and what comes with it.
+    Found {
+        provider: String,
+        env: String,
+        value: String,
+        region: Option<String>,
+        fields: BTreeMap<String, String>,
+    },
+}
+
+impl AgentKeys {
+    /// Which credential each switchable app was told to use (names only).
+    pub fn uses(&self) -> BTreeMap<String, UseChoice> {
+        let Some(store) = &self.store else {
+            return BTreeMap::new();
+        };
+        let mut g = self.uses_cache.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((at, m)) = g.as_ref()
+            && at.elapsed() < CACHE_FOR
+        {
+            return m.clone();
+        }
+        let m = match store.load_secret(USES_NAME) {
+            Ok(Some(bytes)) => {
+                serde_json::from_slice::<BTreeMap<String, UseChoice>>(&bytes).unwrap_or_default()
+            }
+            _ => BTreeMap::new(),
+        };
+        *g = Some((Instant::now(), m.clone()));
+        m
+    }
+
+    /// Tells `app` (a switchable app's setup id) which saved credential to use,
+    /// or with `None` to use the first one that works again. The credential must
+    /// be saved and one the app can read; nothing is signed out or deleted.
+    pub fn set_use(&self, app: &str, choice: Option<(&str, Option<&str>)>) -> Result<()> {
+        if !SWITCHABLE_APPS.contains(&app) {
+            return Err(Error::InvalidArgument(format!(
+                "{app} reads one fixed sign-in; there is nothing to choose"
+            )));
+        }
+        let Some(store) = &self.store else {
+            return Err(self.refusal());
+        };
+        let new = match choice {
+            None => None,
+            Some((env, slot)) => {
+                let keys = {
+                    let mut g = self.lock();
+                    self.read(&mut g, true)?
+                };
+                let k = keys
+                    .iter()
+                    .find(|k| k.env == env && k.slot.as_deref() == slot && k.usable())
+                    .ok_or_else(|| {
+                        Error::InvalidArgument(
+                            "that key isn't saved, or has stopped working".into(),
+                        )
+                    })?;
+                if !registry::can_read(app, env) {
+                    return Err(Error::InvalidArgument(format!(
+                        "{app} can't use that credential"
+                    )));
+                }
+                Some(UseChoice {
+                    provider: k.provider.clone(),
+                    env: k.env.clone(),
+                    slot: k.slot.clone(),
+                })
+            }
+        };
+        let mut all = self.uses();
+        match new {
+            Some(c) => {
+                all.insert(app.to_string(), c);
+            }
+            None => {
+                all.remove(app);
+            }
+        }
+        if all.is_empty() {
+            store.clear_secret(USES_NAME).map_err(store_err)?;
+        } else {
+            store
+                .save_secret(USES_NAME, &serde_json::to_vec(&all)?)
+                .map_err(store_err)?;
+        }
+        *self.uses_cache.lock().unwrap_or_else(|p| p.into_inner()) = Some((Instant::now(), all));
+        Ok(())
+    }
+
+    /// What `app` was told to use, against what is saved now.
+    pub fn chosen(&self, app: &str) -> Chosen {
+        let Some(u) = self.uses().remove(app) else {
+            return Chosen::NoChoice;
+        };
+        let mut g = self.lock();
+        let keys = self.read(&mut g, false).unwrap_or_default();
+        match keys
+            .into_iter()
+            .find(|k| k.env == u.env && k.slot == u.slot && k.usable())
+        {
+            Some(k) if registry::can_read(app, &k.env) => Chosen::Found {
+                provider: k.provider,
+                env: k.env,
+                value: k.value,
+                region: k.region,
+                fields: k.fields,
+            },
+            _ => Chosen::Gone,
+        }
+    }
+
+    /// Notes that a run was refused with the key in `slot`: it reads as needing a reconnect.
+    pub fn mark_slot_rejected(&self, env: &str, slot: &str) -> Result<()> {
+        if self.store.is_none() {
+            return Ok(());
+        }
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        let mut changed = false;
+        for k in keys
+            .iter_mut()
+            .filter(|k| k.env == env && k.slot.as_deref() == Some(slot) && k.rejected_ms.is_none())
+        {
+            k.rejected_ms = Some(now_ms());
+            changed = true;
+        }
+        if changed {
+            self.write(&mut g, keys)?;
+        }
+        Ok(())
     }
 }
 
@@ -908,7 +1189,7 @@ impl AgentKeys {
             }
         };
         let mut out: Vec<registry::Connected> = vec![];
-        for k in keys.into_iter().filter(Stored::usable) {
+        for k in keys.into_iter().filter(|k| k.slot.is_none() && k.usable()) {
             let Some(def) = registry::provider_of_env(&k.env) else {
                 continue;
             };
@@ -959,7 +1240,7 @@ impl AgentKeys {
         let mut g = self.lock();
         let mut keys = self.read(&mut g, true)?;
         let mut changed = vec![];
-        for k in keys.iter_mut() {
+        for k in keys.iter_mut().filter(|k| k.slot.is_none()) {
             let Some((_, added)) = which.iter().find(|(e, _)| *e == k.env) else {
                 continue;
             };
@@ -983,7 +1264,7 @@ impl AgentKeys {
         match self.read(&mut g, true) {
             Ok(keys) => keys
                 .into_iter()
-                .filter(|k| !k.expired() && !k.value.is_empty())
+                .filter(|k| k.slot.is_none() && !k.expired() && !k.value.is_empty())
                 .filter_map(|k| {
                     let def = registry::provider_of_env(&k.env)?;
                     def.check?;
@@ -1167,6 +1448,16 @@ pub fn mark_rejected_for_run(harness: &str, provider: &str) {
     let mut envs = envs;
     envs.sort_unstable();
     envs.dedup();
+    // An app told to use a key beside the first one: that key is the one refused.
+    if let Some(u) = global().uses().remove(harness)
+        && u.provider == provider
+        && let Some(slot) = u.slot.as_deref()
+    {
+        envs.retain(|e| *e != u.env);
+        if let Err(e) = global().mark_slot_rejected(&u.env, slot) {
+            tracing::warn!(error = %e, "agent keys: could not note a rejected credential");
+        }
+    }
     if let Err(e) = global().mark_rejected(&envs) {
         tracing::warn!(error = %e, "agent keys: could not note a rejected credential");
     }
@@ -1285,12 +1576,35 @@ struct SetArgs {
     region: Option<String>,
     #[serde(default)]
     fields: BTreeMap<String, String>,
+    /// Save as another key beside the first one for the provider.
+    #[serde(default)]
+    add: bool,
+    /// A name for the key ("Work key").
+    #[serde(default)]
+    label: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RemoveArgs {
     env: String,
+    /// Remove only this key beside the first one (without it, the key and all beside it).
+    #[serde(default)]
+    slot: Option<String>,
+    /// With no `slot`: remove only the first key and keep the others.
+    #[serde(default)]
+    keep_others: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UseArgs {
+    app: String,
+    /// Absent: use the first credential that works again.
+    #[serde(default)]
+    env: Option<String>,
+    #[serde(default)]
+    slot: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1349,12 +1663,14 @@ pub fn app_call(
                 .map(|l| l.iter().any(|k| k.provider == provider))
                 .unwrap_or(false);
             let saved = parsed.and_then(|a| {
-                keys.set_with(
+                keys.set_slot(
                     &a.provider,
                     a.env.as_deref(),
                     &a.value,
                     a.region.as_deref(),
                     &a.fields,
+                    a.label.as_deref(),
+                    a.add,
                 )
             });
             note_connection(
@@ -1368,11 +1684,23 @@ pub fn app_call(
             serde_json::from_value::<RemoveArgs>(args)
                 .map_err(|e| Error::InvalidArgument(format!("agent_keys.remove: {e}")))
                 .and_then(|a| {
-                    let removed = keys.remove(&a.env)?;
+                    let removed = match a.slot.as_deref() {
+                        Some(slot) => keys.remove_slot(&a.env, slot)?,
+                        None if a.keep_others => keys.remove_first(&a.env)?,
+                        None => keys.remove(&a.env)?,
+                    };
                     if removed {
                         note_connection(&a.env, "remove", "ok");
                     }
                     Ok(removed)
+                })
+                .and_then(|_| keys.report()),
+        ),
+        "agent_keys.use" => report(
+            serde_json::from_value::<UseArgs>(args)
+                .map_err(|e| Error::InvalidArgument(format!("agent_keys.use: {e}")))
+                .and_then(|a| {
+                    keys.set_use(&a.app, a.env.as_deref().map(|e| (e, a.slot.as_deref())))
                 })
                 .and_then(|_| keys.report()),
         ),
@@ -2257,5 +2585,175 @@ mod tests {
         ] {
             assert!(!allowed.contains(&n), "{n}");
         }
+    }
+
+    #[test]
+    fn more_keys_for_one_provider_are_named_listed_without_values_and_kept_apart() {
+        let (keys, dir) = temp_keys();
+        let f = BTreeMap::new();
+        keys.set("anthropic", None, "sk-ant-api03-first-aaaa")
+            .unwrap();
+        let work = keys
+            .set_slot(
+                "anthropic",
+                None,
+                "sk-ant-api03-work-bbbb",
+                None,
+                &f,
+                Some("Work key"),
+                true,
+            )
+            .unwrap();
+        assert!(work.slot.is_some());
+        assert_eq!(work.label.as_deref(), Some("Work key"));
+        // Adding with no first key saves it as the first.
+        let first = keys
+            .set_slot(
+                "openai",
+                None,
+                "sk-openai-first-cccc",
+                None,
+                &f,
+                Some("Mine"),
+                true,
+            )
+            .unwrap();
+        assert!(first.slot.is_none());
+        // A name must be one short line.
+        assert!(
+            keys.set_slot(
+                "openai",
+                None,
+                "sk-openai-x-dddd",
+                None,
+                &f,
+                Some("a\nb"),
+                true
+            )
+            .is_err()
+        );
+        assert!(
+            keys.set_slot(
+                "openai",
+                None,
+                "sk-openai-x-dddd",
+                None,
+                &f,
+                Some(&"n".repeat(41)),
+                true
+            )
+            .is_err()
+        );
+        // A Claude sign-in token is never added as another key.
+        let token = format!("sk-ant-oat01-{}", "y".repeat(40));
+        assert!(
+            keys.set_slot("anthropic", None, &token, None, &f, None, true)
+                .is_err()
+        );
+        // The report names both Anthropic keys and carries no value.
+        let report = serde_json::to_string(&keys.report().unwrap()).unwrap();
+        assert!(report.contains("Work key") && report.contains("bbbb") && report.contains("aaaa"));
+        assert!(
+            !report.contains("sk-ant-api03") && !report.contains("sk-openai"),
+            "{report}"
+        );
+        // Only the first key is what runs, readiness and the connection list see.
+        assert_eq!(
+            keys.values(&["ANTHROPIC_API_KEY"]),
+            BTreeMap::from([("ANTHROPIC_API_KEY".into(), "sk-ant-api03-first-aaaa".into())])
+        );
+        assert_eq!(
+            keys.names()
+                .iter()
+                .filter(|n| *n == "ANTHROPIC_API_KEY")
+                .count(),
+            1
+        );
+        assert_eq!(keys.connections().len(), 2);
+        // Saving the first again replaces only it.
+        keys.set("anthropic", None, "sk-ant-api03-first-zzzz")
+            .unwrap();
+        let listed = keys.list().unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .filter(|k| k.env == "ANTHROPIC_API_KEY")
+                .count(),
+            2
+        );
+        assert!(listed.iter().any(|k| k.slot.is_some() && k.last4 == "bbbb"));
+        // Disconnecting the provider removes every key saved for it.
+        assert!(keys.remove("ANTHROPIC_API_KEY").unwrap());
+        assert!(
+            keys.list()
+                .unwrap()
+                .iter()
+                .all(|k| k.env != "ANTHROPIC_API_KEY")
+        );
+        // A fresh handle reads the same store.
+        let again = AgentKeys::new(cua_auth::Store::TestKeychain(dir.clone()));
+        assert_eq!(again.list().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn which_key_an_app_uses_is_kept_beside_the_keys_and_shown_without_values() {
+        let (keys, dir) = temp_keys();
+        let f = BTreeMap::new();
+        keys.set("anthropic", None, "sk-ant-api03-first-aaaa")
+            .unwrap();
+        let slot = keys
+            .set_slot(
+                "anthropic",
+                None,
+                "sk-ant-api03-work-bbbb",
+                None,
+                &f,
+                None,
+                true,
+            )
+            .unwrap()
+            .slot
+            .unwrap();
+        keys.set_use("hermes", Some(("ANTHROPIC_API_KEY", Some(&slot))))
+            .unwrap();
+        let report = keys.report().unwrap();
+        assert_eq!(report.uses["hermes"].slot.as_deref(), Some(slot.as_str()));
+        assert_eq!(report.uses["hermes"].provider, "anthropic");
+        // It outlives the handle, and clearing it removes it.
+        let again = AgentKeys::new(cua_auth::Store::TestKeychain(dir.clone()));
+        assert_eq!(again.uses().len(), 1);
+        again.set_use("hermes", None).unwrap();
+        assert!(again.uses().is_empty());
+        // A key refused by a run is the chosen one, not the first.
+        keys.set_use("hermes", Some(("ANTHROPIC_API_KEY", Some(&slot))))
+            .unwrap();
+        keys.mark_slot_rejected("ANTHROPIC_API_KEY", &slot).unwrap();
+        let listed = keys.list().unwrap();
+        assert!(listed.iter().find(|k| k.slot.is_some()).unwrap().expired);
+        assert!(!listed.iter().find(|k| k.slot.is_none()).unwrap().expired);
+        assert_eq!(keys.chosen("hermes"), Chosen::Gone);
+        // Drives through the app method as well.
+        let shell = std::path::Path::new("/bin/sh");
+        let out = app_call(
+            &keys,
+            "agent_keys.use",
+            serde_json::json!({"app": "hermes"}),
+            shell,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(out["uses"].as_object().unwrap().is_empty());
+        assert!(
+            app_call(
+                &keys,
+                "agent_keys.use",
+                serde_json::json!({"app": "codex", "env": "ANTHROPIC_API_KEY"}),
+                shell
+            )
+            .unwrap()
+            .is_err()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

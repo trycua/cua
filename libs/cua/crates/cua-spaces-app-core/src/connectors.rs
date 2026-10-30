@@ -269,13 +269,35 @@ pub struct ConnectorFailure {
     pub line: String,
 }
 
+/// A key saved beside the first one for the same variable: named, and told apart by its slot.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ExtraKeyInput {
+    #[serde(flatten)]
+    pub key: AgentKeyInput,
+    pub slot: Option<String>,
+}
+
+/// The credential an app was told to use (names only).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UseInput {
+    pub provider: String,
+    pub env: String,
+    pub slot: Option<String>,
+}
+
 /// What the Connectors page reads.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ConnectorsInput {
     pub apps: Vec<ConnectorAppInput>,
-    /// The saved keys and sign-ins (`agentKeys.list`).
+    /// The saved keys and sign-ins (`agentKeys.list`): the first for each variable.
     pub keys: AgentKeysInput,
+    /// Keys saved beside the first for the same variable (an app that takes any provider can use one).
+    pub key_extras: Vec<ExtraKeyInput>,
+    /// Which credential each app that takes any provider was told to use, by app.
+    pub uses: std::collections::HashMap<String, UseInput>,
     /// Provider variables exported in the person's shell (names only).
     pub shell_keys: Vec<String>,
     /// "Set up new apps automatically".
@@ -293,6 +315,23 @@ pub struct ConnectorsInput {
 impl ConnectorsInput {
     fn key(&self, env: &str) -> Option<&AgentKeyInput> {
         self.keys.keys.iter().find(|k| k.env == env)
+    }
+    /// Every saved key for `env` with its slot: the first (none), then those saved beside it.
+    fn keys_of<'a>(
+        &'a self,
+        env: &'a str,
+    ) -> impl Iterator<Item = (&'a AgentKeyInput, Option<&'a str>)> + 'a {
+        self.keys
+            .keys
+            .iter()
+            .filter(move |k| k.env == env)
+            .map(|k| (k, None))
+            .chain(
+                self.key_extras
+                    .iter()
+                    .filter(move |x| x.key.env == env)
+                    .map(|x| (&x.key, x.slot.as_deref())),
+            )
     }
     fn busy(&self, id: &str) -> Option<&str> {
         self.busy
@@ -405,6 +444,10 @@ fn app_signed_in(input: &ConnectorsInput, app: &str) -> bool {
     let Some(a) = app_sign_in(app) else {
         return true;
     };
+    // An app told which credential to use is connected only while that one works.
+    if let Some(u) = input.uses.get(app).filter(|_| switchable(app)) {
+        return chosen_option(input, app, u).is_some();
+    }
     if a.reads.is_empty() {
         return a.providers.iter().any(|p| provider_connected(input, p.id));
     }
@@ -573,9 +616,9 @@ pub struct ConnectorsView {
     pub auto_label: String,
     pub auto_help: String,
     pub auto: bool,
-    /// "Connections".
+    /// "Providers".
     pub providers_title: String,
-    /// Under Connections: where credentials stay.
+    /// Under Providers: where credentials stay.
     pub providers_footer: String,
     /// The providers up front, then any other that is connected or needs
     /// reconnecting (so a connected one never hides in the search).
@@ -932,7 +975,7 @@ pub fn view_on(input: &ConnectorsInput, os: SpaceOs) -> ConnectorsView {
         auto_label: "Set up new apps automatically".into(),
         auto_help: "When you install another coding app, Cua adds itself and tells you.".into(),
         auto: input.auto,
-        providers_title: "Connections".into(),
+        providers_title: "Providers".into(),
         providers_footer: format!(
             "Sign-ins and keys stay on {this}{place}. Each one is only given to the apps that use it."
         ),
@@ -1614,6 +1657,186 @@ pub struct ConnectorSignIn {
     pub button: ConnectorButton,
 }
 
+/// Whether `app` takes any provider, so the person picks which credential it uses.
+pub fn switchable(app: &str) -> bool {
+    matches!(app, "hermes" | "opencode" | "goose" | "pi" | "openclaw")
+}
+
+/// One credential an app can use (a row of the Uses menu).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UseOption {
+    pub provider: String,
+    /// "Anthropic".
+    pub provider_name: String,
+    /// The icon's key (the provider id).
+    pub icon: String,
+    /// The variable the credential is saved as, and which of its keys.
+    pub env: String,
+    pub slot: Option<String>,
+    /// "API key ending 4f2a", or the key's own name ("Work key").
+    pub line: String,
+    /// The model the app is told to use with it, when the person set one.
+    pub model: Option<String>,
+    pub selected: bool,
+}
+
+/// An app's Uses row: which saved credential it runs with, and the others it could.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUses {
+    /// The row's heading: the provider in use, "No provider connected" or "Key not found".
+    pub title: String,
+    /// `connected` (a credential is in use), `not-connected`, or `gone` (the one
+    /// chosen is no longer saved or stopped working).
+    pub state: String,
+    /// The line under the title when no credential is in use.
+    pub status: String,
+    /// The credential in use.
+    pub current: Option<UseOption>,
+    /// Everything the app can use, first choice first. The Claude and ChatGPT
+    /// sign-ins are never among them.
+    pub options: Vec<UseOption>,
+    /// The person chose (rather than the first one that works being used).
+    pub chosen: bool,
+    /// "Connect another provider", at the bottom of the menu.
+    pub connect_label: String,
+    /// The one plain line under the row.
+    pub note: String,
+    pub enabled: bool,
+}
+
+/// What one saved key reads as in a menu.
+fn use_line(p: &reg::Provider, k: &AgentKeyInput) -> String {
+    if let Some(l) = k.label.as_deref().filter(|l| !l.is_empty()) {
+        return l.to_string();
+    }
+    if p.kind == reg::Kind::Custom {
+        if let Some(u) = k.fields.get("base_url").filter(|u| !u.is_empty()) {
+            return u.clone();
+        }
+        return "Saved".into();
+    }
+    let plan = k
+        .region
+        .as_deref()
+        .and_then(|r| p.regions.iter().find(|x| x.id == r))
+        .map(|r| format!(", {}", r.name))
+        .unwrap_or_default();
+    if k.last4.is_empty() {
+        format!("API key{plan}")
+    } else {
+        format!("API key ending {}{plan}", k.last4)
+    }
+}
+
+/// Every credential `app` can use now, in the order of preference: providers by rank, the
+/// first key of each before the keys saved beside it.
+fn use_options(input: &ConnectorsInput, app: &str) -> Vec<UseOption> {
+    let Some(a) = app_sign_in(app) else {
+        return vec![];
+    };
+    let harness = harness_of_app(app).unwrap_or(app);
+    let mut out = vec![];
+    for p in &a.providers {
+        for env in provider_envs(p) {
+            for (k, slot) in input.keys_of(env).filter(|(k, _)| !k.expired) {
+                // A sign-in scoped to another app is never offered; a custom endpoint needs its URL and model.
+                if p.scope_of(env).is_some() || !reg::can_read(harness, env) {
+                    continue;
+                }
+                if p.kind == reg::Kind::Custom
+                    && !(k.fields.get("base_url").is_some_and(|v| !v.is_empty())
+                        && k.fields.get("model").is_some_and(|v| !v.is_empty()))
+                {
+                    continue;
+                }
+                out.push(UseOption {
+                    provider: p.id.into(),
+                    provider_name: p.name.into(),
+                    icon: p.id.into(),
+                    env: env.into(),
+                    slot: slot.map(str::to_string),
+                    line: use_line(p, k),
+                    model: k.fields.get("model").filter(|m| !m.is_empty()).cloned(),
+                    selected: false,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The option an app was told to use, while it is still saved and works.
+fn chosen_option(input: &ConnectorsInput, app: &str, u: &UseInput) -> Option<UseOption> {
+    use_options(input, app)
+        .into_iter()
+        .find(|o| o.env == u.env && o.slot == u.slot)
+}
+
+fn app_uses(input: &ConnectorsInput, app: &str, name: &str, can_edit: bool) -> AppUses {
+    let mut options = use_options(input, app);
+    let choice = input.uses.get(app);
+    let picked = choice.and_then(|u| {
+        options
+            .iter()
+            .position(|o| o.env == u.env && o.slot == u.slot)
+    });
+    let current_ix = match (choice, picked) {
+        (None, _) => (!options.is_empty()).then_some(0),
+        (Some(_), p) => p,
+    };
+    if let Some(i) = current_ix {
+        options[i].selected = true;
+    }
+    let current = current_ix.map(|i| options[i].clone());
+    let (state, status) = match (&current, choice) {
+        (Some(_), _) => ("connected", String::new()),
+        (None, Some(_)) => (
+            "gone",
+            format!(
+                "The key {name} was told to use isn't saved any more. Choose another or connect one."
+            ),
+        ),
+        (None, None) => {
+            // Only a sign-in this app cannot read is saved: say what it needs, not a bare "not connected".
+            let sign_in_only = input.keys.keys.iter().any(|k| {
+                matches!(
+                    k.env.as_str(),
+                    "CLAUDE_CODE_OAUTH_TOKEN" | "CODEX_AUTH_JSON"
+                ) && !k.expired
+            });
+            (
+                "not-connected",
+                if sign_in_only {
+                    format!("{name} needs an API key")
+                } else {
+                    format!("Connect a provider to run {name}")
+                },
+            )
+        }
+    };
+    let title = match state {
+        "connected" => current
+            .as_ref()
+            .map(|c| c.provider_name.clone())
+            .unwrap_or_default(),
+        "gone" => "Key not found".to_string(),
+        _ => "No provider connected".to_string(),
+    };
+    AppUses {
+        title,
+        state: state.into(),
+        status,
+        current,
+        options,
+        chosen: choice.is_some(),
+        connect_label: "Connect another provider".into(),
+        note: format!("Takes effect the next time {name} runs."),
+        enabled: can_edit,
+    }
+}
+
 /// One app's page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1629,7 +1852,9 @@ pub struct AppDetailView {
     pub tools_title: String,
     pub toggles: Vec<ConnectorToggle>,
     pub sign_in_title: String,
-    /// Absent for an app that signs in on its own.
+    /// Which credential the app uses, for an app that takes any provider (instead of `sign_in`).
+    pub uses: Option<AppUses>,
+    /// Absent for an app that signs in on its own, and for one with `uses`.
     pub sign_in: Option<ConnectorSignIn>,
     /// Instead of `sign_in`: the app signs in on its own.
     pub sign_in_note: Option<String>,
@@ -1691,7 +1916,8 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
             enabled: !busy,
         });
     }
-    let sign_in = app_sign_in(agent).map(|s| {
+    let uses = switchable(agent).then(|| app_uses(input, agent, &a.name, can_edit && !busy));
+    let sign_in = app_sign_in(agent).filter(|_| uses.is_none()).map(|s| {
         // The provider it uses: the first connected one, else the first.
         let p = s
             .providers
@@ -1730,7 +1956,7 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
             },
         }
     });
-    let sign_in_note = sign_in.is_none().then(|| {
+    let sign_in_note = (sign_in.is_none() && uses.is_none()).then(|| {
         format!(
             "{} signs in on its own. Cua doesn't need a sign-in for it.",
             a.name
@@ -1742,6 +1968,10 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
         back_label: "Connections".into(),
         status: match row.state.as_str() {
             "connected" => signed_in_as(input, agent).unwrap_or_else(|| "Connected".into()),
+            // It has a provider to run with; what is missing is Cua's tools in the app.
+            _ if row.line.is_none() && local && app_signed_in(input, agent) => {
+                format!("Cua isn't set up in {} yet", a.name)
+            }
             _ => row.line.clone().unwrap_or_else(|| "Not connected".into()),
         },
         connected: row.state == "connected",
@@ -1752,7 +1982,13 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
             String::new()
         },
         toggles,
-        sign_in_title: "Sign-in".into(),
+        sign_in_title: if uses.is_some() {
+            "Provider"
+        } else {
+            "Sign-in"
+        }
+        .into(),
+        uses,
         sign_in,
         sign_in_note,
         settings_file_label: "Settings file".into(),
@@ -2091,10 +2327,14 @@ mod tests {
         let d = app_detail(&ConnectorsInput::default(), "goose").unwrap();
         assert_eq!(d.name, "Goose");
         assert!(d.toggles.is_empty() && d.tools_title.is_empty());
+        // Goose takes any provider: its page says which credential it uses, not a sign-in.
+        assert!(d.sign_in.is_none() && d.sign_in_note.is_none());
+        let u = d.uses.as_ref().unwrap();
         assert_eq!(
-            d.sign_in.as_ref().unwrap().title,
-            "Signs in with a connected provider"
+            (u.title.as_str(), u.state.as_str()),
+            ("No provider connected", "not-connected")
         );
+        assert_eq!(u.status, "Connect a provider to run Goose");
         assert_eq!(d.connect.as_ref().unwrap().label, "Connect");
         assert!(d.remove_label.is_none() && d.settings_file.is_none());
         assert!(app_detail(&ConnectorsInput::default(), "vscode").is_none());
@@ -2200,13 +2440,19 @@ mod tests {
         i.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
         i.keys.keys.push(key("CODEX_AUTH_JSON", "BBBB"));
         let d = app_detail(&i, "hermes").unwrap();
-        let s = d.sign_in.unwrap();
-        assert!(!s.connected, "{s:?}");
-        assert_ne!(s.status, "Connected");
+        // The card says what Hermes can read: nothing yet, and never the Claude or ChatGPT sign-in.
+        let u = d.uses.unwrap();
+        assert_eq!(u.state, "not-connected", "{u:?}");
+        assert!(u.current.is_none() && u.options.is_empty());
+        assert_eq!(u.title, "No provider connected");
+        assert_eq!(u.status, "Hermes needs an API key");
+        assert!(!d.connected);
         assert!(!signed_in(&i, "hermes"));
         i.keys.keys.push(key("OPENAI_API_KEY", "CCCC"));
         assert!(signed_in(&i, "hermes"));
-        assert!(app_detail(&i, "hermes").unwrap().sign_in.unwrap().connected);
+        let u = app_detail(&i, "hermes").unwrap().uses.unwrap();
+        assert_eq!(u.state, "connected");
+        assert_eq!(u.current.unwrap().provider, "openai");
     }
 
     #[test]
@@ -2277,7 +2523,7 @@ mod tests {
     fn apps_start_with_connect_and_providers_not_connected() {
         let v = view(&input());
         assert_eq!(v.apps_title, "Coding apps");
-        assert_eq!(v.providers_title, "Connections");
+        assert_eq!(v.providers_title, "Providers");
         let claude = &v.apps[0];
         assert_eq!(claude.state, "not-connected");
         assert_eq!(claude.button.as_ref().unwrap().label, "Connect");
@@ -2930,5 +3176,205 @@ mod tests {
                 .contains("device"),
             "machines, not devices"
         );
+    }
+
+    const SWITCHABLE: [&str; 5] = ["hermes", "opencode", "goose", "pi", "openclaw"];
+
+    fn extra(env: &str, last4: &str, slot: &str, label: Option<&str>) -> ExtraKeyInput {
+        let mut k = key(env, last4);
+        k.label = label.map(str::to_string);
+        k.added_ms += 5;
+        ExtraKeyInput {
+            key: k,
+            slot: Some(slot.into()),
+        }
+    }
+
+    fn using(app: &str, env: &str, slot: Option<&str>) -> (String, UseInput) {
+        (
+            app.into(),
+            UseInput {
+                provider: provider_of_env_for_test(env),
+                env: env.into(),
+                slot: slot.map(str::to_string),
+            },
+        )
+    }
+
+    fn provider_of_env_for_test(env: &str) -> String {
+        reg::provider_of_env(env)
+            .map(|p| p.id.to_string())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn every_app_that_takes_any_provider_lists_only_what_it_can_read() {
+        for app in SWITCHABLE {
+            // Only the Claude and ChatGPT sign-ins are saved: none is a credential for this app.
+            let mut i = input();
+            i.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+            i.keys.keys.push(key("CODEX_AUTH_JSON", "BBBB"));
+            let u = app_detail(&i, app).unwrap().uses.unwrap();
+            assert_eq!(u.state, "not-connected", "{app}");
+            assert!(u.options.is_empty() && u.current.is_none(), "{app}: {u:?}");
+            assert!(!signed_in(&i, app), "{app}");
+            assert!(app_detail(&i, app).unwrap().sign_in.is_none(), "{app}");
+            // Two API keys: both are offered, the first one by rank is in use, nothing is chosen.
+            i.keys.keys.push(key("OPENAI_API_KEY", "CCCC"));
+            i.keys.keys.push(key("ANTHROPIC_API_KEY", "DDDD"));
+            let u = app_detail(&i, app).unwrap().uses.unwrap();
+            let ids: Vec<_> = u.options.iter().map(|o| o.provider.as_str()).collect();
+            assert!(
+                ids.contains(&"anthropic") && ids.contains(&"openai"),
+                "{app}: {ids:?}"
+            );
+            assert!(
+                u.options
+                    .iter()
+                    .all(|o| !o.env.contains("OAUTH") && o.env != "CODEX_AUTH_JSON"),
+                "{app}"
+            );
+            assert_eq!(u.state, "connected", "{app}");
+            assert!(!u.chosen, "{app}");
+            let cur = u.current.unwrap();
+            assert_eq!(cur.env, u.options[0].env, "{app}: the first that works");
+            assert!(cur.selected);
+            assert_eq!(u.options.iter().filter(|o| o.selected).count(), 1, "{app}");
+            assert!(u.options[0].line.contains("ending"), "{app}");
+        }
+    }
+
+    #[test]
+    fn apps_with_one_fixed_sign_in_have_no_switcher() {
+        let mut i = input();
+        i.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
+        i.keys.keys.push(key("OPENAI_API_KEY", "BBBB"));
+        for app in ["claude-code", "codex", "gemini-cli", "antigravity"] {
+            let d = app_detail(&i, app).unwrap();
+            assert!(d.uses.is_none(), "{app}");
+            assert!(d.sign_in.is_some(), "{app}");
+            assert!(!switchable(app));
+        }
+    }
+
+    #[test]
+    fn the_person_picks_which_key_an_app_uses() {
+        for app in SWITCHABLE {
+            let mut i = input();
+            i.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
+            i.keys.keys.push(key("OPENAI_API_KEY", "BBBB"));
+            i.key_extras
+                .push(extra("ANTHROPIC_API_KEY", "CCCC", "k2", Some("Work key")));
+            let u = app_detail(&i, app).unwrap().uses.unwrap();
+            assert_eq!(u.options.len(), 3, "{app}");
+            assert!(
+                u.options
+                    .iter()
+                    .any(|o| o.line == "Work key" && o.slot.as_deref() == Some("k2"))
+            );
+            // Pointed at OpenAI: that one is in use and it is chosen.
+            let (a, c) = using(app, "OPENAI_API_KEY", None);
+            i.uses.insert(a, c);
+            let u = app_detail(&i, app).unwrap().uses.unwrap();
+            let cur = u.current.unwrap();
+            assert_eq!(
+                (cur.provider.as_str(), u.chosen, u.state.as_str()),
+                ("openai", true, "connected"),
+                "{app}"
+            );
+            assert!(signed_in(&i, app));
+            // Pointed at the second Anthropic key.
+            let (a, c) = using(app, "ANTHROPIC_API_KEY", Some("k2"));
+            i.uses.insert(a, c);
+            let cur = app_detail(&i, app).unwrap().uses.unwrap().current.unwrap();
+            assert_eq!(
+                (cur.line.as_str(), cur.slot.as_deref()),
+                ("Work key", Some("k2")),
+                "{app}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_removed_key_leaves_the_app_not_connected_and_never_switches_silently() {
+        for app in SWITCHABLE {
+            let mut i = input();
+            i.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
+            i.keys.keys.push(key("OPENAI_API_KEY", "BBBB"));
+            // It was told to use a key beside the first one, and that key is gone.
+            let (a, c) = using(app, "ANTHROPIC_API_KEY", Some("k2"));
+            i.uses.insert(a, c);
+            let d = app_detail(&i, app).unwrap();
+            let u = d.uses.unwrap();
+            assert_eq!(u.state, "gone", "{app}");
+            assert!(u.current.is_none(), "{app}: no silent switch");
+            assert!(u.options.iter().all(|o| !o.selected));
+            assert!(u.status.contains("isn't saved any more"), "{}", u.status);
+            assert!(!signed_in(&i, app), "{app}");
+            assert!(!d.connected, "{app}");
+            assert_eq!(d.connect.unwrap().label, "Connect");
+            // An expired key is the same.
+            let mut j = input();
+            let mut k = key("OPENAI_API_KEY", "BBBB");
+            k.expired = true;
+            j.keys.keys.push(k);
+            j.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
+            let (a, c) = using(app, "OPENAI_API_KEY", None);
+            j.uses.insert(a, c);
+            assert_eq!(
+                app_detail(&j, app).unwrap().uses.unwrap().state,
+                "gone",
+                "{app}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_state_of_the_provider_row_reads_like_an_action_called_uses() {
+        for app in SWITCHABLE {
+            let mut states = vec![];
+            states.push(input());
+            let mut signs = input();
+            signs.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+            states.push(signs);
+            let mut chosen = input();
+            chosen.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
+            states.push(chosen.clone());
+            let (a, c) = using(app, "ANTHROPIC_API_KEY", Some("gone"));
+            chosen.uses.insert(a, c);
+            states.push(chosen);
+            for i in states {
+                let u = app_detail(&i, app).unwrap().uses.unwrap();
+                let words = format!("{} | {}", u.title, u.status);
+                assert!(!words.contains("Uses"), "{app}: {words}");
+                assert!(!u.title.is_empty(), "{app}");
+            }
+        }
+        let u = app_detail(&input(), "opencode").unwrap().uses.unwrap();
+        assert_eq!(
+            (u.title.as_str(), u.status.as_str()),
+            (
+                "No provider connected",
+                "Connect a provider to run OpenCode"
+            )
+        );
+    }
+
+    #[test]
+    fn the_uses_words_have_no_middle_dot_or_devices() {
+        let mut i = input();
+        i.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
+        i.key_extras
+            .push(extra("ANTHROPIC_API_KEY", "CCCC", "k2", Some("Work key")));
+        let (a, c) = using("hermes", "ANTHROPIC_API_KEY", Some("gone"));
+        i.uses.insert(a, c);
+        for app in SWITCHABLE {
+            let text = format!("{:?}", app_detail(&i, app).unwrap().uses);
+            assert!(
+                !text.contains('\u{b7}') && !text.to_lowercase().contains("device"),
+                "{text}"
+            );
+            assert!(text.contains("Takes effect the next time"), "{text}");
+        }
     }
 }

@@ -30,7 +30,12 @@ export interface ConnectorAppInput {
 
 export interface ConnectorsInput {
   apps: ConnectorAppInput[];
-  keys: AgentKeysInput;
+  /** The first key saved for each variable. */
+  keys: Omit<AgentKeysInput, "extras" | "uses">;
+  /** Keys saved beside the first for the same variable. */
+  keyExtras?: NonNullable<AgentKeysInput["extras"]>;
+  /** Which credential each app that takes any provider uses, by app. */
+  uses?: NonNullable<AgentKeysInput["uses"]>;
   shellKeys: string[];
   auto: boolean;
   off: string[];
@@ -216,6 +221,32 @@ export interface ConnectorToggle {
   enabled: boolean;
 }
 
+/** One credential an app can use (a row of the Uses menu). */
+export interface UseOption {
+  provider: string;
+  providerName: string;
+  icon: string;
+  env: string;
+  slot: string | null;
+  /** "API key ending 4f2a", or the key's own name. */
+  line: string;
+  model: string | null;
+  selected: boolean;
+}
+
+/** An app's Uses row: which saved credential it runs with, and the others it could. */
+export interface AppUses {
+  title: string;
+  state: "connected" | "not-connected" | "gone";
+  status: string;
+  current: UseOption | null;
+  options: UseOption[];
+  chosen: boolean;
+  connectLabel: string;
+  note: string;
+  enabled: boolean;
+}
+
 export interface AppDetailView {
   agent: string;
   name: string;
@@ -226,6 +257,8 @@ export interface AppDetailView {
   toolsTitle: string;
   toggles: ConnectorToggle[];
   signInTitle: string;
+  /** Which credential the app uses (an app that takes any provider); it replaces `signIn`. */
+  uses: AppUses | null;
   signIn: { title: string; status: string; connected: boolean; way: string; provider: string; button: ConnectorButton } | null;
   signInNote: string | null;
   settingsFileLabel: string;
@@ -260,7 +293,9 @@ export function connectorsInputOf(
       mcp: r.mcpConfig ? r.configured || /MCP/i.test(r.detail) : null,
       mcpConfig: r.mcpConfig,
     })),
-    keys,
+    keys: { keys: keys.keys, unavailable: keys.unavailable, error: keys.error },
+    ...(keys.extras?.length ? { keyExtras: keys.extras } : {}),
+    ...(keys.uses && Object.keys(keys.uses).length ? { uses: keys.uses } : {}),
     shellKeys: extra.shellKeys ?? [],
     auto: extra.auto ?? false,
     off: extra.off ?? [],

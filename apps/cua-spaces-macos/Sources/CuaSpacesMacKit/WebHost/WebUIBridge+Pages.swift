@@ -89,8 +89,21 @@ extension WebUIBridge {
             if let env = args["env"] as? String, !env.isEmpty { keyArgs["env"] = env }
             if let region = args["region"] as? String, !region.isEmpty { keyArgs["region"] = region }
             if let fields = args["fields"] as? [String: String], !fields.isEmpty { keyArgs["fields"] = fields }
+            // Another key beside the first one for the provider, named (it replaces nothing).
+            if args["add"] as? Bool == true { keyArgs["add"] = true }
+            if let label = args["label"] as? String, !label.isEmpty { keyArgs["label"] = label }
             return try await model.agentKeys.call("agent_keys.set", keyArgs)
-        case "agentKeys.remove": return try await model.agentKeys.call("agent_keys.remove", ["env": try string(args, "env")])
+        case "agentKeys.remove":
+            var removeArgs: [String: Any] = ["env": try string(args, "env")]
+            if let slot = args["slot"] as? String, !slot.isEmpty { removeArgs["slot"] = slot }
+            if args["keep_others"] as? Bool == true { removeArgs["keep_others"] = true }
+            return try await model.agentKeys.call("agent_keys.remove", removeArgs)
+        // Which saved credential an app that takes any provider uses from its next run (no env: the first that works).
+        case "agentKeys.use":
+            var useArgs: [String: Any] = ["app": try string(args, "app")]
+            if let env = args["env"] as? String, !env.isEmpty { useArgs["env"] = env }
+            if let slot = args["slot"] as? String, !slot.isEmpty { useArgs["slot"] = slot }
+            return try await model.agentKeys.call("agent_keys.use", useArgs)
         // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
         case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
         case "agentKeys.fromShell":

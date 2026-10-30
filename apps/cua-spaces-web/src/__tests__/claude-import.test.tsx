@@ -93,7 +93,9 @@ describe.skipIf(!wasmBuilt)("importing the Claude Code sign-in", () => {
     // The row, the Anthropic provider row and the app's own page.
     expect(q("[data-connector-app=claude-code]")!.textContent).toContain(WHO);
     expect(q("[data-connector-provider=anthropic]")!.textContent).toContain(WHO);
-    expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Disconnect");
+    // Disconnect is in the provider's sheet, not on its row.
+    await click(q("[data-connector-provider=anthropic]")!);
+    expect((await found("[data-provider-detail=anthropic] [data-connector-provider-action='sign-out']")).textContent).toBe("Disconnect");
     // Hermes does not count it: a Claude sign-in is Claude Code's alone.
     expect(q("[data-connector-app=hermes]")!.dataset.state).not.toBe("connected");
   });

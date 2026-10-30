@@ -51,6 +51,23 @@ fn activate_bundle(bundle_id: &str) {
     let _ = osascript(&format!(r#"tell application id "{bundle_id}" to activate"#));
 }
 
+fn set_process_visible(process_name: &str, visible: bool) {
+    let _ = osascript(&format!(
+        r#"tell application "System Events" to set visible of application process "{process_name}" to {visible}"#
+    ));
+}
+
+fn process_visible(process_name: &str) -> Option<bool> {
+    osascript(&format!(
+        r#"tell application "System Events" to visible of application process "{process_name}""#
+    ))
+    .and_then(|value| match value.as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    })
+}
+
 /// Make Finder frontmost and keep it there for a settle window. Hosted macOS
 /// runners can hand the front to another process just after `activate`
 /// succeeded, so one sample is a race: re-activate with a bounded deadline
@@ -157,4 +174,51 @@ fn calculator_launch_preserves_finder_frontmost() {
         "Calculator",
         "calculator",
     );
+}
+
+#[test]
+#[ignore]
+fn textedit_launch_reopens_hidden_running_app_without_focus_steal() {
+    let case = CaseSpec::delivered(
+        "macos-textedit-reopen-hidden",
+        "reopen a hidden running app",
+        "appkit",
+        "launch_app",
+        Targeting::NotApplicable,
+        Delivery::Background,
+        Scope::Desktop,
+        DriverRoute::Composite,
+        vec![OracleKind::Focus, OracleKind::Protocol],
+    );
+    execute_case(case, |evidence| {
+        kill_app_process("TextEdit");
+        ensure_finder_frontmost();
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-textedit-reopen-hidden")
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        driver.start_behavior_recording();
+
+        launch_and_assert_frontmost_unchanged(&mut driver, TEXTEDIT_BUNDLE, "initial launch");
+        set_process_visible("TextEdit", false);
+        assert_eq!(
+            process_visible("TextEdit"),
+            Some(false),
+            "TextEdit should be hidden before the reopen request"
+        );
+        ensure_finder_frontmost();
+
+        launch_and_assert_frontmost_unchanged(&mut driver, TEXTEDIT_BUNDLE, "reopen");
+        sleep(Duration::from_millis(1200));
+        assert_eq!(
+            process_visible("TextEdit"),
+            Some(true),
+            "launch_app should make an already-running hidden app visible"
+        );
+        kill_app_process("TextEdit");
+
+        Observation::delivered(
+            vec![OracleKind::Focus, OracleKind::Protocol],
+            Default::default(),
+        )
+    });
 }

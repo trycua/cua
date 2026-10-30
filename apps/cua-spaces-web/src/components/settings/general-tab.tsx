@@ -8,6 +8,7 @@ import type { HostLimitRow, HostLimits } from "@/bridge/contracts/host";
 
 import { chooseSettings, useBridge, useLoginItem, useMachines, useSession, useSettings, useThisMachine, useTips, type GlobalShortcut, type SettingsRow as CoreRow } from "@/bridge";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { CliSettingsSection } from "@/components/settings/cli-section";
 import { CoreSettingsRow } from "@/components/settings/core-section";
 import { RepoCacheGroup } from "@/components/settings/repo-cache-group";
 import { Button } from "@/components/ui/button";
@@ -129,6 +130,7 @@ export function GeneralTab() {
       </SettingsGroup>
       <SharingGroup />
       <RepoCacheGroup />
+      <CliSettingsSection />
     </div>
   );
 }

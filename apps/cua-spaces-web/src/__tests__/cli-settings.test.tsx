@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Settings → Terminal: the first run's CLI install, reachable later.
+// Settings, General, Terminal: the first run's CLI install, reachable later.
 
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,10 +11,10 @@ import { mountApp, stubBrowserApis } from "./app-harness";
 afterEach(cleanup);
 stubBrowserApis();
 
-describe.skipIf(!wasmBuilt)("Settings, Terminal", () => {
+describe.skipIf(!wasmBuilt)("Settings, General, Terminal", () => {
   it("names the file, installs on Install, then says where it is", { timeout: 20_000 }, async () => {
     const calls: { op: string; args: unknown }[] = [];
-    await mountApp("/settings/connections", {
+    await mountApp("/settings/general", {
       failsCreates: false,
       listsGhost: false,
       demo: { cli: "missing" },
@@ -36,7 +36,7 @@ describe.skipIf(!wasmBuilt)("Settings, Terminal", () => {
   });
 
   it("shows where a Local build's CLI is", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connections", { failsCreates: false, listsGhost: false, demo: { cli: "local" } });
+    await mountApp("/settings/general", { failsCreates: false, listsGhost: false, demo: { cli: "local" } });
     await waitFor(() => expect(document.querySelector('[data-settings-cli="installed"]')?.textContent).toMatch(/~\/\.local\/bin\/cua-local.*cua-local spaces ls/), { timeout: 8000 });
   });
 });

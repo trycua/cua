@@ -25,7 +25,7 @@ mod generated;
 
 use std::collections::BTreeMap;
 
-pub use delivery::{deliver, endpoint_for, works_with};
+pub use delivery::{can_read, deliver, deliver_from, endpoint_for, works_with};
 pub use generated::*;
 
 /// Every agent harness a run can use, in the order the Connections page lists

@@ -203,13 +203,10 @@ pub fn capabilities() -> CapabilitiesReport {
         protocol: "Agent Client Protocol (agentclientprotocol.com), normalized to event kinds",
         statuses: vec!["running", "idle", "failed", "crashed", "unknown"],
         event_kinds: events::KINDS,
-        harnesses: {
-            let saved = keys::global().names();
-            harness::HARNESSES
-                .iter()
-                .map(|h| h.info_with_host_key(host_key_with(h, &saved)))
-                .collect()
-        },
+        harnesses: harness::HARNESSES
+            .iter()
+            .map(|h| h.info_with_host_key(host_key(h)))
+            .collect(),
         forwardable_env: forwardable_env(),
         runner: "a detached, tagged cua-spacesd process per run; state in ~/.cua/agents/<run> \
                  in the Space, so runs survive disconnects and server restarts",
@@ -220,7 +217,17 @@ pub fn capabilities() -> CapabilitiesReport {
 /// Spaces (Settings → Connections), or one set in this process's environment
 /// (`env_from_host` forwards it).
 pub fn host_key(h: &harness::Harness) -> Option<&'static str> {
-    host_key_with(h, &keys::global().names())
+    host_key_with(h, &saved_names_for(keys::global(), h))
+}
+
+/// The names of the saved keys a run of `h` can be given: all of them, or only the one
+/// credential the app was told to use (none, when that one is gone).
+fn saved_names_for(saved: &keys::AgentKeys, h: &harness::Harness) -> Vec<String> {
+    match saved.chosen(h.id) {
+        keys::Chosen::NoChoice => saved.names(),
+        keys::Chosen::Gone => vec![],
+        keys::Chosen::Found { env, .. } => vec![env],
+    }
 }
 
 /// [`host_key`] given the names of the saved keys.
@@ -324,8 +331,26 @@ pub fn run_env_with(
         // Every saved credential the app can use, by the registry's delivery
         // rules (a sign-in scoped to another app is never among them).
         let names = keys::registry::all_env_names();
-        let saved_values = saved.values(&names);
-        let delivered = keys::registry::deliver(harness, &|n| saved_values.get(n).cloned());
+        let mut saved_values = saved.values(&names);
+        // An app told which credential to use gets that one alone; if it is gone it gets
+        // none (never another one in its place).
+        let delivered = match saved.chosen(harness) {
+            keys::Chosen::NoChoice => {
+                keys::registry::deliver(harness, &|n| saved_values.get(n).cloned())
+            }
+            keys::Chosen::Gone => BTreeMap::new(),
+            keys::Chosen::Found {
+                provider,
+                env,
+                value,
+                ..
+            } => {
+                saved_values.insert(env, value);
+                keys::registry::deliver_from(harness, Some(&provider), &|n| {
+                    saved_values.get(n).cloned()
+                })
+            }
+        };
         for (dest, value) in delivered {
             if out.get(&dest).is_none_or(|v| v.is_empty()) {
                 out.insert(dest, value);
@@ -382,14 +407,33 @@ pub fn connection_plan(
         return plan;
     }
     let names = reg::all_env_names();
-    let saved_values = saved.values(&names);
+    let mut saved_values = saved.values(&names);
+    // What is connected: the saved connections (or the one credential the app was told
+    // to use, or none when that one is gone), and the providers whose key the caller
+    // passed in the run's env (never a sign-in scoped to another app).
+    let mut connected = match saved.chosen(harness) {
+        keys::Chosen::NoChoice => saved.connections(),
+        keys::Chosen::Gone => vec![],
+        keys::Chosen::Found {
+            provider,
+            env,
+            value,
+            region,
+            fields,
+        } => {
+            saved_values.insert(env, value);
+            vec![reg::Connected {
+                provider,
+                region,
+                fields,
+            }]
+        }
+    };
+    let saved_values = saved_values;
     let has = |n: &str| {
         env.get(n).is_some_and(|v| !v.is_empty())
             || saved_values.get(n).is_some_and(|v| !v.is_empty())
     };
-    // What is connected: the saved connections, and the providers whose key the
-    // caller passed in the run's env (never a sign-in scoped to another app).
-    let mut connected = saved.connections();
     for name in env.keys() {
         if let Some(def) = reg::provider_of_env(name)
             && def.scope_of(name).is_none()
@@ -1046,6 +1090,160 @@ mod tests {
         );
         assert!(k.set("nous", None, "x-key-0000-aaaa").is_err());
         assert!(k.set("xai-oauth", None, "x-key-0000-aaaa").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const SWITCHABLE: [&str; 5] = ["hermes", "opencode", "goose", "pi", "openclaw"];
+
+    /// An app told which credential to use gets that one alone, in each place a run reads it.
+    #[test]
+    fn an_app_told_which_key_to_use_gets_that_key_and_nothing_else() {
+        for app in SWITCHABLE {
+            let (k, dir) = saved(&[
+                ("anthropic", None, "sk-ant-api03-first-aaaa"),
+                ("openai", None, "sk-openai-first-bbbb"),
+            ]);
+            let no_env = BTreeMap::new();
+            // Nothing chosen: every key the app reads, as before.
+            let (env, _) = run_env_with(&k, app, &no_env, &[], false).unwrap();
+            assert_eq!(env["ANTHROPIC_API_KEY"], "sk-ant-api03-first-aaaa", "{app}");
+            assert_eq!(env["OPENAI_API_KEY"], "sk-openai-first-bbbb", "{app}");
+            // Another Anthropic key beside the first, and the app told to use it.
+            let f = BTreeMap::new();
+            let info = k
+                .set_slot(
+                    "anthropic",
+                    None,
+                    "sk-ant-api03-work-cccc",
+                    None,
+                    &f,
+                    Some("Work key"),
+                    true,
+                )
+                .unwrap();
+            let slot = info.slot.clone().unwrap();
+            // Saving another key never replaces the first, and the first is what rows and runs see.
+            let (env, _) = run_env_with(&k, app, &no_env, &[], false).unwrap();
+            assert_eq!(env["ANTHROPIC_API_KEY"], "sk-ant-api03-first-aaaa", "{app}");
+            k.set_use(app, Some(("ANTHROPIC_API_KEY", Some(&slot))))
+                .unwrap();
+            let (env, _) = run_env_with(&k, app, &no_env, &[], false).unwrap();
+            assert_eq!(env["ANTHROPIC_API_KEY"], "sk-ant-api03-work-cccc", "{app}");
+            assert!(
+                !env.contains_key("OPENAI_API_KEY"),
+                "{app}: only the chosen provider"
+            );
+            // The whole run options carry it too (the plan Hermes starts from names the choice).
+            let plan = connection_plan(&k, app, &env, false);
+            if app == "hermes" {
+                let y = plan.hermes_config.unwrap();
+                assert!(y.contains("anthropic") && !y.contains("openai"), "{y}");
+            }
+            // Pointed at OpenAI instead: that key alone.
+            k.set_use(app, Some(("OPENAI_API_KEY", None))).unwrap();
+            let (env, _) = run_env_with(&k, app, &no_env, &[], false).unwrap();
+            assert_eq!(env["OPENAI_API_KEY"], "sk-openai-first-bbbb", "{app}");
+            assert!(!env.contains_key("ANTHROPIC_API_KEY"), "{app}");
+            // Choosing again with nothing goes back to every key.
+            k.set_use(app, None).unwrap();
+            let (env, _) = run_env_with(&k, app, &no_env, &[], false).unwrap();
+            assert!(env.contains_key("ANTHROPIC_API_KEY") && env.contains_key("OPENAI_API_KEY"));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// The key an app was told to use is removed: the app gets no credential from the keys
+    /// and is not ready, and the other keys are not used in its place.
+    #[test]
+    fn a_removed_key_gives_the_app_nothing_rather_than_another_key() {
+        for app in SWITCHABLE {
+            let (k, dir) = saved(&[
+                ("anthropic", None, "sk-ant-api03-first-aaaa"),
+                ("openai", None, "sk-openai-first-bbbb"),
+            ]);
+            let f = BTreeMap::new();
+            let slot = k
+                .set_slot(
+                    "anthropic",
+                    None,
+                    "sk-ant-api03-work-cccc",
+                    None,
+                    &f,
+                    None,
+                    true,
+                )
+                .unwrap()
+                .slot
+                .unwrap();
+            k.set_use(app, Some(("ANTHROPIC_API_KEY", Some(&slot))))
+                .unwrap();
+            assert!(k.remove_slot("ANTHROPIC_API_KEY", &slot).unwrap());
+            assert_eq!(k.chosen(app), keys::Chosen::Gone);
+            let (env, _) = run_env_with(&k, app, &BTreeMap::new(), &[], false).unwrap();
+            assert!(env.is_empty(), "{app}: {env:?}");
+            let plan = connection_plan(&k, app, &env, false);
+            assert!(
+                plan.hermes_config.is_none() && plan.endpoint.is_none(),
+                "{app}"
+            );
+            assert!(saved_names_for(&k, harness::harness(app).unwrap()).is_empty());
+            // The first key removed while another stays: the app does not move onto the one
+            // that takes its place.
+            let first_slot = k
+                .set_slot("openai", None, "sk-openai-work-dddd", None, &f, None, true)
+                .unwrap()
+                .slot
+                .unwrap();
+            k.set_use(app, Some(("OPENAI_API_KEY", None))).unwrap();
+            assert!(k.remove_first("OPENAI_API_KEY").unwrap());
+            assert_eq!(k.chosen(app), keys::Chosen::Gone, "{app}");
+            let (env, _) = run_env_with(&k, app, &BTreeMap::new(), &[], false).unwrap();
+            assert!(env.is_empty(), "{app}");
+            // The one that took its place is still saved, under the first slot, and can be chosen.
+            let _ = first_slot;
+            k.set_use(app, Some(("OPENAI_API_KEY", None))).unwrap();
+            let (env, _) = run_env_with(&k, app, &BTreeMap::new(), &[], false).unwrap();
+            assert_eq!(env["OPENAI_API_KEY"], "sk-openai-work-dddd", "{app}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// Fixed sign-in apps have nothing to choose, and the Claude token reaches no switchable app
+    /// whatever was chosen.
+    #[test]
+    fn only_apps_that_take_any_provider_can_be_told_which_key() {
+        let (k, dir) = saved(&[("anthropic", None, "sk-ant-api03-first-aaaa")]);
+        for app in [
+            "claude-code",
+            "openai-codex",
+            "codex",
+            "gemini-cli",
+            "google-antigravity",
+        ] {
+            assert!(
+                k.set_use(app, Some(("ANTHROPIC_API_KEY", None))).is_err(),
+                "{app}"
+            );
+        }
+        // An app can't be pointed at a credential it can't read (the Claude token, a key that isn't saved).
+        let token = format!("sk-ant-oat01-{}", "x".repeat(40));
+        let _ = k.set("anthropic", None, &token);
+        for app in SWITCHABLE {
+            assert!(
+                k.set_use(app, Some(("CLAUDE_CODE_OAUTH_TOKEN", None)))
+                    .is_err(),
+                "{app}"
+            );
+            assert!(
+                k.set_use(app, Some(("OPENAI_API_KEY", None))).is_err(),
+                "{app}"
+            );
+            assert!(
+                k.set_use(app, Some(("ANTHROPIC_API_KEY", Some("nope"))))
+                    .is_err(),
+                "{app}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

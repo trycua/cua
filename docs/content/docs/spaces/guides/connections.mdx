@@ -10,20 +10,30 @@ with nothing to set up inside the Space.
 
 ## Connect a provider
 
-Open **Settings, Connections**. Each row is one provider, with its state and the
-apps it works with:
+Open **Settings, Connections** and scroll to **Providers**, below **Coding
+apps** and **On another machine**. Each row is one provider on one line: its
+icon, its name, a grey line saying what is saved (for example **Signed in as
+you@example.com (Claude Max)** or **API key ending 4f2a**) or **Not
+connected**, and then either **Connect** or a check and **Connected**.
 
 - **Connected**: Cua has a key or sign-in for it and last saw it work.
 - **Needs reconnect**: the provider refused the key or sign-in, or it ran out.
   Press **Reconnect** and connect it again.
 - **Not connected**: press **Connect**.
 
+Click a row to open its sheet. It shows when the provider was connected, the
+apps it works with (each opens that app's page), and **Disconnect**. If you have
+more than one key for the provider, it lists them, each with **Remove**, and
+**Add another key** saves a second one beside the first, with a name you pick
+such as **Work key**. The first key is the one the row shows and the one every
+app uses unless you tell an app otherwise (see [Pick which key an app uses](#pick-which-key-an-app-uses)).
+
 The sheet shows only the ways that apply on this machine. For Anthropic that
 can be your Claude sign-in (found on this machine, for Claude Code only) or an
 API key. For OpenAI it is an API key, or your ChatGPT sign-in for Codex.
 Every other provider takes an API key. Anthropic, OpenAI, OpenRouter, Google
-AI Studio, xAI, DeepSeek, Kimi and Custom endpoint are up front; the rest are
-under **More providers**, which you can search by name.
+AI Studio, xAI, DeepSeek, Kimi and Custom endpoint are up front; press **Show
+all** for the rest, which you can search by name.
 
 Saving never waits on the provider. Cua checks a key in the background and only
 marks it **Needs reconnect** when the provider says it is invalid.
@@ -58,13 +68,30 @@ A key reaches a run as an environment variable of that run only, written to a
 file in the run's folder that only the run can read and removed from the event
 log. Nothing is written to the Space image or its Volume.
 
+### Pick which key an app uses
+
+Claude Code and Codex read one fixed sign-in, so their page shows it. Hermes,
+OpenCode, Goose, Pi and OpenClaw take any provider, so their page (open it from
+**Coding apps**) has a **Uses** row instead. It shows the provider and the key
+the app runs with, for example **Anthropic, API key ending 4f2a**. Press
+**Change** to point the app at another provider you have connected, or at
+another key of the same provider. The menu lists only what that app can really
+read: your Claude and ChatGPT sign-ins are never in it. **Connect another
+provider** at the bottom opens the Connect sheet.
+
+Choosing signs nothing out and deletes nothing, and it takes effect the next
+time the app runs. Until you choose, the app uses the first connected provider
+that works. If the key you chose is removed, the app does not move to another
+one on its own: its page says so and shows **Connect**, and you pick again.
+
 ### Hermes
 
 Hermes picks a provider by its own order when it is not told which, and can
 borrow the sign-ins of other command line tools it finds. Cua tells it instead:
 each run gets a generated Hermes configuration that names the provider you
-connected (Anthropic first, then OpenAI, OpenRouter and the rest), lists the
-other connected providers as fallbacks, and turns off borrowing sign-ins. If
+chose in its **Uses** row (or, until you choose, the first one you connected:
+Anthropic, then OpenAI, OpenRouter and the rest), lists the other connected
+providers as fallbacks when you have not chosen one, and turns off borrowing sign-ins. If
 Hermes cannot reach its provider, the run fails and the thread shows the
 **Connect** card for it.
 

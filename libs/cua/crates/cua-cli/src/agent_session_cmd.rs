@@ -33,6 +33,11 @@ pub fn session_of(s: &str) -> Option<&str> {
     s.strip_prefix(PREFIX).filter(|n| !n.is_empty())
 }
 
+/// The Space size of an ACP harness driver (the harness and its install
+/// run in it; the job default of 1 CPU and 1 GiB runs out of memory).
+const ACP_DRIVER_CPUS: u32 = 2;
+const ACP_DRIVER_MEMORY_MB: u64 = 4096;
+
 /// The driver of a session: what the coordinator runs, and how it is
 /// packaged.
 struct Driver {
@@ -188,6 +193,7 @@ pub(crate) fn start_params(
         ),
         None => driver.bundle,
     };
+    let bundle_is_empty = bundle.is_empty();
     let space = match a.sandbox.trim() {
         "" | "auto" => String::new(),
         s if s.contains(':') => {
@@ -206,6 +212,13 @@ pub(crate) fn start_params(
         "label": a.harness,
         "bundle": bundle,
     });
+    // A harness driver installs and runs the harness in its Space: the job
+    // default (1 CPU, 1 GiB) is not enough for it (Claude Code's install
+    // is killed for memory), so it gets a bigger one.
+    if !bundle_is_empty {
+        spec["cpus"] = ACP_DRIVER_CPUS.into();
+        spec["memory_mb"] = ACP_DRIVER_MEMORY_MB.into();
+    }
     if let Some(l) = &a.label {
         spec["label"] = l.clone().into();
     }
@@ -592,6 +605,9 @@ mod tests {
         assert_eq!(spec["env"]["ANTHROPIC_API_KEY"], "sk-ant-secret");
         assert!(!bundle.contains("sk-ant-secret"));
         assert_eq!(spec["state_dir"], "~/.cua/durable/fix-it");
+        // The harness installs and runs in the driver's Space: sized for it.
+        assert_eq!(spec["cpus"], ACP_DRIVER_CPUS);
+        assert_eq!(spec["memory_mb"], ACP_DRIVER_MEMORY_MB);
         assert_eq!(spec["label"], "claude-code");
         // Same inputs, same driver.
         let again = start_params(&a, "fix-it", shell).unwrap();

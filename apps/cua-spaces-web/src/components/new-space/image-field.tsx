@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { ChevronsUpDownIcon } from "lucide-react";
-import type { KeyboardEvent } from "react";
+import { type KeyboardEvent, useEffect, useRef } from "react";
 
 import type { ImageFieldView, WizardAction } from "@/bridge";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,11 @@ export function ImageField({
   view: ImageFieldView;
   send: (action: WizardAction) => void;
 }) {
+  const list = useRef<HTMLDivElement>(null);
+  // The list can reach past the dialog's scrolling body: bring it into view.
+  useEffect(() => {
+    if (view.open) list.current?.scrollIntoView?.({ block: "nearest" });
+  }, [view.open]);
   const active = view.groups.flatMap((g) => g.rows).find((r) => r.highlighted);
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -96,6 +101,7 @@ export function ImageField({
       {view.open ? (
         <div
           id="ns-image-suggestions"
+          ref={list}
           role="listbox"
           aria-label={label}
           data-image-suggestions=""

@@ -168,8 +168,9 @@ function Steps({ steps }: { steps: WizardView["steps"] }) {
 /* ---- Layout ---------------------------------------------------------------- */
 
 function Group({ children, className, ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string>) {
+  // Not clipped: the image field's suggestions float over the rows below the card's edge.
   return (
-    <GroupedSection className={className} {...rest}>
+    <GroupedSection className={className} contentClassName="overflow-visible" {...rest}>
       {children}
     </GroupedSection>
   );

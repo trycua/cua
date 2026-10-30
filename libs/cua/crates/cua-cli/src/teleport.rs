@@ -75,9 +75,18 @@ pub struct PushArgs {
         required_unless_present = "url"
     )]
     pub sandbox: Option<String>,
-    /// Destination cua-spacesd URL instead of a sandbox.
+    /// Destination cua-spacesd URL instead of a sandbox: another daemon's
+    /// API, or any machine you can reach. The browser is read by the local
+    /// Cua daemon with the same Keyvault consent, audit record and wipe as
+    /// `--sandbox`; `--url` only names where it goes.
     #[arg(long)]
     pub url: Option<String>,
+    /// With `--url`, read the app in this command's own process instead of
+    /// the Cua daemon. Consent, the audit record and the wipe are skipped, and
+    /// macOS uses this process's permissions, not Cua's. Scheduled for
+    /// removal; use `--url` alone.
+    #[arg(long, requires = "url")]
+    pub read_as_caller: bool,
     /// Token for `--url`.
     #[arg(long, env = "CUA_ENV_TOKEN", hide_env_values = true, requires = "url")]
     pub token: Option<String>,

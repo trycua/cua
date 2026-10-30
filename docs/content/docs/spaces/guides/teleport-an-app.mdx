@@ -246,8 +246,14 @@ cua teleport push --app com.google.Chrome --url http://10.0.0.5:3211 --token "$T
 `--include PATH` picks items, `--all` sends everything, `--no-launch` imports
 only. `--sandbox NAME` routes through your own [Cua Keyvault](/spaces/guides/keyvault)
 (one combined Touch ID prompt for the whole capture-and-deliver, and nothing
-raw ever leaves it); `--url` uploads a bundle straight to a spacesd endpoint
-the Keyvault does not manage as a Space, so it never goes through the vault.
+raw ever leaves it). `--url` names a destination that is not one of your
+Spaces, such as another machine's address, and goes the same way: the Cua
+daemon on this machine reads the app, you approve it with the same Keyvault
+prompt, it is recorded in the audit log, and the copy is wiped on the same
+schedule. The destination is only where it goes, and it is not kept in your
+Spaces afterwards. Because the daemon does the reading, macOS uses the Full
+Disk Access you gave the Cua app, not the permissions of the terminal you ran
+the command in.
 
 ### When macOS asks for permission
 

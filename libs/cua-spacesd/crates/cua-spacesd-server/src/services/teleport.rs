@@ -1063,8 +1063,10 @@ mod tests {
         let store = h.service.ledger_store().clone();
         let ledger = store.read("imp-1").unwrap().expect("ledger written");
         assert_eq!(ledger.provider, "chrome");
-        assert_eq!(ledger.files.len(), 1);
+        // The cookies, and the note that a signed-in browser is available.
+        assert_eq!(ledger.files.len(), 2, "{:?}", ledger.files);
         assert!(ledger.files[0].ends_with("Default/Cookies"));
+        assert!(ledger.files[1].ends_with(".cua/teleport/signed-in-browser.json"));
         #[cfg(unix)]
         {
             assert_eq!(mode(&h.ledger), 0o700);

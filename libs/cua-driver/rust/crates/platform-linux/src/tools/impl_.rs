@@ -12621,6 +12621,15 @@ impl Tool for GetScreenSizeTool {
                 let (frame, monitors) = crate::wayland::hyprland::screen_report()?;
                 return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
             }
+            if crate::wayland::is_wayland() && std::env::var_os("DISPLAY").is_none() {
+                // GNOME publishes its monitor layout on D-Bus; consent needs this content-free
+                // geometry for listing calls, which otherwise fail here (trycua/cua#1922). Other
+                // compositors fall through to the X11 read and its error, as before.
+                if let Ok((w, h, scale, monitors)) = crate::wayland::mutter_display::screen_report()
+                {
+                    return Ok((w, h, scale, Some(monitors)));
+                }
+            }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
             // assumption). Other Wayland compositors retain their existing

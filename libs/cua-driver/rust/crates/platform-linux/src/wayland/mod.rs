@@ -16,6 +16,7 @@ pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
 pub mod kwin_helper;
+pub mod mutter_display;
 pub mod overlay;
 pub mod persistent_vptr;
 pub(crate) mod portal;

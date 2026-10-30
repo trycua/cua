@@ -18,6 +18,9 @@ class InputExperiment {
     void suspend();
     void resume();
     std::string status_json() const;
+    // Deliver background pointer input on the person's seat when the target
+    // client never bound an agent seat (Chromium/Ozone binds only the first).
+    void set_primary_seat_fallback(bool enabled);
 
   private:
     struct Impl;

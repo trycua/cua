@@ -36,6 +36,7 @@ constexpr auto kPluginVersion = CUA_HYPRLAND_PLUGIN_VERSION;
 constexpr auto kSocketName = "cua-inject-v2.sock";
 
 SP<Config::Values::CBoolValue> g_enabled;
+SP<Config::Values::CBoolValue> g_primary_seat_fallback;
 #if CUA_HYPRLAND_SOCKET1_API
 SP<IPC::Socket1::SCommand> g_status_command;
 #else
@@ -159,6 +160,10 @@ std::string stop_server() {
 }
 
 void reconcile_server() {
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
+    if (g_experiment && g_primary_seat_fallback)
+        g_experiment->set_primary_seat_fallback(g_primary_seat_fallback->value());
+#endif
     if (!g_enabled || !g_enabled->value()) {
         g_reconcile_error = stop_server();
         g_socket_path.clear();
@@ -189,6 +194,7 @@ void reconcile_server() {
             g_experiment = std::make_unique<cua::hyprland::InputExperiment>(
                 std::filesystem::path{g_socket_path}.parent_path().string(), g_experiment_handle);
         g_experiment->resume();
+        if (g_primary_seat_fallback) g_experiment->set_primary_seat_fallback(g_primary_seat_fallback->value());
 #endif
     }
     g_server = std::move(server);
@@ -317,6 +323,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
     g_runtime_abi_hash = runtime_abi_hash;
 
+    g_primary_seat_fallback = makeShared<Config::Values::CBoolValue>(
+        "plugin:cua:primary_seat_fallback",
+        "Deliver background pointer input on the person's seat to a target that never bound an agent seat (Chromium/Electron).",
+        false);
+    if (!HyprlandAPI::addConfigValueV2(handle, g_primary_seat_fallback))
+        throw std::runtime_error("failed to register plugin:cua:primary_seat_fallback");
+
     g_enabled = makeShared<Config::Values::CBoolValue>(
         "plugin:cua:enabled",
 #if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
@@ -359,6 +372,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     static_cast<void>(stop_server());
     g_status_command.reset();
     g_enabled.reset();
+    g_primary_seat_fallback.reset();
     g_socket_path.clear();
     g_reconcile_error.clear();
     g_compiled_abi_hash.clear();

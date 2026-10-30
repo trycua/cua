@@ -68,10 +68,10 @@ describe("Add an agent", () => {
     expect(qa("[data-add-agent-marks] [data-harness-mark]").map((m) => m.dataset.harnessMark)).toEqual(["hermes", "claude-code", "codex", "cursor", "openclaw", "t3code"]);
   });
 
-  it("Start an agent here: Hermes, Claude Code, Codex, Cursor, then OpenClaw; a free name; it joins asleep", async () => {
+  it("Start an agent here: Hermes, Claude Code, Codex, then OpenClaw; a free name; it joins asleep", async () => {
     await app({ joinRedeemMs: null });
     await openSheet("start");
-    expect(qa("[data-start-harness]").map((h) => h.dataset.startHarness)).toEqual(["hermes", "claude-code", "codex", "cursor", "openclaw"]);
+    expect(qa("[data-start-harness]").map((h) => h.dataset.startHarness)).toEqual(["hermes", "claude-code", "openai-codex", "openclaw"]);
     // Hermes is taken: the name moves on.
     expect((q("[data-start-name]") as HTMLInputElement).value).toBe("hermes-2");
     await click(q("[data-start-harness='openclaw']")!);

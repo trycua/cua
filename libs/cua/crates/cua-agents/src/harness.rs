@@ -283,8 +283,12 @@ impl Harness {
     }
 }
 
-/// A harness by id.
+/// Short names people and apps use for a harness, and the id they mean.
+const ALIASES: &[(&str, &str)] = &[("codex", "openai-codex"), ("claude", "claude-code")];
+
+/// A harness by id (or by one of its short names: `codex`, `claude`).
 pub fn harness(id: &str) -> Option<&'static Harness> {
+    let id = ALIASES.iter().find(|(a, _)| *a == id).map_or(id, |(_, c)| c);
     HARNESSES.iter().find(|h| h.id == id)
 }
 
@@ -915,6 +919,15 @@ impl Harness {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_names_resolve_to_the_registry_id() {
+        assert_eq!(harness("codex").unwrap().id, "openai-codex");
+        assert_eq!(harness("claude").unwrap().id, "claude-code");
+        assert_eq!(harness("openai-codex").unwrap().id, "openai-codex");
+        assert!(harness("cursor").is_none());
+        assert!(ids().iter().all(|id| ALIASES.iter().all(|(a, _)| a != id)));
+    }
 
     #[test]
     fn every_harness_installs_known_items_and_links_its_acp_binary() {

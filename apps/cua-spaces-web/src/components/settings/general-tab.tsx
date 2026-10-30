@@ -128,9 +128,9 @@ export function GeneralTab() {
           />
         ) : null}
       </SettingsGroup>
+      <CliSettingsSection />
       <SharingGroup />
       <RepoCacheGroup />
-      <CliSettingsSection />
     </div>
   );
 }

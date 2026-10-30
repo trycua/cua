@@ -12,8 +12,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -64,8 +63,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -116,8 +114,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -168,8 +165,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -217,8 +213,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "kindsOff": [
           "container | Container |  | off",
@@ -267,8 +262,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -316,8 +310,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -366,8 +359,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -418,8 +410,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "vm | Virtual machine | AWS does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
@@ -473,8 +464,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -525,8 +515,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"

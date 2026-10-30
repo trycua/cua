@@ -105,8 +105,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
@@ -244,8 +243,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
@@ -381,8 +379,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
@@ -503,8 +500,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
@@ -625,8 +621,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
@@ -747,8 +742,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
@@ -874,8 +868,7 @@
           "image",
           "placement",
           "kind",
-          "runtime",
-          "connect-by-address"
+          "runtime"
         ],
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
@@ -1003,8 +996,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
@@ -1132,8 +1124,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",

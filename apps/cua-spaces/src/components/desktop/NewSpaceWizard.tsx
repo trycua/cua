@@ -664,9 +664,8 @@ function InfoTip({ label, text }: { label: string; text: string }) {
   );
 }
 
-/** The "Run on" menu's last two entries: they open a flow instead of picking a place. */
+/** The "Run on" menu's last entry: it opens a flow instead of picking a place. */
 const ADD_CLOUD = "add:cloud";
-const ADD_ADDRESS = "add:address";
 
 /** One field of the System step, drawn by its core `id`. */
 function SystemField({
@@ -717,7 +716,6 @@ function SystemField({
               title={chosen?.detail || undefined}
               onChange={(event) => {
                 if (event.target.value === ADD_CLOUD) onConnectCloud?.();
-                else if (event.target.value === ADD_ADDRESS) dispatch({ type: "show-address" });
                 else dispatch({ type: "choose-placement", on: event.target.value });
               }}
             >
@@ -731,9 +729,6 @@ function SystemField({
                   {t("spaces.wizard.add_cloud")}
                 </option>
               )}
-              <option value={ADD_ADDRESS} title={t("spaces.wizard.add_address_hint")}>
-                {t("spaces.wizard.add_address")}
-              </option>
             </select>
           </label>
           {f.error && (
@@ -783,9 +778,8 @@ function SystemField({
           </select>
         </label>
       );
-    // Reached from the "Run on" menu's last two entries, not drawn here.
+    // Reached from the "Run on" menu's last entry, not drawn here.
     case "connect-cloud":
-    case "connect-by-address":
       return null;
     default:
       return null;

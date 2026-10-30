@@ -192,14 +192,14 @@ describe("New Space wizard", () => {
   it("lists This Mac and your machines; your clouds and Connect a cloud unless Your cloud is off", () => {
     const onConnectCloud = vi.fn();
     renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: NO_CLOUD });
-    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "Add a computer by its address…"]);
+    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)"]);
     expect(runOnMenu()).toHaveValue("local");
     expect(screen.queryByText(/Cua Cloud/)).toBeNull();
     expect(screen.queryByText(/Add your cloud account/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
     cleanup();
     renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: YOUR_CLOUD });
-    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2", "Add your cloud account…", "Add a computer by its address…"]);
+    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2", "Add your cloud account…"]);
     runOn("add:cloud");
     expect(onConnectCloud).toHaveBeenCalled();
   });
@@ -246,7 +246,9 @@ describe("New Space wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    runOn("add:address");
+    // The address form is New Space's arrow, not a Run on entry.
+    cleanup();
+    renderWizard({ startActions: [{ type: "show-address" }] });
     expect(screen.queryByLabelText("Cost")).toBeNull();
     expect(screen.queryByText(/Free/)).toBeNull();
   });
@@ -398,8 +400,7 @@ describe("the Resources step", () => {
 describe("Connect by address", () => {
   it("adds host:port with a token and dismisses on success", async () => {
     const onAddByAddress = vi.fn(async () => {});
-    const { onCancel } = renderWizard({ onAddByAddress });
-    runOn("add:address");
+    const { onCancel } = renderWizard({ onAddByAddress, startActions: [{ type: "show-address" }] });
     expect(screen.getByRole("button", { name: "Add Space" })).toBeDisabled();
     fireEvent.change(screen.getByPlaceholderText("10.0.0.5:3211"), {
       target: { value: "127.0.0.1:3211" },
@@ -416,8 +417,7 @@ describe("Connect by address", () => {
     const onAddByAddress = vi.fn(async () => {
       throw new Error("cua-spacesd is not available at 127.0.0.1:1");
     });
-    const { onCancel } = renderWizard({ onAddByAddress });
-    runOn("add:address");
+    const { onCancel } = renderWizard({ onAddByAddress, startActions: [{ type: "show-address" }] });
     fireEvent.change(screen.getByPlaceholderText("10.0.0.5:3211"), {
       target: { value: "127.0.0.1:1" },
     });

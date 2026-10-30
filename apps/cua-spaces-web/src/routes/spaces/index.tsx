@@ -23,6 +23,7 @@ import { SpacesToolbar } from "@/components/spaces/spaces-toolbar";
 import { PageTip, useTipsLoaded } from "@/components/tips";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { useQuiet } from "@/hooks/use-quiet";
+import { NewSpaceButton } from "@/components/new-space/new-space-button";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 import { thisComputerText } from "@/lib/host-labels";
@@ -152,9 +153,7 @@ function SpacesPage() {
         title="Spaces"
         description={isLoading || !listStatus.loaded ? "Loading Spaces…" : `${plural(counted.length, "Space")} on ${plural(machines.length, "machine")}, ${running} running`}
         actions={
-          <Button onClick={newSpace}>
-            <PlusIcon /> New Space
-          </Button>
+          <NewSpaceButton />
         }
       />
       {settled ? (

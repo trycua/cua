@@ -46,6 +46,13 @@ use cua_spaces::{Error, Result};
 /// machine's.
 pub const HOST_DESKTOP: &str = "this-mac";
 
+/// The longest a status read of one Space's runs may take (the list shows
+/// the record's last word for a run that did not answer in time).
+pub(crate) const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+/// How long a Space that did not answer is left alone before its runs are
+/// asked again.
+pub(crate) const UNREACHABLE_TTL: std::time::Duration = std::time::Duration::from_secs(20);
+
 pub const CLAIM_TTL: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// The largest local file attached to a post.
@@ -446,6 +453,42 @@ impl Persistent {
         });
     }
 
+    /// The Space's agent service for a status read, or none when it does
+    /// not answer in [`PROBE_TIMEOUT`] or did not a moment ago
+    /// ([`UNREACHABLE_TTL`]).
+    async fn probe_agents(&self, space: &str) -> Option<cua_agents::Agents> {
+        if self.is_unreachable(space).await {
+            return None;
+        }
+        match tokio::time::timeout(PROBE_TIMEOUT, self.cached_agents(space)).await {
+            Ok(Ok(a)) => Some(a),
+            _ => {
+                self.mark_unreachable(space).await;
+                None
+            }
+        }
+    }
+
+    async fn is_unreachable(&self, space: &str) -> bool {
+        let mut live = self.live.lock().await;
+        match live.unreachable.get(space) {
+            Some(at) if at.elapsed() < UNREACHABLE_TTL => true,
+            Some(_) => {
+                live.unreachable.remove(space);
+                false
+            }
+            None => false,
+        }
+    }
+
+    async fn mark_unreachable(&self, space: &str) {
+        self.live
+            .lock()
+            .await
+            .unreachable
+            .insert(space.to_string(), std::time::Instant::now());
+    }
+
     /// The agent members of `space` with what each is doing: the member's
     /// `status` (`working | waiting | failed | idle | asleep | paused`, the
     /// busiest of its sessions) and each session's in `session_states`.
@@ -456,25 +499,47 @@ impl Persistent {
         let fold = store.fold()?;
         let mut out = vec![];
         let live = |r: &AgentRecord| r.session_views().iter().any(|s| s.run_id.is_some());
+        // What each running session reports, asked of the Space's agent
+        // service all at once and each bounded: a Space that does not answer
+        // (a stopped machine, one that is off) must not hold the list for
+        // the sum of every run's timeout. Its members show what the record
+        // last said, and the Space is not asked again for a while.
         let agents = if recs.iter().any(|r| live(r) && !r.paused) {
-            match tokio::time::timeout(std::time::Duration::from_secs(15), self.cached_agents(&id))
-                .await
-            {
-                Ok(Ok(a)) => Some(a),
-                _ => None,
-            }
+            self.probe_agents(&id).await
         } else {
             None
         };
+        let mut reported: std::collections::HashMap<(String, u32), Option<RunStatus>> =
+            std::collections::HashMap::new();
+        if let Some(a) = &agents {
+            let asks = recs
+                .iter()
+                .filter(|r| !r.paused)
+                .flat_map(|r| {
+                    r.session_views()
+                        .into_iter()
+                        .map(move |s| (r.name.clone(), s))
+                })
+                .filter_map(|(name, s)| s.run_id.clone().map(|run| (name, s.k(), run)))
+                .map(|(name, k, run)| {
+                    let a = a.clone();
+                    async move {
+                        let st = tokio::time::timeout(PROBE_TIMEOUT, a.status(&run)).await;
+                        ((name, k), st.ok().and_then(|r| r.ok()).map(|st| st.status))
+                    }
+                });
+            let answers = futures_util::future::join_all(asks).await;
+            if answers.iter().any(|(_, st)| st.is_none()) {
+                self.mark_unreachable(&id).await;
+            }
+            reported.extend(answers);
+        }
         for r in recs {
             let open = fold.open_tasks(Some(&r.name)).len();
             let mut sessions = vec![];
             let mut first_status = None;
             for s in r.session_views() {
-                let mut run_status = None;
-                if let (Some(run), Some(a), false) = (&s.run_id, &agents, r.paused) {
-                    run_status = a.status(run).await.ok().map(|st| st.status);
-                }
+                let run_status = reported.get(&(r.name.clone(), s.k())).copied().flatten();
                 if s.k() <= 1 {
                     first_status = run_status;
                 }
@@ -1876,22 +1941,40 @@ impl Thread {
 
     /// The caller's DM with agent `with`, summed up for the Agents tab.
     pub fn dm_summary(&self, with: &str, may_approve: bool) -> Result<crate::thread::DmSummary> {
+        Ok(self
+            .dm_summaries(&[(with.to_string(), may_approve)])?
+            .remove(0))
+    }
+
+    /// [`Self::dm_summary`] for several agents of one thread: the log, the
+    /// cursors and the approvals are read once, not once per agent.
+    pub fn dm_summaries(
+        &self,
+        members: &[(String, bool)],
+    ) -> Result<Vec<crate::thread::DmSummary>> {
         let me = self.me();
         let cursors = self.store.cursors()?;
-        let key = crate::thread::dm_cursor_key(&me.id, with);
-        let read = cursors
-            .get(&key)
-            .or_else(|| cursors.get(&me.id))
-            .map_or(0, |c| c.read_seq);
-        Ok(crate::thread::dm_summary(
-            &self.store.read(0, usize::MAX)?,
-            &me.id,
-            &me.name,
-            with,
-            read,
-            &self.store.fold()?.approvals,
-            may_approve,
-        ))
+        let entries = self.store.read(0, usize::MAX)?;
+        let fold = self.store.fold()?;
+        Ok(members
+            .iter()
+            .map(|(with, may_approve)| {
+                let key = crate::thread::dm_cursor_key(&me.id, with);
+                let read = cursors
+                    .get(&key)
+                    .or_else(|| cursors.get(&me.id))
+                    .map_or(0, |c| c.read_seq);
+                crate::thread::dm_summary(
+                    &entries,
+                    &me.id,
+                    &me.name,
+                    with,
+                    read,
+                    &fold.approvals,
+                    *may_approve,
+                )
+            })
+            .collect())
     }
 
     /// Open tasks of `member` (an agent caller: its own), oldest first.

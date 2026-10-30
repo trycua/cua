@@ -231,6 +231,8 @@ public final class AppModel {
             hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: nil, nameSeed: nil))
         self.notch = NotchModel()
+        // Pinned Spaces and desktops come first in the notch, across restarts.
+        notch.setPinned(settings.notchPinned)
         // The notch tiles and the preview cover read one thumbnail store,
         // filled from the SDK's shared cache.
         notch.thumbnails.fetch = { [backend] id, maxAgeMs in await backend.thumbnail(id: id, maxAgeMs: maxAgeMs) }
@@ -1605,6 +1607,21 @@ public final class AppModel {
     }
 
     // MARK: - Settings and banners
+
+    /// Pin to notch / Unpin from notch: the Spaces and machine desktops the
+    /// notch lists first (`AppSettings.notchPinned`, in pin order). Saved
+    /// with the settings, so a pin survives a restart; it grants nothing.
+    public func setNotchPinned(_ ids: [String]) {
+        guard ids != settings.notchPinned else { return }
+        settings.notchPinned = ids
+        saveSettings()
+        notch.setPinned(ids)
+    }
+
+    /// Pins `id` to the notch, or unpins it when it is pinned.
+    public func togglePin(_ id: String) {
+        setNotchPinned(appNotchTogglePin(pinned: settings.notchPinned, id: id))
+    }
 
     public func saveSettings() {
         try? appSettingsSave(path: settingsPath, settings: settings)

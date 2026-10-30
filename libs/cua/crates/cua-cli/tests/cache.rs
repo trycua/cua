@@ -70,6 +70,7 @@ fn qemu_state(h: &Home, name: &str, disk: &Path, created_at: u64) {
         shared_memory: false,
         pinned: false,
         bulk: false,
+        tpm: false,
     };
     std::fs::write(dir.join("state.json"), serde_json::to_vec(&st).unwrap()).unwrap();
 }

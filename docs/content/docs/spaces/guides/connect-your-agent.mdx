@@ -25,8 +25,8 @@ most used first: Hermes, Claude Code, Codex, Cursor, then the rest. Each row
 names the settings file Cua changes. Press **Connect** on each agent you want:
 the app adds the Cua skills and MCP server to that agent's settings. Nothing is
 connected until you press it. If an agent was already open, close it and open
-it again. Connecting none is fine: connect agents later in **Settings, AI
-agents**.
+it again. Connecting none is fine: connect agents later in **Settings,
+Connections**.
 
 ### Per machine
 
@@ -54,7 +54,7 @@ in this machine's Keychain (Credential Manager on Windows).
 
 If you already use Claude Code on this machine, Cua can run it in your Spaces
 with the same Claude plan. Press **Connect** next to Claude Code in **Settings,
-Connectors**. Before it reads anything, Cua says what it will do and waits for
+Connections**. Before it reads anything, Cua says what it will do and waits for
 you to press **Use my sign-in**:
 
 1. Cua reads the sign-in Claude Code already keeps on this machine. On a Mac
@@ -89,11 +89,11 @@ again), paste a token made with `claude setup-token` (a long-lived token for
 people who prefer one), or use an Anthropic API key. Sign out removes Cua's copy
 and never touches Claude Code.
 
-To connect an agent later, or to remove one, open **Settings, AI agents**:
+To connect an agent later, or to remove one, open **Settings, Connections**:
 
-- Press **Configure** next to a detected agent to set it up, or **Remove** to
-  take out what Cua added.
-- Press **Configure all detected agents** to set up every one at once.
+- Press **Connect** next to a detected agent under **Coding apps** to set it up.
+- Open the agent's row to switch **Cua skills** and **Cua tools** on or off, or
+  press **Remove Cua from** the agent to take out what Cua added.
 
 ## Connect from a terminal
 
@@ -284,9 +284,13 @@ gets the key it needs.
 - **Another key**: save it under the variable its agent reads, like
   `GEMINI_API_KEY` or `OPENROUTER_API_KEY`.
 
-Each row shows only `•••• ` and the key's last four characters, and when you
-added it. Replace and Remove are on the same row. A key is never shown again
-after you save it.
+Each provider is one row under **Providers**, which shows only `•••• ` and the
+key's last four characters. Click the row for when you added it, the apps it
+works with, **Disconnect**, and **Add another key** if you keep more than one.
+A key is never shown again after you save it. Hermes, OpenCode, Goose, Pi and
+OpenClaw can be pointed at any connected provider or key from their **Provider**
+row (see [Connections](/spaces/guides/connections#pick-which-key-an-app-uses)).
+Cua in Terminal, the `cua` command, installs from **Settings, General**.
 
 The same works from the `cua` CLI. The key is read from stdin, so it never lands
 in your shell history:

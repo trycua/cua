@@ -201,6 +201,12 @@ final class SyntheticMedia: SpaceStreamSession, @unchecked Sendable {
         lock.lock(); jumpToKeyframe = true; lock.unlock()
     }
 
+    /// The transport ends under the session (the Space stopped, the machine
+    /// went away): the socket's close, as the media client reports it.
+    func dropTransport() {
+        sink.onEvent(event: MediaEvent(kind: "closed", json: #"{"code":1006,"reason":"reset"}"#))
+    }
+
     override func sendText(json: String) throws {
         lock.lock()
         inputBatches += 1

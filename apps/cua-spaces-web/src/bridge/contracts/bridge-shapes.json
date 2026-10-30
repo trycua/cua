@@ -186,6 +186,9 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
@@ -213,6 +216,27 @@
               "env",
               "last4",
               "addedMs"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -4393,6 +4417,12 @@
                 "off",
                 "done"
               ]
+            },
+            "notchPinned": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -6952,6 +6982,12 @@
             "done"
           ]
         },
+        "notchPinned": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "runtimes": {
           "anyOf": [
             {
@@ -7281,6 +7317,9 @@
       "required": [
         "names"
       ]
+    },
+    "agentKeys.use": {
+      "$ref": "#/$defs/AgentKeysReport"
     },
     "agents.addRoutine": {
       "type": "null"
@@ -9325,6 +9364,9 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
@@ -9352,6 +9394,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -9406,6 +9469,9 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
@@ -9433,6 +9499,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -9487,6 +9574,9 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
@@ -9514,6 +9604,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -9568,6 +9679,9 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
@@ -9595,6 +9709,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -9649,6 +9784,9 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
@@ -9676,6 +9814,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -9728,6 +9887,111 @@
       },
       "required": [
         "names"
+      ]
+    },
+    "agentKeys.use": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
       ]
     },
     "agents.addRoutine": {

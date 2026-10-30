@@ -19,5 +19,9 @@ id = "key"
 kind = "api_key"
 env = "XAI_API_KEY"
 
+[[model]]
+id = "grok-4.6"
+name = "Grok 4.6"
+
 [delivery]
 hermes = ["XAI_API_KEY"]

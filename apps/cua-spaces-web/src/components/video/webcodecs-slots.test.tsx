@@ -17,7 +17,7 @@ import type { SlotStatus } from "@/lib/video-slots";
 import { resetVideoSlotLoader } from "./use-video-slot";
 import { NO_VIDEO_HERE, webCodecsHost } from "./webcodecs-host";
 import { VideoStats } from "./video-stats";
-import { needsActivation, resetWebCodecsSlots, sessionConfig, streamTarget, WebCodecsSlots, type SessionFactory } from "./webcodecs-slots";
+import { MAX_PARKED, needsActivation, PARK_MS, resetWebCodecsSlots, sessionConfig, streamTarget, WebCodecsSlots, type SessionFactory } from "./webcodecs-slots";
 
 // The production MediaSession, replaced: jsdom has no WebSocket media or VideoDecoder.
 const sessions: { options: Parameters<SessionFactory>[0]; started: number; stopped: number }[] = [];
@@ -247,6 +247,122 @@ describe("WebCodecsSlots", () => {
     } finally {
       window.removeEventListener("keydown", onPage);
     }
+  });
+});
+
+// Leaving a Space and coming back reconnected from scratch (a ticket, a
+// socket, a keyframe) every time. A live viewer is parked for PARK_MS and the
+// next viewer slot for that Space adopts it, live at once.
+describe("a viewer that leaves and comes back", () => {
+  function setup() {
+    const { desktop, calls } = fakeDesktop();
+    const slots = new WebCodecsSlots(desktop, document);
+    const mount = (options: Parameters<WebCodecsSlots["register"]>[1] = viewer) => {
+      const el = document.createElement("div");
+      document.body.append(el);
+      const seen: SlotStatus[] = [];
+      const stop = slots.register(el, options, (s) => seen.push(s));
+      registered.push(stop);
+      return { el, seen, stop, last: () => seen.at(-1) };
+    };
+    return { slots, calls, mount };
+  }
+
+  async function live(mounted: ReturnType<ReturnType<typeof setup>["mount"]>) {
+    await flush();
+    act(() => sessions.at(-1)!.options.onFrame?.(1280, 800));
+    expect(mounted.last()).toMatchObject({ phase: "live" });
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it("keeps the live session while away, and the next slot is live on its first word with no new ticket", async () => {
+    const { calls, mount } = setup();
+    const first = mount();
+    await live(first);
+    first.stop();
+    // Parked: running, off the page.
+    expect(sessions[0]!.stopped).toBe(0);
+    expect(document.querySelector("canvas")).toBeNull();
+
+    const back = mount({ ...viewer, radius: 8 });
+    expect(back.seen).toEqual([{ phase: "live", focused: false }]);
+    expect(back.el.querySelector<HTMLCanvasElement>('canvas[data-webcodecs="full"]')?.style.opacity).toBe("1");
+    await flush();
+    expect(calls).toHaveLength(1);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.started).toBe(1);
+    expect(sessions[0]!.stopped).toBe(0);
+    back.stop();
+  });
+
+  it("closes the parked session after the grace, and a later slot opens a fresh one", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { calls, mount } = setup();
+    const first = mount();
+    await live(first);
+    first.stop();
+    act(() => void vi.advanceTimersByTime(PARK_MS - 1_000));
+    expect(sessions[0]!.stopped).toBe(0);
+    act(() => void vi.advanceTimersByTime(1_000));
+    expect(sessions[0]!.stopped).toBe(1);
+
+    const again = mount();
+    expect(again.seen).toEqual([]);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(calls).toHaveLength(2);
+    expect(sessions).toHaveLength(2);
+  });
+
+  it("lets a parked session go when its stream ends (the Space stopped) and opens fresh on return", async () => {
+    const { calls, mount } = setup();
+    const first = mount();
+    await live(first);
+    first.stop();
+    act(() => sessions[0]!.options.onGone?.("the Space stopped"));
+    expect(sessions[0]!.stopped).toBe(1);
+    const again = mount();
+    // Not live from the dead session: connecting, with a new ticket.
+    expect(again.seen).toEqual([]);
+    await flush();
+    expect(calls).toHaveLength(2);
+  });
+
+  it("keeps nothing parked while the page is hidden, or for a session that was not live", async () => {
+    const { mount } = setup();
+    const a = mount();
+    await live(a);
+    a.stop();
+    hidden = true;
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(sessions[0]!.stopped).toBe(1);
+    hidden = false;
+
+    // Connecting (no frame yet) when it leaves: closed, not parked.
+    const b = mount({ ...viewer, spaceId: "local:b" });
+    await flush();
+    b.stop();
+    expect(sessions[1]!.stopped).toBe(1);
+  });
+
+  it("parks tiles and windows never, and at most MAX_PARKED Spaces, the oldest first", async () => {
+    const { mount } = setup();
+    const t = mount(tile);
+    await live(t);
+    t.stop();
+    expect(sessions[0]!.stopped).toBe(1);
+    const w = mount({ ...viewer, windowId: "w1" });
+    await live(w);
+    w.stop();
+    expect(sessions[1]!.stopped).toBe(1);
+
+    for (let i = 0; i <= MAX_PARKED; i++) {
+      const m = mount({ ...viewer, spaceId: `local:p${i}` });
+      await live(m);
+      m.stop();
+    }
+    const stopped = sessions.slice(2).map((s) => s.stopped);
+    expect(stopped).toEqual([1, ...Array(MAX_PARKED).fill(0)]);
   });
 });
 

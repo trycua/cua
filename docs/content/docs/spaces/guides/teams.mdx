@@ -73,13 +73,14 @@ before it can reach a team machine.
   Create a team, invite a teammate and add a machine for the team (29 seconds, no sound).
 </VideoDemo>
 
-Teams starts at 1 seat, so you can begin with just yourself and add seats as
-people join. Two seats give 10 live sessions and 400 remote hours a month for the
+Teams starts with 1 seat, for you. Start with just yourself, then add a seat for
+each teammate when you invite them. Two seats give 10 live sessions and 400 remote hours a month for the
 whole team.
 
 1. Open [app.cua.ai/buy/teams](https://app.cua.ai/buy/teams) and sign in or
    create a Cua account.
-2. Name your team and choose the number of seats and monthly or yearly billing.
+2. Name your team and choose monthly or yearly billing. Checkout is for 1 seat;
+   you add seats later, as you invite people.
 3. Pay with Stripe Checkout. Teams is for business use: Stripe asks for your
    company name and address, and you can add your company's VAT or GST ID.
 
@@ -95,9 +96,10 @@ Teams are invitation only. Enter an email address and choose a role. The person
 gets an email, signs in with that address and joins. Invitees do not pay and do
 not see checkout.
 
-- Members plus pending invitations cannot exceed the seats you pay for, and you
-  take one seat yourself. On a 1-seat team, the Team page shows **Add seats**
-  before your first invite. It opens Stripe, where you raise the quantity (see
+- Each member and each pending invitation takes a seat, and you take one
+  yourself. When every seat is taken, as on a new 1-seat team, inviting someone
+  adds a seat: the Team page shows the price, for example "This adds 1 seat,
+  $30/month, prorated today", and charges only after you confirm (see
   [Seats and billing](#seats-and-billing)).
 - Until the first payment completes, a new team can invite up to 5 people.
 - Revoke a pending invitation from the same page.
@@ -187,7 +189,8 @@ Windows and Linux apps on the [download page](https://cua.ai/download).
 A member's machine can open team machines only once an owner or admin approves
 it.
 
-1. The member signs in on a new machine and asks for approval.
+1. The member opens a team machine from a new machine. That asks for approval
+   on its own (or run `cua team request <team>` to ask first).
 2. The machine shows as waiting for approval in the list at
    [app.cua.ai/machines](https://app.cua.ai/machines). The member
    sees that it is waiting for an admin.
@@ -236,6 +239,8 @@ Seats, the monthly or yearly period, the card and invoices are managed in the
 Stripe billing portal: [app.cua.ai/billing](https://app.cua.ai/billing), then
 **Manage billing**. Only the owner buys and changes the plan.
 
+- **Invite into a full team:** the Team page adds a seat for you after you
+  confirm the price. The owner and admins can do this.
 - **Add seats:** you pay a prorated amount for the rest of the current period,
   added to your next invoice. The maximum is 100 seats.
 - **Remove seats:** you get a prorated credit on future invoices. Credits are not

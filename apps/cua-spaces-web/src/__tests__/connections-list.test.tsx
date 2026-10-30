@@ -41,6 +41,16 @@ const click = (el: Element) =>
   });
 const type = (el: Element, value: string) => fireEvent.change(el, { target: { value } });
 const host = (calls: Call[], demo: object = {}) => ({ failsCreates: false, listsGhost: false, demo, intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined) });
+/** The sheet a provider's row opens. */
+const openRow = async (id: string) => {
+  await click(await found(`[data-connector-provider=${id}]`));
+  return found(`[data-provider-detail=${id}]`);
+};
+/** Show all, so the search and the rest of the providers are there. */
+const openMore = async () => {
+  const toggle = await found("[data-connectors-more-toggle]");
+  if (toggle.getAttribute("aria-expanded") !== "true") await click(toggle);
+};
 const sets = (calls: Call[]) => calls.filter((c) => c.op === "agentKeys.set").map((c) => c.args as Record<string, unknown>);
 
 describe.skipIf(!wasmBuilt)("the Connections list", () => {
@@ -50,27 +60,31 @@ describe.skipIf(!wasmBuilt)("the Connections list", () => {
     expect(qa("[data-connectors-providers] [data-connector-provider]").map((r) => r.dataset.connectorProvider)).toEqual(
       PROVIDER_REGISTRY.filter((p) => p.tier === "top").map((p) => p.id),
     );
+    // The rows are compact like the coding apps: one grey line, a status or Connect, a chevron. The apps it works
+    // with are in its sheet, and only as a short hover hint on the row.
     const anthropic = q("[data-connector-provider=anthropic]")!;
-    expect(anthropic.querySelector("[data-connector-works-with]")!.textContent).toContain("Works with");
+    expect(anthropic.querySelector("[data-connector-works-with]")).toBeNull();
+    expect(anthropic.textContent).not.toContain("Works with");
+    expect(anthropic.getAttribute("title")).toMatch(/^Works with Claude Code/);
+    expect(anthropic.querySelector("[data-connector-chevron]")).not.toBeNull();
+    const sheet = await openRow("anthropic");
+    expect(sheet.querySelector("[data-connector-works-with]")!.textContent).toContain("Works with");
     // Claude Code takes Anthropic and no other provider on the list.
-    expect(qa("[data-connector-chip=claude-code]").map((c) => c.closest("[data-connector-provider]")!.getAttribute("data-connector-provider"))).toEqual(["anthropic"]);
-    // The chips are four and a count; a chip opens its app's page.
-    expect(anthropic.querySelectorAll("[data-connector-chip]").length).toBe(4);
-    expect(anthropic.querySelector("[data-connector-chips-more]")!.textContent).toBe("and 3 more");
-    const nav = await found("[data-connector-provider=anthropic] [data-connector-chip=claude-code]");
-    await click(nav);
+    await click(await found("[data-provider-detail=anthropic] [data-connector-chip=claude-code]"));
     await found("[data-connector-detail=claude-code]");
+    expect(q("[data-provider-detail]")).toBeNull();
   });
 
   it("keeps the rest in More providers: closed, then all of them, searched by name or alias", async () => {
     await mountApp("/settings/connections", host([]));
-    await found("[data-connectors-more]");
-    expect(qa("[data-connectors-more] [data-connector-provider]")).toHaveLength(0);
-    const toggle = q("[data-connectors-more-toggle]")!;
-    expect(toggle.textContent).toMatch(/^Show all \d+$/);
+    const toggle = await found("[data-connectors-more-toggle]");
+    expect(qa("[data-more-list]")).toHaveLength(0);
+    expect(q("[data-connectors-search]")).toBeNull();
+    expect(toggle.textContent!.trim()).toMatch(/^Show all \d+$/);
     await click(toggle);
+    expect(q("[data-connectors-more-toggle]")!.textContent!.trim()).toBe("Show fewer");
     const all = await waitFor(() => {
-      const rows = qa("[data-connectors-more] [data-connector-provider]").map((r) => r.dataset.connectorProvider);
+      const rows = qa("[data-more-list]").map((r) => r.dataset.connectorProvider);
       expect(rows.length).toBeGreaterThan(15);
       return rows;
     });
@@ -79,9 +93,9 @@ describe.skipIf(!wasmBuilt)("the Connections list", () => {
     for (const id of ["nous", "qwen-oauth", "minimax-oauth", "xai-oauth", "vertex", "bedrock", "azure-foundry", "meta-ai"]) expect(all).not.toContain(id);
     // Search by alias: HF is Hugging Face, glm is Z.AI.
     type(q("[data-connectors-search]")!, "hf");
-    await waitFor(() => expect(qa("[data-connectors-more] [data-connector-provider]").map((r) => r.dataset.connectorProvider)).toEqual(["huggingface"]));
+    await waitFor(() => expect(qa("[data-more-list]").map((r) => r.dataset.connectorProvider)).toEqual(["huggingface"]));
     type(q("[data-connectors-search]")!, "glm");
-    await waitFor(() => expect(qa("[data-connectors-more] [data-connector-provider]").map((r) => r.dataset.connectorProvider)).toEqual(["zai"]));
+    await waitFor(() => expect(qa("[data-more-list]").map((r) => r.dataset.connectorProvider)).toEqual(["zai"]));
     type(q("[data-connectors-search]")!, "no such thing");
     await found("[data-connectors-more-empty]");
     expect(q("[data-connectors-more-empty]")!.textContent).toBe("No provider matches that.");
@@ -108,10 +122,12 @@ describe.skipIf(!wasmBuilt)("the Connections list", () => {
     const row = q("[data-connector-provider=openrouter]")!;
     expect(row.textContent).toContain("Connected");
     expect(row.querySelector("[data-connector-credential]")!.textContent).toContain("•••• cdef");
-    expect(row.textContent).toContain("Disconnect");
+    const sheet = await openRow("openrouter");
+    expect(sheet.querySelector("[data-connector-provider-action]")!.textContent).toBe("Disconnect");
+    expect(sheet.querySelector("[data-connector-added]")!.textContent).toMatch(/^Added/);
     // Hermes (and the other apps that read an OpenRouter key) are connected by it.
     expect(q("[data-connector-app=goose]")!.dataset.state).toBe("connected");
-    expect(q("[data-connector-provider=openrouter] [data-connector-chip=hermes]")).not.toBeNull();
+    expect(sheet.querySelector("[data-connector-chip=hermes]")).not.toBeNull();
   });
 
   it("a custom endpoint asks for its URL, model and API style, needs no key, and says what a local server needs", async () => {
@@ -136,13 +152,14 @@ describe.skipIf(!wasmBuilt)("the Connections list", () => {
     expect(q("[data-connector-provider=custom] [data-connector-credential]")!.textContent).toBe("http://127.0.0.1:1234/v1");
     // Hermes and the apps that can be pointed at an endpoint are connected by it.
     for (const app of ["opencode", "goose"]) expect(q(`[data-connector-app=${app}]`)!.dataset.state).toBe("connected");
-    expect(q("[data-connector-provider=custom] [data-connector-chip=hermes]")).not.toBeNull();
+    expect((await openRow("custom")).querySelector("[data-connector-chip=hermes]")).not.toBeNull();
     expect(q("[data-connector-app=claude-code]")!.dataset.state).not.toBe("connected");
   });
 
   it("Z.AI asks which plan, because the plans bill separately", async () => {
     const calls: Call[] = [];
     await mountApp("/settings/connections", host(calls));
+    await openMore();
     type(await found("[data-connectors-search]"), "z.ai");
     await click(await found("[data-connector-provider=zai] [data-connector-provider-action]"));
     await found("[data-provider-sheet=zai]");
@@ -177,13 +194,15 @@ describe.skipIf(!wasmBuilt)("the Connections list", () => {
     await waitFor(() => expect(q("[data-connector-provider=openai]")?.textContent).toContain("Needs reconnect"));
     expect(q("[data-connector-provider=openai] [data-connector-provider-action]")!.textContent).toBe("Reconnect");
     // Save a Fireworks key: it joins the list up front.
+    await openMore();
     type(await found("[data-connectors-search]"), "fireworks");
-    await click(await found("[data-connectors-more] [data-connector-provider=fireworks] [data-connector-provider-action]"));
+    await click(await found("[data-more-list][data-connector-provider=fireworks] [data-connector-provider-action]"));
     await click(await found("[data-provider-way=key]"));
     type(await found("[data-provider-key]"), "fw_0123456789abcdef");
     await click(q("[data-provider-save]")!);
     await waitFor(() => expect(q("[data-connectors-providers] [data-connector-provider=fireworks]")?.dataset.state).toBe("connected"));
-    await click(q("[data-connectors-providers] [data-connector-provider=fireworks] [data-connector-provider-action]")!);
+    await click(q("[data-connectors-providers] [data-connector-provider=fireworks]")!);
+    await click(await found("[data-provider-detail=fireworks] [data-connector-provider-action='sign-out']"));
     await waitFor(() => expect(q("[data-connector-provider=fireworks]")?.dataset.state ?? "gone").not.toBe("connected"));
     expect(calls.some((c) => c.op === "agentKeys.remove" && (c.args as { env: string }).env === "FIREWORKS_API_KEY")).toBe(true);
   });

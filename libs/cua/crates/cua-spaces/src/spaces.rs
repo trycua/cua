@@ -1232,6 +1232,13 @@ impl Spaces {
         {
             self.forget_relay_machine(machine_id).await?;
         }
+        // A Space this device attached to the relay as a machine of its own
+        // takes that machine with it (as `delete` does): `rm` must not leave
+        // a stale record the owner has to remove by hand (CUA-2841).
+        #[cfg(feature = "spaces-agents")]
+        if !matches!(id, SpaceId::Relay { .. }) {
+            let _ = self.release_attached(&id.to_string()).await;
+        }
         // A direct host leaves the direct-host list with the Spaces it
         // created here (nothing reaches them without it; a host that is
         // gone leaves no rows behind), and a Space one created leaves its
@@ -2037,6 +2044,12 @@ impl Spaces {
                         return Err(crate::host_spaces::stopped_sharing(
                             label.as_deref().unwrap_or(&id.to_string()),
                         ));
+                    }
+                    if let SpaceId::Relay { .. } = &id
+                        && let Some(message) = crate::host_spaces::team_device_refusal(&reason)
+                    {
+                        // Refused by the team, not a Space still starting.
+                        return Err(crate::host_spaces::team_device_refused(message));
                     }
                     if !generic_ok {
                         return Err(Error::SpacesdNotAvailable {

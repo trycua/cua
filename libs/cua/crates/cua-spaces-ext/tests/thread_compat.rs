@@ -1322,6 +1322,34 @@ async fn a_changed_credential_ends_the_idle_run_instead_of_reusing_it() {
     assert!(!run_alive(&fx).await, "the old run was ended");
 }
 
+/// CUA-2830: an idle run whose working folder is on the mounted Cua Volume
+/// can only take a message while the Volume shows the agent's view. A Space
+/// without the Volume to hold (it attached again, or has none) ends that run
+/// and starts a new one instead of waking a runner in a folder that is gone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_idle_run_on_a_volume_that_is_gone_is_not_woken() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| {
+        r["env"] = json!({"ANTHROPIC_API_KEY": "sk-one"})
+    });
+    let meta = json!({"run_id": RUN, "harness": "claude-code", "prompt": "hi",
+                      "cwd": "/volume/agents/ada/work", "created_at": 0.0,
+                      "cred_hash": forwarded_hash("sk-one")});
+    fx.srv.state.put_file(
+        &format!("{RUNS}/{RUN}/meta.json"),
+        meta.to_string().into_bytes(),
+    );
+    // The mock runs no shell, so the fresh start itself can't finish here.
+    let _ = p.send("ada", "again").await;
+    assert!(
+        inbox(&fx).iter().all(|t| t.is_empty()),
+        "the old run was not woken: {:?}",
+        inbox(&fx)
+    );
+    assert!(!run_alive(&fx).await, "the old run was ended");
+}
+
 /// A run whose last turn failed to authenticate is not reused either, even
 /// with the same credentials (the provider rejected them).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

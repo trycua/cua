@@ -17,6 +17,46 @@ const M = "/onboarding/marks/";
 const both = (file: string, scale?: number): AppMark => ({ light: M + file, dark: M + file, scale });
 const pair = (id: string, scale?: number): AppMark => ({ light: `${M}mark-${id}.svg`, dark: `${M}mark-${id}-dark.svg`, scale });
 
+/** A provider's one-colour mark, drawn once in dark ink and once in light ink (public/onboarding/marks/providers). */
+const providerMark = (name: string): AppMark => ({ light: `${M}providers/${name}.svg`, dark: `${M}providers/${name}-dark.svg`, scale: 0.9 });
+
+/** The providers with a mark (keyed `provider:<id>`, as the Providers list asks for them). The rest get the letter tile. */
+const PROVIDER_MARKS: Record<string, AppMark> = {
+  "provider:openrouter": providerMark("openrouter"),
+  "provider:xai": providerMark("xai"),
+  "provider:xai-oauth": providerMark("xai"),
+  "provider:deepseek": providerMark("deepseek"),
+  "provider:kimi": providerMark("kimi"),
+  "provider:alibaba": providerMark("alibabacloud"),
+  "provider:qwen-oauth": providerMark("qwen"),
+  "provider:ai-gateway": providerMark("vercel"),
+  "provider:arcee": providerMark("arcee"),
+  "provider:azure-foundry": providerMark("azureai"),
+  "provider:bedrock": providerMark("bedrock"),
+  "provider:commandcode": providerMark("commandcode"),
+  "provider:deepinfra": providerMark("deepinfra"),
+  "provider:fireworks": providerMark("fireworks"),
+  "provider:gmi": providerMark("gmicloud"),
+  "provider:huggingface": providerMark("huggingface"),
+  "provider:kilocode": providerMark("kilocode"),
+  "provider:meta-ai": providerMark("metaai"),
+  "provider:minimax": providerMark("minimax"),
+  "provider:minimax-oauth": providerMark("minimax"),
+  "provider:nebius-token-factory": providerMark("nebius"),
+  "provider:nous": providerMark("nousresearch"),
+  "provider:novita": providerMark("novita"),
+  "provider:nvidia": providerMark("nvidia"),
+  "provider:ollama-cloud": providerMark("ollama"),
+  "provider:opencode-zen": providerMark("opencode"),
+  "provider:opencode-go": providerMark("opencode"),
+  "provider:stepfun": providerMark("stepfun"),
+  "provider:tencent-tokenhub": providerMark("tencent"),
+  "provider:upstage": providerMark("upstage"),
+  "provider:vertex": providerMark("vertexai"),
+  "provider:xiaomi": providerMark("xiaomimimo"),
+  "provider:zai": providerMark("zai"),
+};
+
 /**
  * Every coding app with a usable official mark. Sources and brand guidelines
  * are in public/onboarding/marks/NOTICE. Apps not listed (Kiro) get the letter tile.
@@ -40,6 +80,7 @@ export const APP_MARKS: Record<string, AppMark> = {
   zed: pair("zed", 0.85),
   antigravity: both("mark-antigravity.svg", 1.15),
   t3code: both("mark-t3code.png"),
+  ...PROVIDER_MARKS,
 };
 
 /** The app's mark at the size `className` gives, switched with the app theme; null when it has none. */

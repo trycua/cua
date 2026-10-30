@@ -1838,6 +1838,16 @@ pub struct AppNotchTile {
     pub progress_label: Option<String>,
     /// Signed in through the Keyvault (and not dismissed): the key badge.
     pub signed_in: bool,
+    /// One of your other machines' desktops, not a Space it provides: the
+    /// tile reads "Desktop" and opens the same desktop the machine's page
+    /// does, creating nothing.
+    pub desktop: bool,
+    /// Pinned to the notch (Pin to notch in the Space's "..." menu): the
+    /// tiles list pinned ones first.
+    pub pinned: bool,
+    /// Why a pinned desktop cannot be opened now ("Offline", "Not
+    /// shared"); `None` while it can. The tile stays, dimmed, and says it.
+    pub note: Option<String>,
 }
 
 /// What the panel shows.
@@ -1880,6 +1890,9 @@ pub struct AppNotchState {
     /// dismissed ([`crate::keyvault::view::signed_in_spaces`]): their tiles
     /// carry the key.
     pub signed_in: Vec<String>,
+    /// The Spaces and desktops pinned to the notch, in the order they were
+    /// pinned (`AppSettings::notch_pinned`): their tiles come first.
+    pub pinned: Vec<String>,
     /// "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
     /// the notch, and hover, clicks and window drags do nothing.
     pub hidden: bool,
@@ -1941,6 +1954,12 @@ pub enum AppNotchEvent {
         label: Option<String>,
         /// The Space ids signed in (their tiles carry the key).
         signed_in: Vec<String>,
+    },
+    /// The pinned Spaces and desktops changed (Pin to notch, Unpin from
+    /// notch, or settings read at start): their ids in pin order.
+    Pinned {
+        /// The pinned ids.
+        ids: Vec<String>,
     },
 }
 
@@ -7037,6 +7056,11 @@ pub struct AppSettings {
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
     pub dismissed_access: Vec<String>,
+    /// The Spaces and the machines' desktops pinned to the notch ("Pin to
+    /// notch" in a Space's "..." menu), in the order they were pinned: the
+    /// notch lists them first ([`crate::notch::tiles_pinned`]). Ids only,
+    /// nothing secret; an id whose Space is gone is kept and draws nothing.
+    pub notch_pinned: Vec<String>,
     /// Keyvault rows may load a site's icon from Google's favicon service
     /// when the source browser had none (Settings, Keyvault; on by default).
     /// Off, only icons read locally are shown.
@@ -11070,6 +11094,10 @@ pub struct AppSpaceMenuInput {
     pub can_delete: bool,
     /// You may leave it.
     pub can_leave: bool,
+    /// It can be pinned to the notch (not This machine).
+    pub can_pin: bool,
+    /// It is pinned to the notch now (Unpin from notch).
+    pub pinned: bool,
 }
 
 /// What an item does.
@@ -11092,6 +11120,8 @@ pub enum AppSpaceMenuItemId {
     Delete,
     /// Leaves it (asks first: `spaces.bulkConfirm`).
     Leave,
+    /// Pins it to the notch, or unpins it (the label says which).
+    Pin,
 }
 
 /// One menu item.

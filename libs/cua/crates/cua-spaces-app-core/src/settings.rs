@@ -77,6 +77,11 @@ pub struct AppSettings {
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
     pub dismissed_access: Vec<String>,
+    /// The Spaces and the machines' desktops pinned to the notch ("Pin to
+    /// notch" in a Space's "..." menu), in the order they were pinned: the
+    /// notch lists them first ([`crate::notch::tiles_pinned`]). Ids only,
+    /// nothing secret; an id whose Space is gone is kept and draws nothing.
+    pub notch_pinned: Vec<String>,
     /// Keyvault rows may load a site's icon from Google's favicon service
     /// when the source browser had none (Settings, Keyvault; on by default).
     /// Off, only icons read locally are shown.
@@ -112,6 +117,7 @@ impl Default for AppSettings {
             experiments: Experiments::default(),
             new_ui: None,
             dismissed_access: vec![],
+            notch_pinned: vec![],
             keyvault_site_icons: true,
             teleport_choices: vec![],
             auto_connect: true,
@@ -1268,6 +1274,26 @@ mod tests {
         // A settings file from before dismissals: none dismissed.
         let old: AppSettings = serde_json::from_str(r#"{"menuBar":true}"#).unwrap();
         assert!(old.dismissed_access.is_empty());
+        assert!(old.notch_pinned.is_empty());
+    }
+
+    /// Pins to the notch are a per-user preference kept in the settings
+    /// file: they survive a restart in the order they were made.
+    #[test]
+    fn notch_pins_survive_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let s = AppSettings {
+            notch_pinned: vec!["relay:wsl".into(), "local:dev".into()],
+            ..AppSettings::default()
+        };
+        save(&path, &s).unwrap();
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("\"notchPinned\"")
+        );
+        assert_eq!(load(&path).notch_pinned, ["relay:wsl", "local:dev"]);
     }
 
     #[test]

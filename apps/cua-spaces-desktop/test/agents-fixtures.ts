@@ -85,6 +85,7 @@ export class FakeAgentsTools {
 export class FakeAgentKeysTools {
   calls: [string, Record<string, unknown>][] = [];
   keys: Record<string, unknown>[] = [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", added_ms: 1_790_000_000_000 }];
+  uses: Record<string, Record<string, unknown>> = {};
   available = true;
 
   run: ToolRunner = async (tool, args) => {
@@ -97,10 +98,14 @@ export class FakeAgentKeysTools {
         const provider = String(args.provider ?? "");
         const env = provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "openai" ? "OPENAI_API_KEY" : String(args.env ?? "");
         const value = String(args.value ?? "");
-        this.keys = this.keys.filter((k) => k.env !== env);
+        // Another key beside the first one (named); saving the first again replaces only it.
+        const slot = args.add === true && this.keys.some((k) => k.env === env && !k.slot) ? `k${this.keys.length}` : undefined;
+        if (!slot) this.keys = this.keys.filter((k) => !(k.env === env && !k.slot));
         this.keys.push({
           provider,
           env,
+          ...(slot ? { slot } : {}),
+          ...(typeof args.label === "string" ? { label: args.label } : {}),
           last4: value.slice(-4),
           added_ms: 1_790_000_100_000,
           ...(typeof args.region === "string" ? { region: args.region } : {}),
@@ -109,12 +114,18 @@ export class FakeAgentKeysTools {
         break;
       }
       case "agent_keys.remove":
-        this.keys = this.keys.filter((k) => k.env !== args.env);
+        this.keys = this.keys.filter((k) => (typeof args.slot === "string" ? !(k.env === args.env && k.slot === args.slot) : k.env !== args.env));
         break;
+      case "agent_keys.use": {
+        const app = String(args.app ?? "");
+        if (typeof args.env === "string") this.uses[app] = { provider: "anthropic", env: args.env, ...(typeof args.slot === "string" ? { slot: args.slot } : {}) };
+        else delete this.uses[app];
+        break;
+      }
       default:
         throw new ToolError(`unknown tool ${tool}`);
     }
-    const report: Record<string, unknown> = { keys: this.keys, providers: [], available: this.available };
+    const report: Record<string, unknown> = { keys: this.keys, providers: [], available: this.available, ...(Object.keys(this.uses).length ? { uses: this.uses } : {}) };
     if (!this.available) report.unavailable = "this build keeps credentials in a file";
     return report;
   };
@@ -211,7 +222,7 @@ export class FixtureAgentSetup implements AgentSetupRunning {
 
   async deviceSignInWaitJson(id: string) {
     this.calls.push(`device-wait:${id}`);
-    return JSON.stringify({ imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Codex · ChatGPT sign-in", expires_ms: null, added_ms: 1 }, refused: null, line: null });
+    return JSON.stringify({ imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "ChatGPT sign-in for Codex", expires_ms: null, added_ms: 1 }, refused: null, line: null });
   }
 
   /** The sign-in finishes at once (no browser in a fixture). */
@@ -238,5 +249,5 @@ export const AGENT_METHODS = [
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine", "agents.removeRoutine",
   "agents.allowComputer", "agents.revokeComputer",
   "agents.status", "agents.connect", "agents.disconnect", "agents.signInStart", "agents.signInWait",
-  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell",
+  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell",
 ];

@@ -455,6 +455,8 @@ pub struct TickReport {
 pub(crate) struct Live {
     leases: HashMap<String, cua_volume::lease::Lease>,
     agents: HashMap<String, Agents>,
+    /// Spaces whose runs did not answer a status read, and when: not asked again for a while.
+    unreachable: HashMap<String, std::time::Instant>,
     bridges: HashMap<String, bridge::BridgeState>,
     routines: Option<Arc<tokio::sync::Mutex<RoutineStore>>>,
     routines_mtime: Option<std::time::SystemTime>,
@@ -1153,6 +1155,25 @@ impl Persistent {
                     }
                     self.release_writer(&rec).await;
                 }
+                // An idle run whose home is not where this agent's home is
+                // now (it was on the mounted Volume, which shows the agent's
+                // view only while the agent holds it): sending would start
+                // its runner again in a folder that is not there. The home
+                // is taken first (the Volume shows this agent's view), and a
+                // run on another home ends and starts again.
+                Ok(st)
+                    if st.accepts_message
+                        && st.status == RunStatus::Idle
+                        && rec.k() == 1
+                        && self.home_moved(&rec, &st).await =>
+                {
+                    tracing::info!(agent = name, "the run's home moved: starting a fresh run");
+                    let _ = self.save(name).await;
+                    if let Err(e) = agents.stop(run).await {
+                        tracing::warn!(agent = name, "the old run did not stop: {e}");
+                    }
+                    self.release_writer(&rec).await;
+                }
                 Ok(st) if st.accepts_message && st.status == RunStatus::Idle => {
                     if rec.k() == 1 && !self.live.lock().await.leases.contains_key(name) {
                         self.take_lease(&rec).await?;
@@ -1170,6 +1191,28 @@ impl Persistent {
             }
         }
         Box::pin(self.start_session(&rec, text, entry, None)).await
+    }
+
+    /// Whether the idle run `st` of `rec` works on the mounted Volume in a
+    /// home other than the one `rec` has now (or the Volume is not its to
+    /// hold). Takes the Volume for the agent when it has one, so a
+    /// run on the mounted home finds its folders where it left them.
+    async fn home_moved(&self, rec: &AgentRecord, st: &ag::RunInfo) -> bool {
+        let Some(cwd) = st.meta.as_ref().map(|m| m.cwd.as_str()) else {
+            return false;
+        };
+        // Only a run on the mounted Volume can lose its folders this way.
+        let on_volume = cwd.starts_with("/volume/");
+        match self.mounted_home(rec).await {
+            Some(m) => on_volume && !Self::in_home(cwd, &m),
+            None => on_volume,
+        }
+    }
+
+    /// Whether `cwd` is `home` or inside it.
+    fn in_home(cwd: &str, home: &str) -> bool {
+        let home = home.trim_end_matches('/');
+        cwd == home || cwd.strip_prefix(home).is_some_and(|r| r.starts_with('/'))
     }
 
     /// Whether the idle run `run` of `rec` must not take another message:
@@ -2279,6 +2322,20 @@ mod tests {
         let line =
             serde_json::json!({"seq": 1, "ts": 0, "turn": turn, "type": kind, "message": text});
         ag::AgentEvent::parse(&line.to_string()).unwrap()
+    }
+
+    #[test]
+    fn a_run_in_another_home_is_not_in_this_one() {
+        // The run started on the mounted Volume; the Volume is not the
+        // agent's now (or the home is copied in): its folders are not there.
+        let vol = "/volume/agents/claude-2";
+        assert!(Persistent::in_home("/volume/agents/claude-2/work", vol));
+        assert!(Persistent::in_home(vol, "/volume/agents/claude-2/"));
+        assert!(!Persistent::in_home(
+            "/volume/agents/claude-2/work",
+            "/home/cua/.cua/homes/claude-2"
+        ));
+        assert!(!Persistent::in_home("/volume/agents/claude-22/work", vol));
     }
 
     #[test]

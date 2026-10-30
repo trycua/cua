@@ -19,5 +19,9 @@ kind = "api_key"
 env = "KIMI_API_KEY"
 aliases = ["KIMI_CODING_API_KEY"]
 
+[[model]]
+id = "kimi-k3"
+name = "Kimi K3"
+
 [delivery]
 hermes = ["KIMI_API_KEY"]

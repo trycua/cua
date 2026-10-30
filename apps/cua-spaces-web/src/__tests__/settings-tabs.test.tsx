@@ -77,14 +77,26 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     expect(text).not.toMatch(/Keyboard shortcuts|Shared links|Storage|Runtimes|Keyvault|AI agents|Welcome/);
   });
 
-  it("puts Connections where Agents was: the providers, More providers and Terminal", async () => {
-    await mountApp("/settings/connections", host);
+  it("puts the Providers below Coding apps and On another machine, and Terminal is not on this tab", async () => {
+    await mountApp("/settings/connections", { ...host, demo: { cli: "missing" } });
     await waitFor(() => expect(document.querySelector("[data-connectors-providers]")).not.toBeNull(), { timeout: 8000 });
-    const text = tab("connections")!.textContent!;
-    expect(text).toContain("Connections");
-    expect(text).toContain("More providers");
+    const t = tab("connections")!;
+    const headings = [...t.querySelectorAll("h2")].map((h) => h.textContent);
+    expect(headings).toEqual(["Coding apps", "On another machine", "Providers"]);
+    // The providers are the last section on the page.
+    const sections = [...t.querySelectorAll("[data-connectors-apps], [data-connectors-other-machine-group], [data-connectors-providers]")].map((e) => e.getAttributeNames().find((n) => n.startsWith("data-connectors-")));
+    expect(sections).toEqual(["data-connectors-apps", "data-connectors-other-machine-group", "data-connectors-providers"]);
+    expect(t.textContent).not.toContain("Connections");
+    expect(t.textContent).not.toMatch(/Use Cua from Terminal/);
+    expect(t.querySelector("[data-settings-cli]")).toBeNull();
     expect(document.querySelector("[data-agent-key-add-other]")).not.toBeNull();
-    expect(text).not.toMatch(/provider key/i);
+    expect(t.textContent).not.toMatch(/provider key/i);
+  });
+
+  it("keeps Use Cua from Terminal reachable, in General", async () => {
+    await mountApp("/settings/general", { ...host, demo: { cli: "missing" } });
+    await waitFor(() => expect(document.querySelector('[data-settings-cli="missing"]')).not.toBeNull(), { timeout: 8000 });
+    expect(tab("general")!.textContent).toContain("Use Cua from Terminal");
   });
 
   it("moves Early releases here from About, and drops the Sharing and Your cloud switches", async () => {

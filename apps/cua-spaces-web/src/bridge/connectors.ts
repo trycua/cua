@@ -30,7 +30,12 @@ export interface ConnectorAppInput {
 
 export interface ConnectorsInput {
   apps: ConnectorAppInput[];
-  keys: AgentKeysInput;
+  /** The first key saved for each variable. */
+  keys: Omit<AgentKeysInput, "extras" | "uses">;
+  /** Keys saved beside the first for the same variable. */
+  keyExtras?: NonNullable<AgentKeysInput["extras"]>;
+  /** Which credential each app that takes any provider uses, by app. */
+  uses?: NonNullable<AgentKeysInput["uses"]>;
   shellKeys: string[];
   auto: boolean;
   off: string[];
@@ -216,6 +221,32 @@ export interface ConnectorToggle {
   enabled: boolean;
 }
 
+/** One credential an app can use (a row of the Uses menu). */
+export interface UseOption {
+  provider: string;
+  providerName: string;
+  icon: string;
+  env: string;
+  slot: string | null;
+  /** "API key ending 4f2a", or the key's own name. */
+  line: string;
+  model: string | null;
+  selected: boolean;
+}
+
+/** An app's Uses row: which saved credential it runs with, and the others it could. */
+export interface AppUses {
+  title: string;
+  state: "connected" | "not-connected" | "gone";
+  status: string;
+  current: UseOption | null;
+  options: UseOption[];
+  chosen: boolean;
+  connectLabel: string;
+  note: string;
+  enabled: boolean;
+}
+
 export interface AppDetailView {
   agent: string;
   name: string;
@@ -226,6 +257,8 @@ export interface AppDetailView {
   toolsTitle: string;
   toggles: ConnectorToggle[];
   signInTitle: string;
+  /** Which credential the app uses (an app that takes any provider); it replaces `signIn`. */
+  uses: AppUses | null;
   signIn: { title: string; status: string; connected: boolean; way: string; provider: string; button: ConnectorButton } | null;
   signInNote: string | null;
   settingsFileLabel: string;
@@ -260,7 +293,9 @@ export function connectorsInputOf(
       mcp: r.mcpConfig ? r.configured || /MCP/i.test(r.detail) : null,
       mcpConfig: r.mcpConfig,
     })),
-    keys,
+    keys: { keys: keys.keys, unavailable: keys.unavailable, error: keys.error },
+    ...(keys.extras?.length ? { keyExtras: keys.extras } : {}),
+    ...(keys.uses && Object.keys(keys.uses).length ? { uses: keys.uses } : {}),
     shellKeys: extra.shellKeys ?? [],
     auto: extra.auto ?? false,
     off: extra.off ?? [],
@@ -285,6 +320,38 @@ export const importSheet = (core: CoreClient, os: HostOs = hostOs()): ImportShee
 
 export const providerPicker = (core: CoreClient, input: ConnectorsInput, forApp: string | null = null, query = "", expanded = false): ProviderPickerView | null =>
   core.tryCall<ProviderPickerView>("connectors.providerPicker", { input: input as unknown as Json, forApp, query, expanded }) ?? null;
+
+/** One model row of the prompt box's model menu. */
+export interface ModelChoice {
+  id: string;
+  label: string;
+  /** A quick, cheap model (tagged "Fast"). */
+  fast: boolean;
+  /** The provider's own default. */
+  default: boolean;
+}
+
+export interface ModelGroup {
+  provider: string;
+  label: string;
+  icon: string;
+  state: "connected" | "needs-reconnect";
+  /** The coding app that must run these models (only its own sign-in is saved); null: the general agent. */
+  harness: string | null;
+  models: ModelChoice[];
+}
+
+/** The models of the connected providers (`connectors.models`). */
+export interface ModelsView {
+  groups: ModelGroup[];
+  /** What a new prompt starts with. */
+  default: { provider: string; model: string } | null;
+  connectLabel: string;
+  empty: string | null;
+}
+
+export const modelsView = (core: CoreClient, input: ConnectorsInput): ModelsView | null =>
+  core.tryCall<ModelsView>("connectors.models", { input: input as unknown as Json }) ?? null;
 
 export const appDetail = (core: CoreClient, input: ConnectorsInput, agent: string): AppDetailView | null =>
   core.tryCall<AppDetailView | null>("connectors.appDetail", { input: input as unknown as Json, agent }) ?? null;

@@ -52,7 +52,7 @@ function AgentsChatPage() {
   // The one list (agents in your Spaces and this device's runs that haven't started): Home shows it too.
   const attempts = useAgentAttempts();
   const act = useAttemptAction();
-  const { chats, spaces, me, refresh } = useAgentChats(attempts);
+  const { chats, spaces, me, loading, refresh } = useAgentChats(attempts);
   const now = useNow();
   const [sheet, setSheet] = useState<AddAgentStage | null>(null);
   const [info, setInfo] = useState(false);
@@ -64,7 +64,7 @@ function AgentsChatPage() {
   return (
     <div data-agents-chat="" className="flex h-full min-h-0">
       <AgentList
-        chats={chats ?? []}
+        chats={chats}
         me={me}
         selected={chat?.key ?? null}
         onSelect={select}
@@ -72,8 +72,9 @@ function AgentsChatPage() {
         onAction={act}
         onNew={() => setSheet("pick")}
         now={now}
+        loading={loading}
       />
-      {chats === null ? (
+      {chats === null || (loading > 0 && chats.every((c) => c.kind !== "agent")) ? (
         <div className="flex-1" />
       ) : chat ? (
         <>

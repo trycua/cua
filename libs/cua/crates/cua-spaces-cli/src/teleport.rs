@@ -157,17 +157,6 @@ async fn push_through_keyvault(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
-    if args.app.profile.is_some() {
-        // The daemon's own Keyvault capture has no per-call profile
-        // selection yet (it always reads the machine's default Chrome
-        // profile) -- refuse rather than silently ignore an explicit
-        // --profile, which `--url` mode still honors in full.
-        return Err(CuaError::Unsupported(
-            "--profile is not supported for a --sandbox push yet (the Keyvault always reads \
-             the default profile); use --url for a specific profile"
-                .into(),
-        ));
-    }
     let t = teleporter(host, &args.app);
     let app_ref = app_ref(&args.app);
     let scope_v = scope(&args.app)?;
@@ -206,7 +195,7 @@ async fn push_through_keyvault(
     }
     let spec = cua_keyvault::broker::ImportSpec {
         app: manifest.provider_id.clone(),
-        profile: None,
+        profile: args.app.profile.clone(),
         sites: vec![],
         whole_app: true,
         cookies: cua_keyvault::broker::CookieFilter::default(),

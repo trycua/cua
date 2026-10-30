@@ -130,6 +130,8 @@ export interface Connectors {
   /** Runs one of the sheet's ways: a pasted `value` for a key, token or endpoint, with its `choices` (a plan, a model, a URL). */
   runWay(way: ProviderWay, value?: string, choices?: KeyChoices): Promise<boolean>;
   signOut(provider: string): Promise<void>;
+  /** Tells an app that takes any provider which saved credential to use from its next run (null: the first that works). */
+  useCredential(app: string, choice: { env: string; slot?: string | null } | null): Promise<void>;
   /** An app page's switch: Cua's skills, its MCP server, or keeping it set up. */
   setToggle(agent: string, id: "skills" | "mcp" | "auto", on: boolean): Promise<void>;
   /** Takes Cua out of the app (and turns Keep it set up off). */
@@ -342,6 +344,18 @@ export function useConnectors(): Connectors {
     [view, keys],
   );
 
+  const useCredential = useCallback(
+    async (app: string, choice: { env: string; slot?: string | null } | null) => {
+      const id = `app:${app}`;
+      try {
+        await keys.use(app, choice ? { env: choice.env, ...(choice.slot ? { slot: choice.slot } : {}) } : null);
+      } catch (e) {
+        fail(id, message(e));
+      }
+    },
+    [keys],
+  );
+
   const setToggle = useCallback(
     async (agent: string, which: "skills" | "mcp" | "auto", on: boolean) => {
       if (which === "auto") {
@@ -407,6 +421,7 @@ export function useConnectors(): Connectors {
     searchMore: (query, open) => set((s) => ({ query, moreOpen: open ?? (s.moreOpen || query.trim() !== "") })),
     runWay,
     signOut,
+    useCredential,
     setToggle,
     removeFromApp,
     reload,

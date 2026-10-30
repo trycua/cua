@@ -1832,19 +1832,26 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 // an embedded runtime confirms on the terminal.
                 host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
                 let yes = matches!(cmd, host::SpacesCmd::Share { yes: true, .. });
-                if let Some(rt) = cua.embedded_runtime() {
-                    if !rt.spaces().has_share_consent() {
-                        rt.spaces()
-                            .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
-                    }
-                } else if matches!(cmd, host::SpacesCmd::Share { .. }) {
-                    // The daemon asks for user presence on this computer.
+                let is_share = matches!(cmd, host::SpacesCmd::Share { .. });
+                let mut presence_asks = is_share;
+                if let Some(rt) = cua.embedded_runtime()
+                    && !rt.spaces().has_share_consent()
+                {
+                    rt.spaces()
+                        .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
+                    presence_asks = false;
+                }
+                if presence_asks {
+                    // The daemon, or an embedded runtime that carries the
+                    // daemon's extensions, asks for user presence on this
+                    // computer; `--yes` cannot skip that.
                     use std::io::IsTerminal as _;
                     host::daemon_share_gate(yes, std::io::stdin().is_terminal())?;
                     eprintln!("{}", host::share_confirm_prompt());
                 }
             }
-            return host::run_spaces_sdk(&cua, cmd, json, out).await;
+            let res = host::run_spaces_sdk(&cua, cmd, json, out).await;
+            res.map_err(host::explain_share_presence_failure)
         }
         Command::Build(a) => {
             let rest = Cli {

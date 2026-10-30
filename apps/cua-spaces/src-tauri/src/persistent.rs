@@ -22,6 +22,7 @@ pub const TOOLS: &[&str] = &[
     "agent_keys.list",
     "agent_keys.set",
     "agent_keys.remove",
+    "agent_keys.use",
     "persistent_agent_list",
     "persistent_agent_save",
     "agent_pause",

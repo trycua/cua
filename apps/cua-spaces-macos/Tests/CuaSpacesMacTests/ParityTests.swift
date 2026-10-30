@@ -2481,6 +2481,7 @@ struct ParityTests {
         case .rename: "rename"
         case .delete: "delete"
         case .leave: "leave"
+        case .pin: "pin"
         }
     }
 

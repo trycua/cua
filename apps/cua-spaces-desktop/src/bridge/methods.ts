@@ -20,7 +20,7 @@ export const METHODS = [
   "agents.status", "agents.connect", "agents.disconnect", "agents.signInStart", "agents.signInWait", "agents.start", "agents.message",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
   "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
-  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell",
+  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell",
   "spaces.add", "clouds.status", "clouds.test", "clouds.connect", "clouds.disconnect", "clouds.approve",
   "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
   "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites",

@@ -355,11 +355,12 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
           setSpaces: (spaces) => calls.push(`spaces:${spaces.length}`),
           setShown: (shown) => calls.push(`shown:${shown}`),
           setKeyvault: (label, signedIn) => calls.push(`keyvault:${label ?? "none"}:${signedIn?.length ?? 0}`),
+          setPinned: (ids) => calls.push(`pinned:${ids.join(",")}`),
           setActivity: (hotspot, transfer) => calls.push(`activity:${hotspot}:${transfer ? "transfer" : "none"}`),
         },
         model,
       );
-      expect(calls).toEqual([`spaces:${model.spaces.length}`, "shown:true", "keyvault:none:0", "activity:false:none"]);
+      expect(calls).toEqual([`spaces:${model.spaces.length}`, "shown:true", "pinned:", "keyvault:none:0", "activity:false:none"]);
       calls.length = 0;
       const end = model.activity.begin();
       model.activity.setHotspot(true);

@@ -26,6 +26,19 @@ async function withBox(fn) {
 const tool = (id, extra = {}) => ({ tool: { id, title: `run ${id}`, kind: "execute", input: { cmd: id }, ...extra } });
 const floor = (box) => Number(fs.readFileSync(path.join(box.state, "epoch"), "utf8"));
 
+// ---- the working folder ----------------------------------------------------
+
+t("a state directory given as ~/... gives the harness an absolute working folder", async (box) => {
+  box.script({ prompts: [{ match: ".", steps: [{ say: "hi" }] }] });
+  // What `cua agent add --durable` sends: state dir `~/.cua/durable/NAME`, cwd `${CUA_SESSION_STATE_DIR}/work`.
+  box.config({ cwd: "${CUA_SESSION_STATE_DIR}/work", durable: { stateDir: "~/.cua/durable/s1" } });
+  const r = await box.go({ epoch: 1, resume: false, env: { HOME: box.root, CUA_SESSION_STATE_DIR: "~/.cua/durable/s1" } });
+  assert.equal(r.code, 0, r.stderr);
+  const cwd = box.agentLog().find((l) => l.ev === "session_new")?.cwd;
+  assert.ok(path.isAbsolute(cwd), `cwd ${cwd} is not absolute`);
+  assert.equal(cwd, path.join(box.root, ".cua/durable/s1/work"));
+});
+
 // ---- the fence -----------------------------------------------------------
 
 t("a stale epoch is refused: exit 75, nothing written, the agent never starts", async (box) => {

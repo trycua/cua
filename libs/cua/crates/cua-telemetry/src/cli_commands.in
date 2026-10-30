@@ -250,6 +250,7 @@
     "telemetry.schema",
     "telemetry.show-last",
     "telemetry.status",
+    "teleport.doctor",
     "teleport.manifest",
     "teleport.providers",
     "teleport.push",

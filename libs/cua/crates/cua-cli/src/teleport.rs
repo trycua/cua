@@ -28,6 +28,22 @@ pub enum TeleportCmd {
   # The whole Slack profile, every item
   cua teleport push --app Slack --sandbox dev --all")]
     Push(PushArgs),
+    /// Check, in plain words, that a teleport can work now: the Keyvault,
+    /// permission to read the browser's files and tabs, and the profile.
+    #[command(after_help = "Examples:
+  cua teleport doctor
+  cua teleport doctor --app chrome --profile \"Profile 1\"")]
+    Doctor(DoctorArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct DoctorArgs {
+    /// Browser to check (`chrome` or `edge`).
+    #[arg(long, default_value = "chrome")]
+    pub app: String,
+    /// Profile to check: a name ("Profile 1"). Default: the one used last.
+    #[arg(long)]
+    pub profile: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]

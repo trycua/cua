@@ -280,6 +280,76 @@ pub struct DomainInventory {
     pub unavailable_reason: String,
 }
 
+/// Whether the OS lets Cua do one thing a teleport needs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Access {
+    /// Allowed, or not needed.
+    Granted,
+    /// The OS refused it.
+    Denied,
+    /// Only known by trying (macOS decides Automation on first use).
+    #[default]
+    Unknown,
+}
+
+/// One check of a [`Readiness`]: the state and a sentence a person can act on
+/// (empty when there is nothing to do).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadinessCheck {
+    /// The state.
+    #[serde(default)]
+    pub state: Access,
+    /// What it means and what to do, in plain words.
+    #[serde(default)]
+    pub say: String,
+}
+
+/// A browser profile, for the picker.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserProfile {
+    /// Directory name (`Default`, `Profile 1`): what `profile` takes.
+    pub dir: String,
+    /// The name the person gave it, or the directory name.
+    pub name: String,
+    /// The account signed in to it, when the browser knows.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// The browser used it last.
+    #[serde(default)]
+    pub last_used: bool,
+}
+
+/// Whether a teleport of an app can work now, checked without reading any
+/// secret and without asking for presence: what the OS allows, and which
+/// profiles exist. The checks run in the daemon, the process that reads the
+/// app, because OS permissions belong to it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Readiness {
+    /// Provider id.
+    pub provider_id: String,
+    /// App display name.
+    pub app_display: String,
+    /// The profile checked: the one asked for, else the last used.
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// The profile a teleport reads when none is named.
+    #[serde(default)]
+    pub default_profile: Option<String>,
+    /// Every profile, `Default` first (empty for an app without profiles).
+    #[serde(default)]
+    pub profiles: Vec<BrowserProfile>,
+    /// Reading the app's files (Full Disk Access on macOS).
+    #[serde(default)]
+    pub files: ReadinessCheck,
+    /// Reading the app's open tabs (Automation on macOS).
+    #[serde(default)]
+    pub tabs: ReadinessCheck,
+    /// The checked profile has no sign-in data (empty or wrong profile).
+    #[serde(default)]
+    pub profile_empty: bool,
+}
+
 /// What a host app offers.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Inventory {
@@ -372,6 +442,16 @@ pub trait Backend: Send + Sync {
     }
     /// Lists what `app` offers (read-only; never values). Blocking.
     fn inventory(&self, app: &str, profile: Option<&str>) -> Result<Inventory>;
+    /// Whether a teleport of `app` can work now: OS permissions and profiles,
+    /// looked at only (no value is read). Blocking. The default knows
+    /// nothing, which reads as "nothing to report".
+    fn readiness(&self, app: &str, profile: Option<&str>) -> Result<Readiness> {
+        Ok(Readiness {
+            provider_id: app.to_string(),
+            profile: profile.map(str::to_string),
+            ..Default::default()
+        })
+    }
     /// Captures the chosen items. Blocking. Called only after user presence.
     fn capture(&self, spec: &ImportSpec) -> Result<Vec<Captured>>;
     /// Builds one bundle from the entries a codec made of same-provider
@@ -1774,6 +1854,22 @@ impl Broker {
         let b = self.backend.clone();
         let (app, profile) = (app.to_string(), profile.map(str::to_string));
         tokio::task::spawn_blocking(move || b.inventory(&app, profile.as_deref()))
+            .await
+            .map_err(|e| Error::Backend(e.to_string()))?
+    }
+
+    /// Whether a teleport of `app` can work now (first party; no presence,
+    /// no secret is read): the OS permissions and the profiles to choose from.
+    pub async fn readiness(
+        &self,
+        caller: &CallerIdentity,
+        app: &str,
+        profile: Option<&str>,
+    ) -> Result<Readiness> {
+        policy::require_first_party(caller, "checking a host app")?;
+        let b = self.backend.clone();
+        let (app, profile) = (app.to_string(), profile.map(str::to_string));
+        tokio::task::spawn_blocking(move || b.readiness(&app, profile.as_deref()))
             .await
             .map_err(|e| Error::Backend(e.to_string()))?
     }

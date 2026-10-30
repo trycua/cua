@@ -29,8 +29,8 @@ use crate::teleport::{AppSessions, TeleportScope};
 use base64::Engine as _;
 use cua_keyvault::broker::{
     AccessRequest, Backend, Broker, BrokerConfig, Captured, CookieFilter, DeliveryOutcome,
-    DomainInventory, ImportSpec, Inventory, LoginFill, LoginFilled, PasswordImportSpec, Selector,
-    TeleportRequest, TeleportStage, UserPresence,
+    DomainInventory, ImportSpec, Inventory, LoginFill, LoginFilled, PasswordImportSpec, Readiness,
+    Selector, TeleportRequest, TeleportStage, UserPresence,
 };
 use cua_keyvault::caller::{CallerIdentity, Signing};
 use cua_keyvault::model::{ItemKind, LoginRecord, PayloadEntry};
@@ -595,6 +595,99 @@ impl Backend for DaemonBackend {
             domains: domains.into_values().collect(),
             notes,
         })
+    }
+
+    fn readiness(&self, app: &str, profile: Option<&str>) -> KvResult<Readiness> {
+        use cua_keyvault::broker::{Access, BrowserProfile, ReadinessCheck};
+        use cua_teleport::privacy as px;
+        let mut out = Readiness {
+            provider_id: self
+                .sessions
+                .provider_id(app)
+                .unwrap_or_else(|| app.to_string()),
+            app_display: self.app_display(app),
+            profile: profile.map(str::to_string),
+            ..Default::default()
+        };
+        // Only a Chromium-family browser has profiles and a cookie store to
+        // look at; the other apps have nothing to report here.
+        if app != "chrome" && app != "edge" && app != "chromium" {
+            out.files.state = Access::Granted;
+            out.tabs.state = Access::Granted;
+            return Ok(out);
+        }
+        let named = profile.map(str::trim).filter(|p| !p.is_empty());
+        let default_dir = self
+            .cookie_reader(None)
+            .profile_dir()
+            .map_err(|e| backend_err("find the browser profile", e))?;
+        let root = px::user_data_dir_of(&default_dir);
+        let profiles = root
+            .as_deref()
+            .map(px::browser_profiles)
+            .unwrap_or_default();
+        out.default_profile = default_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned());
+        // The profile to check: the one named, else the last used.
+        let checked = named
+            .map(str::to_string)
+            .or_else(|| profiles.iter().find(|p| p.last_used).map(|p| p.dir.clone()))
+            .or_else(|| out.default_profile.clone());
+        out.profile = checked.clone();
+        out.profiles = profiles
+            .iter()
+            .map(|p| BrowserProfile {
+                dir: p.dir.clone(),
+                name: p.name.clone(),
+                account: p.account.clone(),
+                last_used: p.last_used,
+            })
+            .collect();
+        let dir = self
+            .cookie_reader(checked.clone())
+            .profile_dir()
+            .map_err(|e| backend_err("find the browser profile", e))?;
+        match px::probe_profile(&dir) {
+            px::Probe::Readable => out.files.state = Access::Granted,
+            px::Probe::Denied => {
+                out.files = ReadinessCheck {
+                    state: Access::Denied,
+                    say: px::FULL_DISK_ACCESS_SAY.into(),
+                };
+            }
+            px::Probe::Missing => {
+                out.profile_empty = true;
+                out.files = ReadinessCheck {
+                    state: Access::Granted,
+                    say: px::missing_profile_say(
+                        checked.as_deref().unwrap_or("Default"),
+                        &profiles,
+                    ),
+                };
+            }
+            px::Probe::Other(e) => {
+                out.files = ReadinessCheck {
+                    state: Access::Unknown,
+                    say: format!("The browser's files could not be checked: {e}"),
+                };
+            }
+        }
+        // Open tabs are read by asking the running browser, which macOS only
+        // decides the first time it is asked: it cannot be checked without
+        // that prompt, so it is reported as unknown, with the step to take.
+        out.tabs = ReadinessCheck {
+            state: Access::Unknown,
+            say: if cfg!(target_os = "macos") {
+                px::AUTOMATION_SAY.into()
+            } else {
+                String::new()
+            },
+        };
+        if !cfg!(target_os = "macos") {
+            out.tabs.state = Access::Granted;
+        }
+        Ok(out)
     }
 
     fn capture(&self, spec: &ImportSpec) -> KvResult<Vec<Captured>> {

@@ -260,6 +260,22 @@ extension FixtureSpacesBackend {
                 kind: nil, arch: nil, reachable: true, error: nil, host: "m1", hostName: "ellieln",
                 power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
         }
+        // `CUA_SPACES_FIXTURE_STOPPED=<n>`: `n` suspended or stopped Spaces that
+        // one of your machines provides, with no recorded add date (so they read
+        // as seen just now), the notch's ordering regression.
+        if let k = environment["CUA_SPACES_FIXTURE_STOPPED"].flatMap(Int.init), k > 0 {
+            let names = ["cua-builder", "onb-new", "onb-old", "windows-aws", "dev-box", "ci-runner", "scratch", "qa-mac"]
+            for i in 0..<min(k, names.count) {
+                let state = i % 2 == 0 ? "suspended" : "stopped"
+                base.append(AppSpaceRow(
+                    id: "relay:ip-172-31-46-222/\(names[i])", name: names[i], displayName: nil, provider: "relay",
+                    spacesdVersion: "0.7.0", features: ["desktop_stream"], addedAt: nil,
+                    os: .unknown, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
+                    kind: nil, arch: nil, reachable: false, error: nil, host: "ip-172-31-46-222",
+                    hostName: "ip-172-31-46-222", power: i % 2 == 0 ? "suspend" : "stop", powerState: state,
+                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
+            }
+        }
         guard let n = environment["CUA_SPACES_FIXTURE_SPACES"].flatMap(Int.init), n > 0,
               let template = base.first else { return base }
         let extra = (1...min(n, 32)).map { i -> AppSpaceRow in

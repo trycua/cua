@@ -18,7 +18,7 @@ import type {
 } from "../native/generated/index";
 import type { LiveSpacesBackend, SpacesBackend } from "./backend";
 import type { AgentSetupRunning } from "./agents";
-import type { AccountProfile, AccountRunning, SignInAttempt } from "./services";
+import type { AccountProfile, AccountRunning, SignInAttempt, SignInOptions } from "./services";
 
 /** A value set once, which callers wait for. */
 export class LiveGate<T> {
@@ -91,6 +91,10 @@ export class PendingSpacesBackend implements SpacesBackend {
   }
 
   rows = async () => (await this.b()).rows();
+  listRead = async () => {
+    const b = await this.b();
+    return b.listRead ? b.listRead() : { rows: await b.rows(), incomplete: false, reaching: 0, stale: false, notice: "" };
+  };
   create = async (args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void) =>
     (await this.b()).create(args, createId, progress);
   cancelCreate = async (createId: string) => (await this.b()).cancelCreate(createId);
@@ -99,6 +103,9 @@ export class PendingSpacesBackend implements SpacesBackend {
   reportedHostname = (id: string) => this.current?.reportedHostname(id) ?? null;
   add = async (url: string, token: string | null, name: string | null) => (await this.b()).add(url, token, name);
   remove = async (id: string, removeOnly: boolean) => (await this.b()).remove(id, removeOnly);
+  deleteMany = async (ids: string[]) => (await this.b()).deleteMany(ids);
+  leave = async (ids: string[]) => (await this.b()).leave(ids);
+  rename = async (id: string, name: string) => (await this.b()).rename(id, name);
   relayUnregister = async (machineId: string) => (await this.b()).relayUnregister(machineId);
   machineHealth = async (machine: string | null) => (await this.b()).machineHealth(machine);
   setPower = async (id: string, on: boolean) => (await this.b()).setPower(id, on);
@@ -107,11 +114,19 @@ export class PendingSpacesBackend implements SpacesBackend {
   setLumeSource = async (value: string) => (await this.b()).setLumeSource(value);
   linuxSource = async () => (await this.b()).linuxSource();
   setLinuxSource = async (value: string) => (await this.b()).setLinuxSource(value);
+  runtimeKinds = async () => (await this.b()).runtimeKinds();
+  runtimeCheckPath = async (kind: string, path: string) => (await this.b()).runtimeCheckPath(kind, path);
+  setRuntimeSetting = async (key: string, value: string | null) => (await this.b()).setRuntimeSetting(key, value);
+  repoCacheStatus = async () => (await this.b()).repoCacheStatus();
+  setRepoCache = async (change: { enabled?: boolean; sizeGb?: number | null }) => (await this.b()).setRepoCache(change);
+  clearRepoCache = async () => (await this.b()).clearRepoCache();
   localStorage = async () => (await this.b()).localStorage();
-  cloudAvailable = async () => (await this.b()).cloudAvailable();
+  loggedIn = async () => (await this.b()).loggedIn();
   runningMacosVms = async () => (await this.b()).runningMacosVms();
-  cloudPricing = async () => (await this.b()).cloudPricing();
   usage = async (id: string) => (await this.b()).usage(id);
+  // Never waits for the SDK: until it is in, the page shows this
+  // computer's own numbers.
+  resources = async (visible: boolean) => (await this.current?.resources?.(visible)) ?? null;
   agentRuns = async (id: string) => (await this.b()).agentRuns(id);
   windows = async (id: string) => (await this.b()).windows(id);
   primaryDisplay = async (id: string) => (await this.b()).primaryDisplay(id);
@@ -143,10 +158,10 @@ export class PendingAccount implements AccountRunning {
     return this.gate.current?.account?.profile() ?? null;
   }
 
-  async beginSignIn(): Promise<SignInAttempt> {
+  async beginSignIn(opts?: SignInOptions): Promise<SignInAttempt> {
     const account = (await this.gate.wait()).account;
     if (!account) throw new NotStarted("Signing in");
-    return account.beginSignIn();
+    return account.beginSignIn(opts);
   }
 
   async signOut(): Promise<void> {

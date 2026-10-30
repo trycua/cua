@@ -91,6 +91,9 @@ jobs:
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          # The TypeScript SDK build (ubrn) compiles a wasm32 target.
+          targets: wasm32-unknown-unknown
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: |

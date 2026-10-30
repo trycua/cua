@@ -42,7 +42,6 @@ fn report(ready: bool) -> String {
 fn env(backends: &[&str]) -> WizardEnv {
     WizardEnv {
         default_location: Location::Local,
-        cloud_available: false,
         local_available: true,
         local_reason: None,
         local_backends: Some(backends.iter().map(|b| b.to_string()).collect()),
@@ -52,7 +51,6 @@ fn env(backends: &[&str]) -> WizardEnv {
         lume_source: None,
         linux_source: None,
         storage: None,
-        cloud_pricing: None,
         clouds: vec![],
         hosts: vec![],
         experiments: Experiments::default(),
@@ -159,7 +157,6 @@ fn a_registered_provider_joins_the_wizard_and_leaves_it_again() {
     assert_eq!(image.variant, SpaceKind::Vm);
     assert_eq!(image.name, "Default");
     assert_eq!(image.local, Some(LocalEngine::External("acme".into())));
-    assert_eq!(image.cloud, None);
     assert_eq!(image.arch, ["arm64"]);
     assert!(
         wizard::image_suggestions("acme")
@@ -170,7 +167,7 @@ fn a_registered_provider_joins_the_wizard_and_leaves_it_again() {
 
     // It runs only on this Mac, only on the provider.
     assert!(wizard::can_place(&image, Location::Local));
-    for on in [Location::Cloud, Location::Yours, Location::Host] {
+    for on in [Location::Yours, Location::Host] {
         assert!(!wizard::can_place(&image, on), "{on:?}");
     }
     assert_eq!(

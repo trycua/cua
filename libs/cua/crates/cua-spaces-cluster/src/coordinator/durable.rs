@@ -23,6 +23,14 @@
 //!   The copy on the host that went down is deleted when that host answers
 //!   again.
 //!
+//! - **Setup.** With a [`SpaceSetup`] configured
+//!   ([`Config::space_setup`](super::Config::space_setup)), every placement
+//!   (the first copy, and each re-placement from scratch) runs the Space's
+//!   `.cua/setup` inside it. Until it finishes the Space's `setup` is
+//!   `pending` and sessions on it wait; when it fails (`failed`, with the
+//!   last lines of its output in `setup_note`) the sessions on it fail
+//!   permanently and are not driven.
+//!
 //! State lives in the coordinator's database (`durable` table), so a
 //! coordinator restart changes nothing.
 
@@ -60,6 +68,45 @@ pub struct DurableSpec {
     pub headless: bool,
 }
 
+/// What a Space's `.cua/setup` did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SetupOutcome {
+    /// It ran and exited 0, or there was no setup hook.
+    pub ok: bool,
+    /// For people: what ran and the end of its output (no secrets).
+    pub note: String,
+}
+
+/// Runs a durable Space's `.cua/setup` inside the Space (the embedding
+/// daemon connects to it with the connection's address and token).
+#[async_trait::async_trait]
+pub trait SpaceSetup: Send + Sync {
+    /// Sets up the copy `space` describes (`generation`, `restored`).
+    async fn setup(&self, space: &DurableConnection) -> SetupOutcome;
+}
+
+/// A [`SpaceSetup`] in the coordinator's configuration.
+#[derive(Clone)]
+pub struct SetupHook(pub Arc<dyn SpaceSetup>);
+
+impl std::fmt::Debug for SetupHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SetupHook")
+    }
+}
+
+/// A durable Space's setup state (`DurableView::setup`).
+pub mod setup {
+    /// No setup step (none configured).
+    pub const NONE: &str = "";
+    /// `.cua/setup` runs (or is about to) for the current copy.
+    pub const PENDING: &str = "pending";
+    /// It finished.
+    pub const OK: &str = "ok";
+    /// It failed: sessions on the Space fail.
+    pub const FAILED: &str = "failed";
+}
+
 /// `pending` (no host has it yet), `running`, or `deleted` (its copies
 /// are being removed).
 pub mod state {
@@ -93,6 +140,15 @@ pub(crate) struct Row {
     updated_ms: i64,
     /// Copies to delete when their host answers: (host, `local:<name>`).
     stale: Vec<(String, String)>,
+    /// [`setup`] state of the current copy.
+    #[serde(default)]
+    setup: String,
+    /// What the last setup said.
+    #[serde(default)]
+    setup_note: String,
+    /// The generation the setup state is about.
+    #[serde(default)]
+    setup_generation: u32,
 }
 
 impl Row {
@@ -129,6 +185,8 @@ impl Row {
             updated_ms: self.updated_ms,
             space: self.id.clone(),
             token: self.token.clone(),
+            setup: self.setup.clone(),
+            setup_note: self.setup_note.clone(),
         }
     }
 
@@ -143,6 +201,8 @@ impl Row {
             node: self.node.clone(),
             id: self.id.clone(),
             token: self.token.clone(),
+            setup: self.setup.clone(),
+            setup_note: self.setup_note.clone(),
         }
     }
 }
@@ -183,6 +243,13 @@ pub struct DurableView {
     /// The token of a `direct:` Space (empty for a relay one).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub token: String,
+    /// `.cua/setup` of the current copy: `""` (no setup step), `pending`,
+    /// `ok` or `failed`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub setup: String,
+    /// What the setup said (the end of its output).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub setup_note: String,
 }
 
 /// What the lease holder gets: the fencing token and how to reach the
@@ -209,6 +276,12 @@ pub struct DurableConnection {
     pub id: String,
     /// The Space's cua-spacesd token.
     pub token: String,
+    /// `.cua/setup` of this copy: `""`, `pending`, `ok` or `failed`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub setup: String,
+    /// What the setup said.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub setup_note: String,
 }
 
 pub(crate) fn init(c: &Connection) -> rusqlite::Result<()> {
@@ -223,10 +296,25 @@ pub(crate) fn init(c: &Connection) -> rusqlite::Result<()> {
            fence INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
            created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL,
            stale TEXT NOT NULL DEFAULT '[]');",
-    )
+    )?;
+    // Added later: a database from an older coordinator gets them.
+    let mut st = c.prepare("PRAGMA table_info(durable)")?;
+    let have: Vec<String> = st
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (col, ty) in [
+        ("setup", "TEXT NOT NULL DEFAULT ''"),
+        ("setup_note", "TEXT NOT NULL DEFAULT ''"),
+        ("setup_generation", "INTEGER NOT NULL DEFAULT 0"),
+    ] {
+        if !have.iter().any(|h| h == col) {
+            c.execute_batch(&format!("ALTER TABLE durable ADD COLUMN {col} {ty};"))?;
+        }
+    }
+    Ok(())
 }
 
-const COLS: &str = "name,spec,state,node,local_space,id,token,kind,generation,restored,holder,lease_token,lease_expires_ms,fence,error,created_ms,updated_ms,stale";
+const COLS: &str = "name,spec,state,node,local_space,id,token,kind,generation,restored,holder,lease_token,lease_expires_ms,fence,error,created_ms,updated_ms,stale,setup,setup_note,setup_generation";
 
 fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     let spec: String = r.get(1)?;
@@ -250,6 +338,9 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
         created_ms: r.get(15)?,
         updated_ms: r.get(16)?,
         stale: serde_json::from_str(&stale).unwrap_or_default(),
+        setup: r.get(18)?,
+        setup_note: r.get(19)?,
+        setup_generation: r.get::<_, i64>(20)? as u32,
     })
 }
 
@@ -275,7 +366,7 @@ fn list(c: &Connection) -> Result<Vec<Row>, String> {
 
 fn save(c: &Connection, r: &Row) -> Result<(), String> {
     c.execute(
-        &format!("INSERT OR REPLACE INTO durable({COLS}) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)"),
+        &format!("INSERT OR REPLACE INTO durable({COLS}) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)"),
         params![
             r.name,
             serde_json::to_string(&r.spec).unwrap_or_default(),
@@ -295,6 +386,9 @@ fn save(c: &Connection, r: &Row) -> Result<(), String> {
             r.created_ms,
             r.updated_ms,
             serde_json::to_string(&r.stale).unwrap_or_else(|_| "[]".into()),
+            r.setup,
+            r.setup_note,
+            r.setup_generation as i64,
         ],
     )
     .map(|_| ())
@@ -458,6 +552,11 @@ impl Coordinator {
                 };
                 row.state = state::RUNNING.into();
                 row.error.clear();
+                if self.cfg.space_setup.is_some() {
+                    row.setup = setup::PENDING.into();
+                    row.setup_note.clear();
+                    row.setup_generation = row.generation;
+                }
                 let detail = if row.generation > 1 {
                     format!(
                         "generation {} on {} (was on {}), restored from scratch",
@@ -470,7 +569,9 @@ impl Coordinator {
                 };
                 self.audit("durable", "coordinator", &row.name, &detail)
                     .await;
-                self.durable_save(row).await
+                let row = self.durable_save(row).await?;
+                self.durable_setup_spawn(&row);
+                Ok(row)
             }
             Err(e) => {
                 // Recorded when it changes, not on every try.
@@ -482,6 +583,59 @@ impl Coordinator {
                 row.error = error;
                 self.durable_save(row).await
             }
+        }
+    }
+
+    /// Starts `.cua/setup` of the row's current copy in the background,
+    /// once per (name, generation).
+    fn durable_setup_spawn(&self, row: &Row) {
+        let Some(hook) = self.cfg.space_setup.clone() else {
+            return;
+        };
+        if row.setup != setup::PENDING
+            || row.setup_generation != row.generation
+            || row.state != state::RUNNING
+        {
+            return;
+        }
+        let key = (row.name.clone(), row.generation);
+        if !self.setups.lock().expect("setups").insert(key.clone()) {
+            return;
+        }
+        let Some(me) = self.me.upgrade() else {
+            return;
+        };
+        let conn = row.connection();
+        tokio::spawn(async move {
+            let out = tokio::select! {
+                o = hook.0.setup(&conn) => Some(o),
+                _ = me.stop.cancelled() => None,
+            };
+            if let Some(out) = out {
+                me.durable_setup_done(&key.0, key.1, out).await;
+            }
+            me.setups.lock().expect("setups").remove(&key);
+        });
+    }
+
+    /// Records what the setup of `generation` did (ignored when the Space
+    /// moved on meanwhile).
+    async fn durable_setup_done(&self, name: &str, generation: u32, out: SetupOutcome) {
+        let _g = self.durable_lock(name).await;
+        let Ok(Some(mut r)) = self.durable_load(name).await else {
+            return;
+        };
+        if r.generation != generation || r.setup != setup::PENDING {
+            return;
+        }
+        r.setup = if out.ok { setup::OK } else { setup::FAILED }.into();
+        r.setup_note = out.note;
+        let detail = format!(
+            ".cua/setup of generation {generation} {}",
+            if out.ok { "finished" } else { "failed" }
+        );
+        if self.durable_save(r).await.is_ok() {
+            self.audit("setup", "coordinator", name, &detail).await;
         }
     }
 
@@ -726,6 +880,8 @@ impl Coordinator {
                             let _ = self.durable_place(r, true).await;
                             continue;
                         }
+                        // A setup a restart interrupted runs again.
+                        self.durable_setup_spawn(&row);
                         let now = now_ms();
                         let last = checked.get(&name).copied().unwrap_or(0);
                         if now - last < CHECK_EVERY.as_millis() as i64 {
@@ -743,5 +899,53 @@ impl Coordinator {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A database an older coordinator wrote gets the setup columns, its
+    /// rows read with no setup step, and a pool-log row without the new
+    /// fields still applies.
+    #[test]
+    fn an_older_database_and_log_row_still_load() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE durable(
+               name TEXT PRIMARY KEY, spec TEXT NOT NULL, state TEXT NOT NULL,
+               node TEXT NOT NULL DEFAULT '', local_space TEXT NOT NULL DEFAULT '',
+               id TEXT NOT NULL DEFAULT '', token TEXT NOT NULL DEFAULT '',
+               kind TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0,
+               restored TEXT NOT NULL DEFAULT '', holder TEXT NOT NULL DEFAULT '',
+               lease_token INTEGER NOT NULL DEFAULT 0, lease_expires_ms INTEGER NOT NULL DEFAULT 0,
+               fence INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
+               created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL,
+               stale TEXT NOT NULL DEFAULT '[]');
+             INSERT INTO durable(name, spec, state, created_ms, updated_ms)
+               VALUES('old', '{}', 'running', 1, 1);",
+        )
+        .unwrap();
+        init(&c).unwrap();
+        init(&c).unwrap();
+        let r = load(&c, "old").unwrap().unwrap();
+        assert_eq!((r.setup.as_str(), r.setup_generation), (setup::NONE, 0));
+        let mut v = serde_json::to_value(&r).unwrap();
+        for k in ["setup", "setup_note", "setup_generation"] {
+            v.as_object_mut().unwrap().remove(k);
+        }
+        v["name"] = "from-log".into();
+        assert!(save_json(&c, &v).unwrap());
+        let mut r = load(&c, "from-log").unwrap().unwrap();
+        assert_eq!(r.setup, "");
+        r.setup = setup::FAILED.into();
+        r.setup_note = "exit 2".into();
+        r.setup_generation = 3;
+        save(&c, &r).unwrap();
+        let back = load(&c, "from-log").unwrap().unwrap();
+        assert_eq!(back, r);
+        assert_eq!(back.view().setup, "failed");
+        assert_eq!(back.connection().setup_note, "exit 2");
     }
 }

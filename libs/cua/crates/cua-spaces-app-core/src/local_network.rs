@@ -192,7 +192,6 @@ mod tests {
         assert!(!applies(SpaceProvider::Local, SpaceOs::Macos, false));
         assert!(!applies(SpaceProvider::Local, SpaceOs::Linux, true));
         assert!(!applies(SpaceProvider::Relay, SpaceOs::Macos, true));
-        assert!(!applies(SpaceProvider::Cloud, SpaceOs::Macos, true));
     }
 
     #[test]
@@ -254,7 +253,6 @@ mod tests {
                 Some("preparing"),
                 false,
                 &then.error_variant,
-                Some(SpaceProvider::Local)
             ),
             "local_network_denied"
         );

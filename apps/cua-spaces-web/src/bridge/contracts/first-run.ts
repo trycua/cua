@@ -8,7 +8,7 @@
  */
 
 /** Welcome, Pick your agent (`connect`), Install the Cua CLI (`cli`, only
- * while it is missing), Connect your other devices, Share this Mac's screen
+ * while it is missing), Add your other computers, Share this Mac's screen
  * (`permissions`, only on a signed-in Mac that shares it), Try it (`setup`). */
 export type FirstRunStep = "welcome" | "connect" | "cli" | "devices" | "permissions" | "setup";
 
@@ -72,6 +72,8 @@ export interface FirstRunAgent {
   signedIn?: boolean;
   /** The settings file Cua adds itself to. */
   mcpConfig?: string | null;
+  /** Its row of the connection status (`agents.status`), when the host answers it. */
+  connection?: import("./agents").ConnectionRow | null;
 }
 
 export interface FirstRunPermission {
@@ -136,6 +138,8 @@ export interface FirstRunInput {
   /** The agent being connected. */
   connectingAgent?: string | null;
   connectError: string | null;
+  /** Advanced setup on Pick your agent (CUA-2267); Simple by default. */
+  advanced?: boolean;
   agentOpenBeforeSetup: boolean | null;
   agentUsedAt: string | null;
   signedIn: boolean;
@@ -166,7 +170,7 @@ export interface FirstRunAgentPick {
   connected: boolean;
   /** "Connect" (`connect`), none once connected or while it runs. */
   action: FirstRunButton | null;
-  /** "Connected", "Adding Cua…". */
+  /** "Connected", "Connecting…". */
   note: string | null;
 }
 
@@ -213,6 +217,12 @@ export interface FirstRunConnectView {
   /** "Skip", until an agent is connected. */
   secondary: FirstRunButton | null;
   error: string | null;
+  /** The one line under the agents: what Connect does (Simple), or that ticked sign-ins are copied (Advanced). */
+  consent?: string;
+  /** The quiet link at the right of the buttons: "Advanced" (`advanced`) or "Simple" (`simple`). */
+  mode?: FirstRunButton | null;
+  /** Advanced: paths shown and sign-ins ticked per agent (CUA-2267). */
+  advanced?: boolean;
 }
 
 export interface FirstRunDevicesView {
@@ -221,7 +231,7 @@ export interface FirstRunDevicesView {
   rows: { title: string; note: string }[];
   /** The sign-in waiting, or this computer being added to the account. */
   status: FirstRunRow | null;
-  /** "Sign in to connect" (`sign-in`), or "Continue" once signed in. */
+  /** "Sign in" (`sign-in`), or "Continue" once signed in. */
   primary: FirstRunButton;
   /** "Not now" (`not-now`). */
   secondary: FirstRunButton | null;
@@ -234,7 +244,7 @@ export interface FirstRunDevicesView {
 export interface FirstRunPermissionsView {
   title: string;
   lede: string;
-  /** `screen-recording`, `accessibility`: `ok`, `fix` (Allow), `checking`. */
+  /** `screen-recording`, `accessibility`, `local-network`: `ok`, `fix` (Allow), `checking`. */
   rows: FirstRunRow[];
   note: string;
   /** "Continue" once both are granted. */
@@ -246,7 +256,7 @@ export interface FirstRunPermissionsView {
 export type FirstRunRowState = "checking" | "ok" | "fix";
 
 export interface FirstRunRow {
-  id: "agent" | "computer" | "account" | "screen-recording" | "accessibility";
+  id: "agent" | "computer" | "account" | "screen-recording" | "accessibility" | "local-network";
   state: FirstRunRowState;
   title: string;
   note: string;

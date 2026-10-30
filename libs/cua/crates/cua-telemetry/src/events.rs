@@ -708,6 +708,36 @@ pub fn agent_run_started(
         )
 }
 
+/// `cua_agent_join_phase`: an agent joining a Space reached `phase`
+/// (one of [`schema::JOIN_PHASES`]) `ms_since_post` after the message that
+/// woke it. `run` is the salted hash of the run (see
+/// [`crate::Telemetry::agent_join_phase`]); `tool` is the installed tool for
+/// `install_done`; `failure` a fixed word for a `failed` phase.
+#[allow(clippy::too_many_arguments)]
+pub fn agent_join_phase(
+    phase: &str,
+    harness_id: &str,
+    runtime_id: &str,
+    cold: bool,
+    ms_since_post: u64,
+    run: &str,
+    tool: &str,
+    failure: &str,
+) -> Option<Event> {
+    let phase = schema::JOIN_PHASES.iter().copied().find(|p| *p == phase)?;
+    Some(
+        Event::new(event::AGENT_JOIN_PHASE)
+            .s("phase", phase)
+            .s("harness", harness(harness_id))
+            .s("runtime", pick(schema::JOIN_RUNTIMES, runtime_id, "other"))
+            .b("cold", cold)
+            .n("ms_since_post", ms_since_post.min(3_600_000))
+            .owned("run", run.to_string())
+            .s("tool", pick(schema::JOIN_TOOLS, tool, "other"))
+            .s("failure", pick(schema::JOIN_FAILURES, failure, "other")),
+    )
+}
+
 /// `cua_agent_run_completed`: a run's first turn ended (or the run failed,
 /// crashed or was stopped first).
 pub fn agent_run_completed(
@@ -920,6 +950,35 @@ pub fn onboarding_page(page: &str, action: &str, choice: &str) -> Option<Event> 
             .s("page", page)
             .s("action", action)
             .s("choice", pick(schema::PAGE_CHOICES, choice, "none"))
+    })
+}
+
+/// One of the first-run funnel events: `step_viewed`, `step_completed`,
+/// `step_failed` (with `reason`) or `skipped` (with `how`, from the same
+/// last argument). None for a step, action or
+/// reason outside the vocabulary. `step_index` and `onboarding_version`
+/// come from the step, so a caller cannot send a wrong one.
+pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
+    let step = pick(schema::FIRST_RUN_STEPS, step, "");
+    let name = match action.trim() {
+        "step_viewed" => event::ONBOARDING_STEP_VIEWED,
+        "step_completed" => event::ONBOARDING_STEP_COMPLETED,
+        "step_failed" => event::ONBOARDING_STEP_FAILED,
+        "step_skipped" => event::ONBOARDING_SKIPPED,
+        _ => return None,
+    };
+    let index = schema::FIRST_RUN_STEPS.iter().position(|s| *s == step)?;
+    let e = Event::new(name)
+        .s("step", step)
+        .n("step_index", index as u64 + 1)
+        .n("onboarding_version", schema::FIRST_RUN_VERSION);
+    Some(match name {
+        event::ONBOARDING_STEP_FAILED => e.s(
+            "reason",
+            pick(schema::FIRST_RUN_FAIL_REASONS, reason, "other"),
+        ),
+        event::ONBOARDING_SKIPPED => e.s("how", pick(schema::FIRST_RUN_SKIP_HOWS, reason, "later")),
+        _ => e,
     })
 }
 
@@ -1264,6 +1323,77 @@ pub fn device_enroll(method: &str, outcome: Outcome) -> Option<Event> {
     })
 }
 
+/// `cua_cloud_link`: `action` on `cloud` linked by `auth`, ending at
+/// `status` (`cloud_connect`'s word; `-` becomes `_`). Words outside the
+/// vocabularies become `other` (cloud), `none` (auth) or `error` (status),
+/// so no identifier can travel in them.
+pub fn cloud_link(
+    action: &str,
+    cloud: &str,
+    auth: &str,
+    status: &str,
+    outcome: Outcome,
+) -> Option<Event> {
+    let action = pick(schema::CLOUD_LINK_ACTIONS, action, "");
+    (!action.is_empty()).then(|| {
+        Event::new(event::CLOUD_LINK)
+            .s("action", action)
+            .s("cloud", pick(schema::CLOUD_LINK_CLOUDS, cloud, "other"))
+            .s("auth", pick(schema::CLOUD_LINK_AUTHS, auth, "none"))
+            .s(
+                "status",
+                pick(
+                    schema::CLOUD_LINK_STATUSES,
+                    &status.replace('-', "_"),
+                    "error",
+                ),
+            )
+            .s("outcome", outcome.as_str())
+    })
+}
+
+/// A plan name as [`schema::PLANS`] has it: `team` is `teams`; anything
+/// else the client does not know (an empty plan, a new one) is `unknown`.
+pub fn plan(plan: &str) -> &'static str {
+    match plan.trim().to_ascii_lowercase().as_str() {
+        "team" => "teams",
+        p => pick(schema::PLANS, p, "unknown"),
+    }
+}
+
+/// `cua_plan_limit_shown`: a plan limit was shown to the person at
+/// `surface` (a [`schema::PLAN_SURFACES`] word, else `other`), for cap
+/// `kind` (else `other`) on `plan` (classified with [`plan`]).
+pub fn plan_limit_shown(surface: &str, kind: &str, plan_name: &str) -> Event {
+    Event::new(event::PLAN_LIMIT_SHOWN)
+        .s("surface", pick(schema::PLAN_SURFACES, surface, "other"))
+        .s(
+            "kind",
+            match pick(schema::LIMIT_KINDS, kind, "other") {
+                "none" => "other",
+                k => k,
+            },
+        )
+        .s("plan", plan(plan_name))
+}
+
+/// `cua_upgrade_link_opened`: the person opened the upgrade or account link
+/// of a limit notice or an upgrade prompt at `surface`; `kind` is the cap
+/// when it came from a limit, `none` otherwise.
+pub fn upgrade_link_opened(surface: &str, kind: &str, plan_name: &str) -> Event {
+    Event::new(event::UPGRADE_LINK_OPENED)
+        .s("surface", pick(schema::PLAN_SURFACES, surface, "other"))
+        .s(
+            "kind",
+            if kind.trim().is_empty() {
+                "none"
+            } else {
+                pick(schema::LIMIT_KINDS, kind, "other")
+            },
+        )
+        .s("plan", plan(plan_name))
+}
+
 /// `cua_installer_step`, as `install.sh` and `install.ps1` send it (they
 /// build the same payload themselves; this builder is the reference the
 /// tests hold them to). None for a step outside [`schema::INSTALLER_STEPS`].
@@ -1339,6 +1469,76 @@ pub fn space_tool_group(tool: &str) -> Option<&'static str> {
         t if t.starts_with("computer_") && !t.starts_with("computer_access_") => "computer",
         _ => return None,
     })
+}
+
+/// `cua_agent_signin_imported`: Connect copied `harness`'s sign-in into
+/// Keyvault on This Mac (only that it happened, for which agent, and how:
+/// `origin` is the copy's origin, `claude-login-keychain` and so on).
+pub fn agent_signin_imported(harness: &str, origin: Option<&str>) -> Event {
+    let via = match origin {
+        Some("claude-login-keychain") => "claude_login_keychain",
+        Some("claude-login-file") => "claude_login_file",
+        Some("device-code") => "device_code",
+        Some("token") => "token",
+        _ => "other",
+    };
+    Event::new(event::AGENT_SIGNIN_IMPORTED)
+        .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
+        .s("via", via)
+}
+
+/// `cua_agent_signin_refused`: Connect could not copy `harness`'s sign-in;
+/// `kind` is the refusal kind (`not_signed_in`, `cancelled`, `not_yet`,
+/// `failed`). Never the line, the error or the account.
+pub fn agent_signin_refused(harness: &str, kind: &str) -> Event {
+    Event::new(event::AGENT_SIGNIN_REFUSED)
+        .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
+        .s("reason", pick(schema::SIGNIN_REFUSALS, kind, "other"))
+}
+
+/// `cua_repo_cache`: what the repo cache did for one clone. Only fixed words
+/// and numbers: `outcome` is `hit`, `miss` or `fallback`, `source` `local` or
+/// `network`, `reason` one of [`schema::REPO_CACHE_REASONS`].
+pub fn repo_cache(
+    outcome: &str,
+    source: &str,
+    bytes_saved: u64,
+    seconds_saved: u64,
+    reason: &str,
+) -> Option<Event> {
+    let outcome = schema::REPO_CACHE_OUTCOMES
+        .iter()
+        .copied()
+        .find(|o| *o == outcome)?;
+    Some(
+        Event::new(event::REPO_CACHE)
+            .s("outcome", outcome)
+            .s(
+                "source",
+                pick(schema::REPO_CACHE_SOURCES, source, "network"),
+            )
+            .n("bytes_saved", bytes_saved.min(1_000_000_000_000))
+            .n("seconds_saved", seconds_saved.min(86_400))
+            .s("reason", pick(schema::REPO_CACHE_REASONS, reason, "other")),
+    )
+}
+
+/// `cua_connection_changed`: a provider was connected, reconnected, removed or
+/// checked. Only fixed words leave: the registry's provider id, the kind of
+/// method, the action and the outcome; never a key, a URL, an account or an
+/// error text.
+pub fn connection_changed(provider: &str, method: &str, action: &str, outcome: &str) -> Event {
+    Event::new(event::CONNECTION_CHANGED)
+        .s(
+            "provider",
+            pick(schema::CONNECTION_PROVIDERS, provider, "other"),
+        )
+        .s("method", pick(schema::CONNECTION_METHODS, method, "other"))
+        .s("action", pick(schema::CONNECTION_ACTIONS, action, "check"))
+        .s(
+            "outcome",
+            pick(schema::CONNECTION_OUTCOMES, outcome, "failed"),
+        )
 }
 
 /// `cua_agent_used_space`: an agent's tool call reached a Space and worked.

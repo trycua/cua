@@ -8,8 +8,9 @@
  * On macOS the SwiftUI host draws live Space video itself, as native views
  * over the web view. The page only says where, and whether the slot can be
  * seen: each mounted slot (a Space tile, the Space viewer) reports its rect,
- * the part of it its scroll containers leave visible (`clip`), and whether
- * page UI covers it (`occluded`: a dialog, a menu, a toast), all in CSS px
+ * the part of it its scroll containers leave visible (`clip`), whether
+ * page UI covers it (`occluded`: a dialog), and where floating UI sits over
+ * it (`holes`: a menu, a popover, a tooltip, a toast), all in CSS px
  * relative to the web view's viewport, on the `cuaVideo` script message
  * handler. The host registers that handler unless native video is turned
  * off (`WebUINativeVideo` NO), so the handler's presence is the flag. No handler: the
@@ -54,8 +55,11 @@ export interface SurfaceState {
   /** The part of `rect` its scroll containers and the viewport leave visible; null when none is. */
   clip: SurfaceRect | null;
   radius: number;
-  /** Page UI (a dialog, a menu, a toast) covers part of the slot: the host hides the video. */
+  /** A dialog (or anything else on top, but floating UI) covers part of the slot, or a modal dialog is open (any slot, the viewer too): the host hides the video. */
   occluded: boolean;
+  /** Floating page UI over the slot (a menu, a popover, a tooltip, a toast, a tile's checkbox and power button while they show), in the same coordinates,
+   * inside `clip`: the host cuts the video out there and keeps the rest playing. */
+  holes?: SurfaceRect[];
   /** On screen at all: the page is visible, the slot is laid out and not clipped away. */
   visible: boolean;
 }

@@ -165,14 +165,24 @@ The first nightly is bounded by the component's current stable tag; later
 nightlies are bounded by the previous published nightly. A component therefore
 needs a reachable stable tag before its nightly channel is enabled.
 
-Before starting platform builds, the nightly planner scans that exact range for
-unresolved human coauthors. Unresolved attribution never holds a nightly: the
-build continues, the plan carries `attributionWarning=true`, and the planner
-writes a step summary and creates or refreshes one component-specific
-maintainer issue. Nightly notes omit the unresolved coauthor. Stable releases
-stay strict: `release_attribution.py` fails the manifest until the identity
-resolves through a linked GitHub email or a verified `identityOverrides` entry;
-never use wildcard or human-email ignores to clear it.
+Attribution is best effort everywhere: it never fails a pull request check, a
+nightly or a stable release. `release_attribution.py` resolves each identity
+automatically, in this order: the pull request author login from the API; the
+trusted `coauthorOverrides` and `identityOverrides`; a GitHub noreply email;
+the merging maintainer's squash trailer; the commits API `author.login` and
+`committer.login` of the pull request's commits (which covers every email
+GitHub has linked); and a GitHub search by public email. Whatever is still
+unresolved is credited by display name, without an @-mention, in the release
+notes and the manifest's `unresolvedIdentities`, and is added (deduplicated by
+email) to one rolling maintainer issue titled "Contributor attribution:
+unresolved identities". Stable and nightly runs publish regardless.
+
+The nightly planner still scans its range up front, sets
+`attributionWarning=true`, writes a step summary and refreshes that same
+rolling issue; the build continues. To credit someone by handle, link their
+email to GitHub or add a verified `identityOverrides` entry (resolved entries
+drop off the issue on the next refresh); never use wildcard or human-email
+ignores.
 
 ## Persistent consumer selection
 

@@ -34,7 +34,6 @@ const DISPLAY_SIZE = 42;
 const ACTOR_SIZE = 112;
 const ACTOR_CENTER = ACTOR_SIZE / 2;
 const SCALE = DISPLAY_SIZE / CANVAS_SIZE;
-const FLOAT_DURATION = 4.0;
 const GLOW_SURFACE_SCALE = 3;
 const GLOW_PADDING = 24;
 const BADGE_Y_OFFSET = 29;
@@ -197,7 +196,16 @@ function roundedRect(cr, x, y, width, height, radius) {
   cr.closePath();
 }
 
+// Upright like the system pointer, matching cua.default: the dart outline is
+// turned 20 degrees clockwise about the hotspot (55, 30) so its left edge
+// stands vertical.
+const UPRIGHT_RADIANS = (20 * Math.PI) / 180;
+
 function traceCursorBody(cr) {
+  cr.save();
+  cr.translate(55, 30);
+  cr.rotate(UPRIGHT_RADIANS);
+  cr.translate(-55, -30);
   cr.moveTo(55, 30);
   cr.curveTo(48, 28, 42, 33, 43, 41);
   cr.lineTo(64, 98);
@@ -207,6 +215,7 @@ function traceCursorBody(cr) {
   cr.lineTo(108, 63);
   cr.curveTo(115, 59, 114, 53, 107, 50);
   cr.closePath();
+  cr.restore();
 }
 
 function drawCursorGlowShape(cr, fillColor) {
@@ -246,16 +255,6 @@ function createGlowSurface(fillColor) {
   drawCursorGlowShape(cr, fillColor);
   cr.$dispose();
   return surface;
-}
-
-function sharedFloatMotion(progress) {
-  const angle = progress * Math.PI * 2;
-  return {
-    dx: Math.sin(angle) * 5,
-    dy: Math.cos(angle) * 6 - 5,
-    rotation: Math.cos(angle) * ((2.5 * Math.PI) / 180),
-    scale: 1,
-  };
 }
 
 function cursorBodyMotion(progress, action) {
@@ -718,12 +717,10 @@ export default class WinRectsExtension extends Extension {
       const duration = ACTION_DURATIONS[this._action] ?? 1.6;
       const elapsed = nowSeconds() - this._actionStarted;
       const progress = (elapsed % duration) / duration;
-      const floatProgress = (elapsed % FLOAT_DURATION) / FLOAT_DURATION;
       cr.save();
       cr.translate(ACTOR_CENTER, ACTOR_CENTER);
       cr.scale(SCALE, SCALE);
       cr.translate(-CANVAS_SIZE / 2, -CANVAS_SIZE / 2);
-      applyCursorBodyMotion(cr, sharedFloatMotion(floatProgress));
       drawCursorGlow(cr, progress, this._action, this._glowSurface);
       drawActionCue(cr, this._action, progress, this._fillColor);
       drawCursorBody(cr, progress, this._action, this._fillColor);

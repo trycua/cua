@@ -42,6 +42,7 @@ pub mod host;
 pub mod hostvms;
 pub mod identity_gate;
 pub mod inject;
+pub mod kinds;
 pub mod local_network;
 #[cfg(feature = "lume")]
 pub mod lume;
@@ -54,6 +55,7 @@ pub mod progress;
 #[cfg(feature = "qemu")]
 pub mod qemu;
 pub mod runtime;
+pub mod screen;
 pub mod storage;
 pub mod types;
 #[cfg(feature = "vnc")]

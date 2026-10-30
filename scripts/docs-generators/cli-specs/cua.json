@@ -124,7 +124,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Agents: `all` (installed), `none`, or ids such as `claude,codex,hermes` (`cua agents detect` lists every supported agent)",
+       "help": "Agents: `all` (installed), `none`, or ids such as `claude,codex,hermes` (`cua connect detect` lists every supported agent)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -362,19 +362,19 @@
    "usage": "cua auth [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "AI coding agents on this computer: install cua skills and configure the cua MCP server",
+   "abstract": "Connect the AI agents on this computer to Cua: install the cua skills and configure the cua MCP server",
    "aliases": [],
    "arguments": [],
    "flags": [],
    "hidden": false,
    "hidden_aliases": [],
-   "name": "agents",
+   "name": "connect",
    "options": [],
    "subcommand_optional": false,
    "subcommands": [
     {
      "abstract": "List supported AI coding agents and which are installed (read-only)",
-     "after_help": "Examples:\n  cua agents detect",
+     "after_help": "Examples:\n  cua connect detect",
      "aliases": [],
      "arguments": [],
      "flags": [],
@@ -384,11 +384,11 @@
      "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua agents detect [OPTIONS]"
+     "usage": "cua connect detect [OPTIONS]"
     },
     {
      "abstract": "Install the default cua skills and configure the cua MCP server",
-     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua agents setup\n  # Claude Code and Codex, no prompts\n  cua agents setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua agents setup --agents hermes -y\n  # Only the MCP server entry\n  cua agents setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua agents setup --cua-driver --agents all -y",
+     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -450,6 +450,17 @@
        "repeatable": false,
        "short_name": null,
        "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connections). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
+       "hidden": false,
+       "name": "sign-in",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
       }
      ],
      "hidden": false,
@@ -460,7 +471,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Agents: `all` (installed), `none`, or ids such as `claude,codex,hermes` (`cua agents detect` lists every supported agent)",
+       "help": "Agents: `all` (installed), `none`, or ids such as `claude,codex,hermes` (`cua connect detect` lists every supported agent)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -491,11 +502,11 @@
      ],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua agents setup [OPTIONS]"
+     "usage": "cua connect setup [OPTIONS]"
     },
     {
-     "abstract": "What cua configured for each agent",
-     "after_help": "Examples:\n  cua agents status",
+     "abstract": "Whether each agent is really connected: installed and its version, signed in, Cua's MCP entry present and answering, and its sign-in copied to Keyvault. The same rows as the app and the `connect_status` MCP tool",
+     "after_help": "Examples:\n  cua connect status\n  cua connect status --json",
      "aliases": [],
      "arguments": [],
      "flags": [],
@@ -505,11 +516,11 @@
      "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua agents status [OPTIONS]"
+     "usage": "cua connect status [OPTIONS]"
     },
     {
      "abstract": "Remove the Cua Spaces skills and MCP entries cua added (nothing else)",
-     "after_help": "Examples:\n  # See what would be removed, change nothing\n  cua agents remove --dry-run\n  cua agents remove\n  cua agents remove --agents codex --skills-only -y\n  # Cua Driver's skill and MCP server too (they stay otherwise)\n  cua agents remove --include-cua-driver",
+     "after_help": "Examples:\n  # See what would be removed, change nothing\n  cua connect remove --dry-run\n  cua connect remove\n  cua connect remove --agents codex --skills-only -y\n  # Cua Driver's skill and MCP server too (they stay otherwise)\n  cua connect remove --include-cua-driver\n  # Also delete the sign-in Connect copied to Keyvault\n  cua connect remove --agents codex --sign-in -y",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -567,6 +578,291 @@
        "repeatable": false,
        "short_name": null,
        "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also delete the sign-ins Connect copied to Keyvault for these agents",
+       "hidden": false,
+       "name": "sign-in",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "remove",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "all",
+       "env": null,
+       "help": "Agents: `all` (default) or ids such as `claude,codex`",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "agents",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "AGENTS"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connect remove [OPTIONS]"
+    },
+    {
+     "abstract": "Refresh installed cua skills and managed MCP entries to this version",
+     "after_help": "Examples:\n  cua connect update",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "update",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connect update [OPTIONS]"
+    }
+   ],
+   "usage": "cua connect [OPTIONS] <COMMAND>"
+  },
+  {
+   "abstract": "Deprecated alias of `connect`",
+   "aliases": [],
+   "arguments": [],
+   "deprecated": true,
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "agents",
+   "options": [],
+   "replaced_by": "cua connect",
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "List supported AI coding agents and which are installed (read-only)",
+     "after_help": "Examples:\n  cua connect detect",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "detect",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua agents detect [OPTIONS]"
+    },
+    {
+     "abstract": "Install the default cua skills and configure the cua MCP server",
+     "after_help": "Examples:\n  # Every installed agent, asking before each change\n  cua connect setup\n  # Claude Code and Codex, no prompts\n  cua connect setup --agents claude,codex -y\n  # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml\n  cua connect setup --agents hermes -y\n  # Only the MCP server entry\n  cua connect setup --mcp-only\n  # Background computer-use: the cua-driver skill and MCP server\n  cua connect setup --cua-driver --agents all -y\n  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's\n  # ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)\n  cua connect setup --agents codex,claude --sign-in -y",
+     "aliases": [],
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [
+        "no-mcp"
+       ],
+       "default_value": false,
+       "env": null,
+       "help": "Only install skills",
+       "hidden": false,
+       "name": "skills-only",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [
+        "no-skills"
+       ],
+       "default_value": false,
+       "env": null,
+       "help": "Only configure the MCP server",
+       "hidden": false,
+       "name": "mcp-only",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Answer yes to every prompt",
+       "hidden": false,
+       "name": "yes",
+       "repeatable": false,
+       "short_name": "y",
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Replace skill folders cua did not write (the old one is backed up)",
+       "hidden": false,
+       "name": "force",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Set up background computer-use instead: the cua-driver skill and the cua-driver MCP server (`cua-driver mcp`). --mcp-command then names the cua-driver binary",
+       "hidden": false,
+       "name": "cua-driver",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connections). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
+       "hidden": false,
+       "name": "sign-in",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "setup",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Agents: `all` (installed), `none`, or ids such as `claude,codex,hermes` (`cua connect detect` lists every supported agent)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "agents",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "AGENTS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Command agents launch for the MCP server (default: the `cua` on PATH, else this binary)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "mcp-command",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "MCP_COMMAND"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua agents setup [OPTIONS]"
+    },
+    {
+     "abstract": "Whether each agent is really connected: installed and its version, signed in, Cua's MCP entry present and answering, and its sign-in copied to Keyvault. The same rows as the app and the `connect_status` MCP tool",
+     "after_help": "Examples:\n  cua connect status\n  cua connect status --json",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "status",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua agents status [OPTIONS]"
+    },
+    {
+     "abstract": "Remove the Cua Spaces skills and MCP entries cua added (nothing else)",
+     "after_help": "Examples:\n  # See what would be removed, change nothing\n  cua connect remove --dry-run\n  cua connect remove\n  cua connect remove --agents codex --skills-only -y\n  # Cua Driver's skill and MCP server too (they stay otherwise)\n  cua connect remove --include-cua-driver\n  # Also delete the sign-in Connect copied to Keyvault\n  cua connect remove --agents codex --sign-in -y",
+     "aliases": [],
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Only remove skills",
+       "hidden": false,
+       "name": "skills-only",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Only remove the MCP entry",
+       "hidden": false,
+       "name": "mcp-only",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Do not ask for confirmation",
+       "hidden": false,
+       "name": "yes",
+       "repeatable": false,
+       "short_name": "y",
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also remove Cua Driver's skill and MCP server (`cua-driver`). Without it only Cua Spaces' own entries go: the `cua` server (`cua-local` for Local) and the Cua Spaces skills",
+       "hidden": false,
+       "name": "include-cua-driver",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "List exactly what would be removed and change nothing",
+       "hidden": false,
+       "name": "dry-run",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also delete the sign-ins Connect copied to Keyvault for these agents",
+       "hidden": false,
+       "name": "sign-in",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
       }
      ],
      "hidden": false,
@@ -596,7 +892,7 @@
     },
     {
      "abstract": "Refresh installed cua skills and managed MCP entries to this version",
-     "after_help": "Examples:\n  cua agents update",
+     "after_help": "Examples:\n  cua connect update",
      "aliases": [],
      "arguments": [],
      "flags": [],
@@ -768,7 +1064,7 @@
    "usage": "cua share [OPTIONS] <TARGET>\n       cua share <COMMAND>"
   },
   {
-   "abstract": "Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop",
+   "abstract": "Agents in a Space: add, send, ls, rm, schedule; run, logs, stop",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -778,6 +1074,226 @@
    "options": [],
    "subcommand_optional": false,
    "subcommands": [
+    {
+     "abstract": "Add an agent: a name, a harness and a Space",
+     "after_help": "Examples:\n  cua agent add ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY\n  cua agent add ada --harness claude-code --in local:dev \"summarize the repo\"\n  cua agent add ada --harness claude-code --in local:dev --daily 08:00 \"plan the day\"\n  cua agent add fix-1 --harness claude-code --in local:dev --once \"fix the failing test\"\n  cua agent add nightly --harness claude-code --durable --on auto \"refactor the parser\"",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The agent's name: 1-63 of a-z, 0-9, `.`, `_`, `-`",
+       "hidden": false,
+       "is_optional": false,
+       "name": "NAME",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      },
+      {
+       "default_value": null,
+       "help": "What it starts on: a first message, a scheduled task (with --daily/--every/--weekly) or the task (--once, --durable)",
+       "hidden": false,
+       "is_optional": true,
+       "name": "PROMPT",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "discussion": ".\n\nWith PROMPT it starts at once. --daily, --every or --weekly schedule PROMPT instead; --once runs PROMPT as a one-off task; --durable keeps it running through crashes.",
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "A one-off task: run PROMPT and stop when it is answered (no name kept, no memory)",
+       "hidden": false,
+       "name": "once",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Keep it running through crashes: your machines' coordinator starts it again (a durable session, `cua agent run --durable`)",
+       "hidden": false,
+       "name": "durable",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "add",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Harness id (`cua agent harnesses`)",
+       "hidden": false,
+       "is_optional": false,
+       "multiple_values": false,
+       "name": "harness",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "HARNESS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The Space it works in (with --durable: a durable Space by name; default `auto`, none)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "in",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "SPACE"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "model",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "MODEL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "base-url",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "BASE_URL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Provider key variable to forward at each start. Repeatable",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "env-from-host",
+       "possible_values": [],
+       "repeatable": true,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "VAR"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "With --durable: the machine the driver runs on (`auto`, or a machine's name; default: this machine)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "on",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "MACHINE"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Schedule PROMPT every N minutes",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "every",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "MINUTES"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Schedule PROMPT every day at HH:MM",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "daily",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "HH:MM"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Schedule PROMPT every week, `mon 09:00`",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "weekly",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "DAY HH:MM"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The schedule's title (default: the agent's name)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "title",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "TITLE"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua agent add [OPTIONS] --harness <HARNESS> <NAME> [PROMPT]"
+    },
     {
      "abstract": "Start a coding agent in a sandbox (returns at once unless --follow)",
      "after_help": "Examples:\n  cua agent run local:dev claude-code \"fix the failing test\" --env-from-host ANTHROPIC_API_KEY -f\n  cua agent run local:ci openai-codex \"add tests\" --repo https://github.com/org/repo --exit-when-idle",
@@ -1159,17 +1675,17 @@
      "usage": "cua agent run [OPTIONS] <SANDBOX> <HARNESS> <PROMPT>"
     },
     {
-     "abstract": "List runs in a sandbox",
-     "after_help": "Examples:\n  cua agent ls local:dev",
+     "abstract": "List your agents, or with SANDBOX the runs in it",
+     "after_help": "Examples:\n  cua agent ls\n  cua agent ls local:dev",
      "aliases": [
       "list"
      ],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME)",
+       "help": "Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME). Without it: your named agents",
        "hidden": false,
-       "is_optional": false,
+       "is_optional": true,
        "name": "SANDBOX",
        "possible_values": [],
        "repeatable": false,
@@ -1206,7 +1722,7 @@
      "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua agent ls [OPTIONS] <SANDBOX>"
+     "usage": "cua agent ls [OPTIONS] [SANDBOX]"
     },
     {
      "abstract": "Print a run's normalized events (--follow to stream)",
@@ -1289,35 +1805,35 @@
      "usage": "cua agent logs [OPTIONS] <SANDBOX> [RUN_ID]"
     },
     {
-     "abstract": "Send a follow-up (queued while a turn runs)",
-     "after_help": "Examples:\n  cua agent send local:dev run-1a2b3c4d \"now add a regression test\" -f",
+     "abstract": "Message a named agent (`send NAME TEXT`), or send a follow-up to a run (`send SANDBOX RUN_ID TEXT`, queued while a turn runs)",
+     "after_help": "Examples:\n  cua agent send ada \"what did you learn yesterday?\"\n  cua agent send local:dev run-1a2b3c4d \"now add a regression test\" -f",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "",
+       "help": "A named agent, or the sandbox of a run",
        "hidden": false,
        "is_optional": false,
-       "name": "SANDBOX",
+       "name": "NAME|SANDBOX",
        "possible_values": [],
        "repeatable": false,
        "type": "string"
       },
       {
        "default_value": null,
-       "help": "",
+       "help": "The message for a named agent, or the run",
        "hidden": false,
        "is_optional": false,
-       "name": "RUN_ID",
+       "name": "TEXT|RUN_ID",
        "possible_values": [],
        "repeatable": false,
        "type": "string"
       },
       {
        "default_value": null,
-       "help": "",
+       "help": "The message for a run",
        "hidden": false,
-       "is_optional": false,
+       "is_optional": true,
        "name": "TEXT",
        "possible_values": [],
        "repeatable": false,
@@ -1351,7 +1867,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "",
+       "help": "Follow a run's turn (`send SANDBOX RUN_ID TEXT` only)",
        "hidden": false,
        "name": "follow",
        "repeatable": false,
@@ -1365,7 +1881,7 @@
      "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua agent send [OPTIONS] <SANDBOX> <RUN_ID> <TEXT>"
+     "usage": "cua agent send [OPTIONS] <NAME|SANDBOX> <TEXT|RUN_ID> [TEXT]"
     },
     {
      "abstract": "Cancel the turn in flight (the session stays open)",
@@ -1542,16 +2058,16 @@
      "usage": "cua agent status [OPTIONS] <SANDBOX> [RUN_ID]"
     },
     {
-     "abstract": "Stop a run and delete its record (secrets included)",
-     "after_help": "Examples:\n  cua agent rm local:dev run-1a2b3c4d\n  cua agent rm session:refactor",
+     "abstract": "Remove a named agent (its home stays in the Cua Volume), or stop a run and delete its record (secrets included)",
+     "after_help": "Examples:\n  cua agent rm ada\n  cua agent rm local:dev run-1a2b3c4d\n  cua agent rm session:refactor",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox, or `session:NAME` for a durable session",
+       "help": "A named agent, a sandbox, or `session:NAME` for a durable session",
        "hidden": false,
        "is_optional": false,
-       "name": "SANDBOX",
+       "name": "NAME|SANDBOX",
        "possible_values": [],
        "repeatable": false,
        "type": "string"
@@ -1597,7 +2113,7 @@
      "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua agent rm [OPTIONS] <SANDBOX> [RUN_ID]"
+     "usage": "cua agent rm [OPTIONS] <NAME|SANDBOX> [RUN_ID]"
     },
     {
      "abstract": "Install harnesses or apps now (`claude-code`, `blender`, ...)",
@@ -1658,6 +2174,228 @@
      "usage": "cua agent ensure [OPTIONS] <SANDBOX> <IDS>..."
     },
     {
+     "abstract": "A named agent's schedules: turns the daemon starts with or without the app open",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "schedule",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [
+      {
+       "abstract": "Add a schedule (give one of --every, --daily, --weekly)",
+       "after_help": "Examples:\n  cua agent schedule add ada --title \"Inbox sweep\" --prompt \"Triage new issues\" --every 60\n  cua agent schedule add ada --title \"Morning\" --prompt \"Plan the day\" --daily 08:00",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "",
+         "hidden": false,
+         "is_optional": false,
+         "name": "AGENT",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "add",
+       "options": [
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "",
+         "hidden": false,
+         "is_optional": false,
+         "multiple_values": false,
+         "name": "title",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "string",
+         "value_name": "TITLE"
+        },
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "",
+         "hidden": false,
+         "is_optional": false,
+         "multiple_values": false,
+         "name": "prompt",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "string",
+         "value_name": "PROMPT"
+        },
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "Every N minutes",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "every",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "integer",
+         "value_name": "MINUTES"
+        },
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "Every day at HH:MM",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "daily",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "string",
+         "value_name": "HH:MM"
+        },
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "Every week, `mon 09:00`",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "weekly",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "string",
+         "value_name": "DAY HH:MM"
+        }
+       ],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent schedule add [OPTIONS] --title <TITLE> --prompt <PROMPT> <AGENT>"
+      },
+      {
+       "abstract": "List schedules",
+       "after_help": "Examples:\n  cua agent schedule ls\n  cua agent schedule ls ada",
+       "aliases": [
+        "list"
+       ],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "",
+         "hidden": false,
+         "is_optional": true,
+         "name": "AGENT",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "ls",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent schedule ls [OPTIONS] [AGENT]"
+      },
+      {
+       "abstract": "Delete a schedule",
+       "after_help": "Examples:\n  cua agent schedule rm 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "",
+         "hidden": false,
+         "is_optional": false,
+         "name": "ID",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "rm",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent schedule rm [OPTIONS] <ID>"
+      },
+      {
+       "abstract": "Turn a schedule on",
+       "after_help": "Examples:\n  cua agent schedule enable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "",
+         "hidden": false,
+         "is_optional": false,
+         "name": "ID",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "enable",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent schedule enable [OPTIONS] <ID>"
+      },
+      {
+       "abstract": "Turn a schedule off",
+       "after_help": "Examples:\n  cua agent schedule disable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "",
+         "hidden": false,
+         "is_optional": false,
+         "name": "ID",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "disable",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent schedule disable [OPTIONS] <ID>"
+      }
+     ],
+     "usage": "cua agent schedule [OPTIONS] <COMMAND>"
+    },
+    {
      "abstract": "Durable sessions: agents your machines keep alive (`run --durable`)",
      "after_help": "Examples:\n  cua agent sessions\n  cua --json agent sessions",
      "aliases": [],
@@ -1686,7 +2424,7 @@
      "usage": "cua agent harnesses [OPTIONS]"
     },
     {
-     "abstract": "The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Agents). Values are read from stdin and never printed",
+     "abstract": "The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connections). Values are read from stdin and never printed",
      "after_help": "Examples:\n  cua agent keys\n  cua agent keys set anthropic\n  cua agent keys rm OPENAI_API_KEY",
      "aliases": [],
      "arguments": [],
@@ -1754,6 +2492,20 @@
        "usage": "cua agent keys set [OPTIONS] <PROVIDER>"
       },
       {
+       "abstract": "Ask each provider whether the saved API keys still work (a cheap read-only request; nothing is sent that is not a key's own request). A key the provider refuses is listed as needing a reconnect, and runs are not given it until it is saved again",
+       "after_help": "Examples:\n  cua agent keys check",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "check",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent keys check [OPTIONS]"
+      },
+      {
        "abstract": "Remove the key a run gets as ENV",
        "after_help": "Examples:\n  cua agent keys rm ANTHROPIC_API_KEY",
        "aliases": [],
@@ -1782,7 +2534,7 @@
      "usage": "cua agent keys [OPTIONS] [COMMAND]"
     },
     {
-     "abstract": "Create a persistent agent: a named harness whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space",
+     "abstract": "Deprecated alias of `add`. Creates a named agent whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space",
      "after_help": "Examples:\n  cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY\n  cua agent create scout --harness claude-code --in local:scout --env-from-host ANTHROPIC_API_KEY",
      "aliases": [],
      "arguments": [
@@ -1797,6 +2549,7 @@
        "type": "string"
       }
      ],
+     "deprecated": true,
      "flags": [],
      "hidden": false,
      "hidden_aliases": [],
@@ -1883,26 +2636,29 @@
        "value_name": "ENV_FROM_HOST"
       }
      ],
+     "replaced_by": "cua agent add",
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua agent create [OPTIONS] --harness <HARNESS> --in <SPACE> <NAME>"
     },
     {
-     "abstract": "List persistent agents",
+     "abstract": "Deprecated alias of `ls` (without a sandbox). Lists named agents",
      "after_help": "Examples:\n  cua agent persistent",
      "aliases": [],
      "arguments": [],
+     "deprecated": true,
      "flags": [],
      "hidden": false,
      "hidden_aliases": [],
      "name": "persistent",
      "options": [],
+     "replaced_by": "cua agent ls",
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua agent persistent [OPTIONS]"
     },
     {
-     "abstract": "Give a persistent agent a turn (starts a run with its home restored, or follows up on its idle run)",
+     "abstract": "Deprecated alias of `send NAME TEXT`. Gives a named agent a turn (starts a run with its home restored, or follows up on its idle run)",
      "after_help": "Examples:\n  cua agent tell ada \"what did you learn yesterday?\"",
      "aliases": [],
      "arguments": [
@@ -1927,11 +2683,13 @@
        "type": "string"
       }
      ],
+     "deprecated": true,
      "flags": [],
      "hidden": false,
      "hidden_aliases": [],
      "name": "tell",
      "options": [],
+     "replaced_by": "cua agent send",
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua agent tell [OPTIONS] <NAME> <TEXT>"
@@ -2029,7 +2787,7 @@
      "usage": "cua agent resume [OPTIONS] <NAME>"
     },
     {
-     "abstract": "Forget a persistent agent (its home stays in the drive)",
+     "abstract": "Deprecated alias of `rm NAME`. Forgets a named agent (its home stays in the Cua Volume)",
      "after_help": "Examples:\n  cua agent forget ada",
      "aliases": [],
      "arguments": [
@@ -2044,29 +2802,33 @@
        "type": "string"
       }
      ],
+     "deprecated": true,
      "flags": [],
      "hidden": false,
      "hidden_aliases": [],
      "name": "forget",
      "options": [],
+     "replaced_by": "cua agent rm",
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua agent forget [OPTIONS] <NAME>"
     },
     {
-     "abstract": "A persistent agent's routines, fired by the daemon with or without the app open",
+     "abstract": "Deprecated alias of `schedule`. A named agent's schedules",
      "aliases": [],
      "arguments": [],
+     "deprecated": true,
      "flags": [],
      "hidden": false,
      "hidden_aliases": [],
      "name": "routine",
      "options": [],
+     "replaced_by": "cua agent schedule",
      "subcommand_optional": false,
      "subcommands": [
       {
-       "abstract": "Add a routine (give one of --every, --daily, --weekly)",
-       "after_help": "Examples:\n  cua agent routine add ada --title \"Inbox sweep\" --prompt \"Triage new issues\" --every 60\n  cua agent routine add ada --title \"Morning\" --prompt \"Plan the day\" --daily 08:00",
+       "abstract": "Add a schedule (give one of --every, --daily, --weekly)",
+       "after_help": "Examples:\n  cua agent schedule add ada --title \"Inbox sweep\" --prompt \"Triage new issues\" --every 60\n  cua agent schedule add ada --title \"Morning\" --prompt \"Plan the day\" --daily 08:00",
        "aliases": [],
        "arguments": [
         {
@@ -2171,8 +2933,8 @@
        "usage": "cua agent routine add [OPTIONS] --title <TITLE> --prompt <PROMPT> <AGENT>"
       },
       {
-       "abstract": "List routines",
-       "after_help": "Examples:\n  cua agent routine ls\n  cua agent routine ls ada",
+       "abstract": "List schedules",
+       "after_help": "Examples:\n  cua agent schedule ls\n  cua agent schedule ls ada",
        "aliases": [
         "list"
        ],
@@ -2198,8 +2960,8 @@
        "usage": "cua agent routine ls [OPTIONS] [AGENT]"
       },
       {
-       "abstract": "Delete a routine",
-       "after_help": "Examples:\n  cua agent routine rm 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B",
+       "abstract": "Delete a schedule",
+       "after_help": "Examples:\n  cua agent schedule rm 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B",
        "aliases": [],
        "arguments": [
         {
@@ -2223,8 +2985,8 @@
        "usage": "cua agent routine rm [OPTIONS] <ID>"
       },
       {
-       "abstract": "Turn a routine on",
-       "after_help": "Examples:\n  cua agent routine enable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B",
+       "abstract": "Turn a schedule on",
+       "after_help": "Examples:\n  cua agent schedule enable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B",
        "aliases": [],
        "arguments": [
         {
@@ -2248,8 +3010,8 @@
        "usage": "cua agent routine enable [OPTIONS] <ID>"
       },
       {
-       "abstract": "Turn a routine off",
-       "after_help": "Examples:\n  cua agent routine disable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B",
+       "abstract": "Turn a schedule off",
+       "after_help": "Examples:\n  cua agent schedule disable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B",
        "aliases": [],
        "arguments": [
         {
@@ -2458,7 +3220,7 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>] [--kind auto|container|vm] [--runtime auto|gvisor|runc|qemu|lume]`",
+     "abstract": "Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>] [--kind auto|container|vm|microvm] [--runtime auto|gvisor|runc|qemu|lume|firecracker|vz|containerization]`",
      "after_help": "Examples:\n  # A Linux desktop on this computer (a gVisor container)\n  cua sb create linux --name dev\n  # A web server container, ready when its HTTP service answers\n  cua sb create python:3.12-slim --service web=8000 --wait http:web/ -- python -m http.server 8000\n  # The same Linux image as a VM\n  cua sb create linux --kind vm --name dev",
      "aliases": [],
      "arguments": [
@@ -3206,7 +3968,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "What kind of computer: auto, container or vm",
+       "help": "What kind of computer: auto, container, vm or microvm",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -8035,7 +8797,7 @@
   },
   {
    "abstract": "Stdio MCP server exposing sandboxes, computer control and skills",
-   "after_help": "Examples:\n  # Serve every tool over stdio (what MCP clients launch)\n  cua mcp\n  # Read-only sandbox tools, computer tools on the sandbox dev\n  cua mcp --permissions sandbox:readonly,computer:all --sandbox dev",
+   "after_help": "Examples:\n  # Serve every tool over stdio (what MCP clients launch)\n  cua mcp\n  # Read-only sandbox tools, computer tools on the sandbox dev\n  cua mcp --permissions sandbox:readonly,computer:all --sandbox dev\n  # An agent that joined a Space with cua join: its thread tools only\n  cua mcp --member ubuntu-build/codex",
    "aliases": [
     "serve-mcp"
    ],
@@ -8076,11 +8838,389 @@
      "takes_value": true,
      "type": "string",
      "value_name": "SANDBOX"
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Serve only the Space thread tools (thread_join, thread_inbox, thread_read, thread_post, agent_members) as the agent this computer joined with `cua join` (`<space>/<handle>`). Its key stays in the keychain",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "member",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": "MEMBER"
     }
    ],
    "subcommand_optional": false,
    "subcommands": [],
    "usage": "cua mcp [OPTIONS]"
+  },
+  {
+   "abstract": "Join a Space as an agent on this computer, with the code from a \"Join my Cua Space\" link. Needs your Cua sign-in; the code works once",
+   "after_help": "Exit codes: 0 joined (or waiting to be let in), 3 not signed in, 4 the code does not work, 5 too many wrong codes, 1 anything else.\n\nExamples:\n  cua join 7KQ2-9FXA\n  cua join https://cua.ai/join/7KQ2-9FXA",
+   "aliases": [],
+   "arguments": [
+    {
+     "default_value": null,
+     "help": "The join code (`7KQ2-9FXA`) or the link that ends in it",
+     "hidden": false,
+     "is_optional": false,
+     "name": "CODE",
+     "possible_values": [],
+     "repeatable": false,
+     "type": "string"
+    }
+   ],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "join",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [],
+   "usage": "cua join [OPTIONS] <CODE>"
+  },
+  {
+   "abstract": "A Space's thread, as the agent this computer joined with `cua join`: say who you are, read your inbox, post",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "thread",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "Say who you are: your name, icon, harness and version",
+     "after_help": "Examples:\n  cua thread join --name Codex --harness codex --version 0.61.0 --icon harness",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "join",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The name people see (1-32 characters)",
+       "hidden": false,
+       "is_optional": false,
+       "multiple_values": false,
+       "name": "name",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "NAME"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "hermes, claude-code, codex, cursor, openclaw, t3code or other",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "harness",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "HARNESS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Your harness's version",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "version",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "VERSION"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "`harness` (your harness's mark) or an https:// image URL",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "icon",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "ICON"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "`<space>/<handle>`, when this computer joined more than one Space",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "member",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "MEMBER"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua thread join [OPTIONS] --name <NAME>"
+    },
+    {
+     "abstract": "Your open tasks (@mentions); waits for one up to --wait seconds",
+     "after_help": "Examples:\n  cua thread inbox --wait 25",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "inbox",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "0",
+       "env": null,
+       "help": "Seconds to wait for a task when there is none (at most 25)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "wait",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "WAIT"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "member",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "MEMBER"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua thread inbox [OPTIONS]"
+    },
+    {
+     "abstract": "Post to the thread, or reply to a task",
+     "after_help": "Examples:\n  cua thread post \"Hi, I'm Codex.\"\n  cua thread post --reply-to 19 \"All green.\"\n  cua thread post --window w42 --app Firefox --title \"Pull requests\" \"Is this the right PR?\"",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": false,
+       "name": "TEXT",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "You are looking at the Space's desktop",
+       "hidden": false,
+       "name": "desktop",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "post",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The task (or entry) this answers",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "reply-to",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "REPLY_TO"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "member",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "MEMBER"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "What you are looking at in the Space: a window, by its id (as `computer_window_list` gives it). Stored with the post as `view`",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "window",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "ID"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "That window's app (\"Firefox\")",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "app",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "NAME"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "That window's title",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "title",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "TITLE"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua thread post [OPTIONS] <TEXT>"
+    },
+    {
+     "abstract": "Read the newest entries",
+     "after_help": "Examples:\n  cua thread read\n  cua thread read --after 40 --limit 10",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "read",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Entries after this seq",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "after",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "AFTER"
+      },
+      {
+       "aliases": [],
+       "default_value": "30",
+       "env": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "limit",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "LIMIT"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "member",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "MEMBER"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua thread read [OPTIONS]"
+    }
+   ],
+   "usage": "cua thread [OPTIONS] <COMMAND>"
   },
   {
    "abstract": "Recorded demonstrations (skills) for agents",
@@ -11812,6 +12952,57 @@
    "usage": "cua computers [OPTIONS]"
   },
   {
+   "abstract": "Your computers on the relay: remove one that is gone",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "machines",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "Remove a computer that is gone: its row leaves your relay directory, then the signed-in device with exactly its name is revoked (never this device; nothing when several match). A computer that is connected now is refused: run `cua host remove` on it",
+     "after_help": "Examples:\n  cua machines rm old-laptop\n  cua machines rm relay:0123abcd4567ef89 --yes --json",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The computer's name, machine id or `relay:<id>` (`cua spaces ls`)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "NAME",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Remove without asking",
+       "hidden": false,
+       "name": "yes",
+       "repeatable": false,
+       "short_name": "y",
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "rm",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua machines rm [OPTIONS] <NAME>"
+    }
+   ],
+   "usage": "cua machines [OPTIONS] <COMMAND>"
+  },
+  {
    "abstract": "Unattended access to this computer (setup, status, stop, start, remove)",
    "aliases": [],
    "arguments": [],
@@ -11823,8 +13014,8 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. By default (the `desktop` profile) it shares this computer's desktop, also with `--provide-spaces`; `--profile spare` or `--no-desktop --provide-spaces` provides Spaces only, so it is a host in your pool (`cua run` jobs run in Spaces there) whose own desktop stays private. Running it again with the same options changes nothing (a stopped service starts again)",
-     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop)\n  cua host setup\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only):\n  # run setup with CUA_MESH=off in the environment\n  # Self-hosting teams: cua help advanced",
+     "abstract": "Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. By default it shares this computer's desktop and, on a computer set up for the first time through the relay, provides Spaces to your devices (a host in your pool: `cua run` jobs and `--on auto` Spaces can run here, within its limits). `--share` picks what it shares: `desktop`, `spaces` (its own desktop stays private), `both` or `none`; `cua host config` changes it later. A computer set up before keeps what it provides. Running it again with the same options changes nothing (a stopped service starts again)",
+     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop and\n  # provides Spaces to your devices)\n  cua host setup\n  # Share this desktop only\n  cua host setup --share desktop\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --share spaces --name \"Mac mini (spare)\"\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only):\n  # run setup with CUA_MESH=off in the environment\n  # Self-hosting teams: cua help advanced",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -11843,8 +13034,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Share this computer's own desktop as a Space",
-       "hidden": false,
+       "help": "Hidden alias of the desktop half of `--share`",
+       "hidden": true,
        "name": "desktop",
        "repeatable": false,
        "short_name": null,
@@ -11854,8 +13045,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Do not share this computer's own desktop (screen, input, shell, files): relayed callers reach only the Spaces it provides",
-       "hidden": false,
+       "help": "Hidden alias of `--share spaces` with `--provide-spaces`",
+       "hidden": true,
        "name": "no-desktop",
        "repeatable": false,
        "short_name": null,
@@ -11865,8 +13056,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Create Spaces for your enrolled devices on this computer's runtimes (Lume macOS VMs, Docker Linux containers). On its own it keeps the default `desktop` profile, so this computer's desktop is shared too; add `--no-desktop` (or use `--profile spare`) to provide Spaces only",
-       "hidden": false,
+       "help": "Hidden alias: with the default profile, `--share both`",
+       "hidden": true,
        "name": "provide-spaces",
        "repeatable": false,
        "short_name": null,
@@ -11876,8 +13067,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Do not create Spaces for other devices",
-       "hidden": false,
+       "help": "Hidden alias: with the default profile, `--share desktop`",
+       "hidden": true,
        "name": "no-provide-spaces",
        "repeatable": false,
        "short_name": null,
@@ -12037,8 +13228,29 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "What this computer is for: `desktop` (share this desktop; the default, also with `--provide-spaces`) or `spare` (do not share the desktop; provide Spaces)",
+       "help": "What this computer shares: its own desktop (screen, input, shell, files), the Spaces it creates for your enrolled devices (Lume macOS VMs, Docker Linux containers), both, or neither (refused). Default: the desktop, plus Spaces on a new relay setup; a computer set up before keeps what it provides",
        "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "share",
+       "possible_values": [
+        "desktop",
+        "spaces",
+        "both",
+        "none"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "desktop | spaces | both | none",
+       "value_name": "WHAT"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Hidden alias: `--share spaces` is `--profile spare`",
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "profile",
@@ -12193,7 +13405,7 @@
     },
     {
      "abstract": "Show or change what this computer shares: its own desktop, and whether it creates Spaces for your other devices",
-     "after_help": "Examples:\n  cua host config\n  # Stop sharing this desktop; keep providing Spaces\n  cua host config --desktop off --provide-spaces on\n  cua host config --max-spaces 6",
+     "after_help": "Examples:\n  cua host config\n  # Stop sharing this desktop; keep providing Spaces\n  cua host config --desktop off --provide-spaces on\n  cua host config --max-spaces 6\n  # Give the Spaces other machines create here at most 32 GB of memory and\n  # 200 GB of disk in total, and stop each after 8 hours (0: no limit)\n  cua host config --max-memory 32 --max-disk 200 --max-run-time 480\n  # Keep no copies of public git repositories on this machine, or at most 2 GB\n  cua host config --repo-cache off\n  cua host config --repo-cache on --repo-cache-size 2",
      "aliases": [],
      "arguments": [],
      "flags": [],
@@ -12270,11 +13482,161 @@
        "takes_value": true,
        "type": "integer",
        "value_name": "MAX_MACOS_VMS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Memory in GB the Spaces other machines create here may use in total (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-memory",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "GB"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Disk in GB the Spaces other machines create here may use in total (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-disk",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "GB"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Minutes a Space created here by another machine may run before it is stopped (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-run-time",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "MINUTES"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The repo cache: on | off. It keeps verified copies of public git repositories on this machine so a repeat `git clone` in a Space starts from one (never private repositories, never anything off this machine's disk)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "repo-cache",
+       "possible_values": [
+        "on",
+        "off"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "on | off",
+       "value_name": "REPO_CACHE"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The most disk the repo cache may use, in GB (`auto`: the smaller of 5 GB and a tenth of the free disk). The least recently used repositories go first",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "repo-cache-size",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "GB"
       }
      ],
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua host config [OPTIONS]"
+    },
+    {
+     "abstract": "What the repo cache holds, and empty it",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "cache",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [
+      {
+       "abstract": "What the repo cache holds: repositories, size and what the last week saved",
+       "after_help": "Examples:\n  cua host cache status",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "status",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache status [OPTIONS]"
+      },
+      {
+       "abstract": "Copy one public repository into the cache now, instead of when a Space first clones it (or bring a copy up to date). A repository that needs a sign-in is never cached",
+       "after_help": "Examples:\n  cua host cache fill https://github.com/vitejs/vite",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "The repository's `https` address",
+         "hidden": false,
+         "is_optional": false,
+         "name": "URL",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "fill",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache fill [OPTIONS] <URL>"
+      },
+      {
+       "abstract": "Delete every repository the cache holds. They are copied again the next time a Space clones them",
+       "after_help": "Examples:\n  cua host cache clear",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "clear",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua host cache clear [OPTIONS]"
+      }
+     ],
+     "usage": "cua host cache [OPTIONS] <COMMAND>"
     },
     {
      "abstract": "Show whether this computer is set up, the service, and who is connected",
@@ -12590,7 +13952,7 @@
     },
     {
      "abstract": "Register a Space after a capabilities handshake with its cua-spacesd (or, for another URL, an MCP initialize). Re-adding an address updates it. The token is stored apart from the registry, 0600",
-     "after_help": "Examples:\n  cua spaces add 10.0.0.5:3211 --token \"$TOKEN\" --name studio\n  cua spaces add local:my-sandbox\n  cua spaces add http://127.0.0.1:8765/mcp --service tools\n  # A computer that provides Spaces over Tailscale, without the relay\n  # (`cua host setup --direct ... --provide-spaces` on it prints this)\n  cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"",
+     "after_help": "Examples:\n  cua spaces add 10.0.0.5:3211 --token \"$TOKEN\" --name studio\n  cua spaces add local:my-sandbox\n  cua spaces add http://127.0.0.1:8765/mcp --service tools\n  # A computer that provides Spaces over Tailscale, without the relay\n  # (`cua host setup --direct ... --share both` on it prints this)\n  cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"",
      "aliases": [],
      "arguments": [
       {
@@ -12675,7 +14037,7 @@
      "usage": "cua spaces add [OPTIONS] <URL>"
     },
     {
-     "abstract": "Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --no-desktop --provide-spaces` there), or in your own cloud account",
+     "abstract": "Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --share spaces` there), or in your own cloud account",
      "after_help": "Examples:\n  cua spaces create linux\n  # On the least-loaded of your machines\n  cua spaces create linux --on auto\n  # Two macOS VMs on your spare Mac mini (matched by name)\n  cua spaces create macos:26 --on \"spare mac mini\" --count 2\n  cua spaces create --on host:0123abcd4567ef89 linux --json\n  # Kept on your machines: created again on another one if its machine goes away\n  cua spaces create linux --on auto --durable --name research\n  # In your AWS account, on a pool host of exactly this type and region\n  cua spaces create linux --on aws --instance-type c7g.xlarge --region us-west-2\n  # Labels are kept with the Space; `cua spaces ls --label team=research` filters\n  cua spaces create linux --label team=research --label run=7",
      "aliases": [],
      "arguments": [
@@ -12770,7 +14132,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "auto | container | vm",
+       "help": "auto | container | vm | microvm",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -13310,7 +14672,7 @@
      "usage": "cua spaces delete [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Turn a Space off: a local container or QEMU VM is suspended (its memory is kept), a Lume VM or a Space one of your computers provides is stopped (its disk is kept), and so is a Space in your own cloud (`--on aws`, `gcp`: compute billing stops; `hetzner`: still billed). Modal sandboxes and Spaces added by address cannot be turned off",
+     "abstract": "Turn a Space off: a local VM (QEMU or Lume) or a Space one of your computers provides is stopped, keeping its disk and freeing its memory, and so is a Space in your own cloud (`--on aws`, `gcp`: compute billing stops; `hetzner`: still billed). A local container is stopped or suspended as its runtime can. `cua spaces suspend` keeps a local Space's memory instead. Modal sandboxes and Spaces added by address cannot be turned off",
      "after_help": "Examples:\n  cua spaces stop local:studio\n  cua spaces stop relay:space-0123456789abcdef --json",
      "aliases": [],
      "arguments": [
@@ -13333,6 +14695,105 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua spaces stop [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "Suspend a local Space (a container or QEMU VM): its memory is kept, and stays in use, so it resumes where it was with `cua spaces start`. `cua spaces stop` frees the memory instead",
+     "after_help": "Examples:\n  cua spaces suspend local:studio",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Space id or name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "suspend",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces suspend [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "Give a local VM Space more or fewer vCPUs, more or less memory, or a bigger disk. It shuts down and boots again from its own disk (a stopped one boots): its files stay, its running processes do not. A disk never shrinks",
+     "after_help": "Examples:\n  cua spaces resize local:builder --memory-mb 24576\n  cua spaces resize builder --cpus 8 --disk-gb 200 --json",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Space id or name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "resize",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "vCPUs",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cpus",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "CPUS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Memory in MiB",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "memory-mb",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "MEMORY_MB"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Grow the disk to this many GiB",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "disk-gb",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "DISK_GB"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces resize [OPTIONS] <SPACE>"
     },
     {
      "abstract": "Turn a Space back on: resume a suspended one or boot a stopped one",
@@ -13385,6 +14846,41 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua spaces rm [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "Give a Space a new name; its id stays the same. Lowercase letters, digits and dashes, as at create. A Space you shared, or one of your computers provides, is renamed on the relay too, so your other devices and the people it is shared with see the new name. Only its owner can rename a Space",
+     "after_help": "Examples:\n  cua spaces rename local:studio design-review\n  cua spaces rename relay:space-0123456789abcdef ci-runner",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Space id or name (as `cua spaces ls` shows)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      },
+      {
+       "default_value": null,
+       "help": "The new name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "NAME",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "rename",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces rename [OPTIONS] <SPACE> <NAME>"
     },
     {
      "abstract": "Let someone in your team watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`. Sharing is for teams: you need a team, and they must be in it (or share with the whole team as `team:<id>`)",
@@ -13599,7 +15095,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Only this cloud (`aws`, `gcp`, `hetzner`, `modal`)",
+       "help": "Only this cloud (`aws`, `azure`, `gcp`, `hetzner`, `modal`)",
        "hidden": false,
        "is_optional": true,
        "name": "PROVIDER",
@@ -13618,13 +15114,13 @@
      "usage": "cua cloud status [OPTIONS] [PROVIDER]"
     },
     {
-     "abstract": "Connect a cloud account Spaces can be created in (after the checks `cua cloud test` runs). AWS, Google Cloud and Modal credentials stay in the cloud's own CLI and Cua stores only the profile, region, project or environment names; Hetzner has no sign-in, so its project API token is saved in the Cua credential store",
-     "after_help": "Examples:\n  cua cloud connect aws --region us-west-2 --default\n  cua cloud connect aws --profile sandbox\n  cua cloud connect gcp --project my-project --region us-central1\n  cua cloud connect modal --environment spaces\n  # Hetzner: the project's API token on standard input\n  cua cloud connect hetzner --token-stdin --region fsn1\n  # Spaces there delete themselves after 4 hours (default 8; 0: never)\n  cua cloud connect aws --ttl-hours 4",
+     "abstract": "Connect a cloud account Spaces can be created in. Never prompts and is safe to run again: every run ends with a status, the next step and the command that verifies it. With --oidc, AWS and Google Cloud are linked without any key: Cua signs short-lived tokens that your account trusts. Azure is always linked that way. Without it, the cloud's own CLI sign-in on this device is used (Cua stores only the profile, region, project or environment names; Hetzner's API token goes to the Cua credential store)",
+     "after_help": "How it ends (every run, also with --json):\n  status   connected | needs-trust | checking | waiting-for-approval | failed\n  next     run: the exact command to run next, or\n           open: a page a person opens (paste: what they paste there)\n           why: what it is for, in plain words\n  verify   the command that confirms it: cua cloud status <cloud>\n  checks   what the check found\nExit code: 0 connected, 10 the next step is yours (run it), 11 it waits on a\nperson (send them `next`), 1 error.\n\nAWS without a stored key (for agents: follow `next` until connected):\n  1. Ask the person for a monthly budget (US dollars), the region and the\n     largest machine, then run:\n       cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16\n  2. status needs-trust: send the person `next.open` (AWS CloudShell, or the\n     CloudFormation quick-create link) and `next.paste`. It creates one\n     stack, cua-spaces: an OIDC provider and the cua-spaces role, scoped to\n     what Cua tags cua-managed=true. No keys. Ask them for the 12-digit AWS\n     account id when it shows CREATE_COMPLETE.\n  3. Run `next.run` (the same command with --account-id <ID> --check). It\n     gets a check token, exchanges it with AWS STS and dry-runs a machine.\n     Nothing is created.\n  4. status connected: done. status waiting-for-approval: an agent made the\n     link (or raised a limit), so a person approves it in the Cua Spaces\n     app; then `cua cloud status aws` says connected.\n  Verify: cua cloud status aws\n\nHetzner and Modal: the API token is sealed to your devices (only devices of\nyour account open it; Cua's servers keep ciphertext). Ask the person for a\nbudget and the token (Hetzner: Read & Write, Cloud Console, Security, API\ntokens; Modal: `modal token new`, given as <token id>:<token secret>), then:\n  cua cloud connect hetzner --token-stdin --region fsn1 --budget 50 --max-size 4x8\n  It seals by default on a device with the account's pool keys when a\n  budget is given; --sealed insists on it, --no-sealed keeps the token on\n  this device only (as before). --sealed without a token seals the one this\n  device already has.\n  Verify: cua cloud status hetzner (its line says which devices can open it)\n\nGoogle Cloud without a stored key:\n  1. cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200 --max-size 4x16\n  2. status needs-trust: a person opens `next.open` (Google Cloud Shell with\n     Cua's trust script) and pastes `next.paste`: it creates the workload\n     identity pool cua, its provider, the role cuaSpaces and one binding. No\n     keys, no service accounts. It prints the project number. An agent on a\n     machine signed in to gcloud gets `next.run` instead (the same script).\n  3. Run `next.run` (with --project-number <N> --check): Google's STS\n     exchanges a check token and the role's permissions are checked.\n  Verify: cua cloud status gcp\n\nAzure (always without a stored key):\n  1. cua cloud connect azure --region westus2 --budget 200 --max-size 4x16\n  2. status needs-trust: a person opens `next.open` (Deploy to Azure) and\n     deploys into resource group cua-spaces: the cua-spaces managed identity\n     trusting Cua's tokens, with Virtual Machine Contributor and Network\n     Contributor on that group only. No keys. Ask for the outputs\n     subscriptionId, tenantId and clientId. An agent on a machine signed in\n     to the az CLI gets `next.run` instead.\n  3. Run `next.run` (with --subscription --tenant --client-id --check):\n     Microsoft Entra exchanges a check token, the resource group is read\n     and a machine is validated.\n  Verify: cua cloud status azure\n\nOther clouds use their own CLI sign-in on this device.\n`cua cloud trust <cloud>` prints the trust setup file (aws, gcp, azure).\nDocs for agents: https://cua.ai/docs/spaces/guides/connect-a-cloud\n\nExamples:\n  # AWS without a stored key: start, then check with the account id\n  cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16\n  cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16 --account-id 123456789012 --check\n  # Google Cloud without a stored key: start, then check with the project number\n  cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200\n  cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200 --project-number 123456789012 --check\n  # Azure: start, then check with the template's outputs\n  cua cloud connect azure --region westus2 --budget 200 --max-size 4x16\n  cua cloud connect azure --region westus2 --budget 200 --subscription 00000000-0000-0000-0000-000000000000 --tenant 11111111-1111-1111-1111-111111111111 --client-id 22222222-2222-2222-2222-222222222222 --check\n  # The cloud CLI's sign-in on this device, with the same limits\n  cua cloud connect aws --profile sandbox --region us-west-2 --budget 50 --default\n  cua cloud connect gcp --project my-project --region us-central1\n  cua cloud connect modal --environment spaces\n  # Hetzner: the project's API token on standard input, sealed to your devices\n  cua cloud connect hetzner --token-stdin --region fsn1 --budget 50 --max-size 4x8\n  # Modal: <token id>:<token secret> on standard input, sealed to your devices\n  cua cloud connect modal --token-stdin --budget 50\n  # Seal the Hetzner token this device already has\n  cua cloud connect hetzner --sealed --budget 50\n  # Spaces there delete themselves after 4 hours (default 8; 0: never)\n  cua cloud connect aws --ttl-hours 4",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "`aws`, `gcp`, `hetzner` or `modal`",
+       "help": "`aws`, `azure`, `gcp`, `hetzner` or `modal`",
        "hidden": false,
        "is_optional": false,
        "name": "PROVIDER",
@@ -13638,7 +15134,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Hetzner: read the project's Read & Write API token from stdin (otherwise `HCLOUD_TOKEN`, the saved token or the hcloud CLI's context). It is saved in the Cua credential store once the checks pass",
+       "help": "Hetzner or Modal: read the API token from stdin (Hetzner: a Read & Write project token, otherwise `HCLOUD_TOKEN`, the saved token or the hcloud CLI's context; Modal: `<token id>:<token secret>`). Once the checks pass it is sealed to your devices, or with --no-sealed saved in this device's Cua credential store (Hetzner)",
        "hidden": false,
        "name": "token-stdin",
        "repeatable": false,
@@ -13652,6 +15148,50 @@
        "help": "Also make it the default location (`default.on`)",
        "hidden": false,
        "name": "default",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Link without a stored key: Cua's issuer signs 15-minute tokens your account trusts (AWS, Google Cloud; Azure always)",
+       "hidden": false,
+       "name": "oidc",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Hetzner, Modal: seal the API token to your devices (the token given on stdin, else the one this device has). The default when this device has the account's pool keys and a budget is given",
+       "hidden": false,
+       "name": "sealed",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Hetzner: keep the API token on this device only (in the Cua credential store), as before sealing",
+       "hidden": false,
+       "name": "no-sealed",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "With --oidc (and Azure): prove the link works (a check token, the exchange with the cloud, a dry run, permission check or validate; nothing is created) and save it",
+       "hidden": false,
+       "name": "check",
        "repeatable": false,
        "short_name": null,
        "takes_value": false
@@ -13681,7 +15221,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "AWS or Google Cloud region, or Hetzner location (default `fsn1`)",
+       "help": "AWS, Google Cloud or Azure region, or Hetzner location (default `fsn1`)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -13756,6 +15296,166 @@
        "takes_value": true,
        "type": "integer",
        "value_name": "TTL_HOURS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The most Cua may spend there per calendar month, in US dollars. New machines are refused once it is reached; stopping and deleting always works. Needed with --oidc",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "budget",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "number",
+       "value_name": "USD"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The largest machine Cua may create there: vCPUs x GB, for example 4x16",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-size",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "VCPUxGB"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "With --oidc: the 12-digit AWS account id the trust stack is in",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "account-id",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "ID"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "With --oidc: the role ARN, only if it is not named cua-spaces",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "role-arn",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "ARN"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Google Cloud with --oidc: the project number (the trust script prints it)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "project-number",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "NUMBER"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Google Cloud with --oidc: a service account to act as (default: none, the federated identity calls Google directly)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "service-account",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "EMAIL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Azure: the subscription id (the template's subscriptionId)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "subscription",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "ID"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Azure: the Microsoft Entra tenant id (the template's tenantId)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "tenant",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "ID"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Azure: the cua-spaces managed identity's client id (the template's clientId)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "client-id",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "ID"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Azure: the resource group Cua works in, the only one its roles reach (default cua-spaces)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "resource-group",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "NAME"
       }
      ],
      "subcommand_optional": false,
@@ -13763,8 +15463,8 @@
      "usage": "cua cloud connect [OPTIONS] <PROVIDER>"
     },
     {
-     "abstract": "Check a cloud account without creating anything: credentials, permissions (by dry run), quota, the region and machine types",
-     "after_help": "Examples:\n  cua cloud test aws\n  cua cloud test gcp --project my-project",
+     "abstract": "Approve what an agent asked for on a cloud: its link, or a higher budget or larger machines. For a person only (refused in an agent's shell). With --deny, decline it: the limits in force stay, and a link never approved is disconnected",
+     "after_help": "Examples:\n  cua cloud status aws\n  cua cloud approve aws\n  cua cloud approve aws --deny",
      "aliases": [],
      "arguments": [
       {
@@ -13783,7 +15483,69 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Hetzner: read the project's Read & Write API token from stdin (otherwise `HCLOUD_TOKEN`, the saved token or the hcloud CLI's context). It is saved in the Cua credential store once the checks pass",
+       "help": "Decline instead of approving",
+       "hidden": false,
+       "name": "deny",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "approve",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua cloud approve [OPTIONS] <PROVIDER>"
+    },
+    {
+     "abstract": "Print the file that makes a cloud trust Cua's tokens (no keys): the AWS CloudFormation stack, the Google Cloud trust script, or the Azure resource group template. `cua cloud connect` says when and how to run it",
+     "after_help": "Examples:\n  cua cloud trust gcp > cua-trust.sh\n  cua cloud trust azure > cua-spaces.json\n  cua cloud trust aws > cua-spaces.yaml",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "`aws`, `gcp` or `azure`",
+       "hidden": false,
+       "is_optional": false,
+       "name": "CLOUD",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "trust",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua cloud trust [OPTIONS] <CLOUD>"
+    },
+    {
+     "abstract": "Check a cloud account without creating anything: credentials, permissions (by dry run), quota, the region and machine types",
+     "after_help": "Examples:\n  cua cloud test aws\n  cua cloud test gcp --project my-project",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "`aws`, `azure`, `gcp`, `hetzner` or `modal`",
+       "hidden": false,
+       "is_optional": false,
+       "name": "PROVIDER",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Hetzner or Modal: read the API token from stdin (Hetzner: a Read & Write project token, otherwise `HCLOUD_TOKEN`, the saved token or the hcloud CLI's context; Modal: `<token id>:<token secret>`). Once the checks pass it is sealed to your devices, or with --no-sealed saved in this device's Cua credential store (Hetzner)",
        "hidden": false,
        "name": "token-stdin",
        "repeatable": false,
@@ -13815,7 +15577,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "AWS or Google Cloud region, or Hetzner location (default `fsn1`)",
+       "help": "AWS, Google Cloud or Azure region, or Hetzner location (default `fsn1`)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -13887,7 +15649,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "`aws`, `gcp`, `hetzner` or `modal`",
+       "help": "`aws`, `azure`, `gcp`, `hetzner` or `modal`",
        "hidden": false,
        "is_optional": false,
        "name": "PROVIDER",
@@ -13942,11 +15704,115 @@
        "takes_value": true,
        "type": "integer",
        "value_name": "LIMIT"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Only this cloud (`aws`, `gcp`, `hetzner`, `modal`)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cloud",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "CLOUD"
       }
      ],
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua cloud audit [OPTIONS]"
+    },
+    {
+     "abstract": "What the machines Cua created in your clouds cost: each one's list price times how long it ran, by Space, agent, UTC day or cloud. An estimate; the cloud's own bill is the final word",
+     "after_help": "Examples:\n  cua cloud cost\n  cua cloud cost --by agent --since 2026-10-01\n  cua cloud cost --cloud aws --by day --format csv > aws-october.csv",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "cost",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Only this cloud (`aws`, `gcp`, `hetzner`, `modal`)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cloud",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "CLOUD"
+      },
+      {
+       "aliases": [],
+       "default_value": "space",
+       "env": null,
+       "help": "One row per `space`, `agent`, `day` or `cloud`",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "by",
+       "possible_values": [
+        "space",
+        "agent",
+        "day",
+        "cloud"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "space | agent | day | cloud",
+       "value_name": "BY"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The first day counted, YYYY-MM-DD (UTC). Default: the first of this month",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "since",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "YYYY-MM-DD"
+      },
+      {
+       "aliases": [],
+       "default_value": "table",
+       "env": null,
+       "help": "`table`, `csv` (header: key,usd,hours,machines) or `json`",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "format",
+       "possible_values": [
+        "table",
+        "csv",
+        "json"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "table | csv | json",
+       "value_name": "FORMAT"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua cloud cost [OPTIONS]"
     },
     {
      "abstract": "Find what Cua left in your clouds: expired Spaces and resources whose Space is gone (with --all, every Cua resource). Lists them unless --delete. Only resources Cua tagged and recorded are ever touched",
@@ -14889,7 +16755,7 @@
      "usage": "cua devices approve [OPTIONS] [CODE]"
     },
     {
-     "abstract": "Your devices and their state",
+     "abstract": "Your signed-in machines and their state",
      "after_help": "Examples:\n  cua devices ls\n  cua devices ls --json",
      "aliases": [
       "list"
@@ -15657,6 +17523,204 @@
    "subcommand_optional": false,
    "subcommands": [],
    "usage": "cua usage [OPTIONS]"
+  },
+  {
+   "abstract": "The AI providers connected once for every app that can use them: list, add (a key from stdin), test, remove. What Cua Spaces shows in Settings, Connections. (`cua connect` connects your coding apps to Cua.)",
+   "after_help": "Examples:\n  cua connections list\n  cua connections add deepseek\n  cua connections test\n  cua connections remove deepseek",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "connections",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "List the providers with their state (Connected, Needs reconnect, Not connected) and the apps each works with. Never prints a key",
+     "after_help": "Examples:\n  cua connections list\n  cua connections list --all\n  cua --json connections list",
+     "aliases": [],
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also list every provider that is not connected (by default: the ones up front and the ones with something saved)",
+       "hidden": false,
+       "name": "all",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "list",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections list [OPTIONS]"
+    },
+    {
+     "abstract": "Connect a provider. The key is read from stdin (pipe it in; a terminal is refused so it isn't echoed). Saving never waits on the provider: `cua connections test` asks it afterwards",
+     "after_help": "Examples:\n  cua connections add deepseek\n  cua connections add zai --region coding-global\n  cua connections add deepinfra --model meta-llama/Meta-Llama-3.1-70B-Instruct\n  cua connections add custom --base-url http://host:1234/v1 --model qwen",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The provider id (`cua connections list --all`)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "PROVIDER",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "discussion": ".\n\nThe provider is one of the ids `cua connections list --all` prints. Pipe the key in: `pbpaste | cua connections add deepseek`. Sign-ins another app made on this machine are imported with `cua connect setup <app> --sign-in`.",
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "add",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "How: `key` (an API key from stdin; the default) or `endpoint` (a custom endpoint: its base URL, model and API style; a key is optional)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "method",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "METHOD"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The plan or region, for a provider that has them (Z.AI: global, cn, coding-global, coding-cn)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "region",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "REGION"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The model to use, for a provider with no default model or to choose another",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "model",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "MODEL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "A custom endpoint's base URL",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "base-url",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "BASE_URL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "A custom endpoint's API style: openai-chat (default), openai-responses or anthropic",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "wire",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "WIRE"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections add [OPTIONS] <PROVIDER>"
+    },
+    {
+     "abstract": "Ask each provider whether its saved key still works (a read-only request on the provider's own host, bounded in time; offline is not a failure). A key the provider refuses is listed as Needs reconnect",
+     "after_help": "Examples:\n  cua connections test\n  cua connections test openrouter",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Only this provider",
+       "hidden": false,
+       "is_optional": true,
+       "name": "PROVIDER",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "test",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections test [OPTIONS] [PROVIDER]"
+    },
+    {
+     "abstract": "Disconnect a provider: remove what is saved for it",
+     "after_help": "Examples:\n  cua connections remove deepseek",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": false,
+       "name": "PROVIDER",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "remove",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua connections remove [OPTIONS] <PROVIDER>"
+    }
+   ],
+   "usage": "cua connections [OPTIONS] <COMMAND>"
   },
   {
    "abstract": "Move a desktop app session (tabs, profile, sign-in) into a sandbox",
@@ -17393,6 +19457,167 @@
    "usage": "cua telemetry [OPTIONS] <COMMAND>"
   },
   {
+   "abstract": "Spaces performance benchmarks: list them, run one in Spaces of its own (writes result.json and samples.csv in the bench-result v1 format), and check a run against a committed baseline",
+   "after_help": "Examples:\n  cua bench list\n  cua bench run microvm-fork --n 5 --out ./mf\n  cua bench check ./mf/result.json --baseline microvm-fork/baseline.json",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "bench",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "Every benchmark: what it measures, the host it needs, what `--n` sets and whether it has a perf guard",
+     "after_help": "Examples:\n  cua bench list\n  cua bench list --json",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "list",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua bench list [OPTIONS]"
+    },
+    {
+     "abstract": "Run one benchmark in Spaces of its own and write the run as bench-result v1: result.json, samples.csv and the bench's own output in raw/",
+     "after_help": "Every run uses a Spaces home of its own (<out>/cua-home, or CUA_HOME when\nset) and a daemon of this binary, and deletes the Spaces it creates. A bench\nthat needs a program a release does not ship (CHANNEL_BENCH, ROLLOUT_BENCH,\nDISK, a source checkout) stops and says how to get it (`cua bench list`).\n\nExamples:\n  # 5 samples per measurement, results in ./mf\n  cua bench run microvm-fork --n 5 --out ./mf\n  # With CHANNEL_BENCH set to the SDK's channel_bench example\n  cua bench run channel\n  # The run as JSON on stdout (progress stays on stderr)\n  cua bench run microvm-fork --json",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The benchmark (`cua bench list`)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "NAME",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "run",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Directory for result.json, samples.csv and raw/ (default ./bench-results/<name>/<UTC time>)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "out",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "path",
+       "value_name": "OUT"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Samples (or the size the bench scales by; `cua bench list` says which). Default: the bench's own",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "n",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "N"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Source checkout (libs/cua) for benches that build with cargo (default: CUA_SRC, or the checkout the current directory is in)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "src",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "path",
+       "value_name": "SRC"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua bench run [OPTIONS] <NAME>"
+    },
+    {
+     "abstract": "Apply a benchmark's perf guard to a run against a committed baseline; exits 1 on a regression",
+     "after_help": "A baseline path that does not exist as given is looked up among the\nbaselines this binary ships (relative to the bench directory).\n\nExamples:\n  cua bench check ./mf/result.json --baseline microvm-fork/baseline.json\n  cua bench check ./ff/result.json --baseline fork-fanout/baseline.json --host macos-hvf",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "A result.json `cua bench run` wrote (its raw/ directory next to it)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "RESULT",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "path"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "check",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "The baseline file",
+       "hidden": false,
+       "is_optional": false,
+       "multiple_values": false,
+       "name": "baseline",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "path",
+       "value_name": "BASELINE"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Host class or profile in a baseline that holds several (fork-fanout, fork-batch)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "host",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "HOST"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua bench check [OPTIONS] --baseline <BASELINE> <RESULT>"
+    }
+   ],
+   "usage": "cua bench [OPTIONS] <COMMAND>"
+  },
+  {
    "abstract": "(internal) The CLI and MCP surface as JSON, for the generated docs",
    "aliases": [],
    "arguments": [],
@@ -17437,6 +19662,38 @@
    "subcommand_optional": false,
    "subcommands": [],
    "usage": "cua dump-docs [OPTIONS]"
+  }
+ ],
+ "deprecated_commands": [
+  {
+   "deprecated": true,
+   "name": "cua agents",
+   "replaced_by": "cua connect"
+  },
+  {
+   "deprecated": true,
+   "name": "cua agent create",
+   "replaced_by": "cua agent add"
+  },
+  {
+   "deprecated": true,
+   "name": "cua agent persistent",
+   "replaced_by": "cua agent ls"
+  },
+  {
+   "deprecated": true,
+   "name": "cua agent tell",
+   "replaced_by": "cua agent send"
+  },
+  {
+   "deprecated": true,
+   "name": "cua agent forget",
+   "replaced_by": "cua agent rm"
+  },
+  {
+   "deprecated": true,
+   "name": "cua agent routine",
+   "replaced_by": "cua agent schedule"
   }
  ],
  "exit_codes": [

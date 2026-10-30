@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { validate, type Schema } from "../../cua-spaces-web/src/bridge/contracts/schema";
 import { OP_SHAPES, SHAPE_DEFS } from "../../cua-spaces-web/src/bridge/contracts/shapes";
 import { HOST_COVERAGE } from "../../cua-spaces-web/src/bridge/coverage";
+import { THREAD_OPERATIONS } from "../../cua-spaces-web/src/bridge/ops/thread";
 import { OPERATIONS, type OpArgs, type OpName } from "../../cua-spaces-web/src/bridge/protocol";
 import { createBridge, type Bridge } from "../src/bridge";
 import { runtimeWord } from "../src/model/backend";
@@ -147,6 +148,10 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["spaces.createOptions", {}],
       ["spaces.cancelCreate", { pendingId: "pending:none" }],
       ["spaces.setPower", { id: space, on: true }],
+      // An id that is not listed: answered, nothing removed (bridge-spaces.test.ts deletes and leaves).
+      ["spaces.deleteMany", { ids: ["local:nowhere"] }],
+      ["spaces.leave", { ids: ["local:nowhere"] }],
+      ["spaces.rename", { spaceId: space, name: "design-review" }],
       ["machines.list", {}],
       ["host.status", {}],
       ["telemetry.track", { signals: [{ type: "step", step: "app_launched", ok: true }] }],
@@ -171,13 +176,17 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["clouds.status", {}],
       ["clouds.test", { target: { provider: "aws", region: "us-west-2" } }],
       ["clouds.connect", { target: { provider: "aws", region: "us-west-2" }, makeDefault: false }],
+      ["clouds.disconnect", { provider: "aws", deleteResources: false }],
+      ["clouds.approve", { provider: "aws", approve: false }],
       ["nudges.pending", {}],
       ["nudges.answer", { id: "none", choice: "separate" }],
       ["links.list", {}],
       ["links.create", { target: "3000" }],
       ["links.stop", { id: "all" }],
       ["checklist.get", {}],
+      ["cli.plan", {}],
       ["checklist.send", { action: { type: "done", step: "teleport" } }],
+      ["crashReporting.config", {}],
       ["session.signOut", {}],
     ];
     const problems: string[] = [];
@@ -185,7 +194,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
     // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks: machines-view.test.ts; the Windows runtime fix: below.)
-    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...THREAD_OPERATIONS, ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -217,7 +226,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const list = (await call("spaces.list")) as { loaded: boolean; spaces: { space: { id: string; os: string; status: string }; detail: { title: string } }[] };
     expect(list.loaded).toBe(true);
     // In the core's order; This machine is there because this app manages a host.
-    expect(list.spaces.map((s) => s.space.id).sort()).toEqual(["cloud:builder", "direct:10.0.0.5:3211", "local:aurora", "this-mac"]);
+    expect(list.spaces.map((s) => s.space.id).sort()).toEqual(["direct:10.0.0.5:3211", "direct:builder", "local:aurora", "this-mac"]);
     const aurora = list.spaces.find((s) => s.space.id === "local:aurora")!;
     expect(aurora.space).toMatchObject({ os: "linux", status: "running" });
     expect(typeof aurora.detail.title).toBe("string");
@@ -374,6 +383,10 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(telemetrySignal(native, { type: "experiments-on", experiments: ["cua_volume", "BAD"] })).toBeNull();
     expect(telemetrySignal(native, { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false })).toBeNull();
     expect(telemetrySignal(native, { type: "launched", onboardingEligible: null })).not.toBeNull();
+    // CUA-1881: plan limits and upgrade links, fixed words only.
+    expect(telemetrySignal(native, { type: "plan-limit-shown", surface: "app_create", kind: "sessions", plan: "free" })).not.toBeNull();
+    expect(telemetrySignal(native, { type: "upgrade-link-opened", surface: "app_meter", kind: "none", plan: "pro" })).not.toBeNull();
+    expect(telemetrySignal(native, { type: "upgrade-link-opened", surface: "app_meter", kind: "hours", plan: "alice@example.com" })).toBeNull();
   });
 
   it("answers the one-time linking notice from the host's telemetry, and records that it was closed", async () => {
@@ -571,6 +584,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const adapter = await pageAdapter(win);
     const args: Partial<{ [K in OpName]: OpArgs<K> }> = {
       "spaces.setPower": { spaceId: "local:aurora", on: true },
+      "spaces.rename": { spaceId: "local:aurora", name: "design-review" },
       "spaces.open": { spaceId: "local:aurora" },
       "spaces.cancelCreate": { pendingId: "pending:none" },
       "telemetry.track": { signals: [{ type: "feature", feature: "space_open" }] },
@@ -587,13 +601,18 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "spaces.add": { url: "http://studio.local:7400", token: null, name: "studio" },
       "clouds.test": { target: { provider: "aws", region: "us-west-2" } },
       "clouds.connect": { target: { provider: "aws", region: "us-west-2" }, makeDefault: false },
+      "clouds.disconnect": { provider: "aws", deleteResources: false },
+      "clouds.approve": { provider: "aws", approve: true },
       "nudges.answer": { id: "none", choice: "separate" },
       "links.create": { target: "3000" },
       "links.stop": { id: "all" },
       "checklist.send": { action: { type: "done", step: "teleport" } },
+      "spaces.deleteMany": { ids: ["local:nowhere"] },
+      "spaces.leave": { ids: ["local:nowhere"] },
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments (the Machines page's rename and remove: machines-view.test.ts).
-    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...(THREAD_OPERATIONS as readonly string[] as OpName[]), ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    // (The thread: thread.test.ts.)
     const problems: string[] = [];
     const checked: string[] = [];
     for (const op of OPERATIONS) {

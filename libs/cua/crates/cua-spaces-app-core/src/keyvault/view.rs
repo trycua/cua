@@ -895,6 +895,7 @@ mod sharing_tests {
         let row = crate::model::SpaceRow {
             id: id.into(),
             name: name.into(),
+            display_name: None,
             provider: "local".into(),
             spacesd_version: "0.4.0".into(),
             features: vec![],
@@ -916,6 +917,7 @@ mod sharing_tests {
             cloud_place: None,
             cloud_delete: None,
             stop_reason: None,
+            sharing: None,
         };
         crate::spaces::row_to_space(&row, 0)
     }

@@ -318,7 +318,7 @@ impl KeyvaultCommands {
         } else if !status.initialized {
             Some((
                 "no_vault",
-                "It keeps the sessions teleport moves, encrypted on this computer.".to_string(),
+                "It keeps the sessions teleport moves, encrypted on this machine.".to_string(),
             ))
         } else if !status.unlocked {
             Some(("locked", "Unlock it to see and approve items.".to_string()))

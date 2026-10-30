@@ -9,7 +9,7 @@
  * adapter starts, so the timeline streams. All synthetic.
  */
 
-import type { AgentEvent, AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
+import type { AgentEvent, AgentRunStatus, AgentSetupRow, ConnectionReport, ConnectionRow, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
 
 const MIN = 60_000;
 
@@ -54,7 +54,23 @@ export function demoAgentSetup(fresh = false, only: string[] | null = null): Age
     row("hermes", "Hermes", true, false, "~/.hermes/config.yaml", "~/.hermes/skills"),
     row("openclaw", "OpenClaw", true, false, "~/.openclaw/openclaw.json", "~/.agents/skills"),
     row("cursor", "Cursor", true, true, "~/.cursor/mcp.json", "~/.cursor/skills"),
+    row("vscode", "VS Code (Copilot agent mode)", true, false, "~/Library/Application Support/Code/User/mcp.json", "~/.agents/skills"),
     row("gemini-cli", "Gemini CLI", false, false, "~/.gemini/settings.json", "~/.gemini/skills"),
+    // The rest of the supported apps, not installed: "Show all" lists them with their marks.
+    ...(
+      [
+        ["cline", "Cline"],
+        ["kiro", "Kiro"],
+        ["opencode", "OpenCode"],
+        ["pi", "Pi"],
+        ["windsurf", "Windsurf (Devin Desktop)"],
+        ["copilot-cli", "GitHub Copilot CLI"],
+        ["amp", "Amp"],
+        ["goose", "Goose"],
+        ["zed", "Zed"],
+        ["antigravity", "Google Antigravity"],
+      ] as const
+    ).map(([agent, name]) => row(agent, name, false, false, null, null)),
   ];
   return rows.map((r) => {
     const installed = only ? only.includes(r.agent) : r.installed;
@@ -62,6 +78,58 @@ export function demoAgentSetup(fresh = false, only: string[] | null = null): Age
     return { ...r, installed, configured, skillsInstalled: configured ? r.skillsTotal : 0, detail: !installed ? "Not installed" : configured ? r.detail : "Not set up" };
   });
 }
+
+/**
+ * The connection status (`agents.status`) the demo's agents give: the same
+ * rules as `cua_agent_setup::connection`, from the demo rows and the
+ * sign-ins it "copied" (`imported`).
+ */
+export function demoConnections(rows: AgentSetupRow[], imported: readonly string[], at: number): ConnectionReport {
+  const order = ["hermes", "claude-code", "codex", "cursor", "openclaw", "t3code"];
+  const copyable: Record<string, string> = { codex: "ChatGPT sign-in", "claude-code": "Claude sign-in", hermes: "OpenRouter key" };
+  const sorted = [...rows].sort((a, b) => (order.indexOf(a.agent) + 1 || 99) - (order.indexOf(b.agent) + 1 || 99));
+  const agents = sorted.map((r): ConnectionRow => {
+    const name = r.agent === "codex" ? "Codex" : r.name;
+    // Codex's demo sign-in waits for `codex login`; the others are signed in.
+    const signedIn: ConnectionRow["signed_in"] = r.agent === "codex" ? (r.signedIn ? "yes" : "no") : r.agent in copyable || r.agent === "cursor" ? "yes" : "unknown";
+    const copied = imported.includes(r.agent);
+    let state: ConnectionRow["state"];
+    let problem: ConnectionRow["problem"] = null;
+    if (!r.installed) state = r.configured ? "attention" : "not_installed";
+    else if (!r.configured) state = "not_connected";
+    else if (signedIn === "no") {
+      state = "attention";
+      problem = { line: `Connected. No ${copyable[r.agent] ?? "sign-in"} on This Mac yet.`, action: r.agent === "codex" ? "sign_in" : "none" };
+    } else state = "connected";
+    if (!r.installed && r.configured) problem = { line: `${name} isn't on This Mac anymore. Disconnect takes Cua out of its settings.`, action: "disconnect" };
+    return {
+      id: r.agent,
+      name,
+      installed: r.installed,
+      version: r.installed ? (DEMO_VERSIONS[r.agent] ?? null) : null,
+      previous_version: r.configured ? (DEMO_VERSIONS[r.agent] ?? null) : null,
+      signed_in: signedIn,
+      sign_in: copyable[r.agent] ?? null,
+      mcp: r.configured ? "ok" : r.mcpConfig ? "missing" : "unsupported",
+      mcp_config: r.mcpConfig,
+      signin_imported: copied,
+      signin_import: r.agent in copyable ? (copied ? "ok" : "missing") : "unsupported",
+      state,
+      problem,
+      checked_at_ms: at,
+    };
+  });
+  return { agents, checked_at_ms: at };
+}
+
+/** The harness versions the demo's agents report (the thread demo's). */
+const DEMO_VERSIONS: Record<string, string> = {
+  hermes: "0.9.2",
+  "claude-code": "2.4.1",
+  codex: "0.61.0",
+  cursor: "2026.10.21",
+  openclaw: "2026.10.7",
+};
 
 /* ---- Event scripts ---------------------------------------------------------- */
 
@@ -72,6 +140,16 @@ class Script {
   private turn = 0;
   private tools = 0;
   constructor(private t: number) {}
+
+  /** Writes after `events` (a reply to a run that already has turns). */
+  static after(events: AgentEvent[], t: number): Script {
+    const s = new Script(t);
+    const last = events[events.length - 1];
+    s.seq = last?.seq ?? 0;
+    s.turn = events.reduce((n, e) => Math.max(n, e.turn), 0);
+    s.tools = events.filter((e) => e.kind === "tool_call").length;
+    return s;
+  }
 
   private push(e: Omit<AgentEvent, "seq" | "ts_ms" | "turn">, gapMs: number): this {
     this.t += gapMs;
@@ -145,6 +223,8 @@ export interface DemoRunRecord {
   live: boolean;
   /** Set when a pause cut the run short. */
   stoppedAt?: number;
+  /** Shown as `needsYou` once every event is written, until a reply. */
+  asks?: { title: string; detail: string };
 }
 
 const ONBOARDING_DIFF = `## Onboarding copy
@@ -161,7 +241,7 @@ I kept the structure and only changed the words. Three screens change:
 + <h1>Welcome to Cua Spaces</h1>
 + <p>Set up takes about a minute.</p>
 
-- <p>Sign in to sync your Spaces across all your devices!</p>
+- <p>Sign in to sync your Spaces across all your machines!</p>
 + <p>Sign in to see your Spaces on every computer you use.</p>
 \`\`\`
 
@@ -290,10 +370,63 @@ export function demoRunRecords(t0: number): DemoRunRecord[] {
     ),
     finished(
       "relay:mac-mini/qa-windows",
-      { runId: "run-claw-4", agent: "openclaw", status: "idle", reason: "waiting for a follow-up", summary: "Install the 0.6.1 Windows build and note what breaks", createdAt: Math.floor((t0 - 3 * 60 * MIN) / 1000) },
+      { runId: "run-claw-4", agent: "openclaw", status: "idle", reason: "waiting for a follow-up", summary: "Install the 0.6.1 Windows build and note what breaks", needsYou: { title: "OpenClaw needs you to sign in to GitHub", detail: "It is checking the installer in qa-windows and can't go on until you sign in." }, createdAt: Math.floor((t0 - 3 * 60 * MIN) / 1000) },
       installer,
     ),
   ];
+}
+
+/** A run started from the app (`agents.start`): it reads the task, gets the
+ * code, runs the tests and answers, then asks to sign in to GitHub before it
+ * posts anything, so the conversation shows every step. Written over about
+ * twenty seconds from `t0`. */
+export function demoStartedRun(space: string, runId: string, agent: string, prompt: string, t0: number, repo?: string): DemoRunRecord {
+  const where = repo ?? "the project";
+  const s = new Script(t0)
+    .prompt(prompt)
+    .thought("Get the code first, then find out how its tests run.", 1400)
+    .tool("execute", `git clone ${where}`, "completed", "Cloned into ./project", 2600)
+    .tool("read", "Read pyproject.toml", "completed", undefined, 900)
+    .tool("execute", "python -m pip install -e '.[dev]'", "completed", "Installed 31 packages", 3400)
+    .tool("execute", "python -m pytest -q", "completed", "70 passed in 41.2s", 4200)
+    .say(
+      "All **70 tests pass** on this clean computer (Python 3.12, 41 seconds). Nothing was skipped.\n\nTo post the result on your pull request I need to be signed in to GitHub here. Can you sign in, or should I skip posting?",
+      90,
+    )
+    .end();
+  return {
+    space,
+    live: true,
+    events: s.events,
+    asks: { title: "Sign in to GitHub", detail: "The agent needs a GitHub sign-in on this machine to post the result." },
+    run: {
+      runId,
+      agent,
+      status: "running",
+      reason: "a turn is running",
+      summary: prompt.split("\n")[0]!.slice(0, 120),
+      createdAt: Math.floor(t0 / 1000),
+      phase: "thinking",
+      turn: 1,
+    },
+  };
+}
+
+/** `agents.message` on a demo run: the reply is a new turn, answered in a few seconds. */
+export function demoReply(rec: DemoRunRecord, text: string, t: number): void {
+  const written = writtenEvents(rec, t);
+  const s = Script.after(written, t).prompt(text);
+  if (/sign|signed|logged|done|go ahead|yes/i.test(text)) {
+    s.tool("execute", "gh pr comment --body-file result.md", "completed", "Posted a comment", 2200)
+      .say("Posted the result on your pull request. You can keep this machine for the next check, or throw it away.", 80);
+  } else {
+    s.thought("Read the reply and carry on.", 800).say("Got it. I'll go on with that.", 80);
+  }
+  s.end();
+  rec.events = [...written, ...s.events];
+  rec.live = true;
+  rec.stoppedAt = undefined;
+  rec.asks = undefined;
 }
 
 /** The events written by `now`. */
@@ -311,6 +444,8 @@ export function runAt(rec: DemoRunRecord, now: number): SpaceAgentRun {
   const status: AgentRunStatus = done ? "idle" : "running";
   return {
     ...rec.run,
+    turn: last?.turn ?? rec.run.turn,
+    needsYou: done && rec.asks ? rec.asks : null,
     status,
     reason: done ? "waiting for a follow-up" : "a turn is running",
     phase: done ? "waiting" : last?.kind === "message" ? "responding" : "tool",

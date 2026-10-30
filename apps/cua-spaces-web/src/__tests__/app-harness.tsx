@@ -8,9 +8,10 @@
 
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
-import { afterEach, beforeEach } from "vitest";
+import { afterEach, beforeAll, beforeEach } from "vitest";
 import type { DataAdapter } from "@/bridge/adapter";
 import type { MachinesView } from "@/bridge/contracts/host";
+import type { CreatingElsewhere, ListStatus } from "@/bridge/contracts/spaces";
 import type { HostEvent } from "@/bridge/protocol";
 import { createDemoAdapter, type DemoOptions } from "@/bridge/adapters/demo";
 import { BridgeProvider, useBridge, useMachines, useSpaces, type SpacesHook } from "@/bridge";
@@ -46,13 +47,32 @@ export interface TestHost {
   /** Rewrites the demo host's answer to `op` (extra rows, this machine's
    * enrollment). */
   answer?: (op: string, out: unknown) => unknown;
+  /** A daemon without the Space thread: the Space page keeps its classic layout. */
+  noThread?: boolean;
   /** Answers `op` itself instead of the demo host (undefined: the demo's). */
   intercept?: (op: string, args: unknown) => unknown;
   /** The Machines page as the host's core drew it (`machinesView`). */
   machinesView?: () => MachinesView | null;
+  /** How far the host's list read got (`listStatus`); undefined: complete. */
+  listStatus?: () => ListStatus;
+  /** What the host's other computers are creating (`creatingElsewhere`). */
+  creatingElsewhere?: () => CreatingElsewhere[];
   /** The demo host's own options (signed out, a first run). */
   demo?: DemoOptions;
 }
+
+/**
+ * Every page's code, once per test file, before its tests: routes are split
+ * into chunks (autoCodeSplitting), and a file's first import of one is a
+ * cold transform. With every worker starting at once on a loaded machine,
+ * those took longer than a test's waitFor (5 s), and a test that visits
+ * three pages longer than its own timeout. Loaded here, they never count
+ * against what a test waits for; a hook has its own budget for it.
+ */
+beforeAll(async () => {
+  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ["/"] }) });
+  await Promise.all(Object.values(router.routesById).map((route) => router.loadRouteChunk(route as never)));
+}, 120_000);
 
 /** The routers mounted by the running test: a navigation the app started (a
  * create that finishes sends the person to the new Space) may still be
@@ -67,12 +87,14 @@ afterEach(async () => {
 });
 
 export async function mountApp(path: string, host: TestHost = { failsCreates: true, listsGhost: true }) {
-  const demo = createDemoAdapter({ latencyMs: 1, stepMs: 4, ...host.demo });
+  const demo = createDemoAdapter({ latencyMs: 1, stepMs: 4, noThread: host.noThread, ...host.demo });
   // The page's listeners, so a test can push what the host would (`emit`).
   const listeners = new Set<(event: HostEvent) => void>();
   const adapter: DataAdapter = {
     mode: demo.mode,
     ...(host.machinesView ? { machinesView: host.machinesView } : {}),
+    ...(host.listStatus ? { listStatus: host.listStatus } : {}),
+    ...(host.creatingElsewhere ? { creatingElsewhere: host.creatingElsewhere } : {}),
     subscribe: (l) => {
       listeners.add(l);
       const off = demo.subscribe(l);
@@ -96,6 +118,13 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
   };
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [path] }) });
   mounted.push(router);
+  // The first page's code before it renders, as the app has it from its
+  // bundle: routes are split into chunks (autoCodeSplitting), and a test
+  // file's first import of one is a cold transform that, with every worker
+  // starting at once on a loaded machine, took longer than a test's
+  // waitFor (5 s) by itself. Loading it here keeps that out of what tests
+  // wait for: they wait only for what the page does.
+  await router.load();
   const hooks = {} as { spaces: SpacesHook; machines: ReturnType<typeof useMachines>; core: ReturnType<typeof useBridge>["core"] };
   function Probe() {
     hooks.spaces = useSpaces();

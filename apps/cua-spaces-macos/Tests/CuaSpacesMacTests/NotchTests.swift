@@ -60,7 +60,7 @@ struct NotchTests {
     /// The debug start's highlight names one control.
     @Test func highlightParses() {
         #expect(NotchHighlight.parse("tile", firstTile: "local:aurora") == NotchHighlight(.tile("local:aurora")))
-        #expect(NotchHighlight.parse("tile=cloud:x:pressed", firstTile: nil) == NotchHighlight(.tile("cloud:x"), pressed: true))
+        #expect(NotchHighlight.parse("tile=direct:x:pressed", firstTile: nil) == NotchHighlight(.tile("direct:x"), pressed: true))
         #expect(NotchHighlight.parse("settings:pressed", firstTile: nil) == NotchHighlight(.button(.settings), pressed: true))
         #expect(NotchHighlight.parse("list", firstTile: nil) == NotchHighlight(.button(.list)))
         #expect(NotchHighlight.parse("search", firstTile: nil) == NotchHighlight(.search))
@@ -197,6 +197,8 @@ struct NotchTests {
         machine.id = "relay:studio"
         machine.name = "Studio"
         machine.provider = "relay"
+        // It only provides Spaces: no desktop to list.
+        machine.features = ["host_spaces"]
         var provided = FixtureSpacesBackend.sample[0]
         provided.id = "relay:studio/dev"
         provided.name = "Dev"
@@ -215,6 +217,84 @@ struct NotchTests {
         #expect(notch.view.tiles.map(\.id) == ["relay:studio/dev"])
         #expect(notch.view.tab.count == "1")
         #expect(notch.view.tiles.count == Int(appOpenableCount(spaces: notch.spaces)))
+    }
+
+    /// A machine's shared desktop is a Space and shows by default; a
+    /// pin puts it first and keeps it, dimmed with its note, when the
+    /// machine goes offline. The tab counts it only while it runs.
+    @Test func aSharedDesktopShowsCountsWhileItRunsAndAPinKeepsItWhenOffline() async {
+        var wsl = FixtureSpacesBackend.sample[0]
+        wsl.id = "relay:wsl"
+        wsl.name = "WSL"
+        wsl.provider = "relay"
+        wsl.features = ["desktop_stream", "window_stream", "host_spaces"]
+        wsl.power = nil
+        wsl.powerState = nil
+        var studio = wsl
+        studio.id = "relay:studio"
+        studio.name = "Studio"
+        studio.features = ["host_spaces"]
+        let backend = FixtureSpacesBackend(rows: [FixtureSpacesBackend.sample[0], wsl, studio])
+        let m = ViewModelTests().makeModel(backend)
+        await m.refresh()
+
+        let clock = ManualScheduler()
+        let notch = NotchModel(scheduler: clock)
+        notch.spaces = m.notch.spaces
+        notch.send(.hoverEnter)
+        clock.advance(motion.hoverDwellMs)
+        let ids = notch.view.tiles.map(\.id)
+        #expect(ids.contains("relay:wsl"), "the shared desktop is a tile")
+        #expect(!ids.contains("relay:studio"), "a machine without a desktop is not")
+        let desktop = notch.view.tiles.first { $0.id == "relay:wsl" }
+        #expect(desktop?.desktop == true && desktop?.location == "Desktop" && desktop?.pinned == false)
+        #expect(notch.view.tab.count == "2", "the running Space and the running desktop")
+
+        // Pinned: first, with the pin (from the settings, as at launch).
+        m.togglePin("relay:wsl")
+        #expect(m.settings.notchPinned == ["relay:wsl"])
+        #expect(appSettingsLoad(path: m.settingsPath).notchPinned == ["relay:wsl"], "kept across a restart")
+        #expect(m.notch.state.pinned == ["relay:wsl"])
+        notch.setPinned(m.settings.notchPinned)
+        #expect(notch.view.tiles.first?.id == "relay:wsl" && notch.view.tiles.first?.pinned == true)
+
+        // The machine goes offline: the pin stays, dimmed, saying so; it counts nothing.
+        wsl.reachable = false
+        backend.fixtureRows = [FixtureSpacesBackend.sample[0], wsl, studio]
+        await m.refresh()
+        notch.spaces = m.notch.spaces
+        let offline = notch.view.tiles.first { $0.id == "relay:wsl" }
+        #expect(offline?.note == "Offline" && offline?.dim == true && offline?.pinned == true)
+        #expect(notch.view.tab.count == "1")
+
+        // Unpinned: gone again.
+        m.togglePin("relay:wsl")
+        #expect(m.settings.notchPinned.isEmpty)
+        notch.setPinned([])
+        #expect(!notch.view.tiles.map(\.id).contains("relay:wsl"))
+    }
+
+    /// Pin to notch is the core's menu item: it flips to Unpin from notch,
+    /// the pins keep their order, and This Mac is never pinned.
+    @Test func pinToNotchIsTheCoresMenuItem() async throws {
+        let m = ViewModelTests().makeModel()
+        await m.refresh()
+        let aurora = try #require(m.spaces.first { $0.id == "local:aurora" })
+        var input = m.menuInput(aurora)
+        input.canPin = true
+        #expect(appSpaceMenu(input: input).map(\.label).contains("Pin to notch"))
+        m.runMenuItem(.pin, on: aurora)
+        #expect(m.settings.notchPinned == ["local:aurora"])
+        input.pinned = m.settings.notchPinned.contains(aurora.id)
+        let labels = appSpaceMenu(input: input).map(\.label)
+        #expect(labels.contains("Unpin from notch") && !labels.contains("Pin to notch"))
+        m.togglePin("direct:builder")
+        #expect(m.settings.notchPinned == ["local:aurora", "direct:builder"], "in the order pinned")
+        m.runMenuItem(.pin, on: aurora)
+        #expect(m.settings.notchPinned == ["direct:builder"])
+        m.togglePin("this-mac")
+        #expect(m.settings.notchPinned == ["direct:builder"])
+        #expect(appSettingsLoad(path: m.settingsPath).notchPinned == ["direct:builder"])
     }
 
     // MARK: - The presentation state machine
@@ -592,14 +672,5 @@ struct LaunchTests {
         #expect(!defaults.bool(forKey: "ApplePersistenceIgnoreState"))
         CuaSpacesMacApp.ignoreSavedWindowState(defaults)
         #expect(defaults.bool(forKey: "ApplePersistenceIgnoreState"))
-    }
-
-    /// With New UI on, or the first run due (it is the web UI's onboarding),
-    /// a launch opens the New UI window, not the native main window.
-    @Test func newUIOrAFirstRunOpensItsWindowAtLaunchInsteadOfTheMainWindow() {
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: true))
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: false))
-        #expect(!CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: true))
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: false))
     }
 }

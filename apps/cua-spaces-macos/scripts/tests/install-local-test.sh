@@ -20,6 +20,8 @@
 #     checked first, in one message;
 #   - on a fresh Keychain (a certificate codesign cannot use yet) it says so and
 #     sets it up only when asked (--setup-signing), or prints the exact steps;
+#   - on a locked Keychain (SSH session, VM) it says the Keychain is locked and
+#     how to unlock it, not that it is new, and never sets up a locked one;
 #   - uninstall-local.sh removes the Local pieces and only those, and first
 #     takes this Mac off the relay when Local is signed in, as Local and with
 #     nothing of the caller's Stable environment;
@@ -105,6 +107,8 @@ int main(int argc, char **argv) {
         fprintf(f, " [CUA_CHANNEL=%s]\n", channel ? channel : "");
         fclose(f);
     }
+    // STUB_UNREGISTER_FAIL=1: `--service-helper unregister` exits 1.
+    if (argc >= 3 && strcmp(argv[2], "unregister") == 0 && getenv("STUB_UNREGISTER_FAIL")) return 1;
     return 0;
 }
 EOF
@@ -249,7 +253,10 @@ EOF
 # arguments to shim.log.
 write_shim() { printf '#!/bin/bash\n%s\n' "$2" > "$SHIMS/$1"; chmod +x "$SHIMS/$1"; }
 write_shim launchctl 'echo "launchctl $*" >> "$SHIM_LOG"'
-write_shim tccutil 'echo "tccutil $*" >> "$SHIM_LOG"'
+# tccutil, like the real one, can only resolve a bundle id while its app is
+# installed: the second log says whether the Local app was still there.
+write_shim tccutil 'echo "tccutil $*" >> "$SHIM_LOG"
+echo "$* app=$([ -d "$HOME/Applications/Cua Spaces Local.app" ] && echo present || echo gone)" >> "$SHIM_LOG.tcc"'
 write_shim open 'echo "open $*" >> "$SHIM_LOG"'
 write_shim lsregister 'echo "lsregister $*" >> "$SHIM_LOG"'
 # security: a Keychain with one item per service until it is deleted; or the
@@ -280,12 +287,16 @@ if [ "${SHIM_FRESH_KEYCHAIN:-0}" = 1 ]; then
     add-trusted-cert)
       if [ "${SHIM_TRUST_FAILS:-0}" = 1 ]; then echo "SecTrustSettingsSetTrustSettings: no user interaction was possible" >&2; exit 1; fi
       : > "$SHIM_STATE/trusted"; exit 0 ;;
+    unlock-keychain)
+      : > "$SHIM_STATE/unlocked"; exit 0 ;;
     set-key-partition-list)
       # SHIM_PARTITION_FAILS=1: no key matched the filter (the tool says so and changes nothing).
       if [ "${SHIM_PARTITION_FAILS:-0}" = 1 ]; then echo "security: SecItemCopyMatching: The specified item could not be found in the keychain." >&2; exit 1; fi
       : > "$SHIM_STATE/partition"; exit 0 ;;
   esac
 fi
+# No certificate in the Keychain (what the real tool says: not found).
+if [ "$1" = find-certificate ]; then exit 44; fi
 exit 0'
 # codesign: the real one, except that it can be made to fail verifying one
 # path, to stall (exit like a killed-by-alarm process, no output) on its first
@@ -300,6 +311,11 @@ write_shim codesign 'if [ "${SHIM_FRESH_KEYCHAIN:-0}" = 1 ]; then
     prev="$a"
   done
   if [ "$fake" = 1 ]; then
+    # A locked Keychain (SHIM_LOCKED_KEYCHAIN=1) in a session that cannot ask
+    # for its password, until `security unlock-keychain` ran.
+    if [ "${SHIM_LOCKED_KEYCHAIN:-0}" = 1 ] && [ ! -e "$SHIM_STATE/unlocked" ]; then
+      echo "probe: errSecInternalComponent" >&2; exit 1
+    fi
     if [ ! -e "$SHIM_STATE/trusted" ] || { [ "${SHIM_NEED_PARTITION:-0}" = 1 ] && [ ! -e "$SHIM_STATE/partition" ]; }; then
       echo "no identity found" >&2; exit 1
     fi
@@ -1108,6 +1124,49 @@ fresh_fixture
 tty_install
 check "with the key already usable after the trust it asks for no password and calls no set-key-partition-list" '! grep >/dev/null "set-key-partition-list" "$SHIM_LOG" && ! printf "%s" "$OUT" | grep -F >/dev/null "Password of the Keychain"'
 
+# A locked Keychain (an SSH session, or a VM that logged in on its own): codesign
+# fails with errSecInternalComponent, because nothing can ask for the password.
+# The message says the Keychain is locked and how to unlock it, and not that it
+# is new; the new-Keychain setup is not attempted on a locked one.
+echo "== a locked Keychain =="
+tty_unlock_install() { run env PTY_ANSWER=y PTY_PROMPT="Unlock it now" /usr/bin/python3 -I "$WORK/pty-run.py" env SHIM_FRESH_KEYCHAIN=1 "$@" "$FAKE_SCRIPTS/install-local.sh" --no-launch --setup-signing; }
+UNLOCK_CMD='security unlock-keychain "$FAKE_KEYCHAIN"'
+
+fresh_fixture
+FRESH_ARGS="--setup-signing"
+fresh_install SHIM_LOCKED_KEYCHAIN=1
+check "it says the Keychain is locked and prints the unlock command" \
+    'printf "%s" "$OUT" | grep -F >/dev/null "its Keychain ($FAKE_KEYCHAIN) is locked" && printf "%s" "$OUT" | grep -F >/dev/null "security unlock-keychain \"$FAKE_KEYCHAIN\""'
+check "it does not call a locked Keychain new, and prints the one-time setup once, as the step after unlocking" \
+    '! printf "%s" "$OUT" | grep -F >/dev/null "a new Keychain: it is not trusted" && printf "%s" "$OUT" | grep -F >/dev/null "If codesign still cannot sign after that" && [ "$(printf "%s\n" "$OUT" | grep -c "one-time setup")" = 1 ]'
+check "--setup-signing without a terminal does not set up a locked Keychain (no trust, no search list, no key access)" \
+    '! security_calls | grep >/dev/null -e "add-trusted-cert" -e "list-keychains .*-s " -e "set-key-partition-list"'
+check "the install is ad hoc, reported, as before (status $RC)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "signed ad hoc"'
+
+fresh_fixture
+FRESH_ARGS="--require-stable-signing"
+fresh_install SHIM_LOCKED_KEYCHAIN=1
+check "--require-stable-signing on a locked Keychain stops, installs nothing, and says it is locked" \
+    '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep -F >/dev/null "is locked" && printf "%s" "$OUT" | grep -F >/dev/null "stable signing is required"'
+
+fresh_fixture
+tty_unlock_install SHIM_LOCKED_KEYCHAIN=1
+check "at a terminal it offers to unlock, runs security unlock-keychain, and goes on to the setup that a new Keychain still needs" \
+    'grep -F >/dev/null "security unlock-keychain $FAKE_KEYCHAIN" "$SHIM_LOG" && grep -n -e "^security unlock-keychain" -e "^security add-trusted-cert" "$SHIM_LOG" | sed -n 1p | grep >/dev/null unlock-keychain'
+check "and then signs with the certificate (status $RC)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "codesign can use the stable local certificate"'
+
+# The certificate could not be created at all: the Keychain exists, holds none,
+# and (the usual reason) refused the import.
+fresh_fixture
+install --require-stable-signing
+check "no certificate in the Keychain: it says it could not create one and that the Keychain is probably locked, with the unlock command" \
+    '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep -F >/dev/null "could not create the stable local certificate in $FAKE_KEYCHAIN: the Keychain is probably locked" && printf "%s" "$OUT" | grep -F >/dev/null "security unlock-keychain \"$FAKE_KEYCHAIN\""'
+check "and it does not print steps that need the certificate (find-certificate, add-trusted-cert)" '! printf "%s" "$OUT" | grep -F >/dev/null -e "security find-certificate" -e "add-trusted-cert"'
+fresh_fixture
+rm -f "$FAKE_KEYCHAIN"
+install --require-stable-signing
+check "no Keychain at all is not called locked" '! printf "%s" "$OUT" | grep -F >/dev/null -e "locked" -e "could not create the stable local certificate"'
+
 # The real `security`, on a throwaway Keychain (not in the search list, no trust
 # change): the function the script runs matches the Local certificate's key and
 # no other signing key, and changes nothing when there is no such key.
@@ -1275,19 +1334,23 @@ echo 'state' > "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.mac
 echo 'mine' > "$FAKE_HOME/Cua Volume Local/keep.txt"
 write_local_cli
 BEFORE_UNINSTALL="$(snap_all)"
-: > "$SHIM_LOG"; : > "$STUB_LOG"
+: > "$SHIM_LOG"; : > "$STUB_LOG"; : > "$SHIM_LOG.tcc"
 
 STDIN_FILE="$WORK/answer-n"; echo n > "$STDIN_FILE"
 uninstall
 check "answering n removes nothing" '[ "$RC" = 0 ] && [ "$(snap_all)" = "$BEFORE_UNINSTALL" ] && printf "%s" "$OUT" | grep >/dev/null cancelled'
 STDIN_FILE=/dev/null
 uninstall
-check "no answer (no terminal) removes nothing" '[ "$(snap_all)" = "$BEFORE_UNINSTALL" ]'
+check "no answer (no terminal) removes nothing" '[ "$(snap_all)" = "$BEFORE_UNINSTALL" ] && [ ! -s "$SHIM_LOG.tcc" ]'
 
 STDIN_FILE="$WORK/answer-y"; echo y > "$STDIN_FILE"
 uninstall
 check "answering y removes Local (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$LOCAL_CLI" ] && [ ! -L "$LOCAL_CLI" ]'
 STDIN_FILE=/dev/null
+check "every Local permission was reset in one call, for the Local bundle id only, while the app was still installed" \
+    '[ "$(cat "$SHIM_LOG.tcc")" = "reset All com.trycua.spaces.macos.local app=present" ] && [ "$(grep -c "^tccutil" "$SHIM_LOG")" = 1 ]'
+check "the plan said the permissions are reset, and the closing line no longer says they are kept" \
+    'printf "%s" "$OUT" | grep >/dev/null "permissions:        reset" && ! printf "%s" "$OUT" | grep >/dev/null "and the permissions macOS granted"'
 check "the Local home and its app support folder are gone" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" ]'
 check "the Local bundle id's preferences, caches, web view data, cookies and window state are gone" \
     '[ ! -e "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.local.plist" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.local.binarycookies" ] && [ ! -e "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.local.savedState" ]'
@@ -1307,6 +1370,28 @@ check "only the Local Keychain services were deleted (both of them)" \
     'grep >/dev/null "^security delete-generic-password -s ai.cua.session.local\$" "$SHIM_LOG" && grep >/dev/null "^security delete-generic-password -s ai.cua.session.local.staging\$" "$SHIM_LOG" && ! grep "^security" "$SHIM_LOG" | grep -v -e "-s ai.cua.session.local\$" -e "-s ai.cua.session.local.staging\$"'
 check "the Local volume folder is kept" '[ "$(cat "$FAKE_HOME/Cua Volume Local/keep.txt")" = mine ]'
 check "Stable files are byte-identical after uninstall" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+echo "== uninstall --keep-permissions, and a login item that will not unregister =="
+reset_fixture
+install
+: > "$SHIM_LOG"; : > "$SHIM_LOG.tcc"
+uninstall --yes --keep-permissions
+check "--keep-permissions removes Local and resets nothing (status $RC)" \
+    '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -s "$SHIM_LOG.tcc" ] && ! grep >/dev/null "^tccutil" "$SHIM_LOG"'
+check "and it says the permissions are kept" \
+    'printf "%s" "$OUT" | grep >/dev/null "permissions:        kept" && printf "%s" "$OUT" | grep >/dev/null "and the permissions macOS granted"'
+reset_fixture
+install
+: > "$SHIM_LOG.tcc"; : > "$STUB_LOG"
+run env STUB_UNREGISTER_FAIL=1 STUB_HELPER_STATUS=not-registered "$FAKE_SCRIPTS/uninstall-local.sh" --yes
+check "an unregister that exits 1 is retried once, and a login item that is not registered raises no warning (status $RC)" \
+    '[ "$RC" = 0 ] && [ "$(grep -c -- "--service-helper unregister" "$STUB_LOG")" = 2 ] && ! printf "%s" "$OUT" | grep >/dev/null "could not unregister its helper"'
+reset_fixture
+install
+: > "$STUB_LOG"
+run env STUB_UNREGISTER_FAIL=1 STUB_HELPER_STATUS=enabled "$FAKE_SCRIPTS/uninstall-local.sh" --yes
+check "a login item that is still enabled after the retry is reported, and the uninstall goes on" \
+    '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "could not unregister its helper"'
 
 echo "== uninstall and the old Local id =="
 reset_fixture
@@ -1333,7 +1418,7 @@ uninstall --yes
 check "uninstall removes the leftovers of both ids when no app is installed (status $RC)" \
     '[ "$RC" = 0 ] && legacy_data_gone && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ]'
 check "and Stable files, whose names the new Local id extends, are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
-check "uninstall never resets permission rows (macOS keeps them for a reinstall)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
+check "with no app installed no permission rows are reset (tccutil cannot resolve a bundle id whose app is gone)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
 
 echo "== uninstall takes this Mac off the relay, safely =="
 # A stray environment of the released Cua Spaces in the caller's shell: its

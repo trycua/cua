@@ -216,6 +216,11 @@ pub struct RelayCaller {
     /// empty for the owner and a direct share. Share links to a team check
     /// these.
     pub teams: Vec<String>,
+    /// A thread grant: the one Space this machine provides (its relay
+    /// machine id) whose thread the account may reach, because that Space
+    /// is shared with it; `role` is its role on that Space. Such a caller
+    /// reaches [`THREAD_GRANT_GRPC_METHODS`] only.
+    pub space: Option<String>,
 }
 
 /// The only calls a relayed caller may make on a machine that does not
@@ -249,6 +254,9 @@ pub const HOST_ONLY_GRPC_METHODS: &[&str] = &[
     "/cua.env.v1.HostSnapshotsService/CreateHostSnapshot",
     "/cua.env.v1.HostSnapshotsService/DeleteHostSnapshot",
     "/cua.env.v1.HostSpacesService/DiagnoseHost",
+    // The threads of the Spaces this host provides (the daemon checks who
+    // may read and write).
+    "/cua.env.v1.HostThreadService/CallThreadTool",
 ];
 
 impl ExternalGrant {
@@ -276,6 +284,22 @@ impl ExternalGrant {
     }
 }
 
+/// `ErrorInfo.metadata["kind"]` of a refused Space thread grant, as the
+/// relay types its own (`cua_relay::server::THREAD_GRANT_REFUSED`).
+pub const THREAD_GRANT_REFUSED: &str = "thread_grant_refused";
+
+/// How the reasons this machine refuses a thread grant with begin
+/// ([`crate::relay_account`]), so the refusal is typed.
+pub const THREAD_GRANT_REASON_PREFIX: &str = "Space thread grant: ";
+
+/// The only calls a thread grant may make ([`RelayCaller::space`]): the
+/// capability probe and the Space's thread, nothing else of this machine.
+pub const THREAD_GRANT_GRPC_METHODS: &[&str] = &[
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+    "/cua.env.v1.HostThreadService/CallThreadTool",
+];
+
 /// The only calls a view-only share (a relay account the owner shared the
 /// Space with to watch) may make: capabilities, the view-only stream, and
 /// presence with its own cursor. Anything else is refused with
@@ -292,6 +316,9 @@ pub const SHARED_VIEWER_GRPC_METHODS: &[&str] = &[
     "/cua.env.v1.PresenceService/Join",
     "/cua.env.v1.PresenceService/UpdateCursor",
     "/cua.env.v1.PresenceService/Leave",
+    // A Space thread on a host that provides Spaces: forwarded to its cua
+    // daemon as role `viewer`, which lets a viewer read and nothing else.
+    "/cua.env.v1.HostThreadService/CallThreadTool",
 ];
 
 /// A credential other than the root token, verified by the embedding
@@ -1061,6 +1088,34 @@ where
                 }
                 Ok(grant) => {
                     let path = req.uri().path().to_owned();
+                    let thread_space = grant
+                        .account
+                        .as_ref()
+                        .and_then(|a| a.space.as_deref())
+                        .filter(|_| !THREAD_GRANT_GRPC_METHODS.contains(&path.as_str()));
+                    if let Some(space) = thread_space {
+                        let who = principal_label(&grant.principal);
+                        self.auth.record_access(
+                            via_of(&grant.principal),
+                            &who,
+                            &format!(
+                                "refused {} (thread of relay:{space} only)",
+                                grpc_service(&path)
+                            ),
+                        );
+                        let response = crate::error::StatusBuilder::new(
+                            tonic::Code::PermissionDenied,
+                            cua_proto::env::v1::ErrorReason::PermissionDenied,
+                            format!(
+                                "{who} reaches only the thread of relay:{space} on this computer, \
+                                 not {path}"
+                            ),
+                        )
+                        .meta("kind", THREAD_GRANT_REFUSED)
+                        .build()
+                        .into_http::<R>();
+                        return Box::pin(async move { Ok(response) });
+                    }
                     if grant.host_only && !HOST_ONLY_GRPC_METHODS.contains(&path.as_str()) {
                         let who = principal_label(&grant.principal);
                         self.auth.record_access(
@@ -1116,12 +1171,17 @@ where
                         &reason.chars().take(120).collect::<String>(),
                     );
                     tracing::debug!(path = %req.uri().path(), %reason, "rejected external credential");
-                    let response = crate::error::status(
+                    // A thread grant this machine does not take says so,
+                    // typed ([`THREAD_GRANT_REFUSED`]).
+                    let mut status = crate::error::StatusBuilder::new(
                         tonic::Code::PermissionDenied,
                         cua_proto::env::v1::ErrorReason::PermissionDenied,
                         format!("relay assertion refused: {reason}"),
-                    )
-                    .into_http::<R>();
+                    );
+                    if reason.starts_with(THREAD_GRANT_REASON_PREFIX) {
+                        status = status.meta("kind", THREAD_GRANT_REFUSED);
+                    }
+                    let response = status.build().into_http::<R>();
                     return Box::pin(async move { Ok(response) });
                 }
             }

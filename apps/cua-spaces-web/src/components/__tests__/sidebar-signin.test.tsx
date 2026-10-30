@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BridgeProvider } from "@/bridge";
 import type { DataAdapter } from "@/bridge/adapter";
@@ -12,7 +13,10 @@ import { AccountFooter } from "@/components/shell/sidebar";
 import { ToastProvider } from "@/components/ui/toast";
 import { testCore } from "@/bridge/__tests__/testCore";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 /** A signed-out demo host whose browser sign-in waits (as a real one does). */
 function host() {
@@ -141,7 +145,7 @@ describe("a sign-in that fails (it never fails silently)", () => {
     expect(toasts).toHaveLength(1);
   });
 
-  it("shows who is signed in", async () => {
+  it("shows who is signed in on one line, without \"Signed in as\"", async () => {
     const base = createDemoAdapter({ latencyMs: 0, signedIn: true, onboarded: true });
     render(
       <BridgeProvider adapter={base} core={await testCore()}>
@@ -153,6 +157,71 @@ describe("a sign-in that fails (it never fails silently)", () => {
       if (!el) throw new Error("not signed in yet");
       return el;
     });
-    expect(who.textContent).toMatch(/^Signed in as \S+/);
+    expect(who.textContent).toBe("ada@example.com");
+    expect(document.body.textContent).not.toContain("Signed in as");
+  });
+});
+
+describe("the account line while the first run is unfinished", () => {
+  it("keeps Finish setting up above it", async () => {
+    const base = createDemoAdapter({ latencyMs: 0, signedIn: true, onboarded: false });
+    const router = createRouter({ routeTree: createRootRoute({ component: AccountFooter }), history: createMemoryHistory({ initialEntries: ["/"] }) });
+    render(
+      <BridgeProvider adapter={base} core={await testCore()}>
+        <RouterProvider router={router} />
+      </BridgeProvider>,
+    );
+    const finish = await screen.findByText("Finish setting up");
+    expect(finish.getAttribute("href")).toBe("/onboarding");
+    expect(document.querySelector("[data-account-line]")?.textContent).toContain("ada@example.com");
+  });
+});
+
+/** A host whose browser sign-in never comes back (another browser, a blocked
+ * connection); a code request is answered with a code. Records every start. */
+function stuckBrowserHost() {
+  const base = createDemoAdapter({ latencyMs: 0, signedIn: false, onboarded: true });
+  const starts: Record<string, unknown>[] = [];
+  const adapter = Object.assign(Object.create(base) as DataAdapter, {
+    call: ((op: string, args: Record<string, unknown>) => {
+      if (op === "session.signIn") {
+        starts.push(args);
+        return Promise.resolve(
+          args.code
+            ? { method: "device", verificationUri: "https://cua.ai/device", userCode: "WXYZ-1234" }
+            : { method: "browser", verificationUri: "https://auth.cua.ai/login" },
+        );
+      }
+      return (base.call as (o: string, a: unknown) => Promise<unknown>).call(base, op, args);
+    }) as DataAdapter["call"],
+  });
+  return { adapter, starts };
+}
+
+describe("a browser sign-in that never comes back", () => {
+  it("offers a code after a while, in plain words, and starts the code sign-in", async () => {
+    const { adapter, starts } = stuckBrowserHost();
+    render(
+      <BridgeProvider adapter={adapter} core={unavailableCore("test: no core")}>
+        <AccountFooter />
+      </BridgeProvider>,
+    );
+    const signInButton = await screen.findByRole("button", { name: "Sign in" });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fireEvent.click(signInButton);
+    await screen.findByRole("status");
+    // Not at once: the person may still be signing in.
+    expect(document.querySelector("[data-signin-stuck]")).toBeNull();
+    await act(async () => {
+      vi.advanceTimersByTime(46_000);
+    });
+    vi.useRealTimers();
+    const stuck = (await waitFor(() => document.querySelector("[data-signin-stuck]") ?? Promise.reject(new Error("not yet")))) as Element;
+    expect(stuck.textContent).toContain("Still waiting?");
+    fireEvent.click(screen.getByText("Get a code instead"));
+    await waitFor(() => expect(starts).toEqual([{}, { code: true }]));
+    await waitFor(() => expect(document.querySelector("[data-signin=waiting]")?.textContent).toContain("Code WXYZ-1234"));
+    // With a code on screen there is nothing more to offer.
+    expect(document.querySelector("[data-signin-stuck]")).toBeNull();
   });
 });

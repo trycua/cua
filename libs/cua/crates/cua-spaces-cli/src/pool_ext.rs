@@ -6,7 +6,9 @@
 //! account's machines with nothing to set up. This module is the glue to
 //! the daemon: the signed-in account and its relay, the account's machines
 //! that provide Spaces and how to reach them, this machine's own job
-//! runner, and Modal when it is connected here.
+//! runner, and Modal when it is connected here. It also lends the pool keys
+//! to the cloud tokens sealed to the account's devices
+//! ([`crate::cloud_tokens`]).
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -17,8 +19,11 @@ use async_trait::async_trait;
 use cua_cluster::link::{GrpcLink, LinkError, LocalLink, NodeLink};
 use cua_daemon::extension::{AttachedExtension, DaemonExtension, ExtensionContext};
 use cua_spaces_cluster::coordinator::LinkFactory;
+use cua_spaces_cluster::coordinator::durable::{
+    DurableConnection, SetupHook, SetupOutcome, SpaceSetup,
+};
 use cua_spaces_cluster::coordinator::store::NodeRow;
-use cua_spaces_cluster::pool::keys::DeviceSigner;
+use cua_spaces_cluster::pool::keys::{DeviceSigner, PoolKeys};
 use cua_spaces_cluster::pool::relay::{PoolAuth, RelayPool};
 use cua_spaces_cluster::pool::seal::PoolSecret;
 use cua_spaces_cluster::pool::{AgentConfig, Host, PoolAgent, PoolMachine};
@@ -66,6 +71,15 @@ impl DaemonExtension for PoolExtension {
         let agent = Arc::new(tokio::sync::OnceCell::new());
         // Durable Spaces are kept by whichever machine coordinates.
         spaces.set_pool(Some(Arc::new(DurableRequests(agent.clone()))));
+        // Hetzner and Modal tokens are sealed with the pool keys, in this
+        // process too (no daemon needed).
+        cua_byoc::sealed::set_pool_sealer(Some(Arc::new(
+            crate::cloud_tokens::PoolKeysSealer::new(pool_keys_fn(DaemonHost::new(
+                spaces.clone(),
+                cx.home.to_path_buf(),
+                None,
+            ))),
+        )));
         Some(Arc::new(Attached {
             spaces: spaces.clone(),
             home: cx.home.to_path_buf(),
@@ -89,20 +103,20 @@ impl AttachedExtension for Attached {
         if std::env::var(ENV_POOL).is_ok_and(|v| v.trim() == "0") {
             return vec![];
         }
-        let host = Arc::new(DaemonHost {
-            spaces: self.spaces.clone(),
-            home: self.home.clone(),
-            runtime_host: runtime.host_spaces(),
-            relays: Mutex::default(),
-            os: Arc::default(),
-            provides: Mutex::default(),
-            signer: Mutex::default(),
-            secret: std::sync::OnceLock::new(),
-        });
+        let host = DaemonHost::new(
+            self.spaces.clone(),
+            self.home.clone(),
+            runtime.host_spaces(),
+        );
         let agent = self.agent.clone();
         let dir = self.home.join("pool");
+        let spaces = self.spaces.clone();
         vec![tokio::spawn(async move {
-            match PoolAgent::start(dir, host, AgentConfig::default()).await {
+            let cfg = AgentConfig {
+                space_setup: Some(SetupHook(Arc::new(HookSetup(spaces)))),
+                ..AgentConfig::default()
+            };
+            match PoolAgent::start(dir, host, cfg).await {
                 Ok(a) => {
                     let _ = agent.set(a);
                 }
@@ -227,7 +241,7 @@ struct DaemonHost {
     home: PathBuf,
     runtime_host: Option<Arc<cua_spaces::host_spaces::HostSpacesServer>>,
     /// The pool per relay URL, once its account is known.
-    relays: Mutex<HashMap<String, RelayPool>>,
+    relays: Mutex<HashMap<String, (Option<String>, RelayPool)>>,
     /// Each machine's OS, once it answered.
     os: Arc<Mutex<HashMap<String, String>>>,
     /// Whether a machine whose setup said otherwise provides Spaces now,
@@ -240,14 +254,75 @@ struct DaemonHost {
 }
 
 /// A relay URL, when its device key was read, and the key.
-type CachedSigner = (String, std::time::Instant, Arc<dyn DeviceSigner>);
+type CachedSigner = (
+    String,
+    std::time::Instant,
+    Option<String>,
+    Arc<dyn DeviceSigner>,
+);
 
 /// The name of this device's pool key in the credential store (the OS
 /// vault for Cua-signed builds, else a 0600 file), next to its device key.
 const POOL_KEY_SECRET: &str = "pool-key";
 
+/// This device's pool keys on the account it is signed in to now (the
+/// same keys the pool agent keeps, made once per relay account).
+fn pool_keys_fn(host: Arc<DaemonHost>) -> crate::cloud_tokens::KeysFn {
+    use cua_byoc::sealed::SealerError;
+    // The keys made last, by the relay pool they are for.
+    type Made = Option<(String, Arc<PoolKeys>)>;
+    let cache: Arc<tokio::sync::Mutex<Made>> = Arc::default();
+    Arc::new(move || {
+        let (host, cache) = (host.clone(), cache.clone());
+        Box::pin(async move {
+            let relay = host.relay().await.ok_or_else(|| {
+                SealerError::Unavailable(
+                    "this device is not signed in to Cua (run `cua auth login`)".into(),
+                )
+            })?;
+            let signer = host.device_signer(&relay).await.ok_or_else(|| {
+                SealerError::Unavailable(
+                    "this device has no device key yet (run `cua auth login`)".into(),
+                )
+            })?;
+            let pool = relay.key();
+            let mut c = cache.lock().await;
+            if let Some((k, keys)) = c.as_ref()
+                && *k == pool
+                && keys.device() == signer.device()
+            {
+                return Ok(keys.clone());
+            }
+            let secret = host.pool_secret().map_err(SealerError::Unavailable)?;
+            let account = pool.rsplit_once('#').map(|(_, a)| a).unwrap_or_default();
+            let keys = PoolKeys::new(account, signer, secret, Arc::new(relay.clone()));
+            *c = Some((pool, keys.clone()));
+            Ok(keys)
+        })
+    })
+}
+
+impl DaemonHost {
+    fn new(
+        spaces: cua_spaces::Spaces,
+        home: PathBuf,
+        runtime_host: Option<Arc<cua_spaces::host_spaces::HostSpacesServer>>,
+    ) -> Arc<Self> {
+        Arc::new(DaemonHost {
+            spaces,
+            home,
+            runtime_host,
+            relays: Mutex::default(),
+            os: Arc::default(),
+            provides: Mutex::default(),
+            signer: Mutex::default(),
+            secret: std::sync::OnceLock::new(),
+        })
+    }
+}
+
 /// The enrolled device key certifies the pool key.
-struct DeviceKeySigner(cua_host::DeviceKey);
+pub(crate) struct DeviceKeySigner(pub(crate) cua_host::DeviceKey);
 
 impl DeviceSigner for DeviceKeySigner {
     fn device(&self) -> String {
@@ -332,7 +407,12 @@ impl DaemonHost {
 impl Host for DaemonHost {
     async fn relay(&self) -> Option<RelayPool> {
         let account = self.spaces.relay_account()?;
-        if let Some(p) = self.relays.lock().expect("relays").get(&account.url) {
+        // Which account this is: the pool is the account's, so another
+        // sign-in needs its own (the relay says its id below).
+        let who = account.account_subject().await;
+        if let Some((started, p)) = self.relays.lock().expect("relays").get(&account.url)
+            && !cua_spaces::relay::account_changed(started, &who)
+        {
             return Some(p.clone());
         }
         let auth: Arc<dyn PoolAuth> = Arc::new(AccountAuth(account.clone()));
@@ -347,7 +427,7 @@ impl Host for DaemonHost {
         self.relays
             .lock()
             .expect("relays")
-            .insert(account.url.clone(), pool.clone());
+            .insert(account.url.clone(), (who, pool.clone()));
         Some(pool)
     }
 
@@ -438,15 +518,18 @@ impl Host for DaemonHost {
         if url != relay.base() {
             return None;
         }
-        if let Some((u, at, s)) = self.signer.lock().expect("signer").as_ref()
+        let who = account.account_subject().await;
+        if let Some((u, at, started, s)) = self.signer.lock().expect("signer").as_ref()
             && *u == url
             && at.elapsed() < std::time::Duration::from_secs(60)
+            && !cua_spaces::relay::account_changed(started, &who)
         {
             return Some(s.clone());
         }
         let key = account.device.as_ref()?.key().ok()??;
         let s: Arc<dyn DeviceSigner> = Arc::new(DeviceKeySigner(key));
-        *self.signer.lock().expect("signer") = Some((url, std::time::Instant::now(), s.clone()));
+        *self.signer.lock().expect("signer") =
+            Some((url, std::time::Instant::now(), who, s.clone()));
         Some(s)
     }
 
@@ -736,6 +819,37 @@ fn elastic(home: &Path) -> Option<(NodeRow, LinkFactory)> {
 /// there), or "" for your own machines.
 fn cloud_of(meta: &std::collections::BTreeMap<String, String>) -> String {
     meta.get(cua_host::META_CLOUD).cloned().unwrap_or_default()
+}
+
+/// A durable Space's `.cua/setup`, run inside its new copy through its
+/// spacesd ([`cua_spaces_ext::hooks::setup_durable_space`]).
+struct HookSetup(cua_spaces::Spaces);
+
+#[async_trait::async_trait]
+impl SpaceSetup for HookSetup {
+    async fn setup(&self, space: &DurableConnection) -> SetupOutcome {
+        match cua_spaces_ext::hooks::setup_durable_space(
+            &self.0,
+            &space.name,
+            &space.id,
+            &space.token,
+        )
+        .await
+        {
+            Ok(Some(r)) => SetupOutcome {
+                ok: r.ok,
+                note: r.note(),
+            },
+            Ok(None) => SetupOutcome {
+                ok: true,
+                note: String::new(),
+            },
+            Err(e) => SetupOutcome {
+                ok: false,
+                note: format!(".cua/setup could not run: {e}"),
+            },
+        }
+    }
 }
 
 #[cfg(test)]

@@ -286,6 +286,7 @@
     "how-to-guides/sandbox/sidecars": "cua-sdk/guides/services#sidecars",
     "how-to-guides/sandbox/troubleshoot-fleet-pools": "cua-sdk/guides/cua-cloud-ended",
     "how-to-guides/sandbox/tunneling": "cua-sdk/guides/services",
+    "spaces/agents": "spaces/guides/agents-from-a-link",
     "how-to-guides/spaces/add-a-space": "spaces/guides/add-a-space",
     "how-to-guides/spaces/install-cua": "spaces/quickstart",
     "how-to-guides/spaces/set-up-unattended-access": "spaces/guides/add-a-computer#add-a-computer-from-a-terminal",
@@ -632,9 +633,18 @@
     "spaces/reference/streams-and-display": "spaces/reference/spaces#streams-and-display",
     "spaces/reference/teleport": "spaces/reference/agents#session-teleport",
     "spaces/reference/volume": "spaces/reference/agents#cua-volume",
+    "spaces/guides/daytona-compat": "spaces/guides/sandbox-sdks#daytona",
+    "spaces/guides/e2b-compat": "spaces/guides/sandbox-sdks#e2b",
+    "spaces/guides/modal-compat": "spaces/guides/sandbox-sdks#modal",
+    "spaces/guides/e2b-python-shim": "spaces/guides/sandbox-sdks#use-cua-e2b-in-place-of-e2b",
     "explanation/the-no-foreground-contract": "cua-driver/concepts/how-cua-driver-works",
     "how-to-guides/sandbox/create-pool-with-typescript": "cua-sdk/guides/cua-cloud-ended",
     "use-cua-with/grok-bot": "cua-driver/guides/connect-your-agent",
-    "agents": "cua-driver/guides/connect-your-agent"
+    "agents": "cua-driver/guides/connect-your-agent",
+    "spaces/guides/pi-durable": "cua-sdk/guides/build-a-durable-agent",
+    "spaces/guides/persistent-agents": "spaces/guides/agent-memory-and-identity",
+    "spaces/guides/durable-agents": "spaces/guides/keep-an-agent-running",
+    "spaces/guides/coding-agents-in-a-space": "spaces/guides/agents-in-a-space",
+    "spaces/guides/use-grok-bot-dots-and-pi-with-spaces": "spaces/guides/connect-your-agent#agents-with-their-own-linux-computer"
   }
 }

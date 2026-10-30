@@ -61,7 +61,7 @@ pub enum DevicesCmd {
         #[arg(long, hide = true)]
         relay: Option<String>,
     },
-    /// Your devices and their state.
+    /// Your signed-in machines and their state.
     #[command(
         visible_alias = "list",
         after_help = "Examples:
@@ -253,6 +253,19 @@ fn state_label(d: &DeviceView) -> &'static str {
 
 fn view_json(d: &DeviceView) -> serde_json::Value {
     serde_json::to_value(d).unwrap_or_default()
+}
+
+/// Revokes device `id` and stops the agents it connected to Spaces.
+pub(crate) async fn revoke_device(auth: &DeviceAuth, id: &str) -> Result<DeviceView, CuaError> {
+    let this = auth.device_id().ok().flatten();
+    let d = auth.revoke(id).await.map_err(crate::host::host_err)?;
+    // The agents that computer connected to Spaces stop at once.
+    if this.as_deref() == Some(id) {
+        crate::member_cmd::forget_this_computer().await;
+    } else {
+        crate::member_cmd::revoke_device_members(id).await;
+    }
+    Ok(d)
 }
 
 /// Runs `cmd` for the device `auth` (`confirm` answers the consent
@@ -508,7 +521,7 @@ pub async fn run_with(
                     "not revoked (pass --yes to revoke without a prompt)".into(),
                 ));
             }
-            let d = auth.revoke(&id).await.map_err(err)?;
+            let d = revoke_device(auth, &id).await?;
             if json {
                 line(out, view_json(&d).to_string());
             } else {

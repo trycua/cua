@@ -132,11 +132,18 @@ jobs:
     if: needs.plan.outputs.attribution_issues != '' && needs.plan.outputs.attribution_issues != '[]'
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write
     steps:
-      # A warning only: the nightly build continues. Stable releases still
-      # fail closed on unresolved attribution.
-      - name: Create or refresh the attribution warning
+      # A warning only: attribution never holds a nightly or a stable release.
+      # Unresolved identities go to the one rolling maintainer issue.
+      - name: Check out trusted reporter
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+
+      - name: Refresh the rolling unresolved-attribution issue
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -145,27 +152,13 @@ jobs:
           ATTRIBUTION_ISSUES: ${{ needs.plan.outputs.attribution_issues }}
         run: |
           set -euo pipefail
-          TITLE="Nightly ${COMPONENT} has unresolved contributor attribution"
-          BODY="$RUNNER_TEMP/nightly-attribution-warning.md"
           {
-            echo "The nightly build for ${COMPONENT} continued, but some contributors cannot be credited in its notes. A stable release of this range will fail until they are resolved."
+            echo "Nightly ${COMPONENT} continued; unresolved contributors are credited by display name."
             echo
-            echo "Source commit: \`$SOURCE_SHA\`"
-            echo
-            echo "Unresolved identities:"
             jq -r '.[] | "- `\(.email)` in commit `\(.sha)` (\(.name))"' <<<"$ATTRIBUTION_ISSUES"
-            echo
-            echo "Resolve each identity by linking the email to GitHub, amending the source commit with a recognized email before merge, or adding a verified \`identityOverrides\` mapping. Do not add wildcard or human-email ignores."
-          } > "$BODY"
-          cat "$BODY" >> "$GITHUB_STEP_SUMMARY"
-          MATCHES=$(gh issue list --repo "${{ github.repository }}" --state open \
-            --search "\"$TITLE\" in:title" --limit 100 --json number,title)
-          NUMBER=$(jq -r --arg title "$TITLE" \
-            'map(select(.title == $title)) | first | .number // empty' <<<"$MATCHES")
-          if [[ -n "$NUMBER" ]]; then
-            gh issue edit "$NUMBER" --repo "${{ github.repository }}" --body-file "$BODY"
-            gh issue comment "$NUMBER" --repo "${{ github.repository }}" \
-              --body "Seen again at \`$SOURCE_SHA\`; the nightly build continued."
-          else
-            gh issue create --repo "${{ github.repository }}" --title "$TITLE" --body-file "$BODY"
-          fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s' "$ATTRIBUTION_ISSUES" > "$RUNNER_TEMP/identities.json"
+          python3 .github/scripts/release_attribution.py report-unresolved \
+            --repository "${{ github.repository }}" \
+            --identities "$RUNNER_TEMP/identities.json" \
+            --source "nightly ${COMPONENT}"

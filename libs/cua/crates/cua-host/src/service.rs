@@ -189,10 +189,8 @@ impl RunnerKind {
             }
         } else if cfg!(windows) {
             RunnerKind::WindowsTask
-        } else if Path::new("/run/systemd/system").is_dir() {
-            RunnerKind::Systemd
         } else {
-            RunnerKind::Process
+            linux_runner(Path::new("/run/systemd/system"))
         }
     }
 
@@ -259,6 +257,10 @@ pub trait ServiceManager: Send + Sync {
     fn uninstall(&self) -> Result<()>;
     /// Current state.
     fn state(&self) -> ServiceState;
+    /// Whether the service this runs could bind `addr` for `transport`
+    /// now (setup asks before it chooses the service's ports). The real
+    /// runners ask the operating system ([`crate::ports::os_port_free`]).
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool;
 }
 
 // ------------------------------------------------------------- generators
@@ -672,6 +674,9 @@ impl ServiceManager for Systemd {
             ),
         }
     }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
+    }
 }
 
 /// launchd LaunchAgent (GUI domain of the current user).
@@ -762,6 +767,9 @@ impl ServiceManager for Launchd {
             kind: "launchd".into(),
             detail: self.plist_path().display().to_string(),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
     }
 }
 
@@ -1081,6 +1089,9 @@ impl ServiceManager for WindowsTask {
             detail: text.trim().to_string(),
         }
     }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
+    }
 }
 
 /// Running processes by executable path (the logon entry has no pidfile:
@@ -1147,8 +1158,34 @@ mod windows_procs {
     }
 }
 
+/// Systemd when `systemd_dir` (`/run/systemd/system`) exists, else the plain
+/// process. A seam for tests: it checks the filesystem.
+fn linux_runner(systemd_dir: &Path) -> RunnerKind {
+    if systemd_dir.is_dir() {
+        RunnerKind::Systemd
+    } else {
+        RunnerKind::Process
+    }
+}
+
+/// The warning `cua host setup` prints when `requested` was `Auto` and the
+/// stored runner `resolved` is the plain process; `None` otherwise.
+pub fn auto_fallback_warning(requested: RunnerKind, resolved: &str) -> Option<&'static str> {
+    (requested == RunnerKind::Auto && resolved == RunnerKind::Process.as_str()).then_some(
+        "warning: systemd is not running here, so `--runner auto` set the host up as a plain process.\n\
+It will not come back after a reboot or a crash. To fix it, either:\n\
+\x20 - turn on systemd (on WSL: systemd=true under [boot] in /etc/wsl.conf, then wsl --shutdown) and run `cua host setup --runner systemd` again with the same options, or\n\
+\x20 - run `cua host start` after each boot (from your init system or container start script).\n\
+Pass `--runner process` to keep the plain process without this warning.",
+    )
+}
+
+/// The note `cua host status` prints under a `process` runner.
+pub const PROCESS_RUNNER_NOTE: &str = "  note: the process runner does not start the host again after a reboot or a crash; run `cua host start` after each boot.";
+
 /// A detached process with a pidfile: the fallback where no init system
-/// runs (containers). Not restarted on reboot or crash.
+/// runs (containers). Not restarted on reboot or crash; `cua host setup`
+/// warns about it ([`auto_fallback_warning`]).
 pub struct ProcessRunner {
     /// Directory for `service.json` and `driver.pid`.
     pub dir: PathBuf,
@@ -1302,6 +1339,9 @@ impl ServiceManager for ProcessRunner {
             kind: "process".into(),
             detail: pid.map(|p| format!("pid {p}")).unwrap_or_default(),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
     }
 }
 
@@ -1615,6 +1655,9 @@ impl ServiceManager for AppHelper {
             detail: format!("{} in {}", self.channel.app_name(), self.app.display()),
         }
     }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
+    }
 }
 
 /// A registration that did not leave the helper allowed to run, in words.
@@ -1661,6 +1704,9 @@ impl ServiceManager for MissingAppHelper {
             kind: RunnerKind::AppHelper.as_str().into(),
             detail: format!("{}: the Cua Spaces app is not installed", app_helper_name()),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
     }
 }
 
@@ -1748,6 +1794,13 @@ pub struct FakeServiceManager {
     /// The last installed spec.
     pub spec: Mutex<Option<ServiceSpec>>,
     running: Mutex<bool>,
+    /// `start` fails while this is set.
+    pub fail_start: Mutex<bool>,
+    /// Ports another program holds (any address, TCP and UDP alike): never
+    /// free. Every other port is free, so no test binds a real one.
+    pub held_by_others: Mutex<Vec<u16>>,
+    /// Ports this service holds while it runs (free once it is stopped).
+    pub held_while_running: Mutex<Vec<u16>>,
 }
 
 impl ServiceManager for FakeServiceManager {
@@ -1761,6 +1814,9 @@ impl ServiceManager for FakeServiceManager {
     }
     fn start(&self) -> Result<()> {
         self.calls.lock().unwrap().push("start".into());
+        if *self.fail_start.lock().unwrap() {
+            return Err(Error::Service("the service would not start".into()));
+        }
         *self.running.lock().unwrap() = true;
         Ok(())
     }
@@ -1782,6 +1838,12 @@ impl ServiceManager for FakeServiceManager {
             kind: "fake".into(),
             detail: String::new(),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, _: crate::ports::Transport) -> bool {
+        let port = addr.port();
+        !self.held_by_others.lock().unwrap().contains(&port)
+            && !(*self.running.lock().unwrap()
+                && self.held_while_running.lock().unwrap().contains(&port))
     }
 }
 
@@ -1915,6 +1977,32 @@ mod tests {
         assert!(!e.contains("\"launchctl\""), "{e}");
     }
     use super::*;
+
+    #[test]
+    fn auto_detection_falls_back_to_a_process_without_systemd() {
+        let dir = tempfile::tempdir().unwrap();
+        let probe = dir.path().join("system");
+        assert_eq!(linux_runner(&probe), RunnerKind::Process);
+        std::fs::create_dir(&probe).unwrap();
+        assert_eq!(linux_runner(&probe), RunnerKind::Systemd);
+    }
+
+    #[test]
+    fn only_auto_resolved_to_a_process_warns() {
+        let text = auto_fallback_warning(RunnerKind::Auto, "process").expect("warns");
+        assert!(text.contains("will not come back after a reboot"), "{text}");
+        assert!(text.contains("host setup --runner systemd"), "{text}");
+        assert!(text.contains("host start"), "{text}");
+        for (req, resolved) in [
+            (RunnerKind::Process, "process"),
+            (RunnerKind::Auto, "systemd"),
+            (RunnerKind::Auto, "launchd"),
+            (RunnerKind::Auto, "app-helper"),
+            (RunnerKind::Auto, "windows-task"),
+        ] {
+            assert_eq!(auto_fallback_warning(req, resolved), None, "{resolved}");
+        }
+    }
 
     fn spec() -> ServiceSpec {
         ServiceSpec {

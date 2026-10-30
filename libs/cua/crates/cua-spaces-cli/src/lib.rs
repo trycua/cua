@@ -28,6 +28,7 @@ use cua_cli::teleport::TeleportCmd;
 use cua_cli::teleport_session::Broker;
 use cua_sdk::{Cua, CuaError, MediaEvent, MediaOpenOptions, MediaSession, SpacesdClient};
 
+pub mod cloud_tokens;
 pub mod drive_config;
 pub mod keyvault_cmd;
 pub mod pool_ext;

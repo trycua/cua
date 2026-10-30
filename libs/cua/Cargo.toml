@@ -16,6 +16,9 @@ members = [
     "crates/cua-image",
     # Disk accounting, cache budget and garbage collection (`cua cache`).
     "crates/cua-disk",
+    # The repo cache: public git repositories mirrored by the daemon so a
+    # repeat clone in a Space is fast (a read-only mount, a git remote helper).
+    "crates/cua-repo-cache",
     # Share a link to anything you run (`cua share`): records, the read-only
     # file server and the access-checked gateway.
     "crates/cua-share",
@@ -48,6 +51,9 @@ members = [
     "crates/cua-spaces-cli",
     # Hotspot (reverse-SOCKS) tunnel protocol shared with cua-spacesd.
     "crates/cua-hotspot",
+    # The provider registry (Settings, Connections): one TOML file per provider,
+    # the generated tables and the per-app delivery rules.
+    "crates/cua-connections",
     # Sealed delivery to a pinned machine key (S1), shared with cua-spacesd
     # (the guest that decrypts).
     "crates/cua-machine-seal",
@@ -71,6 +77,8 @@ members = [
     "crates/cua-logging",
     # Anonymous product telemetry.
     "crates/cua-telemetry",
+    # Opt-in crash reporting (Sentry panic handler, consent and scrubbing).
+    "crates/cua-crash",
     # A failed create's cause as a fixed telemetry word (no dependencies).
     "crates/cua-create-failure",
     "crates/cua-viewer",
@@ -183,6 +191,7 @@ cua-image = { path = "crates/cua-image", version = "0.9.0" } # x-release-please-
 cua-microvm-init = { path = "crates/cua-microvm-init", version = "0.9.0" } # x-release-please-version
 cua-vmm = { path = "crates/cua-vmm", version = "0.9.0", default-features = false } # x-release-please-version
 cua-disk = { path = "crates/cua-disk", version = "0.9.0" } # x-release-please-version
+cua-repo-cache = { path = "crates/cua-repo-cache", version = "0.9.0" } # x-release-please-version
 cua-sandbox-core = { path = "crates/cua-sandbox-core", version = "0.9.0" } # x-release-please-version
 cua-contrib = { path = "crates/cua-contrib", version = "0.9.0", default-features = false } # x-release-please-version
 cua-host = { path = "crates/cua-host", version = "0.9.0" } # x-release-please-version
@@ -204,10 +213,12 @@ cua-spaces-app-core = { path = "crates/cua-spaces-app-core", version = "0.9.0" }
 cua-spaces-ext = { path = "crates/cua-spaces-ext", version = "0.9.0" } # x-release-please-version
 cua-byoc = { path = "crates/cua-byoc", version = "0.9.0", default-features = false } # x-release-please-version
 cua-telemetry = { path = "crates/cua-telemetry", version = "0.9.0" } # x-release-please-version
+cua-crash = { path = "crates/cua-crash", version = "0.9.0" } # x-release-please-version
 cua-create-failure = { path = "crates/cua-create-failure", version = "0.9.0" } # x-release-please-version
 cua-spaces = { path = "crates/cua-spaces", version = "0.9.0" } # x-release-please-version
 cua-spaces-contract = { path = "crates/cua-spaces-contract", version = "0.9.0" } # x-release-please-version
 cua-hotspot = { path = "crates/cua-hotspot", version = "0.9.0" } # x-release-please-version
+cua-connections = { path = "crates/cua-connections", version = "0.9.0" } # x-release-please-version
 cua-share = { path = "crates/cua-share", version = "0.9.0" } # x-release-please-version
 cua-compat = { path = "crates/cua-compat", version = "0.9.0" } # x-release-please-version
 cua-media-protocol = { path = "crates/cua-media-protocol" }
@@ -221,6 +232,19 @@ cua-media-client = { path = "crates/cua-media-client", default-features = false 
 # (what Python, Node and Swift load) is kept.
 [profile.release]
 strip = "symbols"
+
+# Dev and test builds: line tables only for the workspace (backtraces keep
+# file:line; full variable info is what made target dirs tens of GB), and
+# no debug info for dependencies. macOS already keeps debug info unpacked
+# (split-debuginfo = "unpacked" is cargo's default there), so linking never
+# copies it. For a debugger session set CARGO_PROFILE_DEV_DEBUG=full (the
+# workspace crates; dependencies stay without). The release profile is
+# unchanged.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
 
 # SHA-256 over multi-GiB transfers is unusably slow unoptimised; keep test
 # builds fast without making every dependency release-mode.

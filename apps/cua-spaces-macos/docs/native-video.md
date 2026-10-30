@@ -29,17 +29,20 @@ The page keeps one reporter, with one set of observers and one animation frame. 
 
 ```
 { type: "surfaces", update: [{ surfaceId, spaceId, tier: "tile" | "full", interactive,
-                               rect, clip, radius, occluded, visible }], remove: [surfaceId] }
+                               rect, clip, radius, occluded, holes, visible }], remove: [surfaceId] }
 { type: "focus", surfaceId | null }
 ```
 
 - **`rect`** is the video area inside the slot's border, in CSS px from the web view's top left.
 - **`clip`** is the part of `rect` that the viewport and every clipping ancestor leave visible. For example, a tile scrolled halfway under the page's top edge is cut there.
-- **`occluded`** is true when page UI covers the slot. Two checks feed it:
-  - an element matching `[role=dialog|alertdialog|menu|listbox|tooltip]` or `[data-video-occluder]` (toasts, tooltips) overlaps the slot;
+- **`occluded`** is true when page UI covers a Space tile, and the host hides the video. Two checks feed it:
+  - an element matching `[role=dialog|alertdialog]` overlaps the slot (a dialog-role popup that marks itself a hole, such as the profile card, doesn't count);
   - something else is on top at one of 9 sample points (a dialog's backdrop, for example).
 
-  The sample points sit inside the rounded corners.
+  The sample points sit inside the rounded corners. Transparent click catchers (`[data-base-ui-inert]`, which Base UI puts under an open menu or popover) paint nothing and are looked through, and floating UI that gets a hole doesn't count.
+
+  **The Space viewer is not occluded by floating page UI** (CUA-2641): menus, popovers, the profile card, tooltips and toasts are holes over it. **A modal dialog hides it.** Every modal (our Dialog and AlertDialog, the ones that draw the dimmed layer `[data-window-dim]`: Connect, Share, Teleport, Keyvault approvals, the command palette) reports every slot, the viewer too, `occluded: true`, `interactive: false` and no holes, and the page hands the keyboard back (`{ type: "focus", surfaceId: null }`, once per dialog). The native video layer sits above the web view, so it can neither sit under the page's dimmed layer nor under the dialog: left drawn it showed over the dialog's edge and kept the pointer. Hidden, it draws nothing there and catches no pointer or keys, so the local cursor stays visible everywhere over the dialog. The stream keeps running. When the dialog starts to close (`data-ending-style`) the next measurement reports the viewer drawn and interactive again, with no state left over. In the Electron shell, where the page draws the video itself, the canvas takes no pointer events and gives up the keyboard while a modal is open, and takes both again when it closes.
+- **`holes`** are the rects of floating UI over the slot, cut to `clip`: `[role=menu|listbox|tooltip]`, `[data-video-occluder]` (toasts, popovers) and `[data-video-hole]` (the viewer's own key bar, inside the slot). The host masks the video out there, so the menu shows and the rest of the desktop keeps playing, and clicks there go to the page. Hiding the whole video for a menu turned it black while the menu was open.
 - **`visible`** is false when the page is hidden or the slot is clipped away entirely.
 
 **When it measures.**
@@ -77,9 +80,9 @@ CSS px become points through `pageZoom × magnification`. A web view that isn't 
 
 **Visibility.** A surface shows only when the page says it can be seen and it has a frame.
 
-**Pausing.** While the window is fully hidden (minimized, covered, or on another Space), every session stops. They open again when the window shows.
+**Pausing.** While the window is fully hidden (minimized, covered, or on another Space), every session stops but the one the desktop's picture-in-picture panel shows. They open again when the window shows.
 
-**Lifecycle.** A page load (`didCommit`), the web content process ending, and the window closing all tear every surface and session down.
+**Lifecycle.** A page load (`didCommit`), the web content process ending, and the window closing all tear every surface and session down. A viewer slot the page removes keeps its session for `slotGrace` (1.5 s): the Space page moves its viewer between call view's stage and thread view's mini-player by removing one slot and adding another, and the new slot binds to the same live session, with no reconnect.
 
 ### Input and keyboard focus
 
@@ -88,7 +91,7 @@ CSS px become points through `pageZoom × magnification`. A web view that isn't 
 - **Scroll:** scrolls go to the page until the viewer has the keyboard. After that they go to the Space.
 - **Getting the keyboard:** a click on the viewer gives it the keyboard (it becomes the first responder).
 - **While it has the keyboard:**
-  - the line under the viewer says "Keys go to this Space. Press and release ⌃⌥ to stop." with a **Stop controlling** button;
+  - a small bar over the viewer's bottom edge (a hole in the video) says "Keys go to this Space. Press and release ⌃⌥ to stop." with a **Stop controlling** button;
   - every ⌘ chord (⌘Esc too) goes to the Space, because a local key monitor routes it to the view before the web view takes ⌘C and ⌘V (the view's `KeyCapture`, as in the Space window);
   - on a Linux or Windows Space, ⌘ goes as Control: ⌘C arrives as Ctrl+C and ⌘⇧C as Ctrl+Shift+C. Sent as Command, the Space would get Super, and Super+C types "c". A macOS Space keeps ⌘. The Space window does the same, since both send through `LiveStreamSession`, and so does the HTML5 viewer (`metaAsControl`);
   - plain Esc goes to the Space too. Remote apps need it.
@@ -99,7 +102,7 @@ CSS px become points through `pageZoom × magnification`. A web view that isn't 
   - the viewer being covered by page UI or leaving the screen.
 
   Keys then go back to the page, and the page hears it.
-- **Without the keyboard:** "Click the desktop to control it." Open in window is always next to it.
+- **Without the keyboard:** nothing under the viewer. The Space header's picture-in-picture button pops the desktop out.
 - **The pointer:** the system pointer is never hidden or replaced. Like the native window, the viewer also draws its small local cursor dot when the Space has no presence cursor.
 - **Input lease:** there is no input-lease UI in the native viewer yet, so there is none here either.
 
@@ -170,20 +173,21 @@ Scroll tracking was checked by eye only: tiles follow a scroll and clip under th
 A live E2E should check:
 
 1. **Tiles.** Turn the experiment on and open New UI with 2 or more running local Spaces. Tiles go live within a few seconds. Clicking a tile opens the Space, and scrolling the grid moves and clips the video correctly.
-2. **The viewer.** Open a Space. Its viewer goes live and "Click the desktop to control it." shows.
+2. **The viewer.** Open a Space. Its viewer goes live, with nothing under it.
    - Click inside: the click lands in the Space at the right place.
    - Type: keys arrive, including ⌘C and ⌘V inside the Space.
-   - Control+Option pressed and released alone: the line goes back to "Click the desktop…".
+   - Control+Option pressed and released alone: the key bar over the viewer goes.
    - Scroll: the page scrolls before you click, and the Space scrolls after.
-3. **Covering.** Open the command palette (⌘K), the Stop dialog and a toast over the viewer. The video hides while each is open, keys go to the dialog, and the video comes back after.
-4. **Failure.** Stop a Space while its viewer is open. You should see the stopped state, not a frozen frame. Then delete a Space with an open tile.
-5. **Hidden window.** Minimize the window, then restore it. The streams pause, then come back.
-6. **The pointer.** The system pointer stays visible throughout.
-7. **Cost.** `top` on Cua Spaces with 8 to 10 live tiles stays near the harness numbers.
+3. **Covering.** Open the command palette (⌘K) and the Stop dialog over the viewer: the video stays live with only the dialog's own rectangle cut out, keys go to the dialog, a click on the dimmed area closes it instead of reaching the Space, and the viewer takes the keyboard again after. On the Spaces grid a dialog still hides the tiles under it. Open the header's "⋯" menu, a name's profile card and Share, and show a toast: the video stays live, with only the part under each cut out.
+4. **Picture in picture.** Pop the desktop out from the header, then close the panel (its own button or the header's): the inline desktop is live again at once, with no "Connecting…" and no error.
+5. **Failure.** Stop a Space while its viewer is open. You should see the stopped state, not a frozen frame. Then delete a Space with an open tile.
+6. **Hidden window.** Minimize the window, then restore it. The streams pause, then come back. A desktop popped out to picture in picture keeps playing in its panel.
+7. **The pointer.** The system pointer stays visible throughout.
+8. **Cost.** `top` on Cua Spaces with 8 to 10 live tiles stays near the harness numbers.
 
 ## Not done yet
 
-- The viewer has no window switcher and no picture-in-picture of its own. The Stream section's PiP buttons still open native panels.
+- The viewer has no window switcher. Picture in picture opens native panels: the desktop's panel shows the viewer's own `LiveStreamSession` (`WebUIVideoSurfaces.holdViewer`), held while it is open and for `handBackGrace` after, so popping out and back in never closes or reopens the stream and the inline desktop is live again at once. The host tells the page when a panel closes by its own button (`stream.pipChanged`). A window's panel opens a session of its own.
 - Presence cursors of other participants aren't drawn in the embedded viewer. The native window draws them in SwiftUI (`PresenceOverlay`).
 - A tile and the viewer of the same Space open two sessions. That only happens with two windows open.
 - Windows and Linux (Electron, WebCodecs): see `apps/cua-spaces-desktop/README.md`, "Live video".

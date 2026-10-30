@@ -385,7 +385,7 @@ impl OrgAccess {
             ])
             .send()
             .await
-            .map_err(|e| format!("service token: {e}"))?;
+            .map_err(|e| format!("service token: {}", error_chain(&e.without_url())))?;
         if !reply.status().is_success() {
             return Err(format!("service token: HTTP {}", reply.status()));
         }
@@ -421,7 +421,7 @@ impl OrgAccess {
         self.counters.api_calls.fetch_add(1, Ordering::Relaxed);
         let r = req.send().await.map_err(|e| {
             self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
-            format!("Spaces API: {e}")
+            format!("Spaces API: {}", error_chain(&e.without_url()))
         })?;
         if r.status().is_server_error() || r.status() == reqwest::StatusCode::UNAUTHORIZED {
             self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
@@ -457,7 +457,7 @@ impl OrgAccess {
         self.counters.api_calls.fetch_add(1, Ordering::Relaxed);
         let r = req.send().await.map_err(|e| {
             self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
-            format!("Spaces API: {e}")
+            format!("Spaces API: {}", e.without_url())
         })?;
         if !r.status().is_success() {
             self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
@@ -488,7 +488,7 @@ impl OrgAccess {
         self.counters.api_calls.fetch_add(1, Ordering::Relaxed);
         let r = req.send().await.map_err(|e| {
             self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
-            format!("Spaces API: {e}")
+            format!("Spaces API: {}", e.without_url())
         })?;
         let status = r.status();
         if status.is_server_error() || status == reqwest::StatusCode::UNAUTHORIZED {
@@ -498,7 +498,7 @@ impl OrgAccess {
         let value = r
             .json::<serde_json::Value>()
             .await
-            .map_err(|e| format!("Spaces API reply: {e}"))?;
+            .map_err(|e| format!("Spaces API reply: {}", e.without_url()))?;
         Ok((status, value))
     }
 
@@ -727,7 +727,7 @@ impl OrgAccess {
         } else if r.status().is_success() {
             r.json::<AccessAnswer>()
                 .await
-                .map_err(|e| format!("Spaces API access answer: {e}"))?
+                .map_err(|e| format!("Spaces API access answer: {}", e.without_url()))?
         } else {
             // An unexpected 4xx is not an outage and not a yes: fail closed.
             self.entries.lock().expect("org entries").remove(&key);
@@ -799,7 +799,7 @@ impl OrgAccess {
                         message: match device {
                             None => "team machines need an enrolled device: run `cua devices enroll` (or sign in again)".into(),
                             Some(d) => format!(
-                                "this device ({d}) is waiting for a team admin's approval before it can open {}'s machines: ask an owner or admin to approve it at app.cua.ai/team/devices",
+                                "this device ({d}) is waiting for a team admin's approval before it can open {}'s computers. An owner or admin can approve it under Computers at app.cua.ai/machines",
                                 org.alias
                             ),
                         },
@@ -920,7 +920,7 @@ impl OrgAccess {
             let v: serde_json::Value = r
                 .json()
                 .await
-                .map_err(|e| format!("Spaces API machine list: {e}"))?;
+                .map_err(|e| format!("Spaces API machine list: {}", e.without_url()))?;
             machine_ids(&v)
         } else {
             return Err(format!("Spaces API: HTTP {status}"));
@@ -1044,6 +1044,19 @@ fn machine_ids(v: &serde_json::Value) -> Vec<String> {
             .collect()
     })
     .unwrap_or_default()
+}
+
+/// An error with its causes ("error sending request: operation timed out"),
+/// so the log says whether a lookup timed out, was refused or was reset.
+fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut src = e.source();
+    while let Some(s) = src {
+        out.push_str(": ");
+        out.push_str(&s.to_string());
+        src = s.source();
+    }
+    out
 }
 
 #[cfg(test)]

@@ -15,17 +15,25 @@
 //! - Host-safe: everything resolves from a [`HostEnv`] (HOME, XDG and agent
 //!   overrides, PATH, app folders), so tests run against a temporary home.
 
+pub mod claude_login;
 pub mod config;
+pub mod connection;
 mod edit;
 mod fsutil;
 pub mod registry;
+pub mod signin;
 pub mod skills;
 mod state;
 
+pub use connection::{
+    ConnectionReport, ConnectionRow, ConnectionState, ImportState, ImportedSignIn, McpState,
+    Problem, ProblemAction, SignInCopy, SignInVault, SignedInState, StatusOptions,
+};
 pub use cua_home::channel::CuaChannel;
 pub use edit::Format;
 pub use fsutil::hash_dir;
 pub use registry::{AGENTS, AgentSpec};
+pub use signin::CopyRefusal;
 pub use skills::Skill;
 
 /// Reads entry `name` under `key_path` of config `text` (tooling, tests).
@@ -149,6 +157,8 @@ const VARS: &[&str] = &[
     "LOCALAPPDATA",
     "CUA_HOME",
     "CLAUDE_CONFIG_DIR",
+    "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    "USER",
     "CODEX_HOME",
     "GEMINI_CLI_HOME",
     "CLINE_DATA_DIR",
@@ -999,6 +1009,8 @@ impl AgentSetup {
             if let Err(e) = self.configure_one(&mut state, a, m, &file, server, &mut o) {
                 o.change = Change::Failed;
                 o.detail = e.to_string();
+            } else if server.name == self.env.channel.mcp_server_name() {
+                self.record_connected(&mut state, a.id);
             }
             out.push(o);
             // The old entry is the released app's to clean up. Local never
@@ -1009,6 +1021,7 @@ impl AgentSetup {
             }
         }
         state.save(&self.state_path)?;
+        connection::invalidate();
         Ok(out)
     }
 
@@ -1197,6 +1210,7 @@ impl AgentSetup {
         let mut out = Vec::new();
         if parts.mcp {
             for a in &specs {
+                state.connections.remove(a.id);
                 let Some(m) = &a.mcp else { continue };
                 let file = self.mcp_file(m);
                 // The channel's server (`cua`, or `cua-local`) always gets a

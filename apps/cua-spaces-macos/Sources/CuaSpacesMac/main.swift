@@ -24,6 +24,20 @@ if CommandLine.arguments.dropFirst().first == "--check-launch-only" {
 // build changes nothing here.
 TargetEnvironment.pinChannel()
 
+let launchArgs = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
+
+// Crash reporting, as early as the switch can be read (it lives in the
+// channel's home, settled above) and before the Rust core or the daemon start:
+// it sets the CUA_CRASH_* variables they inherit. Off without a DSN or consent.
+// The host service sets only those variables for its cua-spacesd: the Swift
+// SDK would check the windowless helper in with LaunchServices as the app,
+// and opening Cua Spaces would then fail while the service runs.
+if HelperService.isServiceCommand(launchArgs) {
+    CrashReporting.prepareService()
+} else {
+    CrashReporting.start()
+}
+
 // The host service, run by this same executable so every permission is the
 // app's ("Cua Spaces"; ServiceLauncher.swift), before anything else:
 //  * `--service-helper run`: the service itself (the login item launchd
@@ -36,7 +50,6 @@ TargetEnvironment.pinChannel()
 //    SMAppService, which only this bundle's own code may register. cua-host's
 //    app-helper runner runs it (from the app's SDK and from the `cua` CLI);
 //    prints `{"status": ...}` (and `"error"`).
-let launchArgs = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
 if launchArgs.first == "--service-helper" {
     if launchArgs.dropFirst().first == "run" { ServiceLauncher.serve() }
     exit(HelperService.run(Array(launchArgs.dropFirst())))
@@ -44,10 +57,20 @@ if launchArgs.first == "--service-helper" {
 if launchArgs.first == "check-permissions" {
     ServiceLauncher.passthrough(launchArgs)
 }
+// A new process's Screen Recording and Accessibility answers, for
+// PermissionGuide to close its panel once access is granted.
+if launchArgs.first == "preflight-permissions" {
+    print(PermissionGuide.preflightReport())
+    exit(0)
+}
 
 // `CUA_ENV=staging`: this process and the daemon use the staging home (a
 // Local build already settled its three variables above).
 TargetEnvironment.pin()
+// Where the browser's sign-in page says to go back to (the SDK reads it). Set
+// here, once, before any other thread runs: changing the environment later
+// races the threads that read it (CUA-2705).
+setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
 
 // Teleport, the Cua Volume, persistent agents and the Keyvault for every
 // runtime the SDK builds in this process (the Cua Spaces extensions).

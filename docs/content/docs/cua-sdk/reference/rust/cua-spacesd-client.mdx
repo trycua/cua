@@ -1136,6 +1136,7 @@ impl SpacesdClient {
   fn volume(&self) -> VolumeServiceClient<GrpcChannel>;
   fn host_spaces(&self) -> HostSpacesServiceClient<GrpcChannel>;
   fn host_snapshots(&self) -> HostSnapshotsServiceClient<GrpcChannel>;
+  fn host_thread(&self) -> HostThreadServiceClient<GrpcChannel>;
   async fn capabilities(&self) -> Result<GetCapabilitiesResponse>;
   async fn refresh_capabilities(&self) -> Result<GetCapabilitiesResponse>;
   async fn machine_seal_public_key(&self) -> Result<Option<[u8; 32]>>;

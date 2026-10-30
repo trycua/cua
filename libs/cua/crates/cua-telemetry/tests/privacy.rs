@@ -194,11 +194,14 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::onboarding_step(s, Outcome::Ok),
         events::onboarding_page(s, "shown", "none"),
         events::onboarding_page("welcome", s, "none"),
+        events::first_run_step(s, "step_viewed", "none"),
+        events::first_run_step("welcome", s, "none"),
         events::space_wizard(s),
         events::persistent_agent(s, Some(s), Outcome::Ok, Some(s)),
         events::share(s, s, Outcome::Ok, "none", "none"),
         events::app_update(s, s, s),
         events::device_enroll(s, Outcome::Ok),
+        events::cloud_link(s, "aws", "oidc", "connected", Outcome::Ok),
         events::experiment(s, "sharing"),
         events::experiment("experiment_on", s),
     ] {
@@ -214,6 +217,14 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::sign_in_failed(s));
     // Known names with caller text wherever else a builder takes it.
     v.push(events::onboarding_page("volume", "completed", s).unwrap());
+    for action in [
+        "step_viewed",
+        "step_completed",
+        "step_failed",
+        "step_skipped",
+    ] {
+        v.push(events::first_run_step("create_space", action, s).unwrap());
+    }
     v.push(events::space_wizard("cancelled").unwrap());
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
     v.push(events::share("share", s, Outcome::Ok, s, s).unwrap());
@@ -221,12 +232,105 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::app_update("installed", s, s).unwrap());
     v.push(events::app_update("downloaded", s, s).unwrap());
     v.push(events::device_enroll("rekey", Outcome::Ok).unwrap());
+    // An account id, a region or a token in any other slot becomes a word.
+    v.push(events::cloud_link("connect", s, s, s, Outcome::Error).unwrap());
+    v.push(
+        events::cloud_link(
+            "approve",
+            "aws",
+            "oidc",
+            "waiting-for-approval",
+            Outcome::Ok,
+        )
+        .unwrap(),
+    );
     v.push(events::experiment("experiment_off", "your_cloud").unwrap());
     v.push(events::installer_step("installer_started", s, s, s, &[s]).unwrap());
     v.push(events::installer_step("installer_failed", s, s, "ps1", &[s, "cli"]).unwrap());
     v.push(
         events::installer_step("installer_failed", "cli", "cancelled", "sh", &["host"]).unwrap(),
     );
+    v.push(events::plan_limit_shown(s, s, s));
+    v.push(events::plan_limit_shown("app_create", "sessions", "team"));
+    v.push(events::upgrade_link_opened(s, s, s));
+    v.push(events::upgrade_link_opened("cli_limit", "", "pro"));
+    v.push(
+        events::agent_join_phase(
+            "session_ready",
+            "claude-code",
+            "linux_container",
+            true,
+            4200,
+            "0123456789abcdef",
+            "none",
+            "none",
+        )
+        .unwrap(),
+    );
+    v.push(
+        events::agent_join_phase(
+            "install_done",
+            s,
+            s,
+            false,
+            99_999_999,
+            "0123456789abcdef",
+            s,
+            s,
+        )
+        .unwrap(),
+    );
+    v.push(
+        events::agent_join_phase(
+            "failed",
+            "hermes",
+            "macos_vm",
+            true,
+            10,
+            "0123456789abcdef",
+            "none",
+            "auth",
+        )
+        .unwrap(),
+    );
+    assert!(
+        events::agent_join_phase(
+            s,
+            "hermes",
+            "macos_vm",
+            true,
+            10,
+            "0123456789abcdef",
+            "none",
+            "none"
+        )
+        .is_none()
+    );
+    v.push(events::agent_signin_imported("codex", Some("device-code")));
+    v.push(events::agent_signin_imported(
+        "claude-code",
+        Some("claude-login-keychain"),
+    ));
+    v.push(events::agent_signin_imported(s, Some(s)));
+    v.push(events::agent_signin_refused("claude-code", "not_signed_in"));
+    v.push(events::agent_signin_refused(s, s));
+    v.push(events::repo_cache("hit", "local", 80_000_000, 4, "none").unwrap());
+    v.push(events::repo_cache("fallback", "network", 0, 0, "verify_failed").unwrap());
+    v.push(
+        events::repo_cache(
+            "miss",
+            "https://github.com/o/r",
+            1 << 60,
+            1 << 60,
+            "/Users/me/x",
+        )
+        .unwrap(),
+    );
+    assert!(events::repo_cache("https://github.com/o/r", "local", 0, 0, "none").is_none());
+    v.push(events::connection_changed(
+        "deepseek", "api_key", "connect", "ok",
+    ));
+    v.push(events::connection_changed(s, s, s, s));
     v.push(events::agent_used_space("space_bash").unwrap());
     v.push(events::agent_used_space("computer_click").unwrap());
     assert!(events::installer_step(s, "cli", "network", "sh", &[]).is_none());
@@ -1258,6 +1362,32 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     assert_eq!(Outcome::from_word("/Users/alice"), Outcome::Error);
 }
 
+/// The first-run funnel: the step fixes its index and version, a failure
+/// names a fixed reason, and caller text never gets through.
+#[test]
+fn first_run_funnel_events_carry_step_index_version_and_a_fixed_reason() {
+    let e = events::first_run_step("sign_in", "step_viewed", "none").unwrap();
+    assert_eq!(e.name, "cua_onboarding_step_viewed");
+    assert_eq!(e.props["step"], "sign_in");
+    assert_eq!(e.props["step_index"], 4);
+    assert_eq!(e.props["onboarding_version"], 2);
+    assert!(!e.props.contains_key("reason"));
+    let f = events::first_run_step("terminal", "step_failed", "/Users/alice").unwrap();
+    assert_eq!(f.name, "cua_onboarding_step_failed");
+    assert_eq!(f.props["step_index"], 3);
+    assert_eq!(f.props["reason"], "other");
+    let f = events::first_run_step("terminal", "step_failed", "install_failed").unwrap();
+    assert_eq!(f.props["reason"], "install_failed");
+    assert_eq!(
+        events::first_run_step("welcome", "step_skipped", "none")
+            .unwrap()
+            .name,
+        "cua_onboarding_skipped"
+    );
+    // An old-flow action is not a funnel event.
+    assert!(events::first_run_step("welcome", "shown", "none").is_none());
+}
+
 /// Retention: one `cua_app_active` per install per UTC day, none while
 /// off, and a new one the next day.
 #[test]
@@ -1809,4 +1939,85 @@ fn sdk_test_runs_are_marked_synthetic() {
     assert!(!synthetic("sdk_python", &[]));
     assert!(!synthetic("cli", &[("PYTEST_CURRENT_TEST", "t.py::x")]));
     assert!(synthetic("cli", &[("CUA_TELEMETRY_SYNTHETIC", "1")]));
+}
+
+#[test]
+fn plan_limit_events_keep_their_vocabulary() {
+    let get = |e: &Event, k: &str| e.props[k].as_str().unwrap().to_string();
+    let e = events::plan_limit_shown("app_meter", "hours", "team");
+    assert_eq!(e.name, "cua_plan_limit_shown");
+    assert_eq!(
+        (get(&e, "surface"), get(&e, "kind"), get(&e, "plan")),
+        ("app_meter".into(), "hours".into(), "teams".into())
+    );
+    // Caller text never passes: surfaces, kinds and plans coarsen.
+    let e = events::plan_limit_shown("/Users/alice", "alice@example.com", "Enterprise");
+    assert_eq!(
+        (get(&e, "surface"), get(&e, "kind"), get(&e, "plan")),
+        ("other".into(), "other".into(), "unknown".into())
+    );
+    // A limit always names a cap; `none` is only for links not from a limit.
+    assert_eq!(
+        get(
+            &events::plan_limit_shown("cli_limit", "none", "free"),
+            "kind"
+        ),
+        "other"
+    );
+    let e = events::upgrade_link_opened("app_share", "", "free");
+    assert_eq!(e.name, "cua_upgrade_link_opened");
+    assert_eq!(get(&e, "kind"), "none");
+    assert_eq!(
+        get(
+            &events::upgrade_link_opened("cli_limit", "sessions", ""),
+            "plan"
+        ),
+        "unknown"
+    );
+    // Every surface is also a valid `?from=` for the account app.
+    for s in schema::PLAN_SURFACES {
+        assert!(
+            (1..=32).contains(&s.len())
+                && s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+            "{s}"
+        );
+    }
+}
+
+/// The fixed provider words are the registry's ids, and a connection event carries nothing else.
+#[test]
+fn connection_events_use_the_registrys_words_only() {
+    let mut registry: Vec<&str> = cua_connections::PROVIDERS.iter().map(|p| p.id).collect();
+    registry.push("other");
+    registry.sort_unstable();
+    let mut ours: Vec<&str> = schema::CONNECTION_PROVIDERS.to_vec();
+    ours.sort_unstable();
+    assert_eq!(
+        ours, registry,
+        "regenerate schema::CONNECTION_PROVIDERS from providers/*.toml"
+    );
+    let mut kinds: Vec<&str> = cua_connections::MethodKind::ALL
+        .iter()
+        .map(|k| k.word())
+        .collect();
+    kinds.push("other");
+    assert_eq!(schema::CONNECTION_METHODS, kinds.as_slice());
+    // A provider, method or action that is not a fixed word is sent as the fallback, never as typed.
+    let e = events::connection_changed(
+        "http://127.0.0.1:1234/v1",
+        "sk-ant-secret",
+        "ada@example.com",
+        "401 from api.example",
+    );
+    let text = format!("{e:?}");
+    for leak in ["127.0.0.1", "sk-ant", "ada@", "401", "example"] {
+        assert!(!text.contains(leak), "{text}");
+    }
+    let e = events::connection_changed("openrouter", "api_key", "connect", "ok");
+    let text = format!("{e:?}");
+    assert!(
+        text.contains("openrouter") && text.contains("api_key") && text.contains("connect"),
+        "{text}"
+    );
 }

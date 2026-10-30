@@ -45,6 +45,7 @@ const ENV_SERVICES: &[&str] = &[
     "cua.env.v1.HostJobsService",
     "cua.env.v1.VolumeService",
     "cua.env.v1.HostSnapshotsService",
+    "cua.env.v1.HostThreadService",
 ];
 
 const DAEMON_SERVICES: &[&str] = &[
@@ -101,6 +102,7 @@ fn generated_servers_carry_the_contract_names() {
         e::host_jobs_service_server::SERVICE_NAME,
         e::volume_service_server::SERVICE_NAME,
         e::host_snapshots_service_server::SERVICE_NAME,
+        e::host_thread_service_server::SERVICE_NAME,
         d::sandbox_service_server::SERVICE_NAME,
         d::space_service_server::SERVICE_NAME,
         d::runtime_service_server::SERVICE_NAME,

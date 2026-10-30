@@ -63,11 +63,15 @@ pub enum TelemetrySignal {
     /// A first-run page was shown or left (`cua_onboarding_page`).
     OnboardingPage {
         /// `welcome`, `signin`, `agents`, `presentation`, `volume`,
-        /// `this_machine` or `done`.
+        /// `this_machine` or `done`; or, with a `step_*` action, one of
+        /// `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
         page: String,
-        /// `shown`, `completed`, `skipped` or `back`.
+        /// `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+        /// `step_completed`, `step_failed` or `step_skipped`, which send
+        /// `cua_onboarding_step_*` and `cua_onboarding_skipped`.
         action: String,
-        /// The page's answer as a fixed word, or `none`.
+        /// The page's answer as a fixed word, or `none`; for
+        /// `step_failed`, the reason (`timeout`, `install_failed`, ...).
         choice: String,
     },
     /// The New Space panel (`cua_space_wizard`).
@@ -181,6 +185,25 @@ pub enum TelemetrySignal {
         /// Their ids (`cua_volume`, ...); empty: none.
         experiments: Vec<String>,
     },
+    /// A plan limit was shown (`cua_plan_limit_shown`).
+    PlanLimitShown {
+        /// Where: `app_create`, `app_connect`, `app_meter`, `app_team`, ...
+        surface: String,
+        /// `sessions`, `hours`, `machines`, `seats` or `other`.
+        kind: String,
+        /// `free`, `pro`, `teams` or `unknown`.
+        plan: String,
+    },
+    /// The upgrade or plan link of a limit or an upgrade prompt was opened
+    /// (`cua_upgrade_link_opened`).
+    UpgradeLinkOpened {
+        /// Where: `app_meter`, `app_share`, `app_plan_card`, ...
+        surface: String,
+        /// The cap when it came from a limit, `none` otherwise.
+        kind: String,
+        /// `free`, `pro`, `teams` or `unknown`.
+        plan: String,
+    },
 }
 
 fn feature(f: &str) -> TelemetrySignal {
@@ -226,21 +249,69 @@ pub fn feature_used(name: &str) -> Vec<TelemetrySignal> {
 /// `account_menu` (the plan under the account name) are only clicked.
 /// Anything else: nothing.
 pub fn upsell(surface: &str, action: &str) -> Vec<TelemetrySignal> {
+    upsell_with(surface, action, None, None)
+}
+
+/// [`upsell`] knowing the plan (and, for the meter's `limit` notice, the
+/// cap: its `kind`). A `click` also means the upgrade link was opened
+/// (`cua_upgrade_link_opened`, surface `app_<surface>`); the meter shown
+/// past a limit also means a plan limit was shown (`cua_plan_limit_shown`).
+pub fn upsell_with(
+    surface: &str,
+    action: &str,
+    kind: Option<&str>,
+    plan: Option<&str>,
+) -> Vec<TelemetrySignal> {
     let ok = match surface {
         "meter" | "share" | "machine" | "onboarding" => {
             matches!(action, "shown" | "click" | "dismiss")
         }
         "plan_card" | "account_menu" => action == "click",
+        // The limit cards (`upsell::card`): `card_<reason>`.
+        c if c
+            .strip_prefix("card_")
+            .is_some_and(|r| crate::upsell::CARD_REASONS.contains(&r)) =>
+        {
+            matches!(action, "shown" | "click" | "dismiss")
+        }
         _ => false,
     };
-    if ok {
-        vec![feature(&format!("upsell_{surface}_{action}"))]
-    } else {
-        vec![]
+    if !ok {
+        return vec![];
     }
+    let mut out = vec![feature(&format!("upsell_{surface}_{action}"))];
+    let at = format!("app_{surface}");
+    let kind = kind.map(limit_word).unwrap_or("none");
+    let plan = crate::relay_usage::plan_word(plan.unwrap_or_default());
+    match action {
+        "click" => out.push(TelemetrySignal::UpgradeLinkOpened {
+            surface: at,
+            kind: kind.into(),
+            plan: plan.into(),
+        }),
+        "shown" if surface == "meter" && kind != "none" => {
+            out.push(TelemetrySignal::PlanLimitShown {
+                surface: at,
+                kind: kind.into(),
+                plan: plan.into(),
+            })
+        }
+        _ => {}
+    }
+    out
 }
 
-// ---- Getting started -----------------------------------------------------------
+/// A cap as the usage data names it.
+fn limit_word(kind: &str) -> &'static str {
+    match kind.trim() {
+        "sessions" => "sessions",
+        "hours" => "hours",
+        "machines" => "machines",
+        "seats" => "seats",
+        "" | "none" => "none",
+        _ => "other",
+    }
+}
 
 /// The getting-started checklist's steps, in the order it lists them.
 pub const CHECKLIST_STEPS: &[&str] = &[
@@ -263,6 +334,59 @@ pub fn checklist(event: &str) -> Vec<TelemetrySignal> {
         vec![step(&format!("checklist_{event}"), true)]
     } else {
         vec![]
+    }
+}
+
+/// Where a plan limit shows or an upgrade link opens, as the usage data and
+/// the account app's `?from=` name it (`cua-telemetry`'s `PLAN_SURFACES`).
+pub const PLAN_SURFACES: &[&str] = &[
+    "app_create",
+    "app_connect",
+    "app_meter",
+    "app_machine",
+    "app_share",
+    "app_team",
+    "app_plan_card",
+    "app_account_menu",
+    "app_onboarding",
+];
+
+/// A plan limit at `surface` (`action` `shown`), or its upgrade link opened
+/// (`opened`): `kind` is the cap (`sessions`, `hours`, `machines`, `seats`;
+/// none when the link was not from a limit), `plan` the account's plan.
+/// Nothing for another action or surface.
+pub fn plan_limit(action: &str, surface: &str, kind: &str, plan: &str) -> Vec<TelemetrySignal> {
+    if !PLAN_SURFACES.contains(&surface) {
+        return vec![];
+    }
+    let (surface, plan) = (
+        surface.to_string(),
+        crate::relay_usage::plan_word(plan).to_string(),
+    );
+    let kind = limit_word(kind);
+    match action {
+        "shown" if kind != "none" => vec![TelemetrySignal::PlanLimitShown {
+            surface,
+            kind: kind.into(),
+            plan,
+        }],
+        "opened" => vec![TelemetrySignal::UpgradeLinkOpened {
+            surface,
+            kind: kind.into(),
+            plan,
+        }],
+        _ => vec![],
+    }
+}
+
+/// The upgrade link `url` saying it was opened from `surface` (`?from=`),
+/// the rest of its query kept. A surface outside [`PLAN_SURFACES`] leaves
+/// it alone.
+pub fn upgrade_link(url: &str, surface: &str) -> String {
+    if PLAN_SURFACES.contains(&surface) {
+        cua_home::plan_limit::with_from(url, surface)
+    } else {
+        url.to_string()
     }
 }
 
@@ -500,6 +624,7 @@ fn kind_word(k: Option<SpaceKind>) -> &'static str {
     match k {
         Some(SpaceKind::Container) => "container",
         Some(SpaceKind::Vm) => "vm",
+        Some(SpaceKind::Microvm) => "microvm",
         None => "unknown",
     }
 }
@@ -553,15 +678,11 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
                     gpu: p.gpu,
                 }
             });
-            [feature(if provider.as_str() == "cloud" {
-                "space_create_cloud"
-            } else {
-                "space_create_local"
-            })]
-            .into_iter()
-            .chain(started)
-            .chain([step("first_space_created", true)])
-            .collect()
+            [feature("space_create_local")]
+                .into_iter()
+                .chain(started)
+                .chain([step("first_space_created", true)])
+                .collect()
         }
         CreateAction::Finish { id, .. } => match find(id) {
             Some(p) if p.space_id.is_none() => vec![
@@ -603,7 +724,6 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
                     Some(&p.phase),
                     p.gpu,
                     error_variant,
-                    Some(p.provider),
                 );
                 vec![create_event(
                     p,
@@ -906,7 +1026,13 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 page,
                 action,
                 choice,
-            } => events::onboarding_page(page, action, choice).map(|e| t.capture(e)),
+            } => if action.starts_with("step_") {
+                // The first run's funnel (`first_run_step`): its own events.
+                events::first_run_step(page, action, choice)
+            } else {
+                events::onboarding_page(page, action, choice)
+            }
+            .map(|e| t.capture(e)),
             TelemetrySignal::SpaceWizard { action } => {
                 events::space_wizard(action).map(|e| t.capture(e))
             }
@@ -989,6 +1115,16 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 t.set_experiments_on(&ids);
                 None
             }
+            TelemetrySignal::PlanLimitShown {
+                surface,
+                kind,
+                plan,
+            } => Some(t.capture(events::plan_limit_shown(surface, kind, plan))),
+            TelemetrySignal::UpgradeLinkOpened {
+                surface,
+                kind,
+                plan,
+            } => Some(t.capture(events::upgrade_link_opened(surface, kind, plan))),
         };
         if r == Some(Captured::Queued) {
             queued += 1;
@@ -1071,6 +1207,171 @@ pub fn welcome_left(t: &cua_telemetry::Telemetry, on: bool) -> std::io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_limits_and_upgrade_links_say_where_which_cap_and_plan() {
+        // A refused create, on Pro.
+        assert_eq!(
+            plan_limit("shown", "app_create", "sessions", "team"),
+            [TelemetrySignal::PlanLimitShown {
+                surface: "app_create".into(),
+                kind: "sessions".into(),
+                plan: "teams".into(),
+            }]
+        );
+        // Its Upgrade.
+        assert_eq!(
+            plan_limit("opened", "app_connect", "hours", ""),
+            [TelemetrySignal::UpgradeLinkOpened {
+                surface: "app_connect".into(),
+                kind: "hours".into(),
+                plan: "unknown".into(),
+            }]
+        );
+        // A limit always names a cap; unknown surfaces and actions are dropped.
+        assert!(plan_limit("shown", "app_create", "none", "free").is_empty());
+        assert!(plan_limit("shown", "/Users/alice", "hours", "free").is_empty());
+        assert!(plan_limit("clicked", "app_meter", "hours", "free").is_empty());
+        assert_eq!(
+            plan_limit("shown", "app_team", "alice@example.com", "Enterprise"),
+            [TelemetrySignal::PlanLimitShown {
+                surface: "app_team".into(),
+                kind: "other".into(),
+                plan: "unknown".into(),
+            }]
+        );
+
+        // An upsell click opens the upgrade link too; the meter shown past a
+        // limit is a plan limit shown; a heads-up is not.
+        assert_eq!(
+            upsell_with("share", "click", None, Some("free")),
+            [
+                feature("upsell_share_click"),
+                TelemetrySignal::UpgradeLinkOpened {
+                    surface: "app_share".into(),
+                    kind: "none".into(),
+                    plan: "free".into(),
+                }
+            ]
+        );
+        assert_eq!(
+            upsell_with("meter", "shown", Some("hours"), Some("pro")),
+            [
+                feature("upsell_meter_shown"),
+                TelemetrySignal::PlanLimitShown {
+                    surface: "app_meter".into(),
+                    kind: "hours".into(),
+                    plan: "pro".into(),
+                }
+            ]
+        );
+        assert_eq!(
+            upsell_with("meter", "shown", Some("none"), Some("free")),
+            [feature("upsell_meter_shown")]
+        );
+        assert_eq!(
+            upsell("meter", "dismiss"),
+            [feature("upsell_meter_dismiss")]
+        );
+        assert!(upsell("plan_card", "shown").is_empty());
+
+        // The page sends them as the shells read them.
+        assert_eq!(
+            serde_json::to_value(plan_limit("opened", "app_meter", "hours", "free")).unwrap(),
+            serde_json::json!([{"type": "upgrade-link-opened", "surface": "app_meter", "kind": "hours", "plan": "free"}])
+        );
+    }
+
+    #[test]
+    fn an_upgrade_link_says_where_it_was_opened() {
+        assert_eq!(
+            upgrade_link("https://app.cua.ai/buy/pro?from=plan_limit", "app_create"),
+            "https://app.cua.ai/buy/pro?from=app_create"
+        );
+        assert_eq!(
+            upgrade_link("https://app.cua.ai/billing?team=t1", "app_team"),
+            "https://app.cua.ai/billing?team=t1&from=app_team"
+        );
+        assert_eq!(
+            upgrade_link("https://app.cua.ai/billing", "somewhere"),
+            "https://app.cua.ai/billing"
+        );
+    }
+
+    /// The core's surfaces are words the telemetry schema accepts.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn plan_surfaces_are_the_schemas() {
+        for s in PLAN_SURFACES {
+            assert!(
+                cua_telemetry::schema::PLAN_SURFACES.contains(s),
+                "{s} is not in cua-telemetry's PLAN_SURFACES"
+            );
+        }
+        for s in [
+            "meter",
+            "share",
+            "machine",
+            "onboarding",
+            "plan_card",
+            "account_menu",
+        ] {
+            assert!(PLAN_SURFACES.contains(&format!("app_{s}").as_str()), "{s}");
+        }
+    }
+
+    /// Plan limits recorded with usage data on are sent; with it off,
+    /// nothing is.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn plan_limit_signals_are_recorded_and_respect_the_switch() {
+        use std::sync::Arc;
+        let client = |home: &std::path::Path, off: bool| {
+            let sink = Arc::new(cua_telemetry::sink::MemorySink::new());
+            let t = cua_telemetry::Telemetry::builder()
+                .env(move |k| match k {
+                    "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                    "DO_NOT_TRACK" if off => Some("1".into()),
+                    _ => None,
+                })
+                .home(home)
+                .sink(sink.clone())
+                .product("spaces_app", "0.2.0")
+                .notice_mode(cua_telemetry::NoticeMode::External)
+                .foreground()
+                .build();
+            t.acknowledge_notice();
+            (t, sink)
+        };
+        let signals = [
+            plan_limit("shown", "app_create", "sessions", "free"),
+            plan_limit("opened", "app_create", "sessions", "free"),
+        ]
+        .concat();
+        let on = tempfile::tempdir().unwrap();
+        let (t, sink) = client(on.path(), false);
+        assert_eq!(record(&t, &signals), 2);
+        t.flush(std::time::Duration::from_secs(2));
+        let names: Vec<String> = sink
+            .events()
+            .iter()
+            .map(|e| e["event"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            names.contains(&"cua_plan_limit_shown".to_string()),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&"cua_upgrade_link_opened".to_string()),
+            "{names:?}"
+        );
+
+        let off = tempfile::tempdir().unwrap();
+        let (t, sink) = client(off.path(), true);
+        assert_eq!(record(&t, &signals), 0);
+        t.flush(std::time::Duration::from_secs(2));
+        assert!(sink.events().is_empty());
+    }
 
     /// CUA-1855: a failed share says why and where, in fixed words; a
     /// dismissed prompt is `cancelled`, not `error`.
@@ -1193,33 +1494,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn checklist_events_are_fixed_steps_in_the_schema() {
-        let all: Vec<&str> = CHECKLIST_STEPS
-            .iter()
-            .chain(CHECKLIST_EVENTS)
-            .copied()
-            .collect();
-        for e in &all {
-            assert_eq!(steps_of(&checklist(e)), [format!("checklist_{e}")]);
-            #[cfg(feature = "telemetry")]
-            assert!(
-                cua_telemetry::schema::ONBOARDING_STEPS
-                    .contains(&format!("checklist_{e}").as_str()),
-                "checklist_{e} is not in cua-telemetry's step vocabulary"
-            );
-        }
-        for bad in [
-            "",
-            "Share",
-            "checklist_share",
-            "me@example.com",
-            "/Users/x",
-            "share ",
-        ] {
-            assert!(checklist(bad).is_empty(), "{bad:?} accepted");
-        }
-    }
     use crate::drive_settings::DriveMountInput;
     use crate::model::{SpaceOs, SpaceProvider};
     use crate::onboarding::{initial, reduce};
@@ -1921,6 +2195,65 @@ mod tests {
         );
     }
 
+    /// A `step_*` onboarding-page signal sends the first-run funnel events
+    /// with the machine's OS and app version, and an old page still sends
+    /// `cua_onboarding_page`.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn first_run_step_signals_record_the_funnel_events() {
+        use std::sync::Arc;
+        let home = tempfile::tempdir().unwrap();
+        let sink = Arc::new(cua_telemetry::sink::MemorySink::new());
+        let t = cua_telemetry::Telemetry::builder()
+            .env(|k| (k == "CUA_TELEMETRY_FORBID_NETWORK").then(|| "1".into()))
+            .home(home.path())
+            .sink(sink.clone())
+            .product("spaces_app", "0.12.0")
+            .foreground()
+            .build();
+        t.acknowledge_notice();
+        let sig = |page: &str, action: &str, choice: &str| TelemetrySignal::OnboardingPage {
+            page: page.into(),
+            action: action.into(),
+            choice: choice.into(),
+        };
+        let signals = [
+            sig("sign_in", "step_viewed", "none"),
+            sig("sign_in", "step_failed", "timeout"),
+            sig("sign_in", "step_completed", "none"),
+            sig("terminal", "step_skipped", "none"),
+            sig("welcome", "shown", "none"),
+            sig("/Users/alice", "step_viewed", "none"),
+        ];
+        assert_eq!(record(&t, &signals), 5, "the unknown step is dropped");
+        t.flush(std::time::Duration::from_secs(2));
+        let names: Vec<String> = sink
+            .events()
+            .iter()
+            .map(|e| e["event"].as_str().unwrap().to_string())
+            .filter(|n| n.starts_with("cua_onboarding"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "cua_onboarding_step_viewed",
+                "cua_onboarding_step_failed",
+                "cua_onboarding_step_completed",
+                "cua_onboarding_skipped",
+                "cua_onboarding_page"
+            ]
+        );
+        let events = sink.events();
+        let failed = events
+            .iter()
+            .find(|e| e["event"] == "cua_onboarding_step_failed")
+            .unwrap();
+        assert_eq!(failed["properties"]["reason"], "timeout");
+        assert_eq!(failed["properties"]["step_index"], 4);
+        assert_eq!(failed["properties"]["product_version"], "0.12.0");
+        assert!(failed["properties"]["os_family"].is_string());
+    }
+
     /// Every signal the parity flow derives is a valid event: each one is
     /// queued on a client (none dropped by the schema), and no name, path,
     /// email or bucket from the flow's inputs is in any payload.
@@ -2073,5 +2406,33 @@ mod tests {
             !on.path().join("config.toml").exists(),
             "on is the default: nothing written"
         );
+    }
+
+    #[test]
+    fn checklist_events_are_fixed_steps_in_the_schema() {
+        let all: Vec<&str> = CHECKLIST_STEPS
+            .iter()
+            .chain(CHECKLIST_EVENTS)
+            .copied()
+            .collect();
+        for e in &all {
+            assert_eq!(steps_of(&checklist(e)), [format!("checklist_{e}")]);
+            #[cfg(feature = "telemetry")]
+            assert!(
+                cua_telemetry::schema::ONBOARDING_STEPS
+                    .contains(&format!("checklist_{e}").as_str()),
+                "checklist_{e} is not in cua-telemetry's step vocabulary"
+            );
+        }
+        for bad in [
+            "",
+            "Share",
+            "checklist_share",
+            "me@example.com",
+            "/Users/x",
+            "share ",
+        ] {
+            assert!(checklist(bad).is_empty(), "{bad:?} accepted");
+        }
     }
 }

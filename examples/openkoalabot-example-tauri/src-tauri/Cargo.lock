@@ -1700,6 +1700,7 @@ dependencies = [
 name = "cua-agent-setup"
 version = "0.9.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "cua-home",
  "hex",
@@ -1719,9 +1720,11 @@ version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "cua-agent-setup",
+ "cua-connections",
  "cua-proto",
  "cua-spacesd-client",
  "flate2",
+ "futures-util",
  "hex",
  "rand 0.9.5",
  "serde",
@@ -1797,6 +1800,15 @@ dependencies = [
  "tonic",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "cua-connections"
+version = "0.9.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 1.1.4+spec-1.1.0",
 ]
 
 [[package]]
@@ -1886,6 +1898,7 @@ dependencies = [
  "cua-home",
  "flate2",
  "hex",
+ "httpdate",
  "libc",
  "rand 0.9.5",
  "reqwest 0.12.28",
@@ -2074,6 +2087,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-repo-cache"
+version = "0.9.0"
+dependencies = [
+ "cua-home",
+ "cua-telemetry",
+ "hex",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "cua-sandbox-core"
 version = "0.9.0"
 dependencies = [
@@ -2082,6 +2111,7 @@ dependencies = [
  "bytes",
  "cua-home",
  "cua-image",
+ "cua-repo-cache",
  "cua-spacesd-client",
  "cua-vmm",
  "futures-util",
@@ -2224,6 +2254,7 @@ dependencies = [
  "cua-chromium-storage",
  "cua-daemon",
  "cua-home",
+ "cua-host",
  "cua-keyvault",
  "cua-media-client",
  "cua-media-protocol",

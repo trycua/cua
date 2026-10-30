@@ -397,10 +397,6 @@ pub enum StorageAction {
 
 const DEFAULT_REGION: &str = "us-east-1";
 
-/// What "Your S3 bucket" offers first: a prompt the user gives their coding
-/// agent, which sets the bucket up and connects it with the CLI. The page
-/// watches `volume_storage` and connects once the bucket shows up.
-pub const S3_AGENT_PROMPT: &str = "Using the AWS CLI, create a private S3 bucket for Cua Volume with versioning on, and an IAM user whose access is limited to that bucket. Then connect it with `cua volume config set --backend s3 --bucket <bucket> --region <region>`, pipe the new keys into `cua volume config set-keys`, and run `cua volume status`. Don't print the secret key.";
 const GIB: u64 = 1024 * 1024 * 1024;
 /// The cache limits offered (the daemon's minimum is 256 MiB).
 pub const CACHE_LIMITS: [u64; 4] = [GIB, 5 * GIB, 10 * GIB, 50 * GIB];
@@ -674,7 +670,7 @@ pub fn storage_section(input: &StorageInput, state: &StorageState) -> SettingsSe
             let saved = if has_keys && saved_s3 { "Saved" } else { "" };
             if !state.manual {
                 let mut p = row("s3-prompt", Prompt, "Ask your agent to set it up:");
-                p.value = Some(S3_AGENT_PROMPT.into());
+                p.value = Some(crate::agent_prompts::volume_s3_prompt());
                 p.button = Some("Copy".into());
                 rows.push(p);
                 let mut m = row("s3-manual", Link, "Enter details manually");
@@ -980,7 +976,10 @@ mod tests {
         let v = storage_section(&input, &s);
         let prompt = v.rows.iter().find(|r| r.id == "s3-prompt").unwrap();
         assert_eq!(prompt.kind, SettingsRowKind::Prompt);
-        assert_eq!(prompt.value.as_deref(), Some(S3_AGENT_PROMPT));
+        assert_eq!(
+            prompt.value.as_deref(),
+            Some(crate::agent_prompts::volume_s3_prompt().as_str())
+        );
         assert!(v.rows.iter().all(|r| r.id != "s3-secret"));
         s = storage_reduce(&s, &storage_press(&input, "s3-manual").unwrap());
         let v = storage_section(&input, &s);
@@ -1143,7 +1142,7 @@ mod tests {
             cache: None,
         };
         let v = storage_section(&linux, &storage_initial());
-        assert_eq!(v.rows[0].options[0].label, "This computer");
+        assert_eq!(v.rows[0].options[0].label, "This machine");
         let t = texts(&v);
         assert!(t.contains(&"Mounted at".to_string()), "{t:?}");
         assert!(t.contains(&"~/Cua Volume".to_string()), "{t:?}");

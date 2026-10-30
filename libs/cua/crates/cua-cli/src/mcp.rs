@@ -34,6 +34,8 @@ use std::{
 fn spaces_permissions(readonly: bool) -> Vec<String> {
     cua_spaces::contract::tools()
         .into_iter()
+        // A person's tool is never a permission an agent can be given.
+        .filter(|t| !cua_spaces::contract::person_only(t.name))
         .filter(|t| !readonly || t.annotations.read_only)
         .map(|t| format!("spaces:{}", t.name))
         .collect()
@@ -70,6 +72,9 @@ const COMPUTER_ALL: &[&str] = &[
 ];
 const RUNS_ALL: &[&str] = &["runs:run", "runs:read"];
 const SHARE_ALL: &[&str] = &["share:create", "share:read", "share:stop"];
+/// `connect_status`: whether each agent on this computer is connected
+/// (read-only; the same rows as `cua connect status --json` and the app).
+const CONNECT_ALL: &[&str] = &["connect:status"];
 const SKILLS_ALL: &[&str] = &[
     "skills:list",
     "skills:read",
@@ -90,6 +95,7 @@ pub fn parse_permissions(s: &str) -> BTreeSet<String> {
         .iter()
         .chain(COMPUTER_ALL)
         .chain(SKILLS_ALL)
+        .chain(CONNECT_ALL)
         .chain(IMAGES_ALL)
         .chain(TELEPORT_ALL)
         .chain(RUNS_ALL)
@@ -115,6 +121,7 @@ pub fn parse_permissions(s: &str) -> BTreeSet<String> {
             "computer:readonly" => &["computer:screenshot"],
             "skills:all" => SKILLS_ALL,
             "skills:readonly" => &["skills:list", "skills:read"],
+            "connect:all" | "connect:readonly" => CONNECT_ALL,
             // Deprecated name of `sandbox:view`.
             "sandbox:vnc" => &["sandbox:view"],
             "images:all" | "images:readonly" => IMAGES_ALL,
@@ -125,6 +132,19 @@ pub fn parse_permissions(s: &str) -> BTreeSet<String> {
             "share:readonly" => &["share:read"],
             one if all.contains(&one) => {
                 out.insert(one.to_string());
+                continue;
+            }
+            // A former Spaces tool name (`spaces:persistent_agent_send`)
+            // grants the tool it now is (`spaces:agent_send`).
+            one if one.strip_prefix("spaces:").is_some_and(|t| {
+                cua_spaces::contract::canonical(t) != t
+                    && all.contains(
+                        &format!("spaces:{}", cua_spaces::contract::canonical(t)).as_str(),
+                    )
+            }) =>
+            {
+                let t = &one["spaces:".len()..];
+                out.insert(format!("spaces:{}", cua_spaces::contract::canonical(t)));
                 continue;
             }
             unknown => {
@@ -166,6 +186,13 @@ const NAME: (&str, &str, bool, &str) = (
 const X: (&str, &str, bool, &str) = ("x", "integer", true, "X in screenshot pixels");
 const Y: (&str, &str, bool, &str) = ("y", "integer", true, "Y in screenshot pixels");
 const WID: (&str, &str, bool, &str) = ("window_id", "string", true, "Window id");
+
+/// The names of this server's own tools (the Spaces contract tools come
+/// on top), for the 0.7.0 compatibility test.
+#[cfg(test)]
+pub(crate) fn own_tool_names() -> Vec<&'static str> {
+    TOOLS.iter().map(|t| t.name).collect()
+}
 
 const TOOLS: &[Tool] = &[
     Tool {
@@ -329,7 +356,7 @@ const TOOLS: &[Tool] = &[
     Tool {
         name: "sandbox_list",
         permission: "sandbox:list",
-        description: "List sandboxes: local and direct ones by default, each row with location (local or direct). Pass location to list only one kind.",
+        description: "List sandboxes: local and direct ones by default, each row with location (local or direct). Pass location to list only one kind. When the user is signed in and has other machines, a note after the rows names them and the route to use: a machine's own desktop is the Space relay:<id> (computer tools and space_bash take it as `space`), and new Spaces go to one with create_space on=\"host:<name>\".",
         params: &[(
             "location",
             "string",
@@ -340,7 +367,7 @@ const TOOLS: &[Tool] = &[
     Tool {
         name: "sandbox_create",
         permission: "sandbox:create",
-        description: "Create a sandbox from any image. `on` says where (local, the default unless the user configured another with `cua config set default.on`), `kind` what (auto, container, vm) and `runtime` which engine (auto, or gvisor, runc, qemu, lume); an impossible combination fails and lists the valid values. To browse the web, pass browser=true (and optionally url): it starts the canonical Linux image, registers it as a Space, launches Chromium with a throwaway profile inside it and returns the space, session, target_id and tab_id to pass to call_tool with the in-sandbox browser tools (browser_navigate, get_browser_state, browser_click, browser_type). Pass command, env and services to run a server in it, for example an MCP server: services {\"mcp\": 8765}. Without browser=true it does not register a Space: to reach its MCP server with list_tools/call_tool (service=\"mcp\"), use create_space instead (same arguments), or add this one with add_space (address local:<name>).",
+        description: "Create a sandbox from any image. `on` says where (local, the default unless the user configured another with `cua config set default.on`), `kind` what (auto, container, vm, microvm) and `runtime` which engine (auto, or gvisor, runc, qemu, lume, firecracker, vz, containerization); an impossible combination fails and lists the valid values. To browse the web, pass browser=true (and optionally url): it starts the canonical Linux image, registers it as a Space, launches Chromium with a throwaway profile inside it and returns the space, session, target_id and tab_id to pass to call_tool with the in-sandbox browser tools (browser_navigate, get_browser_state, browser_click, browser_type). Pass command, env and services to run a server in it, for example an MCP server: services {\"mcp\": 8765}. Without browser=true it does not register a Space: to reach its MCP server with list_tools/call_tool (service=\"mcp\"), use create_space instead (same arguments), or add this one with add_space (address local:<name>).",
         params: &[
             (
                 "browser",
@@ -390,7 +417,7 @@ const TOOLS: &[Tool] = &[
                 "kind",
                 "string",
                 false,
-                "What kind of computer: auto (default; from the image), container or vm",
+                "What kind of computer: auto (default; from the image), container, vm or microvm",
             ),
             (
                 "runtime",
@@ -447,7 +474,12 @@ const TOOLS: &[Tool] = &[
                 false,
                 "After this long without a create from the pool it keeps none ready until the next one (default: never)",
             ),
-            ("kind", "string", false, "auto (default), container or vm"),
+            (
+                "kind",
+                "string",
+                false,
+                "auto (default), container, vm or microvm",
+            ),
             (
                 "runtime",
                 "string",
@@ -850,6 +882,12 @@ const TOOLS: &[Tool] = &[
         ],
     },
     Tool {
+        name: "connect_status",
+        permission: "connect:status",
+        description: "Whether each AI agent on this computer (Hermes, Claude Code, Codex, Cursor, OpenClaw, T3 Code, ...) is really connected to Cua: installed and its version, signed in, Cua's MCP entry present and answering, its sign-in copied to Keyvault, and one line saying what to do when something is wrong. Read-only.",
+        params: &[],
+    },
+    Tool {
         name: "skills_list",
         permission: "skills:list",
         description: "List recorded skills.",
@@ -884,7 +922,7 @@ fn schema(t: &Tool) -> Value {
             p["items"] = json!({"type": "string"});
         }
         if t.name == "sandbox_create" && *n == "kind" {
-            p["enum"] = json!(["auto", "container", "vm"]);
+            p["enum"] = json!(["auto", "container", "vm", "microvm"]);
         }
         if t.name == "teleport_browser_session" && *n == "browser" {
             p["enum"] = json!(["firefox", "chrome"]);
@@ -907,6 +945,8 @@ pub fn docs() -> Value {
     let groups = |ro: &[&str], all: &[&str]| json!({"all": all, "readonly": ro});
     let mut tools: Vec<Value> = cua_spaces::contract::tools()
         .into_iter()
+        // Not served over MCP (a person's tool): documented with the SDK.
+        .filter(|t| !cua_spaces::contract::person_only(t.name))
         .map(|t| {
             json!({
                 "name": t.name,
@@ -943,6 +983,7 @@ pub fn docs() -> Value {
             "sandbox": groups(&["sandbox:list", "sandbox:get"], SANDBOX_ALL),
             "computer": groups(&["computer:screenshot"], COMPUTER_ALL),
             "skills": groups(&["skills:list", "skills:read"], SKILLS_ALL),
+            "connect": groups(CONNECT_ALL, CONNECT_ALL),
             "images": groups(IMAGES_ALL, IMAGES_ALL),
             "teleport": groups(&[], TELEPORT_ALL),
             "runs": groups(&["runs:read"], RUNS_ALL),
@@ -971,6 +1012,60 @@ type ToolResult = Result<Vec<Value>, CuaError>;
 
 fn text(s: impl Into<String>) -> ToolResult {
     Ok(vec![json!({"type": "text", "text": s.into()})])
+}
+
+/// The user's other machines, from the Spaces list (`list_spaces` rows `relay:<machine>`,
+/// a Space on a machine is `relay:<machine>/<name>`), and the route that reaches each. `None`
+/// when the user is not signed in or has no other machine: nothing to say then.
+async fn other_machines_note(cua: &Cua) -> Option<String> {
+    let text = cua
+        .spaces()
+        .call_tool_json("list_spaces".into(), None)
+        .await
+        .ok()?
+        .text;
+    machines_note(&serde_json::from_str::<Vec<Value>>(&text).ok()?)
+}
+
+/// See [`other_machines_note`].
+fn machines_note(rows: &[Value]) -> Option<String> {
+    let machines: Vec<(String, String, bool)> = rows
+        .iter()
+        .filter_map(|r| {
+            let id = r["id"].as_str()?;
+            let rest = id.strip_prefix("relay:")?;
+            if rest.is_empty() || rest.contains('/') {
+                return None;
+            }
+            let name = r["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(rest);
+            Some((
+                id.to_string(),
+                name.to_string(),
+                r["phase"].as_str() == Some("ready"),
+            ))
+        })
+        .collect();
+    if machines.is_empty() {
+        return None;
+    }
+    let list = machines
+        .iter()
+        .map(|(id, name, ready)| {
+            format!(
+                "{name} ({id}, {})",
+                if *ready { "online" } else { "offline" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let (first_id, first_name, _) = &machines[0];
+    Some(format!(
+        "note: the sandboxes above are on this machine. The user's other machines: {list}. \
+         To use one machine's own desktop, pass its id as `space` (for example \
+         space=\"{first_id}\") to computer_screenshot, computer_click, computer_type or space_bash; \
+         it must be online and sharing its desktop. To create a Space on one, call create_space \
+         with on=\"host:{first_name}\". list_spaces shows their Spaces."
+    ))
 }
 
 fn jtext(v: Value) -> ToolResult {
@@ -1064,6 +1159,15 @@ impl Server {
         }
         if let Some(r) = self.call_skills(name, a) {
             return r;
+        }
+        if name == "connect_status" {
+            return tokio::task::spawn_blocking(|| {
+                crate::agents::connection_report(&cua_agent_setup::AgentSetup::from_env())
+            })
+            .await
+            .map_err(|e| CuaError::Internal(e.to_string()))
+            .and_then(|r| serde_json::to_value(r).map_err(|e| CuaError::Internal(e.to_string())))
+            .and_then(jtext);
         }
         if name == "space_run" || name == "space_runs" {
             return runs_tool(name, a).await;
@@ -1319,12 +1423,18 @@ impl Server {
                             )));
                         }
                     };
+                    let all_locations = location.is_none();
                     let l = sbx.list_with_warnings(location).await?;
                     let mut content = jtext(Value::Array(
                         l.sandboxes.iter().map(sandbox::info_json).collect(),
                     ))?;
                     for w in l.warnings {
                         content.push(json!({"type": "text", "text": format!("warning: {w}")}));
+                    }
+                    // These are this machine's sandboxes. The user's other machines are
+                    // somewhere else: say so, and which route reaches them.
+                    if all_locations && let Some(note) = other_machines_note(&self.cua).await {
+                        content.push(json!({"type": "text", "text": note}));
                     }
                     Ok(content)
                 }
@@ -1681,7 +1791,9 @@ fn tool_budget(tool: &str, arguments: &Value, env: Option<&str>) -> Duration {
     }
     let base = match tool {
         // A macOS image pull is ~25 GB before readiness starts counting.
-        "create_space" | "start_space" | "sandbox_create" | "sandbox_start" => 2 * 3600,
+        "create_space" | "start_space" | "resize_space" | "sandbox_create" | "sandbox_start" => {
+            2 * 3600
+        }
         "upload"
         | "send_file"
         | "download"
@@ -2103,6 +2215,37 @@ async fn runs_tool(name: &str, a: &Value) -> ToolResult {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_sandbox_list_names_the_users_other_machines_and_the_route_to_use() {
+        use super::machines_note;
+        use serde_json::json;
+        // Nothing to say without another machine (a Space on a machine is not one).
+        assert_eq!(machines_note(&[]), None);
+        assert_eq!(
+            machines_note(&[
+                json!({"id": "local:build", "name": "build"}),
+                json!({"id": "relay:abc/dev", "name": "dev"})
+            ]),
+            None
+        );
+        let note = machines_note(&[
+            json!({"id": "relay:0123abcd", "name": "Dillon's MacBook", "phase": "ready"}),
+            json!({"id": "relay:0123abcd/dev", "name": "dev", "phase": "ready"}),
+            json!({"id": "relay:ffff", "name": "mac-mini", "phase": "offline"}),
+        ])
+        .unwrap();
+        assert!(
+            note.contains("Dillon's MacBook (relay:0123abcd, online)"),
+            "{note}"
+        );
+        assert!(note.contains("mac-mini (relay:ffff, offline)"), "{note}");
+        // The route: its desktop is `space`, new Spaces go with `on`.
+        assert!(note.contains("space=\"relay:0123abcd\""), "{note}");
+        assert!(note.contains("on=\"host:Dillon's MacBook\""), "{note}");
+        // The Space on the machine is not listed as a machine.
+        assert!(!note.contains("relay:0123abcd/dev"), "{note}");
+    }
+
     use super::*;
 
     #[test]
@@ -2220,7 +2363,7 @@ mod tests {
         assert_eq!(schema["properties"]["services"]["type"], "object");
         assert_eq!(
             schema["properties"]["kind"]["enum"],
-            json!(["auto", "container", "vm"])
+            json!(["auto", "container", "vm", "microvm"])
         );
         // It creates a sandbox and says so: no Space is registered.
         let d = TOOLS
@@ -2253,6 +2396,14 @@ mod tests {
     }
 
     #[test]
+    fn no_permission_grants_a_person_only_tool() {
+        for group in ["all", "spaces:all", "spaces:cloud_approve"] {
+            let p = parse_permissions(group);
+            assert!(!p.contains("spaces:cloud_approve"), "{group}: {p:?}");
+        }
+    }
+
+    #[test]
     fn permission_groups_expand() {
         let p = parse_permissions("sandbox:readonly,computer:click");
         assert_eq!(
@@ -2261,5 +2412,11 @@ mod tests {
         );
         assert!(parse_permissions("").contains("skills:delete"));
         assert!(parse_permissions("bogus").is_empty());
+        // Former Spaces tool names grant the tool under its current name.
+        assert_eq!(
+            parse_permissions("spaces:persistent_agent_send,spaces:routine_add"),
+            parse_permissions("spaces:agent_send,spaces:agent_schedule_add")
+        );
+        assert!(parse_permissions("spaces:agent_send").contains("spaces:agent_send"));
     }
 }

@@ -95,6 +95,12 @@ pub struct HostCaller {
     /// `relay` or `token`.
     #[serde(default)]
     pub via: String,
+    /// A Space thread grant: the one Space this machine provides (its
+    /// relay machine id) whose thread the caller may reach, because that
+    /// Space is shared with them (`role` is their role on it). Nothing
+    /// else of this machine answers such a caller.
+    #[serde(default)]
+    pub space: Option<String>,
 }
 
 impl HostCaller {
@@ -352,25 +358,37 @@ fn to_pb(s: &ProvidedSpace) -> pb::HostSpace {
         egress_enforced: String::new(),
         // Only the create response says which network it applied.
         network: String::new(),
+        // Only when asked ([`HostSpacesServer::with_disks`]).
+        disk: None,
     }
 }
+
+/// How long a host measures its Spaces' disks for one `GetHostSpaces`.
+const DISK_ANSWER_WITHIN: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 struct Reserved {
     spaces: u32,
     macos: u32,
+    /// Memory (MiB) and disk (GiB) of the creates in flight.
+    memory_mb: u64,
+    disk_gb: u64,
 }
 
 /// Holds a capacity slot until the Space is recorded (or the create fails).
 struct Slot<'a> {
     reserved: &'a Mutex<Reserved>,
     macos: bool,
+    memory_mb: u64,
+    disk_gb: u64,
 }
 
 impl Drop for Slot<'_> {
     fn drop(&mut self) {
         let mut r = self.reserved.lock().expect("reserved");
         r.spaces = r.spaces.saturating_sub(1);
+        r.memory_mb = r.memory_mb.saturating_sub(self.memory_mb);
+        r.disk_gb = r.disk_gb.saturating_sub(self.disk_gb);
         if self.macos {
             r.macos = r.macos.saturating_sub(1);
         }
@@ -529,7 +547,7 @@ async fn following_host<T>(
         let r = tokio::time::timeout(
             HOST_PROGRESS_ASK,
             host.host_spaces()
-                .get_host_spaces(pb::GetHostSpacesRequest {}),
+                .get_host_spaces(pb::GetHostSpacesRequest::default()),
         )
         .await
         .ok()?
@@ -1219,6 +1237,22 @@ impl HostSpacesServer {
             limit: settings.max_spaces,
             reason: "this host's limit (`cua host config --max-spaces`)".into(),
         }];
+        if settings.max_memory_gb > 0 {
+            out.push(pb::HostSpacesCapacity {
+                resource: "memory_gb".into(),
+                used: gb_up(provided_memory_mb(provided) + r.memory_mb),
+                limit: settings.max_memory_gb,
+                reason: "this host's limit (`cua host config --max-memory`)".into(),
+            });
+        }
+        if settings.max_disk_gb > 0 {
+            out.push(pb::HostSpacesCapacity {
+                resource: "disk_gb".into(),
+                used: (provided_disk_gb(provided) + r.disk_gb).min(u64::from(u32::MAX)) as u32,
+                limit: settings.max_disk_gb,
+                reason: "this host's limit (`cua host config --max-disk`)".into(),
+            });
+        }
         if cfg!(target_os = "macos") {
             out.push(pb::HostSpacesCapacity {
                 resource: "macos_vms".into(),
@@ -1237,6 +1271,8 @@ impl HostSpacesServer {
         provided: &[ProvidedSpace],
         macos: bool,
         host_name: &str,
+        memory_mb: u64,
+        disk_gb: u64,
     ) -> Result<Slot<'_>> {
         let settings = policy.spaces_settings();
         let macos_used = if macos {
@@ -1248,8 +1284,32 @@ impl HostSpacesServer {
         let used = provided.len() as u32 + r.spaces;
         if settings.max_spaces > 0 && used >= settings.max_spaces {
             return Err(Error::LimitExceeded(format!(
-                "{host_name} already provides {used} Spaces, its limit (on it: `cua host config \
-                 --max-spaces N`); delete one first"
+                "{host_name} has no room for another Space: it allows {} from other machines and \
+                 {used} {} in use (on it: `cua host config --max-spaces N`)",
+                spaces_text(settings.max_spaces),
+                if used == 1 { "is" } else { "are" },
+            )));
+        }
+        let mem_used = provided_memory_mb(provided) + r.memory_mb;
+        if settings.max_memory_gb > 0
+            && mem_used + memory_mb > u64::from(settings.max_memory_gb) * 1024
+        {
+            return Err(Error::LimitExceeded(format!(
+                "{host_name} has no room for another Space: it allows {} GB of memory for Spaces \
+                 from other machines and {} GB are in use, so another {} GB does not fit (on it: \
+                 `cua host config --max-memory N`)",
+                settings.max_memory_gb,
+                gb_up(mem_used),
+                gb_up(memory_mb),
+            )));
+        }
+        let disk_used = provided_disk_gb(provided) + r.disk_gb;
+        if settings.max_disk_gb > 0 && disk_used + disk_gb > u64::from(settings.max_disk_gb) {
+            return Err(Error::LimitExceeded(format!(
+                "{host_name} has no room for another Space: it allows {} GB of disk for Spaces \
+                 from other machines and {disk_used} GB are in use, so another {disk_gb} GB does \
+                 not fit (on it: `cua host config --max-disk N`)",
+                settings.max_disk_gb,
             )));
         }
         if macos {
@@ -1266,10 +1326,34 @@ impl HostSpacesServer {
             r.macos += 1;
         }
         r.spaces += 1;
+        r.memory_mb += memory_mb;
+        r.disk_gb += disk_gb;
         Ok(Slot {
             reserved: &self.reserved,
             macos,
+            memory_mb,
+            disk_gb,
         })
+    }
+
+    /// Gives the new Space the longest running time the owner set (`cua
+    /// host config --max-run-time`): when it passes the cua daemon turns
+    /// the Space off (`start` brings it back; nothing is deleted).
+    fn limit_run_time(&self, policy: &cua_host::HostPolicy, local_space: &str) {
+        let minutes = policy.spaces_settings().max_run_minutes;
+        if minutes == 0 {
+            return;
+        }
+        if let Err(e) = self.spaces.set_lifetime(
+            local_space,
+            Duration::from_secs(u64::from(minutes) * 60),
+            Some(cua_sandbox_core::LocalExpiry::Suspend),
+        ) {
+            tracing::warn!(
+                space = local_space,
+                "could not set the running time limit: {e}"
+            );
+        }
     }
 
     fn host_name(&self) -> String {
@@ -1337,6 +1421,9 @@ impl HostSpacesServer {
                 } else {
                     0
                 },
+                max_memory_gb: settings.max_memory_gb,
+                max_disk_gb: settings.max_disk_gb,
+                max_run_minutes: settings.max_run_minutes,
             }),
             capacity: self.capacity(&policy, &all),
             spaces: all
@@ -1362,6 +1449,23 @@ impl HostSpacesServer {
             images,
             creating: self.creating.listed(caller),
         })
+    }
+
+    /// `spaces` (a [`HostSpacesServer::get`] answer's) with what each
+    /// takes on this computer's disk (`GetHostSpacesRequest.disk`): measured
+    /// when due, else the sampler's last measurement. Bounded: a
+    /// measurement that takes longer leaves them unset this time.
+    pub async fn with_disks(&self, spaces: &mut [pb::HostSpace]) {
+        let disks = tokio::time::timeout(DISK_ANSWER_WITHIN, self.spaces.local_space_disks())
+            .await
+            .unwrap_or_default();
+        for s in spaces {
+            s.disk = disks.get(&s.local_space).map(|d| pb::HostSpaceDisk {
+                bytes: d.bytes,
+                allocated: d.allocated,
+                shares_space: d.shares_space,
+            });
+        }
     }
 
     /// `CreateHostSpace`: creates one Space here and attaches it to the
@@ -1494,9 +1598,28 @@ impl HostSpacesServer {
         };
         let kind = Kind::parse(&req.kind).map_err(place)?;
         let runtime = Runtime::parse(&req.runtime).map_err(place)?;
+        // This host's runtime, not the caller's: an explicit one it cannot
+        // run is refused naming what it can; `auto` takes its own
+        // `default.runtime`.
+        let settings = cua_sandbox_core::settings::Settings::load().ok();
+        let (mut kind, mut runtime) = host_placement(
+            kind,
+            runtime,
+            macos,
+            settings.as_ref(),
+            &cua_sandbox_core::placement::HostFacts::current(),
+        )
+        .map_err(|e| self.refuse(caller, &label, place(e)))?;
         let provided_now = provided::load_provided(&self.host_dir())?;
         let slot = self
-            .reserve(&policy, &provided_now, macos, &host_name)
+            .reserve(
+                &policy,
+                &provided_now,
+                macos,
+                &host_name,
+                admitted_memory_mb(req.memory_mb),
+                admitted_disk_gb(req.disk_gb),
+            )
             .map_err(|e| self.refuse(caller, &label, e))?;
         // Without a Space limit (`max_spaces` 0, a cluster host), what is
         // free decides: the CPU and memory its jobs and Spaces do not
@@ -1589,41 +1712,77 @@ impl HostSpacesServer {
                 }),
             }
         } else {
-            self.spaces
-                .create(SpaceCreate {
-                    progress: following.as_ref().map(Following::sink),
-                    image: Some(image.clone()),
-                    on: Some(On::Local),
-                    kind,
-                    runtime: runtime.clone(),
-                    name: Some(req.name.clone()).filter(|n| !n.trim().is_empty()),
-                    cpus: Some(req.cpus).filter(|c| *c > 0),
-                    memory_mb: Some(req.memory_mb).filter(|m| *m > 0),
-                    disk_gb: Some(req.disk_gb).filter(|d| *d > 0),
-                    wait: Some(true),
-                    // A provided Space joins the relay through its own driver
-                    // (a direct one is reached through the host's forward).
-                    spacesd: Some(true),
-                    // The caller cancels it by the machine it registered.
-                    create_id: (!direct).then(|| attach.machine_id.clone()),
-                    network,
-                    // Its driver's mesh node, so the caller reaches it directly
-                    // when it can (a direct Space has no relay to coordinate one).
-                    env: {
-                        let mut env: std::collections::BTreeMap<String, String> =
-                            req.env.clone().into_iter().collect();
-                        if !direct {
-                            env.extend(crate::mesh::provided_space_env());
-                        }
-                        env
-                    },
-                    gpu: Some(req.gpu.trim().to_string()).filter(|g| !g.is_empty()),
-                    headless: req.headless,
-                    // Enforced by this host, from the guest's first instruction.
-                    egress: egress_from_pb(req.egress.clone()),
-                    ..Default::default()
-                })
-                .await
+            let create = SpaceCreate {
+                progress: following.as_ref().map(Following::sink),
+                image: Some(image.clone()),
+                on: Some(On::Local),
+                kind,
+                runtime: runtime.clone(),
+                name: Some(req.name.clone()).filter(|n| !n.trim().is_empty()),
+                cpus: Some(req.cpus).filter(|c| *c > 0),
+                memory_mb: Some(req.memory_mb).filter(|m| *m > 0),
+                disk_gb: Some(req.disk_gb).filter(|d| *d > 0),
+                wait: Some(true),
+                // A provided Space joins the relay through its own driver
+                // (a direct one is reached through the host's forward).
+                spacesd: Some(true),
+                // The caller cancels it by the machine it registered.
+                create_id: (!direct).then(|| attach.machine_id.clone()),
+                network,
+                // Its driver's mesh node, so the caller reaches it directly
+                // when it can (a direct Space has no relay to coordinate one).
+                env: {
+                    let mut env: std::collections::BTreeMap<String, String> =
+                        req.env.clone().into_iter().collect();
+                    if !direct {
+                        env.extend(crate::mesh::provided_space_env());
+                    }
+                    env
+                },
+                gpu: Some(req.gpu.trim().to_string()).filter(|g| !g.is_empty()),
+                headless: req.headless,
+                // Enforced by this host, from the guest's first instruction.
+                egress: egress_from_pb(req.egress.clone()),
+                ..Default::default()
+            };
+            match self.spaces.create(create.clone()).await {
+                // `auto` on a broken container engine (Docker failing its
+                // own writes, a stopped engine): the next working runtime
+                // here rather than the engine's error.
+                Err(e)
+                    if let Some(next) = engine_fallback(
+                        kind,
+                        &runtime,
+                        macos,
+                        &e,
+                        &cua_sandbox_core::placement::HostFacts::current(),
+                    ) =>
+                {
+                    tracing::warn!(
+                        error = %e,
+                        runtime = %next,
+                        "the container engine failed; creating the Space on the next runtime"
+                    );
+                    (kind, runtime) = (next.builtin_kind().unwrap_or(Kind::Auto), next);
+                    self.spaces
+                        .create(SpaceCreate {
+                            kind,
+                            runtime: runtime.clone(),
+                            ..create
+                        })
+                        .await
+                        .map_err(|e2| {
+                            Error::host(
+                                "host spaces",
+                                format!(
+                                    "the container engine on {host_name} failed ({e}), and so did \
+                                     {runtime} ({e2})"
+                                ),
+                            )
+                        })
+                }
+                r => r,
+            }
         };
         let info = match created {
             Ok(c) => match c.ready() {
@@ -1684,10 +1843,12 @@ impl HostSpacesServer {
                 direct_port: port,
                 cpus: req.cpus,
                 memory_mb: req.memory_mb,
+                disk_gb: req.disk_gb,
                 routed,
             };
             provided::update_provided(&self.host_dir(), |all| all.push(record.clone()))?;
             drop(slot);
+            self.limit_run_time(&policy, &record.local_space);
             self.audit(
                 "create",
                 caller,
@@ -1752,10 +1913,12 @@ impl HostSpacesServer {
             direct_port: 0,
             cpus: req.cpus,
             memory_mb: req.memory_mb,
+            disk_gb: req.disk_gb,
             routed: false,
         };
         provided::update_provided(&self.host_dir(), |all| all.push(record.clone()))?;
         drop(slot);
+        self.limit_run_time(&policy, &record.local_space);
         self.audit(
             "create",
             caller,
@@ -2004,9 +2167,8 @@ impl HostSpacesServer {
     }
 
     /// `SetHostSpacePower`: turns a Space this host provides off or on.
-    /// Off stops it with its disk kept, so it frees the host's memory (a
-    /// QEMU VM, which cannot boot again from its state, is suspended
-    /// instead); on boots it again and attaches it to its relay machine
+    /// Off stops it with its disk kept, so it frees the host's memory; on
+    /// boots it again and attaches it to its relay machine
     /// again, with the machine token the host keeps. The owner powers any;
     /// another account only the ones it created.
     pub async fn set_power(
@@ -2047,7 +2209,7 @@ impl HostSpacesServer {
             )));
         };
         let sandboxes = self.spaces.sandboxes();
-        let Some(own) = sandboxes.power_control(name) else {
+        if sandboxes.power_control(name).is_none() {
             // The core's refusal names the runtime that cannot.
             let e = sandboxes
                 .power_off(name)
@@ -2056,11 +2218,8 @@ impl HostSpacesServer {
                 .map(Error::from)
                 .unwrap_or_else(|| Error::invalid("no power control"));
             return Err(self.refuse(caller, &space, e));
-        };
-        let control = match sandboxes.get(name).await.map(|i| i.runtime_type) {
-            Ok(runtime) if runtime == "qemu" => own,
-            _ => cua_sandbox_core::PowerControl::Stop,
-        };
+        }
+        let control = cua_sandbox_core::PowerControl::Stop;
         self.spaces.drop_connection(&id).await;
         let label = record.label();
         // What the audit names it by: its relay machine, or for a direct
@@ -2344,6 +2503,24 @@ pub(crate) fn is_stopped_sharing(reason: &str) -> bool {
     reason.contains("stopped sharing")
 }
 
+/// The relay's own sentence when it refused a team computer because this
+/// device still needs a team admin's approval (or is not enrolled), from a
+/// failed connection's reason. That refusal is the whole story: the computer
+/// is not "still starting" and waiting does not help (CUA-2835).
+pub(crate) fn team_device_refusal(reason: &str) -> Option<String> {
+    const MARKERS: [&str; 2] = ["this device (", "team machines need an enrolled device"];
+    let start = MARKERS.iter().filter_map(|m| reason.find(m)).min()?;
+    let rest = &reason[start..];
+    // One line per transport tried, joined with "; ": keep the first.
+    let line = rest.split("; ").next().unwrap_or(rest).trim();
+    (line.contains("approv") || line.contains("enroll")).then(|| line.to_string())
+}
+
+/// A team computer refused because of this device, with the relay's words.
+pub(crate) fn team_device_refused(message: String) -> Error {
+    Error::Relay(cua_host::Error::PermissionDenied(message))
+}
+
 /// [`HostLimit::resource`] of a host the relay sees connected whose owner
 /// stopped sharing it (it refuses every call). Not a count: `used` and
 /// `limit` are 0 and `reason` is the line to show. It travels with the
@@ -2369,8 +2546,8 @@ fn stopped_sharing_reason(e: &Error) -> Option<String> {
 /// local Space (2 vCPUs, 4 GiB).
 /// How this machine's daemon reaches the machine's own cua-spacesd (the
 /// host service): where it listens (the direct listener, `CUA_ENV_LISTEN`,
-/// else loopback on `CUA_ENV_PORT` or the channel's port, 3211 or 3221 for
-/// Cua Spaces Local) and its local env token.
+/// else loopback on `CUA_ENV_PORT`, the port setup chose, or the channel's
+/// port, 3211 or 3221 for Cua Spaces Local) and its local env token.
 fn host_spacesd(host: &Host) -> std::result::Result<cua_cluster::machine::HostSpacesd, String> {
     host_spacesd_on(host, cua_home::channel::CuaChannel::current())
 }
@@ -2379,11 +2556,10 @@ fn host_spacesd_on(
     host: &Host,
     channel: cua_home::channel::CuaChannel,
 ) -> std::result::Result<cua_cluster::machine::HostSpacesd, String> {
-    let listen = host
-        .config()
-        .ok()
-        .flatten()
-        .and_then(|c| c.listen)
+    let config = host.config().ok().flatten();
+    let listen = config
+        .as_ref()
+        .and_then(|c| c.listen.clone())
         .filter(|l| !l.is_empty())
         .or_else(|| {
             std::env::var("CUA_ENV_LISTEN")
@@ -2394,7 +2570,14 @@ fn host_spacesd_on(
             let port = std::env::var("CUA_ENV_PORT")
                 .ok()
                 .and_then(|p| p.trim().parse::<u16>().ok())
-                .unwrap_or(channel.ports().tcp);
+                // The port setup chose (another macOS user's host held
+                // the channel's), else the channel's.
+                .unwrap_or_else(|| {
+                    config
+                        .as_ref()
+                        .map_or(channel.ports(), |c| c.service_ports(channel))
+                        .tcp
+                });
             format!("127.0.0.1:{port}")
         });
     // A listener on every interface is reached on loopback.
@@ -2460,6 +2643,21 @@ fn provided_reservation(host_dir: &std::path::Path) -> cua_cluster::External {
         *ext.running.entry(kind).or_default() += 1;
     }
     ext
+}
+
+use provided::{admitted_disk_gb, admitted_memory_mb, gb_up};
+
+fn provided_memory_mb(provided: &[ProvidedSpace]) -> u64 {
+    provided::used_memory_mb(provided)
+}
+
+fn provided_disk_gb(provided: &[ProvidedSpace]) -> u64 {
+    provided::used_disk_gb(provided)
+}
+
+/// "1 Space", "4 Spaces".
+fn spaces_text(n: u32) -> String {
+    format!("{n} Space{}", if n == 1 { "" } else { "s" })
 }
 
 fn now_ms() -> u64 {
@@ -2634,9 +2832,102 @@ pub(crate) fn from_host(e: cua_spacesd_client::Error) -> Error {
             Error::host("host spaces", msg)
         }
         (Some("not_found"), _) => Error::NotFound(msg),
-        (Some("invalid_argument"), _) => Error::invalid(msg),
+        (Some("invalid_argument" | "invalid_placement"), _) => Error::invalid(msg),
         _ => Error::Env(e),
     }
+}
+
+/// The kind and runtime a Space created on this host runs with, from what
+/// the caller asked (`kind`, `runtime`) and this host's own configuration.
+///
+/// - An explicit built-in runtime must run here ([`placement::select`] on
+///   this host's facts); otherwise the refusal names the runtimes it has.
+/// - `auto` takes this host's `default.runtime` (`cua config set
+///   default.runtime`) when it fits the kind and runs here: the caller's
+///   machine knows nothing about which engine works on this one. A macOS
+///   guest keeps its own rule (Lume).
+///
+/// [`placement::select`]: cua_sandbox_core::placement::select
+pub(crate) fn host_placement(
+    kind: Kind,
+    runtime: Runtime,
+    macos_guest: bool,
+    settings: Option<&cua_sandbox_core::settings::Settings>,
+    host: &cua_sandbox_core::placement::HostFacts,
+) -> std::result::Result<(Kind, Runtime), cua_sandbox_core::placement::PlacementError> {
+    use cua_sandbox_core::placement::{ImageFacts, select};
+    let image = ImageFacts {
+        os: macos_guest.then(|| "macos".to_string()),
+        variants: vec![],
+    };
+    if runtime != Runtime::Auto {
+        if runtime.builtin_kind().is_some() {
+            select(&On::Local, kind, &runtime, &image, host).map_err(|mut e| {
+                e.message = format!("this host cannot run {runtime}: {}", e.message);
+                e
+            })?;
+        }
+        return Ok((kind, runtime));
+    }
+    if macos_guest {
+        return Ok((kind, runtime));
+    }
+    let Some(resolved) = settings.and_then(|s| {
+        s.resolve(Some(On::Local), (kind != Kind::Auto).then_some(kind), None)
+            .ok()
+    }) else {
+        return Ok((kind, runtime));
+    };
+    if resolved.runtime == Runtime::Auto
+        || select(&On::Local, kind, &resolved.runtime, &image, host).is_err()
+    {
+        return Ok((kind, runtime));
+    }
+    Ok((kind, resolved.runtime))
+}
+
+/// The runtime to try when an `auto` create failed on a broken container
+/// engine, or `None` to keep the error: a microVM runtime this host has
+/// (cua's own monitor, Apple's Containerization, Firecracker). Only for
+/// `auto` (an explicit kind or runtime is kept), never for a macOS guest,
+/// and never for an image fault (no such image, a refused pull).
+pub(crate) fn engine_fallback(
+    kind: Kind,
+    runtime: &Runtime,
+    macos_guest: bool,
+    err: &Error,
+    host: &cua_sandbox_core::placement::HostFacts,
+) -> Option<Runtime> {
+    if kind != Kind::Auto || *runtime != Runtime::Auto || macos_guest || !engine_broken(err) {
+        return None;
+    }
+    Kind::parse("microvm").ok()?;
+    [
+        (host.vz, Runtime::Vz),
+        (host.apple_containers, Runtime::Containerization),
+        (host.kvm, Runtime::Firecracker),
+    ]
+    .into_iter()
+    .find_map(|(has, r)| has.then_some(r))
+}
+
+/// Whether `err` says the container engine itself failed (an I/O error in
+/// its store, a 5xx, a stopped daemon), not the image.
+fn engine_broken(err: &Error) -> bool {
+    let m = err.to_string().to_ascii_lowercase();
+    let engine = m.contains("container engine") || m.contains("docker");
+    let image_fault = [
+        "manifest unknown",
+        "pull access denied",
+        "toomanyrequests",
+        "unauthorized",
+        "no such image",
+        "invalid reference",
+        "not found: manifest",
+    ]
+    .iter()
+    .any(|f| m.contains(f));
+    engine && !image_fault
 }
 
 /// A machine that provides Spaces, as [`Spaces::resolve_host`] found it.
@@ -2856,7 +3147,7 @@ async fn host_answer(space: &crate::Space) -> Result<pb::GetHostSpacesResponse> 
     space
         .spacesd()?
         .host_spaces()
-        .get_host_spaces(pb::GetHostSpacesRequest {})
+        .get_host_spaces(pb::GetHostSpacesRequest::default())
         .await
         .map(tonic::Response::into_inner)
         .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
@@ -3151,7 +3442,7 @@ impl Spaces {
             None => match space
                 .spacesd()?
                 .host_spaces()
-                .get_host_spaces(pb::GetHostSpacesRequest {})
+                .get_host_spaces(pb::GetHostSpacesRequest::default())
                 .await
             {
                 Ok(r) if !r.get_ref().name.is_empty() => r.into_inner().name,
@@ -3195,9 +3486,46 @@ impl Spaces {
         space
             .spacesd()?
             .host_spaces()
-            .get_host_spaces(pb::GetHostSpacesRequest {})
+            .get_host_spaces(pb::GetHostSpacesRequest::default())
             .await
             .map(tonic::Response::into_inner)
+            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
+    }
+
+    /// Your Spaces on computer `host` (a [`SpaceInfo::host`]: a relay
+    /// machine id, or the Space of a host added by its address), each with
+    /// what it takes on that computer's disk when the computer measured it
+    /// (`GetHostSpacesRequest.disk`). Reached the way a delete reaches it,
+    /// from the machine list already read (no relay listing of its own).
+    /// Fails when the computer is offline, not reachable as a host, or not
+    /// one this device knows.
+    pub(crate) async fn host_space_disks(&self, host: &str) -> Result<Vec<pb::HostSpace>> {
+        let space = if host.contains(':') {
+            let h = self
+                .registry()
+                .direct_hosts()?
+                .into_iter()
+                .find(|h| h.space == host)
+                .ok_or_else(|| Error::NotFound(format!("host {host}")))?;
+            self.direct_host_space(&h).await?
+        } else {
+            let m = self
+                .inner
+                .relay_cache
+                .lock()
+                .expect("relay cache")
+                .iter()
+                .find(|m| m.id == host)
+                .cloned()
+                .ok_or_else(|| Error::NotFound(format!("host {host}")))?;
+            self.host_space(&m).await?
+        };
+        space
+            .spacesd()?
+            .host_spaces()
+            .get_host_spaces(pb::GetHostSpacesRequest { disk: true })
+            .await
+            .map(|r| r.into_inner().spaces)
             .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
     }
 
@@ -4256,6 +4584,26 @@ mod snapshot_takers {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn team_device_refusal_keeps_the_relays_sentence() {
+        let msg = "this device (dev_ab12) is waiting for a team admin's approval before it can open Acme's computers. An owner or admin can approve it at app.cua.ai/machines";
+        let reason = format!("gRPC-Web: {msg}; HTTP/2: {msg}");
+        assert_eq!(super::team_device_refusal(&reason).as_deref(), Some(msg));
+        let enroll =
+            "team machines need an enrolled device: run `cua devices enroll` (or sign in again)";
+        assert_eq!(super::team_device_refusal(enroll).as_deref(), Some(enroll));
+        assert_eq!(
+            super::team_device_refusal(
+                "nothing answered at https://x (it may still be starting; retry in a few seconds)"
+            ),
+            None
+        );
+        assert_eq!(
+            super::team_device_refusal("the host stopped sharing this machine"),
+            None
+        );
+    }
+
     /// An old host (a Cua 0.7 machine, protocol revision 8) is refused up
     /// front, by name, with how to update; a current one is not.
     #[test]
@@ -4386,6 +4734,14 @@ mod tests {
         assert_eq!(on(CuaChannel::Stable).url, "http://127.0.0.1:3211");
         assert_eq!(on(CuaChannel::Local).url, "http://127.0.0.1:3221");
         assert_eq!(on(CuaChannel::Local).token, "secret");
+        // A host set up beside another macOS user's: the port setup chose.
+        let config = cua_host::HostConfig {
+            mode: "relay".into(),
+            port: Some(3231),
+            ..Default::default()
+        };
+        std::fs::write(host.paths().config(), serde_json::to_vec(&config).unwrap()).unwrap();
+        assert_eq!(on(CuaChannel::Stable).url, "http://127.0.0.1:3231");
         // The mesh media port is every channel's, by design: guest Spaces
         // and older cua-spacesd serve it there, and it is not an OS port.
         for channel in CuaChannel::ALL {
@@ -4836,5 +5192,172 @@ mod tests {
             let back = from_host(cua_spacesd_client::Error::from(status));
             assert_eq!(back.tag(), e.tag(), "{e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod host_runtime_tests {
+    use super::*;
+    use cua_sandbox_core::placement::HostFacts;
+    use cua_sandbox_core::settings::Settings;
+
+    const MAC_26: HostFacts = HostFacts {
+        gvisor: None,
+        apple_silicon: true,
+        kvm: false,
+        apple_containers: true,
+        vz: false,
+    };
+    const MAC_15: HostFacts = HostFacts {
+        gvisor: None,
+        apple_silicon: true,
+        kvm: false,
+        apple_containers: false,
+        vz: false,
+    };
+
+    fn settings(toml: &str) -> (tempfile::TempDir, Settings) {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("config.toml"), toml).unwrap();
+        let s = Settings::load_with(d.path().join("config.toml"), |_| None).unwrap();
+        (d, s)
+    }
+
+    /// A Space created on this host from another device with `auto` runs
+    /// on this host's `default.runtime`, not the engine `auto` would pick.
+    #[test]
+    fn auto_takes_the_hosts_default_runtime() {
+        let (_d, s) = settings("[default]\nruntime = \"containerization\"\n");
+        let got = host_placement(Kind::Auto, Runtime::Auto, false, Some(&s), &MAC_26).unwrap();
+        assert_eq!(got, (Kind::Auto, Runtime::Containerization));
+        // Without a default, `auto` stays `auto` (this host picks at start).
+        let (_d, none) = settings("");
+        let got = host_placement(Kind::Auto, Runtime::Auto, false, Some(&none), &MAC_26).unwrap();
+        assert_eq!(got, (Kind::Auto, Runtime::Auto));
+        let got = host_placement(Kind::Auto, Runtime::Auto, false, None, &MAC_26).unwrap();
+        assert_eq!(got, (Kind::Auto, Runtime::Auto));
+    }
+
+    /// The host's default is skipped where it cannot apply: a macOS guest
+    /// (Lume), a kind it does not run, a host that cannot run it.
+    #[test]
+    fn the_hosts_default_is_skipped_where_it_does_not_fit() {
+        let (_d, s) = settings("[default]\nruntime = \"containerization\"\n");
+        assert_eq!(
+            host_placement(Kind::Auto, Runtime::Auto, true, Some(&s), &MAC_26).unwrap(),
+            (Kind::Auto, Runtime::Auto)
+        );
+        assert_eq!(
+            host_placement(Kind::Container, Runtime::Auto, false, Some(&s), &MAC_26).unwrap(),
+            (Kind::Container, Runtime::Auto)
+        );
+        assert_eq!(
+            host_placement(Kind::Auto, Runtime::Auto, false, Some(&s), &MAC_15).unwrap(),
+            (Kind::Auto, Runtime::Auto)
+        );
+    }
+
+    /// An explicit runtime this host runs is kept; one it cannot run is
+    /// refused naming the runtimes it has (never a transport error).
+    #[test]
+    fn an_explicit_runtime_is_kept_or_refused_with_the_valid_ones() {
+        let got = host_placement(Kind::Auto, Runtime::Containerization, false, None, &MAC_26);
+        assert_eq!(got.unwrap(), (Kind::Auto, Runtime::Containerization));
+        let e = host_placement(Kind::Auto, Runtime::Containerization, false, None, &MAC_15)
+            .unwrap_err();
+        assert!(
+            e.message
+                .starts_with("this host cannot run containerization: "),
+            "{}",
+            e.message
+        );
+        assert!(e.valid.iter().any(|v| v == "auto"), "{:?}", e.valid);
+        assert!(
+            !e.valid.iter().any(|v| v == "containerization"),
+            "{:?}",
+            e.valid
+        );
+        assert!(e.message.contains("valid runtime: auto"), "{}", e.message);
+        // Through the RPC and back it stays a clear invalid-argument error.
+        let status = to_status(&Error::Sandbox(cua_sandbox_core::Error::InvalidPlacement(
+            e.clone(),
+        )));
+        assert_eq!(status.code(), tonic::Code::InvalidArgument);
+        let back = from_host(cua_spacesd_client::Error::from(status));
+        assert!(matches!(back, Error::InvalidArgument(_)), "{back:?}");
+        assert!(
+            back.to_string()
+                .contains("this host cannot run containerization")
+        );
+        // A third-party runtime is the provider's to check.
+        let other = Runtime::Other("acme".into());
+        assert_eq!(
+            host_placement(Kind::Auto, other.clone(), false, None, &MAC_15).unwrap(),
+            (Kind::Auto, other)
+        );
+    }
+
+    /// `auto` on a broken container engine moves to a microVM runtime this
+    /// host has; an image fault, an explicit choice and a macOS guest keep
+    /// the error.
+    #[test]
+    fn a_broken_engine_falls_back_for_auto_only() {
+        let broken = Error::Sandbox(cua_sandbox_core::Error::Runtime(
+            cua_sandbox_core::RuntimeError::Other(
+                "container engine: pull ghcr.io/trycua/linux@sha256:9a: Docker responded with \
+                 status code 500: write /var/lib/containerd/io.containerd.metadata.v1.bolt/meta.db: \
+                 input/output error"
+                    .into(),
+            ),
+        ));
+        let fb = |k, r: &Runtime, mac, e: &Error, h: &HostFacts| engine_fallback(k, r, mac, e, h);
+        assert_eq!(
+            fb(Kind::Auto, &Runtime::Auto, false, &broken, &MAC_26),
+            Some(Runtime::Containerization)
+        );
+        assert_eq!(
+            fb(Kind::Auto, &Runtime::Auto, false, &broken, &MAC_15),
+            None
+        );
+        assert_eq!(
+            fb(Kind::Container, &Runtime::Auto, false, &broken, &MAC_26),
+            None
+        );
+        assert_eq!(
+            fb(Kind::Auto, &Runtime::Gvisor, false, &broken, &MAC_26),
+            None
+        );
+        assert_eq!(fb(Kind::Auto, &Runtime::Auto, true, &broken, &MAC_26), None);
+        let image = Error::Sandbox(cua_sandbox_core::Error::Runtime(
+            cua_sandbox_core::RuntimeError::Other(
+                "container engine: pull ghcr.io/x/y:1: manifest unknown".into(),
+            ),
+        ));
+        assert_eq!(fb(Kind::Auto, &Runtime::Auto, false, &image, &MAC_26), None);
+        let vz = HostFacts { vz: true, ..MAC_26 };
+        assert_eq!(
+            fb(Kind::Auto, &Runtime::Auto, false, &broken, &vz),
+            Some(Runtime::Vz)
+        );
+    }
+
+    /// Drift guard: a create on this host goes through [`host_placement`]
+    /// (its runtime, not the caller's) and keeps [`engine_fallback`].
+    #[test]
+    fn host_creates_resolve_the_runtime_here() {
+        let src = include_str!("host_spaces.rs");
+        let body = src
+            .split("async fn create_provided(")
+            .nth(1)
+            .and_then(|b| b.split("\n    fn with_egress(").next())
+            .expect("create_provided");
+        assert!(
+            body.contains("host_placement("),
+            "create_provided skips host_placement"
+        );
+        assert!(
+            body.contains("engine_fallback("),
+            "create_provided skips engine_fallback"
+        );
     }
 }

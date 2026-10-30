@@ -15,13 +15,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -31,18 +33,18 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -65,13 +67,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -81,18 +85,18 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -115,13 +119,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -131,18 +137,18 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -165,13 +171,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -180,7 +188,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -213,7 +221,8 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "container | Container |  | off"
+          "container | Container |  | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": "Mac mini is at its limit: Apple's macOS license allows two macOS VMs per Mac.",
@@ -261,13 +270,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -276,7 +287,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -308,13 +319,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on *",
@@ -323,7 +336,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -356,13 +369,15 @@
           "connect-cloud",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on *",
@@ -373,7 +388,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -407,14 +422,15 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "vm | Virtual machine | AWS does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | AWS does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -460,13 +476,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -476,18 +494,18 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -510,13 +528,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -525,7 +545,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -553,13 +573,15 @@
           "cpus",
           "memory"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -568,7 +590,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 1,
         "summary": [
@@ -596,13 +618,15 @@
           "name",
           "open-when-ready"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -611,7 +635,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 2,
         "summary": [
@@ -636,13 +660,15 @@
         "canContinue": true,
         "cloud": null,
         "fields": [],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -651,7 +677,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -676,28 +702,30 @@
         "canContinue": true,
         "cloud": null,
         "fields": [],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+          "local | This Mac | Linux, on this Mac | on *"
         ],
         "price": null,
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -713,28 +741,30 @@
         "canContinue": true,
         "cloud": null,
         "fields": [],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+          "local | This Mac | Linux, on this Mac | on *"
         ],
         "price": null,
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],

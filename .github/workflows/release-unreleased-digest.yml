@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   digest:
+    if: github.repository == 'trycua/cua'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -151,11 +151,23 @@ impl ContainerizationRuntime {
     }
 
     /// The `container` binary, if there is one.
+    ///
+    /// With `runtime.microvm = system`, Apple's `container` already on this
+    /// Mac (`runtime.microvm_path`, else the one on `PATH`), never cua's
+    /// own copy.
     pub fn bin(&self) -> Option<PathBuf> {
         match &self.cfg.bin {
             Some(b) => Some(b.clone()),
+            None if Self::uses_installed() => {
+                crate::kinds::system_bin(crate::kinds::RuntimeKind::Microvm)
+            }
             None => install::installed_bin(&self.cfg.root),
         }
+    }
+
+    /// MicroVMs are set to what is already installed (nothing is downloaded).
+    fn uses_installed() -> bool {
+        crate::kinds::source(crate::kinds::RuntimeKind::Microvm) == crate::kinds::KindSource::System
     }
 
     fn lock_for(&self, name: &str) -> Arc<Mutex<()>> {
@@ -248,7 +260,16 @@ impl ContainerizationRuntime {
             if let Some(why) = install::unsupported_reason() {
                 return Err(VmmError::other(why));
             }
-            if install::installed_bin(&self.cfg.root).is_none() {
+            if Self::uses_installed() {
+                if self.bin().is_none() {
+                    return Err(VmmError::missing(
+                        "Apple container",
+                        "MicroVMs are set to use what is already installed, and Apple's container \
+                         is not installed on this Mac (Settings, Advanced, or \
+                         `cua config set runtime.microvm auto`)",
+                    ));
+                }
+            } else if install::installed_bin(&self.cfg.root).is_none() {
                 if !self.cfg.auto_install {
                     return Err(VmmError::missing(
                         "Apple container",
@@ -330,6 +351,13 @@ impl ContainerizationRuntime {
         self.aliases()
             .remove(name)
             .unwrap_or_else(|| name.to_string())
+    }
+
+    /// The directory holding Space `name`'s container under this backend's
+    /// application root (`<root>/data/containers/<id>`: its own root file
+    /// system and state; the image it came from is stored apart).
+    pub fn container_dir(&self, name: &str) -> PathBuf {
+        self.app_root().join("containers").join(self.id_of(name))
     }
 
     /// The Space name container `id` goes by.

@@ -50,7 +50,9 @@ enum JoinWithCode {
         let code = normalizeCode(text) ?? text
         var args = ["host", "setup", "--pair", code]
         if let relay { args += ["--relay", relay] }
-        return args
+        // It provides Spaces and keeps its screen private, as a computer
+        // added by signing in does; sharing its desktop is a choice on its page.
+        return args + ["--no-desktop", "--provide-spaces"]
     }
 
     /// The last non-empty line of the CLI's stderr, for the error message.

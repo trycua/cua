@@ -1,6 +1,6 @@
 {
   "name": "menu-count",
-  "about": "The menu bar item and the notch tab count the same Spaces, the ones on or starting (a stopped Space is not counted; never This machine or another machine's own desktop, even while it provides Spaces; the Spaces a machine provides count), and the menu shows Cua Volume's sync state next to the count when sync applies: synced, syncing, conflicts (they open the Volume page) and offline; nothing on this Mac's store with one device; a bucket that has not answered for 30 s is offline.",
+  "about": "The menu bar item and the notch tab count the same Spaces, the ones on or starting (a stopped Space is not counted; never This machine; another machine's shared desktop counts while it runs, and a machine with no desktop to show (it only provides Spaces) does not, even while it provides them; the Spaces a machine provides count), and the menu shows Cua Volume's sync state next to the count when sync applies: synced, syncing, conflicts (they open the Volume page) and offline; nothing on this Mac's store with one device; a bucket that has not answered for 30 s is offline.",
   "now": 1800000000000,
   "cases": [
     {
@@ -135,9 +135,9 @@
       },
       "rows": [
         {
-          "id": "cloud:aws-ci",
+          "id": "direct:aws-ci",
           "name": "aws-ci",
-          "provider": "cloud",
+          "provider": "direct",
           "spacesdVersion": "0.4.0",
           "features": [
             "desktop_stream"
@@ -192,9 +192,9 @@
           "error": null
         },
         {
-          "id": "cloud:aws-ci",
+          "id": "direct:aws-ci",
           "name": "aws-ci",
-          "provider": "cloud",
+          "provider": "direct",
           "spacesdVersion": "0.4.0",
           "features": [
             "desktop_stream"

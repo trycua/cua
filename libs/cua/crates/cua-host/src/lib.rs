@@ -15,7 +15,9 @@
 //!
 //! A host has two independent settings ([`HostSpacesSettings`]): share its
 //! own desktop, and provide Spaces to the owner's enrolled devices
-//! ([`HostProfile::Spare`] turns the first off and the second on).
+//! ([`HostProfile::Spare`] turns the first off and the second on). A new
+//! relay setup provides Spaces unless asked not to; a machine already set
+//! up keeps what it has ([`default_provide_spaces`]).
 //! [`provided`] keeps the Spaces a host provides, their hash-chained audit,
 //! and [`match_machine`], which resolves "spare mac mini" to a machine.
 //! A host in direct mode provides Spaces without the relay ([`direct`]).
@@ -41,6 +43,7 @@ mod helper_migration_tests;
 mod host;
 pub mod machine;
 pub mod pairing;
+pub mod ports;
 pub mod preflight;
 pub mod provided;
 pub mod relay;
@@ -48,20 +51,23 @@ pub mod service;
 #[cfg(test)]
 mod setup_tests;
 pub mod spaces_api;
+mod sysinfo_gb;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
 mod tests;
 pub mod uv;
 
-pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode};
+pub use device::{
+    DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode, token_subject,
+};
 pub use helper_migration::{ServiceMigration, VerifyTiming};
 pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
     HostStatus, META_ARCH, META_CLOUD, META_OS, META_PROVIDES_SPACES, PermissionHint,
-    RELAY_HICCUP_GRACE, SetupOptions, SpacesDaemon, StaticRelay, local_network_hint,
-    permission_hints,
+    RELAY_HICCUP_GRACE, SetupOptions, SpacesDaemon, StaticRelay, default_provide_spaces,
+    local_network_hint, permission_hints,
 };
 pub use machine::machine_id;
 pub use pairing::{
@@ -155,6 +161,14 @@ pub enum Error {
     /// ([`cua_home::plan_limit::PlanLimit::sentence`]); never retried.
     #[error("{0}")]
     PlanLimit(String),
+    /// The proxy in front of the relay throttled this client (HTTP 429, bare
+    /// `Too Many Requests`) and kept doing so through every retry. The
+    /// request never reached the relay.
+    #[error("Too many attempts right now. Wait {retry_after_secs} seconds, then try again.")]
+    Throttled {
+        /// How long the proxy asked to wait (`Retry-After`), at least 1.
+        retry_after_secs: u64,
+    },
     /// Driver download failed.
     #[error("download: {0}")]
     Download(String),
@@ -180,7 +194,7 @@ impl Error {
             Error::PermissionDenied(m) if m.starts_with("relay: ") => Some(403),
             Error::NotFound(m) if m.starts_with("relay: ") => Some(404),
             Error::Conflict(m) if m.starts_with("relay: ") => Some(409),
-            Error::PlanLimit(_) => Some(429),
+            Error::PlanLimit(_) | Error::Throttled { .. } => Some(429),
             Error::Relay(m) | Error::Download(m) => status_in(m),
             _ => None,
         }
@@ -193,6 +207,7 @@ impl Error {
     /// missing machine or an answer that could not be read.
     pub fn is_transient(&self) -> bool {
         match self {
+            Error::Throttled { .. } => true,
             Error::Relay(m) => match status_in(m) {
                 Some(code) => matches!(code, 429 | 502 | 503 | 504),
                 None => !m.starts_with("bad relay response"),

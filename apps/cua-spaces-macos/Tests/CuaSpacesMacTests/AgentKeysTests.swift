@@ -8,7 +8,7 @@ import Foundation
 import SwiftUI
 import Testing
 
-/// An in-memory daemon for Settings → Agents: `agent_keys.*` as the daemon
+/// An in-memory daemon for Settings → Connections: `agent_keys.*` as the daemon
 /// answers them (never a value).
 final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
     var calls: [(String, [String: Any])] = []
@@ -18,7 +18,7 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
     func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
         calls.append((tool, args))
         switch tool {
-        case "agent_keys.list": break
+        case "agent_keys.list", "agent_keys.check": break
         case "agent_keys.set":
             let provider = args["provider"] as? String ?? ""
             let env = provider == "anthropic" ? "ANTHROPIC_API_KEY" : provider == "openai" ? "OPENAI_API_KEY" : args["env"] as? String ?? ""
@@ -27,6 +27,13 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
             keys.append(["provider": provider, "env": env, "last4": String(value.suffix(4)), "added_ms": 1_790_000_100_000])
         case "agent_keys.remove":
             keys.removeAll { $0["env"] as? String == args["env"] as? String }
+        // Your login shell has an Anthropic key: names only, and a copy saved on request.
+        case "agent_keys.shell": return ["names": ["ANTHROPIC_API_KEY"]]
+        case "agent_keys.from_shell":
+            let env = args["env"] as? String ?? ""
+            guard env == "ANTHROPIC_API_KEY" else { throw AgentsToolError(message: "\(env) isn't set in your shell") }
+            keys.removeAll { $0["env"] as? String == env }
+            keys.append(["provider": "anthropic", "env": env, "last4": "a91c", "added_ms": 1_790_000_200_000])
         default: throw AgentsToolError(message: "unknown tool \(tool)")
         }
         var report: [String: Any] = ["keys": keys, "providers": [], "available": available]
@@ -36,7 +43,7 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
 }
 
 @MainActor
-@Suite("Settings → Agents")
+@Suite("Settings → Connections")
 struct AgentKeysTests {
     init() { _ = NSApplication.shared }
 
@@ -82,18 +89,20 @@ struct AgentKeysTests {
         #expect(none.view.notice?.contains("need the cua daemon") == true)
     }
 
-    @Test func theSettingsTabRenders() async {
-        let m = AgentKeysModel(tools: FakeAgentKeysTools())
+    @Test func aKeyFromYourShellIsSavedAndTheNamesNeverReplaceTheList() async throws {
+        let tools = FakeAgentKeysTools()
+        let m = AgentKeysModel(tools: tools)
         await m.load()
-        let host = NSHostingView(rootView: AgentKeysSettingsView(keys: m))
-        host.frame = NSRect(x: 0, y: 0, width: 520, height: 420)
-        host.layoutSubtreeIfNeeded()
-        #expect(host.fittingSize.width > 0)
-        #expect(AgentKeysSettingsView.added("Added", 1_790_000_000_000).hasPrefix("Added "))
+        let names = try await m.call("agent_keys.shell") as? [String: Any]
+        #expect(names?["names"] as? [String] == ["ANTHROPIC_API_KEY"])
+        // The names answer is not the key list: the rows stay as they were.
+        #expect(m.view.rows.map(\.status) == ["Not set", "\u{2022}\u{2022}\u{2022}\u{2022} 3f9a"])
+        try await m.call("agent_keys.from_shell", ["env": "ANTHROPIC_API_KEY"])
+        #expect(m.view.rows.first?.status == "\u{2022}\u{2022}\u{2022}\u{2022} a91c")
     }
 
     @Test func theWebBridgeRoutesAgentKeysToTheDaemon() {
-        for m in ["agentKeys.list", "agentKeys.set", "agentKeys.remove"] {
+        for m in ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell"] {
             #expect(WebUIBridge.methods.contains(m))
         }
     }

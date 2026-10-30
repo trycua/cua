@@ -12,7 +12,7 @@
 # (the app installs it onto PATH on first launch, like the Tauri app's
 # sidecar), Sparkle.framework (the updater, from the pinned SwiftPM
 # artifact, with its XPC services) in Contents/Frameworks and the
-# third-party notices (Settings, About, Acknowledgements), the host
+# third-party notices (THIRD_PARTY_NOTICES.md in Resources), the host
 # service (the pinned cua-spacesd from scripts/fetch-spacesd.sh, or
 # $CUA_SPACESD_BIN, in Contents/Helpers; the app's own executable runs it as
 # its login item, whose SMAppService plist is in
@@ -122,6 +122,11 @@ app="$out/$app_name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 cp "$here/Support/Info.plist" "$app/Contents/Info.plist"
+# Crash reporting (CrashReporting.swift): the public DSN from the shared
+# config. An empty or missing dsn writes an empty key, which turns it off.
+crash_dsn="$(plutil -extract dsn raw -o - "$here/../../config/spaces-crash-reporting.json" 2>/dev/null || true)"
+/usr/libexec/PlistBuddy -c "Delete :CuaCrashDSN" "$app/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :CuaCrashDSN string $crash_dsn" "$app/Contents/Info.plist"
 if [ "$channel" = local ]; then
   # Another identity, no updater, staging, its own home, helper and URL
   # scheme. Nothing here may reach an installed Cua Spaces: see
@@ -156,6 +161,20 @@ fi
 # directory), so the app finds them through ModuleResources instead.
 for b in "$bin"/*.bundle; do [ -d "$b" ] && cp -R "$b" "$app/Contents/Resources/"; done
 cp "$here/Support/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+# macOS 26 draws icons without their own background on a grey system plate. The
+# Icon Composer source (full-bleed background + key layer, dark/tinted/clear)
+# compiles to Assets.car, found through CFBundleIconName; AppIcon.icns above is
+# the fallback for macOS 15 and older.
+icon_tmp="$(mktemp -d)"
+if xcrun actool "$here/Support/AppIcon.icon" --compile "$icon_tmp" --platform macosx \
+  --minimum-deployment-target 14.0 --app-icon AppIcon --include-all-app-icons \
+  --output-partial-info-plist "$icon_tmp/partial.plist" >/dev/null 2>&1 && [ -s "$icon_tmp/Assets.car" ]; then
+  cp "$icon_tmp/Assets.car" "$app/Contents/Resources/Assets.car"
+else
+  echo "warning: actool (Xcode 26+) could not compile Support/AppIcon.icon; macOS 26 will show the icon on a grey plate" >&2
+  [ -z "${CI:-}" ] || exit 1
+fi
+rm -rf "$icon_tmp"
 cp "$icons/tray-template.png" "$app/Contents/Resources/tray-template.png"
 cp "$icons/tray-template@2x.png" "$app/Contents/Resources/tray-template@2x.png"
 cp "$here/THIRD_PARTY_NOTICES.md" "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
@@ -205,6 +224,20 @@ mkdir -p "$app/Contents/Library/LaunchAgents" "$app/Contents/Helpers"
 spacesd="$("$here/scripts/fetch-spacesd.sh" ${archs:-$(uname -m)})"
 cp "$spacesd" "$app/Contents/Helpers/cua-spacesd"
 chmod 0755 "$app/Contents/Helpers/cua-spacesd"
+# Cua Driver, the computer-use server coding agents on this Mac use: the
+# release pinned in cua-driver.release.json (scripts/fetch-cua-driver.sh
+# checks its size, SHA-256 and Developer ID signature), next to the host
+# service. cua-spacesd runs it as its own child, so macOS counts its
+# Accessibility and Screen Recording as Cua Spaces'. In Contents/Helpers for
+# the same reason as cua-spacesd: its cursor overlay starts AppKit. The
+# release keeps its own signature here (it is not stripped or re-signed);
+# build-release.sh signs it with the release identity.
+# shellcheck disable=SC2086 # one word per architecture
+driver_dir="$("$here/scripts/fetch-cua-driver.sh" ${archs:-$(uname -m)})"
+for f in cua-driver cua-cursor-theme; do
+  cp "$driver_dir/$f" "$app/Contents/Helpers/$f"
+  chmod 0755 "$app/Contents/Helpers/$f"
+done
 helper_plist="$app/Contents/Library/LaunchAgents/$helper_label.plist"
 cp "$here/Support/Helper/com.trycua.spaces.helper.plist" "$helper_plist"
 if [ "$channel" = local ]; then
@@ -291,7 +324,8 @@ fi
 # only fail on the other kind of Mac).
 if [ -n "$archs" ]; then
   for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/Frameworks/libcua_sdk.dylib" "$app/Contents/MacOS/cua" \
-    "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle" "$app/Contents/Helpers/cua-spacesd"; do
+    "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle" "$app/Contents/Helpers/cua-spacesd" \
+    "$app/Contents/Helpers/cua-driver" "$app/Contents/Helpers/cua-cursor-theme"; do
     [ -e "$f" ] || continue
     for arch in $archs; do
       lipo "$f" -verify_arch "$arch" || { echo "$f has no $arch slice ($(lipo -archs "$f"))" >&2; exit 1; }

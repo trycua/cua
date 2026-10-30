@@ -46,6 +46,13 @@ pub trait DaemonExtension: Send + Sync + 'static {
         builder
     }
 
+    /// Capability words this extension adds to `GetInfoResponse.features`
+    /// (for example `thread.v1`), so clients can tell what the daemon
+    /// serves before calling it.
+    fn features(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Once the Spaces runtime is built: start what needs it. The returned
     /// part is kept for the runtime's lifetime.
     fn attach(

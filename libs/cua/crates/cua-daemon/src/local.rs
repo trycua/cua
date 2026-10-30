@@ -276,11 +276,17 @@ pub async fn resolve_placement_for(
             Runtime::Firecracker => BackendKind::Firecracker,
             Runtime::Vz => BackendKind::Vz,
             Runtime::Containerization => BackendKind::Containerization,
+            // `runtime.microvm`: Cua's own monitor, Apple's container
+            // already on this Mac, or (auto) the monitor when it runs here.
             _ if cfg!(target_os = "macos") => {
-                if cua_sandbox_core::placement::HostFacts::current().vz {
-                    BackendKind::Vz
-                } else {
-                    BackendKind::Containerization
+                use cua_vmm::kinds::{KindSource, RuntimeKind, source};
+                match source(RuntimeKind::Microvm) {
+                    KindSource::Builtin => BackendKind::Vz,
+                    KindSource::System => BackendKind::Containerization,
+                    KindSource::Auto if cua_sandbox_core::placement::HostFacts::current().vz => {
+                        BackendKind::Vz
+                    }
+                    KindSource::Auto => BackendKind::Containerization,
                 }
             }
             _ => BackendKind::Firecracker,
@@ -489,6 +495,33 @@ async fn resolve_placement_inner(
         placement,
         image: Some(found),
     })
+}
+
+/// Set once an engine refused a start because of the repo cache's mount:
+/// the daemon offers it no more (until it restarts).
+static REPO_CACHE_MOUNT_REFUSED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Whether `e` (a refused start of `s`) is about the repo cache's mount.
+fn is_repo_cache_mount_error(s: &StartSpec, e: &VmmError) -> bool {
+    if !s
+        .mounts
+        .iter()
+        .any(|m| m.guest == cua_sandbox_core::repo_cache::GUEST_ROOT)
+    {
+        return false;
+    }
+    let text = e.to_string().to_ascii_lowercase();
+    [
+        "mount",
+        "bind",
+        "not shared",
+        "file sharing",
+        "denied",
+        "no such file",
+    ]
+    .iter()
+    .any(|w| text.contains(w))
 }
 
 fn os_of(s: &str) -> GuestOs {
@@ -862,6 +895,27 @@ impl VmmLocal {
     /// The engine local Linux Spaces use ([`managed::choose`]): this Mac's
     /// own, or the built-in runtime. Chosen on first use, without booting
     /// anything.
+    /// The repo cache as a read-only mount of a Linux container Space (see
+    /// `cua-repo-cache`): only where the engine can bind this machine's
+    /// directory, and only while the cache is on.
+    async fn repo_cache_mount(&self, backend: BackendKind, os: &str) -> Option<cua_vmm::Mount> {
+        if backend != BackendKind::Container
+            || os_of(os) != GuestOs::Linux
+            || REPO_CACHE_MOUNT_REFUSED.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return None;
+        }
+        let root = cua_sandbox_core::repo_cache::current().mount_source()?;
+        // The built-in runtime's VM shares only cua's job directories (the
+        // cache lives in one), and not before it booted sharing them.
+        if let Ok(Engine::Builtin(_)) = self.engine().await
+            && !(managed::is_shared(&root) && (!managed::running() || managed::shares_job_dirs()))
+        {
+            return None;
+        }
+        Some(cua_sandbox_core::repo_cache::mount(root))
+    }
+
     async fn engine(&self) -> std::result::Result<Engine, VmmError> {
         let source = LinuxSource::current();
         let mut slot = self.container.lock().await;
@@ -1653,6 +1707,11 @@ impl VmmLocal {
         s.egress = spec.egress.clone();
         s.disk_size_gb = spec.disk_size_gb;
         s.mounts = spec.mounts.clone();
+        if let Some(m) = self.repo_cache_mount(p.backend, &spec.os).await
+            && !s.mounts.iter().any(|x| x.guest == m.guest)
+        {
+            s.mounts.push(m);
+        }
         // The layers from the manifest: progress knows the total, and the
         // layers the engine already has, from the first byte.
         s.pull_layers = r
@@ -1660,6 +1719,14 @@ impl VmmLocal {
             .as_ref()
             .map(|i| i.layers.clone())
             .unwrap_or_default();
+        // What a macOS base pull writes, from the image catalog (the same
+        // sizes the app's New Space checks), so a Mac without room for it
+        // is refused before the download instead of during it.
+        if p.backend == BackendKind::Lume
+            && let ImageSource::Oci { reference } = &s.image
+        {
+            s.pull_bytes = catalog_pull_bytes(reference, cua_vmm::Arch::host().oci());
+        }
         // `auto` (or empty) is the backend's own option.
         s.gpu = spec.gpu.as_deref().map(|g| match (g.trim(), p.backend) {
             ("" | "auto" | "on", BackendKind::Lume) => cua_vmm::gpu::PARAVIRTUAL.to_string(),
@@ -1875,7 +1942,7 @@ impl LocalRuntime for VmmLocal {
     ) -> RuntimeResult<(LocalInstance, Option<cua_sandbox_core::ImageInfo>)> {
         let started = std::time::Instant::now();
         let Prepared {
-            spec: s,
+            spec: mut s,
             backend,
             rt,
             image,
@@ -1917,7 +1984,20 @@ impl LocalRuntime for VmmLocal {
             ));
         }
         let start_at = std::time::Instant::now();
-        let inst = rt.start(&s).await.map_err(rt_err)?;
+        let inst = match rt.start(&s).await {
+            Ok(i) => i,
+            // The repo cache is an extra: a start that this engine refuses
+            // because of its mount (a directory it does not share) runs
+            // again without it, and the daemon stops offering it.
+            Err(e) if is_repo_cache_mount_error(&s, &e) => {
+                tracing::warn!(error = %e, "repo cache mount refused; starting without it");
+                REPO_CACHE_MOUNT_REFUSED.store(true, std::sync::atomic::Ordering::SeqCst);
+                s.mounts
+                    .retain(|m| m.guest != cua_sandbox_core::repo_cache::GUEST_ROOT);
+                rt.start(&s).await.map_err(rt_err)?
+            }
+            Err(e) => return Err(rt_err(e)),
+        };
         // Behind a port forward (the probe on cua-spacesd's port says so),
         // ready once it serves an authenticated call with the Space's
         // token: see `guest_identity::wait_accepts`.
@@ -1987,18 +2067,9 @@ impl LocalRuntime for VmmLocal {
     }
 
     async fn resume(&self, name: &str) -> RuntimeResult<LocalInstance> {
-        let (kind, rt) = self.owner(name).await?;
-        // QEMU resumes a paused VM over QMP; a stopped one has no process
-        // to resume and no start spec to boot from.
-        if kind == BackendKind::Qemu && rt.status(name).await.map_err(rt_err)? == Status::Stopped {
-            return Err(RuntimeError::Unsupported {
-                backend: "qemu".into(),
-                op: format!(
-                    "starting {name} again: a QEMU VM resumes from suspend only, and this one \
-                     was stopped (its disk is kept; delete it and create a new one)"
-                ),
-            });
-        }
+        // A paused QEMU VM runs again over QMP; a stopped one boots again
+        // from its own disk (`QemuRuntime::resume`).
+        let (_, rt) = self.owner(name).await?;
         let inst = rt.resume(name).await.map_err(rt_err)?;
         Ok(LocalInstance {
             backend: runtime_label(&inst),
@@ -2019,19 +2090,22 @@ impl LocalRuntime for VmmLocal {
         })
     }
 
-    /// Containers pause in memory (`docker pause`) and QEMU VMs pause over
-    /// QMP; Lume has no pause, so a Lume VM stops and boots again. On the
+    /// Containers pause in memory (`docker pause`). VMs stop and boot again
+    /// from their disk: turning a VM off gives its memory back to the
+    /// machine (a paused QEMU VM would keep all of it; `Sandboxes::suspend`
+    /// still pauses one when asked), and Lume has no pause at all. On the
     /// built-in Linux runtime containers stop too, so its VM can stop once
     /// no Linux Space runs (a paused one would hold it up).
     fn power_control(&self, runtime_type: &str) -> Option<cua_sandbox_core::PowerControl> {
         use cua_sandbox_core::PowerControl;
         match runtime_type.trim().to_ascii_lowercase().as_str() {
-            // Neither has a pause: the VM stops and boots again.
-            "lume" | "containerization" => Some(PowerControl::Stop),
+            // The VM stops (its memory goes back to the machine) and boots
+            // again from its disk.
+            "lume" | "containerization" | "qemu" => Some(PowerControl::Stop),
             "gvisor" | "runsc" | "runc" | "container" | "docker" if managed::in_use() => {
                 Some(PowerControl::Stop)
             }
-            "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker" | "qemu"
+            "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker"
             | "firecracker" | "vz" => Some(PowerControl::Suspend),
             _ => None,
         }
@@ -2408,6 +2482,16 @@ impl VmmLocal {
 
 // ------------------------------------------------------------------ preflight
 
+/// What pulling `reference` writes on a host of `arch` (`arm64`, `amd64`):
+/// the image catalog's download plus unpacked size. `None` for an image the
+/// catalog does not list or has not measured.
+fn catalog_pull_bytes(reference: &str, arch: &str) -> Option<u64> {
+    let bare = reference.split('@').next().unwrap_or(reference);
+    let entry = cua_image::catalog::find(bare)?;
+    let p = entry.sizes.as_ref()?.platform(arch)?;
+    Some(p.download.saturating_add(p.unpacked))
+}
+
 /// Refuses a create the machine cannot run, in plain words (the first
 /// failed check of [`cua_vmm::preflight`]), before anything is pulled. The
 /// disk is left to the guards of the create itself, which know the image's
@@ -2420,15 +2504,30 @@ async fn preflight_refusal(os: cua_vmm::GuestOs, backend: BackendKind) -> Runtim
         Runs::Vm
     };
     let req = cua_vmm::preflight::request(cua_vmm::preflight::guest_of(os), runs, None);
-    let mut facts = cua_vmm::preflight::gather(&req).await;
+    let mut facts =
+        cua_vmm::preflight::gather_waiting(&req, cua_vmm::local_network::PROMPT_PATIENCE).await;
     facts.free_bytes = None;
-    match cua_create_failure::preflight::evaluate(&req, &facts)
+    match cua_vmm::preflight::evaluate(&req, &facts)
         .into_iter()
         .next()
     {
-        Some(issue) => Err(RuntimeError::Other(issue.message)),
+        Some(issue) => Err(RuntimeError::Other(refusal_text(issue))),
         None => Ok(()),
     }
+}
+
+/// The refusal's words: a Local Network refusal names the app macOS holds
+/// responsible for this daemon (what System Settings lists: "Cua Spaces
+/// Local" for the Local build), not the generic name.
+fn refusal_text(issue: cua_create_failure::preflight::Issue) -> String {
+    use cua_create_failure::preflight::{IssueKind, local_network_denied};
+    if issue.kind == IssueKind::LocalNetwork
+        && let Some(app) = cua_vmm::local_network::ResponsibleApp::of_this_process()
+        && app.bundle
+    {
+        return local_network_denied(&app.name);
+    }
+    issue.message
 }
 
 // ------------------------------------------------------------------ doctor
@@ -3044,6 +3143,23 @@ fn claim_delivers_token(backend: BackendKind) -> bool {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_macos_pull_is_sized_from_the_catalog() {
+        let gib = 1u64 << 30;
+        let mac = super::catalog_pull_bytes("ghcr.io/trycua/macos:26", "arm64").unwrap();
+        // About 24 GB download plus about 35 GB unpacked, not a 30 GB guess.
+        assert!(mac > 50 * gib, "{mac}");
+        // A pinned reference is the same image.
+        assert_eq!(
+            super::catalog_pull_bytes("ghcr.io/trycua/macos:26@sha256:00", "arm64"),
+            Some(mac)
+        );
+        assert_eq!(
+            super::catalog_pull_bytes("example.com/not/listed:1", "arm64"),
+            None
+        );
+    }
+
+    #[test]
     fn only_backends_whose_claim_delivers_the_token_skip_the_pool_secret() {
         assert!(claim_delivers_token(BackendKind::Firecracker));
         assert!(claim_delivers_token(BackendKind::Vz));
@@ -3215,6 +3331,23 @@ mod tests {
         assert!(local.fork_has_own_identity("runc"));
         // A QEMU fork gets its own through cua-spacesd (memory) or its seed.
         assert!(local.fork_has_own_identity("qemu"));
+    }
+
+    /// Turning a VM off frees its memory: QEMU and Lume VMs stop (their
+    /// disk is kept) and boot again; containers still pause.
+    #[test]
+    fn vms_stop_and_free_their_memory_containers_pause() {
+        use cua_sandbox_core::{LocalRuntime, PowerControl};
+        let local = VmmLocal::default();
+        assert_eq!(local.power_control("qemu"), Some(PowerControl::Stop));
+        assert_eq!(local.power_control("lume"), Some(PowerControl::Stop));
+        if !managed::in_use() {
+            assert_eq!(local.power_control("gvisor"), Some(PowerControl::Suspend));
+        }
+        assert_eq!(
+            local.power_control("firecracker"),
+            Some(PowerControl::Suspend)
+        );
     }
 
     /// A Mac's microVMs under cua-vz: found by their label, paused when

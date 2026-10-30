@@ -28,6 +28,8 @@ cua-keyvault.workspace = true
 cua-telemetry.workspace = true
 cua-daemon = { workspace = true, features = ["server", "client", "spaces"] }
 cua-auth.workspace = true
+# The owner's teams (team admins count as admins for agent rights).
+cua-host.workspace = true
 cua-teleport.workspace = true
 cua-chromium-storage.workspace = true
 # The reserved `cookies.json` bundle entry format (`daemon::keyvault`'s
@@ -69,3 +71,4 @@ cua-sandbox-core = { workspace = true, features = ["testing"] }
 cua-proto = { workspace = true, features = ["client", "server", "serde"] }
 tonic = { workspace = true, default-features = false, features = ["codegen", "server", "router", "channel"] }
 tokio-stream = { workspace = true, features = ["net"] }
+tonic-web.workspace = true

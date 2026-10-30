@@ -1,0 +1,30 @@
+name: "CI: flaky quarantine"
+
+# Fails when an entry in .github/flaky/quarantine.json is invalid or past its
+# expiry date, so a quarantined test cannot stay quarantined for good. Runs on
+# every pull request (no path filter: an expired entry blocks every PR until
+# the test is fixed or the entry is renewed with a reason) and daily on main.
+# Also tests the flaky-test tooling (.github/scripts/flaky/flaky.py).
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quarantine:
+    name: quarantine list and flaky tooling
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Quarantine entries are valid and unexpired
+        run: python3 .github/scripts/flaky/flaky.py validate
+      - name: Flaky tooling tests
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest -q -p no:cacheprovider .github/scripts/tests/test_flaky.py

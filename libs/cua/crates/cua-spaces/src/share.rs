@@ -358,6 +358,15 @@ impl Spaces {
             .unwrap_or_default()
     }
 
+    /// The Spaces this device attached to the relay to share them: Space
+    /// id -> relay machine id.
+    pub(crate) fn attached_machines(&self) -> BTreeMap<String, String> {
+        self.attached()
+            .into_iter()
+            .map(|(space, a)| (space, a.machine))
+            .collect()
+    }
+
     fn save_attached(&self, all: &BTreeMap<String, Attached>) -> Result<()> {
         let path = self.shares_path();
         cua_home::guard_write(&path)?;
@@ -400,6 +409,104 @@ impl Spaces {
         }
     }
 
+    /// [`Spaces::rename`] on the relay: a `relay:` Space, a Space you
+    /// shared (its attached machine) and a Space this computer provides to
+    /// your other devices are machines there, renamed so everyone who
+    /// lists them sees the new name. A `relay:` Space you do not own is
+    /// refused; for the others nothing on the relay is a refusal (signed
+    /// out, the machine gone, one a teammate created on this computer):
+    /// they are renamed here only.
+    pub(crate) async fn rename_on_relay(
+        &self,
+        info: &crate::SpaceInfo,
+        id: &SpaceId,
+        name: &str,
+    ) -> Result<()> {
+        let relay_space = matches!(id, SpaceId::Relay { .. });
+        let machine = match id {
+            SpaceId::Relay { machine_id } => Some(machine_id.clone()),
+            _ => self
+                .attached()
+                .get(&info.id)
+                .map(|a| a.machine.clone())
+                .or_else(|| {
+                    cua_host::provided::load_provided(
+                        &cua_host::Host::new(self.home_dir()).paths().dir,
+                    )
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|p| p.local_space == info.id)
+                    .map(|p| p.relay_machine)
+                }),
+        };
+        let Some(machine) = machine else {
+            return Ok(());
+        };
+        let shown = info.shown_name().to_string();
+        let refused = || {
+            Error::Relay(cua_host::Error::PermissionDenied(format!(
+                "{shown} is shared with you. Only its owner can rename it."
+            )))
+        };
+        let relay = match self.relay_account() {
+            Some(r) => r,
+            // Not signed in: the relay's own "sign in" error.
+            None if relay_space => self.relay()?,
+            None => {
+                tracing::info!(space = %info.id, "renamed here only: not signed in to the relay");
+                return Ok(());
+            }
+        };
+        let token = relay.tokens.access_token().await?;
+        let client = relay.client().await?;
+        let m = match client.machine(&token, &machine).await.map_err(Error::from) {
+            Ok(m) => m,
+            Err(e) if !relay_space && e.tag() == "not_found" => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        if m.role != "owner" {
+            if relay_space {
+                return Err(refused());
+            }
+            return Ok(());
+        }
+        client
+            .patch(
+                &token,
+                &machine,
+                &cua_host::MachinePatch {
+                    name: Some(name.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| match e {
+                cua_host::Error::PermissionDenied(_) => refused(),
+                e => e.into(),
+            })?;
+        for m in self
+            .inner
+            .relay_cache
+            .lock()
+            .expect("relay cache")
+            .iter_mut()
+            .filter(|m| m.id == machine)
+        {
+            m.name = name.to_string();
+        }
+        // A `relay:` Space added to this device's registry lists its record.
+        if relay_space && let Some(mut record) = self.inner.registry.get(&info.id)? {
+            record.name = name.to_string();
+            let credential = self
+                .inner
+                .registry
+                .credential(&info.id)?
+                .unwrap_or_default();
+            self.inner.registry.upsert(record, credential)?;
+        }
+        Ok(())
+    }
+
     /// Makes sure `space` is a machine of the owner's account on the relay,
     /// online now, and returns its id: a host already is one; any other
     /// Space's driver is attached (registered on first share, re-attached
@@ -435,7 +542,7 @@ impl Spaces {
         let listed = self.list()?.into_iter().find(|i| i.id == canonical);
         let os = listed.as_ref().map(|i| i.os.clone()).unwrap_or_default();
         let name = listed
-            .map(|i| i.name)
+            .map(|i| i.shown_name().to_string())
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| canonical.clone());
         // What the Space runs, so the relay can keep macOS Spaces out of
@@ -842,6 +949,20 @@ impl Spaces {
     /// network, the Cua app elsewhere) reach it as `relay:<machine>`, and
     /// nobody else until it is shared. Idempotent; re-attaches after the
     /// Space restarted. Returns the relay Space id.
+    /// After a local Space booted again (a start of a stopped VM, a
+    /// resize), attaches it to the relay again when it was on it: its
+    /// guest forgot the attachment when it shut down. Best effort; a Space
+    /// that was never on the relay is left alone.
+    pub(crate) async fn reattach_relay_after_boot(&self, id: &SpaceId) {
+        let canonical = id.to_string();
+        if !self.attached().contains_key(&canonical) {
+            return;
+        }
+        if let Err(e) = self.relay_register(&canonical).await {
+            tracing::warn!(space = %canonical, error = %e, "re-attaching to the relay after a boot failed");
+        }
+    }
+
     pub async fn relay_register(&self, space: &str) -> Result<RelayRegistration> {
         let canonical = self.resolve(space)?.to_string();
         let machine = self.ensure_shared_machine(&canonical).await?;
@@ -863,6 +984,15 @@ impl Spaces {
     /// A host that is connected now is taken off with `cua host remove` on
     /// it instead.
     pub async fn relay_unregister(&self, space: &str) -> Result<bool> {
+        // A Space that is already gone here but was left on the relay (its
+        // delete could not reach the relay, CUA-2841): its machine is still
+        // remembered, so `relay-unregister local:<name>` removes it.
+        if matches!(self.resolve(space), Err(Error::NotFound(_)))
+            && let Some(machine) = self.attached().get(space).map(|a| a.machine.clone())
+        {
+            self.detach(space, &machine).await?;
+            return Ok(true);
+        }
         let id = match self.resolve(space) {
             // A bare relay machine id (`space-…`) is known once the
             // directory was listed.

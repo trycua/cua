@@ -280,7 +280,7 @@ export function createStreamOpener(deps: StreamDeps) {
       const wsUrl = deps.testStreamUrl.replaceAll("{id}", encodeURIComponent(spaceId)).replaceAll("{tier}", tier);
       return { wsUrl, expiresAt: null };
     }
-    if (!(await deps.hasCua())) throw new StreamUnavailableError("Live video needs cua on this computer.");
+    if (!(await deps.hasCua())) throw new StreamUnavailableError("Live video needs cua on this machine.");
     const json = JSON.stringify(openMediaRequest(tier, window));
     let e = await endpoint();
     try {

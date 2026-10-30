@@ -1,0 +1,437 @@
+# cua 0.7.0 (Cua Spaces 0.13.1) command tree: `path`, `path :: --flag`, `path = alias`.
+# Recorded from the released binary's --help; see README.md.
+agent
+agent :: --daemon
+agent :: --daemon-token
+agent :: --embedded
+agent :: --json
+agent :: --state-dir
+agent allow-computer
+agent allow-computer :: --daemon
+agent allow-computer :: --daemon-token
+agent allow-computer :: --embedded
+agent allow-computer :: --for
+agent allow-computer :: --json
+agent allow-computer :: --state-dir
+agent computer-access
+agent computer-access :: --audit
+agent computer-access :: --daemon
+agent computer-access :: --daemon-token
+agent computer-access :: --embedded
+agent computer-access :: --json
+agent computer-access :: --state-dir
+agent create
+agent create :: --base-url
+agent create :: --daemon
+agent create :: --daemon-token
+agent create :: --embedded
+agent create :: --env-from-host
+agent create :: --harness
+agent create :: --in
+agent create :: --json
+agent create :: --model
+agent create :: --state-dir
+agent ensure
+agent ensure :: --daemon
+agent ensure :: --daemon-token
+agent ensure :: --embedded
+agent ensure :: --json
+agent ensure :: --local
+agent ensure :: --state-dir
+agent forget
+agent forget :: --daemon
+agent forget :: --daemon-token
+agent forget :: --embedded
+agent forget :: --json
+agent forget :: --state-dir
+agent harnesses
+agent harnesses :: --daemon
+agent harnesses :: --daemon-token
+agent harnesses :: --embedded
+agent harnesses :: --json
+agent harnesses :: --state-dir
+agent interrupt
+agent interrupt :: --daemon
+agent interrupt :: --daemon-token
+agent interrupt :: --embedded
+agent interrupt :: --json
+agent interrupt :: --local
+agent interrupt :: --state-dir
+agent keys
+agent keys :: --daemon
+agent keys :: --daemon-token
+agent keys :: --embedded
+agent keys :: --json
+agent keys :: --state-dir
+agent keys ls
+agent keys ls :: --daemon
+agent keys ls :: --daemon-token
+agent keys ls :: --embedded
+agent keys ls :: --json
+agent keys ls :: --state-dir
+agent keys rm
+agent keys rm :: --daemon
+agent keys rm :: --daemon-token
+agent keys rm :: --embedded
+agent keys rm :: --json
+agent keys rm :: --state-dir
+agent keys set
+agent keys set :: --daemon
+agent keys set :: --daemon-token
+agent keys set :: --embedded
+agent keys set :: --env
+agent keys set :: --json
+agent keys set :: --state-dir
+agent logs
+agent logs :: --daemon
+agent logs :: --daemon-token
+agent logs :: --embedded
+agent logs :: --follow
+agent logs :: --json
+agent logs :: --local
+agent logs :: --raw
+agent logs :: --state-dir
+agent logs :: -f
+agent ls
+agent ls :: --daemon
+agent ls :: --daemon-token
+agent ls :: --embedded
+agent ls :: --json
+agent ls :: --local
+agent ls :: --state-dir
+agent ls = list
+agent notifications
+agent notifications :: --daemon
+agent notifications :: --daemon-token
+agent notifications :: --embedded
+agent notifications :: --json
+agent notifications :: --mark-read
+agent notifications :: --state-dir
+agent notifications :: --unread
+agent pause
+agent pause :: --daemon
+agent pause :: --daemon-token
+agent pause :: --embedded
+agent pause :: --json
+agent pause :: --state-dir
+agent persistent
+agent persistent :: --daemon
+agent persistent :: --daemon-token
+agent persistent :: --embedded
+agent persistent :: --json
+agent persistent :: --state-dir
+agent resume
+agent resume :: --daemon
+agent resume :: --daemon-token
+agent resume :: --embedded
+agent resume :: --json
+agent resume :: --prompt
+agent resume :: --state-dir
+agent revoke-computer
+agent revoke-computer :: --daemon
+agent revoke-computer :: --daemon-token
+agent revoke-computer :: --embedded
+agent revoke-computer :: --json
+agent revoke-computer :: --state-dir
+agent rm
+agent rm :: --daemon
+agent rm :: --daemon-token
+agent rm :: --embedded
+agent rm :: --json
+agent rm :: --local
+agent rm :: --state-dir
+agent routine
+agent routine :: --daemon
+agent routine :: --daemon-token
+agent routine :: --embedded
+agent routine :: --json
+agent routine :: --state-dir
+agent routine add
+agent routine add :: --daemon
+agent routine add :: --daemon-token
+agent routine add :: --daily
+agent routine add :: --embedded
+agent routine add :: --every
+agent routine add :: --json
+agent routine add :: --prompt
+agent routine add :: --state-dir
+agent routine add :: --title
+agent routine add :: --weekly
+agent routine disable
+agent routine disable :: --daemon
+agent routine disable :: --daemon-token
+agent routine disable :: --embedded
+agent routine disable :: --json
+agent routine disable :: --state-dir
+agent routine enable
+agent routine enable :: --daemon
+agent routine enable :: --daemon-token
+agent routine enable :: --embedded
+agent routine enable :: --json
+agent routine enable :: --state-dir
+agent routine ls
+agent routine ls :: --daemon
+agent routine ls :: --daemon-token
+agent routine ls :: --embedded
+agent routine ls :: --json
+agent routine ls :: --state-dir
+agent routine ls = list
+agent routine rm
+agent routine rm :: --daemon
+agent routine rm :: --daemon-token
+agent routine rm :: --embedded
+agent routine rm :: --json
+agent routine rm :: --state-dir
+agent run
+agent run :: --base-url
+agent run :: --branch
+agent run :: --cwd
+agent run :: --daemon
+agent run :: --daemon-token
+agent run :: --embedded
+agent run :: --env-from-host
+agent run :: --exit-when-idle
+agent run :: --file
+agent run :: --follow
+agent run :: --json
+agent run :: --label
+agent run :: --local
+agent run :: --mcp
+agent run :: --model
+agent run :: --no-sandbox-mcp
+agent run :: --no-skills
+agent run :: --repo
+agent run :: --state-dir
+agent run :: --wire
+agent run :: -f
+agent save
+agent save :: --daemon
+agent save :: --daemon-token
+agent save :: --embedded
+agent save :: --json
+agent save :: --state-dir
+agent send
+agent send :: --daemon
+agent send :: --daemon-token
+agent send :: --embedded
+agent send :: --follow
+agent send :: --json
+agent send :: --local
+agent send :: --state-dir
+agent send :: -f
+agent status
+agent status :: --daemon
+agent status :: --daemon-token
+agent status :: --embedded
+agent status :: --json
+agent status :: --local
+agent status :: --state-dir
+agent stop
+agent stop :: --daemon
+agent stop :: --daemon-token
+agent stop :: --embedded
+agent stop :: --json
+agent stop :: --local
+agent stop :: --state-dir
+agent tell
+agent tell :: --daemon
+agent tell :: --daemon-token
+agent tell :: --embedded
+agent tell :: --json
+agent tell :: --state-dir
+daemon
+daemon :: --daemon
+daemon :: --daemon-token
+daemon :: --embedded
+daemon :: --json
+daemon :: --state-dir
+daemon mcp
+daemon mcp :: --daemon
+daemon mcp :: --daemon-token
+daemon mcp :: --embedded
+daemon mcp :: --json
+daemon mcp :: --permissions
+daemon mcp :: --sandbox
+daemon mcp :: --state-dir
+daemon start
+daemon start :: --daemon
+daemon start :: --daemon-token
+daemon start :: --embedded
+daemon start :: --foreground
+daemon start :: --json
+daemon start :: --loopback
+daemon start :: --socket
+daemon start :: --state-dir
+daemon status
+daemon status :: --daemon
+daemon status :: --daemon-token
+daemon status :: --embedded
+daemon status :: --json
+daemon status :: --state-dir
+daemon stop
+daemon stop :: --daemon
+daemon stop :: --daemon-token
+daemon stop :: --embedded
+daemon stop :: --json
+daemon stop :: --state-dir
+mcp
+mcp :: --daemon
+mcp :: --daemon-token
+mcp :: --embedded
+mcp :: --json
+mcp :: --permissions
+mcp :: --sandbox
+mcp :: --state-dir
+volume
+volume :: --daemon
+volume :: --daemon-token
+volume :: --embedded
+volume :: --json
+volume :: --state-dir
+volume approve
+volume approve :: --daemon
+volume approve :: --daemon-token
+volume approve :: --embedded
+volume approve :: --for
+volume approve :: --json
+volume approve :: --state-dir
+volume audit
+volume audit :: --daemon
+volume audit :: --daemon-token
+volume audit :: --embedded
+volume audit :: --json
+volume audit :: --limit
+volume audit :: --state-dir
+volume cat
+volume cat :: --as
+volume cat :: --daemon
+volume cat :: --daemon-token
+volume cat :: --embedded
+volume cat :: --json
+volume cat :: --space
+volume cat :: --state-dir
+volume config
+volume config :: --daemon
+volume config :: --daemon-token
+volume config :: --embedded
+volume config :: --json
+volume config :: --state-dir
+volume config set
+volume config set :: --backend
+volume config set :: --bucket
+volume config set :: --daemon
+volume config set :: --daemon-token
+volume config set :: --embedded
+volume config set :: --endpoint
+volume config set :: --json
+volume config set :: --path-style
+volume config set :: --region
+volume config set :: --root
+volume config set :: --state-dir
+volume config set-keys
+volume config set-keys :: --daemon
+volume config set-keys :: --daemon-token
+volume config set-keys :: --embedded
+volume config set-keys :: --json
+volume config set-keys :: --state-dir
+volume config show
+volume config show :: --daemon
+volume config show :: --daemon-token
+volume config show :: --embedded
+volume config show :: --json
+volume config show :: --state-dir
+volume deny
+volume deny :: --daemon
+volume deny :: --daemon-token
+volume deny :: --embedded
+volume deny :: --json
+volume deny :: --state-dir
+volume grant
+volume grant :: --daemon
+volume grant :: --daemon-token
+volume grant :: --embedded
+volume grant :: --for
+volume grant :: --json
+volume grant :: --note
+volume grant :: --rw
+volume grant :: --state-dir
+volume grants
+volume grants :: --all
+volume grants :: --daemon
+volume grants :: --daemon-token
+volume grants :: --embedded
+volume grants :: --json
+volume grants :: --state-dir
+volume history
+volume history :: --as
+volume history :: --daemon
+volume history :: --daemon-token
+volume history :: --embedded
+volume history :: --json
+volume history :: --space
+volume history :: --state-dir
+volume ls
+volume ls :: --as
+volume ls :: --daemon
+volume ls :: --daemon-token
+volume ls :: --embedded
+volume ls :: --json
+volume ls :: --space
+volume ls :: --state-dir
+volume mount
+volume mount :: --daemon
+volume mount :: --daemon-token
+volume mount :: --embedded
+volume mount :: --json
+volume mount :: --state-dir
+volume put
+volume put :: --as
+volume put :: --create-only
+volume put :: --daemon
+volume put :: --daemon-token
+volume put :: --embedded
+volume put :: --if-etag
+volume put :: --json
+volume put :: --space
+volume put :: --state-dir
+volume requests
+volume requests :: --daemon
+volume requests :: --daemon-token
+volume requests :: --embedded
+volume requests :: --json
+volume requests :: --state-dir
+volume restore
+volume restore :: --as
+volume restore :: --daemon
+volume restore :: --daemon-token
+volume restore :: --embedded
+volume restore :: --json
+volume restore :: --space
+volume restore :: --state-dir
+volume revoke
+volume revoke :: --daemon
+volume revoke :: --daemon-token
+volume revoke :: --embedded
+volume revoke :: --json
+volume revoke :: --state-dir
+volume rm
+volume rm :: --as
+volume rm :: --daemon
+volume rm :: --daemon-token
+volume rm :: --embedded
+volume rm :: --if-etag
+volume rm :: --json
+volume rm :: --space
+volume rm :: --state-dir
+volume status
+volume status :: --daemon
+volume status :: --daemon-token
+volume status :: --embedded
+volume status :: --json
+volume status :: --state-dir
+volume unmount
+volume unmount :: --daemon
+volume unmount :: --daemon-token
+volume unmount :: --embedded
+volume unmount :: --json
+volume unmount :: --state-dir

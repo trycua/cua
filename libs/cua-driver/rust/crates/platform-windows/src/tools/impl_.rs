@@ -148,10 +148,13 @@ fn resolve_onscreen_point_with_scroll(
     // authoritative for that case; without it a foreground tap can land on the
     // visible control covering the stale point (for example a bottom toolbar).
     if let Some(retained) = admitted.as_ref() {
+        // Geometry read while minimized is stale even when it happens to land
+        // inside the restored window rect.
+        let trust_cached = cached_center_in_window && !retained.read_while_minimized;
         if retained.is_uia() {
             let is_offscreen =
                 unsafe { crate::uia::scroll::element_is_offscreen(retained.as_ptr()) };
-            if cached_center_in_window && is_offscreen != Some(true) {
+            if trust_cached && is_offscreen != Some(true) {
                 return Ok((cx, cy));
             }
             if let Some((nx, ny)) = unsafe {
@@ -161,7 +164,7 @@ fn resolve_onscreen_point_with_scroll(
                     return Ok((nx, ny));
                 }
             }
-        } else if cached_center_in_window {
+        } else if trust_cached {
             return Ok((cx, cy));
         }
         // `retained` drops here → COM Release.
@@ -1440,6 +1443,7 @@ impl Tool for GetWindowStateTool {
             let tree_task = tokio::task::spawn_blocking(move || {
                 let mut budget =
                     cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements);
+                let iconic_before = crate::input::window_is_iconic(hwnd);
                 let tree =
                     crate::uia::walk_tree_budgeted(hwnd, q.as_deref(), max_depth, &mut budget);
                 let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
@@ -1447,7 +1451,10 @@ impl Tool for GetWindowStateTool {
                 } else {
                     crate::uia::snapshot::SnapshotKind::Uia
                 };
-                let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&tree.nodes, kind);
+                let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&tree.nodes, kind)
+                    .with_read_while_minimized(
+                        iconic_before || crate::input::window_is_iconic(hwnd),
+                    );
                 (tree, payload, budget.outcome())
             });
             let started = std::time::Instant::now();
@@ -3483,7 +3490,7 @@ impl Tool for ClickTool {
             // swap and UIPI checks needed for Chromium and retained-mode apps.
             let send_result = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
                 let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::send_click_synthesized_active_mods(
+                crate::input::send_click_synthesized_desktop_mods(
                     hwnd_u, sx, sy, count, &button, &mod_refs,
                 )?;
                 Ok(hwnd_u)
@@ -3694,6 +3701,16 @@ impl Tool for ClickTool {
                         }
                     }
                 };
+                if admitted
+                    .as_ref()
+                    .is_some_and(|element| element.read_while_minimized)
+                {
+                    if let Err(refusal) =
+                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, tx, ty, "clicking")
+                    {
+                        return refusal;
+                    }
+                }
                 pin_overlay_above(&cursor_key, hwnd);
                 overlay_glide_to_target(
                     &cursor_key,
@@ -3935,6 +3952,27 @@ impl Tool for ClickTool {
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
             {
+                // This route posts at the cached center without
+                // `resolve_onscreen_point_with_scroll`, so check it here.
+                if admitted
+                    .as_ref()
+                    .is_some_and(|element| element.read_while_minimized)
+                {
+                    let message = format!(
+                        "Element [{idx}] resolves to ({cx},{cy}), which was read while \
+                         window 0x{hwnd:x} was minimized. Re-snapshot with get_window_state \
+                         before retrying."
+                    );
+                    return ToolResult::error(message.clone()).with_structured(json!({
+                        "status": "refused",
+                        "code": "element_not_visible",
+                        "effect": "refused",
+                        "refusal": {
+                            "code": "element_not_visible",
+                            "message": message,
+                        }
+                    }));
+                }
                 let posted = tokio::task::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
@@ -4094,6 +4132,12 @@ impl Tool for ClickTool {
                     )
                     .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
                     return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
+                }
+                if admitted.as_ref().is_some_and(|element| element.read_while_minimized) {
+                    let (x, y) =
+                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, cx, cy, "clicking")
+                            .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
+                    return Ok(BackgroundElementClick::Post { x, y, failed_calls });
                 }
                 Ok(BackgroundElementClick::Post { x: cx, y: cy, failed_calls })
             } }).await;
@@ -7768,7 +7812,10 @@ impl Tool for DragTool {
                           covers the start point. After a zoom call, pass from_zoom=true. \
                           Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the \
                           window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer \
-                          input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\".".into(),
+                          input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\". \
+                          `modifier` holds keys from press to release in delivery_mode:\"foreground\" and scope:\"desktop\" via \
+                          SendInput. Background drags with modifiers return background_unavailable because posted messages and \
+                          pen injection cannot carry live modifier-key state.".into(),
             input_schema: json!({"type":"object","required":["from_x","from_y","to_x","to_y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "scope":{"type":"string","enum":["window","desktop"],"description":"Use desktop with no pid/window_id for screen-absolute coordinates."},
@@ -7807,11 +7854,13 @@ impl Tool for DragTool {
             let duration_ms = input.duration_ms.unwrap_or(500);
             let steps = input.steps.unwrap_or(20) as usize;
             let button = input.button.unwrap_or(ClickButton::Left).as_str();
+            let modifiers = input.modifier.unwrap_or_default();
             let hwnd = match crate::input::mouse::foreground_window() {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
             let native_drag = tokio::task::spawn_blocking(move || {
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::mouse::send_drag_synthesized(
                     hwnd,
                     from_x,
@@ -7821,6 +7870,7 @@ impl Tool for DragTool {
                     duration_ms,
                     steps,
                     &button,
+                    &modifier_refs,
                 )
             });
             let visual_drag = track_overlay_drag(
@@ -7851,6 +7901,21 @@ impl Tool for DragTool {
         };
         let pid = raw_pid as u32;
         let delivery = DeliveryMode::from_args(&args);
+        let modifiers: Vec<String> = args.str_array("modifier");
+        if !modifiers.is_empty() && delivery != DeliveryMode::Foreground {
+            return ToolResult::error(
+                "drag modifiers require delivery_mode:\"foreground\" on Windows; posted \
+                 messages and pen injection cannot carry live modifier-key state",
+            )
+            .with_structured(json!({
+                "code": "background_unavailable",
+                "effect": "refused",
+                "escalation": {
+                    "recommended": "foreground",
+                    "reason": "Windows modifier drags require SendInput so the target observes live modifier state"
+                }
+            }));
+        }
 
         // Accepts numeric JSON as either float or integer — coerce both to f64.
         let coerce = |key: &str| -> Option<f64> {
@@ -8004,6 +8069,7 @@ impl Tool for DragTool {
                 windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
             };
             let send_result = tokio::task::spawn_blocking(move || {
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::mouse::send_drag_synthesized_active(
                     hwnd,
                     sx_from,
@@ -8013,6 +8079,7 @@ impl Tool for DragTool {
                     duration_ms,
                     steps,
                     &btn_fg,
+                    &modifier_refs,
                 )
             });
             let visual_drag = track_overlay_drag(
@@ -8920,10 +8987,7 @@ impl Tool for GetConfigTool {
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
-            "cursor":              {
-                "motion": cursor_overlay::motion_defaults::read_saved().config_json(),
-                "badges": cursor_overlay::badge_mode::read_saved().as_str(),
-            },
+            "cursor":              cursor_overlay::cursor_options::saved_config_json(),
             "experimental_pip":    pip_enabled,
             "experimental_pip_geometry": pip_geometry,
         });
@@ -8939,6 +9003,7 @@ fn with_cursor_motion_config_properties(mut schema: Value) -> Value {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
         properties.extend(cursor_overlay::badge_mode::config_schema_properties());
+        properties.extend(cursor_overlay::cursor_options::config_schema_properties());
     }
     schema
 }
@@ -8963,7 +9028,8 @@ impl Tool for SetConfigTool {
                 - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n\
                 - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
                 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\
-                - `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n\n\
+                - `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n\
+                - `cursor.float` (resting float): `on` (default), `off`, or `default`. `cursor.marks` (action marks), `cursor.rotate` (turn toward travel): `on`, `off` (default), or `default`. All apply to every cursor at once.\n\n\
                 Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
@@ -8994,7 +9060,11 @@ impl Tool for SetConfigTool {
             Ok(key) => key,
             Err(message) => return ToolResult::error(message),
         };
-        let mut applied = !motion_keys.is_empty() || badge_key.is_some();
+        let option_keys = match cursor_overlay::cursor_options::apply_config_args(&args) {
+            Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
+        };
+        let mut applied = !motion_keys.is_empty() || badge_key.is_some() || !option_keys.is_empty();
         if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
             cfg.capture_mode = mode.to_owned();
             if let Err(e) =
@@ -10640,6 +10710,9 @@ mod set_window_frame_geometry_tests;
 
 #[cfg(test)]
 mod desktop_scope_tests;
+
+#[cfg(test)]
+mod drag_modifier_tests;
 
 #[cfg(test)]
 mod pid_window_target_tests;

@@ -275,6 +275,17 @@ pub fn discover() -> Option<EngineEndpoint> {
             source: "DOCKER_HOST".into(),
         });
     }
+    // `runtime.container_path` (with `runtime.container = system`): the
+    // engine that binary talks to.
+    if let Some(bin) = crate::kinds::configured_bin(crate::kinds::RuntimeKind::Container)
+        && let Some(h) = endpoint_of_binary(&bin)
+    {
+        return Some(EngineEndpoint {
+            kind: classify(&h),
+            uri: h,
+            source: format!("runtime.container_path {}", bin.display()),
+        });
+    }
     let docker_dir = docker_config_dir();
     let env_ctx = std::env::var("DOCKER_CONTEXT").ok();
     if let Some((name, h)) = context_endpoint(&docker_dir, env_ctx.as_deref()) {
@@ -316,9 +327,113 @@ pub fn discover() -> Option<EngineEndpoint> {
         })
 }
 
+/// The engine endpoint a `docker` or `podman` binary uses (its current
+/// context, or its machine's socket), asked once per binary (bounded).
+pub fn endpoint_of_binary(bin: &Path) -> Option<String> {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Vec<(PathBuf, Option<String>)>> = Mutex::new(Vec::new());
+    if let Some((_, h)) = CACHE.lock().ok()?.iter().find(|(p, _)| p == bin) {
+        return h.clone();
+    }
+    let podman = bin
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.contains("podman"));
+    let asks: &[&[&str]] = if podman {
+        &[
+            &[
+                "machine",
+                "inspect",
+                "--format",
+                "{{.ConnectionInfo.PodmanSocket.Path}}",
+            ],
+            &["info", "--format", "{{.Host.RemoteSocket.Path}}"],
+        ]
+    } else {
+        &[&[
+            "context",
+            "inspect",
+            "--format",
+            "{{.Endpoints.docker.Host}}",
+        ]]
+    };
+    let found = asks
+        .iter()
+        .find_map(|args| bounded_output(bin, args))
+        .map(|h| endpoint_uri(&h))
+        .filter(|h| !h.is_empty());
+    if let Ok(mut c) = CACHE.lock() {
+        c.push((bin.to_path_buf(), found.clone()));
+    }
+    found
+}
+
+/// A socket path as a `unix://` URI; anything with a scheme as it is.
+fn endpoint_uri(h: &str) -> String {
+    let h = h.trim().trim_matches('"');
+    if h.starts_with('/') {
+        format!("unix://{h}")
+    } else {
+        h.to_string()
+    }
+}
+
+/// `bin args`'s first line, when it succeeds within a few seconds.
+fn bounded_output(bin: &Path, args: &[&str]) -> Option<String> {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    let mut child = Command::new(bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) if status.success() => break,
+            Some(_) => return None,
+            None if Instant::now() > deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    let mut out = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut out).ok()?;
+    out.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('<'))
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A docker binary's own context names the engine Spaces then use.
+    #[cfg(unix)]
+    #[test]
+    fn a_binary_names_its_engine() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let bin = d.path().join("docker");
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\n[ \"$1 $2\" = \"context inspect\" ] && echo /Users/me/.orbstack/run/docker.sock\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            endpoint_of_binary(&bin).as_deref(),
+            Some("unix:///Users/me/.orbstack/run/docker.sock")
+        );
+        assert_eq!(endpoint_uri("tcp://1.2.3.4:2375"), "tcp://1.2.3.4:2375");
+        assert_eq!(endpoint_of_binary(&d.path().join("missing")), None);
+    }
 
     #[test]
     fn classifies_common_engines() {

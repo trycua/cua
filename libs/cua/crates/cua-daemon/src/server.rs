@@ -213,6 +213,30 @@ const MAINTENANCE_EVERY: Duration = Duration::from_secs(3600);
 /// once a minute after start, then hourly while no request is in flight
 /// and none arrived for five minutes. `CUA_DAEMON_MAINTENANCE=0` turns it
 /// off.
+/// How often the repo cache is tidied and its mirrors refreshed, and how
+/// old a mirror used in the last week may get before it is.
+const REPO_CACHE_EVERY: Duration = Duration::from_secs(15 * 60);
+const REPO_CACHE_REFRESH_AFTER: Duration = Duration::from_secs(60 * 60);
+
+/// Keeps the repo cache within its cap and its mirrors up to date, in the
+/// background and one repository at a time (`cua-repo-cache`). Nothing
+/// happens while the cache is off.
+async fn repo_cache_loop(mut shutdown: watch::Receiver<bool>) {
+    let mut next = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => return,
+            _ = tokio::time::sleep_until(next) => {}
+        }
+        let cache = cua_sandbox_core::repo_cache::current();
+        tokio::select! {
+            _ = shutdown.changed() => return,
+            () = cache.maintain(REPO_CACHE_REFRESH_AFTER) => {}
+        }
+        next = tokio::time::Instant::now() + REPO_CACHE_EVERY;
+    }
+}
+
 async fn maintenance_loop(shared: Arc<Shared>, mut shutdown: watch::Receiver<bool>) {
     use std::sync::atomic::Ordering::SeqCst;
     let Ok(vmm) = shared.runtime.vmm().cloned() else {
@@ -331,15 +355,78 @@ impl DaemonHandle {
         self.cleanup();
     }
 
+    /// [`wait`](Self::wait), with the shutdown bounded: once shutdown is
+    /// requested, the daemon's own wind-down (extensions, the warm pool, the
+    /// built-in Linux runtime) gets `grace`; past it the socket and discovery
+    /// file go and this returns `false`, so a stop signal always ends the
+    /// process (a supervisor that sees the daemon gone never waits on one
+    /// still winding down for minutes).
+    pub async fn wait_bounded(self, grace: Duration) -> bool {
+        let mut rx = self.shared.shutdown.subscribe();
+        while !*rx.borrow() {
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+        let socket = self.socket_path.clone();
+        let discovery = self.discovery_path.clone();
+        if tokio::time::timeout(grace, self.wait()).await.is_ok() {
+            return true;
+        }
+        tracing::warn!(
+            ?grace,
+            "the daemon's shutdown took too long; exiting without it"
+        );
+        cleanup_paths(socket.as_deref(), discovery.as_deref());
+        false
+    }
+
     fn cleanup(&self) {
-        if let Some(p) = &self.socket_path {
-            let _ = std::fs::remove_file(p);
+        cleanup_paths(self.socket_path.as_deref(), self.discovery_path.as_deref());
+    }
+}
+
+/// Removes the daemon's socket, and its discovery file while it names this
+/// process.
+fn cleanup_paths(socket: Option<&std::path::Path>, discovery: Option<&std::path::Path>) {
+    if let Some(p) = socket {
+        let _ = std::fs::remove_file(p);
+    }
+    if let Some(p) = discovery
+        && Discovery::read(p).is_some_and(|d| d.pid == std::process::id())
+    {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// How long a stopped daemon may take to wind down before it exits anyway
+/// ([`DaemonHandle::wait_bounded`]).
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
+
+/// Resolves on the first stop signal: SIGTERM (`kill`, launchd, systemd, an
+/// app quitting) or SIGINT (Ctrl-C) on Unix, Ctrl-C elsewhere.
+pub async fn stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        ) {
+            (Ok(mut term), Ok(mut int)) => {
+                tokio::select! {
+                    _ = term.recv() => tracing::info!("SIGTERM: stopping the daemon"),
+                    _ = int.recv() => tracing::info!("SIGINT: stopping the daemon"),
+                }
+            }
+            _ => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
         }
-        if let Some(p) = &self.discovery_path
-            && Discovery::read(p).is_some_and(|d| d.pid == std::process::id())
-        {
-            let _ = std::fs::remove_file(p);
-        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
     }
 }
 
@@ -391,6 +478,9 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
                 .iter()
                 .map(|n| format!("{}{n}", crate::extension::FEATURE_PREFIX)),
         );
+        // What the extensions serve (`thread.v1`, ...).
+        #[cfg(feature = "spaces")]
+        f.extend(runtime.extension_features().iter().cloned());
         f
     };
     #[cfg(feature = "spaces")]
@@ -606,6 +696,7 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             shared.clone(),
             shared.shutdown.subscribe(),
         )));
+        tasks.push(tokio::spawn(repo_cache_loop(shared.shutdown.subscribe())));
     }
     // The automatic cloud sweep (`CUA_CLOUD_SWEEP_SECS`, 0: off).
     #[cfg(feature = "byoc")]
@@ -730,7 +821,9 @@ async fn accept_loop<L: Accept>(listener: L, app: BoxedApp, mut shutdown: watch:
     conns.abort_all();
 }
 
-/// Headers that name a caller other than this machine's user.
+/// Headers that name a caller other than the owner: the relay-verified
+/// caller the host's cua-spacesd forwards (`x-cua-host-caller`), and the
+/// share gateway's (`x-cua-share-caller`), which no daemon call reads.
 pub const FORWARDED_CALLER_HEADERS: &[&str] = &["x-cua-host-caller", "x-cua-share-caller"];
 
 /// Removes [`FORWARDED_CALLER_HEADERS`] from a request that did not come
@@ -792,6 +885,13 @@ fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
             .max_encoding_message_size(64 * 1024 * 1024),
         )
         .add_service(
+            cua_proto::env::v1::host_thread_service_server::HostThreadServiceServer::new(
+                crate::host_svc::HostThreadSvc(svc.0.clone()),
+            )
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+        )
+        .add_service(
             cua_proto::env::v1::host_snapshots_service_server::HostSnapshotsServiceServer::new(
                 crate::host_svc::HostSnapshotsSvc(svc.0.clone()),
             )
@@ -851,8 +951,11 @@ fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
                 return Ok::<_, std::convert::Infallible>(unauthorized(&req));
             }
             if require_token {
-                // A call on the loopback listener is this machine's user:
-                // only the socket's peer forwards another caller.
+                // Only the 0600 socket's peer (the host's cua-spacesd)
+                // forwards a relay-verified caller. On the loopback listener
+                // (the apps, web views, anything holding the token) a
+                // caller header is the client's own claim: dropped, so the
+                // call is the owner's.
                 strip_forwarded_caller(req.headers_mut());
             }
             let grpc_web = req

@@ -27,10 +27,13 @@ description: "Pull, build, push and publish images, and the cloud account you li
 | [`cua build`](#cua-build) | Build an image from a Dockerfile, in a Space, as pinned checkpoints that Spaces fork from in under a second. |
 | [`cua cloud`](#cua-cloud) | Spaces in your own cloud account (AWS, Google Cloud, Hetzner, Modal): connect, status, test, disconnect, sweep; and pool hosts there (`cua cloud add aws`). |
 | [`cua cloud status`](#cua-cloud-status) | Your clouds: found credentials, the connected account and region, what each runs at what hourly cost, and what Cua created there. |
-| [`cua cloud connect`](#cua-cloud-connect) | Connect a cloud account Spaces can be created in (after the checks `cua cloud test` runs). |
+| [`cua cloud connect`](#cua-cloud-connect) | Connect a cloud account Spaces can be created in. |
+| [`cua cloud approve`](#cua-cloud-approve) | Approve what an agent asked for on a cloud: its link, or a higher budget or larger machines. |
+| [`cua cloud trust`](#cua-cloud-trust) | Print the file that makes a cloud trust Cua's tokens (no keys): the AWS CloudFormation stack, the Google Cloud trust script, or the Azure resource group template. |
 | [`cua cloud test`](#cua-cloud-test) | Check a cloud account without creating anything: credentials, permissions (by dry run), quota, the region and machine types. |
 | [`cua cloud disconnect`](#cua-cloud-disconnect) | Forget a connected cloud. |
 | [`cua cloud audit`](#cua-cloud-audit) | What Cua did in your clouds: connects, disconnects, and every resource recorded, created, confirmed and deleted (by you, a sweep, the automatic sweep or disconnect --delete). |
+| [`cua cloud cost`](#cua-cloud-cost) | What the machines Cua created in your clouds cost: each one's list price times how long it ran, by Space, agent, UTC day or cloud. |
 | [`cua cloud sweep`](#cua-cloud-sweep) | Find what Cua left in your clouds: expired Spaces and resources whose Space is gone (with --all, every Cua resource). |
 | [`cua cloud add`](#cua-cloud-add) | Add hosts in your cloud to your pool: computers made for Cua work that join by themselves (`cua cloud add aws`). |
 | [`cua cloud add aws`](#cua-cloud-add-aws) | EC2 hosts in your connected AWS account (`cua cloud connect aws`) that join your pool by themselves: Ubuntu 24.04 for CPU types, the AWS Deep Learning Base GPU image for g*/p* types. |
@@ -422,7 +425,7 @@ Alias: `cua cloud ls`.
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<PROVIDER>` | string | optional | Only this cloud (`aws`, `gcp`, `hetzner`, `modal`). |
+| `<PROVIDER>` | string | optional | Only this cloud (`aws`, `azure`, `gcp`, `hetzner`, `modal`). |
 
 **Examples**
 
@@ -433,10 +436,146 @@ cua cloud status aws --json
 
 ### `cua cloud connect`
 
-Connect a cloud account Spaces can be created in (after the checks `cua cloud test` runs). AWS, Google Cloud and Modal credentials stay in the cloud's own CLI and Cua stores only the profile, region, project or environment names; Hetzner has no sign-in, so its project API token is saved in the Cua credential store.
+Connect a cloud account Spaces can be created in. Never prompts and is safe to run again: every run ends with a status, the next step and the command that verifies it. With --oidc, AWS and Google Cloud are linked without any key: Cua signs short-lived tokens that your account trusts. Azure is always linked that way. Without it, the cloud's own CLI sign-in on this device is used (Cua stores only the profile, region, project or environment names; Hetzner's API token goes to the Cua credential store).
+
+How it ends (every run, also with --json):
+  status   connected | needs-trust | checking | waiting-for-approval | failed
+  next     run: the exact command to run next, or
+           open: a page a person opens (paste: what they paste there)
+           why: what it is for, in plain words
+  verify   the command that confirms it: cua cloud status &lt;cloud&gt;
+  checks   what the check found
+Exit code: 0 connected, 10 the next step is yours (run it), 11 it waits on a
+person (send them `next`), 1 error.
+
+AWS without a stored key (for agents: follow `next` until connected):
+  1. Ask the person for a monthly budget (US dollars), the region and the
+     largest machine, then run:
+       cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16
+  2. status needs-trust: send the person `next.open` (AWS CloudShell, or the
+     CloudFormation quick-create link) and `next.paste`. It creates one
+     stack, cua-spaces: an OIDC provider and the cua-spaces role, scoped to
+     what Cua tags cua-managed=true. No keys. Ask them for the 12-digit AWS
+     account id when it shows CREATE_COMPLETE.
+  3. Run `next.run` (the same command with --account-id &lt;ID&gt; --check). It
+     gets a check token, exchanges it with AWS STS and dry-runs a machine.
+     Nothing is created.
+  4. status connected: done. status waiting-for-approval: an agent made the
+     link (or raised a limit), so a person approves it in the Cua Spaces
+     app; then `cua cloud status aws` says connected.
+  Verify: cua cloud status aws
+
+Hetzner and Modal: the API token is sealed to your devices (only devices of
+your account open it; Cua's servers keep ciphertext). Ask the person for a
+budget and the token (Hetzner: Read & Write, Cloud Console, Security, API
+tokens; Modal: `modal token new`, given as &lt;token id&gt;:&lt;token secret&gt;), then:
+  cua cloud connect hetzner --token-stdin --region fsn1 --budget 50 --max-size 4x8
+  It seals by default on a device with the account's pool keys when a
+  budget is given; --sealed insists on it, --no-sealed keeps the token on
+  this device only (as before). --sealed without a token seals the one this
+  device already has.
+  Verify: cua cloud status hetzner (its line says which devices can open it)
+
+Google Cloud without a stored key:
+  1. cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200 --max-size 4x16
+  2. status needs-trust: a person opens `next.open` (Google Cloud Shell with
+     Cua's trust script) and pastes `next.paste`: it creates the workload
+     identity pool cua, its provider, the role cuaSpaces and one binding. No
+     keys, no service accounts. It prints the project number. An agent on a
+     machine signed in to gcloud gets `next.run` instead (the same script).
+  3. Run `next.run` (with --project-number &lt;N&gt; --check): Google's STS
+     exchanges a check token and the role's permissions are checked.
+  Verify: cua cloud status gcp
+
+Azure (always without a stored key):
+  1. cua cloud connect azure --region westus2 --budget 200 --max-size 4x16
+  2. status needs-trust: a person opens `next.open` (Deploy to Azure) and
+     deploys into resource group cua-spaces: the cua-spaces managed identity
+     trusting Cua's tokens, with Virtual Machine Contributor and Network
+     Contributor on that group only. No keys. Ask for the outputs
+     subscriptionId, tenantId and clientId. An agent on a machine signed in
+     to the az CLI gets `next.run` instead.
+  3. Run `next.run` (with --subscription --tenant --client-id --check):
+     Microsoft Entra exchanges a check token, the resource group is read
+     and a machine is validated.
+  Verify: cua cloud status azure
+
+Other clouds use their own CLI sign-in on this device.
+`cua cloud trust <cloud>` prints the trust setup file (aws, gcp, azure).
+Docs for agents: https://cua.ai/docs/spaces/guides/connect-a-cloud
 
 ```text output
 cua cloud connect [OPTIONS] <PROVIDER>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<PROVIDER>` | string | required | `aws`, `azure`, `gcp`, `hetzner` or `modal`. |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-cloud-connect--profile"></span>`--profile` | string |  | AWS profile (`~/.aws/config`) or Modal profile (`~/.modal.toml`). |
+| <span id="cua-cloud-connect--region"></span>`--region` | string |  | AWS, Google Cloud or Azure region, or Hetzner location (default `fsn1`). |
+| <span id="cua-cloud-connect--zone"></span>`--zone` | string |  | Google Cloud zone (default: the region's `-a` zone). |
+| <span id="cua-cloud-connect--project"></span>`--project` | string |  | Google Cloud project (default: `gcloud config get project`). |
+| <span id="cua-cloud-connect--environment"></span>`--environment` | string |  | Modal environment (default: the profile's). |
+| <span id="cua-cloud-connect--ttl-hours"></span>`--ttl-hours` | integer |  | Delete each Space there after this many hours (default 8; 0: never; Modal caps a sandbox at 24; a Hetzner server shuts itself down then and `cua cloud sweep --delete` removes it). |
+| <span id="cua-cloud-connect--budget"></span>`--budget` | number |  | The most Cua may spend there per calendar month, in US dollars. New machines are refused once it is reached; stopping and deleting always works. Needed with --oidc. |
+| <span id="cua-cloud-connect--max-size"></span>`--max-size` | string |  | The largest machine Cua may create there: vCPUs x GB, for example 4x16. |
+| <span id="cua-cloud-connect--account-id"></span>`--account-id` | string |  | With --oidc: the 12-digit AWS account id the trust stack is in. |
+| <span id="cua-cloud-connect--role-arn"></span>`--role-arn` | string |  | With --oidc: the role ARN, only if it is not named cua-spaces. |
+| <span id="cua-cloud-connect--project-number"></span>`--project-number` | string |  | Google Cloud with --oidc: the project number (the trust script prints it). |
+| <span id="cua-cloud-connect--service-account"></span>`--service-account` | string |  | Google Cloud with --oidc: a service account to act as (default: none, the federated identity calls Google directly). |
+| <span id="cua-cloud-connect--subscription"></span>`--subscription` | string |  | Azure: the subscription id (the template's subscriptionId). |
+| <span id="cua-cloud-connect--tenant"></span>`--tenant` | string |  | Azure: the Microsoft Entra tenant id (the template's tenantId). |
+| <span id="cua-cloud-connect--client-id"></span>`--client-id` | string |  | Azure: the cua-spaces managed identity's client id (the template's clientId). |
+| <span id="cua-cloud-connect--resource-group"></span>`--resource-group` | string |  | Azure: the resource group Cua works in, the only one its roles reach (default cua-spaces). |
+| <span id="cua-cloud-connect--token-stdin"></span>`--token-stdin` | boolean | `false` | Hetzner or Modal: read the API token from stdin (Hetzner: a Read & Write project token, otherwise `HCLOUD_TOKEN`, the saved token or the hcloud CLI's context; Modal: `<token id>:<token secret>`). Once the checks pass it is sealed to your devices, or with --no-sealed saved in this device's Cua credential store (Hetzner). |
+| <span id="cua-cloud-connect--default"></span>`--default` | boolean | `false` | Also make it the default location (`default.on`). |
+| <span id="cua-cloud-connect--oidc"></span>`--oidc` | boolean | `false` | Link without a stored key: Cua's issuer signs 15-minute tokens your account trusts (AWS, Google Cloud; Azure always). |
+| <span id="cua-cloud-connect--sealed"></span>`--sealed` | boolean |  | Hetzner, Modal: seal the API token to your devices (the token given on stdin, else the one this device has). The default when this device has the account's pool keys and a budget is given. |
+| <span id="cua-cloud-connect--no-sealed"></span>`--no-sealed` | boolean | `false` | Hetzner: keep the API token on this device only (in the Cua credential store), as before sealing. |
+| <span id="cua-cloud-connect--check"></span>`--check` | boolean | `false` | With --oidc (and Azure): prove the link works (a check token, the exchange with the cloud, a dry run, permission check or validate; nothing is created) and save it. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-cloud-connect"
+# AWS without a stored key: start, then check with the account id
+cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16
+cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16 --account-id 123456789012 --check
+
+# Google Cloud without a stored key: start, then check with the project number
+cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200
+cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200 --project-number 123456789012 --check
+
+# Azure: start, then check with the template's outputs
+cua cloud connect azure --region westus2 --budget 200 --max-size 4x16
+cua cloud connect azure --region westus2 --budget 200 --subscription 00000000-0000-0000-0000-000000000000 --tenant 11111111-1111-1111-1111-111111111111 --client-id 22222222-2222-2222-2222-222222222222 --check
+
+# The cloud CLI's sign-in on this device, with the same limits
+cua cloud connect aws --profile sandbox --region us-west-2 --budget 50 --default
+cua cloud connect gcp --project my-project --region us-central1
+cua cloud connect modal --environment spaces
+
+# Hetzner: the project's API token on standard input, sealed to your devices
+cua cloud connect hetzner --token-stdin --region fsn1 --budget 50 --max-size 4x8
+
+# Modal: <token id>:<token secret> on standard input, sealed to your devices
+cua cloud connect modal --token-stdin --budget 50
+
+# Seal the Hetzner token this device already has
+cua cloud connect hetzner --sealed --budget 50
+
+# Spaces there delete themselves after 4 hours (default 8; 0: never)
+cua cloud connect aws --ttl-hours 4
+```
+
+### `cua cloud approve`
+
+Approve what an agent asked for on a cloud: its link, or a higher budget or larger machines. For a person only (refused in an agent's shell). With --deny, decline it: the limits in force stay, and a link never approved is disconnected.
+
+```text output
+cua cloud approve [OPTIONS] <PROVIDER>
 ```
 
 | Argument | Type | Default | Description |
@@ -445,28 +584,34 @@ cua cloud connect [OPTIONS] <PROVIDER>
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-cloud-connect--profile"></span>`--profile` | string |  | AWS profile (`~/.aws/config`) or Modal profile (`~/.modal.toml`). |
-| <span id="cua-cloud-connect--region"></span>`--region` | string |  | AWS or Google Cloud region, or Hetzner location (default `fsn1`). |
-| <span id="cua-cloud-connect--zone"></span>`--zone` | string |  | Google Cloud zone (default: the region's `-a` zone). |
-| <span id="cua-cloud-connect--project"></span>`--project` | string |  | Google Cloud project (default: `gcloud config get project`). |
-| <span id="cua-cloud-connect--environment"></span>`--environment` | string |  | Modal environment (default: the profile's). |
-| <span id="cua-cloud-connect--ttl-hours"></span>`--ttl-hours` | integer |  | Delete each Space there after this many hours (default 8; 0: never; Modal caps a sandbox at 24; a Hetzner server shuts itself down then and `cua cloud sweep --delete` removes it). |
-| <span id="cua-cloud-connect--token-stdin"></span>`--token-stdin` | boolean | `false` | Hetzner: read the project's Read & Write API token from stdin (otherwise `HCLOUD_TOKEN`, the saved token or the hcloud CLI's context). It is saved in the Cua credential store once the checks pass. |
-| <span id="cua-cloud-connect--default"></span>`--default` | boolean | `false` | Also make it the default location (`default.on`). |
+| <span id="cua-cloud-approve--deny"></span>`--deny` | boolean | `false` | Decline instead of approving. |
 
 **Examples**
 
-```bash test="cli-shape" id="ref-cua-cloud-connect"
-cua cloud connect aws --region us-west-2 --default
-cua cloud connect aws --profile sandbox
-cua cloud connect gcp --project my-project --region us-central1
-cua cloud connect modal --environment spaces
+```bash test="cli-shape" id="ref-cua-cloud-approve"
+cua cloud status aws
+cua cloud approve aws
+cua cloud approve aws --deny
+```
 
-# Hetzner: the project's API token on standard input
-cua cloud connect hetzner --token-stdin --region fsn1
+### `cua cloud trust`
 
-# Spaces there delete themselves after 4 hours (default 8; 0: never)
-cua cloud connect aws --ttl-hours 4
+Print the file that makes a cloud trust Cua's tokens (no keys): the AWS CloudFormation stack, the Google Cloud trust script, or the Azure resource group template. `cua cloud connect` says when and how to run it.
+
+```text output
+cua cloud trust [OPTIONS] <CLOUD>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<CLOUD>` | string | required | `aws`, `gcp` or `azure`. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-cloud-trust"
+cua cloud trust gcp > cua-trust.sh
+cua cloud trust azure > cua-spaces.json
+cua cloud trust aws > cua-spaces.yaml
 ```
 
 ### `cua cloud test`
@@ -479,16 +624,16 @@ cua cloud test [OPTIONS] <PROVIDER>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<PROVIDER>` | string | required | `aws`, `gcp`, `hetzner` or `modal`. |
+| `<PROVIDER>` | string | required | `aws`, `azure`, `gcp`, `hetzner` or `modal`. |
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-cloud-test--profile"></span>`--profile` | string |  | AWS profile (`~/.aws/config`) or Modal profile (`~/.modal.toml`). |
-| <span id="cua-cloud-test--region"></span>`--region` | string |  | AWS or Google Cloud region, or Hetzner location (default `fsn1`). |
+| <span id="cua-cloud-test--region"></span>`--region` | string |  | AWS, Google Cloud or Azure region, or Hetzner location (default `fsn1`). |
 | <span id="cua-cloud-test--zone"></span>`--zone` | string |  | Google Cloud zone (default: the region's `-a` zone). |
 | <span id="cua-cloud-test--project"></span>`--project` | string |  | Google Cloud project (default: `gcloud config get project`). |
 | <span id="cua-cloud-test--environment"></span>`--environment` | string |  | Modal environment (default: the profile's). |
-| <span id="cua-cloud-test--token-stdin"></span>`--token-stdin` | boolean | `false` | Hetzner: read the project's Read & Write API token from stdin (otherwise `HCLOUD_TOKEN`, the saved token or the hcloud CLI's context). It is saved in the Cua credential store once the checks pass. |
+| <span id="cua-cloud-test--token-stdin"></span>`--token-stdin` | boolean | `false` | Hetzner or Modal: read the API token from stdin (Hetzner: a Read & Write project token, otherwise `HCLOUD_TOKEN`, the saved token or the hcloud CLI's context; Modal: `<token id>:<token secret>`). Once the checks pass it is sealed to your devices, or with --no-sealed saved in this device's Cua credential store (Hetzner). |
 
 **Examples**
 
@@ -507,7 +652,7 @@ cua cloud disconnect [OPTIONS] <PROVIDER>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<PROVIDER>` | string | required | `aws`, `gcp`, `hetzner` or `modal`. |
+| `<PROVIDER>` | string | required | `aws`, `azure`, `gcp`, `hetzner` or `modal`. |
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -533,6 +678,7 @@ cua cloud audit [OPTIONS]
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-cloud-audit--limit"></span>`--limit` | integer | `50` | How many of the newest entries (default 50). |
+| <span id="cua-cloud-audit--cloud"></span>`--cloud` | string |  | Only this cloud (`aws`, `gcp`, `hetzner`, `modal`). |
 
 **Examples**
 
@@ -540,6 +686,29 @@ cua cloud audit [OPTIONS]
 cua cloud audit
 cua cloud audit --limit 200
 cua cloud audit --json
+```
+
+### `cua cloud cost`
+
+What the machines Cua created in your clouds cost: each one's list price times how long it ran, by Space, agent, UTC day or cloud. An estimate; the cloud's own bill is the final word.
+
+```text output
+cua cloud cost [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-cloud-cost--cloud"></span>`--cloud` | string |  | Only this cloud (`aws`, `gcp`, `hetzner`, `modal`). |
+| <span id="cua-cloud-cost--by"></span>`--by` | `space` \| `agent` \| `day` \| `cloud` | `space` | One row per `space`, `agent`, `day` or `cloud`. |
+| <span id="cua-cloud-cost--since"></span>`--since` | string |  | The first day counted, YYYY-MM-DD (UTC). Default: the first of this month. |
+| <span id="cua-cloud-cost--format"></span>`--format` | `table` \| `csv` \| `json` | `table` | `table`, `csv` (header: key,usd,hours,machines) or `json`. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-cloud-cost"
+cua cloud cost
+cua cloud cost --by agent --since 2026-10-01
+cua cloud cost --cloud aws --by day --format csv > aws-october.csv
 ```
 
 ### `cua cloud sweep`

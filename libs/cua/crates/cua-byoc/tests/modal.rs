@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cua_byoc::modal::{HelperTransport, JOIN_WRAPPER, ModalApi};
+use cua_byoc::modal::{HelperTransport, JOIN_WRAPPER, ModalApi, ModalToken};
 use cua_byoc::{RelayAccess, Target};
 use cua_contrib::image_config::{FixedConfigSource, ImageConfig};
 use cua_host::testing::FakeRelay;
@@ -23,6 +23,8 @@ use serde_json::{Value, json};
 
 #[derive(Default)]
 struct FakeModal {
+    /// Calls signed in with a token: (request, token id, token secret).
+    with_token: Mutex<Vec<(Value, String, String)>>,
     requests: Mutex<Vec<(Value, bool)>>,
     sandboxes: Mutex<BTreeMap<String, Value>>,
     relay: Mutex<Option<Arc<FakeRelay>>>,
@@ -32,6 +34,20 @@ struct FakeModal {
 
 #[async_trait]
 impl HelperTransport for FakeModal {
+    async fn call_with_token(
+        &self,
+        req: Value,
+        token: &ModalToken,
+        d: Duration,
+    ) -> cua_byoc::Result<Value> {
+        self.with_token.lock().unwrap().push((
+            req.clone(),
+            token.id.clone(),
+            token.secret.expose().to_string(),
+        ));
+        self.call(req, true, d).await
+    }
+
     async fn call(&self, req: Value, profile_only: bool, _: Duration) -> cua_byoc::Result<Value> {
         self.requests
             .lock()
@@ -320,4 +336,109 @@ async fn a_throttled_modal_call_is_retried_a_few_times_but_a_create_never() {
         .filter(|(r, _)| r["op"] == "create")
         .count();
     assert_eq!(after_create - before_create, 1);
+}
+
+#[cfg(feature = "federation")]
+mod sealed_support;
+
+/// Modal's token sealed to the account's devices: checked, sealed, and
+/// handed to the helper in its environment only (never in a request), with
+/// no profile; a Modal token given without sealing is refused.
+#[cfg(feature = "federation")]
+#[tokio::test]
+async fn a_sealed_modal_token_signs_in_the_helper_and_nothing_else_sees_it() {
+    use cua_byoc::CloudApi as _;
+    use cua_byoc::federation::IssuerClient;
+    use cua_byoc::sealed::PoolSealer;
+    use cua_sandbox_core::byoc::{CloudManager, ConnectRequest};
+    use sealed_support::{FakeIssuer, FakePool};
+
+    const SECRET: &str = "as-SEALED-modal-secret";
+    let home = tempfile::tempdir().unwrap();
+    let fake = Arc::new(FakeModal::default());
+    let api = Arc::new(ModalApi::with(
+        fake.clone(),
+        Arc::new(FixedConfigSource(ImageConfig::default())),
+        None,
+    ));
+    let issuer = Arc::new(FakeIssuer::default());
+    let pool = FakePool::new();
+    let clouds = cua_byoc::Clouds::new(
+        home.path(),
+        vec![api.clone() as Arc<dyn cua_byoc::CloudApi>],
+        Arc::new(cua_byoc::Store::new(home.path())),
+    )
+    .with_issuer(issuer.clone() as Arc<dyn IssuerClient>)
+    .with_sealer(pool.join("laptop") as Arc<dyn PoolSealer>);
+    let ask = |token: &str, budget: Option<f64>| ConnectRequest {
+        target: Target {
+            provider: "modal".into(),
+            token: Some(token.into()),
+            ..Default::default()
+        },
+        budget_usd_month: budget,
+        ..Default::default()
+    };
+
+    // Without a budget nothing is sealed, and a Modal token is not kept
+    // on the device either: refused, saying how.
+    let e = clouds
+        .connect_with(&ask(&format!("ak-1:{SECRET}"), None))
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("sealed"), "{e}");
+    // Not a Modal token.
+    let e = clouds
+        .connect_with(&ask("just-one-word", Some(30.0)))
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("<token id>:<token secret>"), "{e}");
+
+    let c = clouds
+        .connect_with(&ask(&format!("ak-1:{SECRET}"), Some(30.0)))
+        .await
+        .unwrap();
+    assert_eq!(
+        (c.provider.status.as_str(), c.provider.auth.as_str()),
+        ("connected", "sealed"),
+        "{:?}",
+        c.next
+    );
+    let server = issuer.only("modal");
+    assert_eq!(server.identifiers["workspace"], "default");
+    fake.with_token.lock().unwrap().clear();
+
+    // A later call opens it in memory and signs the helper in with it.
+    let conn = clouds.store().connection("modal").unwrap().unwrap();
+    assert!(conn.profile.is_empty());
+    let t = api.test(&conn).await;
+    assert!(t.ok(), "{:?}", t.checks);
+    let calls = fake.with_token.lock().unwrap().clone();
+    assert!(!calls.is_empty());
+    for (req, id, secret) in &calls {
+        assert_eq!((id.as_str(), secret.as_str()), ("ak-1", SECRET));
+        assert!(!req.to_string().contains(SECRET), "{req}");
+        assert!(req.get("profile").is_none(), "{req}");
+    }
+    let status = clouds.status(Some("modal")).await.unwrap();
+    assert_eq!(status.providers[0].holders, vec!["laptop".to_string()]);
+    assert!(!serde_json::to_string(&status).unwrap().contains(SECRET));
+    assert!(
+        !format!(
+            "{:?}",
+            ModalToken::parse(&format!("ak-1:{SECRET}")).unwrap()
+        )
+        .contains(SECRET)
+    );
+    // Profile tokens read for `--sealed`: the one named, else the active one.
+    let toml = "[a]\ntoken_id = \"ak-a\"\ntoken_secret = \"as-a\"\n[b]\ntoken_id = \"ak-b\"\ntoken_secret = \"as-b\"\nactive = true\n";
+    assert_eq!(
+        cua_byoc::modal::profile_token(toml, None).unwrap().id,
+        "ak-b"
+    );
+    assert_eq!(
+        cua_byoc::modal::profile_token(toml, Some("a")).unwrap().id,
+        "ak-a"
+    );
+    assert!(cua_byoc::modal::profile_token(toml, Some("c")).is_none());
 }

@@ -188,13 +188,25 @@ jobs:
       - name: Stage the Cua Spaces app library
         working-directory: libs/cua
         run: ../spaces-app-swift/scripts/stage-library.sh
+      # swift test has no retry flag, so flaky.sh runs the failed tests once
+      # more. A test that passes only then is reported and gets a `flaky`
+      # issue (.github/flaky/).
       - name: spaces-app-swift tests
-        run: libs/spaces-app-swift/scripts/test.sh
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-app --format log --rerun-failed -- libs/spaces-app-swift/scripts/test.sh
       - name: Notch package tests (the views and the Electron helper's protocol)
-        run: libs/spaces-notch-swift/scripts/test.sh
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-notch --format log --rerun-failed -- libs/spaces-notch-swift/scripts/test.sh
       - name: Swift tests (view models, parity, snapshots)
         working-directory: apps/cua-spaces-macos
-        run: scripts/test.sh
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-mac --format log --rerun-failed -- scripts/test.sh
+      # The bundled Cua Driver is checked against the size and SHA-256
+      # committed in cua-driver.release.json and the Cua team's signature;
+      # a mismatched, incomplete or unsigned download is refused.
+      - name: fetch-cua-driver.sh refuses a download that isn't the pinned release
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/fetch-cua-driver-test.sh
       # install-local.sh and uninstall-local.sh against a fake HOME and a fake
       # build: a Stable install stays byte-identical, a wrong bundle id is
       # refused. Needs no build, certificate or network.
@@ -218,6 +230,10 @@ jobs:
           answers="$RUNNER_TEMP/bridge-answers.json"
           (cd apps/cua-spaces-macos && CUA_BRIDGE_ANSWERS="$answers" scripts/test.sh --filter BridgeContractTests)
           (cd apps/cua-spaces-web && CUA_BRIDGE_ANSWERS="$answers" npx vitest run src/bridge/__tests__/contract.test.ts)
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-swift
       - name: Upload snapshot differences
         if: failure()
         uses: actions/upload-artifact@v4
@@ -291,6 +307,21 @@ jobs:
       - name: Build the app bundle (and its launch check)
         working-directory: apps/cua-spaces-macos
         run: scripts/build-app.sh release
+      # macOS 26 puts icons without their own background on a grey plate: the
+      # bundle must carry the compiled Icon Composer icon (CUA-2244).
+      - name: The bundle has the macOS 26 app icon
+        working-directory: apps/cua-spaces-macos
+        run: |
+          app=".build/app/Cua Spaces.app"
+          test -s "$app/Contents/Resources/Assets.car"
+          test -s "$app/Contents/Resources/AppIcon.icns"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")" = AppIcon
+      # The host service never checks in with LaunchServices as the app:
+      # while a windowless helper held the app's entry, opening Cua Spaces
+      # failed with error -600 (0.17.0-beta.3/beta.4, through the Sentry SDK).
+      - name: The host service is not an app
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/helper-not-an-app.sh ".build/app/Cua Spaces.app"
       # Cua Spaces Local (--channel local) runs beside an installed Cua
       # Spaces and must not be able to touch it (CUA-1776): the Local bundle
       # id, helper, URL scheme and home, staging, and no Sparkle feed. The
@@ -334,5 +365,12 @@ jobs:
         run: |
           brew install xcodegen
           xcodegen generate
-          xcodebuild test -project CuaSpacesMac.xcodeproj -scheme CuaSpacesMacUITests \
-            -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
+          # -retry-tests-on-failure with 2 iterations: one retry.
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-xcuitest --format log -- \
+            xcodebuild test -project CuaSpacesMac.xcodeproj -scheme CuaSpacesMacUITests \
+            -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO \
+            -retry-tests-on-failure -test-iterations 2
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-xcuitest

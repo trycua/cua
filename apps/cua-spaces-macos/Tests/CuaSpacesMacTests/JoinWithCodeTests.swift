@@ -21,15 +21,15 @@ struct JoinWithCodeTests {
 
     @Test func buildsArguments() {
         #expect(JoinWithCode.arguments(code: "abcd-efgh-jkmn", relay: nil)
-                == ["host", "setup", "--pair", "ABCD-EFGH-JKMN"])
+                == ["host", "setup", "--pair", "ABCD-EFGH-JKMN", "--no-desktop", "--provide-spaces"])
         #expect(JoinWithCode.arguments(code: "ABCDEFGHJKMN", relay: "https://relay.example.com")
-                == ["host", "setup", "--pair", "ABCD-EFGH-JKMN", "--relay", "https://relay.example.com"])
+                == ["host", "setup", "--pair", "ABCD-EFGH-JKMN", "--relay", "https://relay.example.com", "--no-desktop", "--provide-spaces"])
         #expect(JoinWithCode.arguments(code: "ABCDEFGHJKMN", relay: "  ")
-                == ["host", "setup", "--pair", "ABCD-EFGH-JKMN"])
+                == ["host", "setup", "--pair", "ABCD-EFGH-JKMN", "--no-desktop", "--provide-spaces"])
         #expect(JoinWithCode.arguments(code: "https://cua.ai/add/abcd-efgh-jkmn?relay=https%3A%2F%2Fr.example.com", relay: nil)
-                == ["host", "setup", "--pair", "ABCD-EFGH-JKMN", "--relay", "https://r.example.com"])
+                == ["host", "setup", "--pair", "ABCD-EFGH-JKMN", "--relay", "https://r.example.com", "--no-desktop", "--provide-spaces"])
         #expect(JoinWithCode.arguments(code: "https://cua.ai/add/ABCDEFGHJKMN?relay=https%3A%2F%2Fr.example.com", relay: "https://mine.example.com")
-                == ["host", "setup", "--pair", "ABCD-EFGH-JKMN", "--relay", "https://mine.example.com"])
+                == ["host", "setup", "--pair", "ABCD-EFGH-JKMN", "--relay", "https://mine.example.com", "--no-desktop", "--provide-spaces"])
         #expect(JoinWithCode.arguments(code: "", relay: nil) == nil)
         #expect(JoinWithCode.arguments(code: "   ", relay: "https://r") == nil)
     }

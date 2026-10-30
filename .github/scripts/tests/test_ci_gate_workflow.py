@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -9,7 +10,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / '.github/workflows'
 GATE = yaml.safe_load((WORKFLOWS / 'ci-gate.yml').read_text())
-SCRIPT = GATE['jobs']['ci-gate']['steps'][0]['run']
+STEPS = {step.get('name'): step for step in GATE['jobs']['ci-gate']['steps']}
+SCRIPT = STEPS['Wait for every other workflow on the pull request head']['run']
 
 
 @pytest.mark.parametrize('filename', [
@@ -37,7 +39,47 @@ def test_gate_wiring():
     assert GATE['jobs']['ci-gate']['timeout-minutes'] == 360
     assert '.workflow_id != $GITHUB_WORKFLOW_ID' in SCRIPT
     assert '(.event == \\"pull_request\\" or .event == \\"pull_request_target\\")' in SCRIPT
-    assert 'claude-auto-fix|ci-release-reminder|review-cua-perception-candidates' in SCRIPT
+    assert 'claude-auto-fix|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)' in SCRIPT
+
+
+def filtered_runs(ignore_re):
+    runs_src = SCRIPT[SCRIPT.index('scope_jq='):]
+    runs_src = runs_src[:runs_src.index('\n}\n') + len('\n}\n')]
+    paths = [
+        ('.github/workflows/cla.yml', 'failure', 'completed'),
+        ('.github/workflows/cla.yml@refs/pull/1/merge', '', 'in_progress'),
+        ('.github/workflows/ci-contributor-attribution.yml', 'failure', 'completed'),
+        ('.github/workflows/claude-auto-fix.yml', 'failure', 'completed'),
+        ('.github/workflows/cla.yml.bak', 'success', 'completed'),
+    ]
+    runs_json = json.dumps({'workflow_runs': [
+        {'workflow_id': i + 1, 'id': 100 + i, 'name': path.rsplit('/', 1)[1], 'path': path,
+         'event': 'pull_request_target', 'conclusion': conclusion or None, 'status': status}
+        for i, (path, conclusion, status) in enumerate(paths)
+    ]})
+    script = ('api() { jq -r "${@: -1}" <<<"$RUNS_JSON"; }\n' + runs_src + 'runs\n')
+    out = subprocess.run(
+        ['bash', '-e', '-c', script],
+        env={**os.environ, 'RUNS_JSON': runs_json, 'IGNORE_RE': ignore_re,
+             'GITHUB_WORKFLOW_ID': '0', 'sha': 'abc', 'GITHUB_REPOSITORY': 'test/repo'},
+        capture_output=True, text=True, timeout=10, check=True,
+    ).stdout
+    return out.strip().splitlines()
+
+
+@pytest.mark.parametrize('ignore_re', ['', 'unrelated-area[.]yml'])
+def test_gate_never_waits_on_the_cla_workflow(ignore_re):
+    rows = filtered_runs(ignore_re)
+    assert [row.split('\t')[2] for row in rows] == [
+        'ci-contributor-attribution.yml', 'cla.yml.bak',
+    ]
+    failing = run_gate('\n'.join(rows))
+    assert failing.returncode == 1, failing.stderr
+    assert 'ci-contributor-attribution.yml: fail' in failing.stdout
+    passing = run_gate('\n'.join(
+        row.replace('\tfailure\t', '\tsuccess\t') for row in rows
+    ))
+    assert passing.returncode == 0, passing.stderr
 
 
 MOCK = '''

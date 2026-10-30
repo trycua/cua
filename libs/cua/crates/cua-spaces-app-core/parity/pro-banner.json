@@ -1,0 +1,11 @@
+{
+  "name": "pro-banner",
+  "about": "The account area (storyboard 11): the Pro banner on Free only, with its text and Upgrade and no way to close it, never on a paid plan; and the account menu (Settings, Plan with the plan's word, Sign out only for a user's session).",
+  "steps": [
+    { "step": "Free", "plan": "free", "signedIn": true, "authMode": "user" },
+    { "step": "Pro", "plan": "pro", "signedIn": true, "authMode": "user" },
+    { "step": "Teams", "plan": "team", "signedIn": true, "authMode": "user" },
+    { "step": "an API key", "plan": "free", "signedIn": true, "authMode": "client-credentials" },
+    { "step": "signed out", "plan": "", "signedIn": false, "authMode": "none" }
+  ]
+}

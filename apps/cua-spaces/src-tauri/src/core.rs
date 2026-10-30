@@ -13,8 +13,8 @@
 //!   hotspot, agents) are SDK calls. No ssh, no rcdp CLI, no Python.
 //! - The signed-in user ([`SessionHandle`], the device-authorization grant)
 //!   drives the relay account and this device's enrollment. There is no
-//!   other credential source: Cua Cloud has ended, so the app builds no
-//!   Fleet client and calls no Cua Cloud API.
+//!   other credential source: Cua Cloud has ended, so the app calls no Cua
+//!   Cloud API.
 //! - `cua daemon` is connected (or started) so CLI and MCP clients share
 //!   Spaces with the app. Every Space's media tickets are safe in a URL, so
 //!   the webview attaches to them directly.
@@ -243,8 +243,7 @@ pub enum AuthMode {
     None,
 }
 
-/// `fleet_status`: the signed-in account. The command keeps its name for
-/// the web UI bridge that still calls it; it reads the local session and
+/// `account_status`: the signed-in account. It reads the local session and
 /// makes no network call.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -381,7 +380,12 @@ pub fn display_name(id: &str, reported: &str) -> String {
 
 impl SpaceRow {
     fn from_info(info: SpaceInfo) -> Self {
-        let name = display_name(&info.id, &info.name);
+        // Renamed elsewhere (the Cua app, `cua spaces rename`): that name.
+        let name = if info.display_name.is_empty() {
+            display_name(&info.id, &info.name)
+        } else {
+            info.display_name.clone()
+        };
         Self {
             id: info.id,
             name,
@@ -537,6 +541,7 @@ pub fn space_host(h: cua_spaces::host_spaces::HostOffer) -> cua_spaces_app_core:
             memory_free_mb: n.memory_free_mb,
             spaces: n.running.values().sum(),
             problem: n.problem,
+            kinds: n.kinds,
         }),
     }
 }
@@ -927,7 +932,7 @@ impl AppCore {
 
     // --------------------------------------------------------- account
 
-    /// `fleet_status`: who is signed in. Reads the local session; no
+    /// `account_status`: who is signed in. Reads the local session; no
     /// network call.
     pub async fn account_status(&self) -> AccountStatus {
         let signed_in = self.signed_in.load(Ordering::Relaxed);
@@ -1080,23 +1085,6 @@ impl AppCore {
         }
     }
 
-    // ----------------------------------------------------------- cloud
-
-    /// `cloud_pricing`: always `None` (no estimate). The rates came from the
-    /// Cua Cloud API, which has ended, and the app does not offer new cloud
-    /// Spaces.
-    pub async fn cloud_pricing(&self) -> Option<cua_spaces_app_core::wizard::CloudPricing> {
-        None
-    }
-
-    /// `billing_status`: always `None`. The Cua Cloud billing API has ended,
-    /// so the app no longer calls it and Settings hides the Billing row.
-    pub async fn billing_status(
-        &self,
-    ) -> CmdResult<Option<cua_spaces_app_core::billing::BillingStatus>> {
-        Ok(None)
-    }
-
     // ----------------------------------------------------------- local
 
     /// `local_status`: which local backends are usable (read-only probe).
@@ -1225,7 +1213,7 @@ impl AppCore {
         let parsed = On::parse(on).map_err(msg)?;
         if parsed.is_existing_machine() {
             return Err(format!(
-                "{parsed} names one computer; the default location is local or cloud"
+                "{parsed} names one computer; the default location is local or a cloud of yours"
             ));
         }
         let mut settings = self.settings()?;

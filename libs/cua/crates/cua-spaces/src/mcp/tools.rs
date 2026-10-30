@@ -129,9 +129,35 @@ pub const PHASE_OFFLINE: &str = "offline";
 async fn dispatch(
     spaces: &Spaces,
     tool: &str,
-    a: Value,
+    mut a: Value,
     broker: Option<&std::sync::Arc<dyn crate::teleport_broker::SessionBroker>>,
 ) -> Result<ToolOutcome> {
+    // A thread or agent member call for a Space whose thread lives on
+    // another machine (one that provides it) runs there, as this device's
+    // signed-in account. Only this machine's own user is forwarded: a
+    // caller someone else's machine vouched for never is.
+    if crate::thread_route::routed(tool, &a)
+        && PINNED.try_with(|_| ()).is_err()
+        && matches!(
+            crate::extension::Caller::current(),
+            crate::extension::Caller::Owner
+        )
+        && let Some(space) = a.get("space").and_then(Value::as_str).map(str::to_owned)
+    {
+        match spaces.thread_home(&space).await? {
+            crate::thread_route::ThreadHome::Owner {
+                host,
+                space,
+                granted,
+            } => {
+                return spaces
+                    .call_thread_owner(&host, &space, tool, granted, a)
+                    .await;
+            }
+            crate::thread_route::ThreadHome::Here(Some(here)) => a["space"] = json!(here),
+            crate::thread_route::ThreadHome::Here(None) => {}
+        }
+    }
     // Tools a registered extension serves (teleport, the Cua Volume,
     // persistent agents): see `crate::extension`.
     if let Some(ext) = spaces.extension_for(tool) {
@@ -143,6 +169,7 @@ async fn dispatch(
                 args: if a.is_null() { json!({}) } else { a },
                 broker,
                 pinned: pinned.as_ref(),
+                caller: crate::extension::Caller::current(),
             })
             .await;
     }
@@ -300,8 +327,20 @@ async fn dispatch(
             Ok(ToolOutcome::text(spaces.delete(&a.space).await?))
         }
         "stop_space" => {
-            let a: i::SpaceOnly = args(tool, a)?;
-            Ok(ToolOutcome::json(&spaces.stop(&a.space).await?))
+            let a: i::StopSpace = args(tool, a)?;
+            if a.suspend.unwrap_or(false) {
+                Ok(ToolOutcome::json(&spaces.suspend(&a.space).await?))
+            } else {
+                Ok(ToolOutcome::json(&spaces.stop(&a.space).await?))
+            }
+        }
+        "resize_space" => {
+            let a: i::ResizeSpace = args(tool, a)?;
+            Ok(ToolOutcome::json(
+                &spaces
+                    .resize(&a.space, a.cpus, a.memory_mb, a.disk_gb)
+                    .await?,
+            ))
         }
         "start_space" => {
             let a: i::SpaceOnly = args(tool, a)?;
@@ -321,13 +360,35 @@ async fn dispatch(
         "cloud_connect" => {
             let a: i::CloudConnect = args(tool, a)?;
             let c = spaces.sandboxes().clouds()?;
+            let req = cua_sandbox_core::byoc::ConnectRequest {
+                target: cloud_target(a.target),
+                make_default: a.make_default.unwrap_or(false),
+                ttl_hours: a.ttl_hours,
+                auth: a.auth,
+                budget_usd_month: a.budget_usd_month,
+                max_size: a.max_size,
+                account_id: a.account_id,
+                role_arn: a.role_arn,
+                project_number: a.project_number,
+                service_account: a.service_account,
+                subscription_id: a.subscription_id,
+                tenant_id: a.tenant_id,
+                client_id: a.client_id,
+                resource_group: a.resource_group,
+                check: a.check.unwrap_or(false),
+                // The caller's word, else the agent this daemon runs for.
+                agent: a
+                    .agent
+                    .filter(|x| !x.trim().is_empty())
+                    .or_else(cua_sandbox_core::byoc::cua_agent),
+            };
+            Ok(json_of(&c.connect_with(&req).await?))
+        }
+        "cloud_approve" => {
+            let a: i::CloudApprove = args(tool, a)?;
+            let c = spaces.sandboxes().clouds()?;
             Ok(json_of(
-                &c.connect(
-                    &cloud_target(a.target),
-                    a.make_default.unwrap_or(false),
-                    a.ttl_hours,
-                )
-                .await?,
+                &c.approve(&a.provider, a.deny.unwrap_or(false)).await?,
             ))
         }
         "cloud_disconnect" => {
@@ -564,7 +625,19 @@ async fn dispatch(
             let a: i::CloudAudit = args(tool, a)?;
             let c = spaces.sandboxes().clouds()?;
             let limit = a.limit.unwrap_or(50).clamp(1, 1000) as usize;
-            Ok(json_of(&c.audit(limit).await?))
+            Ok(json_of(&c.audit_for(a.provider.as_deref(), limit).await?))
+        }
+        "cloud_cost" => {
+            let a: i::CloudCost = args(tool, a)?;
+            let c = spaces.sandboxes().clouds()?;
+            Ok(json_of(
+                &c.cost(
+                    a.provider.as_deref(),
+                    a.by.as_deref().unwrap_or("space"),
+                    a.since.as_deref(),
+                )
+                .await?,
+            ))
         }
         // --- execution --------------------------------------------------------
         "space_bash" => {
@@ -955,6 +1028,7 @@ fn extension_capability(tool: &str) -> Option<&'static str> {
         Category::Teleport => Some("teleport"),
         Category::Volume => Some("Cua Volume"),
         Category::PersistentAgents => Some("persistent agents"),
+        Category::Thread => Some("the Space thread and agent members"),
         _ => None,
     }
 }
@@ -968,6 +1042,53 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
         .ok_or_else(|| Error::invalid(format!("{tool}: `space` is required")))?
         .to_string();
     let s = space_for(spaces, tool, &space_arg).await?;
+    // `name`: an agent member of this Space in place of a run id.
+    let mut a = a;
+    if ag::MEMBER_RUN_TOOLS.contains(&tool) {
+        let name = a.get("name").and_then(Value::as_str).map(str::to_owned);
+        let run_id = a
+            .get("run_id")
+            .and_then(Value::as_str)
+            .filter(|r| !r.is_empty())
+            .map(str::to_owned);
+        match (name, run_id) {
+            (Some(_), Some(_)) => {
+                return Err(Error::invalid(format!(
+                    "{tool}: give `run_id` or `name`, not both"
+                )));
+            }
+            (None, None) => {
+                return Err(Error::invalid(format!(
+                    "{tool}: `run_id` (or an agent member's `name`) is required"
+                )));
+            }
+            (Some(name), None) => {
+                let ext = spaces
+                    .extension_for(ag::MEMBER_OP)
+                    .ok_or_else(|| Error::needs_cua_spaces("agent members"))?;
+                let mut op = a.clone();
+                op["tool"] = json!(tool);
+                op["space"] = json!(s.id().to_string());
+                op["name"] = json!(name);
+                let out = ext
+                    .call_tool(crate::extension::ToolCall {
+                        spaces,
+                        tool: ag::MEMBER_OP,
+                        args: op,
+                        broker: None,
+                        pinned: Some(&s),
+                        caller: crate::extension::Caller::current(),
+                    })
+                    .await?;
+                if tool == "agent_message" {
+                    return Ok(out);
+                }
+                let v = crate::extension::outcome_json(out)?;
+                a["run_id"] = v["run_id"].clone();
+            }
+            (None, Some(_)) => {}
+        }
+    }
     let agents = match s.agents().await {
         Ok(agents) => agents,
         Err(e) => {
@@ -1003,6 +1124,7 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
                             args: a,
                             broker: None,
                             pinned: Some(&s),
+                            caller: crate::extension::Caller::current(),
                         })
                         .await
                     }
@@ -1050,6 +1172,7 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
                                  "agent": started.harness}),
                     broker: None,
                     pinned: Some(&s),
+                    caller: crate::extension::Caller::current(),
                 };
                 if let Err(e) = ext.call_tool(call).await {
                     tracing::warn!(run = %started.run_id, error = %e, "agent run not watched");

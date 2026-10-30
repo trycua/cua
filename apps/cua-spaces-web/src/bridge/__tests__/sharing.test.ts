@@ -55,7 +55,7 @@ describe.skipIf(!wasmBuilt)("the Machines page and New Space's Run on (wasm core
   it("read one online signal, and say the same thing about a machine that stopped sharing", async () => {
     const core = await testCore();
     const machines = toMachines(rows, [], core, NOW);
-    const env = wizardEnv(core, { options: null, clouds: null, defaultLocation: "local", cloudAvailable: false, machines });
+    const env = wizardEnv(core, { options: null, clouds: null, defaultLocation: "local", machines });
     const view = wizardView(core, wizardInitial(core, env), env);
     const runOn = new Map(view.placements.map((p) => [p.id.replace(/^host:/, ""), p] as const));
 
@@ -84,13 +84,12 @@ describe.skipIf(!wasmBuilt)("the Machines page and New Space's Run on (wasm core
       ...DEMO_NEW_SPACE_OPTIONS,
       env: {
         defaultLocation: "local" as const,
-        cloudAvailable: false,
         localAvailable: true,
         maxCpus: 8,
         hosts: [{ id: "gamma", name: "gamma-4 Mac Studio", via: "relay", online: true, os: "macos", limits: [{ resource: "sharing", used: 0, limit: 0, reason: LINE }] }],
       },
     };
-    const env = wizardEnv(core, { options, clouds: null, defaultLocation: "local", cloudAvailable: false, machines: [] });
+    const env = wizardEnv(core, { options, clouds: null, defaultLocation: "local", machines: [] });
     const gamma = wizardView(core, wizardInitial(core, env), env).placements.find((p) => p.id === "host:gamma");
     expect(gamma).toMatchObject({ id: "host:gamma", label: "gamma-4 Mac Studio (not sharing)", enabled: false, detail: `${LINE}.` });
   });

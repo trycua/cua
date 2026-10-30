@@ -240,7 +240,7 @@ Describe 'install.ps1' {
         Join-Path $prefix 'bin/cua.exe' | Should -Exist
         $out | Should -Match 'Installed the command-line tools \(downloads checked\)\.'
         $out | Should -Match 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents\.'
-        $out | Should -Match 'To let your other devices use this computer, run "cua host setup"\.'
+        $out | Should -Match 'To add this computer to your account, run "cua host setup" after signing in\.'
         $out | Should -Match 'is not on your PATH'
     }
 
@@ -465,6 +465,17 @@ Describe 'install.ps1' {
         $out | Should -Match 'agents setup --cua-driver --agents all --yes --mcp-command .*p10.bin.cua-driver.exe'
         $out | Should -Match '\[dry-run\] .*cua.exe host setup'
         $out | Should -Not -Match 'msiexec'
+    }
+
+    It 'dry run: -Select host -NoProvideSpaces adds this computer without providing Spaces' {
+        $out = Invoke-Installer @{ DryRun = $true; Select = 'host'; NoProvideSpaces = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-nps') } @{ CUA_INSTALL_NONINTERACTIVE = '1' }
+        $out | Should -Match '\[dry-run\] .*cua.exe host setup --no-provide-spaces'
+    }
+
+    It '-NoHost refuses what adds this computer' {
+        { Invoke-Installer @{ DryRun = $true; NoHost = $true; Pair = 'K7QM-4XPB-2RHD'; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-nh1') } @{ CUA_INSTALL_NONINTERACTIVE = '1' } } | Should -Throw '*-NoHost and -Pair contradict*'
+        { Invoke-Installer @{ DryRun = $true; NoHost = $true; Select = 'host'; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-nh2') } @{ CUA_INSTALL_NONINTERACTIVE = '1' } } | Should -Throw '*-NoHost and -Select host contradict*'
+        { Invoke-Installer @{ DryRun = $true; NoHost = $true; NoProvideSpaces = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-nh3') } @{ CUA_INSTALL_NONINTERACTIVE = '1' } } | Should -Throw '*-NoProvideSpaces goes with adding this computer*'
     }
 
     It 'rejects unknown items and conflicting selections' {

@@ -69,6 +69,10 @@ pub struct MeshConfig {
     /// [`Mesh::serve_udp`] on the same number. Default
     /// [`MEDIA_UDP_PORT`].
     pub media_udp_port: u16,
+    /// Divides the wait before reconnecting to the coordinator (tests
+    /// only; leave at 1).
+    #[doc(hidden)]
+    pub reconnect_speedup: u32,
 }
 
 impl std::fmt::Debug for MeshConfig {
@@ -101,6 +105,7 @@ impl MeshConfig {
             stun: Vec::new(),
             relay_only: std::env::var("CUA_MESH_RELAY_ONLY").is_ok_and(|v| v == "1"),
             media_udp_port: MEDIA_UDP_PORT,
+            reconnect_speedup: 1,
         }
     }
 }
@@ -338,6 +343,8 @@ impl Mesh {
                 pair_verifier: cfg.pair_verifier.clone(),
                 approved,
                 ephemeral: cfg.identity_path.is_none(),
+                reconnect_speedup: cfg.reconnect_speedup.max(1),
+                identity_path: cfg.identity_path.clone(),
             },
             control,
             engine.clone(),
@@ -428,6 +435,12 @@ impl Mesh {
         self.peers()
             .into_iter()
             .find(|p| p.kind == NodeKind::Machine && p.machine_id.as_deref() == Some(machine_id))
+    }
+
+    /// Bumped on every network map (a peer joined, left, or went online or
+    /// offline): a caller that shows peers' state reads it again.
+    pub fn subscribe_peers(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.inner.engine.subscribe_peers()
     }
 
     /// Waits up to `timeout` for machine `machine_id` to be in the map.

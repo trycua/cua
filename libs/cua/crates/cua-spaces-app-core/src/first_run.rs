@@ -16,8 +16,8 @@
 //!    the result. It is the app's install plan ([`crate::installer`]):
 //!    nothing is written before Install, and the file is the channel's
 //!    (`cua`, or `cua-local` for Cua Spaces Local).
-//! 3. **Connect your other devices** (optional). Signing in lets your other
-//!    computers and your cloud reach this computer's Spaces. "Not now" skips
+//! 3. **Add your other computers** (optional). Signing in lets your other
+//!    computers and your cloud use this computer's Spaces. "Not now" skips
 //!    it: this computer works without an account.
 //! 4. **Share this Mac's screen** (only a signed-in Mac that shares its
 //!    screen). Screen Recording and Accessibility, one row each, with Allow
@@ -62,16 +62,15 @@ pub const OFFERED: [&str; 5] = PREFERENCE;
 const AGENT_KEYS: [(&str, &str); 2] = [("claude-code", "anthropic"), ("codex", "openai")];
 
 /// Home's to-do request: it works on this computer with nothing else set up.
-pub const FIRST_PROMPT: &str = "List my computers and tell me what's on this Mac";
-const FIRST_PROMPT_OTHER: &str = "List my computers and tell me what's on this computer";
-const FIRST_PROMPT_PC: &str = "List my computers and tell me what's on this PC";
+pub const FIRST_PROMPT: &str = "List my machines and tell me what's on this Mac";
+const FIRST_PROMPT_OTHER: &str = "List my machines and tell me what's on this machine";
+const FIRST_PROMPT_PC: &str = "List my machines and tell me what's on this PC";
 
 /// The try screen's request: the agent makes a Space on this computer.
-pub const TRY_PROMPT: &str =
-    "Make a Linux Space on this Mac and stream the desktop in a new window.";
+pub const TRY_PROMPT: &str = "Make a Linux Space on this Mac and show its desktop in a new window.";
 const TRY_PROMPT_OTHER: &str =
-    "Make a Linux Space on this computer and stream the desktop in a new window.";
-const TRY_PROMPT_PC: &str = "Make a Linux Space on this PC and stream the desktop in a new window.";
+    "Make a Linux Space on this machine and show its desktop in a new window.";
+const TRY_PROMPT_PC: &str = "Make a Linux Space on this PC and show its desktop in a new window.";
 
 /// The CLI's name when the host did not say (the released app's,
 /// `CuaChannel::cli_name`). A Local build's host passes its own.
@@ -100,7 +99,7 @@ pub enum FirstRunStep {
     Connect,
     /// Install the Cua CLI (only while it is not installed).
     Cli,
-    /// Connect your other devices.
+    /// Add your other computers.
     Devices,
     /// Share this Mac's screen: Screen Recording and Accessibility. Only on
     /// a signed-in Mac that shares its screen ([`asks_permissions`]).
@@ -190,6 +189,9 @@ pub struct FirstRunAgent {
     /// The settings file Cua adds itself to (`~/.claude.json`), when the
     /// agent has one.
     pub mcp_config: Option<String>,
+    /// Its row of the connection status (`agents.status`, CONTRACT §4),
+    /// when the host answers it: "Connected" only when that says so.
+    pub connection: Option<crate::connection::ConnectionInput>,
 }
 
 /// A permission this computer still needs (`host.status`'s hint: the host
@@ -307,6 +309,10 @@ pub struct FirstRunInput {
     pub connecting_agent: Option<String>,
     /// Adding Cua to the agent's settings failed with this.
     pub connect_error: Option<String>,
+    /// Advanced setup on Pick your agent: paths and per-item ticks
+    /// (CUA-2267). Simple, the default, is one Connect each.
+    #[serde(default)]
+    pub advanced: bool,
     /// The agent was running when its settings changed (none: not known;
     /// no process check exists yet).
     pub agent_open_before_setup: Option<bool>,
@@ -386,7 +392,7 @@ pub struct AgentPick {
     /// "Connect" (`connect`, with `agent`), none once connected or while
     /// it runs.
     pub action: Option<FirstRunButton>,
-    /// "Connected", "Adding Cua…".
+    /// "Connected", "Connecting…".
     pub note: Option<String>,
 }
 
@@ -448,6 +454,18 @@ pub struct ConnectView {
     /// "Skip" (none once an agent is connected).
     pub secondary: Option<FirstRunButton>,
     pub error: Option<String>,
+    /// The one line under the agents: what Connect does (Simple), or that
+    /// ticked sign-ins are copied (Advanced).
+    #[serde(default)]
+    pub consent: String,
+    /// The quiet link at the right of the buttons: "Advanced" in Simple
+    /// (`advanced`), "Simple" in Advanced (`simple`).
+    #[serde(default)]
+    pub mode: Option<FirstRunButton>,
+    /// Advanced: each agent's file and its sign-in are shown and ticked
+    /// one by one; Simple: one Connect each, no paths.
+    #[serde(default)]
+    pub advanced: bool,
 }
 
 /// A row of screen 3 (what signing in connects).
@@ -462,17 +480,17 @@ pub struct DeviceRow {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DevicesView {
-    /// "Connect your other devices.", "This Mac is in your account."
+    /// "Add your other computers.", "This Mac is in your account."
     pub title: String,
     pub lede: String,
     pub rows: Vec<DeviceRow>,
     /// The sign-in waiting, or this computer being added to the account.
     pub status: Option<CheckRow>,
-    /// "Sign in to connect" (`sign-in`), or "Continue" once signed in.
+    /// "Sign in" (`sign-in`), or "Continue" once signed in.
     pub primary: FirstRunButton,
     /// "Not now" (`not-now`) before sign-in.
     pub secondary: Option<FirstRunButton>,
-    /// "This Mac works without it."
+    /// "Not now keeps Cua on this Mac only. You can sign in later."
     pub note: Option<String>,
 }
 
@@ -728,7 +746,7 @@ fn this_computer(os: &str) -> &'static str {
     match os {
         "macos" => "this Mac",
         "windows" => "this PC",
-        _ => "this computer",
+        _ => "this machine",
     }
 }
 
@@ -745,7 +763,7 @@ fn os_name(os: &str) -> &'static str {
         "linux" => "Linux",
         "omarchy" => "Omarchy",
         "windows" => "Windows",
-        _ => "a computer",
+        _ => "a machine",
     }
 }
 
@@ -781,7 +799,7 @@ pub fn try_prompt_tabs(os: &str) -> Vec<PromptTab> {
         .map(|(id, label, kind)| PromptTab {
             id: id.into(),
             label: label.into(),
-            text: format!("Make {kind} Space on {place} and stream the desktop in a new window."),
+            text: format!("Make {kind} Space on {place} and show its desktop in a new window."),
         })
         .collect()
 }
@@ -910,20 +928,51 @@ fn agent_picks(input: &FirstRunInput) -> Vec<AgentPick> {
         .into_iter()
         .map(|id| {
             let row = agents.iter().find(|a| a.agent == id);
-            // Connected here: Cua is in its settings. A run that pressed
-            // Connect and is waiting for the setup to say so counts too.
-            let is_connected = row.is_some_and(|a| a.configured)
-                || (connected.contains(&id) && input.agents.is_some() && !input.connecting);
+            let status = row.and_then(|a| a.connection.as_ref());
+            // Connected here: the connection status says so (Cua's entry is
+            // there and answers). Without one, Cua is in its settings, or a
+            // run pressed Connect and waits for the setup to say so.
+            let is_connected = match status {
+                // Connected and waiting for its own sign-in is still connected;
+                // a broken entry (Reconnect, Disconnect) is not.
+                Some(c) => match c.state.as_str() {
+                    "connected" => true,
+                    "attention" => !c
+                        .problem
+                        .as_ref()
+                        .is_some_and(|p| p.action == "reconnect" || p.action == "disconnect"),
+                    _ => false,
+                },
+                None => {
+                    row.is_some_and(|a| a.configured)
+                        || (connected.contains(&id) && input.agents.is_some() && !input.connecting)
+                }
+            };
+            let problem = status
+                .filter(|c| c.state == "attention")
+                .and_then(|c| c.problem.as_ref())
+                .filter(|p| p.action == "reconnect" || p.action == "disconnect");
             let busy = input.connecting
                 && input.connecting_agent.as_deref().is_none_or(|a| a == id)
                 && !row.is_some_and(|a| a.configured);
             AgentPick {
                 name: name_of(agents, &id),
-                file: row.and_then(|a| a.mcp_config.as_deref()).map(tilde),
+                // Simple shows no paths; Advanced names the file Connect changes.
+                file: input
+                    .advanced
+                    .then(|| row.and_then(|a| a.mcp_config.as_deref()).map(tilde))
+                    .flatten(),
                 connected: is_connected,
-                action: (!is_connected && !busy).then(|| button("connect", "Connect")),
+                action: (!is_connected && !busy).then(|| match problem {
+                    // Gone from This Mac: take Cua out of its settings.
+                    Some(p) if p.action == "disconnect" => button("disconnect", "Disconnect"),
+                    Some(_) => button("connect", "Reconnect"),
+                    None => button("connect", "Connect"),
+                }),
                 note: if busy {
-                    Some("Adding Cua…".into())
+                    Some("Connecting…".into())
+                } else if let Some(p) = problem {
+                    Some(p.line.clone())
                 } else if is_connected {
                     Some("Connected".into())
                 } else {
@@ -969,7 +1018,7 @@ fn credentials(input: &FirstRunInput, connected: &[String]) -> Vec<CredentialRow
             error: (!a.signed_in)
                 .then(|| input.agent_sign_in_error.clone())
                 .flatten()
-                .map(|e| format!("Couldn't start the sign-in: {e}")),
+                .map(|e| format!("Couldn't start sign-in: {e}")),
         });
     }
     let Some(keys) = input
@@ -990,7 +1039,7 @@ fn credentials(input: &FirstRunInput, connected: &[String]) -> Vec<CredentialRow
         out.push(CredentialRow {
             id: format!("key:{provider}"),
             title: format!("{} key", row.title),
-            note: format!("For {} in your Spaces", name_of(agents, id)),
+            note: format!("{} uses it in your Spaces", name_of(agents, id)),
             status: row.set.then(|| "Saved".into()),
             ok: row.set,
             action: (!row.set).then(|| button("add-key", "Add key")),
@@ -1013,7 +1062,7 @@ fn default_or(name: &str, id: &str) -> String {
 fn welcome_view(input: &FirstRunInput) -> WelcomeView {
     let place = this_computer(&input.host_os);
     WelcomeView {
-        title: "Your computers, shared by your team and its agents.".into(),
+        title: "Your machines, shared by your team and its agents.".into(),
         lede: format!("Run agents in Spaces on {place}, or on any computer your team connects."),
         primary: button("start", "Get started"),
     }
@@ -1047,9 +1096,9 @@ fn connect_view(input: &FirstRunInput) -> ConnectView {
         lede: if input.agents.is_none() {
             format!("Looking for agents on {place}…")
         } else if none {
-            format!("No agents found on {place}.")
+            format!("No agents found on {place}. Install one, or use Cua from a terminal.")
         } else {
-            format!("Found on {place}. You can add more later.")
+            format!("Cua found these on {place}. Connect the ones you want to use with Cua.")
         },
         agents: list,
         alternatives: if none {
@@ -1063,8 +1112,8 @@ fn connect_view(input: &FirstRunInput) -> ConnectView {
                 },
                 AgentAlternative {
                     id: "cli".into(),
-                    title: "Use the CLI".into(),
-                    note: format!("Make a Space on {place} from a terminal."),
+                    title: "Use the Terminal".into(),
+                    note: format!("Make a Space on {place} from the command line."),
                     url: None,
                     command: Some(cli_first_space(&cli_name(input))),
                 },
@@ -1072,14 +1121,31 @@ fn connect_view(input: &FirstRunInput) -> ConnectView {
         } else {
             vec![]
         },
+        consent: if none || input.agents.is_none() {
+            String::new()
+        } else if input.advanced {
+            format!("Ticked sign-ins are copied to Keyvault on {}.", cap(place))
+        } else {
+            format!("{SIMPLE_CONSENT} on {}.", cap(place))
+        },
+        mode: (!none && input.agents.is_some()).then(|| {
+            if input.advanced {
+                button("simple", "Simple")
+            } else {
+                button("advanced", "Advanced")
+            }
+        }),
+        advanced: input.advanced,
         credentials: credentials(input, &connected),
-        credentials_note: format!("They stay on {place}."),
+        credentials_note: format!("Sign-ins and keys stay on {place}."),
         primary: button("continue", "Continue"),
-        secondary: connected.is_empty().then(|| button("skip", "Skip")),
+        // Continue works with nothing connected, and "Skip for now" stays at
+        // the top: no second Skip here (CUA-2267).
+        secondary: None,
         error: input
             .connect_error
             .as_ref()
-            .map(|e| format!("Couldn't add Cua: {e}")),
+            .map(|e| format!("Couldn't connect Cua: {e}")),
     }
 }
 
@@ -1127,7 +1193,7 @@ fn account_row(input: &FirstRunInput) -> Option<CheckRow> {
             format!("Add {place} to your account"),
             host.error.as_ref().map_or_else(
                 || "It takes a few seconds.".into(),
-                |e| format!("It didn't work: {e}"),
+                |e| format!("Couldn't add it: {e}"),
             ),
             Some(button(
                 "set-up",
@@ -1141,8 +1207,8 @@ fn account_row(input: &FirstRunInput) -> Option<CheckRow> {
     }
     Some(row(
         RowState::Ok,
-        format!("{} is in your account", cap(place)),
-        "Your other computers can reach its Spaces.".into(),
+        "Ready to share".into(),
+        "Its Spaces appear on every computer signed in to your account.".into(),
         None,
     ))
 }
@@ -1151,8 +1217,8 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
     let place = this_computer(&input.host_os);
     let rows = vec![
         DeviceRow {
-            title: "Your other computers".into(),
-            note: format!("They join {place}'s pool"),
+            title: "Your other machines".into(),
+            note: "Sign in with the same account".into(),
         },
         DeviceRow {
             title: "Your cloud".into(),
@@ -1168,7 +1234,7 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
             } else {
                 format!("Adding {place} to your account.")
             },
-            lede: "Sign in on your other computers, and they reach its Spaces.".into(),
+            lede: "Sign in on your other machines to use its Spaces.".into(),
             rows,
             status,
             primary: button("continue", "Continue"),
@@ -1177,13 +1243,17 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
         };
     }
     DevicesView {
-        title: "Connect your other devices.".into(),
-        lede: format!("Sign in once, and your other computers reach {place}'s Spaces."),
+        title: "Add your other machines.".into(),
+        lede: format!(
+            "Sign in to Cua here and on your other machines. Then they can all use {place}'s Spaces."
+        ),
         rows,
         status: account_row(input),
-        primary: button("sign-in", "Sign in to connect"),
+        primary: button("sign-in", "Sign in"),
         secondary: Some(button("not-now", "Not now")),
-        note: Some(format!("{} works without it.", cap(place))),
+        note: Some(format!(
+            "Not now keeps Cua on {place} only. You can sign in later."
+        )),
     }
 }
 
@@ -1200,7 +1270,11 @@ pub fn asks_permissions(input: &FirstRunInput) -> bool {
             .is_none_or(|h| h.share_desktop != Some(false))
 }
 
-/// The two permissions a shared screen needs, as rows: also what Settings
+/// The host's permission id for macOS Local Network access.
+pub const LOCAL_NETWORK: &str = "local-network";
+
+/// The permissions a shared screen needs (two, and Local Network where macOS
+/// Spaces run), as rows: also what Settings
 /// shows later (the same words and buttons).
 pub fn permissions_view(input: &FirstRunInput) -> PermissionsView {
     let place = this_computer(&input.host_os);
@@ -1215,7 +1289,13 @@ pub fn permissions_view(input: &FirstRunInput) -> PermissionsView {
         .host
         .as_ref()
         .filter(|h| h.configured && !input.host_setting_up);
-    let rows: Vec<CheckRow> = [
+    // The host lists a "local-network" entry (granted or not) when macOS Spaces
+    // can run on this Mac, and the page then asks for it with the other two.
+    let local_network = input
+        .host
+        .as_ref()
+        .is_some_and(|h| h.permissions.iter().any(|p| p.id == LOCAL_NETWORK));
+    let mut wanted = vec![
         // Plain words, not the panes' names: macOS renames them (Accessibility
         // is "Device Control and Data Access" from macOS 27), and Allow opens
         // the right one anyway.
@@ -1231,42 +1311,59 @@ pub fn permissions_view(input: &FirstRunInput) -> PermissionsView {
             format!("So they can click and type on {place}."),
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
         ),
-    ]
-    .into_iter()
-    .map(|(id, title, note, pane)| {
-        let (state, note, action, settings_url) = match known {
-            None => (
-                RowState::Checking,
-                format!("Adding {place} to your account first…"),
-                None,
-                None,
-            ),
-            Some(host) => match missing_permission(host, id) {
-                Some(p) => (
-                    RowState::Fix,
-                    note,
-                    Some(button("allow", "Allow")),
-                    Some(p.settings_url.unwrap_or_else(|| pane.into())),
+    ];
+    if local_network {
+        wanted.push((
+            LOCAL_NETWORK,
+            "Run Spaces on this Mac".to_string(),
+            "So the macOS Spaces you create here can start and connect.".to_string(),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork",
+        ));
+    }
+    let count = wanted.len();
+    let rows: Vec<CheckRow> = wanted
+        .into_iter()
+        .map(|(id, title, note, pane)| {
+            let (state, note, action, settings_url) = match known {
+                None => (
+                    RowState::Checking,
+                    format!("Adding {place} to your account first…"),
+                    None,
+                    None,
                 ),
-                None => (RowState::Ok, "Allowed".into(), None, None),
-            },
-        };
-        CheckRow {
-            id: id.into(),
-            state,
-            title,
-            note,
-            action,
-            settings_url,
-        }
-    })
-    .collect();
+                Some(host) => match missing_permission(host, id) {
+                    Some(p) => (
+                        RowState::Fix,
+                        note,
+                        Some(button("allow", "Allow")),
+                        Some(p.settings_url.unwrap_or_else(|| pane.into())),
+                    ),
+                    None => (RowState::Ok, "Allowed".into(), None, None),
+                },
+            };
+            CheckRow {
+                id: id.into(),
+                state,
+                title,
+                note,
+                action,
+                settings_url,
+            }
+        })
+        .collect();
     let all = rows.iter().all(|r| r.state == RowState::Ok);
     PermissionsView {
         title: format!("Share {place}'s screen."),
-        lede: format!("To let your team and agents see and use {place}, allow two permissions."),
+        lede: if count == 2 {
+            format!("Allow two permissions so your team and agents can see and use {place}.")
+        } else {
+            format!(
+                "Allow three permissions so your team and agents can see and use {place}, and \
+                 so macOS Spaces can run on it."
+            )
+        },
         rows,
-        note: format!("Allow opens System Settings and shows you where to turn on {app}."),
+        note: format!("Allow opens System Settings, where you turn on {app}."),
         primary: all.then(|| button("continue", "Continue")),
         secondary: (!all).then(|| button("not-now", "Not now")),
     }
@@ -1299,7 +1396,7 @@ fn computer_row(input: &FirstRunInput) -> CheckRow {
         return row(
             RowState::Fix,
             "Sign in to Cua".into(),
-            &format!("So your other computers can reach {place}."),
+            &format!("So your other machines can reach {place}."),
             Some(button("sign-in", "Sign in")),
         );
     }
@@ -1315,7 +1412,7 @@ fn computer_row(input: &FirstRunInput) -> CheckRow {
             format!("Set up {place}"),
             &host.error.as_ref().map_or_else(
                 || format!("Cua needs to add {place} to your account. It takes a few seconds."),
-                |e| format!("Setting it up didn't work: {e}"),
+                |e| format!("Couldn't set it up: {e}"),
             ),
             Some(button(
                 "set-up",
@@ -1331,7 +1428,7 @@ fn computer_row(input: &FirstRunInput) -> CheckRow {
         return row(
             RowState::Fix,
             format!("Start Cua on {place}"),
-            "Cua's background service isn't running.",
+            "Cua isn't running in the background.",
             Some(button("set-up", "Start")),
         );
     }
@@ -1439,7 +1536,7 @@ fn extra_view(input: &FirstRunInput) -> ExtraView {
         "creating" => ExtraView {
             action: Some(button("cancel", "Cancel")),
             fraction: e.fraction.map(|f| f.clamp(0.0, 1.0)),
-            footnote: Some("You can press Done now. We'll let you know when it's ready.".into()),
+            footnote: Some("You can press Done. We'll tell you when it's ready.".into()),
             ..base(
                 "creating",
                 format!("Making {name} in the background"),
@@ -1450,7 +1547,7 @@ fn extra_view(input: &FirstRunInput) -> ExtraView {
             "ready",
             format!("{name} is ready"),
             format!(
-                "A fresh {} computer inside {place}.",
+                "A separate {} computer on {place}.",
                 os_label(e.os.as_deref().unwrap_or(""))
             ),
         ),
@@ -1496,7 +1593,7 @@ fn extra_view(input: &FirstRunInput) -> ExtraView {
                 ..base(
                     "choose",
                     "Make a first Space".into(),
-                    format!("A fresh computer inside {place}. One click starts it."),
+                    format!("A separate computer on {place}. Pick a system to start it."),
                 )
             }
         }
@@ -1536,27 +1633,43 @@ fn setup_view(input: &FirstRunInput) -> SetupView {
             id: "agent".into(),
             state: RowState::Checking,
             title: format!("Waiting for {name}…"),
-            note: format!("If {name} was already open, restart it."),
+            note: format!("If {name} was already open, restart it so it can find Cua."),
             action: None,
             settings_url: None,
         },
     };
+    // The last button names the choice (CUA-2267): skip while the agent
+    // hasn't used Cua, continue once it has. The step id stays `done`.
+    let primary = PrimaryView {
+        label: if input.agent_used_at.is_some() {
+            "Continue to the app".into()
+        } else {
+            SKIP_TRY_LATER.into()
+        },
+        ..done
+    };
     SetupView {
         title: format!("Try it in {name}."),
-        lede: format!("Paste this. {name} makes the Space itself."),
+        lede: format!("Paste this in {name} now, or try it later from Home."),
         prompt: Some(PromptView {
             heading: format!("Paste this in {name}"),
             text: try_prompt(&input.host_os).into(),
-            note: format!("It runs on {place}."),
+            note: format!("The Space runs on {place}."),
             copy: Some("Copy".into()),
             tabs: try_prompt_tabs(&input.host_os),
             selected: Some("linux".into()),
         }),
         status: Some(status),
         extra: None,
-        primary: done,
+        primary,
     }
 }
+
+/// The try step's button while the agent hasn't used Cua yet.
+pub const SKIP_TRY_LATER: &str = "Skip, I'll try it later";
+
+/// What Simple's Connect does, in one line (the consent).
+pub const SIMPLE_CONSENT: &str = "Connect adds Cua to the agent and copies its sign-in to Keyvault";
 
 /// The plan card for a moment after the first success: Teams for someone
 /// who entered teammates' emails and isn't on Teams, else Pro for Free.
@@ -1684,7 +1797,7 @@ pub fn cli_view(input: &FirstRunInput) -> CliView {
     } else if let Some(plan) = cli.plan.as_ref().filter(|p| p.source.is_some()) {
         format!("Not installed. Install puts it at {}.", tilde(&plan.target))
     } else {
-        "This app can't install it here.".to_string()
+        "This app can't install the command here.".to_string()
     };
     let can_install = !installed && cli.plan.as_ref().is_some_and(|p| p.source.is_some());
     CliView {
@@ -1693,7 +1806,9 @@ pub fn cli_view(input: &FirstRunInput) -> CliView {
         } else {
             "Use Cua from the Terminal.".into()
         },
-        lede: format!("Type {name} in Terminal to make and use Spaces, for you and your agents."),
+        lede: format!(
+            "Type {name} in Terminal to make and use Spaces. Your agents can use it too."
+        ),
         facts,
         status,
         installed,
@@ -1795,8 +1910,8 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     let extra_done = matches!(input.extra.phase.as_str(), "creating" | "ready");
     items.push(FirstRunTodo {
         id: "extra".into(),
-        title: "Give your agent its own Space (optional)".into(),
-        note: format!("A fresh computer inside {place}, away from your files and your mouse."),
+        title: "Make a first Space (optional)".into(),
+        note: format!("A separate computer on {place}, away from your files and your mouse."),
         done: extra_done,
         optional: true,
         action: (!extra_done).then(|| button("add", "Add a Space")),
@@ -1804,11 +1919,11 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     });
     items.push(FirstRunTodo {
         id: "sign-in".into(),
-        title: "Connect your other devices (optional)".into(),
+        title: "Add your other machines (optional)".into(),
         note: if input.signed_in {
             "Signed in to Cua.".into()
         } else {
-            format!("Sign in, and your other computers reach {place}'s Spaces.")
+            format!("Sign in to use {place}'s Spaces from your other machines.")
         },
         done: input.signed_in,
         optional: true,
@@ -1928,6 +2043,10 @@ mod tests {
                     env: (*env).into(),
                     last4: "1234".into(),
                     added_ms: 1,
+                    expired: false,
+                    label: None,
+                    region: None,
+                    fields: Default::default(),
                 })
                 .collect(),
             ..Default::default()
@@ -1977,7 +2096,7 @@ mod tests {
         let w = view(&input(FirstRunStep::Welcome, vec![])).welcome.unwrap();
         assert_eq!(
             w.title,
-            "Your computers, shared by your team and its agents."
+            "Your machines, shared by your team and its agents."
         );
         assert_eq!(w.primary.id, "start");
     }
@@ -2017,11 +2136,28 @@ mod tests {
             assert!(!a.connected, "{}", a.agent);
             assert_eq!(a.action.as_ref().unwrap().id, "connect");
         }
+        // Simple (the default) shows no paths and says what Connect does;
+        // Advanced names each file, and the link switches back.
+        assert!(c.agents.iter().all(|a| a.file.is_none()));
+        assert_eq!(
+            c.consent,
+            "Connect adds Cua to the agent and copies its sign-in to Keyvault on This Mac."
+        );
+        assert_eq!(c.mode.as_ref().unwrap().id, "advanced");
+        let c = connect(&FirstRunInput {
+            advanced: true,
+            ..i.clone()
+        });
+        assert_eq!(c.mode.as_ref().unwrap().label, "Simple");
+        assert_eq!(
+            c.consent,
+            "Ticked sign-ins are copied to Keyvault on This Mac."
+        );
         let files: Vec<Option<String>> = c.agents.iter().map(|a| a.file.clone()).collect();
         assert_eq!(files[0].as_deref(), Some("~/.hermes/config.yaml"));
         assert_eq!(files[1].as_deref(), Some("~/.claude.json"));
         assert_eq!(files[2].as_deref(), Some("~/.codex/config.toml"));
-        assert_eq!(c.secondary.as_ref().unwrap().id, "skip");
+        assert!(c.secondary.is_none());
         assert_eq!(lead_agent(i.agents.as_deref().unwrap()), "hermes");
         assert_eq!(view(&i).art.agent, "hermes");
     }
@@ -2100,7 +2236,7 @@ mod tests {
         };
         let c = connect(&i);
         let codex = c.agents.iter().find(|a| a.agent == "codex").unwrap();
-        assert_eq!(codex.note.as_deref(), Some("Adding Cua…"));
+        assert_eq!(codex.note.as_deref(), Some("Connecting…"));
         assert!(codex.action.is_none());
         let hermes = c.agents.iter().find(|a| a.agent == "hermes").unwrap();
         assert!(hermes.action.is_some());
@@ -2110,7 +2246,7 @@ mod tests {
         };
         assert_eq!(
             connect(&failed).error.as_deref(),
-            Some("Couldn't add Cua: no write access")
+            Some("Couldn't connect Cua: no write access")
         );
     }
 
@@ -2179,19 +2315,22 @@ mod tests {
     fn signing_in_is_optional_and_says_what_it_connects() {
         let mut i = input(FirstRunStep::Devices, vec![]);
         let d = view(&i).devices.unwrap();
-        assert_eq!(d.title, "Connect your other devices.");
+        assert_eq!(d.title, "Add your other machines.");
         assert_eq!(
             d.lede,
-            "Sign in once, and your other computers reach this Mac's Spaces."
+            "Sign in to Cua here and on your other machines. Then they can all use this Mac's Spaces."
         );
         let rows: Vec<&str> = d.rows.iter().map(|r| r.title.as_str()).collect();
-        assert_eq!(rows, ["Your other computers", "Your cloud"]);
+        assert_eq!(rows, ["Your other machines", "Your cloud"]);
         assert_eq!(
             (d.primary.id.as_str(), d.primary.label.as_str()),
-            ("sign-in", "Sign in to connect")
+            ("sign-in", "Sign in")
         );
         assert_eq!(d.secondary.as_ref().unwrap().id, "not-now");
-        assert_eq!(d.note.as_deref(), Some("This Mac works without it."));
+        assert_eq!(
+            d.note.as_deref(),
+            Some("Not now keeps Cua on this Mac only. You can sign in later.")
+        );
         assert!(d.status.is_none());
 
         i.signing_in = true;
@@ -2221,7 +2360,7 @@ mod tests {
         let ok = d.status.unwrap();
         assert_eq!(
             (ok.state, ok.title.as_str()),
-            (RowState::Ok, "This Mac is in your account")
+            (RowState::Ok, "Ready to share")
         );
 
         // No permission is asked here, even when one is missing.
@@ -2284,7 +2423,7 @@ mod tests {
         assert_eq!(p.title, "Share this Mac's screen.");
         assert_eq!(
             p.lede,
-            "To let your team and agents see and use this Mac, allow two permissions."
+            "Allow two permissions so your team and agents can see and use this Mac."
         );
         assert_eq!(
             p.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
@@ -2323,6 +2462,47 @@ mod tests {
     }
 
     #[test]
+    fn a_mac_that_runs_macos_spaces_also_asks_for_local_network() {
+        let mut i = FirstRunInput {
+            step: FirstRunStep::Permissions,
+            host_os: "macos".into(),
+            signed_in: true,
+            host: Some(FirstRunHost {
+                configured: true,
+                running: true,
+                permissions: vec![FirstRunPermission {
+                    id: LOCAL_NETWORK.into(),
+                    granted: false,
+                    settings_url: None,
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let p = view(&i).permissions.unwrap();
+        assert_eq!(
+            p.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["screen-recording", "accessibility", "local-network"]
+        );
+        // The two the host does not list are granted; Local Network is not.
+        assert_eq!(p.rows[0].state, RowState::Ok);
+        assert_eq!(p.rows[2].state, RowState::Fix);
+        assert!(
+            p.rows[2]
+                .settings_url
+                .as_deref()
+                .is_some_and(|u| u.contains("Privacy_LocalNetwork"))
+        );
+        assert!(p.lede.starts_with("Allow three permissions"));
+        assert!(p.primary.is_none());
+        // Granted: listed, and no longer in the way.
+        i.host.as_mut().unwrap().permissions[0].granted = true;
+        let p = view(&i).permissions.unwrap();
+        assert_eq!(p.rows[2].state, RowState::Ok);
+        assert_eq!(p.primary.unwrap().id, "continue");
+    }
+
+    #[test]
     fn no_permissions_screen_without_a_shared_mac_screen() {
         let mut i = FirstRunInput {
             step: FirstRunStep::Permissions,
@@ -2358,14 +2538,23 @@ mod tests {
         };
         let s = view(&i).setup.unwrap();
         assert_eq!(s.title, "Try it in Hermes.");
-        assert_eq!(s.lede, "Paste this. Hermes makes the Space itself.");
-        let p = s.prompt.unwrap();
+        assert_eq!(
+            s.lede,
+            "Paste this in Hermes now, or try it later from Home."
+        );
+        let p = s.prompt.clone().unwrap();
         assert_eq!(p.text, TRY_PROMPT);
         assert_eq!(p.copy.as_deref(), Some("Copy"));
         assert_eq!(s.status.as_ref().unwrap().title, "Waiting for Hermes…");
         assert!(s.primary.enabled);
+        // The last button names the choice: skip until Hermes used Cua, then continue.
+        assert_eq!(
+            (s.primary.id.as_str(), s.primary.label.as_str()),
+            ("done", "Skip, I'll try it later")
+        );
         i.agent_used_at = Some("18:12".into());
         let s = view(&i).setup.unwrap();
+        assert_eq!(s.primary.label, "Continue to the app");
         let st = s.status.unwrap();
         assert_eq!(
             (st.state, st.title.as_str()),
@@ -2393,15 +2582,15 @@ mod tests {
             [
                 (
                     "macos",
-                    "Make a macOS Space on this Mac and stream the desktop in a new window."
+                    "Make a macOS Space on this Mac and show its desktop in a new window."
                 ),
                 (
                     "linux",
-                    "Make a Linux Space on this Mac and stream the desktop in a new window."
+                    "Make a Linux Space on this Mac and show its desktop in a new window."
                 ),
                 (
                     "omarchy",
-                    "Make an Omarchy Space on this Mac and stream the desktop in a new window."
+                    "Make an Omarchy Space on this Mac and show its desktop in a new window."
                 ),
             ]
         );

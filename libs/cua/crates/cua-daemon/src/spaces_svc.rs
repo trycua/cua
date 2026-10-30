@@ -66,6 +66,7 @@ mod imp {
         pb::Space {
             id: info.id.clone(),
             name: info.name.clone(),
+            display_name: info.display_name.clone(),
             spacesd_version: info.spacesd_version.clone(),
             features: info.features.clone(),
             os: info.os.clone(),
@@ -100,6 +101,7 @@ mod imp {
                 .map(|e| e.as_str().to_string())
                 .unwrap_or_default(),
             volumes: info.volumes.iter().map(Into::into).collect(),
+            sharing: info.sharing.as_ref().map(Into::into),
         }
     }
 
@@ -338,23 +340,57 @@ mod imp {
 
         async fn list_spaces(
             &self,
-            _: tonic::Request<pb::ListSpacesRequest>,
+            req: tonic::Request<pb::ListSpacesRequest>,
         ) -> R<pb::ListSpacesResponse> {
+            let known_now = req.into_inner().known_now;
             let mut spaces = self.spaces().registry().list().map_err(|e| st(e.into()))?;
             for s in &mut spaces {
                 (s.power, s.power_state) = self.spaces().power_of(&s.id);
                 s.stop_reason = self.spaces().stop_reason_of(&s.id);
             }
             self.spaces().fill_records(&mut spaces);
-            // Plus the signed-in account's relay machines (refreshed).
-            for info in self.spaces().list_all().await.map_err(|e| st(e.into()))? {
-                if info.provider == cua_spaces::Provider::Relay
-                    && !spaces.iter().any(|s| s.id == info.id)
-                {
+            // Plus the signed-in account's relay machines: refreshed, or
+            // (`known_now`) as far as they answered, never holding up this
+            // machine's own Spaces.
+            let (others, progress, creating) = if known_now {
+                let l = self
+                    .spaces()
+                    .list_known(cua_spaces::LIST_WAIT)
+                    .await
+                    .map_err(|e| st(e.into()))?;
+                (l.spaces, l.progress, l.creating)
+            } else {
+                let all = self.spaces().list_all().await.map_err(|e| st(e.into()))?;
+                (all, cua_spaces::ListProgress::default(), Vec::new())
+            };
+            for info in others {
+                if let Some(s) = spaces.iter_mut().find(|s| s.id == info.id) {
+                    // A Space this computer provides shows its name on the
+                    // relay (renamed from another device).
+                    s.display_name = info.display_name;
+                } else if info.provider == cua_spaces::Provider::Relay {
                     spaces.push(info_record(&info));
                 }
             }
-            ok(pb::ListSpacesResponse { spaces })
+            ok(pb::ListSpacesResponse {
+                spaces,
+                incomplete: progress.incomplete,
+                reaching: progress.reaching,
+                stale: progress.stale,
+                notice: progress.notice,
+                creating: creating
+                    .into_iter()
+                    .map(|c| pb::CreatingSpace {
+                        machine_id: c.machine_id,
+                        machine_name: c.machine_name,
+                        name: c.name,
+                        os: c.os,
+                        phase: c.phase,
+                        percent: u32::from(c.percent),
+                        updated_at_ms: c.updated_at_ms,
+                    })
+                    .collect(),
+            })
         }
 
         async fn list_volumes(
@@ -733,6 +769,20 @@ mod imp {
             ok(pb::SetSpaceEgressResponse {})
         }
 
+        async fn rename_space(
+            &self,
+            req: tonic::Request<pb::RenameSpaceRequest>,
+        ) -> R<pb::RenameSpaceResponse> {
+            let r = req.into_inner();
+            let info = self
+                .spaces()
+                .rename(&r.space, &r.name)
+                .await
+                .map_err(|e| st(e.into()))?;
+            let space = record(self.spaces(), &info.id).await.map_err(st)?;
+            ok(pb::RenameSpaceResponse { space: Some(space) })
+        }
+
         async fn delete_space(
             &self,
             req: tonic::Request<pb::DeleteSpaceRequest>,
@@ -747,6 +797,35 @@ mod imp {
             // Space of the same name must not reach the deleted one.
             self.rt().detach(&space).await;
             ok(pb::DeleteSpaceResponse { message })
+        }
+
+        async fn delete_spaces(
+            &self,
+            req: tonic::Request<pb::DeleteSpacesRequest>,
+        ) -> R<pb::DeleteSpacesResponse> {
+            let spaces = req.into_inner().spaces;
+            let results = self.spaces().delete_many(&spaces).await;
+            // As one delete does: no cached connection reaches a deleted one.
+            for r in results.iter().filter(|r| r.ok) {
+                self.rt().detach(&r.id).await;
+            }
+            ok(pb::DeleteSpacesResponse {
+                results: results.iter().map(Into::into).collect(),
+            })
+        }
+
+        async fn leave_spaces(
+            &self,
+            req: tonic::Request<pb::LeaveSpacesRequest>,
+        ) -> R<pb::LeaveSpacesResponse> {
+            let spaces = req.into_inner().spaces;
+            let results = self.spaces().leave_many(&spaces).await;
+            for r in results.iter().filter(|r| r.ok) {
+                self.rt().detach(&r.id).await;
+            }
+            ok(pb::LeaveSpacesResponse {
+                results: results.iter().map(Into::into).collect(),
+            })
         }
 
         async fn connect_space(
@@ -838,6 +917,13 @@ mod imp {
             &self,
             req: tonic::Request<pb::CallSpaceToolRequest>,
         ) -> R<pb::CallSpaceToolResponse> {
+            // Who is calling: this machine's user, or the relay account a
+            // host's cua-spacesd verified and forwarded (the same metadata
+            // the host services read). Tools that record an author (the
+            // Space thread) stamp it from here, never from the arguments.
+            let caller = cua_spaces::host_spaces::HostCaller::from_grpc_metadata(req.metadata())
+                .map_err(|e| st(e.into()))?;
+            let caller = cua_spaces::extension::Caller::from_host(&caller);
             let r = req.into_inner();
             let app_method = cua_spaces::agents::keys::is_app_method(&r.name);
             if !app_method && cua_spaces::contract::tool(&r.name).is_none() {
@@ -850,14 +936,16 @@ mod imp {
                 serde_json::from_str(&r.arguments_json)
                     .map_err(|_| st(Error::InvalidArgument("arguments_json is not JSON".into())))?
             };
-            // The app's Settings → Agents methods: not contract tools, so no
+            // The app's Settings → Connections methods: not contract tools, so no
             // MCP server lists or forwards them to an agent.
             let out = if app_method {
-                cua_spaces::agents::keys::app_tool(&r.name, args).unwrap_or_else(|| {
-                    cua_spaces::mcp::ToolOutcome::error_message("not_found", r.name.clone())
-                })
+                cua_spaces::agents::keys::app_tool_async(&r.name, args)
+                    .await
+                    .unwrap_or_else(|| {
+                        cua_spaces::mcp::ToolOutcome::error_message("not_found", r.name.clone())
+                    })
             } else {
-                self.mcp().call(&r.name, args).await
+                caller.scope(self.mcp().call(&r.name, args)).await
             };
             ok(pb::CallSpaceToolResponse {
                 content_json: serde_json::Value::Array(out.content).to_string(),
@@ -1006,6 +1094,44 @@ mod imp {
             });
             ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
         }
+
+        type WatchSpacesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchSpacesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_spaces(
+            &self,
+            _: tonic::Request<pb::WatchSpacesRequest>,
+        ) -> R<Self::WatchSpacesStream> {
+            let mut watch = self.spaces().watch_list();
+            let (tx, rx) = tokio::sync::mpsc::channel(4);
+            // The subscription is the interest: it ends with the stream, so
+            // the watcher stops when the last reader is gone.
+            tokio::spawn(async move {
+                let mut generation = watch.generation();
+                loop {
+                    if tx
+                        .send(Ok(pb::WatchSpacesResponse { generation }))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    tokio::select! {
+                        g = watch.changed() => match g {
+                            Some(g) => generation = g,
+                            None => break,
+                        },
+                        _ = tx.closed() => break,
+                    }
+                }
+            });
+            ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        }
     }
 }
 
@@ -1147,6 +1273,24 @@ mod imp {
         ) -> R<pb::DeleteSpaceResponse> {
             off()
         }
+        async fn delete_spaces(
+            &self,
+            _: tonic::Request<pb::DeleteSpacesRequest>,
+        ) -> R<pb::DeleteSpacesResponse> {
+            off()
+        }
+        async fn leave_spaces(
+            &self,
+            _: tonic::Request<pb::LeaveSpacesRequest>,
+        ) -> R<pb::LeaveSpacesResponse> {
+            off()
+        }
+        async fn rename_space(
+            &self,
+            _: tonic::Request<pb::RenameSpaceRequest>,
+        ) -> R<pb::RenameSpaceResponse> {
+            off()
+        }
         async fn connect_space(
             &self,
             _: tonic::Request<pb::ConnectSpaceRequest>,
@@ -1209,6 +1353,21 @@ mod imp {
             &self,
             _: tonic::Request<pb::WatchResourcesRequest>,
         ) -> R<Self::WatchResourcesStream> {
+            off()
+        }
+
+        type WatchSpacesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchSpacesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_spaces(
+            &self,
+            _: tonic::Request<pb::WatchSpacesRequest>,
+        ) -> R<Self::WatchSpacesStream> {
             off()
         }
     }

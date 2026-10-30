@@ -474,6 +474,210 @@ struct WebUIVideoSurfacesTests {
         s.removeAll()
     }
 
+    // MARK: - Picture in picture
+
+    /// Regression: closing the desktop's picture in picture showed "Could
+    /// not connect to the desktop", then "Connecting…", before the inline
+    /// desktop came back: the panel opened a second stream, the inline one
+    /// closed, and closing the panel closed that one and dialled again. The
+    /// panel now holds the viewer's own session; the slot that comes back
+    /// binds to it, live at once, with no second open and no failure.
+    @Test func pictureInPictureHandsTheSameLiveSessionBackWithNoReopen() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        // Only the panel's hold keeps the session here (no slot grace).
+        s.slotGrace = .zero
+        s.handle(message([entry("v1", space: "a")]))
+        await settle { host.phases("v1").contains("live") }
+        let first = try #require(s.surfaces["v1"])
+        let inline = try #require(s.sessionFor(first))
+
+        // Popped out: the panel holds the same session, and the page's slot goes.
+        let held = try await s.holdViewer(spaceId: "a")
+        #expect(held === inline)
+        s.handle(message([], remove: ["v1"]))
+        #expect(host.opened.count == 1)
+        #expect(held.status == .streaming)
+        // A hidden window pauses slots, never the panel's stream.
+        s.setPaused(true)
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(held.status == .streaming)
+        s.setPaused(false)
+
+        // Closed: the slot that comes back is live at once, on the same session.
+        s.releaseViewer(spaceId: "a", after: .milliseconds(200))
+        s.handle(message([entry("v2", space: "a")]))
+        // Its first word is live, on the next main-queue turn (the session's current frame).
+        await settle(tries: 5) { !host.phases("v2").isEmpty }
+        #expect(host.phases("v2") == ["live"])
+        let back = try #require(s.surfaces["v2"])
+        #expect(s.sessionFor(back) === inline)
+        try? await Task.sleep(for: .milliseconds(400))
+        #expect(host.opened.count == 1)
+        #expect(!host.events.contains { $0.0 == "video.surface" && $0.1["state"] as? String == "failed" })
+        #expect(s.stats().first?["users"] as? Int == 1)
+        s.removeAll()
+        #expect(s.stats().isEmpty)
+    }
+
+    @Test func aReleasedHoldWithNoSlotStopsTheStreamAfterTheGrace() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        // No inline slot (auto-connect off): the panel opens the viewer stream itself.
+        let held = try await s.holdViewer(spaceId: "a")
+        #expect(host.opened.map(\.1) == [.full])
+        #expect(s.stats().count == 1)
+        s.releaseViewer(spaceId: "a", after: .zero)
+        await settle { s.stats().isEmpty }
+        #expect(s.stats().isEmpty)
+        await settle { held.status == .idle }
+        #expect(held.status == .idle)
+    }
+
+    @Test func aHoldOnAStreamThatCannotOpenThrowsAndKeepsNothing() async {
+        let host = Host()
+        let s = surfaces(host) { _, _ in throw StreamError.noStream("no stream for this Space") }
+        await #expect(throws: (any Error).self) { try await s.holdViewer(spaceId: "a") }
+        #expect(s.stats().isEmpty)
+    }
+
+    // MARK: - Moving the viewer (call view and thread view)
+
+    /// The Space page moves its viewer between the call view's stage and
+    /// thread view's mini-player: the old slot goes and a new one comes.
+    /// The new slot binds to the same live session (no second open, no
+    /// "Connecting…"), as long as it comes within `slotGrace`.
+    @Test func aViewerMovedToANewSlotKeepsItsLiveSession() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.handle(message([entry("call", space: "a")]))
+        await settle { host.phases("call").contains("live") }
+        let callSlot = try #require(s.surfaces["call"])
+        let session = try #require(s.sessionFor(callSlot))
+
+        // One message: the stage's slot goes, the mini-player's comes.
+        var mini = entry("mini", space: "a", interactive: false)
+        mini["rect"] = ["x": 500, "y": 400, "width": 320, "height": 200]
+        s.handle(message([mini], remove: ["call"]))
+        await settle(tries: 5) { !host.phases("mini").isEmpty }
+        #expect(host.phases("mini") == ["live"])
+        let miniSlot = try #require(s.surfaces["mini"])
+        #expect(s.sessionFor(miniSlot) === session)
+        // And back again, after the grace has passed for the first move.
+        try? await Task.sleep(for: s.slotGrace + .milliseconds(200))
+        s.handle(message([entry("call2", space: "a")], remove: ["mini"]))
+        await settle(tries: 5) { !host.phases("call2").isEmpty }
+        #expect(host.phases("call2") == ["live"])
+        let back = try #require(s.surfaces["call2"])
+        #expect(s.sessionFor(back) === session)
+        #expect(host.opened.count == 1)
+        #expect(session.status == .streaming)
+        s.removeAll()
+    }
+
+    @Test func aViewerSlotThatDoesNotComeBackStopsItsSessionAfterTheGrace() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.slotGrace = .milliseconds(150)
+        s.handle(message([entry("v", space: "a")]))
+        await settle { host.phases("v").contains("live") }
+        let slot = try #require(s.surfaces["v"])
+        let session = try #require(s.sessionFor(slot))
+        s.handle(message([], remove: ["v"]))
+        // Still there during the grace...
+        #expect(s.stats().count == 1)
+        // ...then gone, and the session stopped.
+        await settle { s.stats().isEmpty }
+        #expect(s.stats().isEmpty)
+        await settle { session.status == .idle }
+        #expect(session.status == .idle)
+        // A page that goes away (removeAll) stops at once, and tiles never wait.
+        s.handle(message([entry("t", space: "b", tier: "tile", interactive: false), entry("w", space: "c")]))
+        await settle { host.opened.count == 3 }
+        s.handle(message([], remove: ["t"]))
+        #expect(s.stats().count == 1)
+        s.removeAll()
+        #expect(s.stats().isEmpty)
+    }
+
+    // MARK: - Holes
+
+    @Test func readsHolesAndMapsThemIntoTheClipContainer() throws {
+        var u = update(rect: CGRect(x: 100, y: 100, width: 400, height: 300), clip: CGRect(x: 100, y: 120, width: 400, height: 280))
+        u.holes = [CGRect(x: 420, y: 90, width: 160, height: 60), CGRect(x: 700, y: 0, width: 10, height: 10)]
+        let l = VideoSurfaceLayout.make(u, zoom: 2, viewHeight: 1000, flipped: true)
+        #expect(!l.hidden)
+        // In the container (from 100,120, doubled), cut to it; the hole off the slot is dropped.
+        #expect(l.holes == [CGRect(x: 640, y: 0, width: 160, height: 60)])
+        #expect(l.inHole(CGPoint(x: 700, y: 10)))
+        #expect(!l.inHole(CGPoint(x: 10, y: 10)))
+        let mask = try #require(l.maskPath)
+        #expect(!mask.contains(CGPoint(x: 700, y: 10)))
+        #expect(mask.contains(CGPoint(x: 10, y: 10)))
+        #expect(VideoSurfaceLayout.make(update(rect: u.rect, clip: u.clip), zoom: 1, viewHeight: 1000, flipped: true).maskPath == nil)
+
+        let parsed = VideoSurfaceUpdate(json: ["surfaceId": "s", "spaceId": "a", "rect": ["x": 0, "y": 0, "width": 10, "height": 10],
+                                               "holes": [["x": 1, "y": 2, "width": 3, "height": 4], "bad"]])
+        #expect(parsed?.holes == [CGRect(x: 1, y: 2, width: 3, height: 4)])
+    }
+
+    /// Regression: the header's "⋯" menu turned the desktop black. A menu
+    /// over the viewer is a hole now: the video stays shown and live, and
+    /// clicks in the hole reach the page's menu.
+    @Test func aMenuOverTheViewerCutsAHoleAndTheVideoStaysLive() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.handle(message([entry("v", space: "a")]))
+        await settle { host.phases("v").contains("live") }
+        var withMenu = entry("v", space: "a")
+        withMenu["holes"] = [["x": 300, "y": 30, "width": 160, "height": 40]]
+        s.handle(message([withMenu]))
+        let view = try #require(s.surfaces["v"]?.view)
+        #expect(!view.isHidden)
+        #expect(view.layer?.mask != nil)
+        #expect(view.layout.inHole(CGPoint(x: 330, y: 10)))
+        #expect(host.phases("v").last == "live")
+        // Closed: no mask.
+        s.handle(message([entry("v", space: "a")]))
+        #expect(view.layer?.mask == nil)
+        s.removeAll()
+    }
+
+    /// A modal dialog over the viewer (the page's dimmed layer is up): the page reports the
+    /// viewer occluded and non-interactive, so the native video is not drawn over the dialog
+    /// or the dimmed page, takes no clicks, and gives the keyboard back; the stream keeps
+    /// running, and the video, the pointer and the keys come back when the dialog closes.
+    /// (A popover or menu over it is still a hole: `aMenuOverTheViewerCutsAHoleAndTheVideoStaysLive`.)
+    @Test func aModalDialogOverTheViewerHidesItAndTakesItsKeysAndClicks() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.handle(message([entry("v", space: "a")]))
+        await settle { host.phases("v").contains("live") }
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == "v")
+        let view = try #require(s.surfaces["v"]?.view)
+        // The dialog opens: occluded, not interactive, no holes (the whole video is hidden).
+        s.handle(message([entry("v", space: "a", interactive: false, occluded: true)]))
+        #expect(view.isHidden)
+        #expect(s.focusedId == nil)
+        #expect(view.layer?.mask == nil)
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == nil)
+        // Closed: it is drawn again and takes the keyboard again, still live.
+        s.handle(message([entry("v", space: "a")]))
+        #expect(!view.isHidden)
+        #expect(host.phases("v").last == "live")
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == "v")
+        s.removeAll()
+    }
+
     @Test func theHarnessAddsRunningFixtureSpaces() {
         #expect(FixtureSpacesBackend.rows(environment: [:]).count == FixtureSpacesBackend.sample.count)
         let rows = FixtureSpacesBackend.rows(environment: ["CUA_SPACES_FIXTURE_SPACES": "3"])

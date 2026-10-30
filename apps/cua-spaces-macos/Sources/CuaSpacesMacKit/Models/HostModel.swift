@@ -22,7 +22,7 @@ public protocol HostRunning: AnyObject, Sendable {
     func resumeSignedIn(account: String) async throws -> HostStatus
     func remove() async throws
     /// Changes what this machine shares: its desktop, and Spaces for your
-    /// other devices.
+    /// other machines.
     func configure(change: HostSettingsChange) async throws -> HostStatus
     /// Moves the host service from the old LaunchAgent into this app, as
     /// its own login item ("Cua Spaces"), keeping this machine's id,
@@ -47,6 +47,9 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
     public var failSetup: String?
     /// The next `configure` fails with this (once).
     public var failConfigure: String?
+    /// The next `resumeSignedIn` for another account fails with this (once),
+    /// after pausing the host as the real one does.
+    public var failResume: String?
     /// What `migrateService` answers (nil: moved, needing permissions).
     public var migration: HostServiceMigration?
 
@@ -71,6 +74,9 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         if let failSetup { throw CuaError.Runtime(message: failSetup) }
         let relay = request.mode == "relay"
         let spare = request.profile == "spare"
+        // As cua-host decides when the request leaves it out: a machine set
+        // up before keeps its setting; a new relay setup provides Spaces.
+        let keep = current.configured ? current.provideSpaces : relay
         current = HostStatus(
             configured: true, mode: request.mode, relayUrl: relay ? (request.relayUrl ?? "https://relay.cua.ai") : nil,
             directUrl: relay ? nil : "http://\(request.direct ?? "")", envTokenPath: nil, machineId: "0123abcd4567",
@@ -86,7 +92,7 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
             ],
             error: nil,
             shareDesktop: request.shareDesktop ?? !spare,
-            provideSpaces: request.provideSpaces ?? spare,
+            provideSpaces: request.provideSpaces ?? (spare || keep),
             maxSpaces: 4, maxMacosVms: 2,
             owner: relay ? owner : nil, ownerEmail: relay ? ownerEmail : nil)
         return current
@@ -100,6 +106,10 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         }
         if let d = change.shareDesktop { current.shareDesktop = d }
         if let p = change.provideSpaces { current.provideSpaces = p }
+        if let n = change.maxSpaces { current.maxSpaces = n }
+        if let n = change.maxMemoryGb { current.maxMemoryGb = n }
+        if let n = change.maxDiskGb { current.maxDiskGb = n }
+        if let n = change.maxRunMinutes { current.maxRunMinutes = n }
         // Both off: nothing to share, so sharing stops (as the host does).
         if !current.shareDesktop && !current.provideSpaces {
             current.sharing = false
@@ -136,10 +146,24 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
 
     public func resumeSignedIn(account: String) async throws -> HostStatus {
         calls.append("resume:\(account)")
-        guard current.pausedSignedOut else { return current }
-        guard account == owner || account.caseInsensitiveCompare(ownerEmail) == .orderedSame else {
-            throw CuaError.InvalidArgument(message: "this computer is shared with another Cua account")
+        let isOwner = account == owner || account.caseInsensitiveCompare(ownerEmail) == .orderedSame
+        // Another account: the host registers again for it (as the real
+        // one does), paused or not.
+        if !isOwner, let why = failResume {
+            failResume = nil
+            current.pausedSignedOut = true
+            current.sharing = false
+            current.online = false
+            current.serviceRunning = false
+            throw CuaError.InvalidArgument(message: why)
         }
+        if !isOwner {
+            owner = account
+            ownerEmail = ""
+            current.owner = account
+            current.ownerEmail = nil
+        }
+        guard current.pausedSignedOut || !isOwner else { return current }
         current.pausedSignedOut = false
         current.sharing = true
         current.online = true
@@ -243,6 +267,13 @@ public final class HostModel {
         "Sign in to Cua in your browser to continue. Setup finishes on its own after that."
     /// Called whenever the state changes (the roster's entry follows it).
     public var onChange: (() -> Void)?
+    /// Called when a setup, the Provide Spaces switch or joining with a code
+    /// turned providing Spaces on here (never for a Mac that already
+    /// provided them): the app asks for Local Network access then, on this
+    /// Mac, so macOS Spaces your other devices create here can connect.
+    public var onStartedProvidingSpaces: (() -> Void)?
+    /// This Mac provides Spaces now (as of the last status).
+    public var providesSpaces: Bool { status.map { $0.configured && $0.provideSpaces } ?? false }
     /// The host's last status, as the SDK reported it.
     public private(set) var status: HostStatus?
     /// The move into the app's helper, while it shows.
@@ -268,6 +299,12 @@ public final class HostModel {
     public var formView: AppHostFormView? { form.map { appHostFormView(state: $0, identity: identity) } }
     /// What the roster's This machine entry reads.
     public var summaryInput: AppHostSummaryInput? { state.map { appHostSummaryInput(state: $0) } }
+
+    /// Calls `onStartedProvidingSpaces` when providing Spaces went from off
+    /// (`was`) to on with the last status.
+    func followProviding(from was: Bool) {
+        if !was && providesSpaces { onStartedProvidingSpaces?() }
+    }
 
     func apply(_ status: HostStatus) {
         self.status = status
@@ -393,15 +430,53 @@ public final class HostModel {
         }
     }
 
+    /// The setup a sign-in started (`addAfterSignIn`), while it runs: the
+    /// web UI's own "signing in adds this computer" waits for it instead of
+    /// setting up a second time.
+    public private(set) var signInSetUp: Task<Void, Never>?
+
+    /// Signing in adds this computer to the account: right after a sign-in,
+    /// a computer that isn't set up yet is set up to provide Spaces with its
+    /// screen kept private (the `spare` profile) and its own name. Sharing
+    /// its desktop is a choice on its page, never a side effect of signing
+    /// in. A computer already set up keeps its settings, so turning Provide
+    /// Spaces off stays off. Never throws: a failure shows on This
+    /// computer, where Set up for access retries.
+    public func addAfterSignIn() async {
+        if let running = signInSetUp { return await running.value }
+        let task = Task { @MainActor [weak self] in
+            guard let self, let host = self.host else { return }
+            if self.status == nil { await self.refresh() }
+            guard let status = self.status, !status.configured else { return }
+            var f = appHostFormReduce(state: appHostFormInitial(), action: .setProfile(profile: "spare"))
+            if let name = self.computerName()?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                f = appHostFormReduce(state: f, action: .setName(name: name))
+            }
+            guard let request = appHostFormView(state: f, identity: self.identity).request else { return }
+            do {
+                try await self.setUp(request, on: host)
+            } catch {
+                self.setupFailure = Self.isUnauthenticated(error)
+                    ? HostSetupFailure.presenting(LiveSpacesBackend.words(error), as: .signedOut)
+                    : HostSetupFailure.presenting(LiveSpacesBackend.words(error))
+            }
+        }
+        signInSetUp = task
+        await task.value
+        signInSetUp = nil
+    }
+
     /// Host setup with a request the core's form built and validated (the
     /// form's submit, and the web UI's): relay setup with the account token.
     func setUp(_ request: AppHostSetupRequest, on host: HostRunning) async throws {
         defer { progress = nil }
+        let was = providesSpaces
         let status = request.mode == "relay"
             ? try await setUpRelay(host, request)
             : try await host.setupRequest(request: request, accountToken: nil)
         setupFailure = nil
         apply(status)
+        followProviding(from: was)
     }
 
     /// Relay setup always runs with a valid account token: signed out (or a
@@ -505,6 +580,10 @@ public final class HostModel {
         } catch {
             actionFailure = HostSetupFailure.presenting(LiveSpacesBackend.words(error))
             failedAction = .resumeSharing
+            // What the failure left behind: a switch of account pauses the
+            // old registration first, so Retry goes through the sign-in
+            // check again, never straight to starting the old one.
+            await refreshStatusOnly()
         }
     }
 
@@ -562,6 +641,24 @@ public final class HostModel {
         }
     }
 
+    /// Changes the limits on the Spaces other machines create here (0 is no
+    /// limit; nil keeps a value). A failure stays in `actionFailure`.
+    public func setLimits(maxSpaces: UInt32?, maxMemoryGb: UInt32?, maxDiskGb: UInt32?, maxRunMinutes: UInt32?) async {
+        guard let host, !busy else { return }
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            apply(try await host.configure(change: HostSettingsChange(
+                shareDesktop: nil, provideSpaces: nil, maxSpaces: maxSpaces, maxMacosVms: nil,
+                maxMemoryGb: maxMemoryGb, maxDiskGb: maxDiskGb, maxRunMinutes: maxRunMinutes)))
+            actionFailure = nil
+        } catch {
+            actionFailure = HostSetupFailure.presenting(LiveSpacesBackend.words(error))
+            await refresh()
+        }
+    }
+
     /// Resume sharing must sign in first: relay sharing paused while
     /// signed out, or relay mode with nobody signed in.
     private var needsSignInToShare: Bool {
@@ -578,8 +675,10 @@ public final class HostModel {
     private func perform(_ id: AppHostActionId, on host: HostRunning) async throws {
         // The two settings: the core says what each switch changes.
         if let change = appHostSettingChange(id: id) {
+            let was = providesSpaces
             apply(try await host.configure(change: HostSettingsChange(
                 shareDesktop: change.shareDesktop, provideSpaces: change.provideSpaces)))
+            followProviding(from: was)
             return
         }
         switch id {

@@ -78,7 +78,14 @@ pub struct DaemonBackend {
     /// Decrypt saved passwords with this platform's scheme (default: this
     /// machine's).
     platform: cua_teleport::Platform,
+    /// Builds the providers for a capture of a named browser profile
+    /// (`--profile "Profile 1"`); tests swap in hermetic ones.
+    profiled: ProfiledSessions,
 }
+
+/// Providers acting on a host with one browser profile selected.
+pub type ProfiledSessions =
+    Arc<dyn Fn(Arc<dyn cua_teleport::HostEffects>, &str) -> AppSessions + Send + Sync>;
 
 impl DaemonBackend {
     /// A backend over the daemon's Spaces registry and teleport providers.
@@ -88,7 +95,22 @@ impl DaemonBackend {
             sessions,
             host: cua_teleport::default_host(),
             platform: cua_teleport::Platform::current(),
+            profiled: Arc::new(|host, profile| {
+                AppSessions::from_registry(
+                    cua_teleport::ExportRegistry::with_builtin_host_and_chrome_profile(
+                        host,
+                        Some(profile.to_string()),
+                    ),
+                )
+            }),
         }
+    }
+
+    /// Uses `build` for the providers of a named browser profile instead of
+    /// the built-in ones.
+    pub fn with_profiled_sessions(mut self, build: ProfiledSessions) -> Self {
+        self.profiled = build;
+        self
     }
 
     /// Reads saved passwords through `host` instead of the real machine.
@@ -177,10 +199,20 @@ impl DaemonBackend {
     fn export_entries(
         &self,
         app: &str,
+        profile: Option<&str>,
         override_paths: Option<&[String]>,
     ) -> KvResult<(String, String, Vec<PayloadEntry>)> {
-        let manifest = self
-            .sessions
+        // An explicit browser profile (`--profile "Profile 1"`) is read by a
+        // provider set up for it; without one, the daemon's own providers.
+        let named;
+        let sessions: &AppSessions = match profile.map(str::trim).filter(|p| !p.is_empty()) {
+            Some(p) => {
+                named = (self.profiled)(self.host.clone(), p);
+                &named
+            }
+            None => &self.sessions,
+        };
+        let manifest = sessions
             .manifest(app, TeleportScope::Full)
             .map_err(|e| backend_err("read manifest", e))?;
         let paths: Vec<String> = if let Some(p) = override_paths {
@@ -206,7 +238,7 @@ impl DaemonBackend {
             .approving("vault-import", &paths, true)
             .map_err(|e| backend_err("mint approval", e))?;
         let mut buf: Vec<u8> = Vec::new();
-        self.sessions
+        sessions
             .export(&approval, &mut buf)
             .map_err(|e| backend_err("export session", e))?;
         let reader =
@@ -606,7 +638,7 @@ impl Backend for DaemonBackend {
         // or an app's files), turned into records by the app's codec. A
         // consent-gated file is only exported when the user picked it.
         if spec.whole_app {
-            let (scope, name, entries) = self.export_entries(&spec.app, spec.paths.as_deref())?;
+            let (scope, name, entries) = self.export_entries(&spec.app, spec.profile.as_deref(), spec.paths.as_deref())?;
             display = name;
             let exported = record::codec_for(&provider_id).export(
                 entries,

@@ -31,6 +31,9 @@ use cua_teleport::{
 /// and a consent-gated `Web Data`.
 struct Browser {
     host: Arc<dyn HostEffects>,
+    /// The browser profile it reads (`None`: Default), written into the
+    /// bytes of each file so a test can tell which profile was captured.
+    profile: Option<String>,
 }
 
 const PATHS: [&str; 4] = [
@@ -100,7 +103,11 @@ impl ExportProvider for Browser {
             "Default/Web Data",
         ] {
             if wants(p) {
-                w.add_bytes(p, 0o600, format!("bytes of {p}").as_bytes())?;
+                w.add_bytes(p, 0o600, match &self.profile {
+                    Some(profile) => format!("bytes of {p} from {profile}"),
+                    None => format!("bytes of {p}"),
+                }
+                .as_bytes())?;
             }
         }
         if wants("Default/Cookies") {
@@ -136,6 +143,7 @@ fn backend() -> (DaemonBackend, tempfile::TempDir) {
     let mut registry = ExportRegistry::new();
     registry.register(Box::new(Browser {
         host: Arc::new(FakeHost::new()),
+        profile: None,
     }));
     let sessions = Arc::new(AppSessions::from_registry(registry));
     (DaemonBackend::new(spaces, sessions), reg)
@@ -288,7 +296,7 @@ fn the_inventory_counts_cookies_per_site_without_decrypting_anything() {
         .build();
     let host: Arc<dyn HostEffects> = Arc::new(FakeHost::new().with_home(home.path()));
     let mut registry = ExportRegistry::new();
-    registry.register(Box::new(Browser { host: host.clone() }));
+    registry.register(Box::new(Browser { host: host.clone(), profile: None }));
     let b = DaemonBackend::new(spaces, Arc::new(AppSessions::from_registry(registry)))
         .with_host(host)
         .with_platform(Platform::MacOS);
@@ -375,4 +383,38 @@ fn a_teleport_reads_only_the_passwords_of_the_sites_picked_for_them() {
         ..picked
     };
     assert!(logins(&none).is_empty(), "not ticked: no password at all");
+}
+
+/// `--profile "Profile 1"` reaches the capture: the whole-app export reads
+/// the named profile, not Default, and without a profile it reads Default.
+#[test]
+fn a_named_browser_profile_is_the_one_captured() {
+    let (b, _reg) = backend();
+    let b = b.with_profiled_sessions(Arc::new(|host, profile| {
+        let mut registry = ExportRegistry::new();
+        registry.register(Box::new(Browser {
+            host,
+            profile: Some(profile.to_string()),
+        }));
+        AppSessions::from_registry(registry)
+    }));
+    let files = |profile: Option<&str>| -> Vec<String> {
+        let spec = ImportSpec {
+            profile: profile.map(str::to_string),
+            ..spec(&["Default/Bookmarks"])
+        };
+        b.capture(&spec)
+            .unwrap()
+            .iter()
+            .filter(|c| c.meta.kind == ItemKind::File)
+            .map(|c| c.payload.record.clone())
+            .collect()
+    };
+    let default = files(None);
+    let named = files(Some("Profile 1"));
+    assert_eq!(default.len(), 1);
+    assert_eq!(named.len(), 1);
+    assert_ne!(default, named, "the named profile is not Default");
+    assert!(!default[0].contains("Profile 1"), "{default:?}");
+    assert!(named[0].contains("Profile 1"), "{named:?}");
 }

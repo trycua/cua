@@ -126,8 +126,8 @@ describe("MainWindow", () => {
     setup();
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
-    expect(within(within(dialog).getByRole("combobox", { name: "Run on" })).getAllByRole("option").map((o) => o.textContent)).toEqual(["This Mac"]);
-    expect(within(dialog).queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
+    expect(within(within(dialog).getByRole("combobox", { name: "Run on" })).getAllByRole("option").map((o) => o.textContent)).toEqual(["This Mac", "Add a computer by its address…"]);
+    expect(within(dialog).queryByRole("option", { name: /Add your cloud account/ })).toBeNull();
     expect(within(dialog).queryByText(/Cua Cloud/)).toBeNull();
     window.localStorage.removeItem("cua.settings.experiments");
   });
@@ -138,7 +138,7 @@ describe("MainWindow", () => {
     const { createSpace } = setup({}, true, cloud);
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
-    fireEvent.click(within(dialog).getByRole("button", { name: /Connect a cloud/ }));
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Run on" }), { target: { value: "add:cloud" } });
     const sheet = await screen.findByRole("dialog", { name: "Connect a cloud" });
     expect(await within(sheet).findByRole("radio", { name: /AWS/ })).toBeChecked();
     fireEvent.click(within(sheet).getByRole("button", { name: "Test" }));

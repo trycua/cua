@@ -303,7 +303,9 @@ class WorkflowWiringTests(unittest.TestCase):
             swift = jobs["swift"]
             self.assertEqual(swift["needs"], "changes")
             # The arm64 larger runner of the same macOS image (macos-26 is 3-core).
-            self.assertEqual(swift["runs-on"], "macos-26-xlarge")
+            # MAC_RUNNER_LABELS moves it to the self-hosted Macs; unset keeps the larger runner.
+            self.assertIn("vars.MAC_RUNNER_LABELS || '\"macos-26-xlarge\"'", swift["runs-on"])
+            self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", swift["runs-on"])
 
     def test_effective_job_conditions(self):
         # The scope decision is final, except that release-please branches skip the

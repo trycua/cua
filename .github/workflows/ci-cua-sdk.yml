@@ -189,7 +189,7 @@ jobs:
     name: rust (${{ matrix.os }})
     # The matrix keeps the standard labels (they name the job); the larger
     # runners are mapped here.
-    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'cua-linux-16core' || matrix.os == 'macos-26' && 'macos-26-xlarge' || matrix.os == 'windows-latest' && 'cua-windows-8core' || matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'cua-linux-16core' || matrix.os == 'macos-26' && ((contains(fromJSON('["push","merge_group","workflow_dispatch"]'), github.event_name) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.MAC_RUNNER_LABELS || '"macos-26-xlarge"') || 'macos-26-xlarge') || matrix.os == 'windows-latest' && 'cua-windows-8core' || matrix.os }}
     needs: reuse
     # Tests only: lint runs in rust-lint, in parallel.
     timeout-minutes: 90

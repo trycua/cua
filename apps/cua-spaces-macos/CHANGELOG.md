@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.1](https://github.com/trycua/cua/compare/cua-spaces-v0.19.0...cua-spaces-v0.19.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **spaces:** one teleport setup sheet and a profile picker (CUA-2855, CUA-2853) ([#6194](https://github.com/trycua/cua/issues/6194)) ([2d974f1](https://github.com/trycua/cua/commit/2d974f1843c7343a70affba9d21e7362979edec3))
+
 ## [0.19.0](https://github.com/trycua/cua/compare/cua-spaces-v0.18.0...cua-spaces-v0.19.0) (2026-10-30)
 
 

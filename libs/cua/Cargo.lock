@@ -3275,6 +3275,7 @@ dependencies = [
  "cua-host",
  "cua-proto",
  "cua-spaces",
+ "cua-telemetry",
  "flate2",
  "hex",
  "hpke",

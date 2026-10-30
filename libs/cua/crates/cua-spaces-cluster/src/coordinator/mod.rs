@@ -39,6 +39,7 @@ pub mod metrics;
 pub mod requests;
 pub mod sessions;
 pub mod store;
+mod telemetry;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;

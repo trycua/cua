@@ -716,6 +716,43 @@ pub const JOIN_RUNTIMES: &[&str] = &[
 /// What an agent's join failed on: a sign-in, an install, a timeout, or
 /// anything else. `none` for a step that worked.
 pub const JOIN_FAILURES: &[&str] = &["none", "auth", "install", "timeout", "other"];
+/// What happened to a durable agent session (`cua_durable_agent`).
+pub const DURABLE_PHASES: &[&str] = &[
+    "started",
+    "restarted",
+    "failed_over",
+    "exhausted",
+    "ended",
+    "space_recreated",
+    "refused",
+];
+/// Why a durable session's driver was started again, or could not be.
+pub const DURABLE_REASONS: &[&str] = &[
+    "none",
+    "process_exit",
+    "stall",
+    "driver_lost",
+    "host_down",
+    "fenced",
+    "permanent",
+    "other",
+];
+/// How a durable session ended.
+pub const DURABLE_ENDS: &[&str] = &["none", "done", "failed", "stopped"];
+/// Where a durable session was asked to run: any machine or one named one
+/// (never which).
+pub const DURABLE_PLACEMENTS: &[&str] = &["auto", "host"];
+/// What a durable session gave up on, as a fixed word (never the message).
+pub const DURABLE_FAILURES: &[&str] = &[
+    "none",
+    "exhausted",
+    "permanent",
+    "space_gone",
+    "setup_failed",
+    "lease_refused",
+    "epoch_refused",
+    "other",
+];
 /// The tools an agent's start installs (`cua-agents` installables), `other`
 /// for any other, `none` for a phase that is not an install.
 pub const JOIN_TOOLS: &[&str] = &[
@@ -835,6 +872,8 @@ pub const AGENT_PRODUCTS: &[&str] = &[
     "sdk_kotlin",
     "spaces_app",
 ];
+/// The products whose process hosts a session coordinator (the daemon).
+pub const DURABLE_PRODUCTS: &[&str] = &["daemon", "cli"];
 /// cua-bench dataset names (`cua_bench/registry.json`) or `custom`.
 pub const TASKSETS: &[&str] = &[
     "cua-bench-basic",
@@ -1003,6 +1042,11 @@ const PLAN: Prop = p(
 // Events
 // ---------------------------------------------------------------------------
 
+/// A per-install salted hash value (16 lowercase hex).
+pub fn is_salted_hash(s: &str) -> bool {
+    is_hex(s, 16)
+}
+
 pub mod event {
     pub const FIRST_RUN: &str = "cua_first_run";
     pub const CLI_COMMAND: &str = "cua_cli_command";
@@ -1018,6 +1062,7 @@ pub mod event {
     pub const AGENT_RUN_STARTED: &str = "cua_agent_run_started";
     pub const AGENT_RUN_COMPLETED: &str = "cua_agent_run_completed";
     pub const AGENT_JOIN_PHASE: &str = "cua_agent_join_phase";
+    pub const DURABLE_AGENT: &str = "cua_durable_agent";
     pub const REPO_CACHE: &str = "cua_repo_cache";
     pub const BENCH_RUN_COMPLETED: &str = "cua_bench_run_completed";
     pub const DAEMON_STARTED: &str = "cua_daemon_started";
@@ -1489,6 +1534,77 @@ pub const EVENTS: &[EventSpec] = &[
             ),
         ],
         purpose: "How long an agent takes to join a Space and answer, step by step, per agent and runtime, cold and warm; where joins fail.",
+    },
+    EventSpec {
+        name: event::DURABLE_AGENT,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: DURABLE_PRODUCTS,
+        props: &[
+            p(
+                "phase",
+                Kind::Enum(DURABLE_PHASES),
+                "What happened: started, restarted, failed_over (a drive ran on another machine than the one before), exhausted (out of attempts), ended, space_recreated (a durable Space was placed again on another machine) or refused (a lease or epoch was refused).",
+            ),
+            AGENT_HARNESS,
+            p(
+                "placement",
+                Kind::Enum(DURABLE_PLACEMENTS),
+                "auto (any machine of the account) or host (pinned to one machine). Never which.",
+            ),
+            p(
+                "attempt",
+                Kind::Count { max: 100 },
+                "Which drive of the session this is (1 is the first); 0 when not about a drive.",
+            ),
+            p(
+                "max_attempts",
+                Kind::Count { max: 100 },
+                "Drives allowed in total.",
+            ),
+            p(
+                "reason",
+                Kind::Enum(DURABLE_REASONS),
+                "Why the driver was started again: process_exit, stall, driver_lost, host_down, fenced, permanent or other; none otherwise.",
+            ),
+            p(
+                "end",
+                Kind::Enum(DURABLE_ENDS),
+                "ended only: done, failed or stopped; none otherwise.",
+            ),
+            p(
+                "failure",
+                Kind::Enum(DURABLE_FAILURES),
+                "A fixed word for what it gave up on or was refused; none otherwise. Never the message.",
+            ),
+            p(
+                "failover",
+                Kind::Bool,
+                "This drive ran on another machine than the one before.",
+            ),
+            p(
+                "machines",
+                Kind::Count { max: 1000 },
+                "How many machines of the account were available to place it on; 0 when unknown.",
+            ),
+            p(
+                "recovery_time_ms",
+                Kind::Count { max: 86_400_000 },
+                "restarted, failed_over: milliseconds from the end of the driver that failed to the start of the next one (includes the wait before it); 0 otherwise.",
+            ),
+            p(
+                "interrupted_calls",
+                Kind::Count { max: 10_000 },
+                "How many tool calls may have run halfway when the driver stopped; 0 when not known.",
+            ),
+            p(
+                "session",
+                Kind::SaltedHash,
+                "A per-install salted hash of the session, so the events of one session can be put together. Not its name.",
+            ),
+        ],
+        purpose: "How durable agents behave in the field: starts, restarts and why, failover between machines, how long recovery takes, how often attempts run out, and how sessions end.",
     },
     EventSpec {
         name: event::REPO_CACHE,

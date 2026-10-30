@@ -4351,6 +4351,59 @@ pub struct KvInventory {
     pub notes: Vec<String>,
 }
 
+/// One thing a teleport needs from the OS, as the setup sheet shows it
+/// (`cua_keyvault::broker::ReadinessCheck`).
+pub type KvReadinessCheck = core::keyvault::wire::KvReadinessCheck;
+#[uniffi::remote(Record)]
+pub struct KvReadinessCheck {
+    /// `granted`, `denied` or `unknown` (only known by trying).
+    pub state: String,
+    /// What it means and what to do, in plain words (empty when nothing).
+    pub say: String,
+}
+
+/// A browser profile to choose from (`cua_keyvault::broker::BrowserProfile`).
+pub type KvBrowserProfile = core::keyvault::wire::KvBrowserProfile;
+#[uniffi::remote(Record)]
+pub struct KvBrowserProfile {
+    /// Directory name (`Default`, `Profile 1`).
+    pub dir: String,
+    /// The name the person gave it.
+    pub name: String,
+    /// The account signed in to it.
+    pub account: Option<String>,
+    /// The browser used it last.
+    pub last_used: bool,
+}
+
+/// Whether a teleport of an app can work now: the Keyvault, what the OS
+/// allows and the profiles to choose from. Reads no value and asks for no
+/// presence (`cua_keyvault::broker::Readiness`, plus the Keyvault's state).
+pub type KvReadiness = core::keyvault::wire::KvReadiness;
+#[uniffi::remote(Record)]
+pub struct KvReadiness {
+    /// Provider id.
+    pub provider_id: String,
+    /// App name.
+    pub app_display: String,
+    /// The Keyvault exists.
+    pub keyvault_initialized: bool,
+    /// The Keyvault is unlocked.
+    pub keyvault_unlocked: bool,
+    /// The profile checked: the one asked for, else the last used.
+    pub profile: Option<String>,
+    /// The profile a teleport reads when none is named.
+    pub default_profile: Option<String>,
+    /// Every profile.
+    pub profiles: Vec<KvBrowserProfile>,
+    /// Reading the app's files (Full Disk Access).
+    pub files: KvReadinessCheck,
+    /// Reading the app's open tabs (Automation).
+    pub tabs: KvReadinessCheck,
+    /// The checked profile has no sign-in data.
+    pub profile_empty: bool,
+}
+
 /// How a caller is signed (`cua_keyvault::caller::Signing`: tagged by
 /// `kind`, snake_case).
 pub type KvSigning = core::keyvault::wire::KvSigning;

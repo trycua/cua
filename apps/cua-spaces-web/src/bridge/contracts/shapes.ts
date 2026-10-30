@@ -61,7 +61,7 @@ import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, R
 import type { ShareEntry, ShareRemoval } from "./share";
 import type { BulkResult } from "./spaces-page";
 import type { CreateFix, CreatingElsewhere, SpaceAccess, SpaceProgress, SpaceRow, SpaceSharingFacts } from "./spaces";
-import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
+import type { CatalogEntry, ConsentItem, KvBrowserProfile, KvDomainCount, KvInventory, KvReadiness, KvReadinessCheck, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
 import type { TelemetryLinkNotice } from "../ops/telemetry";
@@ -1335,6 +1335,18 @@ export const OP_SHAPES: Record<OpName, Schema> = {
     ),
     notes: opt(strings),
   }),
+  "teleport.readiness": obj<KvReadiness>()({
+    provider_id: str,
+    app_display: str,
+    keyvault_initialized: bool,
+    keyvault_unlocked: bool,
+    profile: opt(nullable(str)),
+    default_profile: opt(nullable(str)),
+    profiles: list(obj<KvBrowserProfile>()({ dir: str, name: str, account: opt(nullable(str)), last_used: bool })),
+    files: obj<KvReadinessCheck>()({ state: oneOf("granted", "denied", "unknown"), say: str }),
+    tabs: obj<KvReadinessCheck>()({ state: oneOf("granted", "denied", "unknown"), say: str }),
+    profile_empty: bool,
+  }),
   "teleport.remembered": nullable(strings),
   "teleport.streamWindow": nul,
   "sharing.list": shares,
@@ -1731,6 +1743,20 @@ const WkKvInventory = object({
   notes: strings,
 });
 
+const WkReadinessCheck = object({ state: oneOf("granted", "denied", "unknown"), say: str });
+const WkKvReadiness = object({
+  providerId: str,
+  appDisplay: str,
+  keyvaultInitialized: bool,
+  keyvaultUnlocked: bool,
+  profile: optNull(str),
+  defaultProfile: optNull(str),
+  profiles: list(object({ dir: str, name: str, account: optNull(str), lastUsed: bool })),
+  files: WkReadinessCheck,
+  tabs: WkReadinessCheck,
+  profileEmpty: bool,
+});
+
 /** What the SwiftUI host answers each method with (shapes `adapters/webkit.ts` reads). */
 export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "app.info": WkAppInfoShape,
@@ -1804,6 +1830,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "teleport.plan": WkTeleportPlan,
   "teleport.run": OP_SHAPES["teleport.run"],
   "teleport.sites": WkKvInventory,
+  "teleport.readiness": WkKvReadiness,
   "teleport.remembered": nullable(strings),
   "teleport.streamWindow": nul,
   "sharing.list": shares,

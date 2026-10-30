@@ -24,7 +24,7 @@ export const METHODS = [
   "spaces.add", "clouds.status", "clouds.test", "clouds.connect", "clouds.disconnect", "clouds.approve",
   "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
   "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites",
-  "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare",
+  "teleport.readiness", "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare",
   "sharing.removals", "sharing.ackRemovals",
   "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",

@@ -8875,6 +8875,114 @@
         "json"
       ]
     },
+    "teleport.readiness": {
+      "type": "object",
+      "properties": {
+        "provider_id": {
+          "type": "string"
+        },
+        "app_display": {
+          "type": "string"
+        },
+        "keyvault_initialized": {
+          "type": "boolean"
+        },
+        "keyvault_unlocked": {
+          "type": "boolean"
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "dir": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "account": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "last_used": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "dir",
+              "name",
+              "last_used"
+            ]
+          }
+        },
+        "files": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "tabs": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "profile_empty": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider_id",
+        "app_display",
+        "keyvault_initialized",
+        "keyvault_unlocked",
+        "profiles",
+        "files",
+        "tabs",
+        "profile_empty"
+      ]
+    },
     "teleport.remembered": {
       "type": [
         "array",
@@ -11500,6 +11608,114 @@
         "warnings",
         "relayUnsealed",
         "json"
+      ]
+    },
+    "teleport.readiness": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "type": "string"
+        },
+        "appDisplay": {
+          "type": "string"
+        },
+        "keyvaultInitialized": {
+          "type": "boolean"
+        },
+        "keyvaultUnlocked": {
+          "type": "boolean"
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "defaultProfile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "dir": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "account": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lastUsed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "dir",
+              "name",
+              "lastUsed"
+            ]
+          }
+        },
+        "files": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "tabs": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "profileEmpty": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "providerId",
+        "appDisplay",
+        "keyvaultInitialized",
+        "keyvaultUnlocked",
+        "profiles",
+        "files",
+        "tabs",
+        "profileEmpty"
       ]
     },
     "teleport.remembered": {

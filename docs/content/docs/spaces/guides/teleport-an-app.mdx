@@ -82,6 +82,17 @@ access. See [Keyvault](/spaces/guides/keyvault).
   with a preview of that window; drop it on a Space to teleport the app.
   This needs the Accessibility permission (macOS).
 
+When you teleport a browser's signed-in sites, a **Set up** sheet comes before
+the consent screen if anything is missing or there is a choice to make. It
+shows the Keyvault, Full Disk Access, Automation and the browser profile, each
+with a plain word for where it stands and what to do about it. Full Disk Access
+needs the macOS setting turned on for Cua (the sheet opens System Settings for
+you), and then the Cua app opened again; without it you can still **send open
+tabs only**. When the browser has more than one profile, the sheet lists them
+with the account signed in to each and marks the one used last, and the profile
+you choose is the one that is read. Nothing is read, and Touch ID is not asked,
+until you continue past the sheet.
+
 Files land in `~/Downloads/Teleported` in the Space and open in the app.
 
 ![Teleport an app: the apps on this Mac, narrowed to an aarch64 Linux Space](/img/spaces/spaces-teleport-picker.png)

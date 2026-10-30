@@ -514,3 +514,81 @@ fn readiness_lists_profiles_and_checks_the_chosen_one_without_reading_values() {
     assert_eq!(r.files.state, Access::Granted);
     assert!(r.profiles.is_empty());
 }
+
+/// A refused read reaches the person as the plain sentence, not as
+/// "export session: ... Operation not permitted (os error 1)".
+#[test]
+fn a_privacy_refusal_in_a_capture_is_said_in_plain_words() {
+    struct Refusing(Arc<dyn HostEffects>);
+    impl ExportProvider for Refusing {
+        fn id(&self) -> &str {
+            "chrome"
+        }
+        fn display_name(&self) -> &str {
+            "Google Chrome"
+        }
+        fn host(&self) -> &dyn HostEffects {
+            self.0.as_ref()
+        }
+        fn platform_supported(&self, _: Platform) -> bool {
+            true
+        }
+        fn matches(&self, app: &AppRef) -> bool {
+            app.app_id == "chrome"
+        }
+        fn app_ids(&self) -> &[&str] {
+            &["chrome"]
+        }
+        fn manifest(
+            &self,
+            _: &AppRef,
+            _: Option<&WindowRef>,
+            scope: TransferScope,
+        ) -> cua_teleport::Result<TransferManifest> {
+            Ok(TransferManifest {
+                provider_id: "chrome".into(),
+                app_display_name: "Google Chrome".into(),
+                scope,
+                items: vec![ManifestItem {
+                    label: "Cookies".into(),
+                    rel_path: "Default/Cookies".into(),
+                    est_bytes: 1,
+                    count: None,
+                    count_noun: None,
+                    sensitive: false,
+                    default_checked: true,
+                }],
+                total_est_bytes: 1,
+                notes: vec![],
+            })
+        }
+        fn capture_selected(
+            &self,
+            _: &AppRef,
+            _: TransferScope,
+            _: Option<&HashSet<String>>,
+            _: &mut dyn Write,
+        ) -> cua_teleport::Result<()> {
+            Err(cua_teleport::TeleportError::Provider(
+                "copying Cookies failed: Operation not permitted (os error 1)".into(),
+            ))
+        }
+    }
+    let reg = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(reg.path())
+        .operator_display(Arc::new(cua_spaces::operator::NoDisplay))
+        .build();
+    let mut registry = ExportRegistry::new();
+    registry.register(Box::new(Refusing(Arc::new(FakeHost::new()))));
+    let b = DaemonBackend::new(spaces, Arc::new(AppSessions::from_registry(registry)));
+    let err = b
+        .capture(&spec(&["Default/Cookies"]))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Full Disk Access"), "{err}");
+    assert!(
+        !err.contains("os error") && !err.contains("export session"),
+        "{err}"
+    );
+}

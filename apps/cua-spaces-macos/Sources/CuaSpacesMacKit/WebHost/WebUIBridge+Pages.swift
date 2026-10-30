@@ -43,7 +43,8 @@ extension WebUIBridge {
 
         // Teleport and Share
         case "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
-             "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites", "teleport.remembered",
+             "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites", "teleport.readiness",
+             "teleport.remembered",
              "teleport.streamWindow":
             return try await teleport(method, args)
         // Links to things you run (`cua share`): the daemon's shares.
@@ -964,7 +965,13 @@ extension WebUIBridge {
             // Counts per site, never values; the daemon asks for Touch ID
             // before it shows names, as for the native review.
             guard let client = model.keyvault.client else { throw Failure.unsupported("The Keyvault is not available") }
-            return BridgeValue.encode(try await client.inventory(app: try string(args, "providerId"), profile: nil))
+            return BridgeValue.encode(try await client.inventory(app: try string(args, "providerId"), profile: Self.profile(args)))
+        case "teleport.readiness":
+            // Whether a teleport can work now, in plain words: the Keyvault,
+            // what macOS lets the daemon read, the profiles. Reads no value
+            // and asks for no presence.
+            guard let client = model.keyvault.client else { throw Failure.unsupported("The Keyvault is not available") }
+            return BridgeValue.encode(try await client.readiness(app: try string(args, "providerId"), profile: Self.profile(args)))
         case "teleport.remembered":
             let key = appReviewRememberKey(app: try string(args, "providerId"), space: spaceName(try string(args, "spaceId")))
             return appReviewRemembered(choices: model.settings.teleportChoices, key: key).map { $0 as Any } ?? NSNull()
@@ -1005,7 +1012,7 @@ extension WebUIBridge {
     /// through `sdkConsent`, the same path `TeleportModel.confirm` takes, so
     /// every field (Save to Keyvault included) reaches the run.
     static func teleportConsent(_ c: [String: Any]) -> TeleportConsent {
-        sdkConsent(AppTeleportConsent(
+        var consent = sdkConsent(AppTeleportConsent(
             approved: c["approved"] as? Bool ?? false,
             acknowledgeSensitive: c["acknowledgeSensitive"] as? Bool ?? false,
             saveToKeyvault: c["saveToKeyvault"] as? Bool ?? false,
@@ -1015,6 +1022,15 @@ extension WebUIBridge {
             fromVault: c["fromVault"] as? [String],
             includePasswords: c["includePasswords"] as? Bool ?? false,
             passwordDomains: c["passwordDomains"] as? [String]))
+        // The browser profile chosen in the setup sheet; absent reads Default.
+        consent.profile = profile(c)
+        return consent
+    }
+
+    /// The browser profile an argument names (`Profile 1`), or nil.
+    static func profile(_ args: [String: Any]) -> String? {
+        guard let p = args["profile"] as? String, !p.isEmpty else { return nil }
+        return p
     }
 
     /// A run's report, as the page reads it (`RunReport`).

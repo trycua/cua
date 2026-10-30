@@ -1112,6 +1112,13 @@ public protocol KeyvaultClientProtocol: AnyObject, Sendable {
     func overview() async  -> KeyvaultOverview
 
     /**
+     * Whether a teleport of `app` can work now: the Keyvault's state, what
+     * macOS lets the daemon read, and the profiles. Reads no value and asks
+     * for no presence.
+     */
+    func readiness(app: String, profile: String?) async throws  -> KvReadiness
+
+    /**
      * Creates the vault with a passphrase (and a recovery key, returned
      * once). The passphrase goes only to the broker over the verified
      * Keyvault socket; it is never logged or kept, and zeroized here.
@@ -1295,6 +1302,28 @@ open func overview()async  -> KeyvaultOverview  {
             liftFunc: FfiConverterTypeKeyvaultOverview_lift,
             errorHandler: nil
 
+        )
+}
+
+    /**
+     * Whether a teleport of `app` can work now: the Keyvault's state, what
+     * macOS lets the daemon read, and the profiles. Reads no value and asks
+     * for no presence.
+     */
+open func readiness(app: String, profile: String?)async throws  -> KvReadiness  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_method_keyvaultclient_readiness(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(app),FfiConverterOptionString.lower(profile)
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeKvReadiness_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
         )
 }
 
@@ -46945,6 +46974,92 @@ public func FfiConverterTypeKvAuditEntry_lower(_ value: KvAuditEntry) -> RustBuf
 }
 
 
+public struct KvBrowserProfile: Equatable, Hashable {
+    /**
+     * Directory name (`Default`, `Profile 1`).
+     */
+    public var dir: String
+    /**
+     * The name the person gave it.
+     */
+    public var name: String
+    /**
+     * The account signed in to it.
+     */
+    public var account: String?
+    /**
+     * The browser used it last.
+     */
+    public var lastUsed: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Directory name (`Default`, `Profile 1`).
+         */dir: String,
+        /**
+         * The name the person gave it.
+         */name: String,
+        /**
+         * The account signed in to it.
+         */account: String?,
+        /**
+         * The browser used it last.
+         */lastUsed: Bool) {
+        self.dir = dir
+        self.name = name
+        self.account = account
+        self.lastUsed = lastUsed
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvBrowserProfile: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvBrowserProfile: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvBrowserProfile {
+        return
+            try KvBrowserProfile(
+                dir: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                account: FfiConverterOptionString.read(from: &buf),
+                lastUsed: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvBrowserProfile, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.dir, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.account, into: &buf)
+        FfiConverterBool.write(value.lastUsed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvBrowserProfile_lift(_ buf: RustBuffer) throws -> KvBrowserProfile {
+    return try FfiConverterTypeKvBrowserProfile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvBrowserProfile_lower(_ value: KvBrowserProfile) -> RustBuffer {
+    return FfiConverterTypeKvBrowserProfile.lower(value)
+}
+
+
 public struct KvCaller: Equatable, Hashable {
     /**
      * Pid.
@@ -49134,6 +49249,218 @@ public func FfiConverterTypeKvPendingRow_lift(_ buf: RustBuffer) throws -> KvPen
 #endif
 public func FfiConverterTypeKvPendingRow_lower(_ value: KvPendingRow) -> RustBuffer {
     return FfiConverterTypeKvPendingRow.lower(value)
+}
+
+
+public struct KvReadiness: Equatable, Hashable {
+    /**
+     * Provider id.
+     */
+    public var providerId: String
+    /**
+     * App name.
+     */
+    public var appDisplay: String
+    /**
+     * The Keyvault exists.
+     */
+    public var keyvaultInitialized: Bool
+    /**
+     * The Keyvault is unlocked.
+     */
+    public var keyvaultUnlocked: Bool
+    /**
+     * The profile checked: the one asked for, else the last used.
+     */
+    public var profile: String?
+    /**
+     * The profile a teleport reads when none is named.
+     */
+    public var defaultProfile: String?
+    /**
+     * Every profile.
+     */
+    public var profiles: [KvBrowserProfile]
+    /**
+     * Reading the app's files (Full Disk Access).
+     */
+    public var files: KvReadinessCheck
+    /**
+     * Reading the app's open tabs (Automation).
+     */
+    public var tabs: KvReadinessCheck
+    /**
+     * The checked profile has no sign-in data.
+     */
+    public var profileEmpty: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Provider id.
+         */providerId: String,
+        /**
+         * App name.
+         */appDisplay: String,
+        /**
+         * The Keyvault exists.
+         */keyvaultInitialized: Bool,
+        /**
+         * The Keyvault is unlocked.
+         */keyvaultUnlocked: Bool,
+        /**
+         * The profile checked: the one asked for, else the last used.
+         */profile: String?,
+        /**
+         * The profile a teleport reads when none is named.
+         */defaultProfile: String?,
+        /**
+         * Every profile.
+         */profiles: [KvBrowserProfile],
+        /**
+         * Reading the app's files (Full Disk Access).
+         */files: KvReadinessCheck,
+        /**
+         * Reading the app's open tabs (Automation).
+         */tabs: KvReadinessCheck,
+        /**
+         * The checked profile has no sign-in data.
+         */profileEmpty: Bool) {
+        self.providerId = providerId
+        self.appDisplay = appDisplay
+        self.keyvaultInitialized = keyvaultInitialized
+        self.keyvaultUnlocked = keyvaultUnlocked
+        self.profile = profile
+        self.defaultProfile = defaultProfile
+        self.profiles = profiles
+        self.files = files
+        self.tabs = tabs
+        self.profileEmpty = profileEmpty
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvReadiness: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvReadiness: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvReadiness {
+        return
+            try KvReadiness(
+                providerId: FfiConverterString.read(from: &buf),
+                appDisplay: FfiConverterString.read(from: &buf),
+                keyvaultInitialized: FfiConverterBool.read(from: &buf),
+                keyvaultUnlocked: FfiConverterBool.read(from: &buf),
+                profile: FfiConverterOptionString.read(from: &buf),
+                defaultProfile: FfiConverterOptionString.read(from: &buf),
+                profiles: FfiConverterSequenceTypeKvBrowserProfile.read(from: &buf),
+                files: FfiConverterTypeKvReadinessCheck.read(from: &buf),
+                tabs: FfiConverterTypeKvReadinessCheck.read(from: &buf),
+                profileEmpty: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvReadiness, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.providerId, into: &buf)
+        FfiConverterString.write(value.appDisplay, into: &buf)
+        FfiConverterBool.write(value.keyvaultInitialized, into: &buf)
+        FfiConverterBool.write(value.keyvaultUnlocked, into: &buf)
+        FfiConverterOptionString.write(value.profile, into: &buf)
+        FfiConverterOptionString.write(value.defaultProfile, into: &buf)
+        FfiConverterSequenceTypeKvBrowserProfile.write(value.profiles, into: &buf)
+        FfiConverterTypeKvReadinessCheck.write(value.files, into: &buf)
+        FfiConverterTypeKvReadinessCheck.write(value.tabs, into: &buf)
+        FfiConverterBool.write(value.profileEmpty, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvReadiness_lift(_ buf: RustBuffer) throws -> KvReadiness {
+    return try FfiConverterTypeKvReadiness.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvReadiness_lower(_ value: KvReadiness) -> RustBuffer {
+    return FfiConverterTypeKvReadiness.lower(value)
+}
+
+
+public struct KvReadinessCheck: Equatable, Hashable {
+    /**
+     * `granted`, `denied` or `unknown` (only known by trying).
+     */
+    public var state: String
+    /**
+     * What it means and what to do, in plain words (empty when nothing).
+     */
+    public var say: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `granted`, `denied` or `unknown` (only known by trying).
+         */state: String,
+        /**
+         * What it means and what to do, in plain words (empty when nothing).
+         */say: String) {
+        self.state = state
+        self.say = say
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvReadinessCheck: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvReadinessCheck: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvReadinessCheck {
+        return
+            try KvReadinessCheck(
+                state: FfiConverterString.read(from: &buf),
+                say: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvReadinessCheck, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterString.write(value.say, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvReadinessCheck_lift(_ buf: RustBuffer) throws -> KvReadinessCheck {
+    return try FfiConverterTypeKvReadinessCheck.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvReadinessCheck_lower(_ value: KvReadinessCheck) -> RustBuffer {
+    return FfiConverterTypeKvReadinessCheck.lower(value)
 }
 
 
@@ -51645,6 +51972,10 @@ public struct TeleportConsent: Equatable, Hashable {
      * choice; `None`: those of `cookie_domains`).
      */
     public var passwordDomains: [String]?
+    /**
+     * The browser profile to read (`Profile 1`); `None`: `Default`.
+     */
+    public var profile: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -51679,7 +52010,10 @@ public struct TeleportConsent: Equatable, Hashable {
         /**
          * The sites whose saved passwords to send (the review's own
          * choice; `None`: those of `cookie_domains`).
-         */passwordDomains: [String]? = nil) {
+         */passwordDomains: [String]? = nil,
+        /**
+         * The browser profile to read (`Profile 1`); `None`: `Default`.
+         */profile: String? = nil) {
         self.approved = approved
         self.acknowledgeSensitive = acknowledgeSensitive
         self.saveToKeyvault = saveToKeyvault
@@ -51689,6 +52023,7 @@ public struct TeleportConsent: Equatable, Hashable {
         self.fromVault = fromVault
         self.includePasswords = includePasswords
         self.passwordDomains = passwordDomains
+        self.profile = profile
     }
 
 
@@ -51715,7 +52050,8 @@ public struct FfiConverterTypeTeleportConsent: FfiConverterRustBuffer {
                 exclude: FfiConverterSequenceString.read(from: &buf),
                 fromVault: FfiConverterOptionSequenceString.read(from: &buf),
                 includePasswords: FfiConverterBool.read(from: &buf),
-                passwordDomains: FfiConverterOptionSequenceString.read(from: &buf)
+                passwordDomains: FfiConverterOptionSequenceString.read(from: &buf),
+                profile: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -51729,6 +52065,7 @@ public struct FfiConverterTypeTeleportConsent: FfiConverterRustBuffer {
         FfiConverterOptionSequenceString.write(value.fromVault, into: &buf)
         FfiConverterBool.write(value.includePasswords, into: &buf)
         FfiConverterOptionSequenceString.write(value.passwordDomains, into: &buf)
+        FfiConverterOptionString.write(value.profile, into: &buf)
     }
 }
 
@@ -77090,6 +77427,31 @@ fileprivate struct FfiConverterSequenceTypeKvAuditEntry: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeKvBrowserProfile: FfiConverterRustBuffer {
+    typealias SwiftType = [KvBrowserProfile]
+
+    public static func write(_ value: [KvBrowserProfile], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeKvBrowserProfile.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvBrowserProfile] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [KvBrowserProfile]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeKvBrowserProfile.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeKvCategoryRow: FfiConverterRustBuffer {
     typealias SwiftType = [KvCategoryRow]
 
@@ -82840,6 +83202,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_overview() != 65171) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_readiness() != 1765) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_setup_with_passphrase() != 6939) {

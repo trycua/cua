@@ -100,6 +100,7 @@ export const WEBKIT_METHODS = [
   "teleport.plan",
   "teleport.run",
   "teleport.sites",
+  "teleport.readiness",
   "teleport.remembered",
   "teleport.streamWindow",
   "sharing.list",

@@ -20,6 +20,7 @@
  * | `teleport.plan` `{spaceId, entry, move, files, sensitiveGroups}` | `teleport_plan` |
  * | `teleport.run` `{spaceId, plan, consent, runId}` | `teleport_run` (progress on its channel, re-sent as `teleport.progress`) |
  * | `teleport.sites` `{providerId}` | none: the Keyvault inventory has no Tauri command |
+ * | `teleport.readiness` `{providerId, profile?}` | none: the readiness check has no Tauri command |
  * | `teleport.remembered` `{providerId, spaceId}` | none: the SwiftUI app's remembered site choices are its own setting |
  * | `teleport.streamWindow` `{spaceId, spaceName, windowId, appName, title}` | `stream_remote_windows` |
  *
@@ -44,6 +45,7 @@
 import type {
   CatalogEntry,
   KvInventory,
+  KvReadiness,
   OpenWindow,
   PickerTileIcon,
   PickerTileThumbnail,
@@ -78,7 +80,11 @@ export interface TeleportOperations {
    * Progress arrives as `teleport.progress` events carrying `runId`. */
   "teleport.run": { args: { spaceId: string; plan: TeleportPlan; consent: TeleportConsent; runId: string }; result: RunReport };
   /** A browser's sites with counts, from the Keyvault (never values). */
-  "teleport.sites": { args: { providerId: string }; result: KvInventory };
+  "teleport.sites": { args: { providerId: string; profile?: string | null }; result: KvInventory };
+  /** Whether a teleport of a browser can work now, checked in plain words before
+   * anything is read or any Touch ID is asked: the Keyvault, Full Disk Access,
+   * Automation and the profiles (`profile` null: the last used). */
+  "teleport.readiness": { args: { providerId: string; profile?: string | null }; result: KvReadiness };
   /** The sites sent last time to this Space from this browser (the review starts from them), or null. */
   "teleport.remembered": { args: { providerId: string; spaceId: string }; result: string[] | null };
   /** Streams one of the Space's windows onto this machine (From <Space>). */
@@ -103,6 +109,7 @@ export const TELEPORT_OPERATIONS = [
   "teleport.plan",
   "teleport.run",
   "teleport.sites",
+  "teleport.readiness",
   "teleport.remembered",
   "teleport.streamWindow",
 ] as const satisfies readonly TeleportOpName[];
@@ -112,7 +119,7 @@ export type TeleportHostEvent = { type: "teleport.progress"; runId: string; even
 export const TELEPORT_EVENTS = ["teleport.progress"] as const;
 
 /** No Tauri command answers these (`TAURI_UNSUPPORTED`). */
-export const TELEPORT_TAURI_UNSUPPORTED = ["teleport.sites", "teleport.remembered"] as const satisfies readonly TeleportOpName[];
+export const TELEPORT_TAURI_UNSUPPORTED = ["teleport.sites", "teleport.readiness", "teleport.remembered"] as const satisfies readonly TeleportOpName[];
 
 /* ---- Coverage (`../coverage.ts`) ------------------------------------------ */
 
@@ -132,6 +139,7 @@ export const TELEPORT_COVERAGE = {
   "teleport.plan": row("teleport.plan", ["teleport_plan"]),
   "teleport.run": row("teleport.run", ["teleport_run"]),
   "teleport.sites": row("teleport.sites", [], "the Keyvault inventory has no Tauri command"),
+  "teleport.readiness": row("teleport.readiness", [], "the readiness check has no Tauri command"),
   "teleport.remembered": row("teleport.remembered", [], "remembered site choices are the SwiftUI app's setting"),
   "teleport.streamWindow": row("teleport.streamWindow", ["stream_remote_windows"]),
 } as const;
@@ -245,6 +253,7 @@ export function consentToSdk(c: TeleportConsent): Json {
     from_vault: c.fromVault ?? null,
     include_passwords: Boolean(c.includePasswords),
     password_domains: c.passwordDomains ?? null,
+    profile: c.profile ?? null,
   };
 }
 
@@ -279,7 +288,7 @@ export function tauriTeleportOps(
   /** `window.__TAURI_INTERNALS__`. */
   tauriInternals: unknown,
   emit: (e: TeleportHostEvent) => void,
-): Omit<TeleportHandlers, "teleport.sites" | "teleport.remembered"> {
+): Omit<TeleportHandlers, "teleport.sites" | "teleport.readiness" | "teleport.remembered"> {
   const internals = tauriInternals as TauriInternals | undefined;
   return {
     "teleport.catalog": async ({ spaceId }) => ((await invoke<Json[] | null>("teleport_catalog", { spaceId })) ?? []).map(entryFromSdk),

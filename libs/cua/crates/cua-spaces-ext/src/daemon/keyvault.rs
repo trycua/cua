@@ -49,7 +49,13 @@ const B64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::STANDARD;
 
 fn backend_err(context: &str, e: impl std::fmt::Display) -> KvError {
-    KvError::Backend(format!("{context}: {e}"))
+    let m = e.to_string();
+    // A macOS privacy refusal is said in plain words (what to turn on), not
+    // as "export session: Operation not permitted (os error 1)".
+    if let Some(say) = cua_teleport::privacy::plain_words(&m) {
+        return KvError::Backend(say);
+    }
+    KvError::Backend(format!("{context}: {m}"))
 }
 
 fn scope_str(scope: TransferScope) -> &'static str {

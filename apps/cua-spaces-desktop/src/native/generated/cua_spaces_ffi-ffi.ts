@@ -2157,6 +2157,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_fn_method_keyvaultclient_readiness": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_fn_method_keyvaultclient_setup_with_passphrase": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -4082,6 +4087,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_readiness": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_setup_with_passphrase": {
       args: [],
       ret: FfiType.UInt16,
@@ -4787,6 +4797,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_method_keyvaultclient_inventory(uniffiSelf: bigint, app: Uint8Array, profile: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_method_keyvaultclient_lock(uniffiSelf: bigint): bigint;
     uniffi_cua_spaces_ffi_fn_method_keyvaultclient_overview(uniffiSelf: bigint): bigint;
+    uniffi_cua_spaces_ffi_fn_method_keyvaultclient_readiness(uniffiSelf: bigint, app: Uint8Array, profile: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_method_keyvaultclient_setup_with_passphrase(uniffiSelf: bigint, passphrase: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_method_keyvaultclient_unlock_with_passphrase(uniffiSelf: bigint, passphrase: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_method_pcmsink_on_pcm(uniffiSelf: bigint, audio: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
@@ -5172,6 +5183,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_inventory(): number;
     uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_lock(): number;
     uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_overview(): number;
+    uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_readiness(): number;
     uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_setup_with_passphrase(): number;
     uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_unlock_with_passphrase(): number;
     uniffi_cua_spaces_ffi_checksum_method_pcmsink_on_pcm(): number;

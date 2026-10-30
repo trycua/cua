@@ -246,7 +246,15 @@ async fn create_staging_file(path: &Path) -> std::io::Result<tokio::fs::File> {
 
 fn app_on_path(app: &str) -> bool {
     let candidates: &[&str] = match app {
-        "chrome" => &["google-chrome", "google-chrome-stable", "chrome"],
+        // The Spaces Linux image ships Chromium, which the Chrome importer
+        // lands in and launches when there is no Google Chrome.
+        "chrome" => &[
+            "google-chrome",
+            "google-chrome-stable",
+            "chrome",
+            "chromium",
+            "chromium-browser",
+        ],
         "chromium" => &["chromium", "chromium-browser"],
         "firefox" => &["firefox", "firefox-esr"],
         "vscode" => &["code"],

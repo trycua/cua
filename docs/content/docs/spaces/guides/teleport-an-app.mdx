@@ -286,26 +286,6 @@ starts, so after turning it on, restart the Cua daemon. Without Full Disk
 Access you can still teleport open tabs only. Without a `--profile`, a push
 reads the `Default` profile, so pick the one you are signed in to.
 
-### When macOS asks for permission
-
-Sending a browser's signed-in sites reads its files, and macOS decides whether
-Cua may do that. Teleport checks first and says what is missing, in words,
-before it asks for Touch ID or reads anything:
-
-```bash test="cli-shape" id="cua-teleport-doctor"
-cua teleport doctor
-cua teleport doctor --app chrome --profile "Profile 1"
-```
-
-It reports whether the Keyvault is set up, whether macOS lets Cua read the
-browser's files (Full Disk Access) and its open tabs (Automation), and which
-browser profiles exist, with the account signed in to each and the one used
-last. Cua cannot grant these for you: macOS only lets you, in System Settings,
-under Privacy and Security. macOS applies Full Disk Access to a program when it
-starts, so after turning it on, restart the Cua daemon. Without Full Disk
-Access you can still teleport open tabs only. Without a `--profile`, a push
-reads the `Default` profile, so pick the one you are signed in to.
-
 <Callout type="warn">
   A teleported session is a live sign-in that anyone controlling the Space can
   use. Teleport only into Spaces you own, and prefer `tabs`.

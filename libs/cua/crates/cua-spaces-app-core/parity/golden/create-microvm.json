@@ -18,8 +18,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -79,8 +78,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -140,8 +138,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/macos:26",
@@ -197,8 +194,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/macos:26",
@@ -254,8 +250,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -315,8 +310,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -375,8 +369,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",

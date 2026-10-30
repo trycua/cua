@@ -4043,7 +4043,7 @@ pub type AppWizardField = core::wizard::WizardField;
 #[uniffi::remote(Record)]
 pub struct AppWizardField {
     /// `os`, `image`, `placement`, `kind`, `runtime`, `connect-cloud`,
-    /// `connect-by-address`, `cpus`, `memory`, `disk`, `name`,
+    /// `cpus`, `memory`, `disk`, `name`,
     /// `open-when-ready`, `address`, `token`, `address-name`.
     pub id: String,
     /// Label (or the link's title).

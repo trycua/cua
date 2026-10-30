@@ -2798,7 +2798,7 @@ pub struct ImageFieldView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WizardField {
     /// `os`, `image`, `placement`, `kind`, `runtime`, `connect-cloud`,
-    /// `connect-by-address`, `cpus`, `memory`, `disk`, `name`,
+    /// `cpus`, `memory`, `disk`, `name`,
     /// `open-when-ready`, `address`, `token`, `address-name`.
     pub id: String,
     /// Label (or the link's title).
@@ -3085,7 +3085,6 @@ fn fields(
                 .your_cloud
                 .then(|| field("connect-cloud", CONNECT_CLOUD_LABEL)),
         )
-        .chain([field("connect-by-address", "Connect by address\u{2026}")])
         .collect(),
         // The cloud picks the machine: no sliders, its facts only.
         (WizardMode::Create, 1) if yours => vec![],
@@ -6875,17 +6874,7 @@ mod tests {
         let ids = |s: &WizardState| -> Vec<String> {
             view(s, &e).fields.into_iter().map(|f| f.id).collect()
         };
-        assert_eq!(
-            ids(&s),
-            [
-                "os",
-                "image",
-                "placement",
-                "kind",
-                "runtime",
-                "connect-by-address"
-            ]
-        );
+        assert_eq!(ids(&s), ["os", "image", "placement", "kind", "runtime"]);
         let s1 = reduce(&s, &WizardAction::Next, &e);
         assert_eq!(
             ids(&s1),

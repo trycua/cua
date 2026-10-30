@@ -465,7 +465,7 @@ fn state_path() -> PathBuf {
     util::cua_home().join("do_target.json")
 }
 
-fn consent_path() -> PathBuf {
+pub(crate) fn consent_path() -> PathBuf {
     util::cua_home().join("host_consented")
 }
 

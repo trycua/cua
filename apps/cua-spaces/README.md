@@ -64,7 +64,7 @@ view at launch in debug builds (release builds ignore the recording hooks).
 **New Space** (Cmd+N, the sidebar's +, the notch's New, or the menu bar item)
 is a step-by-step sheet:
 
-1. **System**: Linux, Windows or macOS, the image (a dropdown of the published
+1. **System**: Linux, macOS or Windows, the image (a dropdown of the published
    entries of `libs/images/sandbox-images.json`, the same list the docs show),
    and where it runs: This Mac, one of your own computers, or your own cloud
    account. Cua no longer rents cloud machines. **Advanced** picks the kind (container or virtual

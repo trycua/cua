@@ -970,7 +970,7 @@ fn resolve_press(target: HWND, key: &str, modifiers: &[&str]) -> Result<Press> {
     if let (Some(ch), None, true) = (chars.next(), chars.next(), modifiers.is_empty()) {
         if !ch.is_control() {
             // Letter names are case-insensitive, as on the other platforms:
-            // "A" presses the A key and does not add Shift.
+            // "A" types what "a" types and does not add Shift.
             let ch = ch.to_ascii_lowercase();
             let hkl = unsafe { GetKeyboardLayout(GetWindowThreadProcessId(target, None)) };
             let vk = u16::try_from(ch as u32).ok().and_then(|unit| {

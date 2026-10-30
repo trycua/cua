@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.19.0](https://github.com/trycua/cua/compare/cua-spaces-v0.18.0...cua-spaces-v0.19.0) (2026-10-30)
+
+
+### Features
+
+* **connections:** per-provider model lists and a connectors.models op ([#6173](https://github.com/trycua/cua/issues/6173)) ([1976208](https://github.com/trycua/cua/commit/19762088609eeac34becee1848459ed3da75019a))
+* **settings:** Providers section as compact rows, per-app Uses switcher, bundled provider marks ([#6170](https://github.com/trycua/cua/issues/6170)) ([34f12df](https://github.com/trycua/cua/commit/34f12df58fc0d9f58c0a4134f0dfaf3424ceb3fc))
+
+
+### Performance Improvements
+
+* **spaces:** fill in the Agents page as Spaces answer, bound slow machines ([#6177](https://github.com/trycua/cua/issues/6177)) ([886179f](https://github.com/trycua/cua/commit/886179f87f2610d143de9e0a24012dbb80704126))
+* **spaces:** reconnect to a Space's desktop in under a second (CUA-2850) ([#6176](https://github.com/trycua/cua/issues/6176)) ([8aa59c7](https://github.com/trycua/cua/commit/8aa59c7eb48b67c0cd8e363cbdef6a9219db9b4b))
+
 ## [0.18.0](https://github.com/trycua/cua/compare/cua-spaces-v0.17.0...cua-spaces-v0.18.0) (2026-10-30)
 
 

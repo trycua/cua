@@ -6955,7 +6955,7 @@
      "usage": "cua sandbox mcp [OPTIONS] <NAME> <SERVICE> <COMMAND>"
     },
     {
-     "abstract": "Open the sandbox desktop in the browser (the cua-spacesd HTML5 viewer). A local Lume sandbox without cua-spacesd opens its VNC display with `lume attach`",
+     "abstract": "Open the sandbox desktop in the browser (the cua-spacesd HTML5 viewer). A sandbox at a plain-HTTP address other than loopback (a local Lume VM) is viewed through a loopback proxy, so the command keeps running until Ctrl-C. A local Lume sandbox without cua-spacesd opens its VNC display with `lume attach`",
      "after_help": "Examples:\n  cua sb view dev\n  # Watch only, print the link instead of opening it\n  cua sb view dev --view-only --no-open\n  # An image that ships its own web display instead of cua-spacesd\n  cua sb view old-box --service web",
      "aliases": [],
      "arguments": [

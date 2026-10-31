@@ -546,7 +546,7 @@ const TOOLS: &[Tool] = &[
     Tool {
         name: "sandbox_view",
         permission: "sandbox:view",
-        description: "Get a browser link to the sandbox desktop in the cua-spacesd HTML5 viewer (video, audio, input, clipboard, files). The link expires after an hour.",
+        description: "Get a browser link to the sandbox desktop in the cua-spacesd HTML5 viewer (video, audio, input, clipboard, files). The link expires after an hour. A sandbox at a plain-HTTP address other than loopback (a local Lume VM) gets a 127.0.0.1 link through a proxy that lasts while this server runs.",
         params: &[NAME],
     },
     Tool {
@@ -1003,6 +1003,8 @@ pub struct Server {
     mapping: Mutex<HashMap<String, Mapping>>,
     /// The Cua Keyvault, which owns every teleport and its consent.
     keyvault: Arc<dyn crate::teleport_session::Broker>,
+    /// Loopback proxies `sandbox_view` hands out, for the whole session.
+    viewers: tokio::sync::Mutex<sandbox::Viewers>,
 }
 
 /// Scale and origin of a sandbox's last screenshot.
@@ -1081,6 +1083,7 @@ impl Server {
             default_sandbox,
             mapping: Mutex::new(HashMap::new()),
             keyvault: crate::teleport_session::default_broker(),
+            viewers: Default::default(),
         }
     }
 
@@ -1621,10 +1624,11 @@ impl Server {
             "sandbox_view" | "sandbox_vnc" => {
                 async {
                     let link = sandbox::viewer_link(&self.cua, &n, None, false, None).await?;
-                    let mut v =
-                        json!({"viewer_url": link.url, "expires_at_unix": link.expires_at_unix});
+                    let url =
+                        sandbox::on_loopback(link.url, &mut *self.viewers.lock().await).await?;
+                    let mut v = json!({"viewer_url": url, "expires_at_unix": link.expires_at_unix});
                     if name == "sandbox_vnc" {
-                        v["vnc_url"] = json!(link.url);
+                        v["vnc_url"] = json!(url);
                         v["deprecated"] = json!("use sandbox_view");
                     }
                     jtext(v)

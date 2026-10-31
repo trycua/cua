@@ -846,7 +846,13 @@ async function answerPermission(params) {
   const e = byId.get(id);
   let action = "approve";
   let why = "";
-  if (e && e.decision === "approve" && !e.outcome) {
+  if (e && e.decision === "approve" && !e.outcome && e.approvedGen === gen) {
+    // The same agent process asks again for a call it has not finished: one
+    // call, a second permission (OpenCode asks for an external directory, then
+    // for the command, both under one call id). Nothing ran between the two
+    // requests and nothing restarted, so it is the same approval, not a repeat.
+    action = "again";
+  } else if (e && e.decision === "approve" && !e.outcome) {
     // The tool may be running, or may have half-run before a restart: never
     // approve it blindly a second time.
     if (durable.policy === "rerun-safe" && READ_ONLY_KINDS.has(info.toolKind)) {
@@ -862,9 +868,11 @@ async function answerPermission(params) {
     why = "repeat request for a tool call that already completed";
     ledger("duplicate", id, { name: info.name, action: "deny" });
   }
-  if (action === "approve" || action === "rerun") {
+  if (action === "approve" || action === "rerun" || action === "again") {
     if (action === "rerun") ledger("rerun", id, { name: info.name, policy: "rerun-safe" });
-    else {
+    else if (action === "again") {
+      // Already journaled (the intent of its first request): nothing to add.
+    } else {
       const { end } = ledger("intent", id, {
         name: info.name,
         toolKind: info.toolKind,
@@ -872,6 +880,8 @@ async function answerPermission(params) {
         input: clip(JSON.stringify(info.input ?? null) ?? "null", 400),
         decision: "approve",
       });
+      // Only this agent process may be asked again for it (see above).
+      byId.get(id).approvedGen = gen;
       if (durable.ship && !(await waitShipped(end))) {
         why = "the journal did not reach the Cua Volume in time; the call was not run";
         ledger("outcome", id, { name: info.name, status: "failed", summary: why, denied: true });

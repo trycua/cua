@@ -118,6 +118,24 @@ t("the intent is on disk before the approval is answered; one approval per call 
   assert.equal(outcome.unguarded, undefined);
 });
 
+t("a second permission request for one call from the same agent process is approved, not refused as a repeat (CUA-2958)", async (box) => {
+  // OpenCode asks for an external directory and then for the command, both under one call id.
+  box.script({ prompts: [{ match: ".", steps: [tool("call-1", { askTwice: true }), { say: "done" }] }] });
+  box.config();
+  const r = await box.go({ epoch: 1, resume: false });
+  assert.equal(r.code, 0, r.stderr);
+  const log = box.agentLog();
+  assert.equal(log.filter((l) => l.ev === "permission_first").length, 1);
+  assert.equal(log.find((l) => l.ev === "permission_first").outcome.outcome, "selected");
+  assert.equal(log.filter((l) => l.ev === "permission").length, 1);
+  assert.equal(log.find((l) => l.ev === "permission").outcome.outcome, "selected", "the second request was approved");
+  assert.deepEqual(box.effects(), ["call-1"], "the command ran once");
+  // One intent, one outcome: the second request added nothing to the journal.
+  assert.deepEqual(box.tools().map((x) => x.kind), ["intent", "outcome"]);
+  const perms = box.events().filter((e) => e.type === "permission");
+  assert.deepEqual(perms.map((e) => e.action), ["approve", "again"]);
+});
+
 t("guard: the harness is not switched to full access and is approved with allow-once, so it keeps asking", async (box) => {
   box.script({ prompts: [{ match: ".", steps: [tool("call-1")] }] });
   box.config({ modeKinds: ["full_access"] });

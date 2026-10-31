@@ -229,12 +229,40 @@ const PEN_FLAG_BARREL: u32 = 0x00000001;
 // as `background_unavailable` (see `target_visible_at_point`) and the agent
 // escalates to `delivery_mode:"foreground"` instead of the driver raising it.
 
+/// `InjectSyntheticPointerInput` measures `ptPixelLocation` from the top-left
+/// corner of the virtual desktop, not from the primary monitor's origin like
+/// every other screen coordinate. On a layout with a monitor left of (or above)
+/// the primary, passing screen coordinates through unchanged lands the input
+/// `SM_XVIRTUALSCREEN`/`SM_YVIRTUALSCREEN` pixels away, on another monitor.
+/// See #1981.
+fn screen_to_injection_point(sx: i32, sy: i32, virtual_left: i32, virtual_top: i32) -> (i32, i32) {
+    (
+        sx.saturating_sub(virtual_left),
+        sy.saturating_sub(virtual_top),
+    )
+}
+
+/// [`screen_to_injection_point`] against the live virtual-desktop origin.
+fn injection_point(sx: i32, sy: i32) -> (i32, i32) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    };
+    let (left, top) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+        )
+    };
+    screen_to_injection_point(sx, sy, left, top)
+}
+
 /// One down→up **pen** tap at screen `(sx, sy)`. When `barrel` is set the pen's
 /// barrel button is held for the contact, which the system maps to a secondary
 /// (right) click — both for `WM_POINTER`-aware apps (Chromium/WPF/UWP) and via
 /// pen→mouse promotion for legacy Win32. A fresh synthetic pen device is
 /// created and destroyed per tap (right/middle clicks are rare).
 fn pen_taps(sx: i32, sy: i32, barrel: bool, count: usize) -> Result<()> {
+    let (sx, sy) = injection_point(sx, sy);
     unsafe {
         let dev = CreateSyntheticPointerDevice(PT_PEN, 1, POINTER_FEEDBACK_DEFAULT)
             .map_err(|e| anyhow::anyhow!("CreateSyntheticPointerDevice(PEN): {e}"))?;
@@ -517,6 +545,8 @@ mod iconic_sentinel_tests {
 /// A single synthetic pen device is created for the whole stroke. The barrel
 /// button is held when `barrel` is set (secondary-button drag).
 fn pen_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize, barrel: bool) -> Result<()> {
+    let (sx0, sy0) = injection_point(sx0, sy0);
+    let (sx1, sy1) = injection_point(sx1, sy1);
     unsafe {
         let dev = CreateSyntheticPointerDevice(PT_PEN, 1, POINTER_FEEDBACK_DEFAULT)
             .map_err(|e| anyhow::anyhow!("CreateSyntheticPointerDevice(PEN): {e}"))?;
@@ -591,6 +621,8 @@ static TOUCH_DEV: Mutex<isize> = Mutex::new(0);
 /// as touch/stylus and does NOT move the user's cursor. Serialized on the
 /// single shared device (one stroke at a time across all sessions).
 fn touch_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize) -> Result<()> {
+    let (sx0, sy0) = injection_point(sx0, sy0);
+    let (sx1, sy1) = injection_point(sx1, sy1);
     let mut dev_guard = TOUCH_DEV.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         // A non-pointer-aware window (WPF) makes the OS promote the PRIMARY touch
@@ -772,3 +804,34 @@ pub fn inject_drag_screen(
 // WPF/terminal text) is now reported as `background_unavailable`; the agent
 // escalates to `delivery_mode:"foreground"`, which uses the explicit
 // SetForegroundWindow path (send_key_synthesized / send_text_synthesized).
+
+#[cfg(test)]
+mod injection_point_tests {
+    use super::screen_to_injection_point;
+
+    #[test]
+    fn primary_at_origin_is_unchanged() {
+        assert_eq!(screen_to_injection_point(1000, 700, 0, 0), (1000, 700));
+    }
+
+    #[test]
+    fn monitor_left_of_primary_shifts_by_its_width() {
+        // Primary 3360x1440 at x 0, second monitor 1760x1440 at x -1760.
+        assert_eq!(screen_to_injection_point(1000, 700, -1760, 0), (2760, 700));
+        assert_eq!(screen_to_injection_point(-1000, 700, -1760, 0), (760, 700));
+        assert_eq!(screen_to_injection_point(-1760, 0, -1760, 0), (0, 0));
+    }
+
+    #[test]
+    fn monitor_above_primary_shifts_y() {
+        assert_eq!(
+            screen_to_injection_point(-5, -10, -1920, -1080),
+            (1915, 1070)
+        );
+    }
+
+    #[test]
+    fn extreme_values_saturate() {
+        assert_eq!(screen_to_injection_point(i32::MAX, 0, -1, 0), (i32::MAX, 0));
+    }
+}

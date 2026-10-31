@@ -1544,15 +1544,15 @@ mod tests {
         drop(v);
         // The update committed but the process exited before discarding the
         // staged record; that record cannot be read.
-        use std::os::unix::fs::PermissionsExt;
+        // A dangling symlink cannot be read even with CAP_DAC_OVERRIDE, but it
+        // can be removed.
         let staged = dir.join("items").join(format!(".{e}.sealed.crash.prev"));
-        std::fs::write(&staged, b"old record").unwrap();
-        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::os::unix::fs::symlink(d.path().join("gone"), &staged).unwrap();
 
         let mut reopened = Vault::open(&dir).unwrap();
         reopened.unlock(&pp()).unwrap();
         assert_eq!(reopened.read_payload(&e).unwrap(), sample_payload("a"));
-        assert!(!staged.exists());
+        assert!(std::fs::symlink_metadata(&staged).is_err());
     }
 
     #[test]

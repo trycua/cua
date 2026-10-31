@@ -72,6 +72,9 @@ pub(super) struct FixtureState {
     /// window (`Browser.getWindowForTarget` → `-32000 Browser window not
     /// found`): an extension side panel, an offscreen document.
     windowless_targets: Vec<Value>,
+    /// Extra page targets living in the bound window, after T1 in the
+    /// browser's `Target.getTargets` order.
+    sibling_tabs: Vec<Value>,
     /// Drop the primary tab target T1 from `Target.getTargets`.
     omit_primary_target: bool,
     /// Make `Browser.getWindowForTarget` for T1 answer this CDP error.
@@ -96,6 +99,7 @@ impl Default for FixtureState {
             emit_rogue_attach: false,
             main_url: "https://fixture.test/".into(),
             windowless_targets: Vec::new(),
+            sibling_tabs: Vec::new(),
             omit_primary_target: false,
             primary_window_error: None,
             main_loader: "L_MAIN_1".into(),
@@ -468,6 +472,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         "attached": false,
                     }));
                 }
+                infos.extend(st.sibling_tabs.iter().cloned());
                 infos.extend(st.windowless_targets.iter().cloned());
                 MockReply::ok(json!({ "targetInfos": infos }))
             }
@@ -3581,6 +3586,37 @@ async fn windowless_side_panel_target_is_skipped_and_bind_stays_exact() {
         .calls
         .iter()
         .any(|(_, m, p)| { m == "Target.attachToTarget" && p["targetId"] == "T_SIDEPANEL" }));
+}
+
+#[tokio::test]
+async fn bound_tabs_keep_the_browser_order_across_binds() {
+    let urls: Vec<String> = (1..=5).map(|n| format!("https://tab{n}.test/")).collect();
+    let f = fixture_with(|st| {
+        for (n, url) in urls.iter().enumerate().skip(1) {
+            st.sibling_tabs.push(json!({
+                "targetId": format!("T_SIBLING_{n}"),
+                "type": "page",
+                "title": format!("Sibling {n}"),
+                "url": url,
+                "attached": false,
+            }));
+        }
+    })
+    .await;
+    let mut expected = vec!["https://fixture.test/".to_owned()];
+    expected.extend(urls.into_iter().skip(1));
+    for _ in 0..2 {
+        let s = bind_result(&f).await;
+        assert_eq!(s["status"], "ok", "{s}");
+        let listed: Vec<&str> = s["tabs"]
+            .as_array()
+            .expect("tabs")
+            .iter()
+            .map(|t| t["url"].as_str().unwrap())
+            .collect();
+        assert_eq!(listed, expected, "{s}");
+        assert_eq!(s["tabs"][0]["active"], true, "{s}");
+    }
 }
 
 #[tokio::test]

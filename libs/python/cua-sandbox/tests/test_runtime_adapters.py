@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 from cua_sandbox import Image, sandbox_state
+from cua_sandbox.options import tcp
 from cua_sandbox.runtime import native as native_module
 from cua_sandbox.runtime.docker import DockerRuntime
 from cua_sandbox.runtime.lume import LumeRuntime
@@ -28,6 +29,7 @@ class FakeSandboxes:
         self.state_dir = state_dir
         self.created = []
         self.deleted = []
+        self.events = []
 
     async def create(self, options):
         self.created.append(options)
@@ -46,7 +48,12 @@ class FakeSandboxes:
                 }
             )
         )
-        return SimpleNamespace(info=lambda: None)
+        self.events.append(("create", [p.service or p.port for p in options.wait_for]))
+
+        async def wait_ready(probes, timeout_ms):
+            self.events.append(("wait", [p.service or p.port for p in probes]))
+
+        return SimpleNamespace(info=lambda: None, wait_ready=wait_ready)
 
     async def delete(self, name):
         self.deleted.append(name)
@@ -136,6 +143,35 @@ async def test_qemu_boots_a_local_disk_through_the_sdk(sdk, tmp_path):
     await QEMUBaremetalRuntime().start(Image.from_file(str(disk)), "cua-e2e-e")
 
     assert sdk.created[0].image == f"disk:{disk}"
+
+
+async def test_post_boot_layers_run_before_dependent_readiness(sdk, monkeypatch):
+    ref = "registry.example/desktop:1"
+    image = Image.from_registry(ref, kind="vm").run("systemctl enable --now app")
+
+    monkeypatch.setattr(
+        native_module.native(),
+        "resolve_image",
+        lambda reference, backend, arch: SimpleNamespace(spacesd=True),
+    )
+
+    async def apply_layers(self, info, layered):
+        sdk.events.append(("layers", info.name))
+
+    monkeypatch.setattr(native_module.NativeRuntime, "_apply_layers", apply_layers)
+
+    await QEMUBaremetalRuntime().start(
+        image, "cua-e2e-post-boot", services={"app": 8080}, wait_for=[tcp("app")]
+    )
+
+    assert sdk.created[0].image == f"vm:{ref}"
+    assert sdk.created[0].services["app"] == 8080
+    # The layer installs the service, so its probe waits until after the layers.
+    assert sdk.events == [
+        ("create", []),
+        ("layers", "cua-e2e-post-boot"),
+        ("wait", ["app"]),
+    ]
 
 
 @pytest.mark.parametrize("customization", ["run", "env", "copy"])

@@ -9,6 +9,16 @@
  * this compatibility build keeps the same values and ownership while using
  * JavaScript-owned Uint8Arrays at the N-API boundary.
  *
+ * UBRN 0.31.0-3 also builds a new callback trampoline, with its own
+ * ThreadsafeFunction and libuv async handle, every time a JS function is passed
+ * as a callback argument. The async poll loop passes its continuation callback
+ * on every poll, so each await leaked one, and the host's event loop slowed as
+ * it walked every leaked handle on each wakeup. UBRN fixed this in 0.31.0-4
+ * (#440) by caching one trampoline per callback name and JS function. That
+ * release also changes the RustBuffer boundary patched below, so this build
+ * backports only the cache: node-runtime-trampoline-cache.rs is UBRN's
+ * callback/cache.rs from that change, unmodified.
+ *
  * The patched source remains MPL-2.0 and comes from the exact, pinned
  * uniffi-bindgen-react-native development dependency.
  */
@@ -144,6 +154,88 @@ function patchCall(source) {
   return `${source.slice(0, bodyStart)}${replacement}${source.slice(bodyEnd + bodyEndNeedle.length)}`
 }
 
+function patchCallbackModule(source) {
+  return replaceOnce(
+    source,
+    "pub(crate) mod vtable;",
+    "pub(crate) mod vtable;\npub(crate) mod cache;",
+    "callback module list",
+  )
+}
+
+function patchRegisterTrampolines(source) {
+  source = replaceOnce(
+    source,
+    "    let capacity_symbol = Arc::new(unsafe { CapacitySymbol::new(env.raw())? });",
+    `    let capacity_symbol = Arc::new(unsafe { CapacitySymbol::new(env.raw())? });
+    // One cached trampoline per (callback name, JS function) for this registration.
+    let trampolines = Arc::new(unsafe {
+        crate::callback::cache::TrampolineCache::new(env.raw(), module.spec_callbacks().keys())?
+    });`,
+    "registration capacity Symbol",
+  )
+  source = replaceOnce(
+    source,
+    "        let cap_sym_for_call = Arc::clone(&capacity_symbol);",
+    "        let cap_sym_for_call = Arc::clone(&capacity_symbol);\n        let trampolines_for_call = Arc::clone(&trampolines);",
+    "call closure captures",
+  )
+  return replaceOnce(
+    source,
+    "                &cap_sym_for_call,\n",
+    "                &cap_sym_for_call,\n                &trampolines_for_call,\n",
+    "call dispatch arguments",
+  )
+}
+
+function patchCallTrampolines(source) {
+  source = replaceOnce(
+    source,
+    "    has_rust_call_status: bool,\n    capacity_symbol: &CapacitySymbol,\n) -> Result<JsUnknown> {",
+    "    has_rust_call_status: bool,\n    capacity_symbol: &CapacitySymbol,\n    trampolines: &callback::cache::TrampolineCache,\n) -> Result<JsUnknown> {",
+    "call dispatch signature",
+  )
+  return replaceOnce(
+    source,
+    `                let js_fn = unsafe { napi::JsFunction::from_raw(env.raw(), js_val.raw())? };
+                let user_data = callback::create_callback_user_data(env, js_fn, cb_name, module)?;
+                let fn_ptr = module
+                    .make_callback_trampoline(
+                        cb_name,
+                        callback::on_js_thread,
+                        callback::dispatch_to_js_thread,
+                        callback::is_js_thread,
+                        user_data,
+                    )
+                    .map_err(core_err)?;
+                slot::write_pointer(slot, fn_ptr);`,
+    `                // Trampolines are never freed, so build at most one per JS function.
+                let raw_fn_val = unsafe { js_val.raw() };
+                let cached = unsafe { trampolines.get(env.raw(), raw_fn_val, cb_name)? };
+                let fn_ptr = match cached {
+                    Some(fn_ptr) => fn_ptr,
+                    None => {
+                        let js_fn = unsafe { napi::JsFunction::from_raw(env.raw(), raw_fn_val)? };
+                        let user_data =
+                            callback::create_callback_user_data(env, js_fn, cb_name, module)?;
+                        let fn_ptr = module
+                            .make_callback_trampoline(
+                                cb_name,
+                                callback::on_js_thread,
+                                callback::dispatch_to_js_thread,
+                                callback::is_js_thread,
+                                user_data,
+                            )
+                            .map_err(core_err)?;
+                        unsafe { trampolines.set(env.raw(), raw_fn_val, cb_name, fn_ptr)? };
+                        fn_ptr
+                    }
+                };
+                slot::write_pointer(slot, fn_ptr);`,
+    "callback argument dispatch",
+  )
+}
+
 const temporaryRoot = mkdtempSync(join(tmpdir(), "cua-driver-node-runtime-"))
 try {
   const runtimeRoot = join(temporaryRoot, "runtime")
@@ -156,7 +248,14 @@ try {
   const registerPath = join(runtimeRoot, "napi", "src", "register", "mod.rs")
   writeFileSync(registerPath, patchRegister(readFileSync(registerPath, "utf8")))
   const callPath = join(runtimeRoot, "napi", "src", "call", "mod.rs")
-  writeFileSync(callPath, patchCall(readFileSync(callPath, "utf8")))
+  writeFileSync(callPath, patchCallTrampolines(patchCall(readFileSync(callPath, "utf8"))))
+  writeFileSync(registerPath, patchRegisterTrampolines(readFileSync(registerPath, "utf8")))
+  const callbackPath = join(runtimeRoot, "napi", "src", "callback", "mod.rs")
+  writeFileSync(callbackPath, patchCallbackModule(readFileSync(callbackPath, "utf8")))
+  copyFileSync(
+    join(scriptDirectory, "node-runtime-trampoline-cache.rs"),
+    join(runtimeRoot, "napi", "src", "callback", "cache.rs"),
+  )
 
   const args = ["build", "--release", "--manifest-path", join(runtimeRoot, "napi", "Cargo.toml")]
   if (target) args.push("--target", target)

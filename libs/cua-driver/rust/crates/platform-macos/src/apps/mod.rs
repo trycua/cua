@@ -370,10 +370,10 @@ fn enumerate_running_apps() -> (Vec<AppInfo>, RunningAppStates) {
 /// Replaces a prior `open -g -b` shell-out. The NSWorkspace path:
 ///   * honors `activates = false` so LaunchServices doesn't bring the
 ///     target frontmost,
-///   * attaches an `aevt/oapp` AppleEvent descriptor so cold-launched
-///     apps (Calculator, etc) get their window-creation handler invoked
-///     reliably (the shell-out path silently skipped this for state-
-///     restored apps),
+///   * attaches an `aevt/oapp` descriptor for a cold launch or an
+///     `aevt/rapp` descriptor when the target is already running, so the
+///     app's window-creation handler is invoked reliably without relying on
+///     activation,
 ///   * returns the actual `NSRunningApplication.processIdentifier`
 ///     without needing a separate `list_running_apps` lookup, so we
 ///     can't race a same-bundle-id helper that happens to be running.
@@ -383,10 +383,7 @@ pub fn launch_app(bundle_id: &str) -> anyhow::Result<i32> {
     // NSURL verbatim. Going via a `path` string and back loses the
     // alias/cryptex metadata Safari (and other Cryptex-installed apps)
     // need to relaunch from `/System/Cryptexes/App/...`.
-    let cfg = nsworkspace::OpenConfig {
-        apple_event_bundle_id: Some(bundle_id.to_owned()),
-        ..Default::default()
-    };
+    let cfg = background_launch_config(Some(bundle_id.to_owned()));
     let running = nsworkspace::open_application(bundle_id, &cfg)
         .with_context(|| format!("Failed to launch {bundle_id}"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
@@ -403,14 +400,18 @@ pub fn launch_app_by_name(name: &str) -> anyhow::Result<i32> {
     let located = locate_by_name(name)
         .ok_or_else(|| anyhow::anyhow!("Could not locate app with name '{name}'"))?;
     let (app_ref, bid) = located.app_ref_and_bundle_id();
-    let cfg = nsworkspace::OpenConfig {
-        apple_event_bundle_id: bid,
-        ..Default::default()
-    };
+    let cfg = background_launch_config(bid);
     let running = nsworkspace::open_application(&app_ref, &cfg)
         .with_context(|| format!("Failed to launch '{name}'"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
     Ok(pid)
+}
+
+fn background_launch_config(apple_event_bundle_id: Option<String>) -> nsworkspace::OpenConfig {
+    nsworkspace::OpenConfig {
+        apple_event_bundle_id,
+        ..Default::default()
+    }
 }
 
 /// Launch a bundle with URL handoff. Mirrors Swift's
@@ -1174,8 +1175,8 @@ mod plist_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        all_pids, bundle_root_of_executable, finder_folder_handoff, merge_app_lists, path_of_pid,
-        running_apps_from_processes, AppInfo,
+        all_pids, background_launch_config, bundle_root_of_executable, finder_folder_handoff,
+        merge_app_lists, path_of_pid, running_apps_from_processes, AppInfo,
     };
     use std::collections::HashSet;
 
@@ -1190,6 +1191,19 @@ mod tests {
             kind: None,
             last_used: None,
         }
+    }
+
+    #[test]
+    fn bundle_and_name_launches_share_background_launch_config() {
+        let bundle_route = background_launch_config(Some("com.example.App".to_owned()));
+        let name_route = background_launch_config(Some("com.example.App".to_owned()));
+
+        assert_eq!(
+            bundle_route.apple_event_bundle_id,
+            name_route.apple_event_bundle_id
+        );
+        assert!(!bundle_route.creates_new_instance);
+        assert!(!name_route.creates_new_instance);
     }
 
     fn states(pairs: &[(&str, i32, bool, Option<&str>)]) -> super::RunningAppStates {

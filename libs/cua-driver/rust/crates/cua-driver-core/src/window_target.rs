@@ -161,7 +161,7 @@ impl Tool for PidOnlyWindowTargetGuard {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         self.inner.protected_resource_scope(adapter_id, args).await
     }
 
@@ -170,7 +170,7 @@ impl Tool for PidOnlyWindowTargetGuard {
         adapter_id: &str,
         args: &Value,
         approved_scope: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::tool::ProtectedResourceScopeError> {
         self.inner
             .validate_protected_resource_scope(adapter_id, args, approved_scope)
             .await

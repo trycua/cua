@@ -586,6 +586,7 @@ impl Vault {
     /// the sealed record is rewritten only when its value changed.
     pub fn upsert_items(&mut self, items: Vec<(ItemMeta, ItemPayload)>) -> Result<Vec<Upsert>> {
         let now = crate::now_ms();
+        self.remove_stale_backups();
         // (provider, unique key) -> id, for what the vault already holds.
         let mut index: std::collections::HashMap<(String, String), String> = self
             .meta()?
@@ -745,6 +746,21 @@ impl Vault {
         Ok(out)
     }
 
+    /// Removes records an interrupted upsert staged (`.<id>.sealed.<random>.prev`),
+    /// so a replaced or deleted item's old record does not outlive it.
+    fn remove_stale_backups(&self) {
+        let Ok(entries) = std::fs::read_dir(self.dir.join("items")) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') && name.ends_with(".prev") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
     /// Decrypts an item's payload after checking its record against the
     /// sealed index (digest and revision).
     pub fn read_payload(&self, id: &str) -> Result<ItemPayload> {
@@ -861,6 +877,8 @@ impl Vault {
                 std::fs::remove_file(&path)?;
             }
         }
+        // An interrupted upsert's staged record would outlive the delete.
+        self.remove_stale_backups();
         self.gc_blobs()?;
         Ok(removed)
     }
@@ -920,7 +938,16 @@ impl Backup {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
                 _ => Ok(()),
             },
-            Backup::Linked(staged) => Ok(std::fs::rename(staged, path)?),
+            Backup::Linked(staged) => {
+                std::fs::rename(staged, path)?;
+                // Renaming a link onto another name of the same file is a
+                // no-op that leaves both names (the write failed before
+                // replacing `path`), so drop the staged name explicitly.
+                match std::fs::remove_file(staged) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+                    _ => Ok(()),
+                }
+            }
             Backup::Copied(bytes) => write_private(path, bytes),
         }
     }
@@ -1280,6 +1307,42 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(names, vec![std::ffi::OsString::from(format!("{e}.sealed"))]);
+    }
+
+    #[test]
+    fn restoring_an_unreplaced_record_drops_the_staged_link() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("item.sealed");
+        std::fs::write(&path, b"old record").unwrap();
+        // The write failed before replacing `path`: both names are one file.
+        let backup = Backup::take(&path).unwrap();
+        assert!(matches!(backup, Backup::Linked(_)));
+        backup.restore(&path).unwrap();
+        let names: Vec<_> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("item.sealed")]);
+        assert_eq!(std::fs::read(&path).unwrap(), b"old record");
+    }
+
+    #[test]
+    fn upsert_removes_records_an_interrupted_upsert_staged() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("kv");
+        let mut v = Vault::create(&dir, &[&pp()]).unwrap();
+        let stale = dir.join("items").join(".0123.sealed.abcd.prev");
+        std::fs::write(&stale, b"old sealed record").unwrap();
+        let id = v
+            .upsert_items(vec![(sample_meta(), sample_payload("a"))])
+            .unwrap()[0]
+            .id
+            .clone();
+        assert!(!stale.exists());
+        // Deleting an item also drops a record staged after the last upsert.
+        std::fs::write(&stale, b"old sealed record").unwrap();
+        v.delete_item(&id).unwrap();
+        assert!(!stale.exists());
     }
 
     #[test]

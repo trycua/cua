@@ -4,6 +4,7 @@
     "---Sandboxes---",
     "cua",
     "runtime-kinds",
+    "repo-cache",
     "sandbox",
     "share",
     "image",

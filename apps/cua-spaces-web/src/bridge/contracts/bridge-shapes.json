@@ -181,13 +181,12 @@
             "type": "object",
             "properties": {
               "provider": {
-                "enum": [
-                  "anthropic",
-                  "openai",
-                  "other"
-                ]
+                "type": "string"
               },
               "env": {
+                "type": "string"
+              },
+              "slot": {
                 "type": "string"
               },
               "last4": {
@@ -198,6 +197,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -208,17 +219,34 @@
             ]
           }
         },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
         "providers": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
               "id": {
-                "enum": [
-                  "anthropic",
-                  "openai",
-                  "other"
-                ]
+                "type": "string"
               },
               "label": {
                 "type": "string"
@@ -1830,6 +1858,27 @@
           "type": "number"
         },
         "maxMacosVms": {
+          "type": "number"
+        },
+        "maxMemoryGb": {
+          "type": "number"
+        },
+        "maxDiskGb": {
+          "type": "number"
+        },
+        "maxRunMinutes": {
+          "type": "number"
+        },
+        "usedMemoryGb": {
+          "type": "number"
+        },
+        "usedDiskGb": {
+          "type": "number"
+        },
+        "totalMemoryGb": {
+          "type": "number"
+        },
+        "totalDiskGb": {
           "type": "number"
         },
         "recentAccess": {
@@ -3912,6 +3961,53 @@
         "targetEpoch"
       ]
     },
+    "RepoCacheView": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "repos": {
+          "type": "number"
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "capBytes": {
+          "type": "number"
+        },
+        "sizeSetting": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "week": {
+          "type": "string"
+        },
+        "hits": {
+          "type": "number"
+        },
+        "misses": {
+          "type": "number"
+        },
+        "secondsSaved": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "enabled",
+        "repos",
+        "bytes",
+        "capBytes",
+        "sizeSetting",
+        "summary",
+        "week",
+        "hits",
+        "misses",
+        "secondsSaved"
+      ]
+    },
     "RuntimeFix": {
       "type": "object",
       "properties": {
@@ -4321,6 +4417,12 @@
                 "off",
                 "done"
               ]
+            },
+            "notchPinned": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -5569,6 +5671,12 @@
             "message",
             "retryable"
           ]
+        },
+        "fanoutOf": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -6254,6 +6362,48 @@
             "null"
           ]
         },
+        "maxMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxRunMinutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usedMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usedDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "totalMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "totalDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "recentAccess": {
           "type": [
             "array",
@@ -6832,6 +6982,12 @@
             "done"
           ]
         },
+        "notchPinned": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "runtimes": {
           "anyOf": [
             {
@@ -7133,6 +7289,9 @@
     "about.set": {
       "$ref": "#/$defs/AboutInput"
     },
+    "agentKeys.check": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
     "agentKeys.fromShell": {
       "$ref": "#/$defs/AgentKeysReport"
     },
@@ -7158,6 +7317,9 @@
       "required": [
         "names"
       ]
+    },
+    "agentKeys.use": {
+      "$ref": "#/$defs/AgentKeysReport"
     },
     "agents.addRoutine": {
       "type": "null"
@@ -7788,6 +7950,9 @@
     "host.joinWithCode": {
       "$ref": "#/$defs/HostStatus"
     },
+    "host.limits": {
+      "$ref": "#/$defs/HostStatus"
+    },
     "host.openSettings": {
       "type": "null"
     },
@@ -8189,6 +8354,15 @@
         "reasons",
         "upgradeUrl"
       ]
+    },
+    "repoCache.clear": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.get": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.set": {
+      "$ref": "#/$defs/RepoCacheView"
     },
     "resources.get": {
       "type": [
@@ -8701,6 +8875,114 @@
         "json"
       ]
     },
+    "teleport.readiness": {
+      "type": "object",
+      "properties": {
+        "provider_id": {
+          "type": "string"
+        },
+        "app_display": {
+          "type": "string"
+        },
+        "keyvault_initialized": {
+          "type": "boolean"
+        },
+        "keyvault_unlocked": {
+          "type": "boolean"
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "dir": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "account": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "last_used": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "dir",
+              "name",
+              "last_used"
+            ]
+          }
+        },
+        "files": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "tabs": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "profile_empty": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider_id",
+        "app_display",
+        "keyvault_initialized",
+        "keyvault_unlocked",
+        "profiles",
+        "files",
+        "tabs",
+        "profile_empty"
+      ]
+    },
     "teleport.remembered": {
       "type": [
         "array",
@@ -9034,6 +9316,12 @@
                   },
                   "stage": {
                     "type": "string"
+                  },
+                  "sinceMs": {
+                    "type": "number"
+                  },
+                  "text": {
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -9170,6 +9458,111 @@
     "about.set": {
       "$ref": "#/$defs/AboutInput"
     },
+    "agentKeys.check": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
     "agentKeys.fromShell": {
       "type": "object",
       "properties": {
@@ -9184,6 +9577,9 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
@@ -9192,6 +9588,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -9199,6 +9607,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -9253,6 +9682,9 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
@@ -9261,6 +9693,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -9268,6 +9712,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -9322,6 +9787,9 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
@@ -9330,6 +9798,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -9337,6 +9817,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -9391,6 +9892,9 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
@@ -9399,6 +9903,18 @@
               },
               "expired": {
                 "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -9406,6 +9922,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -9458,6 +9995,111 @@
       },
       "required": [
         "names"
+      ]
+    },
+    "agentKeys.use": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
       ]
     },
     "agents.addRoutine": {
@@ -10126,6 +10768,16 @@
         }
       ]
     },
+    "host.limits": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "host.openSettings": {
       "type": "null"
     },
@@ -10502,6 +11154,15 @@
         "reasons",
         "upgradeUrl"
       ]
+    },
+    "repoCache.clear": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.get": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.set": {
+      "$ref": "#/$defs/RepoCacheView"
     },
     "resources.get": {
       "type": [
@@ -10947,6 +11608,114 @@
         "warnings",
         "relayUnsealed",
         "json"
+      ]
+    },
+    "teleport.readiness": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "type": "string"
+        },
+        "appDisplay": {
+          "type": "string"
+        },
+        "keyvaultInitialized": {
+          "type": "boolean"
+        },
+        "keyvaultUnlocked": {
+          "type": "boolean"
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "defaultProfile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "dir": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "account": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lastUsed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "dir",
+              "name",
+              "lastUsed"
+            ]
+          }
+        },
+        "files": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "tabs": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "profileEmpty": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "providerId",
+        "appDisplay",
+        "keyvaultInitialized",
+        "keyvaultUnlocked",
+        "profiles",
+        "files",
+        "tabs",
+        "profileEmpty"
       ]
     },
     "teleport.remembered": {

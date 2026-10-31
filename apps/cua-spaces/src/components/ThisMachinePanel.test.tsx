@@ -67,7 +67,7 @@ describe("host model", () => {
     const roster = withThisMachine([], sharing, 5, "macos");
     expect(notchActivity(roster, true)).toMatchObject({
       kind: "remote-access",
-      label: "Someone is connected to this computer",
+      label: "Someone is connected to this machine",
     });
     expect(notchActivity(withThisMachine([], { ...sharing, clients: [] }, 5, "macos"), false)).toBeNull();
   });

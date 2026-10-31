@@ -23,7 +23,7 @@ Returned by [`Cua.agent_setup`](/cua-sdk/reference/cua#cua).
 | Method | Description |
 | --- | --- |
 | [`configure_mcp`](#agentsetupconfigure_mcp) | Configures the MCP server (default: `cua mcp`, `cua` resolved on PATH; `cua-local mcp` named `cua-local` for the Local app) for `agents`. |
-| [`connect_json`](#agentsetupconnect_json) | Connect (and Reconnect) for `agents`: Cua's skills and MCP entry (`server`, default this channel's cua), and with `sign_in` the agent's sign-in copied into Keyvault on This Mac (Claude Code waits for its one browser approval). |
+| [`connect_json`](#agentsetupconnect_json) | Connect (and Reconnect) for `agents`: Cua's skills and MCP entry (`server`, default this channel's cua), and with `sign_in` the agent's sign-in copied into Keyvault on This Mac (Claude Code's is the sign-in it already has, read from where Claude Code keeps it). |
 | [`connection_status_json`](#agentsetupconnection_status_json) | Whether each agent is really connected (CONTRACT §4: `{agents, checked_at_ms}`), as JSON, the same JSON `cua connect status --json` prints and the `connect_status` MCP tool answers. |
 | [`device_sign_in_start_json`](#agentsetupdevice_sign_in_start_json) | Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login --device-auth` in a folder Cua owns). |
 | [`device_sign_in_wait_json`](#agentsetupdevice_sign_in_wait_json) | Waits for a device sign-in to be approved and saves it into Keyvault on This Mac. |
@@ -100,8 +100,9 @@ pub async fn configure_mcp(&self, agents: Vec<String>, server: Option<AgentMcpSe
 
 Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
 (`server`, default this channel's cua), and with `sign_in` the
-agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-for its one browser approval). JSON: one result per agent.
+agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+sign-in it already has, read from where Claude Code keeps it). JSON:
+one result per agent.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">

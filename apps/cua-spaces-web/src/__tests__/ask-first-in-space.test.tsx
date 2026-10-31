@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Ask first with the redesign: Start goes straight to the Space being made,
+// Ask first: Start goes straight to the Space being made,
 // and the job is its thread's first message, @mentioning the agent. When the
 // agent can't be woken (Claude Code with no Anthropic sign-in) the message
 // is still posted, with "Claude Code isn't connected yet" and Connect under
@@ -76,6 +76,11 @@ describe.skipIf(!wasmBuilt)("Ask first in the Space (both flags)", () => {
     await act(async () => {
       fireEvent.click(q("[data-wake-connect]")!);
     });
+    // Reading Claude Code's sign-in asks first; once you agree the message goes again by itself.
+    expect(calls.filter((c) => c.op === "agents.connect")).toEqual([]);
+    await act(async () => {
+      fireEvent.click(await found("[data-import-confirm]"));
+    });
     await waitFor(() => expect(q("[data-wake-note=claude]")!.dataset.state).toBe("retried"), { timeout: 15000 });
     expect(calls.filter((c) => c.op === "agents.connect").map((c) => c.args)).toEqual([{ agents: ["claude-code"], signIn: true }]);
     await waitFor(() => expect(calls.some((c) => c.op === "thread.agentAdd" && c.args.harness === "claude-code")).toBe(true));
@@ -102,6 +107,9 @@ describe.skipIf(!wasmBuilt)("Send again when the agent can't join", () => {
     await found("[data-wake-connect]", 15000);
     await act(async () => {
       fireEvent.click(q("[data-wake-connect]")!);
+    });
+    await act(async () => {
+      fireEvent.click(await found("[data-import-confirm]"));
     });
     await waitFor(() => expect(q("[data-wake-note=claude]")!.textContent).toContain("this Space is full"), { timeout: 15000 });
     expect(q("[data-wake-note=claude]")!.dataset.state).not.toBe("retried");
@@ -141,7 +149,7 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
   });
 });
 
-describe.skipIf(!wasmBuilt)("@ any agent in a Space (redesign)", () => {
+describe.skipIf(!wasmBuilt)("@ any agent in a Space ", () => {
   it("offers the agents that can start here and adds one on send", async () => {
     setFlagOverride("spaces_ask_first_home", null);
     const calls: { op: string; args: Record<string, unknown> }[] = [];

@@ -828,11 +828,11 @@
             "omarchy Omarchy: 1.7 GB download · about 3 min the first time"
           ],
           "footnote": null,
-          "note": "A separate computer on this computer. Pick a system to start it.",
+          "note": "A separate computer on this machine. Pick a system to start it.",
           "phase": "choose",
           "title": "Make a first Space"
         },
-        "lede": "Spaces run on this computer, away from your files and your mouse.",
+        "lede": "Spaces run on this machine, away from your files and your mouse.",
         "primary": "done:Done",
         "prompt": null,
         "status": null,

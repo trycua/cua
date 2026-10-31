@@ -199,6 +199,9 @@ pub const METHODS: &[&str] = &[
     "connectors.view",
     "connectors.connectPlan",
     "connectors.providerSheet",
+    "connectors.providerPicker",
+    "connectors.models",
+    "connectors.importSheet",
     "connectors.appDetail",
     "connectors.setupCard",
     "summon.candidates",
@@ -220,6 +223,7 @@ pub const METHODS: &[&str] = &[
     "about.allowedChannels",
     "notch.layout",
     "notch.tiles",
+    "notch.togglePin",
     "notch.initial",
     "notch.reduce",
     "notch.view",
@@ -266,6 +270,7 @@ pub const METHODS: &[&str] = &[
     "machines.merge",
     "machines.pageRows",
     "machines.view",
+    "machines.account",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -1004,14 +1009,26 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 .unwrap_or(SpaceOs::Macos),
             a.get::<Option<String>>("forApp")?.as_deref(),
         )),
+        "connectors.providerPicker" => out(connectors::provider_picker(
+            &a.get("input")?,
+            a.get::<Option<String>>("forApp")?.as_deref(),
+            &a.get::<Option<String>>("query")?.unwrap_or_default(),
+            a.get::<Option<bool>>("expanded")?.unwrap_or(false),
+        )),
+        "connectors.models" => out(connectors::models_view(&a.get("input")?)),
+        "connectors.importSheet" => out(connectors::import_sheet_on(
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "connectors.appDetail" => out(connectors::app_detail(
             &a.get("input")?,
             &a.get::<String>("agent")?,
         )),
-        "connectors.setupCard" => out(connectors::setup_card(
+        "connectors.setupCard" => out(connectors::setup_card_for(
             &a.get("input")?,
             &a.get::<String>("agent")?,
             &a.get::<String>("name")?,
+            a.get::<Option<String>>("provider")?.as_deref(),
         )),
         "summon.candidates" => out(summon::candidates(&a.get("input")?)),
         "summon.plan" => out(summon::plan(&a.get("input")?, &a.get::<String>("text")?)),
@@ -1089,9 +1106,15 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("screen")?,
             a.get::<Option<bool>>("prompt")?.unwrap_or(false),
         )),
-        "notch.tiles" => out(notch::tiles(
+        "notch.tiles" => out(notch::tiles_pinned(
             &a.get::<Vec<Space>>("spaces")?,
             a.get::<Option<String>>("targeted")?.as_deref(),
+            "",
+            &a.get::<Option<Vec<String>>>("pinned")?.unwrap_or_default(),
+        )),
+        "notch.togglePin" => out(notch::toggle_pin(
+            &a.get::<Option<Vec<String>>>("pinned")?.unwrap_or_default(),
+            &a.get::<String>("id")?,
         )),
         "notch.initial" => out(notch::NotchState::default()),
         "notch.reduce" => out(notch::reduce(&a.get("state")?, &a.get("event")?)),
@@ -1167,6 +1190,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "machines.view" => out(crate::machines_view::view(
             &a.get::<Option<crate::machines_view::MachinesViewInput>>("input")?
                 .unwrap_or_default(),
+        )),
+        "machines.account" => out(crate::machines_account::view(
+            &a.get::<Option<devices::DevicesInput>>("input")?
+                .unwrap_or_default(),
+            a.get::<Option<u64>>("now")?.unwrap_or(0),
+            a.get::<Option<String>>("readError")?.as_deref(),
         )),
         "devices.view" => out(devices::devices_view(
             &a.get::<Option<devices::DevicesInput>>("input")?

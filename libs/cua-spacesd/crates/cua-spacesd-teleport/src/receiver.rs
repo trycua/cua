@@ -604,13 +604,16 @@ mod tests {
             .import_bytes(&chrome_bundle(), "chrome", false)
             .unwrap();
         let record = &outcome.record;
-        assert_eq!(record.files.len(), 2, "{record:?}");
+        // The two profile files, and the note that a signed-in browser is there.
+        let note = h.join(crate::importers::chrome::SIGNED_IN_BROWSER_NOTE);
+        assert_eq!(record.files.len(), 3, "{record:?}");
+        assert!(record.files.contains(&note));
         assert!(record.files.iter().all(|f| f.is_file() && f.starts_with(h)));
         assert!(!record.created_dirs.contains(&parent));
         assert!(record
             .created_dirs
             .iter()
-            .all(|d| d.starts_with(&parent) && d.is_dir()));
+            .all(|d| (d.starts_with(&parent) || note.starts_with(d)) && d.is_dir()));
         let ledger = Ledger::new("i", &outcome.provider_id, record, 0, 1);
         let report = receiver.wipe(&ledger);
         assert!(report.complete() && report.refused.is_empty(), "{report:?}");

@@ -1113,3 +1113,86 @@ async fn an_unreachable_host_is_not_a_stall() {
     );
     lab.stop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_driver_that_fits_on_no_machine_says_what_it_waits_for() {
+    let lab = Lab::new(&["a"]).await;
+    let mut spec = driver("1=hang");
+    // The test hosts have 8 CPUs: this driver fits on none of them.
+    spec.cpus = 64.0;
+    spec.memory_mb = 4096;
+    lab.coord.session_start("big", spec, 0).await.unwrap();
+    let v = lab
+        .until("big", "a waiting reason", T, |v| !v.waiting.is_empty())
+        .await;
+    assert_eq!(v.state, sstate::RUNNING);
+    assert!(
+        v.waiting.contains("64 CPUs") && v.waiting.contains("4 GB memory"),
+        "{}",
+        v.waiting
+    );
+    assert_eq!(lab.starts_of(1), 0, "it must not have started");
+    lab.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_driver_that_fits_has_no_waiting_reason() {
+    let lab = Lab::new(&["a"]).await;
+    lab.coord
+        .session_start("small", driver("1=hang"), 0)
+        .await
+        .unwrap();
+    wait_for("epoch 1 started", T, async || {
+        (lab.starts_of(1) == 1).then_some(())
+    })
+    .await;
+    let v = lab.coord.session_get("small").await.unwrap();
+    assert!(v.waiting.is_empty(), "{}", v.waiting);
+    lab.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_next_drive_starts_on_the_machine_that_ran_the_last_when_it_has_room() {
+    // The journal is in the data folder of the machine that ran the last
+    // drive. Spreading would send the next drive to the idle machine `b`;
+    // the session goes back to `a`.
+    let lab = Lab::new(&["a", "b"]).await;
+    lab.coord
+        .session_start("work", driver("1=crashafter:1500;2=hang"), 0)
+        .await
+        .unwrap();
+    wait_for("epoch 1 started", T, async || {
+        (lab.starts_of(1) == 1).then_some(())
+    })
+    .await;
+    let first = lab.starts()[0].0;
+    // Load the first machine so that, without the preference, the next
+    // drive would go to the other one.
+    let other = 1 - first;
+    let names = ["a", "b"];
+    for (i, host) in [(0, names[other]), (1, names[first]), (2, names[first])] {
+        let mut s = driver("1=hang");
+        s.on = host.into();
+        lab.coord
+            .session_start(&format!("filler{i}"), s, 0)
+            .await
+            .unwrap();
+    }
+    let v = lab
+        .until("work", "epoch 2 running", Duration::from_secs(30), |v| {
+            v.epoch == 2 && v.state == sstate::RUNNING
+        })
+        .await;
+    wait_for("epoch 2 started", T, async || {
+        (lab.starts_of(2) == 1).then_some(())
+    })
+    .await;
+    let second = lab
+        .starts()
+        .iter()
+        .find(|(_, e)| *e == 2)
+        .map(|(i, _)| *i)
+        .unwrap();
+    assert_eq!(second, first, "{v:?}");
+    lab.stop();
+}

@@ -532,7 +532,14 @@ async fn each_session_shows_its_state_and_activity() {
             .starts_with("waiting for an answer to #")
     );
     assert_eq!(s[2]["state"], "failed", "{s:?}");
-    assert!(s[2]["activity"].as_str().unwrap().contains("exited"));
+    // A short word, never the error; the complete text is the session's failure.
+    assert_eq!(s[2]["activity"], "Stopped");
+    assert!(
+        s[2]["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("exited")
+    );
     let m = call(&fx.mcp, "agent_members", json!({"space": fx.space}))
         .await
         .unwrap();

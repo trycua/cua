@@ -78,13 +78,8 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces",
             "● cua's Mac Studio — Desktop and 1 Space",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing"
-          ]
-        },
-        {
-          "group": "Your devices",
-          "rows": [
-            "● Ana's laptop — Signed-in device, not shared"
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
@@ -143,14 +138,10 @@
           "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Let other machines create Spaces here: off (read-only)",
-          "Let other machines control this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t let other machines create Spaces. Turn on “Let other machines create Spaces here” in Settings on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
           "mac-mini-staging — Offline (rename: machine)",
@@ -180,15 +171,15 @@
         {
           "group": "Your machines",
           "rows": [
-            "○ Ada's MacBook Pro [This Mac] — Not sharing"
+            "○ Ada's MacBook Pro [This Mac] — Not sharing",
+            "○ Cua BYOC tests — Signed in, not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
-          "group": "Your devices",
+          "group": "Offline for 30+ days (1) (collapsed) · Remove old machines",
           "rows": [
-            "○ Cua BYOC tests — Signed-in device, not shared",
-            "○ mac-mini-staging — Signed-in device, not shared",
-            "● Ana's laptop — Signed-in device, not shared"
+            "○ mac-mini-staging — Signed in, not sharing"
           ]
         }
       ],
@@ -203,34 +194,22 @@
           "Remove from account -> host setup"
         ],
         [
-          "Cua BYOC tests — Offline (rename: device)",
-          "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Let other machines create Spaces here: off (read-only)",
-          "Let other machines control this desktop: off (read-only)",
-          "spaces: No Spaces. The machine is offline.",
-          "New Space here on host:dev_byoc (disabled: It’s offline.)",
+          "Cua BYOC tests — Signed in, not sharing (rename: device)",
+          " on host:dev_byoc (disabled: It is signed in, but it does not share this machine.)",
           "details: Last seen: 9 days ago; OS: macOS",
-          "Remove from account -> dev_byoc"
+          "Revoke -> dev_byoc"
         ],
         [
-          "mac-mini-staging — Offline (rename: device)",
-          "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Let other machines create Spaces here: off (read-only)",
-          "Let other machines control this desktop: off (read-only)",
-          "spaces: No Spaces. The machine is offline.",
-          "New Space here on host:dev_old1 (disabled: It’s offline.)",
-          "details: Last seen: 41 days ago; OS: macOS",
-          "Remove from account -> dev_old1"
-        ],
-        [
-          "Ana's laptop — Online (rename: device)",
-          "Let other machines create Spaces here: off (read-only)",
-          "Let other machines control this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t let other machines create Spaces. Turn on “Let other machines create Spaces here” in Settings on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
+        ],
+        [
+          "mac-mini-staging — Signed in, not sharing (rename: device)",
+          " on host:dev_old1 (disabled: It is signed in, but it does not share this machine.)",
+          "details: Last seen: 41 days ago; OS: macOS",
+          "Revoke -> dev_old1"
         ]
       ],
       "summary": "4 machines, 1 online",
@@ -265,13 +244,8 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing"
-          ]
-        },
-        {
-          "group": "Your devices",
-          "rows": [
-            "● Ana's laptop — Signed-in device, not shared"
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
@@ -334,14 +308,10 @@
           "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Let other machines create Spaces here: off (read-only)",
-          "Let other machines control this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t let other machines create Spaces. Turn on “Let other machines create Spaces here” in Settings on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
           "mac-mini-staging — Offline (rename: machine)",
@@ -374,13 +344,8 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing"
-          ]
-        },
-        {
-          "group": "Your devices",
-          "rows": [
-            "● Ana's laptop — Signed-in device, not shared"
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
@@ -443,14 +408,10 @@
           "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Let other machines create Spaces here: off (read-only)",
-          "Let other machines control this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t let other machines create Spaces. Turn on “Let other machines create Spaces here” in Settings on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
           "mac-mini-staging — Offline (rename: machine)",
@@ -483,13 +444,8 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing"
-          ]
-        },
-        {
-          "group": "Your devices",
-          "rows": [
-            "● Ana's laptop — Signed-in device, not shared"
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
@@ -552,14 +508,10 @@
           "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Let other machines create Spaces here: off (read-only)",
-          "Let other machines control this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t let other machines create Spaces. Turn on “Let other machines create Spaces here” in Settings on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
           "mac-mini-staging — Offline (rename: machine)",
@@ -590,7 +542,6 @@
         "order": [
           "clouds",
           "yours",
-          "devices",
           "old",
           "team"
         ],
@@ -639,13 +590,8 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing"
-          ]
-        },
-        {
-          "group": "Your devices",
-          "rows": [
-            "● Ana's laptop — Signed-in device, not shared"
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
@@ -708,14 +654,10 @@
           "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Let other machines create Spaces here: off (read-only)",
-          "Let other machines control this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t let other machines create Spaces. Turn on “Let other machines create Spaces here” in Settings on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
           "mac-mini-staging — Offline (rename: machine)",
@@ -746,7 +688,6 @@
         "order": [
           "clouds",
           "yours",
-          "devices",
           "old",
           "team"
         ],
@@ -796,13 +737,8 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing"
-          ]
-        },
-        {
-          "group": "Your devices",
-          "rows": [
-            "● Ana's laptop — Signed-in device, not shared"
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
@@ -865,14 +801,10 @@
           "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Let other machines create Spaces here: off (read-only)",
-          "Let other machines control this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t let other machines create Spaces. Turn on “Let other machines create Spaces here” in Settings on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
           "mac-mini-staging — Offline (rename: machine)",

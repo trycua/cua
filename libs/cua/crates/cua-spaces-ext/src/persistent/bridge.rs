@@ -590,7 +590,7 @@ impl ToolExtension for AgentTools {
             ),
             tool(
                 "thread_post",
-                "Post to your Space's thread, as yourself. @name of another agent member gives it a task. Never post secrets.",
+                "Post to your Space's thread, as yourself. An explicit @name of another agent member gives it a task, within limits: a chain stops after 3 agent to agent hops from a person's message and a Space allows 20 such wakes a minute. Never post secrets.",
                 schema(
                     json!({"text": {"type": "string"},
                               "reply_to": {"type": "integer", "description": "The seq this answers."},

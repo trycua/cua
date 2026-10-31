@@ -129,6 +129,12 @@ struct BridgeContractTests {
         }
         func cloudTool(_ tool: String, _ args: [String: Any]) async throws -> Any { try await inner.cloudTool(tool, args) }
 
+        func repoCacheStatus() async -> RepoCacheState? { await inner.repoCacheStatus() }
+        func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? {
+            try await inner.setRepoCache(enabled: enabled, size: size)
+        }
+        func clearRepoCache() async throws -> RepoCacheState? { try await inner.clearRepoCache() }
+
         func rows() async throws -> [AppSpaceRow] { try await inner.rows() }
         func create(_ args: AppCreateSpaceArgs, createId: String,
                     progress: @escaping @Sendable (SpaceCreateProgress) -> Void) async throws -> String {
@@ -248,8 +254,9 @@ struct BridgeContractTests {
             ("agents.setRoutine", ["id": "R1", "enabled": false]), ("agents.removeRoutine", ["id": "R1"]),
             ("agents.allowComputer", ["agent": "ada", "machine": "relay:0123"]),
             ("agents.revokeComputer", ["agent": "ada", "machine": "relay:0123"]),
-            ("agentKeys.list", [:]), ("agentKeys.set", ["provider": "anthropic", "value": "sk-ant-test-0000"]),
+            ("agentKeys.list", [:]), ("agentKeys.check", [:]), ("agentKeys.set", ["provider": "anthropic", "value": "sk-ant-test-0000"]),
             ("agentKeys.remove", ["env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.use", ["app": "hermes", "env": "ANTHROPIC_API_KEY"]),
             ("agentKeys.shell", [:]), ("agentKeys.fromShell", ["env": "ANTHROPIC_API_KEY"]),
             ("clouds.status", [:]), ("clouds.test", ["target": ["provider": "aws", "region": "us-west-2"]]),
             ("clouds.connect", ["target": ["provider": "aws", "region": "us-west-2"], "makeDefault": false]),
@@ -277,6 +284,7 @@ struct BridgeContractTests {
             ("spaces.sendFiles", ["spaceId": space, "paths": ["/tmp/cua-contract-notes.txt"]]),
             ("settings.get", [:]), ("settings.choose", ["row": "telemetry", "option": "off"]),
             ("runtimes.check", ["kind": "container", "path": "/usr/local/bin/docker"]), ("runtimes.browse", ["kind": "container"]),
+            ("repoCache.get", [:]), ("repoCache.set", ["enabled": true, "sizeGb": 2]), ("repoCache.clear", [:]),
             ("settings.update", ["tips": ["off": false, "done": ["try-agent"]]]),
             ("keyvault.get", [:]),
             ("keyvault.lock", ["ids": ["kv-1"]]),
@@ -303,7 +311,7 @@ struct BridgeContractTests {
         "spaces.deleteMany": "removes fixture Spaces the later cases use; BulkDeleteTests covers it",
         "spaces.leave": "changes the fixture list the later cases use; BulkDeleteTests covers it",
         "spaces.add": "needs a running cua-spacesd at the address",
-        "host.setUp": "installs the host service", "host.action": "changes the host service",
+        "host.setUp": "installs the host service", "host.action": "changes the host service", "host.limits": "changes the host settings (HostBridgeTests covers hostLimitsChangeThroughTheHostModel)",
         "host.openSettings": "opens System Settings",
         "host.joinWithCode": "runs the bundled cua; JoinWithCodeTests covers the arguments and bad args",
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
@@ -317,7 +325,7 @@ struct BridgeContractTests {
         "teleport.windows": "lists this Mac's real windows", "teleport.remoteWindows": "needs a Space's stream",
         "teleport.icon": "needs the SDK's teleport handle", "teleport.thumbnail": "needs the SDK's teleport handle",
         "teleport.plan": "needs the SDK's teleport handle", "teleport.run": "needs the SDK's teleport handle",
-        "teleport.sites": "reads a browser's profile through the Keyvault", "teleport.streamWindow": "opens a native window",
+        "teleport.sites": "reads a browser's profile through the Keyvault", "teleport.readiness": "checks a browser through the Keyvault", "teleport.streamWindow": "opens a native window",
         "volume.approve": "the fake has no request", "volume.deny": "the fake has no request",
         "volume.revoke": "the fake has no grant", "volume.resolve": "changes the fake's conflicts",
         "volume.reveal": "opens Finder", "loginItem.openSettings": "opens System Settings",
@@ -419,6 +427,13 @@ struct BridgeContractTests {
             KvDomainCount(domain: "slack.com", cookies: 4, sessionCookies: 1, localStorage: 2, passwords: 0,
                           signin: true, identityProvider: false, unavailable: 0, unavailableReason: ""),
         ], notes: [])
+        let readiness = KvReadiness(
+            providerId: "chrome", appDisplay: "Google Chrome", keyvaultInitialized: true, keyvaultUnlocked: false,
+            profile: "Profile 1", defaultProfile: "Default",
+            profiles: [KvBrowserProfile(dir: "Default", name: "Personal", account: nil, lastUsed: false),
+                       KvBrowserProfile(dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true)],
+            files: KvReadinessCheck(state: "denied", say: "Turn on Full Disk Access."),
+            tabs: KvReadinessCheck(state: "unknown", say: ""), profileEmpty: false)
         let open = AppOpenWindow(windowId: 41, appId: "", appName: "Slack", windowTitle: "general", supported: true,
                                  bundlePath: "/Applications/Slack.app")
         let remote = AppRemoteWindow(id: "w-1", appName: "Firefox", title: "Mozilla Firefox", visible: true, appId: "firefox",
@@ -434,6 +449,7 @@ struct BridgeContractTests {
             ("teleport.plan", BridgeValue.encode(plan)),
             ("teleport.run", WebUIBridge.runReport(report)),
             ("teleport.sites", BridgeValue.encode(sites)),
+            ("teleport.readiness", BridgeValue.encode(readiness)),
             ("teleport.streamWindow", NSNull()),
         ].map { ($0.0, try json($0.1)) }
     }

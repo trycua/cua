@@ -16,10 +16,10 @@
  *   answers approvals.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CoreClient } from "./core";
-import { chatsPollMs, jittered, mapLimit, MissCache } from "../lib/poll-plan";
+import { chatsPollMs, forEachLimit, jittered, MissCache } from "../lib/poll-plan";
 import { useBridge, useSpaces } from "./hooks";
 import type { Space } from "./contracts/spaces";
 import { foldThread, readSeqFrom, type ThreadItem } from "./thread";
@@ -176,62 +176,126 @@ interface AgentListRow {
 /** The Agents tab's base poll; it slows as the account's Spaces grow (`chatsPollMs`). */
 export const CHATS_POLL_MS = 5_000;
 /** Spaces' threads read at once, at most. */
-const CHATS_PARALLEL = 8;
+const CHATS_PARALLEL = 16;
+/** A Space that has not answered in this long stops holding its read slot (it keeps going, and fills in when it answers). */
+export const CHATS_SLOT_MS = 4_000;
 /** How long a Space with no thread is left alone. */
 const MISS_TTL_MS = 60_000;
+/** The newest messages read first in each Space; older ones come on request. */
+export const DM_FIRST_PAGE = 40;
+/** The list as of the last visit, drawn at once on the next one. */
+const CACHE_KEY = "cua.agents.lastKnown.v1";
+/** Answers the page redraws on at most this often while a pass fills in. */
+const FLUSH_MS = 60;
 
 export interface AgentChats {
-  /** null while the first read is under way. */
+  /** null while there is nothing to show yet (no earlier list, no run of this device's, no Space has answered). */
   chats: AgentChat[] | null;
   /** Spaces with a thread (where an agent can be added). */
   spaces: Space[];
   /** Your author id, as the threads say it. */
   me: string | null;
+  /** Spaces still to answer in this pass (the list draws what is known meanwhile). */
+  loading: number;
   /** Read again now (after adding or removing an agent). */
   refresh(): void;
+}
+
+/** What one Space answered: its members with their DM summaries, and your role there. */
+export interface SpaceRead {
+  role: ThreadRole | null;
+  members: AgentMember[];
+  me: string | null;
+}
+
+function loadLastKnown(): Record<string, SpaceRead> {
+  try {
+    const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(CACHE_KEY);
+    const v = raw ? (JSON.parse(raw) as unknown) : null;
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, SpaceRead>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLastKnown(reads: ReadonlyMap<string, SpaceRead>): void {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(Object.fromEntries(reads)));
+  } catch {
+    // No storage (a private window, a full disk): the list just draws after its first answers.
+  }
 }
 
 /** Every agent in every Space you can see, as the Agents tab's list. */
 export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats {
   const { data, core } = useBridge();
   const { data: spaces } = useSpaces();
-  const [read, setRead] = useState<{ space: Space; role: ThreadRole | null; members: AgentMember[] }[] | null>(null);
-  const [withThread, setWithThread] = useState<Space[]>([]);
-  const [me, setMe] = useState<string | null>(null);
+  // What each Space last said: the last visit's answers first, then each Space's own as it comes. A Space
+  // that does not answer keeps its last answer (a machine that is off still lists its agents).
+  const reads = useRef<Map<string, SpaceRead> | null>(null);
+  reads.current ??= new Map(Object.entries(loadLastKnown()));
+  const [version, setVersion] = useState(0);
+  const [settled, setSettled] = useState(false);
+  const [pending, setPending] = useState(0);
   const [round, setRound] = useState(0);
   const list = (spaces ?? []).filter((s) => !s.id.startsWith("pending:"));
   const ids = list.map((s) => s.id).join("\n");
   // Not asked again for a minute: a Space with no thread (a stopped machine, an old daemon) stays that way.
   const misses = useRef(new MissCache(MISS_TTL_MS));
+  const inflight = useRef(new Set<string>());
   useEffect(() => {
     if (!data || spaces === undefined) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    misses.current.prune(new Set(list.map((s) => s.id)));
-    const read = async () => {
-      const asked = list.filter((s) => !misses.current.has(s.id));
-      const got = await mapLimit(asked, CHATS_PARALLEL, async (space) => {
-        try {
-          const [{ members }, page] = await Promise.all([data.call("thread.members", { spaceId: space.id, overview: true }), data.call("thread.read", { spaceId: space.id, limit: 1 })]);
-          return { space, role: page.role, members, me: page.me };
-        } catch (e) {
-          // No thread there (an old daemon, a stopped machine): not in the list, and not asked again for a while.
-          if (isMissingThreadTool(e)) misses.current.add(space.id);
-          else console.debug("agents: couldn't read", space.id, e);
-          return null;
-        }
-      });
-      if (!alive) return;
-      const ok = got.filter((g): g is NonNullable<typeof g> => g !== null);
-      setWithThread(ok.map((g) => g.space));
-      setMe(ok.find((g) => g.me)?.me ?? null);
-      setRead(ok);
+    let flushTimer: ReturnType<typeof setTimeout> | undefined;
+    const known = new Set(list.map((s) => s.id));
+    misses.current.prune(known);
+    for (const id of [...reads.current!.keys()]) if (!known.has(id)) reads.current!.delete(id);
+    // A pass's answers redraw the page together, not one by one.
+    const flush = () => {
+      if (flushTimer !== undefined) return;
+      flushTimer = setTimeout(() => {
+        flushTimer = undefined;
+        if (!alive) return;
+        saveLastKnown(reads.current!);
+        setVersion((v) => v + 1);
+      }, FLUSH_MS);
     };
-    // One read at a time, the next after the last one ends: slower as the
+    const readOne = async (space: Space) => {
+      inflight.current.add(space.id);
+      try {
+        const [{ members }, page] = await Promise.all([data.call("thread.members", { spaceId: space.id, overview: true }), data.call("thread.read", { spaceId: space.id, limit: 1 })]);
+        reads.current!.set(space.id, { role: page.role, members, me: page.me });
+      } catch (e) {
+        // No thread there (an old daemon): not in the list, and not asked again for a while.
+        if (isMissingThreadTool(e)) {
+          misses.current.add(space.id);
+          reads.current!.delete(space.id);
+        } else console.debug("agents: couldn't read", space.id, e);
+      } finally {
+        inflight.current.delete(space.id);
+        if (alive) {
+          setPending((n) => Math.max(0, n - 1));
+          flush();
+        }
+      }
+    };
+    const pass = async () => {
+      const asked = list.filter((s) => !misses.current.has(s.id) && !inflight.current.has(s.id));
+      setPending(asked.length);
+      // Spaces that answered last time go first: the slow ones are last in line, never in front.
+      asked.sort((x, y) => Number(reads.current!.has(y.id)) - Number(reads.current!.has(x.id)));
+      await forEachLimit(asked, CHATS_PARALLEL, CHATS_SLOT_MS, readOne);
+      if (alive) {
+        setSettled(true);
+        flush();
+      }
+    };
+    // One pass at a time, the next after the last one's slots end: slower as the
     // account grows (`chatsPollMs`), spread so pages don't ask together, and
     // paused while the page is hidden (it reads at once on coming back).
     const loop = async () => {
-      if (visible()) await read();
+      if (visible()) await pass();
       if (alive) timer = setTimeout(() => void loop(), jittered(chatsPollMs(list.length)));
     };
     const onVisible = () => {
@@ -244,14 +308,27 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
     return () => {
       alive = false;
       clearTimeout(timer);
+      clearTimeout(flushTimer);
       document.removeEventListener("visibilitychange", onVisible);
     };
     // `list` follows `ids`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, ids, round, spaces === undefined]);
-  // One list, with this device's unfinished runs (the core's order and words).
-  const chats = read === null ? null : mergeChats(core, read, attempts);
-  return { chats, spaces: withThread, me, refresh: useCallback(() => setRound((r) => r + 1), []) };
+  // One list, with this device's unfinished runs (the core's order and words), made again only when an
+  // answer, the Spaces or the runs change.
+  const merged = useMemo(() => {
+    const perSpace = list.flatMap((space) => {
+      const r = reads.current!.get(space.id);
+      return r ? [{ space, role: r.role, members: r.members }] : [];
+    });
+    return { perSpace, chats: spaces === undefined ? [] : mergeChats(core, perSpace, attempts) };
+    // `list` follows `spaces`; `reads` is read when `version` says it changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version, spaces, attempts, core]);
+  const chats = merged.chats.length === 0 && !settled ? null : merged.chats;
+  const withThread = useMemo(() => merged.perSpace.map((p) => p.space), [merged]);
+  const me = useMemo(() => [...reads.current!.values()].find((r) => r.me)?.me ?? null, [merged]);
+  return { chats, spaces: withThread, me, loading: pending, refresh: useCallback(() => setRound((r) => r + 1), []) };
 }
 
 /** One DM item, with the Space it came from. */
@@ -271,6 +348,12 @@ export interface AgentDm {
   entries: Record<string, ThreadEntry[]>;
   /** Your author id, when known. */
   me: string | null;
+  /** Spaces whose first page has not come yet (the others' messages show meanwhile). */
+  pending: number;
+  /** Older messages exist in some Space than are shown. */
+  hasMore: boolean;
+  /** Reads the page before the oldest shown, in each Space that has more. */
+  loadOlder(): Promise<void>;
   /** Sends `text` to the agent in `spaceId`: an @mention task in that Space's thread. */
   send(spaceId: string, text: string): Promise<void>;
   answer(spaceId: string, approval: number, approve: boolean): Promise<void>;
@@ -291,6 +374,8 @@ export function useAgentDm(chat: AgentChat | null, only: string | null): AgentDm
   const [error, setError] = useState<string | null>(null);
   const [me, setMe] = useState<string | null>(null);
   const [readSeq, setReadSeq] = useState<Record<string, number | null>>({});
+  const [pending, setPending] = useState(0);
+  const [more, setMore] = useState<Record<string, boolean>>({});
   const targets = (chat?.spaces ?? []).filter((s) => !only || s.spaceId === only);
   const sig = targets.map((t) => `${t.spaceId}#${t.handle}`).join("\n");
   const merge = useCallback((spaceId: string, more: readonly ThreadEntry[]) => {
@@ -301,29 +386,46 @@ export function useAgentDm(chat: AgentChat | null, only: string | null): AgentDm
       return { ...was, [spaceId]: [...by.values()].sort((a, b) => a.seq - b.seq) };
     });
   }, []);
+  // The oldest seq shown per Space, for paging back (read at the click, not in a render).
+  const oldest = useRef<Record<string, number>>({});
+  useEffect(() => {
+    oldest.current = {};
+    for (const [id, list] of Object.entries(entries)) if (list.length) oldest.current[id] = list[0]!.seq;
+  }, [entries]);
   useEffect(() => {
     setEntries({});
     setReadSeq({});
+    setMore({});
     setStatus("loading");
     setError(null);
+    setPending(targets.length);
     if (!data || !targets.length) return;
     let alive = true;
-    let ready = 0;
+    let ok = 0;
+    let settled = 0;
+    // The first page of each Space shows as it comes: one Space's slow answer never holds the others'.
+    const settle = (good: boolean) => {
+      settled++;
+      if (good) ok++;
+      setPending(targets.length - settled);
+      setStatus(ok > 0 ? "ready" : settled === targets.length ? "error" : "loading");
+    };
     for (const t of targets) {
       void (async () => {
         let cursor = 0;
         try {
-          const first = await data.call("thread.read", { spaceId: t.spaceId, with: t.handle, limit: 100, markRead: visible() });
+          const first = await data.call("thread.read", { spaceId: t.spaceId, with: t.handle, limit: DM_FIRST_PAGE, markRead: visible() });
           if (!alive) return;
           cursor = first.cursor;
           merge(t.spaceId, first.entries);
           setMe((m) => m ?? first.me);
+          setMore((m) => ({ ...m, [t.spaceId]: first.hasMoreBefore }));
           setReadSeq((r) => ({ ...r, [t.spaceId]: first.readSeq ?? readSeqFrom(first.entries, first.unread, first.me) }));
-          if (++ready === targets.length) setStatus("ready");
+          settle(true);
         } catch (e) {
           if (!alive) return;
           setError(e instanceof Error ? e.message : String(e));
-          setStatus("error");
+          settle(false);
           return;
         }
         let backoff = 1_000;
@@ -350,15 +452,41 @@ export function useAgentDm(chat: AgentChat | null, only: string | null): AgentDm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, sig, merge]);
 
-  // Fold each Space's DM like its thread, then interleave by time.
-  const items: DmItem[] = [];
-  for (const t of targets) {
-    for (const item of foldThread(entries[t.spaceId] ?? [], { readSeq: targets.length === 1 ? readSeq[t.spaceId] : null, me })) {
-      const tsMs = item.type === "unread" ? 0 : item.entry.tsMs;
-      items.push({ item, spaceId: t.spaceId, tsMs });
+  const loadOlder = useCallback(async () => {
+    if (!data) return;
+    await Promise.all(
+      targets
+        .filter((t) => more[t.spaceId] && oldest.current[t.spaceId] !== undefined)
+        .map(async (t) => {
+          try {
+            const page = await data.call("thread.read", { spaceId: t.spaceId, with: t.handle, before: oldest.current[t.spaceId], limit: DM_FIRST_PAGE });
+            merge(t.spaceId, page.entries);
+            setMore((m) => ({ ...m, [t.spaceId]: page.hasMoreBefore }));
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+          }
+        }),
+    );
+    // `targets` follows `sig`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, sig, more, merge]);
+
+  // Fold each Space's DM like its thread, then interleave by time: made again only when the entries,
+  // the read positions or the Spaces shown change, not on every render of the page.
+  const items = useMemo(() => {
+    const out: DmItem[] = [];
+    for (const t of targets) {
+      for (const item of foldThread(entries[t.spaceId] ?? [], { readSeq: targets.length === 1 ? readSeq[t.spaceId] : null, me })) {
+        const tsMs = item.type === "unread" ? 0 : item.entry.tsMs;
+        out.push({ item, spaceId: t.spaceId, tsMs });
+      }
     }
-  }
-  if (targets.length > 1) items.sort((a, b) => a.tsMs - b.tsMs);
+    if (targets.length > 1) out.sort((a, b) => a.tsMs - b.tsMs);
+    return out;
+    // `targets` follows `sig`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, readSeq, me, sig]);
+  const hasMore = targets.some((t) => more[t.spaceId]);
 
   const send = useCallback(
     async (spaceId: string, text: string) => {
@@ -380,5 +508,5 @@ export function useAgentDm(chat: AgentChat | null, only: string | null): AgentDm
     },
     [data, merge],
   );
-  return { status: targets.length ? status : "ready", error, items, entries, me, send, answer };
+  return { status: targets.length ? status : "ready", error, items, entries, me, pending, hasMore, loadOlder, send, answer };
 }

@@ -48,6 +48,11 @@ public struct CuaSpacesMacApp: App {
                 Button(model.chrome.newSpaceLabel) { Task { await model.openNewSpace() } }
                     .keyboardShortcut("n")
             }
+            // "Check for Updates…" under About (the macOS convention); the same
+            // entry as the menu bar menu's, from the one `UpdatesModel`.
+            CommandGroup(after: .appInfo) {
+                UpdateMenuButton(updates: model.updates)
+            }
             // The app menu's "Settings…" (⌘,): the page's Settings, the one
             // Settings there is (no `Settings` scene).
             CommandGroup(replacing: .appSettings) {
@@ -82,7 +87,7 @@ struct MenuBarLabel: View {
 
     var body: some View {
         Group {
-            if let icon = MenuBarIcon.image {
+            if let icon = MenuBarIcon.image(badged: model.updates.menuItem?.badge ?? false) {
                 Image(nsImage: icon)
             } else {
                 Text("Cua")
@@ -143,7 +148,15 @@ struct MenuBarContent: View {
             }
             Divider()
         }
-        ForEach(Array(model.menuBar.enumerated()), id: \.offset) { _, item in
+        let items = Array(model.menuBar.enumerated())
+        // The update entry goes last before Quit's separator.
+        let updateAt = items.firstIndex { $0.element.id == .quit }.map {
+            $0 > 0 && items[$0 - 1].element.id == .separator ? $0 - 1 : $0
+        }
+        ForEach(items, id: \.offset) { index, item in
+            if index == updateAt {
+                UpdateMenuButton(updates: model.updates)
+            }
             switch item.id {
             case .status: Text(item.label)
             case .separator: Divider()
@@ -178,6 +191,23 @@ struct MenuBarContent: View {
     }
 }
 
+/// "Check for Updates…", or the found update ("Version X available" over
+/// "Click to install" or "Restart to update"): the entry of the app menu and
+/// the menu bar menu. Nothing in a build with no updater.
+struct UpdateMenuButton: View {
+    let updates: UpdatesModel
+
+    var body: some View {
+        if let item = updates.menuItem {
+            // A menu item has one line: the second line is the grey line
+            // under it (as the Spaces status line above is).
+            Button(item.title) { updates.perform(item.action) }
+                .disabled(!item.enabled)
+            if let detail = item.detail { Text(detail) }
+        }
+    }
+}
+
 /// The Cua key at menu item size, for the low-disk warning.
 enum MenuBarKey {
     static let image: NSImage? = {
@@ -190,13 +220,46 @@ enum MenuBarKey {
 /// The Cua mark as a template image (from apps/cua-spaces/src-tauri/icons,
 /// copied into the bundle by scripts/build-app.sh).
 enum MenuBarIcon {
-    static let image: NSImage? = {
+    static let plain: NSImage? = {
         guard let url = Bundle.main.url(forResource: "tray-template", withExtension: "png"),
               let image = NSImage(contentsOf: url) else { return nil }
         image.isTemplate = true
         image.size = NSSize(width: 18, height: 18)
         return image
     }()
+
+    /// The icon with a small up-arrow in its lower right corner (an update
+    /// was found), still a template so the menu bar tints it.
+    static let badged: NSImage? = plain.map(badge(_:))
+
+    static func image(badged on: Bool) -> NSImage? { on ? badged : plain }
+
+    static func badge(_ icon: NSImage) -> NSImage {
+        let size = icon.size
+        let image = NSImage(size: size, flipped: false) { rect in
+            icon.draw(in: rect)
+            // Cut a clear disc out of the mark, then draw the arrow in it.
+            let disc = NSRect(x: size.width - 9.5, y: 0, width: 9.5, height: 9.5)
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(ovalIn: disc.insetBy(dx: -1, dy: -1)).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            NSColor.black.setFill()
+            let c = NSPoint(x: disc.midX, y: disc.midY)
+            let arrow = NSBezierPath()
+            arrow.move(to: NSPoint(x: c.x, y: c.y + 3.6))
+            arrow.line(to: NSPoint(x: c.x + 3.4, y: c.y - 0.2))
+            arrow.line(to: NSPoint(x: c.x + 1.2, y: c.y - 0.2))
+            arrow.line(to: NSPoint(x: c.x + 1.2, y: c.y - 3.6))
+            arrow.line(to: NSPoint(x: c.x - 1.2, y: c.y - 3.6))
+            arrow.line(to: NSPoint(x: c.x - 1.2, y: c.y - 0.2))
+            arrow.line(to: NSPoint(x: c.x - 3.4, y: c.y - 0.2))
+            arrow.close()
+            arrow.fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
 }
 
 /// Starts the notch and wires it to the model.

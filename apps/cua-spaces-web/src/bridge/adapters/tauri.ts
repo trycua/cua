@@ -104,6 +104,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "agents.signInStart",
   "agents.signInWait",
   "host.joinWithCode",
+  "host.limits",
   ...TELEPORT_TAURI_UNSUPPORTED,
   ...KEYVAULT_MANAGE_TAURI_UNSUPPORTED,
   ...TAURI_SETTINGS_UNSUPPORTED,
@@ -245,6 +246,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
           throw new UnsupportedOperationError("tauri", "settings.set updateChannel");
         // The app core's own settings file is the Mac and Electron apps'; the page keeps this for the session.
         case "tips":
+        case "notchPinned":
           throw new UnsupportedOperationError("tauri", `settings.set ${key}`);
       }
       return readSettings();

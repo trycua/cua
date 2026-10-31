@@ -461,6 +461,25 @@ fn windows_pid_alive(pid: u32) -> bool {
     }
 }
 
+/// The command line of a process, or `None` when it is gone (or off Unix).
+pub fn pid_command(pid: u32) -> Option<String> {
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "command=", "-p", &pid.to_string()])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (out.status.success() && !text.is_empty()).then_some(text)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
 /// Send a signal (`TERM`, `KILL`, ...) to a pid.
 pub fn signal(pid: u32, sig: &str) {
     let _ = std::process::Command::new("kill")

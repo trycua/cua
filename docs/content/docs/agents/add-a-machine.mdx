@@ -1,6 +1,6 @@
 ---
 title: Add a machine
-description: 'For an AI agent: run a Cua Spaces image by hand on a cloud or computer your user owns, then add it to Cua Spaces with cua spaces add.'
+description: 'For an AI agent: run a Cua Spaces image by hand on a cloud or machine your user owns, then add it to Cua Spaces with cua spaces add.'
 ---
 
 Cua Spaces can't start this image on that cloud itself, so your user wants it run
@@ -22,7 +22,7 @@ cloud are billed to them. Tell them what you started and how to stop it.
    docker run -d --name cua-space -e CUA_ENV_TOKEN=$TOKEN -p 3211:3211 ghcr.io/trycua/linux:24.04
    ```
 
-3. From your user's computer, add it with its address and the token. Keep the
+3. From your user's machine, add it with its address and the token. Keep the
    token in an environment variable, not in the chat or a file.
 
    ```bash test="cli-shape" id="agent-machine-add"
@@ -31,9 +31,9 @@ cloud are billed to them. Tell them what you started and how to stop it.
 
 ## You run in the cloud (hosted assistants)
 
-You can't reach your user's cloud account or computer from here. Tell your user the
+You can't reach your user's cloud account or machine from here. Tell your user the
 image, cloud and steps above, and ask them to run them or to paste this link into an
-agent on their computer.
+agent on their machine.
 
 ## Check it worked
 
@@ -61,5 +61,5 @@ firewall and the token, and try again. Don't open the port wider to make it pass
 - Your user can forget it with `cua spaces rm <name>`. That does not stop the
   machine: stop it with the cloud's own CLI.
 - It is a Space reached by its address (`direct:<address>:3211`), not one of
-  your user's computers or devices. How they differ:
-  [Computers, devices and Spaces](/spaces/concepts/computers-devices-and-spaces).
+  your user's machines. How they differ:
+  [Machines and Spaces](/spaces/concepts/machines-and-spaces).

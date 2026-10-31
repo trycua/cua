@@ -203,6 +203,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["notifications.markAllRead", {}],
       ["host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } }],
       ["host.action", { action: "provide-spaces" }],
+      ["host.limits", { maxSpaces: 2 }],
       ["host.openSettings", { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" }],
       ["settings.get", {}],
       ["settings.choose", { row: "telemetry", option: "off" }],
@@ -240,6 +241,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       "storage.run": { request: { kind: "clear-cache" } } as never,
       "host.setUp": { request: { mode: "direct", direct: "0.0.0.0:3211" } } as never,
       "host.action": { action: "provide-spaces" } as never,
+      "host.limits": { maxSpaces: 2 },
       "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
       "settings.set": { key: "telemetry", value: false },
       "settings.choose": { row: "auto-connect", option: "off" },
@@ -275,6 +277,15 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(host.calls.at(-1)).toBe("configure:-:true");
     expect(await code("host.action", { action: "set-up" })).toBe("bad_args");
     expect(await code("host.setUp", { request: {} })).toBe("bad_args");
+  });
+
+  it("changes the limits on the Spaces other machines create, and refuses a bad count", async () => {
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    const r = (await call("host.limits", { maxSpaces: 2 })) as Record<string, unknown>;
+    expect(r).toMatchObject({ configured: true });
+    expect(host.calls.at(-1)).toBe("configure:-:-");
+    expect(await code("host.limits", { maxSpaces: -1 })).toBe("bad_args");
+    expect(await code("host.limits", { maxDiskGb: "lots" })).toBe("bad_args");
   });
 
   it("carries the whole state, the owner and the progress", async () => {
@@ -508,7 +519,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await model.devices.refresh();
     const notes = system.notes.filter((n) => n.id.startsWith("device-"));
     expect(notes.map((n) => n.id)).toEqual(["device-dev_work", "device-dev_old"]);
-    expect(notes[0]).toMatchObject({ route: "/settings/devices" });
+    expect(notes[0]).toMatchObject({ route: "/machines" });
     expect(notes[0]!.title.length).toBeGreaterThan(0);
     started.stop();
   });
@@ -567,6 +578,24 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(settingsEvents).toBeGreaterThan(0);
   });
 
+  it("keeps the notch's pins in the app settings (`settings.update`), in pin order, across a restart", async () => {
+    const before = (await call("settings.get")) as { notchPinned: string[] };
+    expect(before.notchPinned).toEqual([]);
+    const after = (await call("settings.update", { notchPinned: ["relay:wsl", "local:aurora"] })) as typeof before;
+    expect(after.notchPinned).toEqual(["relay:wsl", "local:aurora"]);
+    // Saved with the rest of the app's settings (a launch reads them back); the tips are untouched.
+    expect(native.appSettingsLoad(model.settingsPath).notchPinned).toEqual(["relay:wsl", "local:aurora"]);
+    expect(model.settings.tips).toEqual({ off: false, done: [] });
+    expect(await code("settings.update", { notchPinned: "relay:wsl" })).toBe("bad_args");
+    expect(await code("settings.update", { notchPinned: [1] })).toBe("bad_args");
+    // The core's rule for Pin to notch: pinned last, unpinned when pinned, never This machine.
+    expect(native.appNotchTogglePin(["a"], "b")).toEqual(["a", "b"]);
+    expect(native.appNotchTogglePin(["a", "b"], "a")).toEqual(["b"]);
+    expect(native.appNotchTogglePin([], "this-mac")).toEqual([]);
+    await call("settings.update", { notchPinned: [] });
+    expect(native.appSettingsLoad(model.settingsPath).notchPinned).toEqual([]);
+  });
+
   it("keeps the page's tips in the app settings (`settings.update`), and Show tips and Reset tips", async () => {
     const before = (await call("settings.get")) as { tips: unknown };
     expect(before.tips).toEqual({ off: false, done: [] });
@@ -617,6 +646,21 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(await call("runtimes.check", { kind: "container", path: "/usr/local/bin/docker" })).toMatchObject({ tool: "docker", version: "27.3.1" });
     // "Browse…" is the app's file panel (none in this fixture UI).
     expect(await code("runtimes.browse", { kind: "container" })).toBe("unsupported");
+  });
+
+  it("reads, changes and clears the repo cache, and refuses what is not a number of GB", async () => {
+    const view = (await call("repoCache.get")) as { enabled: boolean; repos: number; bytes: number; capBytes: number; sizeSetting: string; summary: string; week: string };
+    expect(view).toMatchObject({ enabled: true, repos: 3, sizeSetting: "auto", summary: "Repos: 3, 1.2 GB of 5 GB" });
+    // The SDK's 64-bit sizes reach the page as numbers.
+    expect(typeof view.bytes).toBe("number");
+    expect(view.capBytes).toBe(5 * 1024 ** 3);
+    expect(await call("repoCache.set", { enabled: false })).toMatchObject({ enabled: false, sizeSetting: "auto" });
+    expect(await call("repoCache.set", { enabled: true, sizeGb: 2 })).toMatchObject({ enabled: true, sizeSetting: "2", summary: "Repos: 3, 1.2 GB of 2 GB" });
+    expect(await call("repoCache.set", { sizeGb: null })).toMatchObject({ sizeSetting: "auto" });
+    expect(await code("repoCache.set", { sizeGb: -1 })).toBe("bad_args");
+    expect(await code("repoCache.set", { sizeGb: "lots" })).toBe("bad_args");
+    expect(await code("repoCache.set", { enabled: "yes" })).toBe("bad_args");
+    expect(await call("repoCache.clear")).toMatchObject({ repos: 0, bytes: 0 });
   });
 
   it("lists the coding agents under AI agents, and a row's button sets one up", async () => {
@@ -946,6 +990,42 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(ids.sort()).toEqual(realSpaces(model.spaces).map((s) => s.id).sort());
     // The tab counts the Spaces on or starting (never a stopped one), though it lists them all.
     expect(view.tab.count).toBe(String(native.appOnCount(model.spaces)));
+  });
+
+  it("the notch lists a machine's shared desktop, counts it while it runs, and a pin puts it first and keeps it when it goes offline", async () => {
+    const { wireView } = await import("../src/notch/core");
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    const wsl = { ...backend.rowsNow[2]!, id: "relay:wsl", name: "WSL", provider: "relay", host: undefined, features: ["desktop_stream", "window_stream", "host_spaces"], reachable: true };
+    const studio = { ...backend.rowsNow[2]!, id: "relay:studio", name: "Studio", provider: "relay", host: undefined, features: ["host_spaces"], reachable: true };
+    backend.rowsNow = [...backend.rowsNow, wsl, studio];
+    await model.refresh();
+    const core = native as unknown as import("../src/notch/core").NotchCore;
+    const open = (pinned: string[]) => {
+      const shown = core.appNotchReduce(core.appNotchInitial(), { tag: "Visibility", inner: { shown: true } });
+      const clicked = core.appNotchReduce(shown.state, { tag: "Click" });
+      const state = core.appNotchReduce(clicked.state, { tag: "Pinned", inner: { ids: pinned } }).state;
+      return wireView(core.appNotchView(state, model.spaces));
+    };
+    // The shared desktop is a tile of its own kind; the machine that only provides Spaces is not.
+    let view = open([]);
+    const ids = view.tiles.map((t) => t.id);
+    expect(ids).toContain("relay:wsl");
+    expect(ids).not.toContain("relay:studio");
+    expect(view.tiles.find((t) => t.id === "relay:wsl")).toMatchObject({ desktop: true, location: "Desktop" });
+    // It counts as a running Space, as the menu's count does.
+    expect(view.tab.count).toBe(String(native.appOnCount(model.spaces)));
+    expect(native.appOnCount(model.spaces)).toBeGreaterThan(0);
+    // Pinned: first, with the pin.
+    view = open(["relay:wsl"]);
+    expect(view.tiles[0]).toMatchObject({ id: "relay:wsl", pinned: true });
+    // The machine goes offline: the unpinned desktop leaves, the pinned one stays dimmed and says so, and neither counts.
+    const on = native.appOnCount(model.spaces);
+    backend.rowsNow = backend.rowsNow.map((r) => (r.id === "relay:wsl" ? { ...r, reachable: false } : r));
+    await model.refresh();
+    expect(open([]).tiles.map((t) => t.id)).not.toContain("relay:wsl");
+    const kept = open(["relay:wsl"]).tiles.find((t) => t.id === "relay:wsl");
+    expect(kept).toMatchObject({ pinned: true, desktop: true, dim: true, note: "Offline" });
+    expect(native.appOnCount(model.spaces)).toBe(on - 1);
   });
 
   it("says the launch is still waiting first", async () => {

@@ -8,7 +8,7 @@
  * names the composer's `@` picker offers.
  */
 
-import { DEFAULT_AGENT_RIGHTS, type AgentMember, type AgentRight, type AgentRights, type MemberIdentity, type ShareEntry, type ThreadAuthor, type ThreadEntry, type ThreadRole } from "@/bridge";
+import { DEFAULT_AGENT_RIGHTS, type ThreadFailure, type AgentMember, type AgentRight, type AgentRights, type MemberIdentity, type ShareEntry, type ThreadAuthor, type ThreadEntry, type ThreadRole } from "@/bridge";
 import type { MentionCandidate } from "@/lib/mentions";
 
 export interface RosterAgent {
@@ -34,6 +34,8 @@ export interface RosterAgent {
   collides: boolean;
   /** What the Space calls it (`@claude`); `name` is its key on this machine (`claude-2` in a second Space). */
   handle: string;
+  /** Why it failed, typed, with the complete text (the member list says one word; Show details has the rest). */
+  failure: ThreadFailure | null;
 }
 
 /** How an author shows in the thread. */
@@ -145,6 +147,7 @@ export function buildRoster(input: {
     rights: m.rights ?? DEFAULT_AGENT_RIGHTS,
     youCan: m.youCan ?? { task: true, control: true, approve: true },
     identity: m.identity,
+    failure: m.status === "failed" ? (m.failure ?? null) : null,
     collides: false,
   }));
   const colliding = collidingNames(agents);

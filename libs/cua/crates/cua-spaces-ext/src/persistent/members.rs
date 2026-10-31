@@ -39,6 +39,20 @@ use cua_spaces::{Error, Result};
 /// How long a task claim lasts without renewal. The supervisor renews the
 /// claims of a session whose run is alive and working on them, so a claim
 /// runs out only when its session is gone.
+/// The id of the desktop row of this machine ("This Mac"). It is not a Space,
+/// but its page has the thread of any Space: people write there, and nothing
+/// runs there (no agent is a member of it). Its thread lives on this machine
+/// only: it is not mirrored to the Volume, so it never mixes with another
+/// machine's.
+pub const HOST_DESKTOP: &str = "this-mac";
+
+/// The longest a status read of one Space's runs may take (the list shows
+/// the record's last word for a run that did not answer in time).
+pub(crate) const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+/// How long a Space that did not answer is left alone before its runs are
+/// asked again.
+pub(crate) const UNREACHABLE_TTL: std::time::Duration = std::time::Duration::from_secs(20);
+
 pub const CLAIM_TTL: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// The largest local file attached to a post.
@@ -218,20 +232,33 @@ impl Persistent {
         ThreadStore::open(self.spaces.home_dir(), space)
     }
 
+    /// The thread key of `space`: its Space id, or [`HOST_DESKTOP`] for the
+    /// desktop row of this machine (no Space, but a page with a thread).
+    fn thread_key(&self, space: &str) -> Result<String> {
+        if space == HOST_DESKTOP {
+            return Ok(HOST_DESKTOP.to_string());
+        }
+        Ok(self.spaces.resolve(space)?.to_string())
+    }
+
     /// The thread of `space` (id or name) for `caller`: an agent reaches
     /// only its own Space's. A thread with no local log is rebuilt from the
     /// Volume first (once per process).
     pub async fn thread(&self, caller: &Caller, space: &str) -> Result<Thread> {
         // Everyone the transport let in reads (guests too); writing is
         // checked where each entry is written ([`policy`]).
-        let id = self.spaces.resolve(space)?.to_string();
+        let id = self.thread_key(space)?;
         if let Some((_, own)) = caller.agent_member()
             && *own != id
         {
             return Err(denied("an agent posts only in its own Space's thread"));
         }
         let store = self.thread_store(&id);
-        self.rebuild_once(&store).await;
+        // This machine's desktop thread stays on this machine: another
+        // machine's "this-mac" is not the same place.
+        if id != HOST_DESKTOP {
+            self.rebuild_once(&store).await;
+        }
         Ok(Thread {
             p: self.clone(),
             store,
@@ -389,38 +416,130 @@ impl Persistent {
             r.setup = super::durable::setup::PENDING.into();
             r.setup_note.clear();
         })?;
-        self.get(&rec.name)
+        let rec = self.get(&rec.name)?;
+        self.prewarm_in_background(&rec);
+        Ok(rec)
+    }
+
+    /// Puts the member's agent stack in its Space now, in the background,
+    /// so its first message does not wait for the install. A start that
+    /// begins meanwhile waits for this instead of installing twice; a
+    /// Space that cannot be reached yet is left for the start.
+    fn prewarm_in_background(&self, rec: &AgentRecord) {
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        if super::identity::is_external(rec) {
+            return;
+        }
+        let me = self.clone();
+        let rec = rec.clone();
+        rt.spawn(async move {
+            let Some(h) = cua_agents::harness::harness(&rec.harness).filter(|h| h.ready) else {
+                return;
+            };
+            let lock = super::phases::prewarm_lock(&me.dir, &rec.space, &rec.harness);
+            let _held = lock.lock().await;
+            let Ok(agents) = me.agents_for(&rec.space).await else {
+                return;
+            };
+            let _ = agents.prewarm(h, true).await;
+            let install = agents.ensure(h.installs, |_| {});
+            match tokio::time::timeout(std::time::Duration::from_secs(600), install).await {
+                Ok(Ok(_)) => tracing::debug!(agent = %rec.name, "agent stack ready ahead of its first message"),
+                Ok(Err(e)) => tracing::debug!(agent = %rec.name, "prewarm install: {e}"),
+                Err(_) => tracing::debug!(agent = %rec.name, "prewarm install timed out"),
+            }
+        });
+    }
+
+    /// The Space's agent service for a status read, or none when it does
+    /// not answer in [`PROBE_TIMEOUT`] or did not a moment ago
+    /// ([`UNREACHABLE_TTL`]).
+    async fn probe_agents(&self, space: &str) -> Option<cua_agents::Agents> {
+        if self.is_unreachable(space).await {
+            return None;
+        }
+        match tokio::time::timeout(PROBE_TIMEOUT, self.cached_agents(space)).await {
+            Ok(Ok(a)) => Some(a),
+            _ => {
+                self.mark_unreachable(space).await;
+                None
+            }
+        }
+    }
+
+    async fn is_unreachable(&self, space: &str) -> bool {
+        let mut live = self.live.lock().await;
+        match live.unreachable.get(space) {
+            Some(at) if at.elapsed() < UNREACHABLE_TTL => true,
+            Some(_) => {
+                live.unreachable.remove(space);
+                false
+            }
+            None => false,
+        }
+    }
+
+    async fn mark_unreachable(&self, space: &str) {
+        self.live
+            .lock()
+            .await
+            .unreachable
+            .insert(space.to_string(), std::time::Instant::now());
     }
 
     /// The agent members of `space` with what each is doing: the member's
     /// `status` (`working | waiting | failed | idle | asleep | paused`, the
     /// busiest of its sessions) and each session's in `session_states`.
     pub async fn members(&self, space: &str) -> Result<Vec<Value>> {
-        let id = self.spaces.resolve(space)?.to_string();
+        let id = self.thread_key(space)?;
         let recs = self.members_of(&id)?;
         let store = self.thread_store(&id);
         let fold = store.fold()?;
         let mut out = vec![];
         let live = |r: &AgentRecord| r.session_views().iter().any(|s| s.run_id.is_some());
+        // What each running session reports, asked of the Space's agent
+        // service all at once and each bounded: a Space that does not answer
+        // (a stopped machine, one that is off) must not hold the list for
+        // the sum of every run's timeout. Its members show what the record
+        // last said, and the Space is not asked again for a while.
         let agents = if recs.iter().any(|r| live(r) && !r.paused) {
-            match tokio::time::timeout(std::time::Duration::from_secs(15), self.cached_agents(&id))
-                .await
-            {
-                Ok(Ok(a)) => Some(a),
-                _ => None,
-            }
+            self.probe_agents(&id).await
         } else {
             None
         };
+        let mut reported: std::collections::HashMap<(String, u32), Option<RunStatus>> =
+            std::collections::HashMap::new();
+        if let Some(a) = &agents {
+            let asks = recs
+                .iter()
+                .filter(|r| !r.paused)
+                .flat_map(|r| {
+                    r.session_views()
+                        .into_iter()
+                        .map(move |s| (r.name.clone(), s))
+                })
+                .filter_map(|(name, s)| s.run_id.clone().map(|run| (name, s.k(), run)))
+                .map(|(name, k, run)| {
+                    let a = a.clone();
+                    async move {
+                        let st = tokio::time::timeout(PROBE_TIMEOUT, a.status(&run)).await;
+                        ((name, k), st.ok().and_then(|r| r.ok()).map(|st| st.status))
+                    }
+                });
+            let answers = futures_util::future::join_all(asks).await;
+            if answers.iter().any(|(_, st)| st.is_none()) {
+                self.mark_unreachable(&id).await;
+            }
+            reported.extend(answers);
+        }
         for r in recs {
             let open = fold.open_tasks(Some(&r.name)).len();
             let mut sessions = vec![];
             let mut first_status = None;
             for s in r.session_views() {
-                let mut run_status = None;
-                if let (Some(run), Some(a), false) = (&s.run_id, &agents, r.paused) {
-                    run_status = a.status(run).await.ok().map(|st| st.status);
-                }
+                let run_status = reported.get(&(r.name.clone(), s.k())).copied().flatten();
                 if s.k() <= 1 {
                     first_status = run_status;
                 }
@@ -508,31 +627,59 @@ impl Persistent {
         // given back. A connected agent takes its tasks from its inbox
         // itself. A member waiting for (or failed by) its .cua/setup, or
         // whose durable run is being started again elsewhere, keeps its tasks.
-        for rec in records.into_iter().filter(|r| {
-            !r.paused
-                && r.held_by.is_none()
-                && !super::identity::is_external(r)
-                && !r.relaunch
-                && r.setup != super::durable::setup::PENDING
-                && r.setup != super::durable::setup::FAILED
-        }) {
-            let store = self.thread_store(&rec.space);
-            if !store.exists() {
-                continue;
+        let members: Vec<AgentRecord> = records
+            .into_iter()
+            .filter(|r| {
+                !r.paused
+                    && r.held_by.is_none()
+                    && !super::identity::is_external(r)
+                    && !r.relaunch
+                    && r.setup != super::durable::setup::PENDING
+                    && r.setup != super::durable::setup::FAILED
+            })
+            .filter(|r| self.thread_store(&r.space).exists())
+            .collect();
+        // Each member is served on its own, so one member's cold start
+        // (minutes, on first use) never holds up another member's reply.
+        if self.detach_dispatch {
+            for rec in members {
+                let Some(guard) = super::phases::ServingGuard::take(&self.dir, &rec.name) else {
+                    continue; // still being served by an earlier pass
+                };
+                let me = self.clone();
+                tokio::spawn(async move {
+                    let _guard = guard;
+                    let store = me.thread_store(&rec.space);
+                    match tokio::time::timeout(
+                        super::DISPATCH_BUDGET,
+                        me.dispatch_member(&rec, &store),
+                    )
+                    .await
+                    {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => tracing::warn!("{} dispatch: {e}", rec.name),
+                        Err(_) => tracing::warn!("{} dispatch: timed out", rec.name),
+                    }
+                });
             }
-            let r =
-                tokio::time::timeout(super::AGENT_TICK_BUDGET, self.dispatch_member(&rec, &store))
-                    .await;
+            return;
+        }
+        let results = futures_util::future::join_all(members.iter().map(|rec| async move {
+            let store = self.thread_store(&rec.space);
+            let r = tokio::time::timeout(super::DISPATCH_BUDGET, self.dispatch_member(rec, &store))
+                .await;
+            (rec.name.as_str(), r)
+        }))
+        .await;
+        for (name, r) in results {
             match r {
                 Ok(Ok(seqs)) => {
                     for seq in seqs {
-                        report.fired.push(format!("{}: task #{seq}", rec.name));
+                        report.fired.push(format!("{name}: task #{seq}"));
                     }
                 }
-                Ok(Err(e)) => report.errors.push(format!("{} dispatch: {e}", rec.name)),
-                Err(_) => report
-                    .errors
-                    .push(format!("{} dispatch: timed out", rec.name)),
+                Ok(Err(e)) => report.errors.push(format!("{name} dispatch: {e}")),
+                Err(_) => report.errors.push(format!("{name} dispatch: timed out")),
             }
         }
     }
@@ -595,10 +742,11 @@ impl Persistent {
         task: &TaskInfo,
         entry: &str,
     ) -> Result<Delivered> {
-        let base = match self.current_turn(rec).await {
-            Some(Some(turn)) => turn,
+        let picked_ms = super::phases::now_ms();
+        let (base, cold) = match self.current_turn(rec).await {
+            Some(Some(turn)) => (turn, false),
             Some(None) => return Ok(Delivered::Busy),
-            None => 0,
+            None => (0, true),
         };
         let holder = Holder::new(&rec.name, rec.k(), rec.drive_epoch());
         let dispatch = || ClaimEntries {
@@ -614,7 +762,10 @@ impl Persistent {
             Err(e) => return Err(e),
         }
         let posted = store.get(task.seq)?;
-        let text = posted.map(|e| e.text).unwrap_or_else(|| task.text.clone());
+        let text = posted
+            .as_ref()
+            .map(|e| e.text.clone())
+            .unwrap_or_else(|| task.text.clone());
         let framed = format!(
             "[thread #{} from {}] {text}\n\n(Your answer is posted as your reply in the Space's thread when this turn ends; the `cua` tools thread_reply, thread_post and thread_read reach the thread yourself.)",
             task.seq, task.author.name
@@ -631,6 +782,18 @@ impl Persistent {
                 },
             )
         };
+        // How long the join takes is measured from the message.
+        let posted_ms = posted.as_ref().map(|e| e.ts_ms).unwrap_or(picked_ms);
+        if cold {
+            super::phases::set_woke(
+                &self.dir,
+                &format!("{}#{}", rec.name, rec.k()),
+                super::phases::Woke {
+                    posted_ms,
+                    picked_ms,
+                },
+            );
+        }
         // Show it at once: a run to start is `starting`, a warm one `thinking`.
         self.set_stage(
             rec,
@@ -640,15 +803,18 @@ impl Persistent {
                 "starting"
             }),
         );
-        let sent = self.send_session(rec, &framed, entry).await;
+        let sent = Box::pin(self.send_session(rec, &framed, entry)).await;
         if sent.is_err() {
             self.set_stage(rec, None);
         }
         match sent {
             Ok(d) => {
                 let base = if d.started { 0 } else { base };
-                // The note ("woke up and joined") comes when the agent is up.
-                if d.started {
+                if !d.started {
+                    // A follow-up to a running agent: its steps are timed too.
+                    Box::pin(self.follow_warm(rec, &d.run_id, posted_ms, picked_ms)).await;
+                } else {
+                    // The note ("woke up and joined") comes when the agent is up.
                     self.live
                         .lock()
                         .await
@@ -677,10 +843,21 @@ impl Persistent {
                 Ok(Delivered::Busy)
             }
             Err(e) => {
+                super::phases::take_woke(&self.dir, &format!("{}#{}", rec.name, rec.k()));
+                if cold {
+                    super::phases::start_failed(
+                        &format!("{}/{}", rec.name, task.seq),
+                        &rec.harness,
+                        &self.runtime_word(&rec.space),
+                        posted_ms,
+                        &e.to_string(),
+                    );
+                }
                 // The agent answers in the thread: plain words, with the
                 // complete error (and a Connect button when it needs a
                 // sign-in) in `failure`.
                 let failure = failure_for(rec, &e.to_string());
+                note_rejected(rec, &failure);
                 let mut reply = Draft::new(
                     Author::agent(&rec.name),
                     EntryKind::Message,
@@ -700,6 +877,27 @@ impl Persistent {
                 )?;
                 Err(e)
             }
+        }
+    }
+
+    /// Starts timing a follow-up to a running agent (`cua_agent_join_phase`).
+    async fn follow_warm(&self, rec: &AgentRecord, run_id: &str, posted_ms: u64, picked_ms: u64) {
+        if let Ok(agents) = self.cached_agents(&rec.space).await {
+            super::phases::follow(
+                agents,
+                super::phases::Join {
+                    run_id: run_id.to_string(),
+                    harness: rec.harness.clone(),
+                    runtime: self.runtime_word(&rec.space),
+                    cold: false,
+                    posted_ms,
+                },
+                vec![
+                    ("posted", 0),
+                    ("dispatch_picked", picked_ms.saturating_sub(posted_ms)),
+                ],
+                0,
+            );
         }
     }
 
@@ -909,6 +1107,11 @@ impl Persistent {
             let written = store.release(t.seq, drafts)?;
             anchor = written.first().map(|e| e.seq);
         }
+        // Nothing is streaming any more: the reply (or the failure) is the entry.
+        self.partials
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&format!("{}/{}#{}", rec.space, rec.name, rec.k()));
         self.update_in(rec, |r| {
             r.task = None;
             r.activity = None;
@@ -957,7 +1160,26 @@ impl Persistent {
                 .as_ref()
                 .is_some_and(|f| !f.open_tasks(Some(&rec.name)).is_empty());
             if let (Some(stage), true) = (stage, open) {
-                rows.push(json!({"agent": rec.handle(), "stage": stage}));
+                let mut row = json!({"agent": rec.handle(), "stage": stage});
+                // When its oldest open task was given (the working row's elapsed time) and what it
+                // has said so far this turn (the streaming entry, replaced whole each time).
+                if let Some(since) = fold
+                    .as_ref()
+                    .and_then(|f| f.open_tasks(Some(&rec.name)).iter().map(|t| t.ts_ms).min())
+                {
+                    row["since_ms"] = json!(since);
+                }
+                let key = format!("{}/{}#{}", rec.space, rec.name, rec.k());
+                if let Some(p) = self
+                    .partials
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&key)
+                    .filter(|p| !p.text.trim().is_empty())
+                {
+                    row["text"] = json!(p.text.trim_end());
+                }
+                rows.push(row);
             }
         }
         rows.sort_by_key(|r| r["agent"].as_str().unwrap_or_default().to_string());
@@ -965,9 +1187,10 @@ impl Persistent {
             .iter()
             .map(|r| {
                 format!(
-                    "{}={}",
+                    "{}={}#{}",
                     r["agent"].as_str().unwrap_or_default(),
-                    r["stage"].as_str().unwrap_or_default()
+                    r["stage"].as_str().unwrap_or_default(),
+                    r["text"].as_str().map_or(0, str::len)
                 )
             })
             .collect::<Vec<_>>()
@@ -1104,6 +1327,10 @@ impl Persistent {
         let owner = self.owner();
         for store in ThreadStore::list(self.spaces.home_dir()) {
             let key = store.space().to_string();
+            // Not shipped to the Volume: see [`HOST_DESKTOP`].
+            if key == HOST_DESKTOP {
+                continue;
+            }
             let now = cua_volume::now_ms();
             if self
                 .live
@@ -1239,7 +1466,12 @@ impl Thread {
     }
 
     /// Posts as the caller. An @mention of an agent member (not the author
-    /// itself) makes the entry a task for the first one mentioned.
+    /// itself) makes the entry a task for it, and each further agent
+    /// mentioned (`@a @b`) gets the same task on a copy of the message.
+    /// `@everyone` mentions every member the caller may task, and a person's
+    /// reply to an agent's message with no @mention addresses that agent.
+    /// An agent's message wakes another agent only through an explicit
+    /// @mention, within the chatter limits ([`super::wake`]).
     pub async fn post(&self, args: PostArgs) -> Result<ThreadEntry> {
         policy::may_write(self.p.role_of(&self.caller))?;
         check_text(&args.text)?;
@@ -1259,6 +1491,40 @@ impl Thread {
             .filter_map(|m| self.member_key(&m))
             .collect();
         let fold = self.store.fold()?;
+        let by_agent = author.agent_name().map(str::to_string);
+        // Mentions a person did not type: `@everyone`, or a reply to an agent's message.
+        let mut implied: Vec<String> = vec![];
+        let mut everyone = false;
+        let mut mentions = mentions;
+        if by_agent.is_none() {
+            let typed = parse_mentions(&args.text);
+            if typed.iter().any(|m| m == "everyone") && !members.iter().any(|h| h == "everyone") {
+                everyone = true;
+                implied = self
+                    .p
+                    .members_of(self.store.space())?
+                    .into_iter()
+                    .map(|r| r.name)
+                    .filter(|k| !mentions.contains(k))
+                    .collect();
+            } else if mentions.is_empty()
+                && let Some(r) = args.reply_to
+                && let Some(parent) = self.store.get(r)?
+                && let Some(key) = parent.author.agent_name()
+                && self
+                    .p
+                    .get(key)
+                    .is_ok_and(|rec| rec.space == self.store.space())
+            {
+                implied = vec![key.to_string()];
+            }
+        }
+        let quiet: Vec<String> = if everyone { implied.clone() } else { vec![] };
+        for k in &implied {
+            if !mentions.contains(k) {
+                mentions.push(k.clone());
+            }
+        }
         let mut kind = EntryKind::Message;
         let mut draft_approval = None;
         let mut draft_answer = None;
@@ -1300,27 +1566,50 @@ impl Thread {
             .transpose()?;
         let id = new_entry_id();
         let attachments = self.attachments(&id, &args.attachments).await?;
-        let task_to = mentions
-            .iter()
-            .find(|m| author.agent_name() != Some(m.as_str()))
-            .cloned();
+        // Everyone mentioned but the author itself, the caller may task.
+        let mut targets: Vec<(String, Option<crate::thread::KeyOwner>)> = vec![];
         // A mention of an agent the caller can't task is posted, but gives
-        // no task (a note says why).
-        let mut refused = None;
-        let mut keys_of = None;
-        let task_to = match task_to.map(|to| (self.p.get(&to), to)) {
-            Some((Ok(rec), to)) => {
-                if self.p.allows(&self.caller, &rec, Right::Task) {
-                    keys_of = self.p.keys_of(&self.caller, &rec);
-                    Some(to)
-                } else {
-                    refused = Some((to, Persistent::rights_of(&rec).task));
-                    None
+        // no task (a note says why; `@everyone` skips them quietly).
+        let mut refused = vec![];
+        for to in mentions
+            .iter()
+            .filter(|m| author.agent_name() != Some(m.as_str()))
+        {
+            match self.p.get(to) {
+                Ok(rec) if self.p.allows(&self.caller, &rec, Right::Task) => {
+                    targets.push((to.clone(), self.p.keys_of(&self.caller, &rec)));
+                }
+                Ok(rec) => {
+                    if !quiet.contains(to) {
+                        refused.push((to.clone(), Persistent::rights_of(&rec).task));
+                    }
+                }
+                Err(_) => targets.push((to.clone(), None)),
+            }
+        }
+        // Chatter limits: an agent's wake counts hops from the person who started the chain.
+        let mut hops = 0;
+        if let Some(me) = &by_agent {
+            if !targets.is_empty() {
+                let mine = fold
+                    .tasks
+                    .values()
+                    .filter(|t| t.to == *me)
+                    .max_by_key(|t| (!t.state.is_closed(), t.seq));
+                hops = mine.map_or(0, |t| t.hops) + 1;
+                if !self
+                    .p
+                    .wake_allowed(&self.store, hops, targets.len())
+                    .await?
+                {
+                    targets.clear();
                 }
             }
-            Some((Err(_), to)) => Some(to),
-            None => None,
-        };
+        } else if !targets.is_empty() {
+            self.p.wake_reset(self.store.space()).await;
+        }
+        let keys_of = targets.first().and_then(|t| t.1.clone());
+        let task_to = targets.first().map(|t| t.0.clone());
         let who = author.name.clone();
         let answered_join = draft_answer
             .as_ref()
@@ -1338,8 +1627,27 @@ impl Thread {
                 )));
             }
         }
+        // The other agents it names get the same task on a copy of the message.
+        let copies: Vec<(String, Draft)> = targets
+            .iter()
+            .skip(1)
+            .map(|(to, keys)| {
+                let mut c = Draft::new(author.clone(), kind, args.text.clone());
+                c.mentions = mentions.clone();
+                c.attachments = attachments.clone();
+                c.task = Some(TaskTo {
+                    to: to.clone(),
+                    session: None,
+                });
+                c.runs_on_keys_of = keys.clone();
+                c.view = view.clone();
+                c.hops = hops;
+                (to.clone(), c)
+            })
+            .collect();
         let mut d = Draft::new(author, kind, args.text);
         d.id = Some(id);
+        d.hops = if task_to.is_some() { hops } else { 0 };
         d.mentions = mentions;
         d.reply_to = args.reply_to.or(draft_answer.as_ref().map(|a| a.approval));
         d.attachments = attachments;
@@ -1351,29 +1659,35 @@ impl Thread {
         });
         d.runs_on_keys_of = keys_of;
         d.view = view;
-        // The agent shows as at work in the thread's live row right away
+        // Each agent shows as at work in the thread's live row right away
         // (the dispatcher gives it the task within a second).
-        if let Some(to) = &task_to
-            && let Ok(rec) = self.p.get(to)
-            && !rec.paused
-            && !super::identity::is_external(&rec)
-            && rec.session_views().iter().all(|s| s.activity.is_none())
-        {
-            self.p.set_stage(
-                &rec,
-                Some(if rec.run_id.is_some() {
-                    "thinking"
-                } else {
-                    "starting"
-                }),
-            );
+        for to in targets.iter().map(|t| &t.0) {
+            if let Ok(rec) = self.p.get(to)
+                && !rec.paused
+                && !super::identity::is_external(&rec)
+                && rec.session_views().iter().all(|s| s.activity.is_none())
+            {
+                self.p.set_stage(
+                    &rec,
+                    Some(if rec.run_id.is_some() {
+                        "thinking"
+                    } else {
+                        "starting"
+                    }),
+                );
+            }
         }
         let e = self.store.append(d)?;
+        let mut copied = vec![];
+        for (to, mut c) in copies {
+            c.fanout_of = Some(e.seq);
+            copied.push((to, self.store.append(c)?.seq));
+        }
         if let Some((seq, approve)) = answered_join {
             self.p
                 .answer_join_request(&self.caller, &self.store, seq, approve)?;
         }
-        if let Some((to, holders)) = refused {
+        for (to, holders) in refused {
             self.store.append(Draft::note(
                 "rights",
                 None,
@@ -1383,15 +1697,21 @@ impl Thread {
                 ),
             ))?;
         }
-        if let Some(to) = task_to
-            && let Ok(rec) = self.p.get(&to)
-            && rec.paused
-        {
-            self.store.append(Draft::note(
-                "dispatch",
-                Some(e.seq),
-                format!("{to} is paused; task #{} waits until it is resumed.", e.seq),
-            ))?;
+        let seqs = task_to
+            .into_iter()
+            .map(|to| (to, e.seq))
+            .chain(copied)
+            .collect::<Vec<_>>();
+        for (to, seq) in seqs {
+            if let Ok(rec) = self.p.get(&to)
+                && rec.paused
+            {
+                self.store.append(Draft::note(
+                    "dispatch",
+                    Some(seq),
+                    format!("{to} is paused; task #{seq} waits until it is resumed."),
+                ))?;
+            }
         }
         Ok(e)
     }
@@ -1621,22 +1941,40 @@ impl Thread {
 
     /// The caller's DM with agent `with`, summed up for the Agents tab.
     pub fn dm_summary(&self, with: &str, may_approve: bool) -> Result<crate::thread::DmSummary> {
+        Ok(self
+            .dm_summaries(&[(with.to_string(), may_approve)])?
+            .remove(0))
+    }
+
+    /// [`Self::dm_summary`] for several agents of one thread: the log, the
+    /// cursors and the approvals are read once, not once per agent.
+    pub fn dm_summaries(
+        &self,
+        members: &[(String, bool)],
+    ) -> Result<Vec<crate::thread::DmSummary>> {
         let me = self.me();
         let cursors = self.store.cursors()?;
-        let key = crate::thread::dm_cursor_key(&me.id, with);
-        let read = cursors
-            .get(&key)
-            .or_else(|| cursors.get(&me.id))
-            .map_or(0, |c| c.read_seq);
-        Ok(crate::thread::dm_summary(
-            &self.store.read(0, usize::MAX)?,
-            &me.id,
-            &me.name,
-            with,
-            read,
-            &self.store.fold()?.approvals,
-            may_approve,
-        ))
+        let entries = self.store.read(0, usize::MAX)?;
+        let fold = self.store.fold()?;
+        Ok(members
+            .iter()
+            .map(|(with, may_approve)| {
+                let key = crate::thread::dm_cursor_key(&me.id, with);
+                let read = cursors
+                    .get(&key)
+                    .or_else(|| cursors.get(&me.id))
+                    .map_or(0, |c| c.read_seq);
+                crate::thread::dm_summary(
+                    &entries,
+                    &me.id,
+                    &me.name,
+                    with,
+                    read,
+                    &fold.approvals,
+                    *may_approve,
+                )
+            })
+            .collect())
     }
 
     /// Open tasks of `member` (an agent caller: its own), oldest first.
@@ -1967,14 +2305,23 @@ pub(crate) fn failure_for(rec: &AgentRecord, e: &str) -> ag::failure::Failure {
     f
 }
 
-/// A failed member's status line: "Not connected" when it needs a sign-in,
-/// else the error's first line, whole.
-fn failed_line(harness: &str, e: &str) -> String {
-    let f = ag::failure::classify(harness, e);
-    match f.class {
-        ag::failure::FailureClass::NeedsConnect => "Not connected".into(),
-        ag::failure::FailureClass::Error => super::notify::reason(e),
+/// A run that was refused its credential: what its harness read from the saved keys for that
+/// provider reads as needing a reconnect in Settings, and no run is given it again until it is saved
+/// again.
+pub(crate) fn note_rejected(rec: &AgentRecord, f: &ag::failure::Failure) {
+    if f.class == ag::failure::FailureClass::NeedsConnect
+        && let Some(provider) = f.provider.as_deref()
+    {
+        ag::keys::mark_rejected_for_run(&rec.harness, provider);
     }
+}
+
+/// A failed member's status: one short word, the Connections words ("Needs reconnect" when the
+/// provider refused its credential, "Not connected" when it has none, else "Stopped").
+/// The error itself is never the status; the member's `failure` carries its complete text for Show
+/// details.
+fn failed_line(harness: &str, e: &str) -> String {
+    ag::failure::status_word(&ag::failure::classify(harness, e)).into()
 }
 
 /// One session of an agent member, as `agent_members` shows it.
@@ -2033,7 +2380,8 @@ pub fn session_state(
         "failed" => s.last_error.as_deref().map(|e| failed_line(&s.harness, e)),
         _ => None,
     };
-    // An error is never cut: only a working line is clipped.
+    // A failed session's word is short already; a working line is clipped. (The error is not cut
+    // anywhere: its complete text is the session's `failure`.)
     let activity = if state == "failed" {
         activity
     } else {

@@ -168,7 +168,7 @@ describe.skipIf(!wasmBuilt)("resources on Home and a Space's page", () => {
     expect(panel.querySelector('[data-resource-card="Memory"]')?.textContent).toContain("Given 4 GB of this Mac’s 64 GB");
   });
 
-  it("another computer's running Space has no panel with only its size there", async () => {
+  it("another machine's running Space has no panel with only its size there", async () => {
     await mountApp(`/spaces/${encodeURIComponent("relay:mac-mini/qa-windows")}`, { failsCreates: false, listsGhost: false, noThread: true });
     await waitFor(() => expect(document.querySelector("[data-detail-title]")).not.toBeNull());
     await act(() => new Promise((r) => setTimeout(r, 50)));

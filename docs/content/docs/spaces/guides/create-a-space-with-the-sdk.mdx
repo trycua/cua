@@ -1,6 +1,6 @@
 ---
 title: Use Spaces from code
-description: Create a Linux Space on your own computer from Python or TypeScript, run a command in it, take a screenshot, ask Cua Driver for its windows, watch it, and delete it. Then start from a full agent app in TypeScript, Rust or Swift.
+description: Create a Linux Space on your own machine from Python or TypeScript, run a command in it, take a screenshot, ask Cua Driver for its windows, watch it, and delete it. Then start from a full agent app in TypeScript, Rust or Swift.
 keywords:
   - Cua Spaces example
   - TypeScript agent app
@@ -10,9 +10,9 @@ keywords:
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 This walkthrough is for developers. A Space is a desktop your agents can use and
-you can watch. You create one on your own computer from code, run a command in it,
+you can watch. You create one on your own machine from code, run a command in it,
 take a screenshot, ask Cua Driver which windows it sees, watch the desktop,
-and delete the Space. Nothing leaves your computer.
+and delete the Space. Nothing leaves your machine.
 
 Requirements: Docker (or Podman or Colima) and about 4 GB of free memory.
 
@@ -42,7 +42,7 @@ npm install @trycua/cua
 
 ## 2. Create a Space and use it
 
-The program passes no location, so the Space runs on this computer: the
+The program passes no location, so the Space runs on this machine: the
 canonical Linux desktop (`ghcr.io/trycua/linux:24.04`) in a container.
 
 <Tabs groupId="sdk-lang" persist items={['Python', 'TypeScript']}>
@@ -208,10 +208,10 @@ Each app needs a Space: create one with **New Space**, or add one by address.
 
 ## Next
 
-- [Reach another computer](/cua-sdk#reach-another-machine): connect the SDK to
-  any computer that runs cua-spacesd, by address and token.
-- [Add a computer](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces):
-  let your laptop create Spaces on another computer, over the relay, ssh or
+- [Reach another machine](/cua-sdk#reach-another-machine): connect the SDK to
+  any machine that runs cua-spacesd, by address and token.
+- [Add a machine](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces):
+  let your laptop create Spaces on another machine, over the relay, ssh or
   Tailscale.
 - [Create a Space](/spaces/guides/add-a-space): any image, progress, GPUs.
 - [Space kinds](/spaces/concepts/space-kinds): pass `kind` (`container`, `vm`

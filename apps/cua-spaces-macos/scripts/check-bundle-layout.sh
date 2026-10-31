@@ -6,7 +6,8 @@
 #
 #   Contents/MacOS     only the app's own executable (CFBundleExecutable),
 #                      the `cua` CLI and the microVM monitor `cua-vz`
-#   Contents/Helpers   the host service, cua-spacesd
+#   Contents/Helpers   the host service, cua-spacesd, and Cua Driver
+#                      (cua-driver, cua-cursor-theme), which it runs
 #
 # Why: AppKit and LaunchServices take a process's bundle from its
 # executable's path, and any executable in Contents/MacOS is the app. When
@@ -41,4 +42,10 @@ if [ ! -x "$app/Contents/Helpers/cua-spacesd" ]; then
   echo "$app has no Contents/Helpers/cua-spacesd (the host service)" >&2
   bad=1
 fi
+for f in cua-driver cua-cursor-theme; do
+  if [ ! -x "$app/Contents/Helpers/$f" ]; then
+    echo "$app has no Contents/Helpers/$f (Cua Driver, which the host service runs)" >&2
+    bad=1
+  fi
+done
 exit "$bad"

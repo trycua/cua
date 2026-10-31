@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Home's sections with the redesign: "Your agents" (the Agents page's own
+ * Home's sections: "Your agents" (the Agents page's own
  * list, `agentList.view`: agents in your Spaces and this device's runs that
  * haven't started, with Connect or Try again) and "Your Spaces" (the Spaces
  * page's tiles). One row each, and See all.

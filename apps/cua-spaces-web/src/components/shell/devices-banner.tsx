@@ -12,8 +12,8 @@ import { cn } from "@/lib/utils";
 /**
  * This device needs enrolling or re-verifying: one bar above every page,
  * the core's words and its Enroll… (the SwiftUI app's `DevicesBanner`).
- * Settings, Devices says the same under its own row, so the bar stays off
- * that page.
+ * This machine's page says the same under its own name, so the bar stays off
+ * the Machines page.
  */
 export function DevicesBanner() {
   const { data: session } = useSession();
@@ -21,14 +21,14 @@ export function DevicesBanner() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const banner = shellDevicesBanner(devices.data, session?.signedIn);
-  if (!banner || pathname.startsWith("/settings/devices")) return null;
+  if (!banner || pathname.startsWith("/machines")) return null;
 
   const critical = banner.tone === "critical";
   const Icon = critical ? TriangleAlertIcon : CircleAlertIcon;
-  // The enroll sheet is the Devices page's.
+  // The sheet is the Machines page's.
   const enroll = () => {
     devices.startEnroll();
-    void navigate({ to: "/settings/devices" });
+    void navigate({ to: "/machines" });
   };
   return (
     <div role="status" data-shell-devices-banner={banner.tone} className="flex shrink-0 items-center gap-2 bg-muted/60 px-4 py-1.5 text-xs">

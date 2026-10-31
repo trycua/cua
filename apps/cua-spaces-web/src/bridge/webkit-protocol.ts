@@ -100,6 +100,7 @@ export const WEBKIT_METHODS = [
   "teleport.plan",
   "teleport.run",
   "teleport.sites",
+  "teleport.readiness",
   "teleport.remembered",
   "teleport.streamWindow",
   "sharing.list",
@@ -128,6 +129,9 @@ export const WEBKIT_METHODS = [
   "loginItem.openSettings",
   "runtimes.check",
   "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -158,6 +162,7 @@ export const WEBKIT_METHODS = [
   "host.setUp",
   "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
   "settings.get",
   "settings.choose",
@@ -376,6 +381,8 @@ export interface WkSettings {
   cli?: { name: string; installed: boolean } | null;
   /** `AppSettings.tips`; absent: an older host that keeps none. Saved with `settings.update`. */
   tips?: { off: boolean; done: string[] };
+  /** `AppSettings.notchPinned`: the Spaces and desktops pinned to the notch, in pin order; absent: an older host. Saved with `settings.update`. */
+  notchPinned?: string[];
   /** Settings, Advanced's runtimes as the host read them (`runtimes::RuntimesInput`); absent: not read. */
   runtimes?: RuntimesInput | null;
 }
@@ -411,6 +418,13 @@ export interface WkHostState {
   provideSpaces: boolean;
   maxSpaces: number;
   maxMacosVms?: number | null;
+  maxMemoryGb?: number | null;
+  maxDiskGb?: number | null;
+  maxRunMinutes?: number | null;
+  usedMemoryGb?: number | null;
+  usedDiskGb?: number | null;
+  totalMemoryGb?: number | null;
+  totalDiskGb?: number | null;
   recentAccess?: { atMs: number; via: string; who: string; what: string }[] | null;
   accessLogError?: string | null;
   providedSpaces?: import("./contracts/host").HostProvidedSpace[] | null;

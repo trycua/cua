@@ -617,7 +617,7 @@ export class AppModel {
       // A create this app asked another computer for already has its own pending row.
       this.creatingElsewhere = (list.creating ?? []).filter((c) => !this.spaces.some((s) => s.name === c.name && (s.host === c.machineId || this.native.appCreatesIsPending(s.id))));
       // Your other computers could not be read: their rows are the last known ones.
-      this.rosterError = list.notice ? "Could not reach your other computers. Their Spaces may be out of date." : null;
+      this.rosterError = list.notice ? "Could not reach your other machines. Their Spaces may be out of date." : null;
       if (this.selectedSpaceId === null) {
         const first = this.sidebar.selectedId;
         if (first) this.selectedSpaceId = first;

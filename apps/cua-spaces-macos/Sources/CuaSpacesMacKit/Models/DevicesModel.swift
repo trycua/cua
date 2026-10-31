@@ -69,7 +69,7 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
         guard device.state == "enrolled" else {
             throw CuaError.Runtime(
                 message: "The relay did not enroll \(device.name) (\(device.id)): it is \(device.state). "
-                    + "Ask that device for a new code and try again.")
+                    + "Ask that machine for a new code and try again.")
         }
     }
     public func rename(id: String, name: String) async throws { _ = try await inner.rename(id: id, name: name) }
@@ -449,7 +449,7 @@ public final class DevicesModel {
     /// A row's second line: platform and state, then when it was last seen.
     public func rowDetail(_ r: AppDeviceRow) -> String {
         guard let seen = r.lastSeen else { return r.detail }
-        return "\(r.detail) \u{b7} \(view.labels.lastSeen) \(relativeText(seen))"
+        return "\(r.detail), \(view.labels.lastSeen.lowercased()) \(relativeText(seen))"
     }
 
     // MARK: - Refresh

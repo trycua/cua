@@ -79,6 +79,8 @@ pub mod expectation;
 pub mod ffmpeg_install;
 pub mod health_report;
 pub mod history;
+#[cfg(feature = "keyring")]
+pub mod history_keyring;
 pub mod image_utils;
 pub mod interactive_input;
 pub mod key_pacing;

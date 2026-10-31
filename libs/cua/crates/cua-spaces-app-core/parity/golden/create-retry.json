@@ -686,8 +686,8 @@
           "os-macos Mac [spaces.status.starting] 1000 100%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Failed - Failed",
-          "os-macos Mac, macOS, This Mac, Starting 1000 Ready"
+          "os-macos Mac, macOS, This Mac, Starting 1000 Ready",
+          "os-macos Mac, macOS, This Mac, Failed - Failed"
         ]
       }
     },
@@ -751,8 +751,8 @@
           "os-macos Mac [spaces.status.starting] 1000 100%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Failed - Failed",
-          "os-macos Mac, macOS, This Mac, Starting 1000 Ready"
+          "os-macos Mac, macOS, This Mac, Starting 1000 Ready",
+          "os-macos Mac, macOS, This Mac, Failed - Failed"
         ]
       }
     }

@@ -1303,7 +1303,7 @@ fn microvm_support(
             Some(h) if h.online && host_runs_microvm(h) => Ok(vec![]),
             Some(h) => Err(MicrovmBlock::Why(host_microvm_why(h))),
             None => Err(MicrovmBlock::Why(
-                "needs a computer that runs microVMs".into(),
+                "needs a machine that runs microVMs".into(),
             )),
         },
         Location::Auto => {
@@ -2798,7 +2798,7 @@ pub struct ImageFieldView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WizardField {
     /// `os`, `image`, `placement`, `kind`, `runtime`, `connect-cloud`,
-    /// `connect-by-address`, `cpus`, `memory`, `disk`, `name`,
+    /// `cpus`, `memory`, `disk`, `name`,
     /// `open-when-ready`, `address`, `token`, `address-name`.
     pub id: String,
     /// Label (or the link's title).
@@ -3085,7 +3085,6 @@ fn fields(
                 .your_cloud
                 .then(|| field("connect-cloud", CONNECT_CLOUD_LABEL)),
         )
-        .chain([field("connect-by-address", "Connect by address\u{2026}")])
         .collect(),
         // The cloud picks the machine: no sliders, its facts only.
         (WizardMode::Create, 1) if yours => vec![],
@@ -3317,6 +3316,9 @@ struct DiskView {
     note: Option<String>,
     /// The chosen size is not the image's.
     resized: bool,
+    /// A container Space's Disk as one short line ("About 4\u{2013}8 GB"),
+    /// from the same range as the full row.
+    disk_short: Option<String>,
 }
 
 fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: SpaceOs) -> DiskView {
@@ -3365,10 +3367,17 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: Spa
             size_text(runtime_download)
         )
     });
+    let mut disk_short = None;
     if let Some(s) = size {
         if bounds.is_none() {
             let footprint = if image.local == Some(LocalEngine::Container) {
                 let (low, high) = container_footprint(s, runtime_download);
+                let (a, b) = (low.div_ceil(GIB), high.div_ceil(GIB));
+                disk_short = Some(if a == b {
+                    format!("About {a} GB")
+                } else {
+                    format!("About {a}\u{2013}{b} GB")
+                });
                 format!("{} initially; grows with use", size_range_text(low, high))
             } else {
                 size_text(s.disk)
@@ -3431,6 +3440,7 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: Spa
         arch,
         note,
         resized,
+        disk_short,
     }
 }
 
@@ -3680,8 +3690,8 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     let host_os = os;
     let os_tiles = [
         (SpaceOs::Linux, "Linux", "Ubuntu desktop with cua-spacesd"),
-        (SpaceOs::Windows, "Windows", "Windows Server VM"),
         (SpaceOs::Macos, "macOS", "Apple silicon VM through Lume"),
+        (SpaceOs::Windows, "Windows", "Windows Server VM"),
     ]
     .into_iter()
     .map(|(os, title, detail)| {
@@ -3728,7 +3738,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         },
         Location::Host => host_why
             .clone()
-            .unwrap_or_else(|| "Choose a computer.".to_string()),
+            .unwrap_or_else(|| "Choose a machine.".to_string()),
         Location::Auto => "None of your machines can take it now.".to_string(),
         Location::Local if runtime_switch.is_some() => match image.local {
             Some(LocalEngine::Container) => {
@@ -3941,9 +3951,14 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             .filter(|_| local && image.local == Some(LocalEngine::Container))
             .map(|f| Fact {
                 label: f.label.clone(),
-                value: f.value.clone(),
+                // One short line; the full breakdown is the tooltip.
+                value: disk.disk_short.clone().unwrap_or_else(|| f.value.clone()),
                 copy: None,
-                help: f.help.clone(),
+                help: disk
+                    .disk_short
+                    .as_ref()
+                    .map(|_| f.value.clone())
+                    .or_else(|| f.help.clone()),
                 warning: None,
             }),
     );
@@ -4191,7 +4206,7 @@ pub struct FirstSpaceOffer {
 
 /// What the offers say while this machine's runtimes or free space are not
 /// read yet: a VM that may not fit or run here is not offered until they are.
-pub const OFFER_NOT_CHECKED: &str = "Still checking this computer.";
+pub const OFFER_NOT_CHECKED: &str = "Still checking this machine.";
 
 /// Why a macOS VM can't run on a host of this architecture, or none.
 pub const MACOS_NEEDS_APPLE_SILICON: &str = "macOS Spaces need a Mac with Apple silicon.";
@@ -4973,26 +4988,30 @@ mod tests {
                 && f.value
                     .contains("includes 455 MB one-time Linux runtime download")
         }));
-        assert!(v.summary.iter().any(|f| {
-            f.label == "Disk"
-                && f.value
-                    .contains("includes 455 MB one-time Linux runtime download")
-        }));
-        assert!(v.summary.iter().any(|f| {
-            f.label == "Disk"
-                && f.value.starts_with(
-                    size_text(p.unpacked + (455 << 20))
-                        .trim_end_matches(" GB")
-                        .trim_end_matches(" MB"),
-                )
-        }));
-        e.storage.as_mut().unwrap().linux_runtime_download_bytes = 0;
-        assert!(
-            !view(&s, &e)
-                .summary
-                .iter()
-                .any(|f| f.value.contains("one-time Linux runtime download"))
+        // The Summary shows one short line; the full breakdown is its tooltip.
+        let disk = v.summary.iter().find(|f| f.label == "Disk").unwrap();
+        let (low, high) = container_footprint(&p, 455 << 20);
+        assert_eq!(
+            disk.value,
+            format!(
+                "About {}\u{2013}{} GB",
+                low.div_ceil(GIB),
+                high.div_ceil(GIB)
+            )
         );
+        assert!(
+            disk.help
+                .as_deref()
+                .unwrap()
+                .contains("includes 455 MB one-time Linux runtime download")
+        );
+        e.storage.as_mut().unwrap().linux_runtime_download_bytes = 0;
+        assert!(!view(&s, &e).summary.iter().any(|f| {
+            f.value.contains("one-time Linux runtime download")
+                || f.help
+                    .as_deref()
+                    .is_some_and(|h| h.contains("one-time Linux runtime download"))
+        }));
         let mac = on("ghcr.io/trycua/macos:15", &e);
         e.storage.as_mut().unwrap().linux_runtime_download_bytes = 455 << 20;
         assert!(
@@ -6855,17 +6874,7 @@ mod tests {
         let ids = |s: &WizardState| -> Vec<String> {
             view(s, &e).fields.into_iter().map(|f| f.id).collect()
         };
-        assert_eq!(
-            ids(&s),
-            [
-                "os",
-                "image",
-                "placement",
-                "kind",
-                "runtime",
-                "connect-by-address"
-            ]
-        );
+        assert_eq!(ids(&s), ["os", "image", "placement", "kind", "runtime"]);
         let s1 = reduce(&s, &WizardAction::Next, &e);
         assert_eq!(
             ids(&s1),

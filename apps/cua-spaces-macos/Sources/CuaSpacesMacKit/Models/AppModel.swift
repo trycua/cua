@@ -121,7 +121,7 @@ public final class AppModel {
     public let checklist: ChecklistModel
     /// Settings, Storage: the Cua Volume's store, Finder volume and cache.
     public internal(set) var storage: StorageModel
-    /// Settings, Connectors: the provider keys agents get (kept by the daemon).
+    /// Settings, Connections: the provider keys agents get (kept by the daemon).
     public let agentKeys: AgentKeysModel
     /// The user's own clouds: the "Your cloud" tile and "Connect a cloud".
     public let cloud: CloudModel
@@ -231,6 +231,8 @@ public final class AppModel {
             hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: nil, nameSeed: nil))
         self.notch = NotchModel()
+        // Pinned Spaces and desktops come first in the notch, across restarts.
+        notch.setPinned(settings.notchPinned)
         // The notch tiles and the preview cover read one thumbnail store,
         // filled from the SDK's shared cache.
         notch.thumbnails.fetch = { [backend] id, maxAgeMs in await backend.thumbnail(id: id, maxAgeMs: maxAgeMs) }
@@ -524,7 +526,7 @@ public final class AppModel {
         if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
         if let device {
             guard let relay = devices.devices else {
-                throw CuaError.InvalidArgument(message: "Revoking a device needs a signed-in Cua account")
+                throw CuaError.InvalidArgument(message: "Revoking a machine needs a signed-in Cua account")
             }
             try await relay.revoke(id: device)
         }
@@ -926,7 +928,7 @@ public final class AppModel {
             // Your other computers could not be read: their rows are the
             // last known ones (this Mac's are current).
             rosterError = list.notice.isEmpty ? nil
-                : "Could not reach your other computers. Their Spaces may be out of date."
+                : "Could not reach your other machines. Their Spaces may be out of date."
             await hostRead
             // Your machines' load for their sidebar lines, every so often
             // (each machine is asked; never holds up the list).
@@ -1605,6 +1607,21 @@ public final class AppModel {
     }
 
     // MARK: - Settings and banners
+
+    /// Pin to notch / Unpin from notch: the Spaces and machine desktops the
+    /// notch lists first (`AppSettings.notchPinned`, in pin order). Saved
+    /// with the settings, so a pin survives a restart; it grants nothing.
+    public func setNotchPinned(_ ids: [String]) {
+        guard ids != settings.notchPinned else { return }
+        settings.notchPinned = ids
+        saveSettings()
+        notch.setPinned(ids)
+    }
+
+    /// Pins `id` to the notch, or unpins it when it is pinned.
+    public func togglePin(_ id: String) {
+        setNotchPinned(appNotchTogglePin(pinned: settings.notchPinned, id: id))
+    }
 
     public func saveSettings() {
         try? appSettingsSave(path: settingsPath, settings: settings)

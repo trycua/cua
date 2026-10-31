@@ -124,10 +124,10 @@ agent
     },
     authMethods: [],
   }))
-  .onRequest("session/new", () => {
+  .onRequest("session/new", (ctx) => {
     const id = `mock-${Math.random().toString(16).slice(2, 10)}`;
     fs.writeFileSync(sessionsFile, JSON.stringify({ ...sessions(), [id]: true }));
-    log({ ev: "session_new", id });
+    log({ ev: "session_new", id, cwd: ctx?.params?.cwd });
     return {
       sessionId: id,
       modes: { currentModeId: "default", availableModes: [{ id: "default" }, { id: "ask", _meta: { kind: "standard" } }, { id: "full", _meta: { kind: "full_access" } }] },

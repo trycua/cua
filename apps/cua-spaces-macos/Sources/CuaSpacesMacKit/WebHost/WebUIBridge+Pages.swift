@@ -43,7 +43,8 @@ extension WebUIBridge {
 
         // Teleport and Share
         case "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
-             "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites", "teleport.remembered",
+             "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites", "teleport.readiness",
+             "teleport.remembered",
              "teleport.streamWindow":
             return try await teleport(method, args)
         // Links to things you run (`cua share`): the daemon's shares.
@@ -78,17 +79,39 @@ extension WebUIBridge {
             if model.identity != nil { try await model.teamsReader?.ackShareRemovals() }
             return NSNull()
 
-        // Settings, Connectors: the daemon's agent_keys methods (the key travels
+        // Settings, Connections: the daemon's agent_keys methods (the key travels
         // once, in agentKeys.set's arguments; answers never carry one).
         case "agentKeys.list": return try await model.agentKeys.call("agent_keys.list")
+        // The providers are asked whether the saved API keys still work (answers cached for minutes).
+        case "agentKeys.check": return try await model.agentKeys.call("agent_keys.check")
         case "agentKeys.set":
-            var keyArgs: [String: Any] = ["provider": try string(args, "provider"), "value": try string(args, "value")]
+            // A custom endpoint may have no key: `value` is then empty.
+            var keyArgs: [String: Any] = ["provider": try string(args, "provider"), "value": (args["value"] as? String) ?? ""]
             if let env = args["env"] as? String, !env.isEmpty { keyArgs["env"] = env }
+            if let region = args["region"] as? String, !region.isEmpty { keyArgs["region"] = region }
+            if let fields = args["fields"] as? [String: String], !fields.isEmpty { keyArgs["fields"] = fields }
+            // Another key beside the first one for the provider, named (it replaces nothing).
+            if args["add"] as? Bool == true { keyArgs["add"] = true }
+            if let label = args["label"] as? String, !label.isEmpty { keyArgs["label"] = label }
             return try await model.agentKeys.call("agent_keys.set", keyArgs)
-        case "agentKeys.remove": return try await model.agentKeys.call("agent_keys.remove", ["env": try string(args, "env")])
+        case "agentKeys.remove":
+            var removeArgs: [String: Any] = ["env": try string(args, "env")]
+            if let slot = args["slot"] as? String, !slot.isEmpty { removeArgs["slot"] = slot }
+            if args["keep_others"] as? Bool == true { removeArgs["keep_others"] = true }
+            return try await model.agentKeys.call("agent_keys.remove", removeArgs)
+        // Which saved credential an app that takes any provider uses from its next run (no env: the first that works).
+        case "agentKeys.use":
+            var useArgs: [String: Any] = ["app": try string(args, "app")]
+            if let env = args["env"] as? String, !env.isEmpty { useArgs["env"] = env }
+            if let slot = args["slot"] as? String, !slot.isEmpty { useArgs["slot"] = slot }
+            return try await model.agentKeys.call("agent_keys.use", useArgs)
         // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
         case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
-        case "agentKeys.fromShell": return try await model.agentKeys.call("agent_keys.from_shell", ["env": try string(args, "env")])
+        case "agentKeys.fromShell":
+            var shellArgs: [String: Any] = ["env": try string(args, "env")]
+            if let region = args["region"] as? String, !region.isEmpty { shellArgs["region"] = region }
+            if let fields = args["fields"] as? [String: String], !fields.isEmpty { shellArgs["fields"] = fields }
+            return try await model.agentKeys.call("agent_keys.from_shell", shellArgs)
 
         // Cua Volume
         case "volume.overview": return try await volumeOverview()
@@ -330,6 +353,19 @@ extension WebUIBridge {
             guard model.host.host != nil else { throw Failure.unsupported("This Mac can't be set up for access in this build") }
             let id = try hostAction(try string(args, "action"))
             await model.host.run(id)
+            if let failure = model.host.actionFailure { throw Self.hostFailure(failure) }
+            return hostStatus()
+        case "host.limits":
+            guard model.host.host != nil else { throw Failure.unsupported("This Mac can't be set up for access in this build") }
+            func count(_ key: String) throws -> UInt32? {
+                guard let v = args[key], !(v is NSNull) else { return nil }
+                guard let n = (v as? NSNumber)?.doubleValue, n >= 0, n <= 1_000_000, n == n.rounded() else {
+                    throw Failure.badArgs("\(key): a whole number, 0 or more")
+                }
+                return UInt32(n)
+            }
+            await model.host.setLimits(maxSpaces: try count("maxSpaces"), maxMemoryGb: try count("maxMemoryGb"),
+                                       maxDiskGb: try count("maxDiskGb"), maxRunMinutes: try count("maxRunMinutes"))
             if let failure = model.host.actionFailure { throw Self.hostFailure(failure) }
             return hostStatus()
         case "host.openSettings":
@@ -929,7 +965,13 @@ extension WebUIBridge {
             // Counts per site, never values; the daemon asks for Touch ID
             // before it shows names, as for the native review.
             guard let client = model.keyvault.client else { throw Failure.unsupported("The Keyvault is not available") }
-            return BridgeValue.encode(try await client.inventory(app: try string(args, "providerId"), profile: nil))
+            return BridgeValue.encode(try await client.inventory(app: try string(args, "providerId"), profile: Self.profile(args)))
+        case "teleport.readiness":
+            // Whether a teleport can work now, in plain words: the Keyvault,
+            // what macOS lets the daemon read, the profiles. Reads no value
+            // and asks for no presence.
+            guard let client = model.keyvault.client else { throw Failure.unsupported("The Keyvault is not available") }
+            return BridgeValue.encode(try await client.readiness(app: try string(args, "providerId"), profile: Self.profile(args)))
         case "teleport.remembered":
             let key = appReviewRememberKey(app: try string(args, "providerId"), space: spaceName(try string(args, "spaceId")))
             return appReviewRemembered(choices: model.settings.teleportChoices, key: key).map { $0 as Any } ?? NSNull()
@@ -970,7 +1012,7 @@ extension WebUIBridge {
     /// through `sdkConsent`, the same path `TeleportModel.confirm` takes, so
     /// every field (Save to Keyvault included) reaches the run.
     static func teleportConsent(_ c: [String: Any]) -> TeleportConsent {
-        sdkConsent(AppTeleportConsent(
+        var consent = sdkConsent(AppTeleportConsent(
             approved: c["approved"] as? Bool ?? false,
             acknowledgeSensitive: c["acknowledgeSensitive"] as? Bool ?? false,
             saveToKeyvault: c["saveToKeyvault"] as? Bool ?? false,
@@ -980,6 +1022,15 @@ extension WebUIBridge {
             fromVault: c["fromVault"] as? [String],
             includePasswords: c["includePasswords"] as? Bool ?? false,
             passwordDomains: c["passwordDomains"] as? [String]))
+        // The browser profile chosen in the setup sheet; absent reads Default.
+        consent.profile = profile(c)
+        return consent
+    }
+
+    /// The browser profile an argument names (`Profile 1`), or nil.
+    static func profile(_ args: [String: Any]) -> String? {
+        guard let p = args["profile"] as? String, !p.isEmpty else { return nil }
+        return p
     }
 
     /// A run's report, as the page reads it (`RunReport`).

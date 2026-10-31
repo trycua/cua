@@ -9,7 +9,7 @@
 // runtimes, launch at login, usage data, the update channel, the
 // experiments, Welcome's "Show again", the coding agents (`model.agents`)
 // and the Keyvault's switches (`model.keyvault`).
-import type { AppLoginItemStatus, AppSettingsInput, AppTeamInput, AppTelemetryInput } from "../native/generated/index";
+import type { AppLoginItemStatus, AppSettingsInput, AppTeamInput, AppTelemetryInput, RepoCacheStatus } from "../native/generated/index";
 import type { AppModel } from "../model/app-model";
 import { words } from "../model/errors";
 import { bounded } from "../model/time";
@@ -20,6 +20,23 @@ import { Failure, type Handlers } from "./host";
 import { hostParts, type HostParts } from "./host-parts";
 import { encode } from "./value";
 import { cliSetting } from "./cli";
+
+/** The repo cache as the page reads it (`RepoCacheView`); the SDK's numbers are 64-bit. */
+function repoCacheView(s: RepoCacheStatus | null) {
+  if (!s) throw Failure.unsupported("The repo cache is not available in this build");
+  return {
+    enabled: s.enabled,
+    repos: s.repos,
+    bytes: Number(s.bytes),
+    capBytes: Number(s.capBytes),
+    sizeSetting: s.sizeSetting,
+    summary: s.summary,
+    week: s.week,
+    hits: s.hits,
+    misses: s.misses,
+    secondsSaved: Number(s.secondsSaved),
+  };
+}
 
 function telemetryInput(model: AppModel): AppTelemetryInput | undefined {
   try {
@@ -96,6 +113,8 @@ export function settingsState(model: AppModel, parts: HostParts) {
     runtimes: encode(model.runtimesInput()),
     // The app core's own settings the page changes (`settings.update`).
     tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
+    // The Spaces and machine desktops pinned to the notch, in pin order.
+    notchPinned: [...model.settings.notchPinned],
   };
 }
 
@@ -108,6 +127,11 @@ export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel[
     const { off, done } = t as { off?: unknown; done?: unknown };
     if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string")) throw Failure.badArgs("tips: {off: boolean, done: string[]}");
     patch.tips = { off, done: done as string[] };
+  }
+  if ("notchPinned" in args) {
+    const ids = args.notchPinned;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw Failure.badArgs("notchPinned: string[]");
+    patch.notchPinned = ids as string[];
   }
   if (!Object.keys(patch).length) throw Failure.badArgs("tips");
   return patch;
@@ -192,7 +216,7 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       case "global-shortcut": {
         // The keys that bring the app forward from any app (Mac). The option is the accelerator.
         const system = parts().system;
-        if (!system?.setGlobalShortcut) throw Failure.failed("This computer has no shortcut to change.");
+        if (!system?.setGlobalShortcut) throw Failure.failed("This machine has no shortcut to change.");
         try {
           system.setGlobalShortcut(option);
         } catch (e) {
@@ -299,7 +323,27 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       if (!ctx.ui.chooseProgram) throw Failure.unsupported("This build has no file picker");
       return { path: (await ctx.ui.chooseProgram(caller.window)) ?? null };
     },
-    // The page's tips (`AppSettings.tips`), saved as given.
+    // Settings, General: the repo cache (the daemon's; the page shows its words).
+    "repoCache.get": async () => repoCacheView(await model.backend.repoCacheStatus()),
+    "repoCache.set": async (args) => {
+      const change: { enabled?: boolean; sizeGb?: number | null } = {};
+      if (args.enabled !== undefined) {
+        if (typeof args.enabled !== "boolean") throw Failure.badArgs("enabled: true or false");
+        change.enabled = args.enabled;
+      }
+      if (args.sizeGb !== undefined) {
+        const g = args.sizeGb;
+        if (g !== null && (typeof g !== "number" || !Number.isFinite(g) || g < 0 || g > 100_000)) throw Failure.badArgs("sizeGb: a number of GB, 0 or more, or null for automatic");
+        change.sizeGb = g;
+      }
+      try {
+        return repoCacheView(await model.backend.setRepoCache(change));
+      } catch (error) {
+        throw Failure.failed(words(error));
+      }
+    },
+    "repoCache.clear": async () => repoCacheView(await model.backend.clearRepoCache()),
+    // The page's tips (`AppSettings.tips`) and the notch's pins (`AppSettings.notchPinned`), saved as given.
     "settings.update": (args) => {
       save(settingsUpdate(args));
       return settingsState(model, parts());

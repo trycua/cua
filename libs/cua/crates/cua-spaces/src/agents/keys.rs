@@ -1,5 +1,5 @@
 //! Provider keys for agent runs, kept on this machine (Cua Spaces →
-//! Settings → Connectors).
+//! Settings → Connections).
 //!
 //! The keys live in the OS credential vault through cua-auth's secret store
 //! ([`cua_auth::Store::save_secret`]): one item, `agent-keys`, next to the
@@ -17,6 +17,8 @@
 //! `env_from_host`, never into logs or telemetry.
 
 use crate::error::{Error, Result};
+use cua_agents::claude_login;
+pub use cua_agents::connections as registry;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
@@ -25,25 +27,34 @@ use std::time::{Duration, Instant};
 /// The store's secret name.
 pub const SECRET_NAME: &str = "agent-keys";
 
+/// The store's secret name for which credential each app uses (not a secret:
+/// a provider, a variable name and a slot, kept beside the keys).
+pub const USES_NAME: &str = "agent-uses";
+
+/// The apps that take any provider and so let the person pick which
+/// credential they use (Settings, Connections, the app's page). Claude Code,
+/// Codex, Gemini CLI and Antigravity read one fixed sign-in.
+pub const SWITCHABLE_APPS: &[&str] = &["hermes", "opencode", "goose", "pi", "openclaw"];
+
 /// The app's settings methods (`SpaceService.CallSpaceTool` names). They are
 /// not contract tools: no MCP server lists or calls them, so an agent can
 /// never read or change a key.
 pub const APP_METHODS: &[&str] = &[
     "agent_keys.list",
+    "agent_keys.check",
     "agent_keys.set",
     "agent_keys.remove",
+    "agent_keys.use",
     "agent_keys.shell",
     "agent_keys.from_shell",
 ];
 
 /// The provider keys Cua may read from your login shell, by name (Settings,
-/// Connectors: "Use ANTHROPIC_API_KEY from your shell"). Nothing else is
-/// ever read there.
-pub const SHELL_NAMES: &[&str] = &[
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "COPILOT_GITHUB_TOKEN",
-];
+/// Connections: "Use ANTHROPIC_API_KEY from your shell"): the API key names of
+/// the providers in the registry. Nothing else is ever read there.
+pub fn shell_allowed() -> Vec<&'static str> {
+    registry::shell_names()
+}
 
 /// How long the login shell has to answer.
 const SHELL_WAIT: Duration = Duration::from_secs(5);
@@ -60,15 +71,23 @@ pub fn login_shell() -> std::path::PathBuf {
 }
 
 /// `name`'s value in a login, interactive `shell` (the profile files your
-/// terminal reads), when it is one of [`SHELL_NAMES`] and set. The shell's
+/// terminal reads), when it is one of [`shell_allowed`] and set. The shell's
 /// stdin is closed and it is stopped after [`SHELL_WAIT`].
 pub fn shell_value(shell: &std::path::Path, name: &str) -> Option<String> {
-    if !SHELL_NAMES.contains(&name) {
+    if !shell_allowed().contains(&name) {
         return None;
     }
     let script = format!("printf '\\n{SHELL_MARK}%s' \"${{{name}-}}\"");
+    let text = run_shell(shell, &script)?;
+    let value = text.rsplit_once(SHELL_MARK)?.1.trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+/// Runs `script` in a login, interactive `shell` with stdin closed, stopped
+/// after [`SHELL_WAIT`]; what it printed.
+fn run_shell(shell: &std::path::Path, script: &str) -> Option<String> {
     let mut child = std::process::Command::new(shell)
-        .args(["-l", "-i", "-c", &script])
+        .args(["-l", "-i", "-c", script])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -94,17 +113,27 @@ pub fn shell_value(shell: &std::path::Path, name: &str) -> Option<String> {
             }
         }
     }
-    let text = reader.join().ok()?;
-    let value = text.rsplit_once(SHELL_MARK)?.1.trim().to_string();
-    (!value.is_empty()).then_some(value)
+    reader.join().ok()
 }
 
-/// Which of [`SHELL_NAMES`] your login shell has set (names only).
+/// Which of [`shell_allowed`] your login shell has set (names only), in one
+/// shell start: the shell prints the names that are set, never a value.
 pub fn shell_names(shell: &std::path::Path) -> Vec<String> {
-    SHELL_NAMES
-        .iter()
-        .filter(|n| shell_value(shell, n).is_some())
-        .map(|n| (*n).to_string())
+    let allowed = shell_allowed();
+    let script = format!(
+        "printf '\\n{SHELL_MARK}'; for n in {}; do eval \"v=\\${{$n-}}\"; [ -n \"$v\" ] && printf ' %s' \"$n\"; done; true",
+        allowed.join(" ")
+    );
+    let Some(text) = run_shell(shell, &script) else {
+        return vec![];
+    };
+    let Some((_, names)) = text.rsplit_once(SHELL_MARK) else {
+        return vec![];
+    };
+    names
+        .split_whitespace()
+        .filter(|n| allowed.contains(n))
+        .map(str::to_string)
         .collect()
 }
 
@@ -113,7 +142,7 @@ pub fn is_app_method(name: &str) -> bool {
     APP_METHODS.contains(&name)
 }
 
-/// A provider with its own row in Settings.
+/// A provider with its own row in Settings: the registry's visible providers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Provider {
     pub id: &'static str,
@@ -121,27 +150,23 @@ pub struct Provider {
     pub env: &'static str,
 }
 
-/// Anthropic and OpenAI; anything else is `other` with its own name.
-pub const PROVIDERS: &[Provider] = &[
-    Provider {
-        id: "anthropic",
-        label: "Anthropic",
-        env: "ANTHROPIC_API_KEY",
-    },
-    Provider {
-        id: "openai",
-        label: "OpenAI",
-        env: "OPENAI_API_KEY",
-    },
-];
+/// The providers a key can be saved for (`cua_connections`, visible ones with
+/// a key to save); anything else is `other` with its own name.
+pub fn providers() -> Vec<Provider> {
+    registry::visible()
+        .filter_map(|p| {
+            p.key_method().map(|m| Provider {
+                id: p.id,
+                label: p.name,
+                env: m.env,
+            })
+        })
+        .collect()
+}
 
-/// The provider id for a variable: its row's, else `other`.
+/// The provider id for a variable: its provider's, else `other`.
 pub fn provider_of(env: &str) -> &'static str {
-    PROVIDERS
-        .iter()
-        .find(|p| p.env == env)
-        .map(|p| p.id)
-        .unwrap_or("other")
+    registry::provider_of_env(env).map_or("other", |p| p.id)
 }
 
 /// Names a stored key may not take: they would change how a run's shell,
@@ -249,11 +274,15 @@ pub struct KeyInfo {
     pub provider: String,
     /// The variable a run gets it as.
     pub env: String,
+    /// Which of several keys saved for the same variable this is; absent for the
+    /// first one (the key a provider's row shows).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slot: Option<String>,
     /// Its last four characters (empty for a key shorter than 12).
     pub last4: String,
     /// When it was added (Unix ms).
     pub added_ms: u64,
-    /// A copied sign-in's name ("Codex · ChatGPT sign-in"); none for a key
+    /// A copied sign-in's name ("ChatGPT sign-in for Codex"); none for a key
     /// typed in Settings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -265,6 +294,13 @@ pub struct KeyInfo {
     pub expires_ms: Option<u64>,
     /// It has stopped working (`expires_ms` has passed): runs no longer get it.
     pub expired: bool,
+    /// The region or plan chosen for it (Z.AI), when the provider has them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    /// Non-secret values saved with it: a custom endpoint's `base_url`, `model`
+    /// and `wire`, or a `model` chosen for a provider. Never the key.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
 }
 
 /// `agent_keys.list`: the stored keys and whether this machine can store
@@ -272,6 +308,9 @@ pub struct KeyInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct KeysReport {
     pub keys: Vec<KeyInfo>,
+    /// Which credential each switchable app uses, by app; an app not listed uses
+    /// the first one that works.
+    pub uses: BTreeMap<String, UseChoice>,
     pub providers: Vec<Provider>,
     /// Keys can be saved here.
     pub available: bool,
@@ -280,9 +319,22 @@ pub struct KeysReport {
     pub unavailable: Option<String>,
 }
 
+/// The credential an app was told to use: a variable and which of its saved
+/// keys. Names only, never a value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UseChoice {
+    pub provider: String,
+    pub env: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<String>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Stored {
     env: String,
+    /// Set on a key added beside the first one for the same variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    slot: Option<String>,
     provider: String,
     value: String,
     added_ms: u64,
@@ -292,6 +344,21 @@ struct Stored {
     source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_ms: Option<u64>,
+    /// When the provider (or an agent's run) said this credential is rejected (Unix ms). Saving
+    /// the credential again replaces the entry, so a reconnect clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rejected_ms: Option<u64>,
+    /// How a copied sign-in was made (`claude-login-keychain`, `claude-login-file`,
+    /// `device-code`, `token`). A `claude-login-*` copy is re-read from Claude
+    /// Code's own sign-in when it runs out ([`AgentKeys::sync_claude_login`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<String>,
+    /// The region or plan chosen for a provider that has them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    region: Option<String>,
+    /// Non-secret values saved with the key (a custom endpoint's URL, model and wire).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    fields: BTreeMap<String, String>,
 }
 
 impl std::fmt::Debug for Stored {
@@ -310,6 +377,11 @@ impl Stored {
         self.expires_ms.is_some_and(|e| e <= now_ms())
     }
 
+    /// Whether runs may be given it: not past its expiry and not rejected.
+    fn usable(&self) -> bool {
+        !self.expired() && self.rejected_ms.is_none()
+    }
+
     fn info(&self) -> KeyInfo {
         let n = self.value.chars().count();
         let last4 = if n >= 12 {
@@ -320,12 +392,16 @@ impl Stored {
         KeyInfo {
             provider: self.provider.clone(),
             env: self.env.clone(),
+            slot: self.slot.clone(),
             last4,
             added_ms: self.added_ms,
             label: self.label.clone(),
             source: self.source.clone(),
             expires_ms: self.expires_ms,
-            expired: self.expired(),
+            // A rejected credential reads like an expired one: it no longer works, Reconnect.
+            expired: !self.usable(),
+            region: self.region.clone(),
+            fields: self.fields.clone(),
         }
     }
 }
@@ -342,12 +418,74 @@ struct Blob {
 /// the next run must see them.
 const CACHE_FOR: Duration = Duration::from_secs(2);
 
+/// The variable Claude Code's sign-in is delivered as.
+const CLAUDE_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
+
+/// How long before its expiry a copied Claude sign-in is looked at again.
+const REFRESH_WITHIN_MS: u64 = 30 * 60 * 1000;
+
+/// The least time between two re-reads of Claude Code's own sign-in.
+const RESYNC_EVERY: Duration = Duration::from_secs(20);
+
+/// How long Claude Code may take to refresh its own sign-in when asked.
+const ASK_WAIT: Duration = Duration::from_secs(25);
+
+/// Where the freshness check reads Claude Code's own sign-in (a fake in tests).
+pub trait ClaudeLogin: Send + Sync {
+    /// Reads Claude Code's sign-in now.
+    fn lookup(&self) -> claude_login::Lookup;
+    /// Asks Claude Code to refresh its own sign-in; whether that ran well.
+    fn ask_to_refresh(&self) -> bool;
+}
+
+/// This computer's Claude Code. Reads nothing in a test process.
+pub struct HostClaudeLogin;
+
+impl ClaudeLogin for HostClaudeLogin {
+    fn lookup(&self) -> claude_login::Lookup {
+        if cua_home::is_test_process() {
+            return claude_login::Lookup::NotSignedIn;
+        }
+        let env = cua_agents::HostEnv::current();
+        claude_login::lookup(&env, &*claude_login::default_keychain(&env), now_ms())
+    }
+
+    fn ask_to_refresh(&self) -> bool {
+        let env = cua_agents::HostEnv::current();
+        // Called from async code: tell the runtime this thread blocks.
+        let ask = || claude_login::ask_claude_to_refresh(&env, ASK_WAIT);
+        match tokio::runtime::Handle::try_current() {
+            Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(ask)
+            }
+            _ => ask(),
+        }
+    }
+}
+
+/// What [`AgentKeys::sync_claude_login`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginSync {
+    /// There is no copy of Claude Code's sign-in.
+    NotApplicable,
+    /// The copy works and is not about to run out.
+    Fresh,
+    /// A newer sign-in was read from Claude Code and saved.
+    Updated,
+    /// The copy has run out and Claude Code has nothing newer: Reconnect.
+    Stale,
+}
+
 /// The stored agent keys of one credential store.
 pub struct AgentKeys {
     store: Option<cua_auth::Store>,
     unavailable: Option<String>,
     // Serializes read-modify-write; holds the last read.
     cache: Mutex<Option<(Instant, Vec<Stored>)>>,
+    // When Claude Code's own sign-in was last re-read ([`AgentKeys::sync_claude_login`]).
+    claude_sync: Mutex<Option<Instant>>,
+    // Which credential each switchable app uses, as last read.
+    uses_cache: Mutex<Option<(Instant, BTreeMap<String, UseChoice>)>>,
 }
 
 impl std::fmt::Debug for AgentKeys {
@@ -380,6 +518,8 @@ impl AgentKeys {
                 store: Some(store),
                 unavailable: None,
                 cache: Mutex::new(None),
+                claude_sync: Mutex::new(None),
+                uses_cache: Mutex::new(None),
             }
         } else {
             Self::unavailable(file_store_reason())
@@ -392,6 +532,8 @@ impl AgentKeys {
             store: None,
             unavailable: Some(reason.into()),
             cache: Mutex::new(None),
+            claude_sync: Mutex::new(None),
+            uses_cache: Mutex::new(None),
         }
     }
 
@@ -455,60 +597,210 @@ impl AgentKeys {
     pub fn report(&self) -> Result<KeysReport> {
         Ok(KeysReport {
             keys: self.list()?,
-            providers: PROVIDERS.to_vec(),
+            uses: self.uses(),
+            providers: providers(),
             available: self.available(),
             unavailable: self.unavailable.clone(),
         })
     }
 
-    /// Adds or replaces a key. `provider` is `anthropic`, `openai` or
-    /// `other`; `other` needs `env` (checked by [`validate_name`]).
+    /// Adds or replaces a key. `provider` is a provider id of the registry
+    /// (`anthropic`, `deepseek`, ...) or `other`; `other` needs `env` (checked
+    /// by [`validate_name`]).
     pub fn set(&self, provider: &str, env: Option<&str>, value: &str) -> Result<KeyInfo> {
-        let env = match (provider, env.map(str::trim).filter(|e| !e.is_empty())) {
+        self.set_with(provider, env, value, None, &BTreeMap::new())
+    }
+
+    /// [`AgentKeys::set`] with the non-secret choices a connection can carry: a
+    /// `region` (a plan or endpoint the provider lists) and `fields`
+    /// (`model`, and for a custom endpoint its `base_url` and `wire`). Saving
+    /// never asks the provider anything; a check runs later, in the
+    /// background ([`AgentKeys::recheck`]).
+    pub fn set_with(
+        &self,
+        provider: &str,
+        env: Option<&str>,
+        value: &str,
+        region: Option<&str>,
+        fields: &BTreeMap<String, String>,
+    ) -> Result<KeyInfo> {
+        self.set_slot(provider, env, value, region, fields, None, false)
+    }
+
+    /// [`AgentKeys::set_with`], optionally as another key beside the first one
+    /// saved for the provider (`add`), named `label` ("Work key"). With `add`
+    /// and no first key yet, it is saved as the first. The first key is what a
+    /// provider's row shows; the others are only used by an app that was told
+    /// to use one ([`AgentKeys::set_use`]).
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_slot(
+        &self,
+        provider: &str,
+        env: Option<&str>,
+        value: &str,
+        region: Option<&str>,
+        fields: &BTreeMap<String, String>,
+        label: Option<&str>,
+        add: bool,
+    ) -> Result<KeyInfo> {
+        let label = match label.map(str::trim).filter(|l| !l.is_empty()) {
+            Some(l) if l.chars().count() > 40 || l.chars().any(|c| c.is_control()) => {
+                return Err(Error::InvalidArgument(
+                    "a key's name must be one line of at most 40 characters".into(),
+                ));
+            }
+            other => other,
+        };
+        let mut optional_secret = false;
+        // A Claude token (`sk-ant-oat...`, from `claude setup-token`) pasted where an API
+        // key goes is a sign-in for Claude Code, not an API key: saved as one, so it
+        // works for Claude Code and is never offered to another app as a key.
+        if provider == "anthropic" && value.trim().contains("sk-ant-oat") {
+            if add {
+                return Err(Error::InvalidArgument(
+                    "a Claude sign-in token is used by Claude Code only; it can't be added as another key".into(),
+                ));
+            }
+            let copy = cua_agents::signin::claude_pasted_token(value)
+                .map_err(|r| Error::InvalidArgument(r.line().into()))?;
+            return self.import(
+                &copy.source,
+                &copy.env,
+                &copy.label,
+                &copy.value,
+                copy.expires_ms,
+                copy.origin.as_deref(),
+            );
+        }
+        let (env, id) = match (provider, env.map(str::trim).filter(|e| !e.is_empty())) {
             ("other", Some(e)) => {
                 validate_name(e)?;
-                e.to_string()
+                (e.to_string(), "other".to_string())
             }
             ("other", None) => {
                 return Err(Error::InvalidArgument(
                     "an Other key needs its environment variable name".into(),
                 ));
             }
-            (p, _) => PROVIDERS
-                .iter()
-                .find(|x| x.id == p)
-                .ok_or_else(|| {
+            (p, _) => {
+                let def = registry::provider(p).filter(|d| d.visible()).ok_or_else(|| {
                     Error::InvalidArgument(format!(
-                        "unknown provider {p:?}: use anthropic, openai or other"
+                        "unknown provider {p:?}: use a provider from `cua connections list`, or other"
                     ))
-                })?
-                .env
-                .to_string(),
+                })?;
+                let m = def.key_method().ok_or_else(|| {
+                    Error::InvalidArgument(format!("{} is connected another way", def.name))
+                })?;
+                optional_secret = m.secret_optional;
+                check_choices(def, m, region, fields)?;
+                (m.env.to_string(), def.id.to_string())
+            }
         };
-        let value = validate_value(value)?;
+        let value = if optional_secret && value.trim().is_empty() {
+            ""
+        } else {
+            validate_value(value)?
+        };
         if self.store.is_none() {
             return Err(self.refusal());
         }
         let mut g = self.lock();
         let mut keys = self.read(&mut g, true)?;
-        keys.retain(|k| k.env != env);
+        // Another key goes beside the first; saving the first again replaces only it.
+        let slot = (add && keys.iter().any(|k| k.env == env && k.slot.is_none()))
+            .then(|| format!("k{:x}", now_ms()));
+        if slot.is_none() {
+            keys.retain(|k| !(k.env == env && k.slot.is_none()));
+        }
         let stored = Stored {
-            provider: provider_of(&env).into(),
+            slot,
+            provider: id,
             env,
             value: value.into(),
             added_ms: now_ms(),
-            label: None,
+            label: label.map(str::to_string),
             source: None,
             expires_ms: None,
+            rejected_ms: None,
+            origin: None,
+            region: region.filter(|r| !r.is_empty()).map(str::to_string),
+            fields: fields
+                .iter()
+                .filter(|(_, v)| !v.trim().is_empty())
+                .map(|(k, v)| (k.clone(), v.trim().to_string()))
+                .collect(),
         };
         let info = stored.info();
         keys.push(stored);
-        keys.sort_by(|a, b| a.env.cmp(&b.env));
+        keys.sort_by(|a, b| (&a.env, &a.slot, a.added_ms).cmp(&(&b.env, &b.slot, b.added_ms)));
         self.write(&mut g, keys)?;
         Ok(info)
     }
 
-    /// Removes the key named `env`; whether there was one.
+    /// Removes one key beside the first, named by its `slot`; whether there was one.
+    /// An app that was told to use it then has no credential (it says so), never
+    /// another one.
+    pub fn remove_slot(&self, env: &str, slot: &str) -> Result<bool> {
+        if self.store.is_none() {
+            return Ok(false);
+        }
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        let before = keys.len();
+        keys.retain(|k| !(k.env == env && k.slot.as_deref() == Some(slot)));
+        if keys.len() == before {
+            return Ok(false);
+        }
+        self.write(&mut g, keys)?;
+        Ok(true)
+    }
+
+    /// Removes the first key saved for `env` and keeps the others: the oldest of them
+    /// becomes the first. Whether there was one.
+    pub fn remove_first(&self, env: &str) -> Result<bool> {
+        if self.store.is_none() {
+            return Ok(false);
+        }
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        let Some(at) = keys.iter().position(|k| k.env == env && k.slot.is_none()) else {
+            return Ok(false);
+        };
+        keys.remove(at);
+        // The oldest key beside it takes its place; a use that named it follows.
+        let next = keys
+            .iter()
+            .enumerate()
+            .filter(|(_, k)| k.env == env && k.slot.is_some())
+            .min_by_key(|(_, k)| k.added_ms)
+            .map(|(i, _)| i);
+        if let Some(i) = next {
+            keys[i].slot = None;
+        }
+        self.write(&mut g, keys)?;
+        drop(g);
+        // An app told to use the key just removed has no credential now (it says so); it is
+        // not moved to the key that took its place.
+        let mut all = self.uses();
+        let mut changed = false;
+        for u in all
+            .values_mut()
+            .filter(|u| u.env == env && u.slot.is_none())
+        {
+            u.slot = Some("removed".into());
+            changed = true;
+        }
+        if changed && let Some(store) = &self.store {
+            store
+                .save_secret(USES_NAME, &serde_json::to_vec(&all)?)
+                .map_err(store_err)?;
+            *self.uses_cache.lock().unwrap_or_else(|p| p.into_inner()) =
+                Some((Instant::now(), all));
+        }
+        Ok(true)
+    }
+
+    /// Removes the key named `env`, and every key saved beside it; whether there was one.
     pub fn remove(&self, env: &str) -> Result<bool> {
         if self.store.is_none() {
             return Ok(false);
@@ -535,6 +827,7 @@ impl AgentKeys {
         label: &str,
         value: &str,
         expires_ms: Option<u64>,
+        origin: Option<&str>,
     ) -> Result<KeyInfo> {
         validate_name(env)?;
         let value = validate_value(value)?;
@@ -548,11 +841,12 @@ impl AgentKeys {
             .any(|k| k.env == env && k.source.as_deref() != Some(source))
         {
             return Err(Error::InvalidArgument(format!(
-                "{env} is already in Keyvault; remove it in Settings → Connectors to copy this one"
+                "{env} is already in Keyvault; remove it in Settings → Connections to copy this one"
             )));
         }
         keys.retain(|k| k.source.as_deref() != Some(source));
         let stored = Stored {
+            slot: None,
             provider: provider_of(env).into(),
             env: env.into(),
             value: value.into(),
@@ -560,6 +854,10 @@ impl AgentKeys {
             label: Some(label.into()),
             source: Some(source.into()),
             expires_ms,
+            rejected_ms: None,
+            origin: origin.map(str::to_string),
+            region: None,
+            fields: BTreeMap::new(),
         };
         let info = stored.info();
         keys.push(stored);
@@ -599,6 +897,100 @@ impl AgentKeys {
             .collect())
     }
 
+    /// Keeps a copy of Claude Code's own sign-in usable, without ever
+    /// refreshing it ourselves.
+    ///
+    /// Claude Code's access token lasts hours, and its refresh token works
+    /// once: each refresh returns a new pair and spends the old one. If Cua
+    /// refreshed, Claude Code's next refresh would fail and sign the person
+    /// out of Claude Code. So Cua keeps the access token only, and when its
+    /// copy is within [`REFRESH_WITHIN_MS`] of running out (or a run said it
+    /// was refused) it reads Claude Code's own sign-in again: Claude Code
+    /// refreshes it as it is used and writes the new pair under its own lock.
+    /// With `ask` and nothing newer there, Claude Code is asked to refresh by
+    /// a one-line request ([`ClaudeLogin::ask_to_refresh`], at most every five
+    /// minutes), waiting a few seconds. Never a request of ours to Anthropic,
+    /// and nothing is checked live before saving.
+    ///
+    /// Re-read at most every 20 seconds. Only copies made by importing
+    /// Claude Code's sign-in are touched.
+    pub fn sync_claude_login(&self, src: &dyn ClaudeLogin, ask: bool) -> LoginSync {
+        let copy = {
+            let mut g = self.lock();
+            match self.read(&mut g, false) {
+                Ok(keys) => keys.into_iter().find(|k| {
+                    k.env == CLAUDE_ENV
+                        && k.origin
+                            .as_deref()
+                            .is_some_and(|o| o.starts_with("claude-login"))
+                }),
+                Err(_) => None,
+            }
+        };
+        let Some(copy) = copy else {
+            return LoginSync::NotApplicable;
+        };
+        let now = now_ms();
+        let rejected = copy.rejected_ms.is_some();
+        let running_out = rejected
+            || copy
+                .expires_ms
+                .is_some_and(|e| e <= now + REFRESH_WITHIN_MS);
+        if !running_out {
+            return LoginSync::Fresh;
+        }
+        let verdict = |copy: &Stored| {
+            if copy.usable() {
+                LoginSync::Fresh
+            } else {
+                LoginSync::Stale
+            }
+        };
+        {
+            let mut last = self.claude_sync.lock().unwrap_or_else(|p| p.into_inner());
+            if last.is_some_and(|t| t.elapsed() < RESYNC_EVERY) {
+                return verdict(&copy);
+            }
+            *last = Some(Instant::now());
+        }
+        let newer = |l: &claude_login::Lookup| -> Option<claude_login::Found> {
+            match l {
+                claude_login::Lookup::Found(f)
+                    if !f.oauth.expired(now_ms())
+                        && f.oauth.access_token != copy.value
+                        && (rejected
+                            || f.oauth.expires_ms.unwrap_or(u64::MAX)
+                                > copy.expires_ms.unwrap_or(0)) =>
+                {
+                    Some(f.clone())
+                }
+                _ => None,
+            }
+        };
+        let mut found = newer(&src.lookup());
+        if found.is_none() && ask && src.ask_to_refresh() {
+            found = newer(&src.lookup());
+        }
+        let Some(f) = found else {
+            return verdict(&copy);
+        };
+        let origin = match f.source {
+            claude_login::Source::Keychain { .. } => "claude-login-keychain",
+            claude_login::Source::File(_) => "claude-login-file",
+        };
+        match self.import(
+            "claude-code",
+            CLAUDE_ENV,
+            &f.label(),
+            &f.oauth.access_token,
+            f.oauth.expires_ms,
+            Some(origin),
+        ) {
+            Ok(_) => LoginSync::Updated,
+            Err(_) => verdict(&copy),
+        }
+    }
+
     /// The names of the stored keys (readiness). A store that can't be read
     /// has none.
     pub fn names(&self) -> Vec<String> {
@@ -606,7 +998,7 @@ impl AgentKeys {
         match self.read(&mut g, false) {
             Ok(keys) => keys
                 .into_iter()
-                .filter(|k| !k.expired())
+                .filter(|k| k.slot.is_none() && k.usable())
                 .map(|k| k.env)
                 .collect(),
             Err(e) => {
@@ -628,7 +1020,7 @@ impl AgentKeys {
                 .into_iter()
                 // A sign-in past its expiry is not forwarded: the run would
                 // only be told 401 by the provider.
-                .filter(|k| names.contains(&k.env.as_str()) && !k.expired())
+                .filter(|k| k.slot.is_none() && names.contains(&k.env.as_str()) && k.usable())
                 .map(|k| (k.env, k.value))
                 .collect(),
             Err(e) => {
@@ -637,6 +1029,514 @@ impl AgentKeys {
             }
         }
     }
+}
+
+/// What an app was told to use, against what is saved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Chosen {
+    /// Nothing was chosen: the app gets every credential it can read, as before.
+    NoChoice,
+    /// It was told to use a credential that is no longer saved or no longer works.
+    /// The app gets no credential from the keys; Settings says so.
+    Gone,
+    /// The credential it was told to use, and what comes with it.
+    Found {
+        provider: String,
+        env: String,
+        value: String,
+        region: Option<String>,
+        fields: BTreeMap<String, String>,
+    },
+}
+
+impl AgentKeys {
+    /// Which credential each switchable app was told to use (names only).
+    pub fn uses(&self) -> BTreeMap<String, UseChoice> {
+        let Some(store) = &self.store else {
+            return BTreeMap::new();
+        };
+        let mut g = self.uses_cache.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((at, m)) = g.as_ref()
+            && at.elapsed() < CACHE_FOR
+        {
+            return m.clone();
+        }
+        let m = match store.load_secret(USES_NAME) {
+            Ok(Some(bytes)) => {
+                serde_json::from_slice::<BTreeMap<String, UseChoice>>(&bytes).unwrap_or_default()
+            }
+            _ => BTreeMap::new(),
+        };
+        *g = Some((Instant::now(), m.clone()));
+        m
+    }
+
+    /// Tells `app` (a switchable app's setup id) which saved credential to use,
+    /// or with `None` to use the first one that works again. The credential must
+    /// be saved and one the app can read; nothing is signed out or deleted.
+    pub fn set_use(&self, app: &str, choice: Option<(&str, Option<&str>)>) -> Result<()> {
+        if !SWITCHABLE_APPS.contains(&app) {
+            return Err(Error::InvalidArgument(format!(
+                "{app} reads one fixed sign-in; there is nothing to choose"
+            )));
+        }
+        let Some(store) = &self.store else {
+            return Err(self.refusal());
+        };
+        let new = match choice {
+            None => None,
+            Some((env, slot)) => {
+                let keys = {
+                    let mut g = self.lock();
+                    self.read(&mut g, true)?
+                };
+                let k = keys
+                    .iter()
+                    .find(|k| k.env == env && k.slot.as_deref() == slot && k.usable())
+                    .ok_or_else(|| {
+                        Error::InvalidArgument(
+                            "that key isn't saved, or has stopped working".into(),
+                        )
+                    })?;
+                if !registry::can_read(app, env) {
+                    return Err(Error::InvalidArgument(format!(
+                        "{app} can't use that credential"
+                    )));
+                }
+                Some(UseChoice {
+                    provider: k.provider.clone(),
+                    env: k.env.clone(),
+                    slot: k.slot.clone(),
+                })
+            }
+        };
+        let mut all = self.uses();
+        match new {
+            Some(c) => {
+                all.insert(app.to_string(), c);
+            }
+            None => {
+                all.remove(app);
+            }
+        }
+        if all.is_empty() {
+            store.clear_secret(USES_NAME).map_err(store_err)?;
+        } else {
+            store
+                .save_secret(USES_NAME, &serde_json::to_vec(&all)?)
+                .map_err(store_err)?;
+        }
+        *self.uses_cache.lock().unwrap_or_else(|p| p.into_inner()) = Some((Instant::now(), all));
+        Ok(())
+    }
+
+    /// What `app` was told to use, against what is saved now.
+    pub fn chosen(&self, app: &str) -> Chosen {
+        let Some(u) = self.uses().remove(app) else {
+            return Chosen::NoChoice;
+        };
+        let mut g = self.lock();
+        let keys = self.read(&mut g, false).unwrap_or_default();
+        match keys
+            .into_iter()
+            .find(|k| k.env == u.env && k.slot == u.slot && k.usable())
+        {
+            Some(k) if registry::can_read(app, &k.env) => Chosen::Found {
+                provider: k.provider,
+                env: k.env,
+                value: k.value,
+                region: k.region,
+                fields: k.fields,
+            },
+            _ => Chosen::Gone,
+        }
+    }
+
+    /// Notes that a run was refused with the key in `slot`: it reads as needing a reconnect.
+    pub fn mark_slot_rejected(&self, env: &str, slot: &str) -> Result<()> {
+        if self.store.is_none() {
+            return Ok(());
+        }
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        let mut changed = false;
+        for k in keys
+            .iter_mut()
+            .filter(|k| k.env == env && k.slot.as_deref() == Some(slot) && k.rejected_ms.is_none())
+        {
+            k.rejected_ms = Some(now_ms());
+            changed = true;
+        }
+        if changed {
+            self.write(&mut g, keys)?;
+        }
+        Ok(())
+    }
+}
+
+impl AgentKeys {
+    /// The connections the saved keys make: one per provider that has a usable
+    /// credential a run may be given (a sign-in scoped to one app counts for
+    /// that app's provider too), with the region and non-secret fields saved
+    /// with it. Never a value.
+    pub fn connections(&self) -> Vec<registry::Connected> {
+        let mut g = self.lock();
+        let keys = match self.read(&mut g, false) {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(error = %e, "agent keys: the store can't be read");
+                return vec![];
+            }
+        };
+        let mut out: Vec<registry::Connected> = vec![];
+        for k in keys.into_iter().filter(|k| k.slot.is_none() && k.usable()) {
+            let Some(def) = registry::provider_of_env(&k.env) else {
+                continue;
+            };
+            // The empty key of a server that needs none still connects it.
+            if k.value.is_empty() && !def.key_method().is_some_and(|m| m.secret_optional) {
+                continue;
+            }
+            match out.iter_mut().find(|c| c.provider == def.id) {
+                Some(c) => {
+                    // A sign-in saved beside a key never overwrites the key's choices.
+                    if c.region.is_none() {
+                        c.region = k.region.clone();
+                    }
+                    for (f, v) in &k.fields {
+                        c.fields.entry(f.clone()).or_insert_with(|| v.clone());
+                    }
+                }
+                None => out.push(registry::Connected {
+                    provider: def.id.to_string(),
+                    region: k.region.clone(),
+                    fields: k.fields.clone(),
+                }),
+            }
+        }
+        out
+    }
+}
+
+impl AgentKeys {
+    /// Notes that the credentials named in `envs` were rejected by their provider (a run of an
+    /// agent got an authentication failure with them): they read as needing a reconnect and no run
+    /// gets them until they are saved again. Returns the names that changed.
+    pub fn mark_rejected(&self, envs: &[&str]) -> Result<Vec<String>> {
+        self.set_rejected(envs.iter().map(|e| (*e, None)), Some(now_ms()))
+    }
+
+    /// Sets (`Some`) or clears (`None`) the rejection of each `(env, only if added at)`; a
+    /// credential saved again since (a different `added_ms`) is left alone.
+    fn set_rejected<'a>(
+        &self,
+        which: impl Iterator<Item = (&'a str, Option<u64>)>,
+        at: Option<u64>,
+    ) -> Result<Vec<String>> {
+        if self.store.is_none() {
+            return Ok(vec![]);
+        }
+        let which: Vec<(&str, Option<u64>)> = which.collect();
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        let mut changed = vec![];
+        for k in keys.iter_mut().filter(|k| k.slot.is_none()) {
+            let Some((_, added)) = which.iter().find(|(e, _)| *e == k.env) else {
+                continue;
+            };
+            if added.is_some_and(|a| a != k.added_ms) || k.rejected_ms.is_some() == at.is_some() {
+                continue;
+            }
+            k.rejected_ms = at;
+            changed.push(k.env.clone());
+        }
+        if !changed.is_empty() {
+            self.write(&mut g, keys)?;
+        }
+        Ok(changed)
+    }
+
+    /// The API keys to check against their provider. A sign-in token
+    /// (`CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`) has no check that is known to accept it,
+    /// so it is not asked about; nor is a custom endpoint, which Cua never probes.
+    fn checkable(&self) -> Vec<Checkable> {
+        let mut g = self.lock();
+        match self.read(&mut g, true) {
+            Ok(keys) => keys
+                .into_iter()
+                .filter(|k| k.slot.is_none() && !k.expired() && !k.value.is_empty())
+                .filter_map(|k| {
+                    let def = registry::provider_of_env(&k.env)?;
+                    def.check?;
+                    if def.scope_of(&k.env).is_some() {
+                        return None;
+                    }
+                    Some(Checkable {
+                        provider: def.id,
+                        env: k.env,
+                        added_ms: k.added_ms,
+                        value: k.value,
+                        region: k.region,
+                    })
+                })
+                .collect(),
+            Err(_) => vec![],
+        }
+    }
+}
+
+/// A saved API key a provider can be asked about.
+struct Checkable {
+    provider: &'static str,
+    env: String,
+    added_ms: u64,
+    value: String,
+    region: Option<String>,
+}
+
+/// What the provider said of a key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyCheck {
+    /// The provider accepted it.
+    Valid,
+    /// The provider refused it (HTTP 401 or 403): it does not work.
+    Rejected,
+    /// No answer worth acting on (offline, rate limited, a server error): leave it as it was.
+    Unknown,
+}
+
+/// Where the providers' read-only requests go: each provider's own host from
+/// its file (a request is a cheap "list models" style GET that answers 401 for
+/// a key that does not work). `overrides` replaces a provider's whole check
+/// URL by provider id, for a test's local server.
+#[derive(Clone, Debug, Default)]
+pub struct CheckEndpoints {
+    pub overrides: BTreeMap<String, String>,
+}
+
+impl CheckEndpoints {
+    /// Every provider checked at `url` (a test's local server).
+    pub fn all_at(url: &str) -> Self {
+        Self {
+            overrides: registry::PROVIDERS
+                .iter()
+                .map(|p| (p.id.to_string(), url.to_string()))
+                .collect(),
+        }
+    }
+}
+
+/// How long an answer is reused (Settings opens and the Agents page opens ask often).
+const CHECK_CACHE: Duration = Duration::from_secs(5 * 60);
+
+type CheckCache = Mutex<BTreeMap<(String, u64), (Instant, KeyCheck)>>;
+
+fn check_cache() -> &'static CheckCache {
+    static CACHE: OnceLock<CheckCache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// Asks the provider about one key. The value only goes into the request's header; nothing here
+/// logs it, and an error is reported without its text.
+async fn ask_provider(client: &reqwest::Client, ep: &CheckEndpoints, c: &Checkable) -> KeyCheck {
+    let Some(def) = registry::provider(c.provider) else {
+        return KeyCheck::Unknown;
+    };
+    let Some(check) = def.check else {
+        return KeyCheck::Unknown;
+    };
+    let url = ep
+        .overrides
+        .get(def.id)
+        .cloned()
+        .unwrap_or_else(|| format!("{}{}", def.base_url_for(c.region.as_deref()), check.path));
+    let request = client.get(&url);
+    let request = match check.auth {
+        "x-api-key" => request
+            .header("x-api-key", &c.value)
+            .header("anthropic-version", "2023-06-01"),
+        "x-goog-api-key" => request.header("x-goog-api-key", &c.value),
+        _ => request.bearer_auth(&c.value),
+    };
+    match request.send().await {
+        Ok(r) if r.status().is_success() => KeyCheck::Valid,
+        Ok(r) if matches!(r.status().as_u16(), 401 | 403) => KeyCheck::Rejected,
+        _ => KeyCheck::Unknown,
+    }
+}
+
+impl AgentKeys {
+    /// Asks each provider whether the saved API keys still work (a cheap read-only request,
+    /// answers reused for five minutes, never logged), notes a refused key as needing a reconnect
+    /// and clears the note on one that is accepted again. Sign-in tokens are not asked about.
+    /// Never fails the caller: the list that follows says what is known.
+    pub async fn recheck(&self, ep: &CheckEndpoints) -> Result<KeysReport> {
+        let todo = self.checkable();
+        if !todo.is_empty() {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(6))
+                .build()
+                .map_err(|e| Error::Agent(e.to_string()))?;
+            let mut rejected: Vec<(String, u64)> = vec![];
+            let mut accepted: Vec<(String, u64)> = vec![];
+            for c in todo {
+                let (env, added) = (c.env.clone(), c.added_ms);
+                let cached = check_cache()
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&(env.clone(), added))
+                    .filter(|(at, _)| at.elapsed() < CHECK_CACHE)
+                    .map(|(_, c)| *c);
+                let answer = match cached {
+                    Some(c) => c,
+                    None => {
+                        let a = ask_provider(&client, ep, &c).await;
+                        if a != KeyCheck::Unknown {
+                            check_cache()
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .insert((env.clone(), added), (Instant::now(), a));
+                        }
+                        a
+                    }
+                };
+                match answer {
+                    KeyCheck::Rejected => rejected.push((env, added)),
+                    KeyCheck::Valid => accepted.push((env, added)),
+                    KeyCheck::Unknown => {}
+                }
+            }
+            for env in self.set_rejected(
+                rejected.iter().map(|(e, a)| (e.as_str(), Some(*a))),
+                Some(now_ms()),
+            )? {
+                // A key the provider refused: only that it happened, for which provider.
+                note_connection(&env, "check", "needs_reconnect");
+            }
+            self.set_rejected(accepted.iter().map(|(e, a)| (e.as_str(), Some(*a))), None)?;
+        }
+        self.report()
+    }
+}
+
+/// Notes that an agent run got an authentication failure: the saved credentials of `provider`
+/// that `harness` reads (and only those) read as needing a reconnect.
+pub fn mark_rejected_for_run(harness: &str, provider: &str) {
+    let Some(h) = super::harness::harness(harness) else {
+        return;
+    };
+    let Some(def) = registry::provider(provider) else {
+        return;
+    };
+    let envs: Vec<&str> = h
+        .keys
+        .iter()
+        .copied()
+        .filter(|k| def.envs().any(|e| e == *k))
+        .chain(
+            // The app reads the credential under another name than the one saved
+            // (Goose's GOOGLE_API_KEY comes from the saved GEMINI_API_KEY).
+            def.delivery_for(harness)
+                .iter()
+                .filter(|e| def.scope_of(e.src).is_none_or(|s| s == harness))
+                .map(|e| e.src),
+        )
+        .collect();
+    if envs.is_empty() {
+        return;
+    }
+    let mut envs = envs;
+    envs.sort_unstable();
+    envs.dedup();
+    // An app told to use a key beside the first one: that key is the one refused.
+    if let Some(u) = global().uses().remove(harness)
+        && u.provider == provider
+        && let Some(slot) = u.slot.as_deref()
+    {
+        envs.retain(|e| *e != u.env);
+        if let Err(e) = global().mark_slot_rejected(&u.env, slot) {
+            tracing::warn!(error = %e, "agent keys: could not note a rejected credential");
+        }
+    }
+    if let Err(e) = global().mark_rejected(&envs) {
+        tracing::warn!(error = %e, "agent keys: could not note a rejected credential");
+    }
+}
+
+/// Checks the non-secret choices saved with a connection against its
+/// provider file: a region it lists, fields it asks for, URLs that are URLs.
+fn check_choices(
+    def: &registry::Provider,
+    m: &registry::Method,
+    region: Option<&str>,
+    fields: &BTreeMap<String, String>,
+) -> Result<()> {
+    let bad = |m: String| Err(Error::InvalidArgument(m));
+    if let Some(r) = region.filter(|r| !r.is_empty())
+        && !def.regions.iter().any(|x| x.id == r)
+    {
+        return bad(format!("{} has no region or plan {r:?}", def.name));
+    }
+    for (k, v) in fields {
+        let known = k == "model" || m.fields.iter().any(|f| f.id == *k);
+        if !known {
+            return bad(format!("{} has no field {k:?}", def.name));
+        }
+        if v.len() > 512 || v.chars().any(|c| c.is_control()) {
+            return bad(format!("{k} must be one line of at most 512 characters"));
+        }
+    }
+    for f in m.fields {
+        let v = fields.get(f.id).map(|v| v.trim()).unwrap_or_default();
+        if f.required && v.is_empty() {
+            return bad(format!("{} needs {}", def.name, f.label.to_lowercase()));
+        }
+        if f.kind == "url"
+            && !v.is_empty()
+            && !(v.starts_with("http://") || v.starts_with("https://"))
+        {
+            return bad(format!("{} must start with http:// or https://", f.label));
+        }
+        if f.kind == "choice" && !v.is_empty() && !f.options.contains(&v) {
+            return bad(format!(
+                "{} must be one of {}",
+                f.label,
+                f.options.join(", ")
+            ));
+        }
+    }
+    // A provider with no default model needs one chosen when an app is told which to use.
+    if def.default_model.is_empty()
+        && def.kind != registry::Kind::Custom
+        && !def.delivery_for("hermes").is_empty()
+        && fields.get("model").is_none_or(|v| v.trim().is_empty())
+    {
+        return bad(format!("{} needs a model", def.name));
+    }
+    Ok(())
+}
+
+/// Tells telemetry a connection changed: only the registry's provider id and
+/// the kind of method, the action and how it ended (`cua_connection_changed`).
+/// Never a key, a URL, an account or an error text.
+fn note_connection(env_or_provider: &str, action: &str, outcome: &str) {
+    let def =
+        registry::provider(env_or_provider).or_else(|| registry::provider_of_env(env_or_provider));
+    let (provider, method) = match def {
+        Some(d) => {
+            let kind = d
+                .methods
+                .iter()
+                .find(|m| m.env == env_or_provider || m.aliases.contains(&env_or_provider))
+                .or_else(|| d.key_method())
+                .map_or("other", |m| m.kind.word());
+            (d.id, kind)
+        }
+        None => ("other", "api_key"),
+    };
+    cua_telemetry::capture(cua_telemetry::events::connection_changed(
+        provider, method, action, outcome,
+    ));
 }
 
 fn store_err(e: cua_auth::Error) -> Error {
@@ -670,13 +1570,51 @@ struct SetArgs {
     provider: String,
     #[serde(default)]
     env: Option<String>,
+    #[serde(default)]
     value: String,
+    #[serde(default)]
+    region: Option<String>,
+    #[serde(default)]
+    fields: BTreeMap<String, String>,
+    /// Save as another key beside the first one for the provider.
+    #[serde(default)]
+    add: bool,
+    /// A name for the key ("Work key").
+    #[serde(default)]
+    label: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RemoveArgs {
     env: String,
+    /// Remove only this key beside the first one (without it, the key and all beside it).
+    #[serde(default)]
+    slot: Option<String>,
+    /// With no `slot`: remove only the first key and keep the others.
+    #[serde(default)]
+    keep_others: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UseArgs {
+    app: String,
+    /// Absent: use the first credential that works again.
+    #[serde(default)]
+    env: Option<String>,
+    #[serde(default)]
+    slot: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FromShellArgs {
+    env: String,
+    #[serde(default)]
+    region: Option<String>,
+    #[serde(default)]
+    fields: BTreeMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -704,19 +1642,66 @@ pub fn app_call(
         r.and_then(|r| serde_json::to_value(r).map_err(|e| Error::Agent(e.to_string())))
     };
     Some(match name {
-        "agent_keys.list" => report(keys.report()),
-        "agent_keys.set" => report(
-            serde_json::from_value::<SetArgs>(args)
-                .map_err(|e| {
-                    Error::InvalidArgument(format!("agent_keys.set: {}", redact_serde(&e)))
-                })
-                .and_then(|a| keys.set(&a.provider, a.env.as_deref(), &a.value))
-                .and_then(|_| keys.report()),
-        ),
+        // The check needs the network: `app_tool_async` does it; a synchronous caller gets the list.
+        "agent_keys.list" | "agent_keys.check" => {
+            // A copy of Claude Code's sign-in that ran out is read again from
+            // Claude Code before Settings calls it "Needs reconnect".
+            keys.sync_claude_login(&HostClaudeLogin, false);
+            report(keys.report())
+        }
+        "agent_keys.set" => {
+            let parsed = serde_json::from_value::<SetArgs>(args).map_err(|e| {
+                Error::InvalidArgument(format!("agent_keys.set: {}", redact_serde(&e)))
+            });
+            let provider = parsed
+                .as_ref()
+                .map(|a| a.provider.clone())
+                .unwrap_or_default();
+            // A key saved again (or one that was refused) is a reconnect.
+            let had = keys
+                .list()
+                .map(|l| l.iter().any(|k| k.provider == provider))
+                .unwrap_or(false);
+            let saved = parsed.and_then(|a| {
+                keys.set_slot(
+                    &a.provider,
+                    a.env.as_deref(),
+                    &a.value,
+                    a.region.as_deref(),
+                    &a.fields,
+                    a.label.as_deref(),
+                    a.add,
+                )
+            });
+            note_connection(
+                &provider,
+                if had { "reconnect" } else { "connect" },
+                if saved.is_ok() { "ok" } else { "failed" },
+            );
+            report(saved.and_then(|_| keys.report()))
+        }
         "agent_keys.remove" => report(
             serde_json::from_value::<RemoveArgs>(args)
                 .map_err(|e| Error::InvalidArgument(format!("agent_keys.remove: {e}")))
-                .and_then(|a| keys.remove(&a.env))
+                .and_then(|a| {
+                    let removed = match a.slot.as_deref() {
+                        Some(slot) => keys.remove_slot(&a.env, slot)?,
+                        None if a.keep_others => keys.remove_first(&a.env)?,
+                        None => keys.remove(&a.env)?,
+                    };
+                    if removed {
+                        note_connection(&a.env, "remove", "ok");
+                    }
+                    Ok(removed)
+                })
+                .and_then(|_| keys.report()),
+        ),
+        "agent_keys.use" => report(
+            serde_json::from_value::<UseArgs>(args)
+                .map_err(|e| Error::InvalidArgument(format!("agent_keys.use: {e}")))
+                .and_then(|a| {
+                    keys.set_use(&a.app, a.env.as_deref().map(|e| (e, a.slot.as_deref())))
+                })
                 .and_then(|_| keys.report()),
         ),
         "agent_keys.shell" => serde_json::to_value(ShellReport {
@@ -725,18 +1710,26 @@ pub fn app_call(
         .map_err(|e| Error::Agent(e.to_string())),
         // The value goes straight from your shell into the store; it is never answered.
         "agent_keys.from_shell" => report(
-            serde_json::from_value::<RemoveArgs>(args)
+            serde_json::from_value::<FromShellArgs>(args)
                 .map_err(|e| Error::InvalidArgument(format!("agent_keys.from_shell: {e}")))
                 .and_then(|a| {
                     let value = shell_value(shell, &a.env).ok_or_else(|| {
                         Error::InvalidArgument(format!("{} isn't set in your shell", a.env))
                     })?;
                     let provider = provider_of(&a.env);
-                    keys.set(
+                    let saved = keys.set_with(
                         provider,
                         (provider == "other").then_some(a.env.as_str()),
                         &value,
-                    )
+                        a.region.as_deref(),
+                        &a.fields,
+                    );
+                    note_connection(
+                        provider,
+                        "connect",
+                        if saved.is_ok() { "ok" } else { "failed" },
+                    );
+                    saved
                 })
                 .and_then(|_| keys.report()),
         ),
@@ -755,13 +1748,32 @@ pub fn app_tool(name: &str, args: serde_json::Value) -> Option<crate::mcp::ToolO
     })
 }
 
+/// [`app_tool`] for a caller that can wait: `agent_keys.check` asks the providers whether the saved
+/// API keys still work, then answers like `agent_keys.list`.
+#[cfg(feature = "mcp")]
+pub async fn app_tool_async(
+    name: &str,
+    args: serde_json::Value,
+) -> Option<crate::mcp::ToolOutcome> {
+    if name != "agent_keys.check" {
+        return app_tool(name, args);
+    }
+    Some(match global().recheck(&CheckEndpoints::default()).await {
+        Ok(report) => match serde_json::to_value(report) {
+            Ok(v) => crate::mcp::ToolOutcome::json(&v),
+            Err(e) => crate::mcp::ToolOutcome::error(&Error::Agent(e.to_string())),
+        },
+        Err(e) => crate::mcp::ToolOutcome::error(&e),
+    })
+}
+
 /// A serde error without the input it quotes (it could be the key).
 fn redact_serde(e: &serde_json::Error) -> String {
     let s = e.to_string();
     if s.contains("missing field") || s.contains("unknown field") {
         s
     } else {
-        "expected {provider, env?, value} as strings".into()
+        "expected {provider, env?, value, region?, fields?} as strings".into()
     }
 }
 
@@ -834,8 +1846,9 @@ mod tests {
         app.import(
             "codex",
             "CODEX_AUTH_JSON",
-            "Codex · ChatGPT sign-in",
+            "ChatGPT sign-in for Codex",
             "{\"tokens\":{}}",
+            None,
             None,
         )
         .unwrap();
@@ -863,9 +1876,10 @@ mod tests {
         keys.import(
             "claude-code",
             "CLAUDE_CODE_OAUTH_TOKEN",
-            "Claude Code · Claude sign-in",
+            "Signed in as ada@example.com (Claude Max)",
             "sk-ant-oat01-test",
             Some(long_ago),
+            None,
         )
         .unwrap();
         let listed = keys.list().unwrap();
@@ -876,14 +1890,162 @@ mod tests {
         keys.import(
             "claude-code",
             "CLAUDE_CODE_OAUTH_TOKEN",
-            "Claude Code · Claude sign-in",
+            "Signed in as ada@example.com (Claude Max)",
             "sk-ant-oat01-test",
             Some(now_ms() + 3_600_000),
+            None,
         )
         .unwrap();
         assert!(!keys.list().unwrap()[0].expired);
         assert_eq!(keys.names(), ["CLAUDE_CODE_OAUTH_TOKEN"]);
         assert_eq!(keys.values(&["CLAUDE_CODE_OAUTH_TOKEN"]).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A tiny local provider: answers 200 to the key `good`, 401 to anything else, 500 to `flaky`;
+    /// counts the requests it got.
+    async fn provider() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1/models", listener.local_addr().unwrap());
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = hits.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buf = vec![0u8; 4096];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+                let status = if req.contains("good") {
+                    "200 OK"
+                } else if req.contains("flaky") {
+                    "500 Internal Server Error"
+                } else {
+                    "401 Unauthorized"
+                };
+                let _ = sock
+                    .write_all(
+                        format!("HTTP/1.1 {status}\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}")
+                            .as_bytes(),
+                    )
+                    .await;
+            }
+        });
+        (url, hits)
+    }
+
+    /// A key the provider refuses reads as needing a reconnect and reaches no run; one it accepts
+    /// stays; a key saved again clears the note; sign-in tokens are not asked about; the answer is
+    /// reused, never logged and never returned.
+    #[tokio::test]
+    async fn a_saved_key_the_provider_refuses_needs_a_reconnect() {
+        let (keys, dir) = temp_keys();
+        let (url, hits) = provider().await;
+        let ep = CheckEndpoints::all_at(&url);
+        keys.set("anthropic", None, "sk-ant-stale-0000-abcd")
+            .unwrap();
+        keys.set("openai", None, "sk-good-1111-wxyz").unwrap();
+        keys.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude sign-in",
+            "sk-ant-oat01-whatever",
+            None,
+            None,
+        )
+        .unwrap();
+        let report = keys.recheck(&ep).await.unwrap();
+        let by = |env: &str| report.keys.iter().find(|k| k.env == env).unwrap().expired;
+        assert!(by("ANTHROPIC_API_KEY"), "the refused key needs a reconnect");
+        assert!(!by("OPENAI_API_KEY"));
+        // The sign-in token is not asked about: no request for it, and it stays as it was.
+        assert!(!by("CLAUDE_CODE_OAUTH_TOKEN"));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // The refused key reaches no run; the others do.
+        assert_eq!(keys.names(), ["CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY"]);
+        assert!(keys.values(&["ANTHROPIC_API_KEY"]).is_empty());
+        // Opened again a moment later: the answers are reused.
+        keys.recheck(&ep).await.unwrap();
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // The report never carries a value.
+        let text = serde_json::to_string(&report).unwrap();
+        assert!(
+            !text.contains("sk-ant-stale") && !text.contains("sk-good"),
+            "{text}"
+        );
+        // Reconnecting (saving it again) clears the note.
+        keys.set("anthropic", None, "sk-good-2222-abcd").unwrap();
+        assert!(!keys.list().unwrap().iter().any(|k| k.expired));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A provider that cannot answer is no reason to flag a key.
+    #[tokio::test]
+    async fn an_unreachable_provider_flags_nothing() {
+        let (keys, dir) = temp_keys();
+        let (url, _) = provider().await;
+        let ep = CheckEndpoints::all_at(&url);
+        keys.set("openai", None, "sk-flaky-3333-wxyz").unwrap();
+        assert!(!keys.recheck(&ep).await.unwrap().keys[0].expired);
+        let offline = CheckEndpoints::all_at("http://127.0.0.1:1/x");
+        keys.set("anthropic", None, "sk-ant-offline-4444").unwrap();
+        assert!(
+            !keys
+                .recheck(&offline)
+                .await
+                .unwrap()
+                .keys
+                .iter()
+                .any(|k| k.expired)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A run's authentication failure marks only the credentials its harness reads, for its provider.
+    #[test]
+    fn a_run_that_fails_to_authenticate_marks_what_it_was_given() {
+        let (keys, dir) = temp_keys();
+        keys.set("anthropic", None, "sk-ant-api-0000-abcd").unwrap();
+        keys.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude sign-in",
+            "sk-ant-oat01-whatever",
+            None,
+            None,
+        )
+        .unwrap();
+        keys.set("openai", None, "sk-openai-1111-wxyz").unwrap();
+        // Hermes read the API key (not the sign-in token), and said Anthropic refused it.
+        let h = super::super::harness::harness("hermes").unwrap();
+        let envs: Vec<&str> = h
+            .keys
+            .iter()
+            .copied()
+            .filter(|k| {
+                registry::provider("anthropic")
+                    .unwrap()
+                    .envs()
+                    .any(|e| e == *k)
+            })
+            .collect();
+        assert!(envs.contains(&"ANTHROPIC_API_KEY"));
+        keys.mark_rejected(&envs).unwrap();
+        let expired = |env: &str| {
+            keys.list()
+                .unwrap()
+                .iter()
+                .find(|k| k.env == env)
+                .unwrap()
+                .expired
+        };
+        assert!(expired("ANTHROPIC_API_KEY"));
+        assert!(!expired("OPENAI_API_KEY"));
+        // Noting it twice changes nothing more.
+        assert!(keys.mark_rejected(&envs).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1063,6 +2225,535 @@ mod tests {
                 "{m} is a contract tool"
             );
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- the freshness check on a copy of Claude Code's own sign-in
+
+    const HOUR: u64 = 3_600_000;
+
+    fn login(access: &str, expires_ms: u64, email: &str) -> claude_login::Lookup {
+        claude_login::Lookup::Found(claude_login::Found {
+            source: claude_login::Source::File(std::path::PathBuf::from(
+                "/fixture/.credentials.json",
+            )),
+            oauth: claude_login::Oauth {
+                access_token: access.into(),
+                has_refresh_token: true,
+                expires_ms: Some(expires_ms),
+                scopes: vec![],
+                subscription_type: Some("max".into()),
+            },
+            account: claude_login::Account {
+                email: Some(email.into()),
+                organization: None,
+            },
+        })
+    }
+
+    /// A fake Claude Code: what its sign-in reads as now, what it reads as after it
+    /// is asked to refresh, and how often it was read and asked.
+    struct FakeClaude {
+        now: Mutex<claude_login::Lookup>,
+        after_ask: Option<claude_login::Lookup>,
+        reads: Mutex<u32>,
+        asks: Mutex<u32>,
+    }
+    impl FakeClaude {
+        fn new(now: claude_login::Lookup, after_ask: Option<claude_login::Lookup>) -> Self {
+            Self {
+                now: Mutex::new(now),
+                after_ask,
+                reads: Mutex::new(0),
+                asks: Mutex::new(0),
+            }
+        }
+    }
+    impl ClaudeLogin for FakeClaude {
+        fn lookup(&self) -> claude_login::Lookup {
+            *self.reads.lock().unwrap() += 1;
+            self.now.lock().unwrap().clone()
+        }
+        fn ask_to_refresh(&self) -> bool {
+            *self.asks.lock().unwrap() += 1;
+            match &self.after_ask {
+                Some(l) => {
+                    *self.now.lock().unwrap() = l.clone();
+                    true
+                }
+                None => false,
+            }
+        }
+    }
+
+    fn import_login(keys: &AgentKeys, token: &str, expires_ms: u64) {
+        keys.import(
+            "claude-code",
+            CLAUDE_ENV,
+            "Signed in as ada@example.com (Claude Max)",
+            token,
+            Some(expires_ms),
+            Some("claude-login-file"),
+        )
+        .unwrap();
+    }
+
+    fn token_of(keys: &AgentKeys) -> String {
+        keys.values(&[CLAUDE_ENV])
+            .remove(CLAUDE_ENV)
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_copy_far_from_expiry_is_delivered_without_reading_claude_code() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-one", now_ms() + 5 * HOUR);
+        let claude = FakeClaude::new(claude_login::Lookup::NotSignedIn, None);
+        assert_eq!(keys.sync_claude_login(&claude, true), LoginSync::Fresh);
+        assert_eq!(
+            *claude.reads.lock().unwrap(),
+            0,
+            "no Keychain read when nothing is needed"
+        );
+        assert_eq!(*claude.asks.lock().unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_copies_made_from_claude_codes_own_sign_in_are_synced() {
+        let (keys, dir) = temp_keys();
+        let claude = FakeClaude::new(
+            login("sk-ant-oat01-new", now_ms() + 8 * HOUR, "a@b.c"),
+            None,
+        );
+        assert_eq!(
+            keys.sync_claude_login(&claude, true),
+            LoginSync::NotApplicable
+        );
+        // A pasted token (a year, no refresh) and an API key are never replaced.
+        keys.import(
+            "claude-code",
+            CLAUDE_ENV,
+            "Claude token you pasted",
+            "sk-ant-oat01-pasted",
+            Some(now_ms() - 1),
+            Some("token"),
+        )
+        .unwrap();
+        assert_eq!(
+            keys.sync_claude_login(&claude, true),
+            LoginSync::NotApplicable
+        );
+        assert_eq!(*claude.reads.lock().unwrap(), 0);
+        assert_eq!(token_of(&keys), "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_copy_about_to_run_out_is_replaced_by_what_claude_code_has_refreshed() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-old", now_ms() + HOUR / 4);
+        let claude = FakeClaude::new(
+            login("sk-ant-oat01-new", now_ms() + 8 * HOUR, "ada@example.com"),
+            None,
+        );
+        assert_eq!(keys.sync_claude_login(&claude, true), LoginSync::Updated);
+        assert_eq!(token_of(&keys), "sk-ant-oat01-new");
+        let listed = keys.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(!listed[0].expired);
+        assert_eq!(
+            listed[0].label.as_deref(),
+            Some("Signed in as ada@example.com (Claude Max)")
+        );
+        assert_eq!(
+            *claude.asks.lock().unwrap(),
+            0,
+            "no need to ask Claude Code: it had refreshed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_run_out_copy_asks_claude_code_to_refresh_once_and_reads_again() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-old", now_ms() - 1000);
+        assert!(keys.list().unwrap()[0].expired);
+        // Claude Code has the same run-out token until asked; then it has a new one.
+        let claude = FakeClaude::new(
+            login("sk-ant-oat01-old", now_ms() - 1000, "ada@example.com"),
+            Some(login(
+                "sk-ant-oat01-fresh",
+                now_ms() + 8 * HOUR,
+                "ada@example.com",
+            )),
+        );
+        assert_eq!(keys.sync_claude_login(&claude, true), LoginSync::Updated);
+        assert_eq!(*claude.asks.lock().unwrap(), 1);
+        assert_eq!(token_of(&keys), "sk-ant-oat01-fresh");
+        assert!(!keys.list().unwrap()[0].expired);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_reads_again_but_never_asks_claude_code_to_refresh() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-old", now_ms() - 1000);
+        let claude = FakeClaude::new(
+            login("sk-ant-oat01-old", now_ms() - 1000, "a@b.c"),
+            Some(login("sk-ant-oat01-fresh", now_ms() + HOUR, "a@b.c")),
+        );
+        assert_eq!(keys.sync_claude_login(&claude, false), LoginSync::Stale);
+        assert_eq!(*claude.asks.lock().unwrap(), 0);
+        assert!(
+            keys.list().unwrap()[0].expired,
+            "honest: Needs reconnect until Claude Code has a new one"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nothing_newer_anywhere_is_needs_reconnect_and_signed_out_is_not_guessed_at() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-old", now_ms() - 1000);
+        for gone in [
+            claude_login::Lookup::NotSignedIn,
+            claude_login::Lookup::Denied,
+        ] {
+            let (k2, d2) = temp_keys();
+            import_login(&k2, "sk-ant-oat01-old", now_ms() - 1000);
+            let claude = FakeClaude::new(gone, None);
+            assert_eq!(k2.sync_claude_login(&claude, true), LoginSync::Stale);
+            assert_eq!(token_of(&k2), "", "an expired copy is never delivered");
+            let _ = std::fs::remove_dir_all(&d2);
+        }
+        // An older or equal token from Claude Code is not "newer".
+        let claude = FakeClaude::new(login("sk-ant-oat01-old", now_ms() - 1000, "a@b.c"), None);
+        assert_eq!(keys.sync_claude_login(&claude, true), LoginSync::Stale);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn claude_code_is_read_at_most_every_twenty_seconds() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-old", now_ms() - 1000);
+        let claude = FakeClaude::new(claude_login::Lookup::NotSignedIn, None);
+        for _ in 0..5 {
+            assert_eq!(keys.sync_claude_login(&claude, true), LoginSync::Stale);
+        }
+        assert_eq!(*claude.reads.lock().unwrap(), 1);
+        assert_eq!(*claude.asks.lock().unwrap(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_refused_copy_recovers_when_claude_code_has_a_different_sign_in() {
+        let (keys, dir) = temp_keys();
+        import_login(&keys, "sk-ant-oat01-revoked", now_ms() + 5 * HOUR);
+        keys.mark_rejected(&[CLAUDE_ENV]).unwrap();
+        assert!(
+            keys.list().unwrap()[0].expired,
+            "refused reads as Needs reconnect"
+        );
+        // Claude Code still holds the same refused token: stays refused.
+        let same = FakeClaude::new(
+            login("sk-ant-oat01-revoked", now_ms() + 5 * HOUR, "a@b.c"),
+            None,
+        );
+        assert_eq!(keys.sync_claude_login(&same, false), LoginSync::Stale);
+        assert!(keys.list().unwrap()[0].expired);
+        // The person signed in again in Claude Code: the new sign-in replaces it.
+        let (keys2, dir2) = temp_keys();
+        import_login(&keys2, "sk-ant-oat01-revoked", now_ms() + 5 * HOUR);
+        keys2.mark_rejected(&[CLAUDE_ENV]).unwrap();
+        let again = FakeClaude::new(
+            login("sk-ant-oat01-again", now_ms() + 8 * HOUR, "a@b.c"),
+            None,
+        );
+        assert_eq!(keys2.sync_claude_login(&again, false), LoginSync::Updated);
+        assert!(!keys2.list().unwrap()[0].expired);
+        assert_eq!(token_of(&keys2), "sk-ant-oat01-again");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn a_claude_token_pasted_as_an_api_key_is_saved_as_a_claude_code_sign_in() {
+        let (keys, dir) = temp_keys();
+        let token = format!("sk-ant-oat01-{}", "aB3_".repeat(24));
+        let info = keys
+            .set("anthropic", None, &format!("  {token}\n"))
+            .unwrap();
+        assert_eq!(info.env, CLAUDE_ENV);
+        assert_eq!(info.label.as_deref(), Some("Signed in with a Claude token"));
+        assert!(
+            info.expires_ms
+                .is_some_and(|e| e > now_ms() + 300 * 24 * 3600 * 1000)
+        );
+        assert_eq!(keys.values(&[CLAUDE_ENV]).get(CLAUDE_ENV), Some(&token));
+        assert!(
+            keys.values(&["ANTHROPIC_API_KEY"]).is_empty(),
+            "never as an API key"
+        );
+        // Never re-read from Claude Code: a pasted token is the person's own.
+        let claude = FakeClaude::new(login("sk-ant-oat01-x", now_ms() + HOUR, "a@b.c"), None);
+        assert_eq!(
+            keys.sync_claude_login(&claude, true),
+            LoginSync::NotApplicable
+        );
+        // A cut-off one is refused in plain words, and a real API key is untouched.
+        let e = keys
+            .set("anthropic", None, "sk-ant-oat01-short")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("doesn't look like a Claude token"), "{e}");
+        keys.set("anthropic", None, "sk-ant-api03-abcdefghijklmnop")
+            .unwrap();
+        assert_eq!(keys.values(&["ANTHROPIC_API_KEY"]).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_host_login_reads_nothing_in_a_test_process() {
+        assert_eq!(HostClaudeLogin.lookup(), claude_login::Lookup::NotSignedIn);
+        assert!(!HostClaudeLogin.ask_to_refresh());
+    }
+
+    /// Any provider that declares a check is asked on its own host, the others never are, and a
+    /// custom endpoint is never probed. A refusal marks only that provider's key.
+    #[tokio::test]
+    async fn every_provider_that_declares_a_check_is_checked_and_only_those() {
+        let (keys, dir) = temp_keys();
+        let (url, hits) = provider().await;
+        let ep = CheckEndpoints::all_at(&url);
+        keys.set("deepseek", None, "ds-stale-0000-abcd").unwrap();
+        keys.set("openrouter", None, "sk-or-good-1111-wxyz")
+            .unwrap();
+        // No check declared (Fireworks): never asked, so it is never marked.
+        keys.set("fireworks", None, "fw-stale-2222-abcd").unwrap();
+        let mut f = BTreeMap::new();
+        f.insert("base_url".to_string(), "http://127.0.0.1:1/v1".to_string());
+        f.insert("model".to_string(), "m".to_string());
+        f.insert("wire".to_string(), "openai-chat".to_string());
+        keys.set_with("custom", None, "stale-key-3333-abcd", None, &f)
+            .unwrap();
+        let report = keys.recheck(&ep).await.unwrap();
+        let by = |env: &str| report.keys.iter().find(|k| k.env == env).unwrap().expired;
+        assert!(by("DEEPSEEK_API_KEY"));
+        assert!(!by("OPENROUTER_API_KEY"));
+        assert!(
+            !by("FIREWORKS_API_KEY"),
+            "a provider with no declared check is left alone"
+        );
+        assert!(
+            !by("CUSTOM_ENDPOINT_API_KEY"),
+            "a custom endpoint is never probed"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // Connected means valid: the refused provider's key reaches no run.
+        assert!(keys.values(&["DEEPSEEK_API_KEY"]).is_empty());
+        assert_eq!(
+            keys.connections()
+                .iter()
+                .map(|c| c.provider.as_str())
+                .collect::<Vec<_>>(),
+            ["custom", "fireworks", "openrouter"]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_shell_may_only_be_asked_for_provider_key_names() {
+        let allowed = shell_allowed();
+        for n in [
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "COPILOT_GITHUB_TOKEN",
+            "DEEPSEEK_API_KEY",
+            "OPENROUTER_API_KEY",
+        ] {
+            assert!(allowed.contains(&n), "{n}");
+        }
+        // Not a sign-in, a hidden provider's name, or anything that is not a provider key.
+        for n in [
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CODEX_AUTH_JSON",
+            "NOUS_API_KEY",
+            "PATH",
+            "HOME",
+            "AWS_SECRET_ACCESS_KEY",
+        ] {
+            assert!(!allowed.contains(&n), "{n}");
+        }
+    }
+
+    #[test]
+    fn more_keys_for_one_provider_are_named_listed_without_values_and_kept_apart() {
+        let (keys, dir) = temp_keys();
+        let f = BTreeMap::new();
+        keys.set("anthropic", None, "sk-ant-api03-first-aaaa")
+            .unwrap();
+        let work = keys
+            .set_slot(
+                "anthropic",
+                None,
+                "sk-ant-api03-work-bbbb",
+                None,
+                &f,
+                Some("Work key"),
+                true,
+            )
+            .unwrap();
+        assert!(work.slot.is_some());
+        assert_eq!(work.label.as_deref(), Some("Work key"));
+        // Adding with no first key saves it as the first.
+        let first = keys
+            .set_slot(
+                "openai",
+                None,
+                "sk-openai-first-cccc",
+                None,
+                &f,
+                Some("Mine"),
+                true,
+            )
+            .unwrap();
+        assert!(first.slot.is_none());
+        // A name must be one short line.
+        assert!(
+            keys.set_slot(
+                "openai",
+                None,
+                "sk-openai-x-dddd",
+                None,
+                &f,
+                Some("a\nb"),
+                true
+            )
+            .is_err()
+        );
+        assert!(
+            keys.set_slot(
+                "openai",
+                None,
+                "sk-openai-x-dddd",
+                None,
+                &f,
+                Some(&"n".repeat(41)),
+                true
+            )
+            .is_err()
+        );
+        // A Claude sign-in token is never added as another key.
+        let token = format!("sk-ant-oat01-{}", "y".repeat(40));
+        assert!(
+            keys.set_slot("anthropic", None, &token, None, &f, None, true)
+                .is_err()
+        );
+        // The report names both Anthropic keys and carries no value.
+        let report = serde_json::to_string(&keys.report().unwrap()).unwrap();
+        assert!(report.contains("Work key") && report.contains("bbbb") && report.contains("aaaa"));
+        assert!(
+            !report.contains("sk-ant-api03") && !report.contains("sk-openai"),
+            "{report}"
+        );
+        // Only the first key is what runs, readiness and the connection list see.
+        assert_eq!(
+            keys.values(&["ANTHROPIC_API_KEY"]),
+            BTreeMap::from([("ANTHROPIC_API_KEY".into(), "sk-ant-api03-first-aaaa".into())])
+        );
+        assert_eq!(
+            keys.names()
+                .iter()
+                .filter(|n| *n == "ANTHROPIC_API_KEY")
+                .count(),
+            1
+        );
+        assert_eq!(keys.connections().len(), 2);
+        // Saving the first again replaces only it.
+        keys.set("anthropic", None, "sk-ant-api03-first-zzzz")
+            .unwrap();
+        let listed = keys.list().unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .filter(|k| k.env == "ANTHROPIC_API_KEY")
+                .count(),
+            2
+        );
+        assert!(listed.iter().any(|k| k.slot.is_some() && k.last4 == "bbbb"));
+        // Disconnecting the provider removes every key saved for it.
+        assert!(keys.remove("ANTHROPIC_API_KEY").unwrap());
+        assert!(
+            keys.list()
+                .unwrap()
+                .iter()
+                .all(|k| k.env != "ANTHROPIC_API_KEY")
+        );
+        // A fresh handle reads the same store.
+        let again = AgentKeys::new(cua_auth::Store::TestKeychain(dir.clone()));
+        assert_eq!(again.list().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn which_key_an_app_uses_is_kept_beside_the_keys_and_shown_without_values() {
+        let (keys, dir) = temp_keys();
+        let f = BTreeMap::new();
+        keys.set("anthropic", None, "sk-ant-api03-first-aaaa")
+            .unwrap();
+        let slot = keys
+            .set_slot(
+                "anthropic",
+                None,
+                "sk-ant-api03-work-bbbb",
+                None,
+                &f,
+                None,
+                true,
+            )
+            .unwrap()
+            .slot
+            .unwrap();
+        keys.set_use("hermes", Some(("ANTHROPIC_API_KEY", Some(&slot))))
+            .unwrap();
+        let report = keys.report().unwrap();
+        assert_eq!(report.uses["hermes"].slot.as_deref(), Some(slot.as_str()));
+        assert_eq!(report.uses["hermes"].provider, "anthropic");
+        // It outlives the handle, and clearing it removes it.
+        let again = AgentKeys::new(cua_auth::Store::TestKeychain(dir.clone()));
+        assert_eq!(again.uses().len(), 1);
+        again.set_use("hermes", None).unwrap();
+        assert!(again.uses().is_empty());
+        // A key refused by a run is the chosen one, not the first.
+        keys.set_use("hermes", Some(("ANTHROPIC_API_KEY", Some(&slot))))
+            .unwrap();
+        keys.mark_slot_rejected("ANTHROPIC_API_KEY", &slot).unwrap();
+        let listed = keys.list().unwrap();
+        assert!(listed.iter().find(|k| k.slot.is_some()).unwrap().expired);
+        assert!(!listed.iter().find(|k| k.slot.is_none()).unwrap().expired);
+        assert_eq!(keys.chosen("hermes"), Chosen::Gone);
+        // Drives through the app method as well.
+        let shell = std::path::Path::new("/bin/sh");
+        let out = app_call(
+            &keys,
+            "agent_keys.use",
+            serde_json::json!({"app": "hermes"}),
+            shell,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(out["uses"].as_object().unwrap().is_empty());
+        assert!(
+            app_call(
+                &keys,
+                "agent_keys.use",
+                serde_json::json!({"app": "codex", "env": "ANTHROPIC_API_KEY"}),
+                shell
+            )
+            .unwrap()
+            .is_err()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

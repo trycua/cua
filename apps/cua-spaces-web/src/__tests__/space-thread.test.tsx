@@ -46,9 +46,15 @@ describe("a Space's thread", () => {
     // The state is kept for logic only: no Working or Failed chip on anyone's message.
     expect(qa("[data-task]").map((t) => t.dataset.taskState)).toEqual(expect.arrayContaining(["done", "working", "queued"]));
     expect(qa("[data-task-chip]")).toHaveLength(0);
-    // Claude Code's reply sits inside the task it answers, with its files.
+    // Flat, like a chatroom: Claude Code's reply is its own row, with its files, not nested in the task it answers.
     const done = q('[data-task-state="done"]')!;
-    expect(done.querySelector("[data-task-replies] [data-attachment='report.html']")).not.toBeNull();
+    expect(done.querySelector("[data-attachment]")).toBeNull();
+    expect(qa("[data-task-replies]")).toHaveLength(0);
+    const replyRow = q("[data-attachment='report.html']")!.closest("[data-entry]")!;
+    expect(replyRow).not.toBeNull();
+    expect(done.contains(replyRow)).toBe(false);
+    // Each row has its author and time.
+    expect(replyRow.querySelector("time")).not.toBeNull();
     expect(qa("[data-thread-note]").map((n) => n.textContent)).toContain("Hermes woke up and joined");
     expect(qa("[data-unread]")).toHaveLength(1);
     await waitFor(() => expect(q("[data-member='agent:claude']")?.textContent).toContain("Claude Code"));
@@ -70,7 +76,7 @@ describe("a Space's thread", () => {
     });
     fireEvent.change(box, { target: { value: "@", selectionStart: 1 } });
     await waitFor(() => expect(q("[data-mention-picker]")).not.toBeNull());
-    expect(qa("[data-mention-option]").map((o) => o.dataset.mentionOption)).toEqual(["claude", "hermes", "cursor", "codex", "openclaw", "grace", "linus"]);
+    expect(qa("[data-mention-option]").map((o) => o.dataset.mentionOption)).toEqual(["claude", "hermes", "cursor", "codex", "openclaw", "everyone", "grace", "linus"]);
     fireEvent.keyDown(box, { key: "ArrowDown" });
     fireEvent.keyDown(box, { key: "Enter" });
     expect(box.value).toBe("@hermes ");
@@ -85,9 +91,11 @@ describe("a Space's thread", () => {
       return t!;
     });
     expect(box.value).toBe("");
-    // The demo's Hermes picks it up and answers under it.
+    // The demo's Hermes picks it up and answers on the next row.
     await waitFor(() => expect(mine.dataset.taskState).toBe("done"), { timeout: 4000 });
-    expect(mine.querySelector("[data-task-replies]")?.textContent).toContain("Done.");
+    const answer = qa("[data-entry]").find((e) => e.textContent?.includes("Done. Nothing else needed from me."))!;
+    expect(answer).toBeDefined();
+    expect(mine.contains(answer)).toBe(false);
   });
 
   it("shows a live row for an agent at work: within a second, each stage in order, gone when it replies", async () => {
@@ -103,8 +111,17 @@ describe("a Space's thread", () => {
       const stage = q("[data-live-row='hermes']")?.getAttribute("data-live-stage");
       if (stage && seen[seen.length - 1] !== stage) seen.push(stage);
     };
-    const observer = new MutationObserver(watch);
-    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-live-stage"] });
+    // What the agent has said so far, as it streams: one entry replaced whole each time.
+    const said: string[] = [];
+    const watchText = () => {
+      const t = q("[data-live-entry='hermes'] .select-text")?.textContent?.trim();
+      if (t && said[said.length - 1] !== t) said.push(t);
+    };
+    const observer = new MutationObserver(() => {
+      watch();
+      watchText();
+    });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true, attributeFilter: ["data-live-stage"] });
     fireEvent.change(box, { target: { value: "@hermes draft the release note", selectionStart: 30 } });
     const sent = Date.now();
     await act(async () => {
@@ -127,7 +144,10 @@ describe("a Space's thread", () => {
     await waitFor(() => expect(mine.dataset.taskState).toBe("done"), { timeout: 6000 });
     await waitFor(() => expect(q("[data-live-row]")).toBeNull());
     observer.disconnect();
-    expect(seen).toEqual(["starting", "installing", "starting", "thinking", "using Bash"]);
+    expect(seen).toEqual(["starting", "installing", "starting", "thinking", "using Bash", "replying"]);
+    // It streamed as whole-text snapshots (each one replaces the last), then the real reply took its place.
+    expect(said).toEqual(["Done.", "Done. Nothing else"]);
+    expect(q("[data-live-entry]")).toBeNull();
     // "woke up and joined" came after the agent was up, not before.
     expect(qa("[data-thread-note]").map((n) => n.textContent)).toContain("Hermes woke up and joined");
     // No middle dot in the thread or the member list.

@@ -399,7 +399,10 @@ public final class UpdatesModel {
         self.info = info
         self.channel = channel
         updater?.channels = appAboutAllowedChannels(channel: channel)
-        updater?.onChange = { [weak self] in self?.revision += 1 }
+        updater?.onChange = { [weak self] in
+            self?.revision += 1
+            self?.installWhenReady()
+        }
         // Do people update: what each check found, and installs (the Tauri
         // app records the same words).
         updater?.onUpdateEvent = { [weak self] event in self?.record(event) }
@@ -442,6 +445,36 @@ public final class UpdatesModel {
 
     /// "Restart to update": installs the downloaded update and restarts.
     public func installUpdate() { updater?.installNow() }
+
+    /// The update entry of both menus and the menu bar badge, from the one state.
+    /// Nil in a build with no updater (a development build).
+    public var menuItem: UpdateMenuItem? {
+        updater == nil ? nil : UpdateMenuItem.make(updateState)
+    }
+
+    /// An install asked for before the download finished.
+    private var installQueued = false
+
+    /// What a click on the menu entry does: check, or install (now when the
+    /// update is downloaded, else as soon as it is).
+    public func perform(_ action: UpdateMenuItem.Action) {
+        switch action {
+        case .check: checkNow()
+        case .install:
+            if updateState.status == .downloaded { installUpdate() } else { installQueued = true }
+        case .none: break
+        }
+    }
+
+    private func installWhenReady() {
+        switch updater?.state.status {
+        case .downloaded where installQueued:
+            installQueued = false
+            updater?.installNow()
+        case .idle, .error: installQueued = false
+        default: break
+        }
+    }
 
     static func dateText(_ date: Date) -> String {
         date.formatted(date: .abbreviated, time: .shortened)

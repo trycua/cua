@@ -37,13 +37,13 @@ describe("machines", () => {
     expect(connectionLabel(machine({}))).toBe("Cua relay");
     expect(connectionLabel(machine({ connection: "direct" }))).toBe("Direct");
     expect(connectionLabel(machine({ connection: null, current: true }))).toBe("Not set up for access");
-    expect(machineSubtitle(machine({ model: "Mac mini" }))).toBe("Mac mini · Cua relay");
-    expect(machineSubtitle(machine({ os: "windows", connection: "direct" }))).toBe("Windows · Direct");
+    expect(machineSubtitle(machine({ model: "Mac mini" }))).toBe("Mac mini, Cua relay");
+    expect(machineSubtitle(machine({ os: "windows", connection: "direct" }))).toBe("Windows, Direct");
   });
 
-  it("labels a signed-in device apart from a machine's connection", () => {
-    expect(connectionLabel(machine({ connection: null, device: true }))).toBe("Signed-in device, not shared");
-    expect(machineSubtitle(machine({ os: "windows", connection: null, device: true }))).toBe("Windows · Signed-in device, not shared");
+  it("labels a signed-in machine apart from a machine's connection", () => {
+    expect(connectionLabel(machine({ connection: null, device: true }))).toBe("Signed in, not sharing");
+    expect(machineSubtitle(machine({ os: "windows", connection: null, device: true }))).toBe("Windows, Signed in, not sharing");
     expect(connectionLabel(machine({ connection: "relay", device: true }))).toBe("Cua relay");
     expect(connectionLabel(machine({ connection: null, current: true }))).toBe("Not set up for access");
     expect(connectionLabel(machine({ connection: null, current: false }))).toBe("Unknown");

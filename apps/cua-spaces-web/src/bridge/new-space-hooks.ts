@@ -70,6 +70,8 @@ export interface NewSpaceWizardHook {
   /** Opens the wizard; `on` presets "Run on" (`host:<machine>`, a cloud);
    * `os` opens it on that system, on this machine (an empty home tile). */
   show(on?: string | null, os?: SpaceOs): void;
+  /** Opens "Add a machine by its address" (New Space's menu): the address form, not the wizard's steps. */
+  showAddress(): void;
   close(): void;
   send(action: WizardAction): void;
   /** Starts the plan's create through the bridge's creates flow and closes:
@@ -110,6 +112,12 @@ export function useNewSpaceWizard(): NewSpaceWizardHook {
       let state = wizardInitial(core, local);
       if (os) state = wizardReduce(core, state, { type: "choose-os", os }, local);
       update((x) => ({ ...x, open: true, pinnedEnv: null, state, placeOn: on ?? null }));
+      void ctx.ready.then(loadHostData);
+    },
+    showAddress() {
+      if (!offered) return;
+      const state = wizardReduce(core, wizardInitial(core, env), { type: "show-address" }, env);
+      update((x) => ({ ...x, open: true, pinnedEnv: null, state, placeOn: null }));
       void ctx.ready.then(loadHostData);
     },
     close: () => update((x) => ({ ...x, open: false, state: null, pinnedEnv: null, placeOn: null })),

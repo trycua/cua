@@ -34,7 +34,7 @@ pub enum AgentsCmd {
   # Background computer-use: the cua-driver skill and MCP server
   cua connect setup --cua-driver --agents all -y
   # Also copy each agent's sign-in to Keyvault on This Mac (Codex's
-  # ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)
+  # ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)
   cua connect setup --agents codex,claude --sign-in -y")]
     Setup(SetupCmdArgs),
     /// Whether each agent is really connected: installed and its version,
@@ -98,11 +98,13 @@ pub struct SetupCmdArgs {
     #[arg(long)]
     pub cua_driver: bool,
     /// Also make a sign-in for each agent's runs in your Spaces and keep it
-    /// in Keyvault on This Mac: Claude Code's `claude setup-token` (one
-    /// browser approval) and Codex's own device sign-in (a link and a code
-    /// to enter there, in a folder Cua owns); Hermes uses the providers
-    /// connected in Cua Spaces (Settings, Connectors).
-    /// The agent's own sign-in files are never read or changed.
+    /// in Keyvault on This Mac: the sign-in Claude Code already has (read
+    /// from where Claude Code keeps it, as an access token only; Claude
+    /// Code's own sign-in is never changed) and Codex's own device sign-in
+    /// (a link and a code to enter there, in a folder Cua owns); Hermes uses
+    /// the providers connected in Cua Spaces (Settings, Connections).
+    /// Only Claude Code's own sign-in is read, and only its access token is
+    /// kept; Codex's own `auth.json` is never read or changed.
     #[arg(long, conflicts_with = "cua_driver")]
     pub sign_in: bool,
 }
@@ -763,7 +765,7 @@ fn run_connect(
             &server,
             parts,
             vault.as_deref(),
-            cua_agent_setup::signin::SETUP_TOKEN_WAIT,
+            cua_agent_setup::signin::CLAUDE_IMPORT_WAIT,
             Some(&mut show),
         )
         .map_err(err)?;

@@ -74,6 +74,12 @@ fn is_qcow2(p: &Path) -> bool {
         && m == *b"QFI\xfb"
 }
 
+fn tpm_not_copied(name: &str) -> VmmError {
+    VmmError::invalid(format!(
+        "checkpoint '{name}' holds TPM state, which is not copied between hosts"
+    ))
+}
+
 impl QemuRuntime {
     /// The checkpoint ABIs this host restores: the native accelerator for
     /// the host's own architecture, when memory restores work here.
@@ -99,6 +105,9 @@ impl QemuRuntime {
             return Err(VmmError::invalid(format!(
                 "'{name}' is not a checkpoint (only checkpoints are copied to other hosts)"
             )));
+        }
+        if st.tpm {
+            return Err(tpm_not_copied(name));
         }
         let state = serde_json::to_value(&st)?;
         let mut named = BTreeSet::new();
@@ -198,9 +207,13 @@ impl QemuRuntime {
         if self.state_path(name).exists() {
             return Err(VmmError::AlreadyExists(name.to_string()));
         }
+        let has_tpm = state["tpm"] == true;
         let mut st: QemuState = serde_json::from_value(state)?;
         if st.kind != EntryKind::Checkpoint {
             return Err(VmmError::invalid("only checkpoints are imported"));
+        }
+        if has_tpm {
+            return Err(tpm_not_copied(name));
         }
         let here = self.restorable_abis();
         let theirs = abi(&st.accel, st.arch);

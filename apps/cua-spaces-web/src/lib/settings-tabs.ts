@@ -5,8 +5,7 @@
 export const SETTINGS_TABS = [
   { to: "/settings", label: "Account", exact: true },
   { to: "/settings/general", label: "General", exact: false },
-  { to: "/settings/connectors", label: "Connectors", exact: false },
-  { to: "/settings/devices", label: "Trusted machines", exact: false },
+  { to: "/settings/connections", label: "Connections", exact: false },
   { to: "/settings/advanced", label: "Advanced", exact: false },
   { to: "/settings/about", label: "About", exact: false },
 ] as const;

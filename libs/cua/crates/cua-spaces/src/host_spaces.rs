@@ -370,18 +370,25 @@ const DISK_ANSWER_WITHIN: Duration = Duration::from_secs(10);
 struct Reserved {
     spaces: u32,
     macos: u32,
+    /// Memory (MiB) and disk (GiB) of the creates in flight.
+    memory_mb: u64,
+    disk_gb: u64,
 }
 
 /// Holds a capacity slot until the Space is recorded (or the create fails).
 struct Slot<'a> {
     reserved: &'a Mutex<Reserved>,
     macos: bool,
+    memory_mb: u64,
+    disk_gb: u64,
 }
 
 impl Drop for Slot<'_> {
     fn drop(&mut self) {
         let mut r = self.reserved.lock().expect("reserved");
         r.spaces = r.spaces.saturating_sub(1);
+        r.memory_mb = r.memory_mb.saturating_sub(self.memory_mb);
+        r.disk_gb = r.disk_gb.saturating_sub(self.disk_gb);
         if self.macos {
             r.macos = r.macos.saturating_sub(1);
         }
@@ -1230,6 +1237,22 @@ impl HostSpacesServer {
             limit: settings.max_spaces,
             reason: "this host's limit (`cua host config --max-spaces`)".into(),
         }];
+        if settings.max_memory_gb > 0 {
+            out.push(pb::HostSpacesCapacity {
+                resource: "memory_gb".into(),
+                used: gb_up(provided_memory_mb(provided) + r.memory_mb),
+                limit: settings.max_memory_gb,
+                reason: "this host's limit (`cua host config --max-memory`)".into(),
+            });
+        }
+        if settings.max_disk_gb > 0 {
+            out.push(pb::HostSpacesCapacity {
+                resource: "disk_gb".into(),
+                used: (provided_disk_gb(provided) + r.disk_gb).min(u64::from(u32::MAX)) as u32,
+                limit: settings.max_disk_gb,
+                reason: "this host's limit (`cua host config --max-disk`)".into(),
+            });
+        }
         if cfg!(target_os = "macos") {
             out.push(pb::HostSpacesCapacity {
                 resource: "macos_vms".into(),
@@ -1248,6 +1271,8 @@ impl HostSpacesServer {
         provided: &[ProvidedSpace],
         macos: bool,
         host_name: &str,
+        memory_mb: u64,
+        disk_gb: u64,
     ) -> Result<Slot<'_>> {
         let settings = policy.spaces_settings();
         let macos_used = if macos {
@@ -1259,8 +1284,32 @@ impl HostSpacesServer {
         let used = provided.len() as u32 + r.spaces;
         if settings.max_spaces > 0 && used >= settings.max_spaces {
             return Err(Error::LimitExceeded(format!(
-                "{host_name} already provides {used} Spaces, its limit (on it: `cua host config \
-                 --max-spaces N`); delete one first"
+                "{host_name} has no room for another Space: it allows {} from other machines and \
+                 {used} {} in use (on it: `cua host config --max-spaces N`)",
+                spaces_text(settings.max_spaces),
+                if used == 1 { "is" } else { "are" },
+            )));
+        }
+        let mem_used = provided_memory_mb(provided) + r.memory_mb;
+        if settings.max_memory_gb > 0
+            && mem_used + memory_mb > u64::from(settings.max_memory_gb) * 1024
+        {
+            return Err(Error::LimitExceeded(format!(
+                "{host_name} has no room for another Space: it allows {} GB of memory for Spaces \
+                 from other machines and {} GB are in use, so another {} GB does not fit (on it: \
+                 `cua host config --max-memory N`)",
+                settings.max_memory_gb,
+                gb_up(mem_used),
+                gb_up(memory_mb),
+            )));
+        }
+        let disk_used = provided_disk_gb(provided) + r.disk_gb;
+        if settings.max_disk_gb > 0 && disk_used + disk_gb > u64::from(settings.max_disk_gb) {
+            return Err(Error::LimitExceeded(format!(
+                "{host_name} has no room for another Space: it allows {} GB of disk for Spaces \
+                 from other machines and {disk_used} GB are in use, so another {disk_gb} GB does \
+                 not fit (on it: `cua host config --max-disk N`)",
+                settings.max_disk_gb,
             )));
         }
         if macos {
@@ -1277,10 +1326,34 @@ impl HostSpacesServer {
             r.macos += 1;
         }
         r.spaces += 1;
+        r.memory_mb += memory_mb;
+        r.disk_gb += disk_gb;
         Ok(Slot {
             reserved: &self.reserved,
             macos,
+            memory_mb,
+            disk_gb,
         })
+    }
+
+    /// Gives the new Space the longest running time the owner set (`cua
+    /// host config --max-run-time`): when it passes the cua daemon turns
+    /// the Space off (`start` brings it back; nothing is deleted).
+    fn limit_run_time(&self, policy: &cua_host::HostPolicy, local_space: &str) {
+        let minutes = policy.spaces_settings().max_run_minutes;
+        if minutes == 0 {
+            return;
+        }
+        if let Err(e) = self.spaces.set_lifetime(
+            local_space,
+            Duration::from_secs(u64::from(minutes) * 60),
+            Some(cua_sandbox_core::LocalExpiry::Suspend),
+        ) {
+            tracing::warn!(
+                space = local_space,
+                "could not set the running time limit: {e}"
+            );
+        }
     }
 
     fn host_name(&self) -> String {
@@ -1348,6 +1421,9 @@ impl HostSpacesServer {
                 } else {
                     0
                 },
+                max_memory_gb: settings.max_memory_gb,
+                max_disk_gb: settings.max_disk_gb,
+                max_run_minutes: settings.max_run_minutes,
             }),
             capacity: self.capacity(&policy, &all),
             spaces: all
@@ -1536,7 +1612,14 @@ impl HostSpacesServer {
         .map_err(|e| self.refuse(caller, &label, place(e)))?;
         let provided_now = provided::load_provided(&self.host_dir())?;
         let slot = self
-            .reserve(&policy, &provided_now, macos, &host_name)
+            .reserve(
+                &policy,
+                &provided_now,
+                macos,
+                &host_name,
+                admitted_memory_mb(req.memory_mb),
+                admitted_disk_gb(req.disk_gb),
+            )
             .map_err(|e| self.refuse(caller, &label, e))?;
         // Without a Space limit (`max_spaces` 0, a cluster host), what is
         // free decides: the CPU and memory its jobs and Spaces do not
@@ -1760,10 +1843,12 @@ impl HostSpacesServer {
                 direct_port: port,
                 cpus: req.cpus,
                 memory_mb: req.memory_mb,
+                disk_gb: req.disk_gb,
                 routed,
             };
             provided::update_provided(&self.host_dir(), |all| all.push(record.clone()))?;
             drop(slot);
+            self.limit_run_time(&policy, &record.local_space);
             self.audit(
                 "create",
                 caller,
@@ -1828,10 +1913,12 @@ impl HostSpacesServer {
             direct_port: 0,
             cpus: req.cpus,
             memory_mb: req.memory_mb,
+            disk_gb: req.disk_gb,
             routed: false,
         };
         provided::update_provided(&self.host_dir(), |all| all.push(record.clone()))?;
         drop(slot);
+        self.limit_run_time(&policy, &record.local_space);
         self.audit(
             "create",
             caller,
@@ -2416,6 +2503,24 @@ pub(crate) fn is_stopped_sharing(reason: &str) -> bool {
     reason.contains("stopped sharing")
 }
 
+/// The relay's own sentence when it refused a team computer because this
+/// device still needs a team admin's approval (or is not enrolled), from a
+/// failed connection's reason. That refusal is the whole story: the computer
+/// is not "still starting" and waiting does not help (CUA-2835).
+pub(crate) fn team_device_refusal(reason: &str) -> Option<String> {
+    const MARKERS: [&str; 2] = ["this device (", "team machines need an enrolled device"];
+    let start = MARKERS.iter().filter_map(|m| reason.find(m)).min()?;
+    let rest = &reason[start..];
+    // One line per transport tried, joined with "; ": keep the first.
+    let line = rest.split("; ").next().unwrap_or(rest).trim();
+    (line.contains("approv") || line.contains("enroll")).then(|| line.to_string())
+}
+
+/// A team computer refused because of this device, with the relay's words.
+pub(crate) fn team_device_refused(message: String) -> Error {
+    Error::Relay(cua_host::Error::PermissionDenied(message))
+}
+
 /// [`HostLimit::resource`] of a host the relay sees connected whose owner
 /// stopped sharing it (it refuses every call). Not a count: `used` and
 /// `limit` are 0 and `reason` is the line to show. It travels with the
@@ -2538,6 +2643,21 @@ fn provided_reservation(host_dir: &std::path::Path) -> cua_cluster::External {
         *ext.running.entry(kind).or_default() += 1;
     }
     ext
+}
+
+use provided::{admitted_disk_gb, admitted_memory_mb, gb_up};
+
+fn provided_memory_mb(provided: &[ProvidedSpace]) -> u64 {
+    provided::used_memory_mb(provided)
+}
+
+fn provided_disk_gb(provided: &[ProvidedSpace]) -> u64 {
+    provided::used_disk_gb(provided)
+}
+
+/// "1 Space", "4 Spaces".
+fn spaces_text(n: u32) -> String {
+    format!("{n} Space{}", if n == 1 { "" } else { "s" })
 }
 
 fn now_ms() -> u64 {
@@ -4464,6 +4584,26 @@ mod snapshot_takers {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn team_device_refusal_keeps_the_relays_sentence() {
+        let msg = "this device (dev_ab12) is waiting for a team admin's approval before it can open Acme's computers. An owner or admin can approve it at app.cua.ai/machines";
+        let reason = format!("gRPC-Web: {msg}; HTTP/2: {msg}");
+        assert_eq!(super::team_device_refusal(&reason).as_deref(), Some(msg));
+        let enroll =
+            "team machines need an enrolled device: run `cua devices enroll` (or sign in again)";
+        assert_eq!(super::team_device_refusal(enroll).as_deref(), Some(enroll));
+        assert_eq!(
+            super::team_device_refusal(
+                "nothing answered at https://x (it may still be starting; retry in a few seconds)"
+            ),
+            None
+        );
+        assert_eq!(
+            super::team_device_refusal("the host stopped sharing this machine"),
+            None
+        );
+    }
+
     /// An old host (a Cua 0.7 machine, protocol revision 8) is refused up
     /// front, by name, with how to update; a current one is not.
     #[test]

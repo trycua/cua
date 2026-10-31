@@ -134,7 +134,7 @@ describe("meters", () => {
     expect(systemName(undefined)).toBeNull();
   });
 
-  it("says how old another computer's summary is", () => {
+  it("says how old another machine's summary is", () => {
     expect(updatedAgo(0, 30_000)).toBe("just now");
     expect(updatedAgo(0, 2 * 60_000)).toBe("2 min ago");
     expect(updatedAgo(0, 3 * 3_600_000)).toBe("3 hours ago");

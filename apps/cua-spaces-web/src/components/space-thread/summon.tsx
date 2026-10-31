@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * @mentioning agents in a Space (redesign): the composer's picker offers the
+ * @mentioning agents in a Space: the composer's picker offers the
  * agents in the Space and those that can start in it; sending posts the
  * message, adds an @mentioned agent that isn't in the Space yet (asleep, so
  * the message wakes it), and, when one can't be woken, shows why under the
  * message with Connect. Once Connect finishes the message goes again by
  * itself. Which agents, what each step is and every word are the core's
- * (`summon.*`); Connect is Settings, Connectors' (`useConnectors`).
+ * (`summon.*`); Connect is Settings, Connections' (`useConnectors`).
  *
  * The notes are this device's: they are about its own sign-ins, so they
  * aren't posted to the thread for everyone.
@@ -197,9 +197,9 @@ export function useSummon({ spaceId, thread, roster, canAdd }: { spaceId: string
   const handles = useMemo(() => new Set([...roster.handles, ...extra.map((c) => c.handle.toLowerCase())]), [roster.handles, extra]);
 
   const send = useCallback(
-    async (text: string, view: PostView | null) => {
+    async (text: string, view: PostView | null, replyTo?: number | null) => {
       if (!data) return;
-      await sendWithSummon({ core, data, spaceId, input, text, post: (t) => thread.post(t, view) });
+      await sendWithSummon({ core, data, spaceId, input, text, post: (t) => thread.post(t, view, replyTo) });
     },
     [core, data, spaceId, input, thread],
   );
@@ -274,7 +274,7 @@ export function WakeNoteView({
             </Button>
           ) : null}
           {c.openLabel ? (
-            <Button size="sm" variant="ghost" className="text-muted-foreground" render={<Link to="/settings/connectors/$app" params={{ app: c.app }} />} data-wake-open="">
+            <Button size="sm" variant="ghost" className="text-muted-foreground" render={<Link to="/settings/connections/$app" params={{ app: c.app }} />} data-wake-open="">
               {c.openLabel}
             </Button>
           ) : null}

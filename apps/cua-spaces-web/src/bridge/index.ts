@@ -54,20 +54,34 @@ export type {
 } from "./store";
 export { newPendingId } from "./store";
 export type { TranscriptItem, TranscriptStep } from "./transcript";
-export { GRID_COLUMNS, iconKey, thumbnailKey, useTeleport, type TeleportHook, type TeleportSession, type TeleportStore } from "./teleport";
+export {
+  AUTOMATION_PANE,
+  FULL_DISK_ACCESS_PANE,
+  GRID_COLUMNS,
+  iconKey,
+  setupBlocked,
+  setupProfile,
+  thumbnailKey,
+  useTeleport,
+  type TeleportHook,
+  type TeleportSession,
+  type TeleportSetup,
+  type TeleportStore,
+} from "./teleport";
 export { useShareSheet, type ShareHook, type ShareSession } from "./share";
 export { useShareRemovalNote, type ShareRemovalNoteHook } from "./removal-note";
 export {
   agentKeyForm,
   agentKeysView,
   useAgentKeys,
+  useKeysRecheck,
   type AgentKeyFormView,
   type AgentKeyRowView,
   type AgentKeysHook,
   type AgentKeysInput,
   type AgentKeysView,
 } from "./agent-keys";
-export type { AgentKeyInfo, AgentKeyProvider, AgentKeysReport } from "./ops/agent-keys";
+export type { AgentKeyInfo, AgentKeyProvider, AgentKeysReport, KeyChoices } from "./ops/agent-keys";
 export { connectionRows, useConnections, type ConnectionsHook, type ConnectionReport, type ConnectionRow, type ConnectionRowView, type ConnectResult } from "./connections";
 export {
   DEFAULT_SETTINGS,
@@ -134,6 +148,7 @@ export { displayPairingCode, normalizePairingCode, pairingLinkRelay } from "./pa
 export { BUY_PRO_URL, BUY_TEAMS_URL, expiresInText, FINISHING_SETUP, PAIRING_POLL_MS, pairingUnsupported, planFailure, usePairingCode, type PairingHook, type PairingPhase } from "./pairing";
 export { READY_STARTUP, type StartupAction, type StartupPhase, type StartupState } from "./ops/startup";
 export { NO_TIPS, sendTipsEvent, tipsState, useTips, type TipsHook } from "./tips";
+export { useNotchPins, type NotchPins } from "./notch-pins";
 export {
   CHECKLIST_STEPS,
   useChecklist,
@@ -158,7 +173,7 @@ export {
 
 export { linkEnds, needsRelaySetup, useLinks, type LinksHook } from "./links";
 export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatAttempt, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
-export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem } from "./thread";
+export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem, type ThreadQuote } from "./thread";
 export {
   DEFAULT_AGENT_RIGHTS,
   isMissingThreadTool,

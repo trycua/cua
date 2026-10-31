@@ -38,6 +38,10 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua host setup`](#cua-host-setup) | Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. |
 | [`cua host pair`](#cua-host-pair) | Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. |
 | [`cua host config`](#cua-host-config) | Show or change what this computer shares: its own desktop, and whether it creates Spaces for your other devices. |
+| [`cua host cache`](#cua-host-cache) | What the repo cache holds, and empty it. |
+| [`cua host cache status`](#cua-host-cache-status) | What the repo cache holds: repositories, size and what the last week saved. |
+| [`cua host cache fill`](#cua-host-cache-fill) | Copy one public repository into the cache now, instead of when a Space first clones it (or bring a copy up to date). |
+| [`cua host cache clear`](#cua-host-cache-clear) | Delete every repository the cache holds. |
 | [`cua host status`](#cua-host-status) | Show whether this computer is set up, the service, and who is connected. |
 | [`cua host stop`](#cua-host-stop) | Stop sharing: disconnect everyone and refuse new connections. |
 | [`cua host start`](#cua-host-start) | Start sharing again after `stop`. |
@@ -49,7 +53,7 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua devices status`](#cua-devices-status) | This device: enrolled, waiting for approval, or not enrolled. |
 | [`cua devices enroll`](#cua-devices-enroll) | Enroll this device. |
 | [`cua devices approve`](#cua-devices-approve) | Approve a new device (or re-verify an expired one) from this enrolled device, by the code it shows or by its id. |
-| [`cua devices ls`](#cua-devices-ls) | Your devices and their state. |
+| [`cua devices ls`](#cua-devices-ls) | Your signed-in machines and their state. |
 | [`cua devices rename`](#cua-devices-rename) | Rename a device. |
 | [`cua devices revoke`](#cua-devices-revoke) | Revoke a device: it can no longer list or reach your computers. |
 | [`cua devices audit`](#cua-devices-audit) | Who accessed what, and when: enrollments, device sessions, computer access (yours and by accounts you share with), sharing changes. |
@@ -689,6 +693,11 @@ cua host config [OPTIONS]
 | <span id="cua-host-config--provide-spaces"></span>`--provide-spaces` | `on` \| `off` |  | Create Spaces for your enrolled devices: on \| off. |
 | <span id="cua-host-config--max-spaces"></span>`--max-spaces` | integer |  | Provided Spaces at once (0: no limit). |
 | <span id="cua-host-config--max-macos-vms"></span>`--max-macos-vms` | integer |  | macOS VMs at once, 0 to 2 (Apple's license allows two per Mac). |
+| <span id="cua-host-config--max-memory"></span>`--max-memory` | integer |  | Memory in GB the Spaces other machines create here may use in total (0: no limit). |
+| <span id="cua-host-config--max-disk"></span>`--max-disk` | integer |  | Disk in GB the Spaces other machines create here may use in total (0: no limit). |
+| <span id="cua-host-config--max-run-time"></span>`--max-run-time` | integer |  | Minutes a Space created here by another machine may run before it is stopped (0: no limit). |
+| <span id="cua-host-config--repo-cache"></span>`--repo-cache` | `on` \| `off` |  | The repo cache: on \| off. It keeps verified copies of public git repositories on this machine so a repeat `git clone` in a Space starts from one (never private repositories, never anything off this machine's disk). |
+| <span id="cua-host-config--repo-cache-size"></span>`--repo-cache-size` | string |  | The most disk the repo cache may use, in GB (`auto`: the smaller of 5 GB and a tenth of the free disk). The least recently used repositories go first. |
 
 **Examples**
 
@@ -698,6 +707,67 @@ cua host config
 # Stop sharing this desktop; keep providing Spaces
 cua host config --desktop off --provide-spaces on
 cua host config --max-spaces 6
+
+# Give the Spaces other machines create here at most 32 GB of memory and 200 GB of disk in total, and stop each after 8 hours (0: no limit)
+cua host config --max-memory 32 --max-disk 200 --max-run-time 480
+
+# Keep no copies of public git repositories on this machine, or at most 2 GB
+cua host config --repo-cache off
+cua host config --repo-cache on --repo-cache-size 2
+```
+
+### `cua host cache`
+
+What the repo cache holds, and empty it.
+
+```text output
+cua host cache [OPTIONS] <COMMAND>
+```
+
+#### `cua host cache status`
+
+What the repo cache holds: repositories, size and what the last week saved.
+
+```text output
+cua host cache status [OPTIONS]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-host-cache-status"
+cua host cache status
+```
+
+#### `cua host cache fill`
+
+Copy one public repository into the cache now, instead of when a Space first clones it (or bring a copy up to date). A repository that needs a sign-in is never cached.
+
+```text output
+cua host cache fill [OPTIONS] <URL>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<URL>` | string | required | The repository's `https` address. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-host-cache-fill"
+cua host cache fill https://github.com/vitejs/vite
+```
+
+#### `cua host cache clear`
+
+Delete every repository the cache holds. They are copied again the next time a Space clones them.
+
+```text output
+cua host cache clear [OPTIONS]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-host-cache-clear"
+cua host cache clear
 ```
 
 ### `cua host status`
@@ -908,7 +978,7 @@ cua devices approve dev_0123456789abcdef01234567
 
 ### `cua devices ls`
 
-Your devices and their state.
+Your signed-in machines and their state.
 
 ```text output
 cua devices ls [OPTIONS]

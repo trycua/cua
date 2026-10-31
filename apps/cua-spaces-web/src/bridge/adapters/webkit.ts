@@ -318,6 +318,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
       // The core's own settings the page changes (`settings.update`); an older host has none.
       ...(s.tips ? { tips: { off: s.tips.off === true, done: Array.isArray(s.tips.done) ? s.tips.done : [] } } : {}),
+      ...(Array.isArray(s.notchPinned) ? { notchPinned: s.notchPinned.filter((id): id is string => typeof id === "string") } : {}),
     },
     defaultLocation: null,
     telemetry: telemetry
@@ -432,6 +433,13 @@ export function toHostStatus(h: WkHostState): HostStatus {
     // The rest of the core's state, as the host sends it: the logs, the
     // provided Spaces, and whether sharing waits for a sign-in.
     maxMacosVms: h.maxMacosVms ?? 0,
+    maxMemoryGb: h.maxMemoryGb ?? 0,
+    maxDiskGb: h.maxDiskGb ?? 0,
+    maxRunMinutes: h.maxRunMinutes ?? 0,
+    usedMemoryGb: h.usedMemoryGb ?? 0,
+    usedDiskGb: h.usedDiskGb ?? 0,
+    totalMemoryGb: h.totalMemoryGb ?? 0,
+    totalDiskGb: h.totalDiskGb ?? 0,
     recentAccess: list(h.recentAccess) as HostStatus["recentAccess"],
     accessLogError: h.accessLogError ?? null,
     providedSpaces: list(h.providedSpaces) as HostStatus["providedSpaces"],
@@ -644,6 +652,7 @@ export function createWebkitAdapter(
           break;
         // The app core's own settings (`AppSettings`), saved as given.
         case "tips":
+        case "notchPinned":
           return toSettingsSnapshot(await request<WkSettings>("settings.update", { [key]: value ?? null }), page);
       }
       return settingsSnapshot();

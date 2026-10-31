@@ -14,15 +14,22 @@ import { useNavigate } from "@tanstack/react-router";
 import { MoreHorizontalIcon } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 
-import { spaceMenu, useBridge, useSession, useShareSheet, useTeleport, type SpaceMenuInput, type SpaceMenuItem } from "@/bridge";
+import { spaceMenu, useBridge, useNotchPins, useSession, useShareSheet, useTeleport, type SpaceMenuInput, type SpaceMenuItem } from "@/bridge";
+import { toastError } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
-import type { SpaceItem } from "./model";
+import { canPinToNotch, type SpaceItem } from "./model";
 import { MENU_ITEM, MENU_POPUP } from "./spaces-toolbar";
 
-/** What the core's menu reads for this Space. */
-export function menuInput(item: SpaceItem): SpaceMenuInput {
+/**
+ * What the core's menu reads for this Space. `pinned`: the notch's pins, when the host can keep
+ * them (Pin to notch / Unpin from notch); without it the menu has no pin item. One of your other
+ * machines' desktops is not a Space to turn on, share or delete: its menu is Open and the pin.
+ */
+export function menuInput(item: SpaceItem, pinned?: ReadonlySet<string>): SpaceMenuInput {
   const { access, state, space } = item;
+  const pin = pinned && canPinToNotch(item) ? { canPin: true, pinned: pinned.has(space.id) } : {};
+  if (item.desktop) return { kind: "mine", role: "owner", power: "off", ...pin };
   const busy = space.power?.turningOn !== undefined && space.power?.turningOn !== null;
   return {
     kind: access.kind,
@@ -38,6 +45,7 @@ export function menuInput(item: SpaceItem): SpaceMenuInput {
     canRename: false,
     canDelete: access.canDelete && item.mine,
     canLeave: access.canLeave,
+    ...pin,
   };
 }
 
@@ -46,21 +54,25 @@ export interface MenuActions {
   power: (item: SpaceItem, on: boolean) => void;
   /** Ask to delete or leave it (the bulk confirm, with one Space). */
   remove: (item: SpaceItem) => void;
-  /** Hide a machine's desktop row from the list (Hide on its hover). */
+  /** Hide a machine's desktop row from the list (Hide on This Mac's hover, in the menu of another machine's). */
   hide?: (item: SpaceItem) => void;
 }
 
+/** One menu entry: the core's item, or Hide (the page's own, on another machine's desktop), with what it does. */
+type MenuEntry = Omit<SpaceMenuItem, "id"> & { id: SpaceMenuItem["id"] | "hide"; run: () => void };
+
 /** The menu's items, each with what it does. */
-export function useSpaceMenu(item: SpaceItem, actions: MenuActions): (SpaceMenuItem & { run: () => void })[] {
+export function useSpaceMenu(item: SpaceItem, actions: MenuActions): MenuEntry[] {
   const { core } = useBridge();
   const navigate = useNavigate();
   const share = useShareSheet();
   const teleport = useTeleport();
   const { data: session } = useSession();
-  // A machine's desktop is not a Space: no delete, power or share menu; Hide is its hover button.
-  if (core.status !== "ready" || item.desktop) return [];
-  const items = spaceMenu(core, menuInput(item));
-  const run = (id: SpaceMenuItem["id"]) => {
+  const pins = useNotchPins();
+  // This Mac's desktop and a desktop that is not shared have no menu: Hide is This Mac's hover button.
+  if (core.status !== "ready" || item.desktop === "off" || item.space.id === "this-mac") return [];
+  const items = spaceMenu(core, menuInput(item, pins.canPin ? pins.pinned : undefined));
+  const run = (id: MenuEntry["id"]) => {
     switch (id) {
       case "open":
         return void navigate({ to: "/spaces/$spaceId", params: { spaceId: item.space.id } });
@@ -74,14 +86,21 @@ export function useSpaceMenu(item: SpaceItem, actions: MenuActions): (SpaceMenuI
       case "delete":
       case "leave":
         return actions.remove(item);
+      case "pin":
+        return void pins.toggle(item.space.id).catch(toastError(`Couldn't change the notch`));
+      case "hide":
+        return actions.hide?.(item);
       case "rename":
         return undefined;
     }
   };
-  return items.map((i) => ({ ...i, run: () => run(i.id) }));
+  const entries: MenuEntry[] = items.map((i) => ({ ...i, run: () => run(i.id) }));
+  // Another machine's desktop leaves the list from here (This Mac's has the hover button).
+  if (item.desktop && actions.hide) entries.push({ id: "hide", label: "Hide", enabled: true, destructive: false, separatorBefore: false, run: () => run("hide") });
+  return entries;
 }
 
-function Items({ items, Item, Separator }: { items: ReturnType<typeof useSpaceMenu>; Item: typeof MenuPrimitive.Item; Separator: typeof MenuPrimitive.Separator }) {
+function Items({ items, Item, Separator }: { items: MenuEntry[]; Item: typeof MenuPrimitive.Item; Separator: typeof MenuPrimitive.Separator }) {
   return items.map((i) => (
     <Fragment key={i.id}>
       {i.separatorBefore ? <Separator className="-mx-1 my-1 h-px bg-foreground/10" /> : null}
@@ -165,5 +184,40 @@ export function SpaceContextMenu({ item, actions, children }: { item: SpaceItem;
         </ContextMenu.Positioner>
       </ContextMenu.Portal>
     </ContextMenu.Root>
+  );
+}
+
+/**
+ * The "⋯" on a row of a machine's page ("Spaces on this machine": its shared desktop, then the Spaces it
+ * provides): Open and Pin to notch / Unpin from notch, the core's menu for what a row there can do. It
+ * shows on hover over the row's chevron. Nothing where the app core can't pin.
+ */
+export function MachineRowMenu({ id, name }: { id: string; name: string }) {
+  const { core } = useBridge();
+  const navigate = useNavigate();
+  const pins = useNotchPins();
+  if (core.status !== "ready" || !pins.canPin) return null;
+  const items = spaceMenu(core, { kind: "mine", role: "owner", power: "off", canPin: true, pinned: pins.pinned.has(id) });
+  const run = (item: SpaceMenuItem) => {
+    if (item.id === "open") void navigate({ to: "/spaces/$spaceId", params: { spaceId: id } });
+    else if (item.id === "pin") void pins.toggle(id).catch(toastError("Couldn't change the notch"));
+  };
+  return (
+    <MenuPrimitive.Root>
+      <MenuPrimitive.Trigger aria-label={`More for ${name}`} data-space-more={id} className={cn(MORE_BUTTON, "absolute top-1/2 right-[-6px] -translate-y-1/2")}>
+        <MoreHorizontalIcon className="size-4" />
+      </MenuPrimitive.Trigger>
+      <MenuPrimitive.Portal>
+        <MenuPrimitive.Positioner sideOffset={4} align="end" className="z-50 outline-none">
+          <MenuPrimitive.Popup data-space-menu="more" className={MENU_POPUP}>
+            {items.map((i) => (
+              <MenuPrimitive.Item key={i.id} disabled={!i.enabled} data-menu-item={i.id} onClick={() => run(i)} className={MENU_ITEM}>
+                {i.label}
+              </MenuPrimitive.Item>
+            ))}
+          </MenuPrimitive.Popup>
+        </MenuPrimitive.Positioner>
+      </MenuPrimitive.Portal>
+    </MenuPrimitive.Root>
   );
 }

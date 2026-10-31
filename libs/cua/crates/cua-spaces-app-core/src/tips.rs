@@ -346,7 +346,7 @@ pub fn view(place: TipPlace, facts: &TipFacts, state: &TipsState) -> Option<Tip>
             let mut t = tip(
                 "on-auto",
                 place,
-                "New Spaces can go to whichever computer has room.".into(),
+                "New Spaces can go to whichever machine has room.".into(),
                 action(
                     TipActionKind::CopyCommand,
                     "Copy",
@@ -607,7 +607,7 @@ mod tests {
         };
         let t = view(TipPlace::Sidebar, &f, &TipsState::default()).unwrap();
         assert_eq!(t.id, "on-auto");
-        assert_eq!(t.text, "New Spaces can go to whichever computer has room.");
+        assert_eq!(t.text, "New Spaces can go to whichever machine has room.");
         assert_eq!(t.code.as_deref(), Some("cua create --on auto"));
         assert_eq!(t.action.kind, TipActionKind::CopyCommand);
         assert_eq!(t.action.value.as_deref(), Some("cua create --on auto"));

@@ -24,7 +24,6 @@ export type ParityScreen =
   | "settings/about"
   | "settings/advanced"
   | "settings/connected-apps"
-  | "settings/devices"
   | "notifications"
   | "machines"
   | "agents"
@@ -64,7 +63,7 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "create-progress": { status: "run", screen: "spaces" },
   "create-stages": { status: "run", screen: "spaces" },
   "create-retry": { status: "run", screen: "spaces" },
-  devices: { status: "run", screen: "settings/devices" },
+  devices: { status: "run", screen: "machines" },
   "driver-card": { status: "run", screen: "settings/connected-apps" },
   "share-sheet": { status: "run", screen: "share" },
   "agents-page": { status: "run", screen: "agents" },
@@ -80,7 +79,7 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "agent-keys": { status: "run", screen: "settings/connected-apps" },
   connectors: {
     status: "skip",
-    reason: "The redesign's Connectors page, an app's page, the @ picker and the agent list draw connectors.*, summon.* and agentList.view as is; the webview parity test replays this flow on the wasm core, and src/__tests__/connectors-redesign.test.tsx, ask-first-in-space.test.tsx and home-agents.test.tsx drive the screens",
+    reason: "The Connections page, an app's page, the @ picker and the agent list draw connectors.*, summon.* and agentList.view as is; the webview parity test replays this flow on the wasm core, and src/__tests__/connectors-redesign.test.tsx, ask-first-in-space.test.tsx and home-agents.test.tsx drive the screens",
   },
   "your-cloud": { status: "run", screen: "new-space" },
   "telemetry-funnel": { status: "run", screen: "spaces" },

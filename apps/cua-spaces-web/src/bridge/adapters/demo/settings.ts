@@ -11,7 +11,7 @@ import { HostError } from "../../adapter";
 import type { DeviceInput, DevicesInput, PairingCode } from "../../contracts/devices";
 import type { MachineRow } from "../../contracts/host";
 import type { NotificationInput } from "../../contracts/notifications";
-import type { AboutInput, DriveCheckInput, Experiments, LoginItemReport, StorageInput, UpdateState } from "../../contracts/settings";
+import type { AboutInput, DriveCheckInput, Experiments, LoginItemReport, RepoCacheView, StorageInput, UpdateState } from "../../contracts/settings";
 import { NO_EXPERIMENTS } from "../../contracts/volume";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./platform";
 import { DEMO_BROWSED, demoProbe } from "./runtimes";
@@ -77,16 +77,17 @@ export function demoDevices(nowMs: number, unenrolled = false): DevicesInput {
       { id: "dev_old", name: "Old laptop", state: "expired", platform: "linux", enrolledUntil: now - 2 * DAY, lastSeen: now - 33 * DAY },
     ],
     audit: [
-      { ts: now - 5 * 3600, kind: "machine_access", device: "dev_studio", machine: "m1", detail: "owner" },
-      { ts: now - 2 * 3600, kind: "shared_access", machine: "m1", subject: "bob@example.com" },
+      { ts: now - 5 * 3600, kind: "machine_access", device: "dev_studio", machine: "studio-pc", detail: "owner" },
+      { ts: now - 2 * 3600, kind: "shared_access", machine: "studio-pc", subject: "bob@example.com" },
       { ts: now - 1800, kind: "device_registered", device: "dev_work" },
-      { ts: now - 600, kind: "machine_access", device: "dev_mac", machine: "m2", detail: "owner" },
+      { ts: now - 900, kind: "machine_access", device: "dev_studio", machine: "this-mac", detail: "owner" },
+      { ts: now - 600, kind: "machine_access", device: "dev_mac", machine: "mac-mini", detail: "owner" },
     ],
     enforceAfter: now - 30 * DAY,
-    machineNames: { m1: "studio-mac", m2: "mac-mini" },
+    machineNames: { "studio-pc": "Studio PC", "mac-mini": "Mac mini", "this-mac": "This Mac" },
     machines: [
-      { id: "m1", name: "studio-mac", confirmed: true },
-      { id: "m2", name: "mac-mini", confirmed: true },
+      { id: "studio-pc", name: "Studio PC", confirmed: true },
+      { id: "mac-mini", name: "Mac mini", confirmed: true },
     ],
   };
 }
@@ -189,6 +190,26 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
   const patchDevice = (id: string, patch: Partial<NonNullable<DevicesInput["devices"]>[number]>) => {
     devices = { ...devices, devices: devices.devices?.map((d) => (d.id === id ? { ...d, ...patch } : d)) };
   };
+  // The repo cache: three repositories and a week of hits to show (the real
+  // words come from the host, `cua_sdk::RepoCacheStatus`).
+  const repoCache = { enabled: true, sizeGb: null as number | null, repos: 3, bytes: Math.round(1.2 * GIB) };
+  const sizeWords = (bytes: number) => (bytes >= GIB ? `${Math.round((bytes / GIB) * 10) / 10} GB` : `${Math.round(bytes / (1024 * 1024))} MB`);
+  const repoCacheView = (): RepoCacheView => {
+    const capBytes = Math.round((repoCache.sizeGb ?? 5) * GIB);
+    const none = repoCache.repos === 0;
+    return {
+      enabled: repoCache.enabled,
+      repos: repoCache.repos,
+      bytes: repoCache.bytes,
+      capBytes,
+      sizeSetting: repoCache.sizeGb === null ? "auto" : String(repoCache.sizeGb),
+      summary: `Repos: ${repoCache.repos}, ${sizeWords(repoCache.bytes)} of ${sizeWords(capBytes)}`,
+      week: none ? "No clones yet this week" : "Last week: 80% of clones came from the cache, about 2 minutes saved",
+      hits: none ? 0 : 8,
+      misses: none ? 0 : 2,
+      secondsSaved: none ? 0 : 125,
+    };
+  };
   const ok = (applied: boolean): DriveCheckInput => ({ ok: true, reachable: true, authorized: true, versioning: true, detail: null, applied });
 
   return {
@@ -242,6 +263,20 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     },
     "runtimes.browse": ({ kind }) => ({ path: DEMO_BROWSED[kind] ?? null }),
 
+    "repoCache.get": () => repoCacheView(),
+    "repoCache.set": async (change) => {
+      await wait(stepMs);
+      if (change.enabled !== undefined) repoCache.enabled = change.enabled;
+      if (change.sizeGb !== undefined) repoCache.sizeGb = change.sizeGb;
+      return repoCacheView();
+    },
+    "repoCache.clear": async () => {
+      await wait(stepMs);
+      repoCache.repos = 0;
+      repoCache.bytes = 0;
+      return repoCacheView();
+    },
+
     "devices.get": () => {
       if (!ctx.signedIn()) throw new HostError("Sign in to Cua to see your machines", "signed_out");
       return structuredClone(devices);
@@ -286,7 +321,7 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     // Works like the relay: one code per machine, 30 minutes, shown once.
     // The demo's other computer runs the command after a few reads.
     "devices.createPairingCode": async ({ team }) => {
-      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to add a computer", "signed_out");
+      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to add a machine", "signed_out");
       await wait(stepMs / 2);
       const t = Math.floor(now() / 1000);
       pairingSeq += 1;

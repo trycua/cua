@@ -198,6 +198,16 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::first_run_step("welcome", s, "none"),
         events::space_wizard(s),
         events::persistent_agent(s, Some(s), Outcome::Ok, Some(s)),
+        events::durable_agent(&DurableAgent {
+            phase: s,
+            session: "0123456789abcdef",
+            ..Default::default()
+        }),
+        events::durable_agent(&DurableAgent {
+            phase: "started",
+            session: s,
+            ..Default::default()
+        }),
         events::share(s, s, Outcome::Ok, "none", "none"),
         events::app_update(s, s, s),
         events::device_enroll(s, Outcome::Ok),
@@ -227,6 +237,26 @@ fn all_builders(s: &str) -> Vec<Event> {
     }
     v.push(events::space_wizard("cancelled").unwrap());
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
+    for phase in schema::DURABLE_PHASES {
+        v.push(
+            events::durable_agent(&DurableAgent {
+                phase,
+                harness: s,
+                on: s,
+                attempt: u32::MAX,
+                max_attempts: u32::MAX,
+                reason: s,
+                end: s,
+                failure: s,
+                failover: true,
+                machines: u32::MAX,
+                recovery_time_ms: u64::MAX,
+                interrupted_calls: u32::MAX,
+                session: "0123456789abcdef",
+            })
+            .unwrap(),
+        );
+    }
     v.push(events::share("share", s, Outcome::Ok, s, s).unwrap());
     v.push(events::share("share", "viewer", Outcome::Error, s, s).unwrap());
     v.push(events::app_update("installed", s, s).unwrap());
@@ -254,8 +284,83 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::plan_limit_shown("app_create", "sessions", "team"));
     v.push(events::upgrade_link_opened(s, s, s));
     v.push(events::upgrade_link_opened("cli_limit", "", "pro"));
-    v.push(events::agent_signin_imported("codex"));
-    v.push(events::agent_signin_imported(s));
+    v.push(
+        events::agent_join_phase(
+            "session_ready",
+            "claude-code",
+            "linux_container",
+            true,
+            4200,
+            "0123456789abcdef",
+            "none",
+            "none",
+        )
+        .unwrap(),
+    );
+    v.push(
+        events::agent_join_phase(
+            "install_done",
+            s,
+            s,
+            false,
+            99_999_999,
+            "0123456789abcdef",
+            s,
+            s,
+        )
+        .unwrap(),
+    );
+    v.push(
+        events::agent_join_phase(
+            "failed",
+            "hermes",
+            "macos_vm",
+            true,
+            10,
+            "0123456789abcdef",
+            "none",
+            "auth",
+        )
+        .unwrap(),
+    );
+    assert!(
+        events::agent_join_phase(
+            s,
+            "hermes",
+            "macos_vm",
+            true,
+            10,
+            "0123456789abcdef",
+            "none",
+            "none"
+        )
+        .is_none()
+    );
+    v.push(events::agent_signin_imported("codex", Some("device-code")));
+    v.push(events::agent_signin_imported(
+        "claude-code",
+        Some("claude-login-keychain"),
+    ));
+    v.push(events::agent_signin_imported(s, Some(s)));
+    v.push(events::agent_signin_refused("claude-code", "not_signed_in"));
+    v.push(events::agent_signin_refused(s, s));
+    v.push(events::repo_cache("hit", "local", 80_000_000, 4, "none").unwrap());
+    v.push(events::repo_cache("fallback", "network", 0, 0, "verify_failed").unwrap());
+    v.push(
+        events::repo_cache(
+            "miss",
+            "https://github.com/o/r",
+            1 << 60,
+            1 << 60,
+            "/Users/me/x",
+        )
+        .unwrap(),
+    );
+    assert!(events::repo_cache("https://github.com/o/r", "local", 0, 0, "none").is_none());
+    v.push(events::connection_changed(
+        "deepseek", "api_key", "connect", "ok",
+    ));
+    v.push(events::connection_changed(s, s, s, s));
     v.push(events::agent_used_space("space_bash").unwrap());
     v.push(events::agent_used_space("computer_click").unwrap());
     assert!(events::installer_step(s, "cli", "network", "sh", &[]).is_none());
@@ -1908,4 +2013,41 @@ fn plan_limit_events_keep_their_vocabulary() {
             "{s}"
         );
     }
+}
+
+/// The fixed provider words are the registry's ids, and a connection event carries nothing else.
+#[test]
+fn connection_events_use_the_registrys_words_only() {
+    let mut registry: Vec<&str> = cua_connections::PROVIDERS.iter().map(|p| p.id).collect();
+    registry.push("other");
+    registry.sort_unstable();
+    let mut ours: Vec<&str> = schema::CONNECTION_PROVIDERS.to_vec();
+    ours.sort_unstable();
+    assert_eq!(
+        ours, registry,
+        "regenerate schema::CONNECTION_PROVIDERS from providers/*.toml"
+    );
+    let mut kinds: Vec<&str> = cua_connections::MethodKind::ALL
+        .iter()
+        .map(|k| k.word())
+        .collect();
+    kinds.push("other");
+    assert_eq!(schema::CONNECTION_METHODS, kinds.as_slice());
+    // A provider, method or action that is not a fixed word is sent as the fallback, never as typed.
+    let e = events::connection_changed(
+        "http://127.0.0.1:1234/v1",
+        "sk-ant-secret",
+        "ada@example.com",
+        "401 from api.example",
+    );
+    let text = format!("{e:?}");
+    for leak in ["127.0.0.1", "sk-ant", "ada@", "401", "example"] {
+        assert!(!text.contains(leak), "{text}");
+    }
+    let e = events::connection_changed("openrouter", "api_key", "connect", "ok");
+    let text = format!("{e:?}");
+    assert!(
+        text.contains("openrouter") && text.contains("api_key") && text.contains("connect"),
+        "{text}"
+    );
 }

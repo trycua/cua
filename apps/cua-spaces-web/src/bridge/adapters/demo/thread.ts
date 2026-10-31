@@ -278,7 +278,7 @@ function demoSideThreads(now: number, me: { id: string; name: string }): [string
   ];
 }
 
-function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean; authFailed?: boolean; stranger?: boolean } = {}): DemoThread {
+function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean; authFailed?: boolean; stranger?: boolean; paused?: boolean } = {}): DemoThread {
   const ids = demoIdentities(now, owner);
   // An agent's posts carry who it was when it posted (they stay after it leaves).
   const agent = (handle: string) => ({ kind: "agent", id: `agent:${handle}`, name: handle, identity: ids[handle] });
@@ -372,7 +372,7 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
       message: 'Internal error: Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}',
     });
     const hey = asked("@hermes hey", "hermes", min(1));
-    failed(hey, min(1), HERMES, "I can't reach Claude yet. Connect Claude, then try again.", {
+    failed(hey, min(1), HERMES, "Hermes needs a connected provider. Connect one, then try again. Your Claude subscription sign-in only works in Claude Code.", {
       class: "needs_connect",
       provider: "anthropic",
       retryable: true,
@@ -385,6 +385,18 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
         m.failure = { class: "needs_connect", provider: "anthropic", retryable: true, message: "Failed to authenticate. API Error: 401" };
       }
     }
+  }
+  if (opts.paused) {
+    // Agents asked each other three times in a row; the fourth ask is posted, wakes nobody, and the daemon says so once.
+    const ask = (from: ReturnType<typeof agent>, to: string, text: string, ts: number, hops: number) =>
+      add({ ts_ms: ts, author: from, text, mentions: [to], ...(hops <= 3 ? { task: { to, session: null }, hops } : {}) });
+    const first = add({ ts_ms: min(4), author: DEMO_THREAD_ME, text: "@claude look at the flaky ws_reconnect test and get a second opinion", mentions: ["claude"], task: { to: "claude", session: null } });
+    update(min(4), first, "done");
+    ask(CLAUDE, "hermes", "@hermes can you check the timeout I picked?", min(3), 1);
+    ask(HERMES, "claude", "@claude it looks fine, can you confirm with a rerun?", min(2), 2);
+    ask(CLAUDE, "hermes", "@hermes rerun is green, anything else?", min(1), 3);
+    ask(HERMES, "claude", "@claude nothing else from me, anything from you?", min(1), 4);
+    add({ ts_ms: min(1), author: { kind: "system", id: "system:limits", name: "Cua" }, kind: "system", text: "Paused agent to agent messages for a moment" });
   }
   if (opts.stranger) {
     // Dana's Gemini CLI: Dana is not in this Space, so her card opens in place.
@@ -443,6 +455,7 @@ export function demoThreadHandlers({
   lookalike = false,
   authFailed = false,
   stranger = false,
+  paused = false,
   joinRedeemMs,
   joinExpireMs,
   request = false,
@@ -458,6 +471,8 @@ export function demoThreadHandlers({
   authFailed?: boolean;
   /** `?demo=thread-stranger`: an agent whose owner is not in the Space. */
   stranger?: boolean;
+  /** `?demo=thread-paused`: the thread shows the daemon's note that agent to agent messages were paused. */
+  paused?: boolean;
   /** How long after it is made an open code is redeemed (null: never). Default 12 steps. */
   joinRedeemMs?: number | null;
   /** Codes expire this long after they are made, instead of their ttl. */
@@ -466,7 +481,7 @@ export function demoThreadHandlers({
   request?: boolean;
 }): DemoHandlers<ThreadOpName> {
   const owner = role === "owner" ? DEMO_THREAD_ME : GRACE;
-  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike, authFailed, stranger })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME) : [])]);
+  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike, authFailed, stranger, paused })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME) : [])]);
   let codeSeq = 0;
   const redeemAfter = joinRedeemMs === undefined ? stepMs * 12 : joinRedeemMs;
   const SYSTEM = { kind: "system", id: "system:members", name: "Cua" };
@@ -570,17 +585,20 @@ export function demoThreadHandlers({
     waiting.delete(space);
   };
   // Each agent's stage while it works on a task (`thread_read`'s `live`), by Space.
-  const stages = new Map<string, Map<string, string>>();
+  const stages = new Map<string, Map<string, { stage: string; since: number; text?: string }>>();
   const liveOf = (space: string) => {
-    const agents = [...(stages.get(space) ?? [])].map(([agent, stage]) => ({ agent, stage })).sort((a, b) => a.agent.localeCompare(b.agent));
-    return { key: agents.map((a) => `${a.agent}=${a.stage}`).join(";"), agents };
+    const agents = [...(stages.get(space) ?? [])]
+      .map(([agent, s]) => ({ agent, stage: s.stage, since_ms: s.since, ...(s.text ? { text: s.text } : {}) }))
+      .sort((a, b) => a.agent.localeCompare(b.agent));
+    // As the daemon keys it: the text's length moves it too, so a follow wakes for a new snapshot.
+    return { key: agents.map((a) => `${a.agent}=${a.stage}#${a.text?.length ?? 0}`).join(";"), agents };
   };
-  /** Sets (or with null clears) an agent's stage and wakes the thread's followers. */
-  const setStage = (space: string, agent: string, stage: string | null) => {
-    const m = stages.get(space) ?? new Map<string, string>();
+  /** Sets (or with null clears) an agent's stage, and what it has said so far, and wakes the thread's followers. */
+  const setStage = (space: string, agent: string, stage: string | null, text?: string) => {
+    const m = stages.get(space) ?? new Map<string, { stage: string; since: number; text?: string }>();
     stages.set(space, m);
     if (stage === null) m.delete(agent);
-    else m.set(agent, stage);
+    else m.set(agent, { stage, since: m.get(agent)?.since ?? now(), ...(text ? { text } : {}) });
     wake(space);
   };
   const append = (space: string, e: Json) => {
@@ -676,7 +694,13 @@ export function demoThreadHandlers({
     setStage(space, agent, "using Bash");
     if (member) Object.assign(member, { activity: "Using Bash" });
     await wait(stepMs * 2);
-    append(space, { author: { kind: "agent", id: `agent:${agent}`, name: agent, ...(member ? { identity: member.identity } : {}) }, reply_to: task, text: "Done. Nothing else needed from me." });
+    // It starts to answer: what it has said so far streams as one entry, replaced whole each time.
+    const said = "Done. Nothing else needed from me.";
+    for (const part of [said.slice(0, 5), said.slice(0, 18)]) {
+      setStage(space, agent, "replying", part);
+      await wait(stepMs);
+    }
+    append(space, { author: { kind: "agent", id: `agent:${agent}`, name: agent, ...(member ? { identity: member.identity } : {}) }, reply_to: task, text: said });
     setStage(space, agent, null);
     append(space, { author: system, kind: "task_update", update: { task, state: "done", session: 1, note: null } });
     if (member) Object.assign(member, { status: "idle", activity: null });
@@ -866,6 +890,24 @@ export function demoThreadHandlers({
       return null;
     },
   };
+}
+
+/**
+ * `?demo=thread-slow`: the machine that has `space` does not answer, so
+ * every thread call for it waits (the Agents page keeps drawing the other
+ * Spaces and says it is still checking this one).
+ */
+export function hangingSpace(handlers: DemoHandlers<ThreadOpName>, space: string): DemoHandlers<ThreadOpName> {
+  return Object.fromEntries(
+    Object.entries(handlers).map(([op, h]) => [op, (args: { spaceId?: string }) => (args.spaceId === space ? new Promise<never>(() => undefined) : (h as (a: unknown) => unknown)(args))]),
+  ) as unknown as DemoHandlers<ThreadOpName>;
+}
+
+/** `?demo=thread-long`: `count` more tasks for Hermes in the demo's Space, so its DM is long (the agents answer a few steps later). */
+export function seedLongDm(handlers: DemoHandlers<ThreadOpName>, count: number): void {
+  void (async () => {
+    for (let i = 1; i <= count; i++) await handlers["thread.post"]({ spaceId: DEMO_THREAD_SPACE, text: `@hermes check item ${i} of the release list` } as never);
+  })();
 }
 
 const label = (agent: string) => (agent === "claude" ? "Claude Code" : agent.charAt(0).toUpperCase() + agent.slice(1));

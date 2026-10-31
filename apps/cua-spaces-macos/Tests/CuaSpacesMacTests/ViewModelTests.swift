@@ -88,6 +88,21 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
         return inventoryResult
     }
 
+    /// What the Keyvault says about a teleport of an app (the setup sheet).
+    var readinessResult = KvReadiness(
+        providerId: "chrome", appDisplay: "Google Chrome", keyvaultInitialized: true, keyvaultUnlocked: true,
+        profile: "Profile 1", defaultProfile: "Default",
+        profiles: [KvBrowserProfile(dir: "Default", name: "Personal", account: nil, lastUsed: false),
+                   KvBrowserProfile(dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true)],
+        files: KvReadinessCheck(state: "denied", say: "macOS is not letting Cua read this browser's files."),
+        tabs: KvReadinessCheck(state: "unknown", say: ""), profileEmpty: false)
+    var readinessAsks: [(app: String, profile: String?)] = []
+
+    func readiness(app: String, profile: String?) async throws -> KvReadiness {
+        readinessAsks.append((app, profile))
+        return readinessResult
+    }
+
     /// Passphrases the page sent (test fixtures, never real secrets).
     var passphrases: [String] = []
 

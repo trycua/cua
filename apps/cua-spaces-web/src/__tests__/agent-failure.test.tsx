@@ -18,6 +18,8 @@ stubBrowserApis();
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
 const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
+/** The failed agent's reply (its own row: the one with a Connect), named by what it says. */
+const failureReply = (who: string) => qa("[data-entry]").find((e) => e.querySelector("[data-failure-connect]") && e.textContent?.includes(who));
 const host = { failsCreates: false, listsGhost: false, demo: { threadAuthFailed: true } };
 
 describe("an agent that is not connected", () => {
@@ -36,13 +38,19 @@ describe("an agent that is not connected", () => {
     expect(claude.querySelector("[data-task-chip]")).toBeNull();
     const own = claude.querySelector(":scope > [data-entry]")!;
     expect(own.querySelector("[data-task-chip]")).toBeNull();
-    const reply = claude.querySelector("[data-task-replies] [data-entry]")!;
+    // Flat: the reply is its own row after the task, not inside it.
+    expect(claude.querySelector("[data-task-replies]")).toBeNull();
+    const reply = failureReply("Claude")!;
     expect(reply.querySelector("[data-failure-connect]")).not.toBeNull();
     expect(reply.textContent).toContain("I can't reach Claude yet. Connect Claude, then try again.");
     expect(reply.textContent).not.toMatch(/401|authentication_error|OAuth/);
-    // Connect opens Settings, Connectors on the app; Retry is there too.
-    const connect = reply.querySelector<HTMLAnchorElement>("[data-failure-connect]")!;
-    expect(connect.getAttribute("href")).toBe("/settings/connectors/claude-code");
+    // Connect opens the same sheet as Settings, Connections, on the provider that refused it; Retry is there too.
+    const connect = reply.querySelector<HTMLButtonElement>("[data-failure-connect]")!;
+    expect(connect.tagName).toBe("BUTTON");
+    await act(async () => {
+      fireEvent.click(connect);
+    });
+    await waitFor(() => expect(q("[data-import-sheet], [data-provider-sheet]")).not.toBeNull());
     expect(reply.querySelector("[data-failure-retry]")).not.toBeNull();
     // No middle dot anywhere in what the failure draws.
     expect(claude.textContent).not.toContain("·");
@@ -52,8 +60,7 @@ describe("an agent that is not connected", () => {
     await mountApp(path, host);
     const reply = await waitFor(
       () => {
-        const t = qa('[data-task-state="failed"]').find((x) => x.textContent?.includes("@claude hi"));
-        const r = t?.querySelector("[data-task-replies] [data-entry]");
+        const r = failureReply("Claude");
         expect(r).toBeTruthy();
         return r as HTMLElement;
       },
@@ -71,7 +78,7 @@ describe("an agent that is not connected", () => {
     expect(reply.querySelector("[data-failure-copy]")).not.toBeNull();
   });
 
-  it("shows a failed member's reason whole in the member list", async () => {
+  it("says one word for a failed member in the member list, and keeps the whole error under Show details", async () => {
     await mountApp(path, host);
     const row = await waitFor(
       () => {
@@ -82,7 +89,16 @@ describe("an agent that is not connected", () => {
       { timeout: 5000 },
     );
     const caption = row.querySelector<HTMLElement>("[data-member-caption]")!;
+    // A short word, never the raw error.
     expect(caption.textContent).toBe("Not connected");
-    expect(caption.className).not.toContain("truncate");
+    expect(row.textContent).not.toMatch(/401|OAuth|authentication/i);
+    const details = q("[data-member-details] [data-failure-details]");
+    expect(details).not.toBeNull();
+    await act(async () => {
+      fireEvent.click(details!);
+    });
+    const message = q("[data-member-details] [data-failure-message]")!;
+    expect(message.className).toContain("select-text");
+    expect(message.textContent!.length).toBeGreaterThan(20);
   });
 });

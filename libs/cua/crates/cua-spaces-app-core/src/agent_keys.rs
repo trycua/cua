@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Settings, Connectors: the provider keys agents in your Spaces get.
+//! Settings, Connections: the provider keys agents in your Spaces get.
 //!
 //! The cua daemon keeps the keys in the Keychain (`cua_spaces::agents::keys`)
 //! and answers only what this section shows: the provider, the variable a
@@ -60,6 +60,13 @@ pub struct AgentKeyInput {
     pub added_ms: u64,
     /// A sign-in past its expiry: not used by any run until reconnected.
     pub expired: bool,
+    /// A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+    pub label: Option<String>,
+    /// The plan or region chosen for it (Z.AI), when the provider has them.
+    pub region: Option<String>,
+    /// Non-secret values saved with it: a custom endpoint's `base_url`, `model`
+    /// and `wire`, or a `model`. Never the key.
+    pub fields: std::collections::HashMap<String, String>,
 }
 
 /// What the section shows.
@@ -466,6 +473,9 @@ mod tests {
             last4: last4.into(),
             added_ms: 1,
             expired: false,
+            label: None,
+            region: None,
+            fields: Default::default(),
         }
     }
 

@@ -1838,6 +1838,16 @@ pub struct AppNotchTile {
     pub progress_label: Option<String>,
     /// Signed in through the Keyvault (and not dismissed): the key badge.
     pub signed_in: bool,
+    /// One of your other machines' desktops, not a Space it provides: the
+    /// tile reads "Desktop" and opens the same desktop the machine's page
+    /// does, creating nothing.
+    pub desktop: bool,
+    /// Pinned to the notch (Pin to notch in the Space's "..." menu): the
+    /// tiles list pinned ones first.
+    pub pinned: bool,
+    /// Why a pinned desktop cannot be opened now ("Offline", "Not
+    /// shared"); `None` while it can. The tile stays, dimmed, and says it.
+    pub note: Option<String>,
 }
 
 /// What the panel shows.
@@ -1880,6 +1890,9 @@ pub struct AppNotchState {
     /// dismissed ([`crate::keyvault::view::signed_in_spaces`]): their tiles
     /// carry the key.
     pub signed_in: Vec<String>,
+    /// The Spaces and desktops pinned to the notch, in the order they were
+    /// pinned (`AppSettings::notch_pinned`): their tiles come first.
+    pub pinned: Vec<String>,
     /// "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
     /// the notch, and hover, clicks and window drags do nothing.
     pub hidden: bool,
@@ -1941,6 +1954,12 @@ pub enum AppNotchEvent {
         label: Option<String>,
         /// The Space ids signed in (their tiles carry the key).
         signed_in: Vec<String>,
+    },
+    /// The pinned Spaces and desktops changed (Pin to notch, Unpin from
+    /// notch, or settings read at start): their ids in pin order.
+    Pinned {
+        /// The pinned ids.
+        ids: Vec<String>,
     },
 }
 
@@ -4024,7 +4043,7 @@ pub type AppWizardField = core::wizard::WizardField;
 #[uniffi::remote(Record)]
 pub struct AppWizardField {
     /// `os`, `image`, `placement`, `kind`, `runtime`, `connect-cloud`,
-    /// `connect-by-address`, `cpus`, `memory`, `disk`, `name`,
+    /// `cpus`, `memory`, `disk`, `name`,
     /// `open-when-ready`, `address`, `token`, `address-name`.
     pub id: String,
     /// Label (or the link's title).
@@ -4330,6 +4349,59 @@ pub struct KvInventory {
     pub domains: Vec<KvDomainCount>,
     /// Notes.
     pub notes: Vec<String>,
+}
+
+/// One thing a teleport needs from the OS, as the setup sheet shows it
+/// (`cua_keyvault::broker::ReadinessCheck`).
+pub type KvReadinessCheck = core::keyvault::wire::KvReadinessCheck;
+#[uniffi::remote(Record)]
+pub struct KvReadinessCheck {
+    /// `granted`, `denied` or `unknown` (only known by trying).
+    pub state: String,
+    /// What it means and what to do, in plain words (empty when nothing).
+    pub say: String,
+}
+
+/// A browser profile to choose from (`cua_keyvault::broker::BrowserProfile`).
+pub type KvBrowserProfile = core::keyvault::wire::KvBrowserProfile;
+#[uniffi::remote(Record)]
+pub struct KvBrowserProfile {
+    /// Directory name (`Default`, `Profile 1`).
+    pub dir: String,
+    /// The name the person gave it.
+    pub name: String,
+    /// The account signed in to it.
+    pub account: Option<String>,
+    /// The browser used it last.
+    pub last_used: bool,
+}
+
+/// Whether a teleport of an app can work now: the Keyvault, what the OS
+/// allows and the profiles to choose from. Reads no value and asks for no
+/// presence (`cua_keyvault::broker::Readiness`, plus the Keyvault's state).
+pub type KvReadiness = core::keyvault::wire::KvReadiness;
+#[uniffi::remote(Record)]
+pub struct KvReadiness {
+    /// Provider id.
+    pub provider_id: String,
+    /// App name.
+    pub app_display: String,
+    /// The Keyvault exists.
+    pub keyvault_initialized: bool,
+    /// The Keyvault is unlocked.
+    pub keyvault_unlocked: bool,
+    /// The profile checked: the one asked for, else the last used.
+    pub profile: Option<String>,
+    /// The profile a teleport reads when none is named.
+    pub default_profile: Option<String>,
+    /// Every profile.
+    pub profiles: Vec<KvBrowserProfile>,
+    /// Reading the app's files (Full Disk Access).
+    pub files: KvReadinessCheck,
+    /// Reading the app's open tabs (Automation).
+    pub tabs: KvReadinessCheck,
+    /// The checked profile has no sign-in data.
+    pub profile_empty: bool,
 }
 
 /// How a caller is signed (`cua_keyvault::caller::Signing`: tagged by
@@ -6671,6 +6743,13 @@ pub struct AppAgentKeyInput {
     pub added_ms: u64,
     /// A sign-in past its expiry: not used by any run until reconnected.
     pub expired: bool,
+    /// A copied sign-in's name ("Signed in as ada@example.com (Claude Max)").
+    pub label: Option<String>,
+    /// The plan or region chosen for it (Z.AI), when the provider has them.
+    pub region: Option<String>,
+    /// Non-secret values saved with it: a custom endpoint's `base_url`, `model`
+    /// and `wire`, or a `model`. Never the key.
+    pub fields: std::collections::HashMap<String, String>,
 }
 
 /// What the section shows.
@@ -7030,6 +7109,11 @@ pub struct AppSettings {
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
     pub dismissed_access: Vec<String>,
+    /// The Spaces and the machines' desktops pinned to the notch ("Pin to
+    /// notch" in a Space's "..." menu), in the order they were pinned: the
+    /// notch lists them first ([`crate::notch::tiles_pinned`]). Ids only,
+    /// nothing secret; an id whose Space is gone is kept and draws nothing.
+    pub notch_pinned: Vec<String>,
     /// Keyvault rows may load a site's icon from Google's favicon service
     /// when the source browser had none (Settings, Keyvault; on by default).
     /// Off, only icons read locally are shown.
@@ -7639,6 +7723,21 @@ pub struct AppHostState {
     pub max_spaces: u32,
     /// macOS VMs at once (at most two; 0 off a Mac).
     pub max_macos_vms: u32,
+    /// Memory the Spaces other machines create here may use in total, in GB
+    /// (0: no limit).
+    pub max_memory_gb: u32,
+    /// Disk the Spaces other machines create here may use in total, in GB
+    /// (0: no limit).
+    pub max_disk_gb: u32,
+    /// How long a Space created here by another machine may run, in minutes
+    /// (0: no limit).
+    pub max_run_minutes: u32,
+    /// What those Spaces were given now, in GB.
+    pub used_memory_gb: u32,
+    pub used_disk_gb: u32,
+    /// This machine's own memory and disk in GB (0: not known).
+    pub total_memory_gb: u32,
+    pub total_disk_gb: u32,
     /// The Spaces this machine provides now.
     pub provided_spaces: Vec<AppHostProvidedSpace>,
     /// Remote creates, deletes and refusals, and settings changes, newest
@@ -7716,6 +7815,34 @@ pub struct AppHostSettingChange {
     pub share_desktop: Option<bool>,
     /// Provide Spaces.
     pub provide_spaces: Option<bool>,
+}
+
+/// One limit on the Spaces other machines create here, drawn as a number
+/// row under the switch (Settings, Sharing).
+pub type AppHostLimitRow = core::host::HostLimitRow;
+#[uniffi::remote(Record)]
+pub struct AppHostLimitRow {
+    /// `max-spaces`, `max-memory`, `max-disk` or `max-run`.
+    pub id: String,
+    /// "Most Spaces at once".
+    pub label: String,
+    /// One line under it.
+    pub help: String,
+    /// The limit (0: no limit).
+    pub value: u32,
+    /// What the number counts: `Spaces`, `GB` or `minutes`.
+    pub unit: String,
+    /// What is in use now ("2 of 4 Spaces", "12 of 32 GB"; "2 Spaces" with
+    /// no limit); none for a limit that is about time.
+    pub use_text: Option<String>,
+    /// This machine's own total in `unit` (memory and disk), 0 when not
+    /// known.
+    pub total: u32,
+    /// Use is above the limit (it was lowered below what runs): nothing
+    /// is stopped, new Spaces are refused.
+    pub over: bool,
+    /// "Over limit" while `over`.
+    pub over_text: Option<String>,
 }
 
 /// One of the two settings, drawn as a switch.
@@ -7849,6 +7976,9 @@ pub struct AppHostPanelView {
     /// The limits, one line ("Up to 4 Spaces \u{b7} 2 macOS VMs"), while
     /// providing Spaces.
     pub limits: Option<String>,
+    /// The limits as number rows (Settings, Sharing), while providing
+    /// Spaces: most Spaces, memory and disk in total, longest running time.
+    pub limit_rows: Vec<AppHostLimitRow>,
     /// "Spaces for your devices", while providing Spaces.
     pub provided_title: Option<String>,
     /// One row per Space this machine provides.
@@ -11017,6 +11147,10 @@ pub struct AppSpaceMenuInput {
     pub can_delete: bool,
     /// You may leave it.
     pub can_leave: bool,
+    /// It can be pinned to the notch (not This machine).
+    pub can_pin: bool,
+    /// It is pinned to the notch now (Unpin from notch).
+    pub pinned: bool,
 }
 
 /// What an item does.
@@ -11039,6 +11173,8 @@ pub enum AppSpaceMenuItemId {
     Delete,
     /// Leaves it (asks first: `spaces.bulkConfirm`).
     Leave,
+    /// Pins it to the notch, or unpins it (the label says which).
+    Pin,
 }
 
 /// One menu item.

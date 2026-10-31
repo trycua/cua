@@ -12,12 +12,12 @@ tailnet then does the networking and decides who is who:
 
 - **Identity.** A teammate is identified by their tailnet login (through
   your identity provider and its SSO and MFA). They need no Cua env token.
-- **Access.** Your tailnet's ACLs decide which devices can reach the
+- **Access.** Your tailnet's ACLs decide which machines can reach the
   machine at all; the machine's share list decides what each user may do.
 - **Rollout.** Your MDM or RMM installs the tailnet client as it already
   does; Cua uses it, and never installs or reconfigures it.
 
-Nothing goes through cua.ai: no relay, no sign-in, no enrolled devices.
+Nothing goes through cua.ai: no relay, no sign-in, no added machines.
 
 ## Set the machine up
 
@@ -51,9 +51,9 @@ change who may use it.
 ## How identity works
 
 For each call from a tailnet address, the machine asks the local tailnet
-client which user owns the calling device (`tailscale whois`, the same
+client which user owns the calling machine (`tailscale whois`, the same
 lookup `tailscale serve` uses). It never trusts a name the caller sends. A
-device tagged by ACL (`tag:ci`) belongs to no user, so it needs the env
+machine tagged by ACL (`tag:ci`) belongs to no user, so it needs the env
 token. Login names match the share list case-insensitively; with Headscale
 they are the Headscale user names (`bob`), with Tailscale usually emails.
 
@@ -78,7 +78,7 @@ The same policy works in Headscale's ACL file.
 | | Your tailnet (`--tailnet`) | The cua.ai relay and mesh (default) |
 |---|---|---|
 | Who runs the network | You (Tailscale or Headscale) | Cua, inside the app |
-| Identity | Your tailnet's logins and SSO | Your cua.ai account and enrolled devices |
+| Identity | Your tailnet's logins and SSO | Your cua.ai account and added machines |
 | Access rules | Your tailnet ACLs plus the machine's share list | Owner, share lists and sharing switch |
 | Encryption | Your tailnet's WireGuard | Cua's [WireGuard®-based mesh](/spaces/guides/relay-security#end-to-end-encrypted-connections) |
 | Browser viewer from anywhere | Only on the tailnet | Yes, through the relay |

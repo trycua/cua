@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The card a person or an agent opens to in a Space (redesign): their name
+ * The card a person or an agent opens to in a Space: their name
  * or avatar in the thread, an @mention, a row in "In this space". One calm
  * shape for both, like a chat app's profile card: who, their access or what
  * runs them, their status, the few actions that apply, and for an agent the
@@ -279,7 +279,7 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
             </Button>
           ) : null}
           {v.settingsLabel && v.app ? (
-            <Button size="sm" variant="ghost" data-card-settings="" render={<Link to="/settings/connectors/$app" params={{ app: v.app }} />}>
+            <Button size="sm" variant="ghost" data-card-settings="" render={<Link to="/settings/connections/$app" params={{ app: v.app }} />}>
               {v.settingsLabel}
             </Button>
           ) : null}
@@ -409,7 +409,7 @@ function IdCopy({ value }: { value: string }) {
 
 /**
  * Opens the card of `person` or `agent` on click. Without a Space's scope
- * (outside the redesigned Space page) a person has no card: the children
+ * (outside the Space page) a person has no card: the children
  * draw as they are.
  */
 export function ProfileTrigger({

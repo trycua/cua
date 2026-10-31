@@ -62,8 +62,8 @@
           "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
-          "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
-          "os-linux keep, Linux, This Mac, Running - -"
+          "os-linux keep, Linux, This Mac, Running - -",
+          "os-linux demo, Linux, This Mac, Deleting… - Deleting…"
         ]
       },
       "isDeleting": true,
@@ -130,8 +130,8 @@
           "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
-          "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
-          "os-linux keep, Linux, This Mac, Running - -"
+          "os-linux keep, Linux, This Mac, Running - -",
+          "os-linux demo, Linux, This Mac, Deleting… - Deleting…"
         ]
       },
       "isDeleting": null,
@@ -198,8 +198,8 @@
           "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
-          "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
-          "os-linux keep, Linux, This Mac, Running - -"
+          "os-linux keep, Linux, This Mac, Running - -",
+          "os-linux demo, Linux, This Mac, Deleting… - Deleting…"
         ]
       },
       "isDeleting": null,
@@ -266,8 +266,8 @@
           "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
-          "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
-          "os-linux keep, Linux, This Mac, Running - -"
+          "os-linux keep, Linux, This Mac, Running - -",
+          "os-linux demo, Linux, This Mac, Deleting… - Deleting…"
         ]
       },
       "isDeleting": true,

@@ -83,14 +83,14 @@ change it, share with the team again with the other role.
 ## How it works
 
 Sharing uses the same relay and allowlist as an
-[added computer](/spaces/guides/add-a-computer#add-a-computer-from-a-terminal):
+[added machine](/spaces/guides/add-a-computer#add-a-machine-from-a-terminal):
 
 - A host (`relay:<id>` from `cua host setup`) is shared directly.
 - Any other Space is published on the relay on its first share. The owner's
-  account registers a computer for it, and the Space's own driver dials out
+  account registers a machine for it, and the Space's own driver dials out
   over WSS, so no inbound port opens.
-- The relay keeps two lists per computer: `allow` (editors) and `viewers`.
-- Invitees need a verified email or account ID and an [enrolled device](/spaces/guides/add-a-computer#reach-it-from-your-other-machines).
+- The relay keeps two lists per machine: `allow` (editors) and `viewers`.
+- Invitees need a verified email or account ID and an [added machine](/spaces/guides/add-a-computer#reach-it-from-your-other-machines).
 - Removing someone, or changing their role, cuts their open streams at once.
 - Team membership comes from your team in your Cua account, not from the
   relay. The Cua account service checks it when you share and again each time
@@ -98,8 +98,8 @@ Sharing uses the same relay and allowlist as an
   leaves your team, they lose access to what you shared with them. If a team
   is deleted, its shares stop.
 - A team share works differently. The Space goes on the team's list of
-  computers, and each time someone opens it, the relay checks with the Cua
-  account service that they are still in the team and that their device is
+  machines, and each time someone opens it, the relay checks with the Cua
+  account service that they are still in the team and that their machine is
   approved.
 
 ```rust test="excerpt" id="rs-share-space" source="libs/cua/crates/cua-spaces/tests/share_space_e2e.rs#rs-share-space"
@@ -126,7 +126,7 @@ Removing someone needs no confirmation.
 
 ## Reach a Space from your other machines
 
-To reach a Space from your phone or another computer without sharing it with
+To reach a Space from your phone or another machine without sharing it with
 anyone, publish it on the relay:
 
 ```bash test="cli-shape" id="cua-spaces-relay-register"
@@ -138,7 +138,7 @@ cua spaces relay-unregister local:studio
 let reg = ada.relay_register(&info.id).await.unwrap();
 ```
 
-Only your account's enrolled devices reach it until you share it. The MCP
+Only your account's added machines reach it until you share it. The MCP
 tools are `relay_register_space` and `relay_unregister_space`.
 
 ## Audit
@@ -156,7 +156,7 @@ tools are `relay_register_space` and `relay_unregister_space`.
 | Space | Shareable | Why |
 |---|---|---|
 | Host (`relay:<id>`) | yes | Already on the relay. |
-| Local container or VM | yes, while this computer runs it | Its driver dials the relay. Suspending it disconnects everyone. |
+| Local container or VM | yes, while this machine runs it | Its driver dials the relay. Suspending it disconnects everyone. |
 | In your own cloud (AWS, Google Cloud, Modal) | yes | Its driver dials the relay from the cloud. |
 | Added by address (`direct:`) | yes, if its driver supports `relay_attach` | Older drivers report `capability_missing`. |
 | A Space shared with you | no | Only the owner can share (`permission_denied`). |

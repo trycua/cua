@@ -651,6 +651,251 @@ async fn limits_two_macos_vms_per_mac_and_the_hosts_own() {
     assert!(e.to_string().contains("--max-spaces"), "{e}");
 }
 
+/// A provided Space of `memory_mb` and `disk_gb` that exists on the host.
+fn provided_of(f: &Fixture, n: u32, memory_mb: u64, disk_gb: u32) -> ProvidedSpace {
+    f.rt.running
+        .lock()
+        .unwrap()
+        .insert(format!("limit-{n}"), true);
+    f.spaces
+        .sandboxes()
+        .state()
+        .save(&cua_sandbox_core::SandboxState::Local(
+            cua_sandbox_core::LocalState {
+                name: format!("limit-{n}"),
+                runtime_type: "fake".into(),
+                status: "running".into(),
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+    ProvidedSpace {
+        relay_machine: format!("space-limit0000{n}"),
+        local_space: format!("local:limit-{n}"),
+        image: "linux".into(),
+        os: "linux".into(),
+        created_by_account: "ada".into(),
+        memory_mb,
+        disk_gb,
+        ..Default::default()
+    }
+}
+
+async fn ask_bob(
+    f: &Fixture,
+    memory_mb: u64,
+    disk_gb: u32,
+    attach: pb::AttachRelayRequest,
+) -> cua_spaces::Result<pb::HostSpace> {
+    f.server
+        .create(
+            &bob(),
+            pb::CreateHostSpaceRequest {
+                image: "linux".into(),
+                memory_mb,
+                disk_gb,
+                attach: Some(attach),
+                ..Default::default()
+            },
+        )
+        .await
+}
+
+async fn configure(f: &Fixture, change: HostSettingsChange) {
+    Host::new(&f.home)
+        .with_service_manager(Arc::new(FakeServiceManager::default()))
+        .configure(change)
+        .await
+        .unwrap();
+}
+
+/// The owner's limits on the Spaces other machines create here: memory and
+/// disk in total. A create past one is refused for any requester with "has
+/// no room for another Space"; a limit lowered below what runs stops
+/// nothing (it only refuses new ones); the use is reported live.
+#[tokio::test]
+async fn memory_and_disk_limits_refuse_what_does_not_fit_and_stop_nothing() {
+    let f = fixture(HostProfile::Spare).await;
+    provided::save_provided(&f.host_dir(), &[provided_of(&f, 1, 6144, 40)]).unwrap();
+    configure(
+        &f,
+        HostSettingsChange {
+            max_spaces: Some(0),
+            max_memory_gb: Some(8),
+            max_disk_gb: Some(100),
+            ..Default::default()
+        },
+    )
+    .await;
+    // 6 GB are given out of 8: another 4 GB does not fit, whoever asks (an
+    // editor of the machine, as an agent or a child Space's overflow would).
+    for (who, id) in [(bob(), "space-mem00001"), (ada(), "space-mem00002")] {
+        let e = f
+            .server
+            .create(
+                &who,
+                pb::CreateHostSpaceRequest {
+                    image: "linux".into(),
+                    memory_mb: 4096,
+                    attach: Some(f.register("ada-token", id).await),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(e.tag(), "limit_exceeded", "{e}");
+        let m = e.to_string();
+        assert!(m.contains("has no room for another Space"), "{m}");
+        assert!(
+            m.contains("Mac mini (spare)") && m.contains("--max-memory"),
+            "{m}"
+        );
+    }
+    assert!(f.rt.started.lock().unwrap().is_empty(), "nothing started");
+    assert_eq!(f.audit().last().unwrap().0, "refused");
+    // A smaller one fits exactly (6 + 2 = 8 GB), and the use says so.
+    ask_bob(
+        &f,
+        2048,
+        10,
+        f.register("ada-token", "space-mem00003").await,
+    )
+    .await
+    .unwrap();
+    let caps = f.server.get(&ada()).await.unwrap().capacity;
+    let c = |r: &str| {
+        caps.iter()
+            .find(|c| c.resource == r)
+            .map(|c| (c.used, c.limit))
+    };
+    assert_eq!(c("memory_gb"), Some((8, 8)));
+    assert_eq!(c("disk_gb"), Some((50, 100)));
+    assert_eq!(c("spaces"), Some((2, 0)));
+    // Disk: 50 of 100 GB are given; lowering the limit to 30 stops nothing,
+    // shows as over, and refuses the next one.
+    configure(
+        &f,
+        HostSettingsChange {
+            max_disk_gb: Some(30),
+            max_memory_gb: Some(0),
+            ..Default::default()
+        },
+    )
+    .await;
+    let caps = f.server.get(&ada()).await.unwrap().capacity;
+    assert_eq!(
+        caps.iter()
+            .find(|c| c.resource == "disk_gb")
+            .map(|c| (c.used, c.limit)),
+        Some((50, 30))
+    );
+    let e = ask_bob(&f, 1024, 5, f.register("ada-token", "space-disk0001").await)
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "limit_exceeded", "{e}");
+    assert!(
+        e.to_string().contains("has no room for another Space"),
+        "{e}"
+    );
+    assert!(e.to_string().contains("--max-disk"), "{e}");
+    assert!(
+        f.rt.deleted.lock().unwrap().is_empty(),
+        "nothing was stopped or removed"
+    );
+    assert_eq!(provided::load_provided(&f.host_dir()).unwrap().len(), 2);
+    // No limit (0) gives the room back.
+    configure(
+        &f,
+        HostSettingsChange {
+            max_disk_gb: Some(0),
+            max_memory_gb: Some(0),
+            ..Default::default()
+        },
+    )
+    .await;
+    ask_bob(&f, 1024, 5, f.register("ada-token", "space-disk0002").await)
+        .await
+        .unwrap();
+}
+
+/// The owner's Space limit is refused with the same words, and a Space
+/// made here by another machine gets the longest running time the owner set.
+#[tokio::test]
+async fn the_space_limit_says_no_room_and_a_run_time_limit_ends_a_space() {
+    let f = fixture(HostProfile::Spare).await;
+    provided::save_provided(&f.host_dir(), &[provided_of(&f, 1, 0, 0)]).unwrap();
+    configure(
+        &f,
+        HostSettingsChange {
+            max_spaces: Some(1),
+            max_run_minutes: Some(5),
+            ..Default::default()
+        },
+    )
+    .await;
+    let e = f
+        .create(
+            &ada(),
+            "linux",
+            f.register("ada-token", "space-room00001").await,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "limit_exceeded", "{e}");
+    assert!(
+        e.to_string().contains("has no room for another Space"),
+        "{e}"
+    );
+    assert!(e.to_string().contains("--max-spaces"), "{e}");
+    configure(
+        &f,
+        HostSettingsChange {
+            max_spaces: Some(3),
+            ..Default::default()
+        },
+    )
+    .await;
+    let made = f
+        .create(
+            &ada(),
+            "linux",
+            f.register("ada-token", "space-room00002").await,
+        )
+        .await
+        .unwrap();
+    let life = f
+        .spaces
+        .lifetime(&made.local_space)
+        .expect("a running time limit");
+    assert_eq!(life.on_expire, "suspend", "turned off, not deleted");
+    let left = life
+        .expires_at()
+        .duration_since(std::time::SystemTime::now())
+        .unwrap();
+    assert!(
+        left > std::time::Duration::from_secs(240) && left <= std::time::Duration::from_secs(300),
+        "{left:?}"
+    );
+    // Without the limit a Space has no lifetime.
+    configure(
+        &f,
+        HostSettingsChange {
+            max_run_minutes: Some(0),
+            ..Default::default()
+        },
+    )
+    .await;
+    let free = f
+        .create(
+            &ada(),
+            "linux",
+            f.register("ada-token", "space-room00003").await,
+        )
+        .await
+        .unwrap();
+    assert!(f.spaces.lifetime(&free.local_space).is_none());
+}
+
 /// The owner deleting a provided Space on the host itself takes it off the
 /// relay and the host's list too; a host that still provides Spaces is not
 /// removed out from under them.

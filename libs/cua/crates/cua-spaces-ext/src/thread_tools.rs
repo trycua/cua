@@ -237,19 +237,27 @@ pub(crate) async fn call(
                 }
             }
             let me = p.author_for(caller).id;
+            // One read of the records, not one per row.
+            let records = p.list().unwrap_or_default();
             for row in &mut rows {
                 let name = row["name"].as_str().unwrap_or_default().to_string();
-                if let Ok(rec) = p.get(&name) {
-                    row["you_can"] = Persistent::rights_of(&rec).you_can(p.role_of(caller), &me);
+                if let Some(rec) = records.iter().find(|r| r.name == name) {
+                    row["you_can"] = Persistent::rights_of(rec).you_can(p.role_of(caller), &me);
                 }
             }
             // The Agents tab (CUA-2266): each agent's DM with the caller.
             if a.overview.unwrap_or(false) && caller.agent_member().is_none() {
                 let t = p.thread(caller, &a.space).await?;
-                for row in &mut rows {
-                    let name = row["name"].as_str().unwrap_or_default().to_string();
-                    let may_approve = row["you_can"]["approve"].as_bool().unwrap_or(true);
-                    let sum = t.dm_summary(&name, may_approve)?;
+                let asks: Vec<(String, bool)> = rows
+                    .iter()
+                    .map(|row| {
+                        (
+                            row["name"].as_str().unwrap_or_default().to_string(),
+                            row["you_can"]["approve"].as_bool().unwrap_or(true),
+                        )
+                    })
+                    .collect();
+                for (row, sum) in rows.iter_mut().zip(t.dm_summaries(&asks)?) {
                     row["dm"] = json!({"unread": sum.unread, "last": sum.last});
                     row["needs_you"] = json!(sum.needs_you);
                 }

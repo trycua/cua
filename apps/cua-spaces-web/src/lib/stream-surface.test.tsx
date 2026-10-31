@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { noCore } from "@/bridge/__tests__/testCore";
 import { BridgeProvider, type Space } from "@/bridge";
-import { CONNECT_TIMEOUT_MS, CONNECT_TIMEOUT_REASON, StreamSurface } from "@/components/space-detail/stream-surface";
+import { CONNECT_TIMEOUT_MS, CONNECT_TIMEOUT_REASON, SLOW_CONNECT_HINT, SLOW_CONNECT_MS, StreamSurface } from "@/components/space-detail/stream-surface";
 import { ToastProvider } from "@/components/ui/toast";
 import { canStreamTile } from "@/components/video/tile-video";
 import { resetVideoSlotLoader } from "@/components/video/use-video-slot";
@@ -143,10 +143,11 @@ describe("stream surface helpers", () => {
     }
   });
 
-  // CUA-2641: dialogs (Share, the command palette) over the Space viewer: the
-  // video stays drawn with a hole where the dialog is, its dimmed backdrop is
-  // looked through, and a Space tile still hides.
-  it("keeps the Space viewer drawn under a dialog and its backdrop, and still hides a tile", () => {
+  // CUA-2641: a dialog-role popup over the Space viewer: the video stays
+  // drawn with a hole where it is, a dimmed layer is looked through, and a
+  // Space tile still hides. (A modal dialog, the dimmed layer open, hides the
+  // viewer too: `VideoSlotReporter.measure`, next test.)
+  it("keeps the Space viewer drawn with a hole under a dialog-role popup, and still hides a tile", () => {
     const slot = document.createElement("div");
     const inner = document.createElement("span");
     slot.append(inner);
@@ -165,7 +166,11 @@ describe("stream surface helpers", () => {
     expect(videoHoles(slot, clip, document, false)).toEqual([]);
   });
 
-  it("reports the viewer non-interactive, not hidden, while a modal dialog is open", () => {
+  // The owner's report: with a live desktop in the Space, a modal ("Connect Anthropic") opened
+  // from the Connect card and the native video drew over the bottom edge of the dialog, and
+  // the desktop hid the local cursor on the way to it. A native layer sits above the web view:
+  // the page's dimmed layer and the dialog cannot cover it, so the video goes while a modal is up.
+  it("hides the viewer, takes no input and gives back the keys while a modal dialog is open, and restores all when it closes", () => {
     vi.stubGlobal("innerWidth", 1000);
     vi.stubGlobal("innerHeight", 700);
     const posted: StreamSurfaceMessage[] = [];
@@ -185,7 +190,10 @@ describe("stream surface helpers", () => {
       const m = [...posted].reverse().find((x) => x.type === "surfaces" && x.update.some((u) => u.spaceId === space)) as Extract<StreamSurfaceMessage, { type: "surfaces" }>;
       return m.update.find((u) => u.spaceId === space)!;
     };
+    const focusPosts = () => posted.filter((m) => m.type === "focus");
     expect(last("b")).toMatchObject({ interactive: true, occluded: false });
+    // The desktop has the keyboard when the dialog opens (the host says so).
+    window.dispatchEvent(new CustomEvent("cua:event", { detail: { event: "video.focus", payload: { surfaceId: reporter.idOf(viewer) } } }));
     const dim = document.createElement("div");
     dim.setAttribute("data-window-dim", "");
     const dialog = document.createElement("div");
@@ -194,15 +202,53 @@ describe("stream surface helpers", () => {
     box(dialog, { x: 150, y: 260, width: 300, height: 200 });
     document.elementsFromPoint = (x, y) => (x > 150 && x < 450 && y > 260 && y < 460 ? [dialog, dim, viewer] : [dim, viewer]);
     reporter.flush();
-    expect(last("b")).toMatchObject({ interactive: false, occluded: false, holes: [{ x: 150, y: 260, width: 300, height: 200 }] });
+    // Hidden (not drawn over the dialog's edge), no pointer, no keys, no holes to leak through.
+    expect(last("b")).toMatchObject({ interactive: false, occluded: true, holes: [] });
     expect(last("a")).toMatchObject({ occluded: true });
-    // Closed: the viewer takes input again.
+    expect(focusPosts()).toEqual([{ type: "focus", surfaceId: null }]);
+    // Once per dialog: measuring again does not ask again.
+    reporter.flush();
+    expect(focusPosts()).toHaveLength(1);
+    // Closed (the dialog starts to go: its dim is marked ending): the viewer takes input and draws again.
+    dim.setAttribute("data-ending-style", "");
+    reporter.flush();
+    expect(last("b")).toMatchObject({ interactive: true, occluded: false });
     dim.remove();
     dialog.remove();
     document.elementsFromPoint = () => [viewer];
     reporter.flush();
     expect(last("b")).toMatchObject({ interactive: true, occluded: false, holes: [] });
+    // The next dialog takes the keys again if the desktop has them.
+    window.dispatchEvent(new CustomEvent("cua:event", { detail: { event: "video.focus", payload: { surfaceId: reporter.idOf(viewer) } } }));
+    dim.removeAttribute("data-ending-style");
+    document.body.append(dim);
+    reporter.flush();
+    expect(focusPosts()).toHaveLength(2);
+    dim.remove();
     stop.forEach((f) => f());
+  });
+
+  it("still cuts a hole, not the whole video, for popovers and menus over the viewer (they are not modal)", () => {
+    vi.stubGlobal("innerWidth", 1000);
+    vi.stubGlobal("innerHeight", 700);
+    const posted: StreamSurfaceMessage[] = [];
+    const reporter = new VideoSlotReporter({ postMessage: (m) => posted.push(m) });
+    const viewer = document.createElement("div");
+    document.body.append(viewer);
+    box(viewer, { x: 10, y: 200, width: 640, height: 400 });
+    document.elementFromPoint = () => viewer;
+    document.elementsFromPoint = () => [viewer];
+    const stop = reporter.register(viewer, { spaceId: "b", tier: "full", interactive: true, radius: 12 }, () => {});
+    const card = document.createElement("div");
+    card.setAttribute("role", "dialog");
+    card.setAttribute("data-video-occluder", "");
+    document.body.append(card);
+    box(card, { x: 100, y: 300, width: 200, height: 120 });
+    reporter.flush();
+    const m = [...posted].reverse().find((x) => x.type === "surfaces") as Extract<StreamSurfaceMessage, { type: "surfaces" }>;
+    expect(m.update[0]).toMatchObject({ interactive: true, occluded: false, holes: [{ x: 100, y: 300, width: 200, height: 120 }] });
+    card.remove();
+    stop();
   });
 
   // Regression: the Space header's "⋯" menu turned the desktop black. Base
@@ -538,6 +584,49 @@ describe("<StreamSurface> native video", () => {
     act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
     expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
     expect(container.querySelector("[data-desktop-cover]")).toBeNull();
+  });
+
+  // "Connecting…" alone for many seconds reads as hung: after SLOW_CONNECT_MS
+  // the cover says, in plain words, that it is still going (and the failure
+  // at CONNECT_TIMEOUT_MS still ends it).
+  it("says it is still connecting once the wait is slow, and drops the line with the picture", async () => {
+    expect(SLOW_CONNECT_MS).toBeLessThan(CONNECT_TIMEOUT_MS);
+    expect(SLOW_CONNECT_HINT).not.toContain("\u00b7");
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    hostDrawsVideo();
+    const { container, getByText } = mount();
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    const first = updates()[0]!;
+    expect(getByText("Connecting…")).toBeTruthy();
+    expect(container.querySelector("[data-cover-hint]")).toBeNull();
+    act(() => void vi.advanceTimersByTime(SLOW_CONNECT_MS - 500));
+    expect(container.querySelector("[data-cover-hint]")).toBeNull();
+    act(() => void vi.advanceTimersByTime(500));
+    expect(container.querySelector("[data-cover-hint]")?.textContent).toBe(SLOW_CONNECT_HINT);
+    expect(getByText("Connecting…")).toBeTruthy();
+    act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
+    expect(container.querySelector("[data-cover-hint]")).toBeNull();
+    expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
+  });
+
+  // The warm return: the host's session is still live, so its first word for
+  // the new slot is "live". Leaving and coming back must go from the mount to
+  // live with no wait of the page's own (no fixed delay, no settings round
+  // trip): generous bound, it catches a delay creeping back in.
+  it("goes from mounting to live as soon as the host says so, with no wait of its own", async () => {
+    hostDrawsVideo();
+    const first = mount();
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    first.unmount();
+    expect(posted.some((m) => m.type === "surfaces" && m.remove.length > 0)).toBe(true);
+    posted.length = 0;
+    const started = performance.now();
+    const { container } = mount();
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    act(() => hostEvent("video.surface", { surfaceId: updates()[0]!.surfaceId, state: "live" }));
+    expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
+    expect(container.querySelector("[data-desktop-cover]")).toBeNull();
+    expect(performance.now() - started).toBeLessThan(1_500);
   });
 
   it("starts the wait over on Try again after a timeout", async () => {

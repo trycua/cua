@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings tabs keep their place: some are long (Connectors: the page
+ * Settings tabs keep their place: some are long (Connections: the page
  * scrolls), the others are short (it doesn't). The page's scrollbar must not take width
  * from the column on one tab and not the other, or the tab bar and content
  * jump sideways when you switch.
@@ -13,15 +13,14 @@ import { expect, test } from "./host";
 const TABS = [
   ["Account", "/settings"],
   ["General", "/settings/general"],
-  ["Connectors", "/settings/connectors"],
-  ["Trusted machines", "/settings/devices"],
+  ["Connections", "/settings/connections"],
   ["Advanced", "/settings/advanced"],
   ["About", "/settings/about"],
 ] as const;
 
-// A window that fits the short tabs but not Connectors; a Settings tab bar and heading to measure.
+// A window that fits the short tabs (General has Terminal at its end) but not Connections; a Settings tab bar and heading to measure.
 test.use({
-  viewport: { width: 1100, height: 900 },
+  viewport: { width: 1100, height: 1100 },
   // Headless Chromium hides scrollbars by default; a Mac window with a mouse
   // (or "always show scrollbars") shows them, and they take width.
   launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] },
@@ -30,7 +29,7 @@ test.use({
 test("Settings: the heading, tab bar and content keep their left edge across tabs", async ({ page }) => {
   await page.goto("/settings?bridge=demo&parity");
   // The window's own size is the host's (the Electron window ignores the viewport): fix the page's height here.
-  await page.addStyleTag({ content: "html, body, #root { height: 760px !important; max-height: 760px !important; overflow: hidden !important; }" });
+  await page.addStyleTag({ content: "html, body, #root { height: 1000px !important; max-height: 1000px !important; overflow: hidden !important; }" });
   const nav = page.getByRole("tablist", { name: "Settings" });
   await nav.waitFor();
 

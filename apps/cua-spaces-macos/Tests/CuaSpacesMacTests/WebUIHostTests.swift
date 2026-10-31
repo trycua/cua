@@ -215,6 +215,27 @@ struct WebUIHostTests {
         #expect(fake.commands.last == .revokeGrant(id: "grant-1"))
     }
 
+    /// The teleport setup sheet's check goes to the Keyvault with the profile
+    /// asked for (none: the last used), reads no value, and is a method the
+    /// page may call.
+    @Test func theTeleportReadinessCheckAsksTheKeyvaultForTheProfile() async throws {
+        let fake = FakeKeyvault(try fixtureOverview())
+        let (bridge, model) = bridge(kv: fake)
+        await model.keyvault.refresh()
+        #expect(WebUIBridge.methods.contains("teleport.readiness"))
+        let r = try await bridge.handle("teleport.readiness", ["providerId": "chrome", "profile": "Profile 1"]) as? [String: Any]
+        #expect(r?["providerId"] as? String == "chrome")
+        #expect(r?["keyvaultInitialized"] as? Bool == true)
+        #expect((r?["files"] as? [String: Any])?["state"] as? String == "denied")
+        #expect((r?["profiles"] as? [Any])?.count == 2)
+        #expect(fake.readinessAsks.last?.app == "chrome" && fake.readinessAsks.last?.profile == "Profile 1")
+        _ = try await bridge.handle("teleport.readiness", ["providerId": "chrome", "profile": NSNull()])
+        #expect(fake.readinessAsks.last?.profile == nil)
+        #expect(await failure(bridge, "teleport.readiness", [:]) == "bad_args")
+        // The sites list reads the profile the page chose.
+        _ = try await bridge.handle("teleport.sites", ["providerId": "chrome", "profile": "Profile 2"])
+    }
+
     /// "No Keyvault yet" on the web page: Set up Keyvault runs the core's
     /// Touch ID setup and answers the recovery key once.
     @Test func setupFromTheWebPageAnswersTheRecoveryKey() async throws {
@@ -441,7 +462,7 @@ struct WebUIHostTests {
         for m in ["spaces.add", "clouds.status", "teleport.catalog", "teleport.run", "sharing.share", "volume.overview",
                   "agents.setupDriver", "about.set", "update.get", "update.install", "loginItem.set", "devices.approve", "storage.run",
                   "notifications.list", "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.windows", "stream.pip", "spaces.thumbnail", "spaces.sendFiles", "host.setUp", "host.action",
-                  "host.openSettings"] {
+                  "host.limits", "host.openSettings", "repoCache.get", "repoCache.set", "repoCache.clear"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
         #expect(!WebUIBridge.methods.contains("spaces.new"))
@@ -558,6 +579,48 @@ struct WebUIHostTests {
         let s = try await bridge.handle("host.action", ["action": "provide-spaces"]) as? [String: Any]
         #expect(s?["provideSpaces"] as? Bool == true)
         #expect(await failure(bridge, "host.action", ["action": "set-up"]) == "bad_args")
+    }
+
+    /// The limits on the Spaces other machines create here: changed through the
+    /// host (0 is no limit, a missing one keeps its value), a bad number refused.
+    @Test func hostLimitsChangeThroughTheHostModel() async throws {
+        let host = FixtureHost()
+        let (bridge, _) = bridge(host: host)
+        _ = try await bridge.handle("host.setUp", ["request": ["mode": "relay", "name": "Studio"]])
+        let s = try await bridge.handle("host.limits", ["maxSpaces": 6, "maxMemoryGb": 32]) as? [String: Any]
+        #expect(s?["maxSpaces"] as? Int == 6)
+        #expect(s?["maxMemoryGb"] as? Int == 32)
+        #expect(s?["maxDiskGb"] as? Int == 0)
+        let kept = try await bridge.handle("host.limits", ["maxDiskGb": 200]) as? [String: Any]
+        #expect(kept?["maxSpaces"] as? Int == 6, "a limit not given keeps its value")
+        #expect(kept?["maxDiskGb"] as? Int == 200)
+        let none = try await bridge.handle("host.limits", ["maxSpaces": 0]) as? [String: Any]
+        #expect(none?["maxSpaces"] as? Int == 0, "0 is no limit")
+        #expect(await failure(bridge, "host.limits", ["maxSpaces": -1]) == "bad_args")
+        #expect(await failure(bridge, "host.limits", ["maxSpaces": 1.5]) == "bad_args")
+    }
+
+    /// Settings, General's repo cache: read, switched, sized and cleared in
+    /// the host's words; a value that is not a number of GB is refused.
+    @Test func theRepoCacheReadsChangesAndClears() async throws {
+        let (bridge, _) = bridge(backend: FixtureSpacesBackend())
+        let got = try #require(try await bridge.handle("repoCache.get", [:]) as? [String: Any])
+        #expect(got["enabled"] as? Bool == true)
+        #expect(got["summary"] as? String == "Repos: 3, 1.2 GB of 5 GB")
+        #expect(got["sizeSetting"] as? String == "auto")
+        let off = try #require(try await bridge.handle("repoCache.set", ["enabled": false]) as? [String: Any])
+        #expect(off["enabled"] as? Bool == false)
+        #expect(off["sizeSetting"] as? String == "auto", "a field not given keeps its value")
+        let sized = try #require(try await bridge.handle("repoCache.set", ["enabled": true, "sizeGb": 2]) as? [String: Any])
+        #expect(sized["sizeSetting"] as? String == "2")
+        #expect(sized["summary"] as? String == "Repos: 3, 1.2 GB of 2 GB")
+        let auto = try #require(try await bridge.handle("repoCache.set", ["sizeGb": NSNull()]) as? [String: Any])
+        #expect(auto["sizeSetting"] as? String == "auto")
+        #expect(await failure(bridge, "repoCache.set", ["sizeGb": -1]) == "bad_args")
+        #expect(await failure(bridge, "repoCache.set", ["sizeGb": "lots"]) == "bad_args")
+        #expect(await failure(bridge, "repoCache.set", ["enabled": "yes"]) == "bad_args")
+        let cleared = try #require(try await bridge.handle("repoCache.clear", [:]) as? [String: Any])
+        #expect(cleared["repos"] as? Int == 0)
     }
 
     @Test func hostStatusCarriesTheWholeStateAndTheProgress() async throws {

@@ -117,6 +117,9 @@ export class PendingSpacesBackend implements SpacesBackend {
   runtimeKinds = async () => (await this.b()).runtimeKinds();
   runtimeCheckPath = async (kind: string, path: string) => (await this.b()).runtimeCheckPath(kind, path);
   setRuntimeSetting = async (key: string, value: string | null) => (await this.b()).setRuntimeSetting(key, value);
+  repoCacheStatus = async () => (await this.b()).repoCacheStatus();
+  setRepoCache = async (change: { enabled?: boolean; sizeGb?: number | null }) => (await this.b()).setRepoCache(change);
+  clearRepoCache = async () => (await this.b()).clearRepoCache();
   localStorage = async () => (await this.b()).localStorage();
   loggedIn = async () => (await this.b()).loggedIn();
   runningMacosVms = async () => (await this.b()).runningMacosVms();

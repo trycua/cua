@@ -20,41 +20,80 @@ desktop and share a Space whenever you ask.
 
 ## Connect from the app
 
-On first run, **Pick your agent** lists the agents found on this computer,
+On first run, **Pick your agent** lists the agents found on this machine,
 most used first: Hermes, Claude Code, Codex, Cursor, then the rest. Each row
 names the settings file Cua changes. Press **Connect** on each agent you want:
 the app adds the Cua skills and MCP server to that agent's settings. Nothing is
 connected until you press it. If an agent was already open, close it and open
-it again. Connecting none is fine: connect agents later in **Settings, AI
-agents**.
+it again. Connecting none is fine: connect agents later in **Settings,
+Connections**.
 
-### Per computer
+### Per machine
 
-Everything on this screen belongs to this computer only:
+Everything on this screen belongs to this machine only:
 
 - The Cua skills and MCP server go into each agent's settings on this
-  computer. On another computer, install Cua Spaces there and pick its agents.
-- **Sign-ins and keys** stay on this computer too. Another computer keeps its
+  machine. On another machine, install Cua Spaces there and pick its agents.
+- **Sign-ins and keys** stay on this machine too. Another machine keeps its
   own.
 
 ### Codex and ChatGPT
 
 Codex signs in with your ChatGPT account on its own, with `codex login`. When
 Codex is connected, the screen shows **ChatGPT sign-in**: press **Sign in**
-and finish in the browser that opens. Codex keeps the sign-in on this computer,
-and Cua never reads or copies it. On another computer, sign in to Codex there
+and finish in the browser that opens. Codex keeps the sign-in on this machine,
+and Cua never reads or copies it. On another machine, sign in to Codex there
 (press **Sign in** in its first run, or run `codex login`).
 
-An agent that Cua runs in a Space uses the provider keys saved on the computer
+An agent that Cua runs in a Space uses the provider keys saved on the machine
 that hosts the Space: the **OpenAI key** for Codex and the **Anthropic key** for
-Claude Code. Add them on **Pick your agent** or in **Settings, Connectors**. They stay
-in this computer's Keychain (Credential Manager on Windows).
+Claude Code. Add them on **Pick your agent** or in **Settings, Connections**. They stay
+in this machine's Keychain (Credential Manager on Windows).
 
-To connect an agent later, or to remove one, open **Settings, AI agents**:
+### Claude Code and your Claude plan
 
-- Press **Configure** next to a detected agent to set it up, or **Remove** to
-  take out what Cua added.
-- Press **Configure all detected agents** to set up every one at once.
+If you already use Claude Code on this machine, Cua can run it in your Spaces
+with the same Claude plan. Press **Connect** next to Claude Code in **Settings,
+Connections**. Before it reads anything, Cua says what it will do and waits for
+you to press **Use my sign-in**:
+
+1. Cua reads the sign-in Claude Code already keeps on this machine. On a Mac
+   that is the Keychain item "Claude Code-credentials", and macOS asks you to
+   allow it. On Linux and Windows, and when Claude Code keeps it in a file, it
+   is `.credentials.json` in Claude Code's folder (`~/.claude`, or the folder
+   `CLAUDE_CONFIG_DIR` names). Who you are comes from Claude Code's
+   `.claude.json`, which holds no tokens.
+2. Cua keeps the access token in its own Keychain item, never your refresh
+   token, and changes nothing about Claude Code's own sign-in. You stay signed
+   in to Claude Code.
+3. Each Claude Code run in a Space gets that access token as
+   `CLAUDE_CODE_OAUTH_TOKEN`. Only Claude Code gets it: Hermes and the other
+   agents never do, and a Space has no refresh token to spend.
+
+The row then reads **Signed in as you@example.com (Claude Max)**, the same
+words on the Claude Code page, the Anthropic row and the card an agent shows
+when it can't start.
+
+An access token lasts a few hours. A refresh token works only once, so if Cua
+refreshed it too, your own Claude Code would be signed out. Cua never refreshes.
+When its copy is about to run out, the next run reads the newer one Claude Code
+has refreshed on its own. If Claude Code hasn't run for a while, Cua asks Claude
+Code to refresh its own sign-in (one short request through `claude -p`, at most
+every five minutes). Only when there is nothing newer does the row read **Needs
+reconnect**, with **Reconnect**: open Claude Code once, or run `claude auth
+login`, then press Reconnect.
+
+If Claude Code isn't signed in on this machine, Cua offers the ways on in this
+order: sign in with Claude Code (`claude auth login` in Terminal, then try
+again), paste a token made with `claude setup-token` (a long-lived token for
+people who prefer one), or use an Anthropic API key. Sign out removes Cua's copy
+and never touches Claude Code.
+
+To connect an agent later, or to remove one, open **Settings, Connections**:
+
+- Press **Connect** next to a detected agent under **Coding apps** to set it up.
+- Open the agent's row to switch **Cua skills** and **Cua tools** on or off, or
+  press **Remove Cua from** the agent to take out what Cua added.
 
 ## Connect from a terminal
 
@@ -79,7 +118,7 @@ codex mcp add cua -- cua daemon mcp
 ```
 
 `cua daemon mcp` starts `cua daemon` if it is not running, so every agent on
-this computer shares the same Spaces, sandboxes and streams.
+this machine shares the same Spaces, sandboxes and streams.
 
 ## Check that it works
 
@@ -90,11 +129,11 @@ this computer shares the same Spaces, sandboxes and streams.
    their own window or terminal.
 
 Then try the request the app offers at the end of its first run. The agent makes
-a Space on this computer:
+a Space on this machine:
 
 > Make a Linux Space on this Mac and show its desktop in a new window.
 
-On Windows the request says "this PC", and on Linux "this computer". When
+On Windows the request says "this PC", and on Linux "this machine". When
 that works, try a bigger task:
 
 | Ask your agent | What it does |
@@ -109,7 +148,7 @@ lists the tools it gets.
 ## What your agent can do
 
 The cua MCP server gives an agent 33 Spaces tools plus sandbox and computer
-tools. For the computer the agent runs on, use [Cua Driver](/cua-driver/quickstart)
+tools. For the machine the agent runs on, use [Cua Driver](/cua-driver/quickstart)
 instead. The main ones:
 
 ```text output
@@ -155,7 +194,7 @@ An agent can also start other agents inside a Space, as long-lived threads.
 Runs live in the guest (`~/.spaces-agents/<run_id>/`) and survive the client
 going away. Host credential files are never copied into the Space: an API
 key reaches a run only as env you name for that run (`env_from_host`), or as
-a key saved in Settings → Connectors for that harness.
+a key saved in Settings → Connections for that harness.
 
 In TypeScript a run is a thread:
 
@@ -237,7 +276,7 @@ and the Swift tab is from [Cua Bots](/spaces/examples/cua-bots).
 ## Agent keys
 
 Claude Code, Codex and the other harnesses need a provider key to run. Add it
-once in **Cua Spaces, Settings, Connectors**, and every agent you start in a Space
+once in **Cua Spaces, Settings, Connections**, and every agent you start in a Space
 gets the key it needs.
 
 - **Anthropic** (`ANTHROPIC_API_KEY`): Claude Code and other agents that use Claude.
@@ -245,9 +284,13 @@ gets the key it needs.
 - **Another key**: save it under the variable its agent reads, like
   `GEMINI_API_KEY` or `OPENROUTER_API_KEY`.
 
-Each row shows only `•••• ` and the key's last four characters, and when you
-added it. Replace and Remove are on the same row. A key is never shown again
-after you save it.
+Each provider is one row under **Providers**, which shows only `•••• ` and the
+key's last four characters. Click the row for when you added it, the apps it
+works with, **Disconnect**, and **Add another key** if you keep more than one.
+A key is never shown again after you save it. Hermes, OpenCode, Goose, Pi and
+OpenClaw can be pointed at any connected provider or key from their **Provider**
+row (see [Connections](/spaces/guides/connections#pick-which-key-an-app-uses)).
+Cua in Terminal, the `cua` command, installs from **Settings, General**.
 
 The same works from the `cua` CLI. The key is read from stdin, so it never lands
 in your shell history:
@@ -276,7 +319,7 @@ from the daemon's environment) wins over a saved one.
 
 `agent_capabilities` counts saved keys: a harness whose key is saved reports
 `auth: ok`. A run with no key fails before anything is installed, and the error
-says to add the key in Settings, Connectors or to set it for the Cua daemon.
+says to add the key in Settings, Connections or to set it for the Cua daemon.
 
 ### Where the keys are kept
 
@@ -312,10 +355,10 @@ as the macOS Keychain.
 | The agent has no `cua` tools | Run `cua agents status`. Then start a new session in the agent. In Hermes, run `/reload-mcp`. |
 | "The Cua daemon isn't running. Start Cua, or run `cua daemon start`." | Open Cua Spaces, or run `cua daemon start`. |
 | Your agent is not in the app's list | Run `cua agents detect` to see every supported agent, or add the server by hand as shown above. |
-| The agent can't reach a Space on another computer | Sign in on this computer, and make sure the device is enrolled. See [Add a computer](/spaces/guides/add-a-computer#reach-it-from-your-other-machines). |
+| The agent can't reach a Space on another machine | Sign in on this machine, and make sure the machine is added to your account. See [Add a machine](/spaces/guides/add-a-computer#reach-it-from-your-other-machines). |
 
 ## Next
 
 - [Create a Space](/spaces/guides/add-a-space): run an agent's work in a new desktop.
-- [Add a computer](/spaces/guides/add-a-computer): give your agent another computer.
+- [Add a machine](/spaces/guides/add-a-computer): give your agent another machine.
 - [Agents in a Space](/spaces/guides/agents-in-a-space): agents with a name, a memory and schedules.

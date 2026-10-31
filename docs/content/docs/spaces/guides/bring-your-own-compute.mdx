@@ -1,11 +1,11 @@
 ---
 title: Bring your own compute
-description: 'Run Cua Spaces on computers you already have: this Mac, a Mac mini, a Linux box or VPS, or a VM in your own cloud account. Cua does not rent you a computer.'
+description: 'Run Cua Spaces on machines you already have: this Mac, a Mac mini, a Linux box or VPS, or a VM in your own cloud account. Cua does not rent you a machine.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Spaces runs on hardware you bring. You don't rent a computer from Cua. You
+Cua Spaces runs on hardware you bring. You don't rent a machine from Cua. You
 add one you already have, and your agents and your other machines use it from
 there. This page shows four ways to do that. Pick the one that matches what you
 have.
@@ -17,18 +17,18 @@ have.
 | A Linux machine, or a VPS you rent somewhere | [A Linux box or VPS](#a-linux-box-or-vps) |
 | A VM in your own cloud account | [A VM in your cloud account](#a-vm-in-your-cloud-account) |
 
-Every route ends the same way. The computer shows up in **Machines** in the
-app and in `cua spaces ls`. Nothing connects inward to it: the computer calls
+Every route ends the same way. The machine shows up in **Machines** in the
+app and in `cua spaces ls`. Nothing connects inward to it: the machine calls
 out to the cua.ai relay, so you don't open ports or set up a VPN.
 
 ## This Mac
 
-The quickest start. Your Mac becomes your first computer.
+The quickest start. Your Mac becomes your first machine.
 
 1. Install Cua Spaces and sign in. [Install](/spaces/guides/install) has the
    steps, and the [quickstart](/spaces/quickstart) walks through the first run.
-2. Open **This computer**, choose how to use it, and press **Set up for
-   access**. Your other devices can now reach this Mac.
+2. Open **This machine**, choose how to use it, and press **Set up for
+   access**. Your other machines can now reach this Mac.
 
 Prefer a terminal? Run:
 
@@ -43,7 +43,7 @@ System Settings, Privacy & Security, and turn both on.
 ## A Mac mini
 
 A Mac mini in a closet is a good place to run Spaces for your laptop and your
-agents. Set it up as a spare computer: it runs Spaces for you, and its own
+agents. Set it up as a spare machine: it runs Spaces for you, and its own
 desktop and files stay private.
 
 On the mini, in Terminal:
@@ -54,7 +54,7 @@ cua host setup --share spaces --name "Mac mini"
 
 If you only reach the mini over ssh, install without a screen and sign in with
 a code instead. The first command installs. The second prints a web address and
-a short code. Open the address on any other device and enter the code.
+a short code. Open the address on any other machine and enter the code.
 
 ```bash skip="no-runner"
 curl -fsSL https://cua.ai/install.sh | sh -s -- -y --select spaces,host --no-onboarding
@@ -80,7 +80,7 @@ cua spaces create macos:26 --on "mac mini" --count 2
 
 Spaces on a Mac need an Apple silicon Mac. One Mac runs at most two macOS
 Spaces at once, because that is Apple's license limit. [Add a
-computer](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces) has the
+machine](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces) has the
 rest: limits, Tailscale without the relay and fixes for common errors.
 
 ## A Linux box or VPS
@@ -90,7 +90,7 @@ provider. You can do it over ssh, with no screen.
 
 Before you start, make sure the machine can run Linux Spaces. They run in
 containers, so **install Docker first**. Spaces on a Linux box are Linux
-Spaces. A Mac or Windows Space needs a Mac or a Windows computer.
+Spaces. A Mac or Windows Space needs a Mac or a Windows machine.
 
 1. Connect to the machine with ssh.
 2. Install Cua Spaces without questions:
@@ -127,7 +127,7 @@ add `--share spaces` to the setup command.
 
 Already on the Cua Spaces app? You can skip the code. Open **Machines**, press
 **Add a machine**, and run the install command it shows on the server. See
-[Add a computer](/spaces/guides/add-a-computer#add-a-computer-from-the-app).
+[Add a machine](/spaces/guides/add-a-computer#add-a-machine-from-the-app).
 
 ## A VM in your cloud account
 
@@ -153,9 +153,9 @@ Because the VM is yours, so are its costs. A stopped VM is not reachable and
 shows **Offline** in your list. Start it again and it reconnects on its own.
 
 To remove it, run `cua host remove` on the VM, then delete the VM in your cloud
-console. Removing a computer from Cua doesn't delete anything on it.
+console. Removing a machine from Cua doesn't delete anything on it.
 
-## After you add a computer
+## After you add a machine
 
 - **Create a Space on it.** See [Create a Space](/spaces/guides/add-a-space).
 - **Let an agent use it.** See [Connect your agent](/spaces/guides/connect-your-agent).
@@ -164,5 +164,5 @@ console. Removing a computer from Cua doesn't delete anything on it.
   `cua host remove` to take it out. See
   [Check, pause or remove](/spaces/guides/add-a-computer#check-pause-or-remove).
 
-If a computer doesn't show up, run `cua host status` on it. It names the
+If a machine doesn't show up, run `cua host status` on it. It names the
 problem. [Troubleshoot](/spaces/guides/troubleshoot) covers the rest.

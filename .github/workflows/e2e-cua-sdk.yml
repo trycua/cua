@@ -18,6 +18,7 @@ name: "E2E: cua SDK"
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       # Keep in step with PATHS in .github/scripts/e2e_cua_sdk_scope.py (a test
       # pins the two lists together).
@@ -105,7 +106,7 @@ jobs:
   # skipped, the run still exists and succeeds, so `ci-gate` counts it as passed.
   changes:
     name: "E2E: cua SDK / changes"
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -143,9 +144,9 @@ jobs:
   build-sdk:
     name: build / release SDK
     needs: changes
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
-    runs-on: cua-linux-16core
-    timeout-minutes: 240
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -185,9 +186,9 @@ jobs:
   build-cli:
     name: build / debug CLI, TypeScript, wasm
     needs: changes
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
-    runs-on: cua-linux-16core
-    timeout-minutes: 240
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -233,9 +234,9 @@ jobs:
   build-fixtures:
     name: build / fixtures, static cua-spacesd
     needs: changes
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
-    runs-on: cua-linux-16core
-    timeout-minutes: 240
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -285,9 +286,9 @@ jobs:
   build-rust-tests:
     name: build / Rust test binaries
     needs: changes
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
-    runs-on: cua-linux-16core
-    timeout-minutes: 240
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -326,8 +327,8 @@ jobs:
   build-images:
     name: build / reference images
     needs: changes
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
-    runs-on: cua-linux-16core
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
       # Optional: an authenticated Docker Hub keeps anonymous pull rate limits
@@ -357,6 +358,7 @@ jobs:
           if-no-files-found: error
 
   shard:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: tests (shard ${{ matrix.shard }})
     needs: [build-sdk, build-cli, build-fixtures, build-rust-tests, build-images]
     runs-on: ubuntu-24.04
@@ -423,7 +425,7 @@ jobs:
   matrix:
     name: matrix (${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }})
     needs: shard
-    if: ${{ !cancelled() && needs.shard.result != 'skipped' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.shard.result != 'skipped' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -475,7 +477,7 @@ jobs:
 
   live:
     name: nightly (cua-sandbox, qemu)
-    if: github.event_name == 'schedule'
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'schedule') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:

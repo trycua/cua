@@ -11,7 +11,7 @@
 
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, EyeIcon, InfoIcon, LinkIcon, LockIcon, MonitorPlayIcon, PlayIcon, PlusIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useAgentDm, useAgents, useBridge, type AgentChat, type AgentChatSpace, type AgentSetupRow, type ChatNeed, type DmItem, type ThreadAttachment, type ThreadEntry } from "@/bridge";
 import { AddAgentSheet, type AddAgentStage } from "@/components/add-agent/add-agent-sheet";
@@ -65,7 +65,7 @@ export function needText(t: string): string {
 }
 
 export function AgentList({
-  chats,
+  chats: known,
   me,
   selected,
   onSelect,
@@ -73,8 +73,10 @@ export function AgentList({
   onAction,
   onNew,
   now,
+  loading = 0,
 }: {
-  chats: AgentChat[];
+  /** null while nothing is known yet: the list says nothing rather than "No agents yet". */
+  chats: AgentChat[] | null;
   me: string | null;
   selected: string | null;
   onSelect: (key: string, space?: string) => void;
@@ -84,7 +86,10 @@ export function AgentList({
   onAction?: (chat: AgentChat) => void;
   onNew: () => void;
   now: number;
+  /** Spaces still answering: the list draws what is known and says so quietly. */
+  loading?: number;
 }) {
+  const chats = known ?? [];
   const needs = chats.flatMap((c) => c.needsYou.map((n) => ({ n, c }))).sort((a, b) => b.n.tsMs - a.n.tsMs);
   // Runs that haven't started (being made, not connected, failed): their own section, in the core's order.
   const runs = chats.filter((c) => c.kind === "attempt");
@@ -100,7 +105,7 @@ export function AgentList({
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-        {chats.length === 0 ? <p className="px-2 text-xs text-muted-foreground">No agents yet</p> : null}
+        {known !== null && chats.length === 0 ? <p className="px-2 text-xs text-muted-foreground">No agents yet</p> : null}
         {needs.length ? (
           <Section title="Needs you" count={needs.length}>
             {needs.map(({ n, c }) => (
@@ -141,6 +146,11 @@ export function AgentList({
               <AgentRow key={c.key} chat={c} me={me} selected={selected === c.key} onSelect={() => (c.kind === "attempt" ? onOpenRun?.(c) : onSelect(c.key))} onAction={onAction ? () => onAction(c) : undefined} now={now} />
             ))}
           </Section>
+        ) : null}
+        {loading > 0 ? (
+          <p data-agents-loading={loading} role="status" className="px-2 pt-3 text-xs text-muted-foreground">
+            {loading === 1 ? "Checking 1 Space" : `Checking ${loading} Spaces`}
+          </p>
         ) : null}
       </div>
       <div className="shrink-0 px-5 pb-3">
@@ -270,6 +280,19 @@ export function AgentDmView({ chat, space, onSpace, identity, onInfo, me }: { ch
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [lastKey, chat.key, space]);
+  // Earlier messages come in above: the log keeps what was in view where it was.
+  const keep = useRef<number | null>(null);
+  const older = async () => {
+    keep.current = ref.current ? ref.current.scrollHeight - ref.current.scrollTop : null;
+    await dm.loadOlder();
+  };
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && keep.current !== null) {
+      el.scrollTop = el.scrollHeight - keep.current;
+      keep.current = null;
+    }
+  }, [dm.items.length]);
   const asleepHere = space && shown[0]?.member.status === "asleep";
   return (
     <section data-dm={chat.key} data-dm-space={space ?? "all"} className="flex min-w-0 flex-1 flex-col">
@@ -317,9 +340,14 @@ export function AgentDmView({ chat, space, onSpace, identity, onInfo, me }: { ch
             </p>
           ) : (
             <>
+              {dm.hasMore ? (
+                <button type="button" data-dm-older="" onClick={() => void older()} className="mx-auto mb-1 cursor-default rounded-lg px-2 py-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:underline">
+                  Show earlier messages
+                </button>
+              ) : null}
               {asleepHere ? <p className="my-1 text-center text-xs text-muted-foreground">{chat.label} is asleep here. A message wakes it.</p> : null}
-              {dm.items.map((d) => (
-                <DmRow key={`${d.spaceId}${d.item.key}`} d={d} roster={rosters[d.spaceId]!} spaces={chat.spaces} multi={multi && !space} onAnswer={(seq, ok) => dm.answer(d.spaceId, seq, ok)} onOpenAttachment={openAttachment} onRetry={(text) => dm.send(d.spaceId, text)} />
+              {dm.items.map((d, i) => (
+                <DmRow key={`${d.spaceId}${d.item.key}`} d={d} above={dmAbove(dm.items, i)} roster={rosters[d.spaceId]!} spaces={chat.spaces} multi={multi && !space} onAnswer={(seq, ok) => dm.answer(d.spaceId, seq, ok)} onOpenAttachment={openAttachment} onRetry={(text) => dm.send(d.spaceId, text)} />
               ))}
             </>
           )}
@@ -345,11 +373,23 @@ export function AgentDmView({ chat, space, onSpace, identity, onInfo, me }: { ch
   );
 }
 
-function DmRow({ d, roster, spaces, multi, onAnswer, onOpenAttachment, onRetry }: { d: DmItem; roster: Roster; spaces: AgentChatSpace[]; multi: boolean; onAnswer: (seq: number, ok: boolean) => Promise<void>; onOpenAttachment: (a: ThreadAttachment) => void; onRetry: (text: string) => Promise<void> }) {
+/** The seq of the entry above `items[i]` in the same Space (a reply quotes only what is not right above it). */
+function dmAbove(items: readonly DmItem[], i: number): number | null {
+  const mine = items[i]!;
+  for (let j = i - 1; j >= 0; j--) {
+    const it = items[j]!;
+    if (it.spaceId !== mine.spaceId) continue;
+    if (it.item.type === "system" || it.item.type === "unread") continue;
+    return it.item.entry.seq;
+  }
+  return null;
+}
+
+function DmRow({ d, above, roster, spaces, multi, onAnswer, onOpenAttachment, onRetry }: { d: DmItem; above: number | null; roster: Roster; spaces: AgentChatSpace[]; multi: boolean; onAnswer: (seq: number, ok: boolean) => Promise<void>; onOpenAttachment: (a: ThreadAttachment) => void; onRetry: (text: string) => Promise<void> }) {
   const s = spaces.find((x) => x.spaceId === d.spaceId);
   // Every message says its Space when the DM shows several.
   const label = multi && s ? <SpaceLabel name={s.spaceName} os={s.os} /> : undefined;
-  return <ThreadItemView item={d.item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRetry={onRetry} label={label} />;
+  return <ThreadItemView item={d.item} above={above} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRetry={onRetry} label={label} />;
 }
 
 function SpaceLabel({ name, os }: { name: string; os: AgentChatSpace["os"] }) {
@@ -447,8 +487,8 @@ export function AgentsEmpty({ onStart, onConnect }: { onStart: () => void; onCon
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // Connecting an app is its switch in Settings, Connectors: this opens it at that app.
-  const connect = (agent: string) => void navigate({ to: "/settings/connectors", search: { app: agent } });
+  // Connecting an app is its switch in Settings, Connections: this opens it at that app.
+  const connect = (agent: string) => void navigate({ to: "/settings/connections", search: { app: agent } });
   return (
     <div data-agents-empty="" className="flex min-w-0 flex-1 items-center justify-center">
       <div className="w-[min(520px,100%)] px-6">

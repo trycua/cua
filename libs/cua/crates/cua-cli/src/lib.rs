@@ -39,6 +39,7 @@ mod cloud_cmd;
 mod compat_cmd;
 mod computer;
 mod config_cmd;
+mod connections_cmd;
 mod devices_cmd;
 mod do_cmd;
 mod doctor;
@@ -56,6 +57,7 @@ pub mod onboard;
 mod persistent_cmd;
 pub mod prewarm;
 mod providers;
+mod repo_cache_cmd;
 mod resources_view;
 mod risky;
 mod runs;
@@ -369,6 +371,18 @@ enum Command {
         #[arg(long, hide = true)]
         relay: Option<String>,
     },
+    /// The AI providers connected once for every app that can use them: list,
+    /// add (a key from stdin), test, remove. What Cua Spaces shows in
+    /// Settings, Connections. (`cua connect` connects your coding apps to Cua.)
+    #[command(
+        subcommand,
+        after_help = "Examples:
+  cua connections list
+  cua connections add deepseek
+  cua connections test
+  cua connections remove deepseek"
+    )]
+    Connections(connections_cmd::ConnectionsCmd),
     /// Move a desktop app session (tabs, profile, sign-in) into a sandbox.
     #[command(subcommand)]
     Teleport(teleport::TeleportCmd),
@@ -1690,7 +1704,9 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             return Ok(i32::from(ended.iter().any(|e| e.error.is_some())));
         }
         Command::Teleport(
-            cmd @ (teleport::TeleportCmd::Providers | teleport::TeleportCmd::Manifest(_)),
+            cmd @ (teleport::TeleportCmd::Providers
+            | teleport::TeleportCmd::Manifest(_)
+            | teleport::TeleportCmd::Doctor(_)),
         ) => {
             return extension::teleport(None, cmd.clone(), json, out).await;
         }
@@ -1818,19 +1834,26 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 // an embedded runtime confirms on the terminal.
                 host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
                 let yes = matches!(cmd, host::SpacesCmd::Share { yes: true, .. });
-                if let Some(rt) = cua.embedded_runtime() {
-                    if !rt.spaces().has_share_consent() {
-                        rt.spaces()
-                            .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
-                    }
-                } else if matches!(cmd, host::SpacesCmd::Share { .. }) {
-                    // The daemon asks for user presence on this computer.
+                let is_share = matches!(cmd, host::SpacesCmd::Share { .. });
+                let mut presence_asks = is_share;
+                if let Some(rt) = cua.embedded_runtime()
+                    && !rt.spaces().has_share_consent()
+                {
+                    rt.spaces()
+                        .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
+                    presence_asks = false;
+                }
+                if presence_asks {
+                    // The daemon, or an embedded runtime that carries the
+                    // daemon's extensions, asks for user presence on this
+                    // computer; `--yes` cannot skip that.
                     use std::io::IsTerminal as _;
                     host::daemon_share_gate(yes, std::io::stdin().is_terminal())?;
                     eprintln!("{}", host::share_confirm_prompt());
                 }
             }
-            return host::run_spaces_sdk(&cua, cmd, json, out).await;
+            let res = host::run_spaces_sdk(&cua, cmd, json, out).await;
+            res.map_err(host::explain_share_presence_failure)
         }
         Command::Build(a) => {
             let rest = Cli {
@@ -1913,6 +1936,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         cli.command,
         Command::Sandbox(_)
             | Command::Agent(_)
+            | Command::Connections(_)
             | Command::Do(_)
             | Command::DoHostConsent
             | Command::Mcp { .. }
@@ -1954,6 +1978,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             return extension::viewer(cua.clone(), &listen, no_open, out).await;
         }
         Command::Agent(cmd) => return agent_cmd::run(&cua, cmd, json, out).await,
+        Command::Connections(cmd) => return connections_cmd::run(&cua, cmd, json, out).await,
         Command::Volume(cmd) => return drive_cmd::run(&cua, cmd, json, out).await,
         Command::Teleport(cmd @ teleport::TeleportCmd::Push(_)) => {
             return extension::teleport(Some(&cua), cmd, json, out).await;

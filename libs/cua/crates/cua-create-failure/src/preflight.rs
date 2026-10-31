@@ -209,7 +209,9 @@ pub fn local_network_denied(app: &str) -> String {
 /// The sentence for a Mac whose VPN or firewall blocks its own VM network
 /// while Local Network access is on.
 pub const LOCAL_NETWORK_VPN: &str = "A VPN or firewall is blocking this Mac's own network, so \
-     Cua Spaces can't connect to macOS Spaces. Turn off the VPN and try again.";
+     Cua Spaces can't connect to macOS Spaces. Turn off the VPN and try again. If you can't turn \
+     it off, ask whoever manages it (often your IT team) to let 192.168.64.0/24, the network \
+     macOS Spaces use on this Mac, skip the VPN.";
 
 /// A System Settings page or Windows dialog a fix opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -554,6 +556,8 @@ mod tests {
         let i = first(&req(Host::Macos, Guest::Macos, Runs::Vm), &facts);
         assert_eq!(i.kind, IssueKind::LocalNetworkVpn);
         assert!(i.message.contains("Turn off the VPN"), "{}", i.message);
+        // A work VPN often can't be turned off: say what to ask for instead.
+        assert!(i.message.contains("192.168.64.0/24"), "{}", i.message);
         assert!(i.fix.is_none());
         assert_eq!(i.kind.error_kind(), "local_network");
         assert_eq!(i.kind.error_subclass(), Some("local_network_vpn"));

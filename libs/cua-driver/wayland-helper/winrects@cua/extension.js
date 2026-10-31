@@ -19,6 +19,7 @@ const IFACE = `<node><interface name="org.cua.WinRects">
 <method name="CaptureWindow"><arg type="u" direction="in" name="id"/><arg type="u" direction="in" name="pid"/><arg type="s" direction="out" name="png_base64"/></method>
 <method name="CaptureWindowPreview"><arg type="u" direction="in" name="id"/><arg type="u" direction="in" name="pid"/><arg type="u" direction="in" name="max_dimension"/><arg type="s" direction="out" name="png_base64"/><arg type="u" direction="out" name="width"/><arg type="u" direction="out" name="height"/></method>
 <method name="Activate"><arg type="u" direction="in" name="id"/><arg type="b" direction="out" name="activated"/></method>
+<method name="Move"><arg type="u" direction="in" name="id"/><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/><arg type="b" direction="out" name="moved"/></method>
 <method name="MoveCursor"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="ClickPulse"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="SetCursorColor"><arg type="s" direction="in" name="fill_color"/></method>
@@ -861,7 +862,7 @@ export default class WinRectsExtension extends Extension {
     }
   }
   GetVersion() {
-    return 10;
+    return 11;
   }
   GetRects() {
     const actors = global.get_window_actors();
@@ -1010,11 +1011,30 @@ export default class WinRectsExtension extends Extension {
       invocation.return_dbus_error('org.cua.WinRects.CaptureFailed', String(error));
     }
   }
+  // One lookup for every window-addressed call: the id is the Shell stable
+  // sequence, which survives restacking and title changes, and it is the same
+  // id GetRects() and Activate() already use.
+  _windowForId(id) {
+    return (
+      global
+        .get_window_actors()
+        .map((actor) => actor.meta_window)
+        .find((window) => window?.get_stable_sequence() === id) ?? null
+    );
+  }
+
+  // Mutter ignores a geometry request for a maximized window, so the maximized
+  // state is dropped first: "put that window in the corner" has to mean exactly
+  // that. Fullscreen is refused instead — silently shrinking a fullscreen app is
+  // not what the caller asked for, and the caller can see the refusal.
+  _prepareForGeometry(window) {
+    if (window.is_fullscreen() || !window.allows_move()) return false;
+    if (window.is_maximized()) window.unmaximize();
+    return true;
+  }
+
   ActivateAsync([id], invocation) {
-    const target = global
-      .get_window_actors()
-      .map((actor) => actor.meta_window)
-      .find((window) => window?.get_stable_sequence() === id);
+    const target = this._windowForId(id);
     if (!target) {
       invocation.return_value(new GLib.Variant('(b)', [false]));
       return;
@@ -1024,6 +1044,12 @@ export default class WinRectsExtension extends Extension {
       invocation.return_value(new GLib.Variant('(b)', [global.display.focus_window === target]));
       return GLib.SOURCE_REMOVE;
     });
+  }
+  Move(id, x, y) {
+    const window = this._windowForId(id);
+    if (!window || !this._prepareForGeometry(window)) return false;
+    window.move_frame(true, x, y);
+    return true;
   }
   MoveCursor(x, y) {
     if (!this._cursor) return;

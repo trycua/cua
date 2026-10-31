@@ -334,9 +334,9 @@ def markdown(rep):
     w = ['| metric | before | after | reduction | label | note |',
          '|---|---|---|---|---|---|']
     for r in rep['rows']:
-        b = '—' if r['before'] is None else f"{r['before']:.2f}"
-        a = '—' if r['after'] is None else f"{r['after']:.2f}"
-        d = '—' if r['reduction_pct'] is None else f"{r['reduction_pct']:.1f}%"
+        b = 'n/a' if r['before'] is None else f"{r['before']:.2f}"
+        a = 'n/a' if r['after'] is None else f"{r['after']:.2f}"
+        d = 'n/a' if r['reduction_pct'] is None else f"{r['reduction_pct']:.1f}%"
         lab = f"{r['label_before']} / {r['label_after']}"
         w.append(f"| {r['metric']} | {b} | {a} | {d} | {lab} | {r['note']} |")
     return '\n'.join(w)

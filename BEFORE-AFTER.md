@@ -15,8 +15,8 @@ python3 measure/measure.py   # print the table below + the evidence behind it
 
 | metric | before | after | reduction | label |
 |---|---|---|---|---|
-| sccache hit rate, `libs-cua-driver-rust` | **0.26 %** (4 / 1563) | — | — | measured / n/a |
-| sccache hit rate, `libs-cua-spacesd` | **97.71 %** | — | — | measured / n/a |
+| sccache hit rate, `libs-cua-driver-rust` | **0.26 %** (4 / 1563) | n/a | n/a | measured / n/a |
+| sccache hit rate, `libs-cua-spacesd` | **97.71 %** | n/a | n/a | measured / n/a |
 | `gate / Linux E2E / shared Electron + Tauri` | **34.55 min** | 20.47 min | **40.8 %** | measured / **projected** |
 | `ci-gate` job duration | 2.42 min (median) | 2.42 min | 0.0 % | measured / measured |
 | `ci-gate` timeout cap | 360 min | 180 min | **50 %** | measured / measured |
@@ -27,7 +27,7 @@ python3 measure/measure.py   # print the table below + the evidence behind it
 
 Only **one** row is a real before/after from this PR: the `ci-gate` timeout cap,
 360 → 180 minutes. That is a ceiling on a wedged run, not a saving on a normal
-PR — the worst gate observed across 98 runs was **94.8 min**, so 180 keeps ~47 %
+PR: the worst gate observed across 98 runs was **94.8 min**, so 180 keeps ~47 %
 headroom while stopping a hang from holding a required check for six hours.
 
 Everything else is context:
@@ -69,7 +69,7 @@ deliberately: a dispatch or `workflow_call` can certify an older commit, and
 that run must not seed main's scope with it.
 
 The ninth site, `e2e-rust-linux.yml:113`, is `Swatinem/rust-cache`, which *does*
-honour `save-if` itself — and it is the only site that really wrote PR-scoped
+honour `save-if` itself, and it is the only site that really wrote PR-scoped
 data (`refs/pull/5957/merge` and `refs/pull/5661/merge`, ~1,005 MB each, key
 `v0-rust-e2e-shared-verify-skill-*`). That is the entry this PR stops recurring.
 It now reads
@@ -86,7 +86,7 @@ something, so none of them ship:
 | proposed | why not |
 |---|---|
 | add `push:` to `ci-cua-spacesd.yml` | already on main (line 36) since before this analysis; 14 push runs, 98.9 % hits |
-| `ci-gate` `sleep 120` → 20 s | **unsafe.** Run-creation fan-out across 37 measured bursts: p90 11 s, p95 101 s, p99 119 s, **max 119 s** — the window is sized to that. At 20 s the first verdict lands ~30 s in, and 3 of 37 bursts still had runs appearing after that, so the two-identical-listings rule would confirm an incomplete set and verdict early. `test_gate_catches_a_failing_run_that_appears_inside_the_window` exists precisely to catch this. |
+| `ci-gate` `sleep 120` → 20 s | **unsafe.** Run-creation fan-out across 37 measured bursts: p90 11 s, p95 101 s, p99 119 s, **max 119 s**, and the window is sized to that. At 20 s the first verdict lands ~30 s in, and 3 of 37 bursts still had runs appearing after that, so the two-identical-listings rule would confirm an incomplete set and verdict early. `test_gate_catches_a_failing_run_that_appears_inside_the_window` exists precisely to catch this. |
 | cap `poll_interval()` 60 s → 20 s | breaks the repo's own API budget: `test_gate_poll_schedule_backs_off_and_stays_within_the_api_budget` asserts `set(intervals) == {10, 30, 60}` and `len(sleeps) <= 100`. A 128-min PR would go from ~113 polls to ~339. Upside is ~40 s. |
 | `concurrency:` on `ci-release-metadata.yml` | **would block merges.** `test_installer_compatibility_never_cancels_a_superseded_caller` documents why: a cancelled call fails the required `validate` check on that head, and a failed duplicate blocks the merge. The duplicates are real (4 overlapping runs across 28 heads) but cancelling them is the wrong remedy. |
 | `concurrency:` on `release-on-merge.yml` | no evidence: 8 runs, 8 distinct heads, 0 duplicates. |
@@ -130,7 +130,7 @@ replace the `n/a` and `projected` cells with `measured` values; until then any
 ## If you want the bigger number
 
 The 40.8 % is a ceiling, and the real cause sits in `libs-cua-driver-rust`
-restoring an exact hit and then missing 1,542 times — a cache-key/input mismatch
+restoring an exact hit and then missing 1,542 times, which points at a cache-key/input mismatch
 between how main seeds that family (dev profile, `ci-rust-linux.yml`) and how the
 E2E leg compiles (release profile, `--features portal-input`). Fixing that is a
 separate change and is the one lever that would move the 34.55 min leg.

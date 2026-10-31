@@ -18,7 +18,9 @@ use tokio::sync::Notify;
 
 #[test]
 fn background_window_sources_delegate_without_space_queries_or_refiltering() {
-    let source = include_str!("../../platform-macos/src/ax/exact_target.rs");
+    // A Windows checkout with core.autocrlf has CRLF sources; the searches below
+    // look for LF-only `\n}\n`, so normalize first.
+    let source = include_str!("../../platform-macos/src/ax/exact_target.rs").replace("\r\n", "\n");
     let function = |signature: &str| {
         let start = source.find(signature).unwrap();
         &source[start..start + source[start..].find("\n}\n").unwrap()]
@@ -33,7 +35,8 @@ fn background_window_sources_delegate_without_space_queries_or_refiltering() {
         assert!(!body.to_lowercase().contains("space"));
     }
 
-    let detector = include_str!("../../platform-macos/src/window_change_detector.rs");
+    let detector =
+        include_str!("../../platform-macos/src/window_change_detector.rs").replace("\r\n", "\n");
     let start = detector
         .find("fn host_windows() -> Vec<WindowInfo> {")
         .unwrap();

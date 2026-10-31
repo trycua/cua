@@ -45,7 +45,11 @@ schedule; those are on [named agents](/spaces/guides/agent-memory-and-identity)
 today.
 
 The session keeps a journal in its state directory (`CUA_SESSION_STATE_DIR`,
-or `$CUA_JOB_DATA/session` when that is empty). It holds:
+or `$CUA_JOB_DATA/session` when that is empty). `cua agent add --durable`
+leaves it empty, so the journal sits in the run's data folder on the machine
+that drives it: it outlives the driver's Space, and a driver that dies or stalls
+is started again on the same machine with the same conversation. A new drive on
+another machine does not find it and starts the task from the beginning. It holds:
 
 | File | What |
 |---|---|

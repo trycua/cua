@@ -101,8 +101,8 @@ pub struct DurableOptions {
     /// overrides it; the journal itself is the truth.
     pub resume: bool,
     /// Where the journal lives. In a Space: default the run directory. For a
-    /// driver spec: default `~/.cua/durable/<session>`, else empty (the
-    /// runner then uses `$CUA_JOB_DATA/session`).
+    /// driver spec: default empty (the runner then uses
+    /// `$CUA_JOB_DATA/session`, which outlives the driver's Space).
     pub state_dir: Option<String>,
     /// The session's name (for the default state directory and the journal).
     pub session: Option<String>,
@@ -413,11 +413,14 @@ pub fn durable_driver_spec(
     for k in opts.env.keys() {
         crate::runs::valid_env_name(k)?;
     }
-    // Empty: the coordinator leaves CUA_SESSION_STATE_DIR empty and the
-    // runner uses $CUA_JOB_DATA/session.
+    // Empty by default: the coordinator leaves CUA_SESSION_STATE_DIR empty and
+    // the runner uses $CUA_JOB_DATA/session. The job data directory is per run
+    // on each machine and the run id is the same for every drive, so the
+    // journal outlives the driver's Space (a `~/.cua/...` default sat in the
+    // Space's home and died with it: the task restarted from scratch).
     let state_dir = match (&d.state_dir, &d.session) {
         (Some(s), _) => s.clone(),
-        (None, Some(n)) if crate::runs::valid_home_name(n) => format!("~/.cua/durable/{n}"),
+        (None, Some(n)) if crate::runs::valid_home_name(n) => String::new(),
         (None, Some(n)) => {
             return Err(Error::Invalid(format!(
                 "session name {n:?}: use 1-63 of a-z, 0-9, `.`, `_`, `-`"
@@ -671,10 +674,10 @@ mod tests {
             "${CUA_MCP_0_0}"
         );
         assert_eq!(run["durable"]["policy"], "ask-model");
-        assert_eq!(run["durable"]["stateDir"], "~/.cua/durable/nightly");
+        assert_eq!(run["durable"]["stateDir"], "");
         assert_eq!(run["exitWhenIdle"], true);
         assert_eq!(run["prompt"], "fix the bug");
-        assert_eq!(spec.state_dir, "~/.cua/durable/nightly");
+        assert_eq!(spec.state_dir, "");
         assert_eq!(spec.label, "claude-code");
     }
 

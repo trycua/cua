@@ -724,8 +724,8 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // list_windows).  Z-ordering above the target is managed dynamically via
     // orderWindow:relativeTo: (see dispatch_pin_above / render_loop repin).
     let _: () = msg_send![win, setLevel: 0i64];
-    // NSWindowCollectionBehaviorCanJoinAllSpaces(1<<0) | FullScreenAuxiliary(1<<8) | Stationary(1<<4)
-    let _: () = msg_send![win, setCollectionBehavior: (1u64 | (1<<8) | (1<<4))];
+    // Join every Space without participating in keyboard window cycling.
+    let _: () = msg_send![win, setCollectionBehavior: (1u64 | (1<<8) | (1<<4) | (1<<6))];
     let _: () = msg_send![win, setReleasedWhenClosed: false];
     let _: () = msg_send![win, setHidesOnDeactivate: false];
 
@@ -761,9 +761,6 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let window_number: isize = msg_send![win, windowNumber];
     OVERLAY_WINDOW_ID.store(u32::try_from(window_number).unwrap_or(0), Ordering::Release);
 
-    // ---- Show the window ----
-    let _: () = msg_send![win, orderFrontRegardless];
-
     // ---- Render thread (60 fps) ----
     let layer_ptr = layer as usize;
     let win_ptr = win as usize;
@@ -788,6 +785,7 @@ fn render_loop(
     let target_frame_ms = Duration::from_millis(16); // ~60 fps while pixels can change
     let hover_poll_ms = Duration::from_millis(80);
     let mut last_tick = Instant::now();
+    let mut window_visible = false;
     let mut frame_tick_needed = false;
     let mut hover_poll_needed = false;
     // Repin bookkeeping: track last pinned wid and a frame counter for
@@ -873,6 +871,7 @@ fn render_loop(
             hover_changed,
             next_frame_tick_needed,
             next_hover_poll_needed,
+            has_pixels,
         ) = {
             let mut guard = RENDER.lock().unwrap();
             match guard.as_mut() {
@@ -942,6 +941,7 @@ fn render_loop(
                         hover_changed,
                         next_frame_tick_needed,
                         next_hover_poll_needed,
+                        map.cursors.values().any(cursor_may_paint),
                     )
                 }
                 None => break,
@@ -953,22 +953,28 @@ fn render_loop(
             arrival_fire(k);
         }
 
+        if window_visible && !has_pixels {
+            dispatch_visibility(win_ptr, false);
+        }
+        let became_visible = !window_visible && has_pixels;
+        window_visible = has_pixels;
+
         // Repin: immediately on target change, then defensive every ~1 s while
         // the render loop is active. When quiescent, z-order is left unchanged
         // until the next command wakes the loop.
-        if frame_tick_needed || had_msg {
+        if has_pixels && (frame_tick_needed || had_msg) {
             repin_frames += 1;
             let pin_changed = pinned_wid != last_pinned;
             last_pinned = pinned_wid;
-            if pinned_wid.is_some() && (pin_changed || repin_frames >= 60) {
+            if pinned_wid.is_some() && (became_visible || pin_changed || repin_frames >= 60) {
                 MacZOrderEnforcer { win_ptr }.reassert(pinned_wid);
                 repin_frames = 0;
-            } else if raise_unpinned {
+            } else if raise_unpinned || became_visible {
                 // A direct move_cursor has no target window to pin against.
                 // Raise the normal-level, click-through overlay without
                 // activating the driver so a later foreground application
                 // cannot cover a standalone session cursor.
-                dispatch_order_front(win_ptr);
+                dispatch_visibility(win_ptr, true);
                 repin_frames = 0;
             } else if repin_frames >= 60 {
                 repin_frames = 0;
@@ -1157,12 +1163,8 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
     }
 }
 
-/// Raise the normal-level overlay without activating the driver application.
-///
-/// This is used only for an externally visible cursor with no target window.
-/// Target-bound actions continue to use [`dispatch_pin_above`] so background
-/// delivery remains below unrelated foreground applications.
-fn dispatch_order_front(win_ptr: usize) {
+/// Change overlay visibility without activating the driver application.
+fn dispatch_visibility(win_ptr: usize, visible: bool) {
     use std::ffi::c_void;
 
     #[link(name = "System", kind = "framework")]
@@ -1175,19 +1177,24 @@ fn dispatch_order_front(win_ptr: usize) {
         );
     }
 
-    unsafe extern "C" fn order_front_cb(ctx: *mut c_void) {
-        let win_ptr = *Box::from_raw(ctx as *mut usize);
+    unsafe extern "C" fn visibility_cb(ctx: *mut c_void) {
+        let (win_ptr, visible) = *Box::from_raw(ctx as *mut (usize, bool));
         let win = win_ptr as *mut objc2::runtime::AnyObject;
-        let _: () = objc2::msg_send![win, orderFrontRegardless];
+        if visible {
+            let _: () = objc2::msg_send![win, orderFrontRegardless];
+        } else {
+            let _: () =
+                objc2::msg_send![win, orderOut: std::ptr::null::<objc2::runtime::AnyObject>()];
+        }
     }
 
-    let payload = Box::new(win_ptr);
+    let payload = Box::new((win_ptr, visible));
     unsafe {
         let main_queue = &raw const _dispatch_main_q as *const c_void;
         dispatch_async_f(
             main_queue,
             Box::into_raw(payload) as *mut c_void,
-            order_front_cb,
+            visibility_cb,
         );
     }
 }

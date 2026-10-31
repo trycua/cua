@@ -20,9 +20,9 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-core/src/snapshot_store.rs"
       - "libs/cua-driver/rust/crates/cua-driver-core/src/tool.rs"
       - "libs/cua-driver/rust/crates/cua-driver-core/src/window_target.rs"
-      - "libs/cua-driver/rust/crates/platform-windows/src/tools/impl_.rs"
+      - "libs/cua-driver/rust/crates/platform-windows/src/tools/*.rs"
       - "libs/cua-driver/rust/crates/platform-windows/src/win32/combo.rs"
-      - "libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs"
+      - "libs/cua-driver/rust/crates/platform-linux/src/tools/*.rs"
       - "libs/cua-driver/rust/crates/platform-linux/src/atspi/**"
 
 permissions:

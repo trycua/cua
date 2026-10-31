@@ -18,13 +18,13 @@ import {
   type VisualObservation,
 } from './core.js';
 import { driverEnvironment } from './driver_env.js';
-import { chooseLiveForTask, chooseMockForTask } from './jev_adapter.js';
+import { backendName, chooseBrowserProvider, type BrowserProvider } from './browser_provider.js';
 import { FixtureFormTask, fixtureSources, type Task, type TaskSources } from './tasks.js';
 
 type VisualMode = 'auto' | 'always' | 'off';
 
 type Arguments = {
-  provider: 'mock' | 'live';
+  provider: BrowserProvider;
   visualObservation: VisualMode;
   fixtureUrl: string;
   token?: string;
@@ -60,6 +60,9 @@ function parseArgs(argv: string[]): Arguments {
   }
   if (!Number.isInteger(result.maxSteps) || result.maxSteps < 1) {
     throw new Error('--max-steps must be a positive integer');
+  }
+  if (!['mock', 'live', 'typesafe', 's1'].includes(result.provider)) {
+    throw new Error('--provider must be mock, live, typesafe, or s1');
   }
   result.fixtureUrl = validateFixtureUrl(result.fixtureUrl);
   return result;
@@ -471,12 +474,36 @@ async function run(args: Arguments): Promise<Outcome> {
       }
       const visual = sources.visual?.observation;
       const providerStarted = performance.now();
-      const answer =
-        args.provider === 'mock'
-          ? chooseMockForTask(task, sources, candidates, history)
-          : await chooseLiveForTask(task, sources, candidates, history);
+      let answer;
+      try {
+        answer = await chooseBrowserProvider(
+          args.provider,
+          task,
+          sources,
+          candidates,
+          history
+        );
+      } catch (error) {
+        await writeEvent(args.log, {
+          event: 'outcome',
+          outcome: 'unknown',
+          phase: 'decide',
+          step,
+          backend: backendName(args.provider),
+          error: error instanceof Error ? error.name : 'Error',
+        });
+        return 'unknown';
+      }
       const providerDecisionMs = performance.now() - providerStarted;
-      if (!answer.choice) return 'abstained';
+      if (!answer.choice) {
+        await writeEvent(args.log, {
+          event: 'outcome',
+          outcome: 'abstained',
+          step,
+          backend: answer.backend,
+        });
+        return 'abstained';
+      }
       const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;
       const timing = decisionTimingFields({
@@ -492,6 +519,7 @@ async function run(args: Arguments): Promise<Outcome> {
           event: 'step',
           step,
           candidate: candidate.id,
+          backend: answer.backend,
           confidence: answer.confidence,
           probabilities: answer.probabilities,
           ...timing,
@@ -511,6 +539,7 @@ async function run(args: Arguments): Promise<Outcome> {
           event: 'outcome',
           outcome: 'abstained',
           step,
+          backend: answer.backend,
           confidence: answer.confidence,
           probabilities: answer.probabilities,
           visual: visualRecord,
@@ -534,6 +563,7 @@ async function run(args: Arguments): Promise<Outcome> {
               event: 'step',
               step,
               candidate: candidate.id,
+              backend: answer.backend,
               confidence: answer.confidence,
               probabilities: answer.probabilities,
               ...timing,
@@ -555,6 +585,7 @@ async function run(args: Arguments): Promise<Outcome> {
             outcome: 'unknown',
             step,
             phase: 'action',
+            backend: answer.backend,
             error: error instanceof Error ? error.name : 'UnknownError',
             tool: candidate.tool,
             visual: visualRecord,
@@ -567,6 +598,7 @@ async function run(args: Arguments): Promise<Outcome> {
         event: 'step',
         step,
         candidate: candidate.id,
+        backend: answer.backend,
         confidence: answer.confidence,
         probabilities: answer.probabilities,
         ...timing,

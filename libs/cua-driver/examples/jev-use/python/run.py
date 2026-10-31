@@ -23,7 +23,7 @@ from core import (
     parse_visual_regions,
     validate_choice,
 )
-from jev_adapter import choose_live_for_task, choose_mock_for_task
+from browser_provider import backend_name, choose_browser_provider
 from tasks import (
     FixtureFormTask,
     Task,
@@ -440,18 +440,41 @@ async def run(args: argparse.Namespace) -> str:
 
                 visual = sources.visual.observation if sources.visual is not None else None
                 provider_started = time.perf_counter()
-                if args.provider == "mock":
-                    choice, confidence, probabilities = choose_mock_for_task(
-                        task, sources, candidates, history
+                try:
+                    choice, confidence, probabilities, backend = await asyncio.to_thread(
+                        choose_browser_provider,
+                        args.provider,
+                        task,
+                        sources,
+                        candidates,
+                        history,
                     )
-                else:
-                    choice, confidence, probabilities = await asyncio.to_thread(
-                        choose_live_for_task, task, sources, candidates, history
+                except Exception as error:
+                    write_event(
+                        log_path,
+                        {
+                            "event": "outcome",
+                            "outcome": "unknown",
+                            "phase": "decide",
+                            "step": step,
+                            "backend": backend_name(args.provider),
+                            "error": type(error).__name__,
+                        },
                     )
+                    return "unknown"
                 provider_decision_ms = round(
                     (time.perf_counter() - provider_started) * 1000, 2
                 )
                 if choice is None:
+                    write_event(
+                        log_path,
+                        {
+                            "event": "outcome",
+                            "outcome": "abstained",
+                            "step": step,
+                            "backend": backend,
+                        },
+                    )
                     return "abstained"
                 candidate = validate_choice(
                     choice,
@@ -472,6 +495,7 @@ async def run(args: argparse.Namespace) -> str:
                         "event": "step",
                         "step": step,
                         "candidate": candidate.id,
+                        "backend": backend,
                         "confidence": confidence,
                         "probabilities": probabilities,
                         **timing,
@@ -492,6 +516,7 @@ async def run(args: argparse.Namespace) -> str:
                             "event": "outcome",
                             "outcome": "abstained",
                             "step": step,
+                            "backend": backend,
                             "confidence": confidence,
                             "probabilities": probabilities,
                             "visual": visual_record,
@@ -514,6 +539,7 @@ async def run(args: argparse.Namespace) -> str:
                                 "event": "step",
                                 "step": step,
                                 "candidate": candidate.id,
+                                "backend": backend,
                                 "confidence": confidence,
                                 "probabilities": probabilities,
                                 **timing,
@@ -540,6 +566,7 @@ async def run(args: argparse.Namespace) -> str:
                                 "outcome": "unknown",
                                 "step": step,
                                 "phase": "action",
+                                "backend": backend,
                                 "error": type(error).__name__,
                                 "tool": candidate.tool,
                                 "visual": visual_record,
@@ -553,6 +580,7 @@ async def run(args: argparse.Namespace) -> str:
                     "event": "step",
                     "step": step,
                     "candidate": candidate.id,
+                    "backend": backend,
                     "confidence": confidence,
                     "probabilities": probabilities,
                     **timing,
@@ -584,7 +612,12 @@ async def run(args: argparse.Namespace) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=("mock", "live"), default="mock")
+    parser.add_argument(
+        "--provider",
+        choices=("mock", "live", "typesafe", "s1"),
+        default="mock",
+        help="decision backend; live is a compatibility alias for typesafe",
+    )
     parser.add_argument(
         "--fixture-url", type=validate_fixture_url, default="http://127.0.0.1:8765/"
     )

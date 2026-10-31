@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::element_token::TokenOwner;
 use crate::protocol::ToolResult;
 use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef};
 
@@ -69,9 +70,10 @@ pub type PidFallbackWindowResolver = Arc<dyn Fn(i64) -> Option<u64> + Send + Syn
 /// `(pid, snapshot handle)` -> the window that snapshot was taken of.
 pub type SnapshotWindowResolver = Arc<dyn Fn(i64, &str) -> Option<u64> + Send + Sync + 'static>;
 
-/// Call arguments -> the pid their `element_token` was minted for (see
-/// `SnapshotStore::pid_for_token`). `None` when the token is unknown.
-pub type TokenPidResolver = Arc<dyn Fn(&Value) -> Option<i32> + Send + Sync + 'static>;
+/// Call arguments -> who their `element_token` belonged to, and that process's
+/// current snapshots (see `SnapshotStore::token_owner`), so a stale refusal can
+/// name what is current instead of only saying the token is stale.
+pub type TokenPidResolver = Arc<dyn Fn(&Value) -> TokenOwner + Send + Sync + 'static>;
 
 /// Desktop-frame `x`/`y` of an action, when the call carries them.
 fn desktop_frame_point(args: &Value) -> Option<(f64, f64)> {
@@ -563,7 +565,12 @@ mod tests {
             Arc::new(|_| panic!("a token target must not enumerate windows")),
         )
         .with_token_pid_resolver(Arc::new(|args| {
-            (args["element_token"] == "s00000001:2").then_some(42)
+            let live = args["element_token"] == "s00000001:2";
+            TokenOwner {
+                pid: live.then_some(42),
+                current: Vec::new(),
+                live,
+            }
         }));
 
         let result = guard

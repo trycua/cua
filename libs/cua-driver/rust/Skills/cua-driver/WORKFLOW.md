@@ -53,7 +53,7 @@ The accessibility model may lag or disagree with rendered state: Electron text s
 
 ## Act once
 
-Use the `element_token` `<snapshot_id>:N` for row `[N]` of the latest snapshot of the intended window, for example `"s0000002a:11"`. A bare `"11"` is accepted only together with `window_id` and then means row 11 of that window's current snapshot. Do not mix a row number from one read with the `snapshot_id` of another. A later snapshot can invalidate a pending action, including when another agent observes the same window.
+Use the `element_token` `<snapshot_id>:N` for row `[N]` of the latest snapshot of the intended window, for example `"s0000002a:11"`. A bare `"11"` is accepted only together with `window_id`, and only while the current snapshot is the one your read printed: as soon as that window is read again the number no longer says which read it came from, and the call is refused with `stale_bare_row` naming the current token for that row. It is never re-pointed at whatever element now sits at row 11. Do not mix a row number from one read with the `snapshot_id` of another. A later snapshot can invalidate a pending action, including when another agent observes the same window.
 
 Example CLI window action, with IDs and token replaced from the preceding response:
 

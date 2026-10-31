@@ -148,7 +148,7 @@ fn pid_window_guarded<T: Tool + 'static>(
 /// The pid an `element_token` was minted for, so a token-only action (no
 /// `pid`) reaches its tool with the pid the token carries.
 fn token_pid_resolver(state: Arc<ToolState>) -> cua_driver_core::window_target::TokenPidResolver {
-    Arc::new(move |args| state.snapshots.pid_for_token(args))
+    Arc::new(move |args| state.snapshots.token_owner(args))
 }
 
 /// The window a `snapshot_id` was published for (the element cache lane of

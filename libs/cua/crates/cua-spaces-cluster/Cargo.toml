@@ -22,6 +22,7 @@ ring = "0.17"
 zeroize = "1"
 cua-cluster.workspace = true
 cua-host.workspace = true
+cua-telemetry.workspace = true
 cua-proto = { workspace = true, features = ["client", "server", "serde"] }
 hex.workspace = true
 rand.workspace = true

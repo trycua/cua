@@ -5,8 +5,11 @@
 //                the agent saw), effects.log (one line per executed tool),
 //                marks/ (once-only markers)
 //   MOCK_SCRIPT  path to JSON: {"loadSession": bool, "resume": bool,
-//                "prompts": [{"match": "regex", "steps": [...]}]}; the first
-//                entry whose regex matches the prompt text runs
+//                "forgets": bool, "prompts": [{"match": "regex", "steps": [...]}]};
+//                the first entry whose regex matches the prompt text runs.
+//                "forgets": like Hermes, session/resume of an id the agent
+//                lost succeeds (it makes another session), and a prompt for
+//                an id it does not know is answered with stopReason "refusal"
 //
 // Steps: {say}, {tool: {id,title,kind,input,permission,effect,fail}},
 //        {crash, once}, {killRunner, once}, {hold}, {pause}, {startsOnly}
@@ -59,6 +62,20 @@ async function runSteps(steps, sid, cx) {
       const t = st.tool;
       const base = { toolCallId: t.id, title: t.title ?? t.id, kind: t.kind ?? "execute", rawInput: t.input ?? { id: t.id } };
       await note({ sessionUpdate: "tool_call", ...base, status: "pending" });
+      if (t.permission !== false && t.askTwice) {
+        // OpenCode: a command that touches a folder outside the workspace is asked for twice under one call id,
+        // first as an "external directory" request (kind other), then for the command.
+        const first = await cx.request("session/request_permission", {
+          sessionId: sid,
+          toolCall: { ...base, kind: "other", title: "external_directory: /outside", status: "pending" },
+          options: [
+            { kind: "allow_once", name: "Allow", optionId: "allow" },
+            { kind: "reject_once", name: "Reject", optionId: "reject" },
+          ],
+        });
+        log({ ev: "permission_first", id: t.id, outcome: first.outcome });
+        if (first.outcome.outcome !== "selected" || first.outcome.optionId === "reject") continue;
+      }
       if (t.permission !== false) {
         const res = await cx.request("session/request_permission", {
           sessionId: sid,
@@ -124,10 +141,10 @@ agent
     },
     authMethods: [],
   }))
-  .onRequest("session/new", () => {
+  .onRequest("session/new", (ctx) => {
     const id = `mock-${Math.random().toString(16).slice(2, 10)}`;
     fs.writeFileSync(sessionsFile, JSON.stringify({ ...sessions(), [id]: true }));
-    log({ ev: "session_new", id });
+    log({ ev: "session_new", id, cwd: ctx?.params?.cwd });
     return {
       sessionId: id,
       modes: { currentModeId: "default", availableModes: [{ id: "default" }, { id: "ask", _meta: { kind: "standard" } }, { id: "full", _meta: { kind: "full_access" } }] },
@@ -143,12 +160,20 @@ agent
     return {};
   })
   .onRequest("session/resume", (ctx) => {
+    if (!sessions()[ctx.params.sessionId] && script.forgets) {
+      log({ ev: "session_resume_forgot", id: ctx.params.sessionId });
+      return {};
+    }
     if (!sessions()[ctx.params.sessionId]) throw new Error("unknown session");
     log({ ev: "session_resume", id: ctx.params.sessionId });
     return {};
   })
   .onRequest("session/prompt", async (ctx) => {
     const text = ctx.params.prompt.map((b) => b.text ?? "").join("\n");
+    if (script.forgets && !sessions()[ctx.params.sessionId]) {
+      log({ ev: "prompt_refused", id: ctx.params.sessionId });
+      return { stopReason: "refusal" };
+    }
     log({ ev: "prompt", text });
     const entry = script.prompts.find((p) => new RegExp(p.match, "s").test(text));
     if (script.promptError && (!script.promptError.match || new RegExp(script.promptError.match).test(text))) {

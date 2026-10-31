@@ -29,6 +29,8 @@ struct FakeRuntime {
     started: Mutex<Vec<LocalStartSpec>>,
     deleted: Mutex<Vec<String>>,
     running: Mutex<BTreeMap<String, bool>>,
+    /// Instances their engine says stopped on their own (a killed container).
+    exits: Mutex<BTreeMap<String, cua_sandbox_core::StopReason>>,
 }
 
 #[async_trait]
@@ -77,6 +79,13 @@ impl LocalRuntime for FakeRuntime {
         self.running.lock().unwrap().remove(name);
         Ok(())
     }
+    async fn stop_reason(
+        &self,
+        name: &str,
+        _runtime_type: &str,
+    ) -> Result<Option<cua_sandbox_core::StopReason>, RuntimeError> {
+        Ok(self.exits.lock().unwrap().get(name).copied())
+    }
     async fn endpoints(&self, _name: &str) -> Result<LocalEndpoints, RuntimeError> {
         Ok(LocalEndpoints {
             host: "127.0.0.1".into(),
@@ -113,6 +122,7 @@ async fn fixture() -> Fixture {
         started: Mutex::default(),
         deleted: Mutex::default(),
         running: Mutex::default(),
+        exits: Mutex::default(),
     });
     let spaces = Spaces::builder()
         .home(&home)
@@ -245,6 +255,57 @@ async fn a_job_runs_once_in_a_fresh_space_that_is_deleted() {
     assert_eq!(f.rt.started.lock().unwrap().len(), 2);
     // The ledger is on disk under the host directory.
     assert!(f.home.join("host/jobs/ledger.jsonl").is_file());
+}
+
+/// A job's Space that is killed while its command runs ends the job at once,
+/// with the reason, instead of the host waiting for a Space that is gone
+/// (CUA-2967: a durable agent's driver whose container was killed was only
+/// noticed by the 120 s stall watch).
+#[tokio::test]
+async fn a_job_whose_space_is_killed_ends_at_once_with_the_reason() {
+    let f = fixture().await;
+    seed_uv(&f.home);
+    let jobs = f.server.jobs_for(&HostCaller::local()).await.unwrap();
+    let mut long = spec("k1-1", &["sleep", "120000"]);
+    long.timeout_secs = 300;
+    let acks = jobs.run_batch(vec![long], "test").await;
+    assert_eq!(acks[0].outcome, "accepted", "{acks:?}");
+    // Wait until its Space runs, then have the engine report it killed
+    // (the command's own stream is still open: the mock spacesd stays up).
+    let mut name = String::new();
+    for _ in 0..400 {
+        if let Some(s) = f.rt.started.lock().unwrap().first() {
+            name = s.name.clone();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(!name.is_empty(), "the job's Space never started");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let killed = std::time::Instant::now();
+    f.rt.exits.lock().unwrap().insert(
+        name.clone(),
+        cua_sandbox_core::StopReason {
+            exit_code: 137,
+            out_of_memory: false,
+        },
+    );
+    let end = tokio::time::timeout(Duration::from_secs(20), ended(&jobs, "k1-1"))
+        .await
+        .expect("the job did not end after its Space was killed");
+    assert!(
+        killed.elapsed() < Duration::from_secs(15),
+        "took {:?}",
+        killed.elapsed()
+    );
+    assert_eq!(end.state, "error", "{end:?}");
+    assert!(
+        end.error.contains("Space stopped") && end.error.contains("killed"),
+        "{}",
+        end.error
+    );
+    // Its Space is removed like any job's.
+    assert!(f.rt.deleted.lock().unwrap().contains(&name));
 }
 
 /// What a scheduler reads: `GetHostSpaces` carries the node status.

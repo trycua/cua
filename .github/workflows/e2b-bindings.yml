@@ -14,6 +14,7 @@ name: e2b-bindings
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "libs/cua/crates/cua-sdk/**"
       - "libs/cua/proto/**"
@@ -43,10 +44,11 @@ env:
 
 jobs:
   swift:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: swift tests (macOS)
-    runs-on: macos-26-xlarge
+    runs-on: macos-26
     # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
-    timeout-minutes: 90
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: libs/cua

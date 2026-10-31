@@ -45,7 +45,11 @@ schedule; those are on [named agents](/spaces/guides/agent-memory-and-identity)
 today.
 
 The session keeps a journal in its state directory (`CUA_SESSION_STATE_DIR`,
-or `$CUA_JOB_DATA/session` when that is empty). It holds:
+or `$CUA_JOB_DATA/session` when that is empty). `cua agent add --durable`
+leaves it empty, so the journal sits in the run's data folder on the machine
+that drives it: it outlives the driver's Space, and a driver that dies or stalls
+is started again on the same machine with the same conversation. A new drive on
+another machine does not find it and starts the task from the beginning. It holds:
 
 | File | What |
 |---|---|
@@ -54,10 +58,47 @@ or `$CUA_JOB_DATA/session` when that is empty). It holds:
 | `tools.jsonl` | The tool ledger |
 | `epoch` | The fence floor |
 
+## What to expect, by kind of failure
+
+Measured on real machines (Linux, Docker with gVisor, three machines on a
+private account, a scripted model so no model keys or spend; three runs per
+cell, so read the times as rough).
+
+| What fails | What happens | Same conversation? |
+|---|---|---|
+| The agent process dies (`kill -9`) | The runner restarts it in place and resumes the session, in seconds | Yes, the recovery note lists what ran and what may have run halfway |
+| The runner (the driver process) dies | Noticed at once; a new driver starts a new Space on the same machine, 40 to 80 s with Claude Code and Codex | Yes by the journal: the harness's own session files are gone with the old Space, so the recovery note carries the journal's summary instead of the conversation |
+| The driver's Space is killed or runs out of memory | The machine sees the Space stop within a few seconds and ends the driver; a new driver starts a new Space on the same machine, about 55 s from the kill to the resumed agent with Claude Code | Same as above |
+| The driver's Space is removed, or the driver freezes | Noticed only by the stall limit (`--stall-secs`, default 120 s): about 140 to 170 s from the fault to the resumed agent | Same as above |
+| The machine running the agent stops answering | After about 65 to 75 s the session records the lost machine and starts the next drive on **another machine** | **No.** The task starts from the beginning |
+
+When a drive moves to another machine, the new one does not have the journal,
+the conversation or the working folder of the old one. Plan for it:
+
+- Put the files the task needs, and the results you want to keep, in
+  [Cua Volume](/spaces/guides/cua-volume). The default storage, This Mac, is a
+  folder on one machine, so another machine does not see it. Use your own
+  S3-compatible bucket (AWS S3, R2, MinIO) so every machine reaches the same
+  files.
+- Write the task so running it again from the start is safe.
+- A session makes at most 5 drives by default (`--max-attempts`), counting the
+  first one and every restart for any reason. When they are used up it ends
+  `failed` and says it gave up after 5 of 5 drives, with the last failure.
+- A drive that no machine has room for waits and says what it waits for, for
+  example `waiting for a machine with 2 CPUs and 4 GB memory free`. A driver
+  that runs a harness asks for 2 CPUs and 4 GiB.
+- A durable Space whose machine is lost is created again on another machine
+  within about a minute, with the same name and an empty disk; the old record
+  stays listed as offline until you delete it.
+
+Known problems today: `cua agent logs
+session:NAME` shows only the driver's heartbeat lines, not what the agent did.
+
 ## What happens when it crashes
 
-1. The re-driver issues a higher **epoch** and starts the driver again, on any
-   machine that can reach the state directory.
+1. The re-driver issues a higher **epoch** and starts the driver again, on the
+   machine that ran the last drive when it has room, else on another one (which
+   starts the task from the beginning, see above).
 2. The new driver raises the fence first. An older driver that is still alive
    sees the higher floor on its next write, stops, and exits with code 75
    without writing anything.

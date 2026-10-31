@@ -505,8 +505,9 @@ pub fn filter(spaces: &[Space], query: &str) -> Vec<Space> {
 /// The Space tiles: the Spaces the user can open
 /// ([`crate::spaces::openable_spaces`]: Spaces, and the desktops of your
 /// other machines that are there to open; never This machine or a machine
-/// that only provides Spaces), in MRU order, at most [`MAX_TILES`]. Stopped
-/// Spaces are tiles too (dimmed, and they take drops), but the tab counts
+/// that only provides Spaces): the ones that are on first, in MRU order.
+/// Stopped Spaces are tiles too, after them (dimmed, and they take drops;
+/// at most [`MAX_TILES`] tiles unless more are on), but the tab counts
 /// only the ones that are on.
 pub fn tiles(spaces: &[Space], targeted: Option<&str>) -> Vec<NotchTile> {
     tiles_matching(spaces, targeted, "")
@@ -544,12 +545,39 @@ pub fn tiles_pinned(
         .cloned()
         .collect();
     let mut sorted = sort_by_mru(&listed);
-    // Pinned first, in pin order; the rest keep their MRU order.
-    sorted.sort_by_key(|s| pinned.iter().position(|p| *p == s.id).unwrap_or(usize::MAX));
+    // Pinned first, in pin order; then the Spaces that are on, then the
+    // desktops of other machines that are on, then the stopped and
+    // suspended ones. Each group keeps its MRU order. Without the
+    // grouping, a row that was added or seen later than your running
+    // Spaces sorted ahead of them and, with the cap, pushed them out.
+    sorted.sort_by_key(|s| {
+        let desktop = is_remote_desktop(s);
+        let on = crate::spaces::is_on(s)
+            || (desktop && desktop_availability(s) == DesktopAvailability::Available);
+        let group = match (on, desktop) {
+            (true, false) => 0u8,
+            (true, true) => 1,
+            (false, _) => 2,
+        };
+        (
+            pinned.iter().position(|p| *p == s.id).unwrap_or(usize::MAX),
+            group,
+        )
+    });
+    // The cap trims only stopped and suspended tiles: a Space that is on
+    // or pinned always gets its tile (the strip scrolls).
+    let mut kept = 0usize;
     sorted
         .into_iter()
         .filter(|s| matches(s, query))
-        .take(MAX_TILES)
+        .filter(|s| {
+            kept += 1;
+            kept <= MAX_TILES
+                || crate::spaces::is_on(s)
+                || (is_remote_desktop(s)
+                    && desktop_availability(s) == DesktopAvailability::Available)
+                || pinned.contains(&s.id)
+        })
         .map(|s| {
             let desktop = is_remote_desktop(&s);
             let note = if desktop {
@@ -2421,14 +2449,14 @@ mod tests {
         // The search still narrows the pinned ones.
         let pinned: Vec<String> = vec!["relay:wsl".into()];
         assert!(tiles_pinned(&spaces, None, "nothing like it", &pinned).is_empty());
-        // Pinned tiles survive the cap: the seventh Space is the one cut.
+        // Pinned tiles survive the cap: the seventh stopped Space is the one cut.
         let many: Vec<Space> = (0..MAX_TILES + 2)
             .map(|i| {
                 let mut s = space(
                     &format!("local:{i}"),
                     &format!("S{i}"),
                     SpaceOs::Linux,
-                    SpaceStatus::Running,
+                    SpaceStatus::Suspended,
                 );
                 s.last_used_at = 100 - i as i64;
                 s
@@ -2438,6 +2466,59 @@ mod tests {
         let t = tiles_pinned(&many, None, "", std::slice::from_ref(&last));
         assert_eq!(t.len(), MAX_TILES);
         assert_eq!(t[0].id, last);
+    }
+
+    /// The owner's report: four running Spaces on This Mac were missing from
+    /// the notch while suspended and stopped rows filled it. Rows that were
+    /// seen later sorted first by last use, and the cap cut the running ones.
+    #[test]
+    fn running_spaces_come_before_stopped_ones_and_are_never_cut() {
+        let mut spaces: Vec<Space> = (0..4)
+            .map(|i| {
+                let mut s = space(
+                    &format!("local:run{i}"),
+                    &format!("run{i}"),
+                    SpaceOs::Linux,
+                    SpaceStatus::Running,
+                );
+                s.last_used_at = 10 + i as i64;
+                s
+            })
+            .collect();
+        for i in 0..8 {
+            let mut s = space(
+                &format!("local:off{i}"),
+                &format!("off{i}"),
+                SpaceOs::Linux,
+                SpaceStatus::Suspended,
+            );
+            s.last_used_at = 1_000 + i as i64;
+            spaces.push(s);
+        }
+        let t = tiles_pinned(&spaces, None, "", &[]);
+        let ids: Vec<&str> = t.iter().map(|t| t.id.as_str()).collect();
+        // Every running Space is there, first.
+        for i in 0..4 {
+            assert!(
+                ids[..4].contains(&format!("local:run{i}").as_str()),
+                "{ids:?}"
+            );
+        }
+        // The stopped ones follow, capped.
+        assert_eq!(t.len(), MAX_TILES);
+        assert!(t[4..].iter().all(|t| t.dim));
+        // More running Spaces than the cap: all of them still get a tile.
+        let running: Vec<Space> = (0..MAX_TILES + 3)
+            .map(|i| {
+                space(
+                    &format!("local:r{i}"),
+                    &format!("R{i}"),
+                    SpaceOs::Linux,
+                    SpaceStatus::Running,
+                )
+            })
+            .collect();
+        assert_eq!(tiles_pinned(&running, None, "", &[]).len(), MAX_TILES + 3);
     }
 
     /// A pinned desktop that is off or no longer shared stays, dimmed, and

@@ -26,8 +26,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -541,6 +543,34 @@ def mcp_list_tools(command: str, args: list[str], env: dict[str, str]) -> list[s
         return [t["name"] for t in reply.get("result", {}).get("tools", [])]
     finally:
         client.close()
+
+
+@contextlib.contextmanager
+def capture_subject(work: Path):
+    """On Linux the capture check needs a window to look at: an empty desktop is a uniform frame, which the
+    check rightly rejects. Show a BenchLab window for its duration (macOS opens Calculator instead)."""
+    if desktop.detect_platform() != "linux":
+        yield
+        return
+    work.mkdir(parents=True, exist_ok=True)
+    args = [
+        *desktop.bench_app_argv("BenchLab"),
+        *["--mode", "hover", "--seed", "1"],
+        *["--state", str(work / "state.json"), "--events", str(work / "events.jsonl")],
+    ]
+    proc = desktop.start_app(args, work, work / "lab.log")
+    try:
+        deadline = time.monotonic() + 20
+        while (
+            time.monotonic() < deadline
+            and not (work / "state.json").exists()
+            and proc.poll() is None
+        ):
+            time.sleep(0.2)
+        yield
+    finally:
+        desktop.stop_group(proc.pid)
+        proc.wait(timeout=5)
 
 
 def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
@@ -1113,6 +1143,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             video_raw = ctx.recorder.stop()
         if lab is not None:
             claude_driver.kill_group(lab.pid)
+            lab.wait(timeout=5)
         if watcher is not None:
             watcher.finish()
         if guard is not None:
@@ -1728,7 +1759,7 @@ def check_gates(ctx: Ctx) -> None:
         ):
             raise StopRun("BUDGET", f"cap {args.budget_cap_usd}")
         free = rec.free_gb(ctx.run_dir)
-        if free < DISK_FLOOR_GB:
+        if free < args.disk_floor_gb:
             if ctx.compress and ctx.compress.pending():
                 ctx.log(f"disk {free:.1f} GB < floor; waiting for compression")
                 ctx.compress.join()
@@ -2148,8 +2179,8 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     free = rec.free_gb(ctx.run_dir)
     add(
         "disk",
-        "pass" if free > DISK_FLOOR_GB else "fail",
-        f"{free:.1f} GB free (floor {DISK_FLOOR_GB:.0f})",
+        "pass" if free > ctx.args.disk_floor_gb else "fail",
+        f"{free:.1f} GB free (floor {ctx.args.disk_floor_gb:g})",
     )
     git_root = subprocess.run(
         ["git", "-C", str(ca.CWD_ROOT.parent), "rev-parse", "--show-toplevel"],
@@ -2301,8 +2332,9 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     try:
         if desktop.detect_platform() == "macos":
             subprocess.run(["/usr/bin/open", "-a", "Calculator"], check=True, timeout=30)
-        for arm in ctx.arm_names:
-            add(*real_capture_check(ctx, arm))
+        with capture_subject(ctx.run_dir / "preflight-capture" / "subject"):
+            for arm in ctx.arm_names:
+                add(*real_capture_check(ctx, arm))
     except (OSError, subprocess.SubprocessError) as error:
         for arm in ctx.arm_names:
             add(f"{arm} real capture", "fail", str(error)[:300])
@@ -2377,6 +2409,13 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
 
 
 # ---------------------------------------------------------------- setup
+
+
+def positive_gb(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError(f"must be a finite number > 0: {text}")
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2464,6 +2503,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="move the real pointer to an empty menu-bar point before each trial (Amendment 3, A3.9)",
     )
     p.add_argument("--no-recorder", action="store_true")
+    p.add_argument(
+        "--disk-floor-gb",
+        type=positive_gb,
+        default=DISK_FLOOR_GB,
+        help="free-space floor for preflight and every trial admission",
+    )
     p.add_argument(
         "--codex-cu-mcp",
         type=Path,
@@ -2568,6 +2613,11 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
         ca.CUA_SKILLS = args.cua_skills.resolve()
         for name, build in ca.CUA_BUILDS.items():
             ca.CUA_BUILDS[name] = replace(build, executable=ca.CUA_BIN, skills=ca.CUA_SKILLS)
+            if ca.SCRIPT_FLAG not in build.daemon_env and ca.NO_SCRIPT_FLAG not in build.daemon_env:
+                # the explicit build ships run_script; only the script arm may expose it
+                ca.CUA_BUILDS[name] = replace(
+                    ca.CUA_BUILDS[name], daemon_env=(*build.daemon_env, ca.NO_SCRIPT_FLAG)
+                )
     codex = [a for a in arm_names if a in arms.CODEX_FALLBACK_ARMS]
     if codex and not args.allow_codex_arms:
         raise SystemExit(f"arms {codex} are fallback arms; pass --allow-codex-arms")
@@ -2695,6 +2745,10 @@ def shutdown(ctx: Ctx) -> None:
     for proc, sock in ((ctx.rec_daemon, ca.RECORDER_SOCKET), (ctx.daemon, agent_socket)):
         if proc is not None:
             claude_driver.kill_group(proc.pid)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
             try:
                 os.unlink(sock)
             except OSError:

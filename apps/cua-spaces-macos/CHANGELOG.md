@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.2](https://github.com/trycua/cua/compare/cua-spaces-v0.19.1...cua-spaces-v0.19.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **spaces:** show running Spaces first in the notch, never cut them for stopped ones ([#6215](https://github.com/trycua/cua/issues/6215)) ([a68e2c9](https://github.com/trycua/cua/commit/a68e2c986eb29cf70c38dcde1f9fa961af3144e6))
+
 ## [0.19.1](https://github.com/trycua/cua/compare/cua-spaces-v0.19.0...cua-spaces-v0.19.1) (2026-10-30)
 
 

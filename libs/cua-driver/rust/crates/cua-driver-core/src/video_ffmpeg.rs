@@ -85,6 +85,7 @@ impl FfmpegVideoBackend {
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
 
+        let started_at = Instant::now();
         let mut child = cmd
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn ffmpeg ({}): {e}", ffmpeg.display()))?;
@@ -129,7 +130,7 @@ impl FfmpegVideoBackend {
         Ok(FfmpegVideoBackend {
             child,
             output_path,
-            started_at: Instant::now(),
+            started_at,
             stderr_thread,
         })
     }

@@ -261,7 +261,7 @@ pub fn post_window_key_records(pid: pid_t, current: Option<u32>, target: u32) ->
         note_post_status(unsafe { post(psn.as_ptr() as *const c_void, record.as_ptr()) })
     };
     let mut ok = true;
-    if let Some(current) = current {
+    if let Some(current) = defocused(current, target) {
         let mut defocus = focus_record(current);
         defocus[0x8A] = 0x02;
         ok &= send(&defocus);
@@ -275,6 +275,12 @@ pub fn post_window_key_records(pid: pid_t, current: Option<u32>, target: u32) ->
         ok &= send(&make_key_window_record(target, event_kind));
     }
     ok
+}
+
+/// The window the key records defocus first: none when it is `target`, since a
+/// Qt app that loses and regains key resets the focus to its default field.
+fn defocused(current: Option<u32>, target: u32) -> Option<u32> {
+    current.filter(|&c| c != target)
 }
 
 /// Wait until the app's focus has settled on `target`, for at most `budget`.
@@ -1614,7 +1620,7 @@ mod tests {
 
 #[cfg(test)]
 mod key_prime_tests {
-    use super::{prime_exact_window_key, restore_target, KeyFocus, KeyPrime};
+    use super::{defocused, prime_exact_window_key, restore_target, KeyFocus, KeyPrime};
     use std::cell::Cell;
 
     fn at(window: Option<u32>, element_window: Option<u32>) -> KeyFocus {
@@ -1733,6 +1739,13 @@ mod key_prime_tests {
     #[test]
     fn a_hidden_previous_dialog_hands_key_to_the_frontmost_remaining_window() {
         assert_eq!(restore_target(7, Some(9), &[9, 5, 7], &[7, 5]), Some(5));
+    }
+
+    #[test]
+    fn the_key_records_never_defocus_the_window_they_make_key() {
+        assert_eq!(defocused(Some(7), 7), None);
+        assert_eq!(defocused(Some(9), 7), Some(9));
+        assert_eq!(defocused(None, 7), None);
     }
 
     #[test]

@@ -274,10 +274,8 @@ async fn consent_action<T: Send + 'static>(
     check_deadline(deadline)?;
     // Commit before scheduling: dropping a running blocking task cannot cancel it.
     let worker = action.perform(|| {
-        // Made here, where the call's desktop lease is in scope, so the worker
-        // keeps the lane until every wait it makes has stopped. The worker
-        // waits on the one foreground transaction and is not dispatched under
-        // a tool call's action, so it binds this one: every wait it makes,
+        // The worker waits on the one foreground transaction and runs under
+        // no action of its own, so it binds this one: every wait it makes,
         // that one included, ends at the consent deadline instead of
         // outliving the attempt it serves.
         let bound =

@@ -397,14 +397,15 @@ mod tests {
     fn a_nested_transaction_runs_inside_the_one_its_thread_holds() {
         // A GNOME click reaches `click_focused`'s libei fallback from inside
         // the foreground guard it already holds and re-enters it there. The
-        // bound action is what an outer caller would carry, so a nested
-        // transaction that waited for its own lock would spend it and fail.
-        let _bound = bind(Action::new(Duration::from_millis(200)));
+        // action is bound only around the nested call, as the outer caller's
+        // is: binding it around the outer transaction instead would let a
+        // slower test holding the process-wide lock fail this one.
         let sent = transaction(
             &mut (),
             |()| Ok(Some("prior")),
             |(), _| Ok(()),
             || {
+                let _bound = bind(Action::new(Duration::from_millis(200)));
                 transaction(
                     &mut (),
                     |()| Ok(Some("prior")),
@@ -422,6 +423,10 @@ mod tests {
     fn only_the_outermost_transaction_locks_and_its_drop_releases_it() {
         let outer = hold_transaction().unwrap();
         assert!(outer.guard.is_some());
+        // This thread already holds the transaction, so the nested hold never
+        // waits on another thread. The action bounds it anyway: a hold that
+        // waited for its own lock fails here instead of hanging the suite.
+        let _bound = bind(Action::new(Duration::from_millis(200)));
         drop(hold_transaction().unwrap());
         assert!(
             outer.guard.is_some(),

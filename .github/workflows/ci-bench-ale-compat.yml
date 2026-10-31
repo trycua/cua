@@ -22,6 +22,10 @@ permissions:
 env:
   ALE_SHA: d10fb61a14f9719774c3520c5763068b28ef5546
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ale-compat:
     name: ALE tasks and harness (${{ matrix.deps }})

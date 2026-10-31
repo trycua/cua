@@ -21,6 +21,10 @@ env:
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   corpus-parity:
     runs-on: ubuntu-24.04

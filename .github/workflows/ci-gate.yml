@@ -10,11 +10,15 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ci-gate:
     name: ci-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 180
     steps:
       # Which workflows this gate may ignore, from the paths the PR changes (area map:
       # .github/ci-areas.json, docs/contributing/CI.md). The merge queue entry resolves the

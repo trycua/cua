@@ -89,6 +89,9 @@ fn desktop_point_window_resolver() -> cua_driver_core::window_target::DesktopPoi
         let (x, y) = if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
             let frame = crate::wayland::hyprland::desktop_frame().ok()?;
             (x + f64::from(frame.x), y + f64::from(frame.y))
+        } else if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+            let frame = crate::wayland::niri::desktop_snapshot().ok()?.frame;
+            (x + f64::from(frame.x), y + f64::from(frame.y))
         } else {
             (x, y)
         };
@@ -128,6 +131,9 @@ fn topmost_window_at(
 fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallbackWindowResolver {
     Arc::new(|pid| {
         let pid = u32::try_from(pid).ok()?;
+        if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+            return crate::wayland::niri::window_in_use(pid);
+        }
         let windows: Vec<crate::x11::WindowInfo> = crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
             .filter(|w| w.pid == Some(pid))
@@ -4494,9 +4500,16 @@ pub fn build_registry_with_provider(
                         &state_for_session_end,
                         session_id,
                         |cursor_id, held| {
-                            crate::wayland::persistent_vptr::release(cursor_id, held.button)
+                            crate::wayland::persistent_vptr::release_at_session_end(
+                                cursor_id,
+                                held.button,
+                            )
                         },
                     )?;
+                    // A press the tool never recorded (its recording failed
+                    // and its release was not confirmed) is released too.
+                    crate::wayland::persistent_vptr::release_unrecorded_at_session_end(session_id)
+                        .map_err(|error| error.to_string())?;
                 } else {
                     clear_mouse_hold_after_release(&state_for_session_end, session_id);
                 }

@@ -1,0 +1,190 @@
+{
+  "libs-cua-driver-rust": [
+    {
+      "log": "124640077183.log",
+      "restored": "373M",
+      "files": 405,
+      "how": "exact hit",
+      "save": "false",
+      "executed": 1563.0,
+      "hits": 4.0,
+      "hit_rate": 0.2559181062060141,
+      "avg_compiler": 1.843
+    },
+    {
+      "log": "124641529403.log",
+      "restored": "373M",
+      "files": 405,
+      "how": "exact hit",
+      "save": "false",
+      "executed": 1563.0,
+      "hits": 4.0,
+      "hit_rate": 0.2559181062060141,
+      "avg_compiler": 1.751
+    },
+    {
+      "log": "cirustlinux.log",
+      "restored": "373M",
+      "files": 405,
+      "how": "exact hit",
+      "save": "false",
+      "executed": 1042.0,
+      "hits": 0.0,
+      "hit_rate": 0.0,
+      "avg_compiler": 1.154
+    }
+  ],
+  "libs-cua-spacesd": [
+    {
+      "log": "spacesd_main_linux.log",
+      "restored": "2.7G",
+      "files": 6981,
+      "how": "prefix hit",
+      "save": "true",
+      "executed": 4129.0,
+      "hits": 4083.0,
+      "hit_rate": 98.88592879631872,
+      "avg_compiler": 6.577
+    },
+    {
+      "log": "spacesd_main_macos.log",
+      "restored": "1.1G",
+      "files": 1584,
+      "how": "prefix hit",
+      "save": "true",
+      "executed": 1561.0,
+      "hits": 1507.0,
+      "hit_rate": 96.54067905188981,
+      "avg_compiler": 8.336
+    }
+  ],
+  "e2e_legs": [
+    {
+      "job_id": 124641529403,
+      "run_id": 41235953704,
+      "head": "459c2180",
+      "minutes": 34.55,
+      "conclusion": "success"
+    }
+  ],
+  "gate": {
+    "n": 40,
+    "median": 2.425,
+    "max": 94.81666666666666
+  },
+  "pr_spans": [
+    {
+      "head": "a612e9c0",
+      "branch": "refactor/2886-per-tool-modules",
+      "minutes": 25.1,
+      "workflows": 25
+    },
+    {
+      "head": "cfbc8f97",
+      "branch": "onigiri/task-1deabeb8",
+      "minutes": 31.066666666666666,
+      "workflows": 17
+    },
+    {
+      "head": "07cdd762",
+      "branch": "release-please--branches--main--components--cua-driver-rs",
+      "minutes": 14.416666666666666,
+      "workflows": 44
+    },
+    {
+      "head": "023003c7",
+      "branch": "release-please--branches--main--components--cua-driver-rs",
+      "minutes": 7.533333333333333,
+      "workflows": 41
+    },
+    {
+      "head": "2b65bb25",
+      "branch": "release-please--branches--main--components--cua-driver-rs",
+      "minutes": 21.733333333333334,
+      "workflows": 44
+    },
+    {
+      "head": "35cbe935",
+      "branch": "release-please--branches--main--components--cua-spacesd",
+      "minutes": 9.2,
+      "workflows": 27
+    },
+    {
+      "head": "459c2180",
+      "branch": "salvage-5523-slim",
+      "minutes": 128.31666666666666,
+      "workflows": 13
+    },
+    {
+      "head": "17052f1b",
+      "branch": "release-please--branches--main--components--cua-driver-rs",
+      "minutes": 2.7333333333333334,
+      "workflows": 41
+    },
+    {
+      "head": "7ed21a9b",
+      "branch": "release-please--branches--main--components--cua-driver-rs",
+      "minutes": 9.233333333333333,
+      "workflows": 44
+    },
+    {
+      "head": "cccce038",
+      "branch": "release-please--branches--main--components--cua-driver-rs",
+      "minutes": 11.8,
+      "workflows": 41
+    },
+    {
+      "head": "f8b62caa",
+      "branch": "fix/cua-driver-macos-stale-frontmost",
+      "minutes": 0.16666666666666666,
+      "workflows": 1
+    },
+    {
+      "head": "e0d0ce2d",
+      "branch": "onigiri/task-7f21f991",
+      "minutes": 0.16666666666666666,
+      "workflows": 1
+    },
+    {
+      "head": "20009d8d",
+      "branch": "onigiri/task-cebfe18b",
+      "minutes": 0.16666666666666666,
+      "workflows": 1
+    },
+    {
+      "head": "e174e8ce",
+      "branch": "onigiri/task-978124d7",
+      "minutes": 0.18333333333333332,
+      "workflows": 1
+    },
+    {
+      "head": "a59c62fc",
+      "branch": "dependabot/uv/joserfc-1.7.6",
+      "minutes": 2.433333333333333,
+      "workflows": 11
+    },
+    {
+      "head": "d196f969",
+      "branch": "dependabot/uv/joserfc-1.7.6",
+      "minutes": 4.283333333333333,
+      "workflows": 2
+    },
+    {
+      "head": "ce131efd",
+      "branch": "dependabot/uv/pyasn1-0.6.5",
+      "minutes": 3.65,
+      "workflows": 3
+    },
+    {
+      "head": "dd678af9",
+      "branch": "deps/security-patch-2026-10-31",
+      "minutes": 0.15,
+      "workflows": 1
+    }
+  ],
+  "duplicates_release_metadata": {
+    "heads": 28,
+    "duplicate_runs": 4,
+    "wasted_job_minutes": 3.5833333333333335
+  }
+}

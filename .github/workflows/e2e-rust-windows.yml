@@ -101,7 +101,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-shared
-          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && inputs.runner == 'windows-latest' }}
+          save-if: ${{ github.event_name != 'pull_request' && inputs.runner == 'windows-latest' }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -146,7 +146,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-native
-          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && inputs.runner == 'windows-latest' }}
+          save-if: ${{ github.event_name != 'pull_request' && inputs.runner == 'windows-latest' }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -191,7 +191,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-capture
-          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && inputs.runner == 'windows-latest' }}
+          save-if: ${{ github.event_name != 'pull_request' && inputs.runner == 'windows-latest' }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -236,7 +236,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-installer
-          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha }}
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Verify installer runner is interactive
         shell: pwsh
         run: .\scripts\ci\windows\verify-user-session.ps1

@@ -291,3 +291,23 @@ class VerifySkillTests(unittest.TestCase):
         finally:
             sleeper.terminate()
             sleeper.wait(timeout=5)
+
+
+def test_cache_saves_never_write_pull_request_scope_but_keep_dispatches() -> None:
+    """A PR must not save its own sccache entry, but a dispatch still may.
+
+    `github.ref_type == 'branch'` is true on pull_request too, so it never gated
+    a PR save. The in-repo rust-cache action decides `save` itself and only drops
+    a save when `save-if` is the literal "false", so these guards must evaluate
+    false on pull_request and true otherwise. Swatinem/rust-cache honours
+    `save-if` directly and was the one site writing PR-scoped entries.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    # Only the save guards: setup-node's `cache:` inputs are a separate decision.
+    save_guards = [line for line in workflow.splitlines() if 'save-if:' in line]
+    assert not any("ref_type == 'branch'" in line for line in save_guards)
+
+    swatinem = workflow.split("- uses: Swatinem/rust-cache", 1)[1].split("- uses:", 1)[0]
+    assert "save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}" in swatinem
+
+    assert workflow.count("save-if: ${{ github.event_name != 'pull_request' }}") == 4

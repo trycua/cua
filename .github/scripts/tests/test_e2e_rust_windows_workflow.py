@@ -107,3 +107,14 @@ def test_matrix_summary_recovers_results_when_lane_summary_is_missing(tmp_path: 
     assert f"[recordings/windows-wpf-click/recording.mp4]({artifact_url})" in summary
     assert "No lane summary artifact was produced." not in summary
     assert step_summary.read_text(encoding="utf-8") == summary
+
+
+def test_cache_saves_never_write_pull_request_scope_but_keep_dispatches() -> None:
+    """Same invariant as the Linux matrix: no PR-scoped saves, dispatches still save."""
+    workflow = (ROOT / ".github/workflows/e2e-rust-windows.yml").read_text(encoding="utf-8")
+    save_guards = [line for line in workflow.splitlines() if 'save-if:' in line]
+    assert not any("ref_type == 'branch'" in line for line in save_guards)
+    assert workflow.count(
+        "save-if: ${{ github.event_name != 'pull_request' && inputs.runner == 'windows-latest' }}"
+    ) == 3
+    assert workflow.count("save-if: ${{ github.event_name != 'pull_request' }}") == 1

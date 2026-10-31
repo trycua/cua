@@ -1,0 +1,12 @@
+# Fetched from the Actions API by fetch.py (about 33 MB). The committed
+# evidence.json and logs/ carry every counter the published numbers use, so the
+# report reproduces without committing the raw payloads.
+data/runs.json
+data/runs_p*.json
+data/workflow_runs.json
+data/jobs.json
+data/workflows.json
+
+# The parsed sccache outputs behind every published number are small and are
+# the only evidence that survives if the Actions logs expire. Re-include them.
+!data/logs/*.log

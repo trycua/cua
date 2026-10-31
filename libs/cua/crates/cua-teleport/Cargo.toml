@@ -29,12 +29,6 @@ thiserror.workspace = true
 # Item counts in consent manifests (Chrome/Firefox SQLite databases, opened
 # read-only and immutable).
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
-# Decrypting Chrome's saved passwords for the Keyvault (`passwords`):
-# Chrome's own PBKDF2-HMAC-SHA1 + AES-128-CBC scheme, RustCrypto crates.
-aes = "0.8"
-cbc = { version = "0.1", features = ["alloc"] }
-pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
-sha1 = "0.10"
 zeroize = "1"
 # Firefox localStorage values are raw Snappy blocks (dom/localstorage/SnappyUtils.cpp).
 snap = "1"

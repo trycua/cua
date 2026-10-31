@@ -877,7 +877,7 @@ mod tests {
             .keysyms
             .iter_mut()
             .filter(|sym| **sym == 0)
-            .skip(2)
+            .skip(4)
             .for_each(|sym| *sym = 1);
         let restored = std::cell::Cell::new(0);
         let error = plan_text_with_fallback(&keymap, Some(50), "aé€a", |ch, mapping| {

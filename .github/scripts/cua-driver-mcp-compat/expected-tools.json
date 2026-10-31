@@ -56,6 +56,7 @@
     "run_script",
     "run_steps",
     "scroll",
+    "select_text",
     "set_agent_cursor_enabled",
     "set_agent_cursor_motion",
     "set_agent_cursor_theme",

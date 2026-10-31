@@ -17,6 +17,7 @@ mod menu_equivalent;
 mod press_key;
 mod right_click;
 mod scroll;
+mod select_text;
 mod set_value;
 mod set_window_frame;
 mod type_text;
@@ -1141,6 +1142,10 @@ pub fn register_all(
     ));
     registry.register(pid_window_guarded(
         set_value::SetValueTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        select_text::SelectTextTool::new(state.clone()),
         &pid_window_candidates,
     ));
     registry.register(pid_window_guarded(

@@ -693,7 +693,7 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 /// - `accessibility.tree`, `accessibility.tree.structured`,
 ///   `accessibility.tree.bounded`, `accessibility.window_state`,
 ///   `accessibility.element_tokens` (Surface 6 — tool accepts the
-///   opaque `element_token` arg)
+///   opaque `element_token` arg), `accessibility.text_selection`
 /// - `app.launch`, `app.list`, `app.kill`, `window.list`,
 ///   `window.activate`, `window.frame.set`, `window.debug_info`
 /// - `system.permissions.tcc`,
@@ -767,6 +767,11 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
             // typing surface, even though the implementation skips
             // per-key events.
             "input.keyboard.type",
+            "accessibility.element_tokens",
+        ],
+        // Moves an element's text selection or caret; never edits text.
+        "select_text" => &[
+            "accessibility.text_selection",
             "accessibility.element_tokens",
         ],
 
@@ -3387,6 +3392,7 @@ fn is_physical_desktop_action(tool: &str) -> bool {
             | "press_key"
             | "hotkey"
             | "set_value"
+            | "select_text"
             | "bring_to_front"
             | "set_window_frame"
     )
@@ -6599,6 +6605,7 @@ mod capability_tests {
         "press_key",
         "hotkey",
         "set_value",
+        "select_text",
         // screen
         "zoom",
         "get_screen_size",
@@ -6696,6 +6703,7 @@ mod capability_tests {
         // Surface 6 — claimed by tools that accept the opaque
         // `element_token` arg + get_window_state which emits them.
         "accessibility.element_tokens",
+        "accessibility.text_selection",
         // app / window
         "app.launch",
         "app.list",
@@ -6895,6 +6903,7 @@ mod capability_tests {
             "type_text_chars",
             "press_key",
             "set_value",
+            "select_text",
             // get_window_state emits the tokens — same capability
             // claim, from the other side of the contract.
             "get_window_state",

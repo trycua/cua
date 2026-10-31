@@ -756,8 +756,10 @@ impl Vault {
     /// old record does not outlive it.
     fn settle_staged_records(&self) -> Result<()> {
         let meta = self.meta()?;
-        let Ok(entries) = std::fs::read_dir(self.dir.join("items")) else {
-            return Ok(());
+        let entries = match std::fs::read_dir(self.dir.join("items")) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
         };
         let matches = |path: &Path, digest: &str| {
             std::fs::read(path).is_ok_and(|bytes| {
@@ -767,7 +769,8 @@ impl Vault {
                 )
             })
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry?;
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if !(name.starts_with('.') && name.ends_with(".prev")) {
@@ -791,7 +794,15 @@ impl Vault {
                     ))
                 })?;
             }
-            let _ = std::fs::remove_file(&staged);
+            match std::fs::remove_file(&staged) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(Error::Corrupt(format!(
+                        "could not remove the staged record {}: {e}",
+                        staged.display()
+                    )));
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -1448,6 +1459,37 @@ mod tests {
         reopened.unlock(&pp()).unwrap();
         assert_eq!(reopened.read_payload(&e).unwrap(), sample_payload("a"));
         assert!(!staged.exists());
+    }
+
+    #[test]
+    fn unlock_fails_when_staged_records_cannot_be_settled() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("kv");
+        Vault::create(&dir, &[&pp()]).unwrap();
+        let items = dir.join("items");
+
+        // A staged name that cannot be removed (a non-empty directory).
+        let stuck = items.join(".0123.sealed.abcd.prev");
+        std::fs::create_dir(&stuck).unwrap();
+        std::fs::write(stuck.join("occupied"), b"").unwrap();
+        let mut v = Vault::open(&dir).unwrap();
+        let err = v.unlock(&pp()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("could not remove the staged record"),
+            "{err}"
+        );
+        assert!(v.meta().is_err());
+        std::fs::remove_dir_all(&stuck).unwrap();
+
+        // An items directory that cannot be scanned.
+        std::fs::rename(&items, dir.join("items.moved")).unwrap();
+        std::fs::write(&items, b"not a directory").unwrap();
+        assert!(matches!(v.unlock(&pp()), Err(Error::Io(_))));
+        assert!(v.meta().is_err());
+        std::fs::remove_file(&items).unwrap();
+        std::fs::rename(dir.join("items.moved"), &items).unwrap();
+        v.unlock(&pp()).unwrap();
     }
 
     #[test]

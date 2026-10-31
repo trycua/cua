@@ -2,7 +2,7 @@
 //!
 //! Produces the same Markdown format as the macOS AX tree:
 //!   `INDENT- [N] ControlType "Name" [value="..." id=... actions=[...]]`
-//!   `INDENT- ControlType = "Value"` (non-indexed read-only elements)
+//!   `INDENT- ControlType "Name" = "Value" [id=... enabled=...]` (non-indexed read-only elements)
 //!
 //! Uses IUIAutomation COM interface (available Windows 7+).
 //! Uses IUIAutomationCacheRequest to batch-fetch all properties in one RPC
@@ -1128,6 +1128,16 @@ pub(crate) fn format_node_line(node: &UiaNode) -> String {
         if let Some(v) = &node.value {
             s.push_str(&format!(" = \"{}\"", v));
         }
+        let mut attrs = Vec::new();
+        if let Some(id) = &node.automation_id {
+            attrs.push(format!("id={}", id));
+        }
+        if let Some(enabled) = node.enabled {
+            attrs.push(format!("enabled={}", enabled));
+        }
+        if !attrs.is_empty() {
+            s.push_str(&format!(" [{}]", attrs.join(" ")));
+        }
     }
     s
 }
@@ -1315,5 +1325,59 @@ mod tests {
         assert!(!state.complete);
         assert_eq!(state.budget.outcome().reason(), Some("timeout"));
         assert_eq!(state.budget.outcome().nodes_visited, 0);
+    }
+
+    fn display_only(control_type: &str, name: &str, automation_id: &str) -> UiaNode {
+        UiaNode {
+            element_index: None,
+            control_type: control_type.to_owned(),
+            name: Some(name.to_owned()),
+            value: None,
+            automation_id: Some(automation_id.to_owned()),
+            help_text: None,
+            actions: vec![],
+            enabled: Some(true),
+            selected: None,
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 2,
+            parent_element_index: None,
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn display_only_rows_keep_their_automation_id_and_enabled_state() {
+        // A read-only label: the text alone cannot say which label it is.
+        let label = display_only("Text", "RP-20417", "lblAgent");
+        let expected = "- Text \"RP-20417\" [id=lblAgent enabled=true]";
+        assert_eq!(format_node_line(&label), expected);
+
+        // A control demoted to display-only because it is disabled (its owner
+        // window is behind a modal): still identifiable, and visibly disabled.
+        let mut edit = display_only("Edit", "Book return time", "dtReturn");
+        edit.value = Some("10/29/2026 10:15 AM".to_owned());
+        edit.enabled = Some(false);
+        let expected = concat!(
+            "- Edit \"Book return time\" = \"10/29/2026 10:15 AM\"",
+            " [id=dtReturn enabled=false]"
+        );
+        assert_eq!(format_node_line(&edit), expected);
+
+        // Nothing known: the row renders exactly as before this change.
+        let mut bare = display_only("Text", "Agent:", "");
+        bare.automation_id = None;
+        bare.enabled = None;
+        assert_eq!(format_node_line(&bare), "- Text \"Agent:\"");
+
+        // Actionable rows are untouched.
+        let mut button = display_only("Button", "Save", "btnSave");
+        button.element_index = Some(5);
+        button.actions = vec!["invoke".to_owned()];
+        let expected = "- [5] Button \"Save\" [id=btnSave actions=[invoke]]";
+        assert_eq!(format_node_line(&button), expected);
     }
 }

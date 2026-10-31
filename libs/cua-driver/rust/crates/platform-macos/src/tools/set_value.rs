@@ -548,10 +548,21 @@ fn set_value_blocking(
                     numeric_target.is_some(),
                 );
             }
+            // kitty exposes no text while it is not focused, yet commits the
+            // write to its pty: a blank read-back there proves nothing.
+            let blank_terminal = blank_ax_value_terminal(
+                &crate::apps::bundle_id_for_pid(pid).unwrap_or_default(),
+                before.as_deref(),
+                after.as_deref(),
+            );
+            (verified, changed) = honest_verdict(verified, changed, blank_terminal);
             let suffix = match (verified, changed) {
                 (Some(true), Some(false)) => " Value already matched; write was idempotent.",
                 (Some(true), _) => "",
                 (Some(false), _) => " Read-back did not confirm the value; verify via screenshot.",
+                (None, _) if blank_terminal => {
+                    " The terminal shows no text through AX here; could not confirm."
+                }
                 (None, _) => " Value is not readable through AX; could not confirm.",
             };
             // An AX write bypasses NSTextView's edit model, so a document is
@@ -595,6 +606,27 @@ fn set_value_blocking(
         } else {
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
+    }
+}
+
+/// A terminal that commits `AXValue` writes to its pty (kitty) reads blank
+/// while unfocused, so a blank read-back there proves nothing. Terminal.app
+/// and iTerm2 drop such writes: their blank read-back stays not applied.
+fn blank_ax_value_terminal(bundle_id: &str, before: Option<&str>, after: Option<&str>) -> bool {
+    crate::terminal::commits_ax_value(bundle_id)
+        && crate::terminal::read_back_is_blank(before, after)
+}
+
+/// A blank terminal read-back neither confirms nor denies the write.
+fn honest_verdict(
+    verified: Option<bool>,
+    changed: Option<bool>,
+    blank_terminal: bool,
+) -> (Option<bool>, Option<bool>) {
+    if blank_terminal {
+        (None, None)
+    } else {
+        (verified, changed)
     }
 }
 
@@ -1292,9 +1324,10 @@ fn hex_digit(n: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_surface_trust, apply_verification_label, classify_write, file_name_needs_rename,
-        is_file_name_cell, is_get_info_name_field, not_applied_result, write_not_applied,
-        SetValueOutcome, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
+        apply_surface_trust, apply_verification_label, blank_ax_value_terminal, classify_write,
+        file_name_needs_rename, honest_verdict, is_file_name_cell, is_get_info_name_field,
+        not_applied_result, write_not_applied, SetValueOutcome, GET_INFO_RENAME_ROUTE,
+        LIST_RENAME_ROUTE,
     };
 
     #[test]
@@ -1404,6 +1437,44 @@ mod tests {
             "delivery_mode:\"foreground\"",
         ] {
             assert!(reason.contains(needed), "missing {needed:?}: {reason}");
+        }
+    }
+
+    /// kitty applied the write but shows no text while unfocused: the blank
+    /// read-back is unverifiable, not a write the app refused.
+    #[test]
+    fn a_blank_terminal_read_back_is_unverifiable_not_unapplied() {
+        let (verified, changed) = classify_write(Some(""), Some(""), "ax-test", false);
+        assert!(write_not_applied(verified, changed));
+        let (verified, changed) = honest_verdict(verified, changed, true);
+        assert_eq!((verified, changed), (None, None));
+        assert!(!write_not_applied(verified, changed));
+        let (verified, changed) = classify_write(Some(""), Some(""), "x", false);
+        assert_eq!(
+            honest_verdict(verified, changed, false),
+            (verified, changed)
+        );
+    }
+
+    /// Only a terminal that commits AXValue writes gets the blank pass:
+    /// Terminal.app and iTerm2 drop the write, so theirs stays not applied.
+    #[test]
+    fn a_blank_read_back_stays_not_applied_outside_kitty() {
+        assert!(blank_ax_value_terminal(
+            "net.kovidgoyal.kitty",
+            Some(""),
+            Some("")
+        ));
+        for bundle in [
+            "com.apple.Terminal",
+            "com.googlecode.iterm2",
+            "com.apple.TextEdit",
+        ] {
+            let blank = blank_ax_value_terminal(bundle, Some(""), Some(""));
+            assert!(!blank, "{bundle}");
+            let (verified, changed) = classify_write(Some(""), Some(""), "ls", false);
+            let (verified, changed) = honest_verdict(verified, changed, blank);
+            assert!(write_not_applied(verified, changed), "{bundle}");
         }
     }
 

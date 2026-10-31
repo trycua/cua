@@ -16,7 +16,10 @@
 //! entirely: terminals expose `AXTextArea` for their grid but the
 //! `AXSelectedText` write never reaches the pty, so the tool would
 //! report success while the shell sees nothing. We go straight to
-//! CGEvent key-event synthesis (`path: "key_events"`).
+//! CGEvent key-event synthesis (`path: "key_events"`). kitty is the
+//! exception in the background: it drops key events while it has no key
+//! window but commits an `AXValue` write to the pty, so plain text goes
+//! there (`path: "ax"`, see [`crate::terminal::AX_VALUE_INPUT_BUNDLE_IDS`]).
 //!
 //! Use `type_text_chars` when you explicitly need per-character pacing
 //! (e.g., to trigger live-search debounce handlers).
@@ -794,6 +797,9 @@ fn chromium_native_field_submit_refusal(
 
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+/// How long kitty's echo of an AXValue insert is awaited. Only a focused
+/// kitty shows it, so the wait is short.
+const AX_VALUE_ECHO_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// Pause before the single `AXFocused` re-apply in the foreground rung. Covers
 /// an app that installs its own first responder just after activation is
@@ -1385,24 +1391,17 @@ fn type_text_in_key_window(
     // An unreadable value is not evidence that the field is empty — and for a
     // window-addressed request it must come from the exact target window,
     // never a same-process sibling.
-    // A background terminal insert has no semantic AX rung: when the
-    // exact-target decision restricted this request to semantic-only, there is
-    // nothing safe to run, and an over-budget synthesis cannot start. Both
-    // refusals need no read of the target, so they come before any AX call.
-    if is_terminal_target && !delivery_mode.is_foreground() {
-        if let BackgroundKeyboardPolicy::SemanticOnly(refusal) = &keyboard_policy {
-            return Ok(TypeTextDelivery::Refused(refusal.clone()));
-        }
-        if let Some(refusal) = synthesis_preflight(
-            TextDeliveryRoute::UnicodeSynthesis,
-            text.chars().count(),
-            delay_ms,
-        ) {
-            return Ok(TypeTextDelivery::SynthesisRefused {
-                path: PATH_KEY_EVENTS,
-                refusal,
-                ax_attempt: AxAttempt::NotAttempted,
-            });
+    // A background terminal insert has no semantic AX rung, except kitty's
+    // AXValue write: when the exact-target decision restricted this request to
+    // semantic-only, there is nothing else safe to run, and an over-budget
+    // synthesis cannot start. Both refusals need no read of the target, so
+    // they come before any AX call.
+    let ax_value_input = is_terminal_target
+        && !delivery_mode.is_foreground()
+        && crate::terminal::takes_ax_value_input(&bundle_id_of(pid), text);
+    if is_terminal_target && !delivery_mode.is_foreground() && !ax_value_input {
+        if let Some(refusal) = terminal_key_refusal(&keyboard_policy, text, delay_ms) {
+            return Ok(refusal);
         }
     }
     let before = read_axvalue_bound(pid, element_ptr_and_idx, window_id);
@@ -1557,6 +1556,17 @@ fn type_text_in_key_window(
         }));
     }
 
+    // --- Background rung 0: kitty takes the text as an AXValue write. ---
+    if ax_value_input {
+        let view = unsafe { kitty_text_view(pid, element_ptr_and_idx, window_id) };
+        if let KittyDelivery::Ax(outcome) = kitty_delivery(view.as_ref(), text) {
+            return Ok(TypeTextDelivery::Typed(outcome));
+        }
+        if let Some(refusal) = terminal_key_refusal(&keyboard_policy, text, delay_ms) {
+            return Ok(refusal);
+        }
+    }
+
     // --- Background rung 0: terminal emulator → CGEvent only (AX is dropped). ---
     if is_terminal_target {
         // The semantic-only and synthesis-budget refusals already ran before
@@ -1574,6 +1584,11 @@ fn type_text_in_key_window(
             /*settle_ms=*/ 0,
             window_id,
         )?;
+        let delivered_chars = honest_terminal_count(
+            delivered_chars,
+            before.as_deref(),
+            read_axvalue_bound(pid, element_ptr_and_idx, window_id).as_deref(),
+        );
         return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
             detail: format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
             path: PATH_KEY_EVENTS,
@@ -1735,6 +1750,187 @@ fn type_text_in_key_window(
 ///
 /// # Safety
 /// `element` must be a live `AXUIElementRef`.
+/// The refusals a background key insert into a terminal needs before any key
+/// is posted: a semantic-only restriction, or a text over the synthesis
+/// budget.
+fn terminal_key_refusal(
+    keyboard_policy: &BackgroundKeyboardPolicy,
+    text: &str,
+    delay_ms: u64,
+) -> Option<TypeTextDelivery> {
+    if let BackgroundKeyboardPolicy::SemanticOnly(refusal) = keyboard_policy {
+        return Some(TypeTextDelivery::Refused(refusal.clone()));
+    }
+    synthesis_preflight(
+        TextDeliveryRoute::UnicodeSynthesis,
+        text.chars().count(),
+        delay_ms,
+    )
+    .map(|refusal| TypeTextDelivery::SynthesisRefused {
+        path: PATH_KEY_EVENTS,
+        refusal,
+        ax_attempt: AxAttempt::NotAttempted,
+    })
+}
+
+/// A terminal key insert's delivered count, or `None` when the read-back
+/// was blank both before and after and so cannot tell zero from all.
+fn honest_terminal_count(
+    delivered_chars: Option<usize>,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> Option<usize> {
+    match delivered_chars {
+        Some(0) if crate::terminal::read_back_is_blank(before, after) => None,
+        other => other,
+    }
+}
+
+/// The text view an `AXValue` insert writes to.
+trait AxTextView {
+    fn value(&self) -> Option<String>;
+    fn set_value(&self, text: &str) -> crate::ax::bindings::AXError;
+}
+
+/// A retained (or borrowed) AX element, released on drop when owned.
+struct AxElement {
+    element: AXUIElementRef,
+    owns: bool,
+}
+
+impl AxTextView for AxElement {
+    fn value(&self) -> Option<String> {
+        unsafe { copy_string_attr(self.element, "AXValue") }
+    }
+
+    fn set_value(&self, text: &str) -> crate::ax::bindings::AXError {
+        unsafe { set_string_attr(self.element, "AXValue", text) }
+    }
+}
+
+impl Drop for AxElement {
+    fn drop(&mut self) {
+        if self.owns {
+            unsafe { CFRelease(self.element as _) };
+        }
+    }
+}
+
+/// How background text for kitty goes in.
+enum KittyDelivery {
+    /// The `AXValue` write was sent, or may have been: never follow it with
+    /// keys, which would type the text twice.
+    Ax(TypeTextOutcome),
+    /// No text view, or AX refused the write before kitty could apply it.
+    Keys,
+}
+
+/// Background text for kitty: an `AXValue` write on its text view, which
+/// kitty commits to the pty as typed text with no key window. Only a write
+/// AX refused outright falls back to keys; an error that could follow an
+/// applied write (a messaging timeout) reports the text as unverified.
+fn kitty_delivery(view: Option<&impl AxTextView>, text: &str) -> KittyDelivery {
+    let Some(view) = view else {
+        return KittyDelivery::Keys;
+    };
+    let before = view.value();
+    let err = view.set_value(text);
+    if ax_value_write_refused(err) {
+        return KittyDelivery::Keys;
+    }
+    let deadline = std::time::Instant::now() + AX_VALUE_ECHO_TIMEOUT;
+    let landed = loop {
+        let landed = ax_value_insert_landed(before.as_deref(), view.value().as_deref(), text);
+        if landed || std::time::Instant::now() >= deadline {
+            break landed;
+        }
+        std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
+    };
+    KittyDelivery::Ax(TypeTextOutcome {
+        detail: " via AXValue (kitty commits it to the terminal as typed text)".to_string(),
+        path: PATH_AX,
+        verified: landed,
+        delivered_chars: landed.then(|| text.chars().count()),
+    })
+}
+
+/// Whether AX refused an attribute write before the app could apply it.
+fn ax_value_write_refused(err: crate::ax::bindings::AXError) -> bool {
+    use crate::ax::bindings::{
+        kAXErrorAPIDisabled, kAXErrorAttributeUnsupported, kAXErrorIllegalArgument,
+        kAXErrorInvalidUIElement,
+    };
+    [
+        kAXErrorAttributeUnsupported,
+        kAXErrorIllegalArgument,
+        kAXErrorInvalidUIElement,
+        kAXErrorAPIDisabled,
+    ]
+    .contains(&err)
+}
+
+/// kitty's `AXValue` is the text around its cursor, and only while kitty is
+/// focused: the insert landed when that text now holds it and has changed.
+fn ax_value_insert_landed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
+    after.is_some_and(|after| after.contains(text) && before != Some(after))
+}
+
+/// kitty's text view in `window_id`: the addressed element, the window's
+/// focused element, else the window's first `AXTextArea`, since kitty reports
+/// no focused element while it is not active.
+unsafe fn kitty_text_view(
+    pid: i32,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+    window_id: Option<u32>,
+) -> Option<AxElement> {
+    use crate::ax::bindings::{
+        ax_get_window_id, copy_ax_windows_including, copy_children, AXUIElementCreateApplication,
+    };
+
+    let owned = |element| AxElement {
+        element,
+        owns: true,
+    };
+    if let Some((ptr, _)) = element_ptr_and_idx {
+        return Some(AxElement {
+            element: ptr as AXUIElementRef,
+            owns: false,
+        });
+    }
+    let Some(window_id) = window_id else {
+        return focused_element_of_pid(pid).map(owned);
+    };
+    let is_text_area = |element: AXUIElementRef| {
+        copy_string_attr(element, "AXRole").as_deref() == Some("AXTextArea")
+    };
+    if let Some(element) = crate::ax::exact_target::focused_element_in_window(pid, window_id) {
+        if is_text_area(element) {
+            return Some(owned(element));
+        }
+        CFRelease(element as _);
+    }
+    let app = AXUIElementCreateApplication(pid);
+    if app.is_null() {
+        return None;
+    }
+    let windows = copy_ax_windows_including(app, pid, window_id);
+    CFRelease(app as _);
+    let mut found = None;
+    for window in windows {
+        if found.is_none() && ax_get_window_id(window) == Some(window_id) {
+            for child in copy_children(window) {
+                if found.is_none() && is_text_area(child) {
+                    found = Some(child);
+                } else {
+                    CFRelease(child as _);
+                }
+            }
+        }
+        CFRelease(window as _);
+    }
+    found.map(owned)
+}
+
 unsafe fn focused_accepts_text(element: AXUIElementRef) -> bool {
     let role = copy_string_attr(element, "AXRole").unwrap_or_default();
     is_text_input_role(&role)
@@ -1821,6 +2017,102 @@ fn no_focused_text_input_refusal(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_blank_terminal_read_back_is_not_a_zero_delivery() {
+        use super::honest_terminal_count;
+        assert_eq!(honest_terminal_count(Some(0), Some(""), Some("")), None);
+        assert_eq!(honest_terminal_count(Some(0), None, Some("")), None);
+        assert_eq!(
+            honest_terminal_count(Some(0), Some("$ "), Some("$ ")),
+            Some(0)
+        );
+        assert_eq!(
+            honest_terminal_count(Some(3), Some(""), Some("abc")),
+            Some(3)
+        );
+        assert_eq!(honest_terminal_count(None, Some(""), Some("")), None);
+    }
+
+    /// A kitty text view whose `AXValue` writes return `err` and leave the
+    /// value blank, as an unfocused kitty reads.
+    struct FakeView {
+        err: crate::ax::bindings::AXError,
+        writes: std::cell::Cell<usize>,
+    }
+
+    impl super::AxTextView for FakeView {
+        fn value(&self) -> Option<String> {
+            Some(String::new())
+        }
+
+        fn set_value(&self, _: &str) -> crate::ax::bindings::AXError {
+            self.writes.set(self.writes.get() + 1);
+            self.err
+        }
+    }
+
+    fn fake(err: crate::ax::bindings::AXError) -> FakeView {
+        FakeView {
+            err,
+            writes: Default::default(),
+        }
+    }
+
+    /// Keys follow the AXValue write only when AX refused it outright: after
+    /// an indeterminate error, or a write kitty took while unfocused, keys
+    /// could type the text a second time.
+    #[test]
+    fn kitty_text_falls_back_to_keys_only_after_a_refused_ax_write() {
+        use super::{kitty_delivery, KittyDelivery};
+        use crate::ax::bindings::{
+            kAXErrorAPIDisabled, kAXErrorAttributeUnsupported, kAXErrorFailure,
+            kAXErrorIllegalArgument, kAXErrorInvalidUIElement, kAXErrorSuccess,
+        };
+        const CANNOT_COMPLETE: crate::ax::bindings::AXError = -25204;
+        for err in [kAXErrorSuccess, CANNOT_COMPLETE, kAXErrorFailure] {
+            let view = fake(err);
+            let KittyDelivery::Ax(outcome) = kitty_delivery(Some(&view), "git status") else {
+                panic!("error {err} fell back to keys");
+            };
+            assert_eq!(view.writes.get(), 1);
+            assert!(!outcome.verified);
+            assert_eq!(outcome.delivered_chars, None);
+        }
+        for err in [
+            kAXErrorAttributeUnsupported,
+            kAXErrorIllegalArgument,
+            kAXErrorInvalidUIElement,
+            kAXErrorAPIDisabled,
+        ] {
+            let view = fake(err);
+            assert!(matches!(
+                kitty_delivery(Some(&view), "git status"),
+                KittyDelivery::Keys
+            ));
+        }
+        assert!(matches!(
+            kitty_delivery(None::<&FakeView>, "git status"),
+            KittyDelivery::Keys
+        ));
+    }
+
+    #[test]
+    fn a_kitty_insert_lands_only_when_its_line_changed_to_hold_the_text() {
+        use super::ax_value_insert_landed;
+        assert!(ax_value_insert_landed(
+            Some("❯ "),
+            Some("❯ git status"),
+            "git status"
+        ));
+        assert!(!ax_value_insert_landed(Some(""), Some(""), "git status"));
+        assert!(!ax_value_insert_landed(
+            Some("❯ git status"),
+            Some("❯ git status"),
+            "git status"
+        ));
+        assert!(!ax_value_insert_landed(None, None, "git status"));
+    }
+
     #[test]
     fn unfocused_window_needs_a_confirmed_key_window() {
         assert!(super::unfocused_window_accepts_keys(

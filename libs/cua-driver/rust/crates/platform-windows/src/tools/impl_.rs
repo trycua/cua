@@ -10229,7 +10229,6 @@ impl Tool for DebugWindowInfoTool {
         };
 
         let outcome = tokio::task::spawn_blocking(move || -> serde_json::Value {
-            use std::collections::HashSet;
             use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, BOOL, TRUE};
             use windows::Win32::System::Com::{
                 CoCreateInstance, CoInitializeEx, CoUninitialize,
@@ -10375,36 +10374,44 @@ impl Tool for DebugWindowInfoTool {
             }
 
             // ── Build per-window JSON
-            let xaml_classes: HashSet<&str> = [
-                "ApplicationFrameWindow",
-                "WinUIDesktopWin32WindowClass",
-                "Windows.UI.Core.CoreWindow",
-                "Microsoft.UI.Content.DesktopChildSiteBridge",
-            ].iter().copied().collect();
-            let xaml_exes: HashSet<&str> = [
-                "notepad.exe", "calculatorapp.exe", "calc.exe",
-                "applicationframehost.exe", "photos.exe", "systemsettings.exe",
-            ].iter().copied().collect();
-
+            // Single source of truth: the `crate::input` helpers the input
+            // router itself calls, so this diagnostic can never disagree with
+            // the routing it claims to explain. (CUA-543 follow-up: it did — on
+            // Windows 10's classic Notepad `exe_xaml_match` was true from an
+            // exe-name-only match while the same payload reported
+            // `xaml_class_match: false`.)
             let windows_json: Vec<serde_json::Value> = ctx.hwnds.iter()
                 .map(|&h| {
                     let hwnd = HWND(h as *mut _);
                     let cls = class_name(hwnd);
                     let title = window_title(hwnd);
                     let xaml_class_match = cls.as_deref()
-                        .map(|c| xaml_classes.contains(c))
+                        .map(crate::input::is_xaml_host_class)
                         .unwrap_or(false);
+                    let xaml_descendant_match = crate::input::has_xaml_descendant_window(h as u64);
                     serde_json::json!({
                         "hwnd": h,
                         "class_name": cls,
                         "title": title,
                         "xaml_class_match": xaml_class_match,
+                        "xaml_descendant_match": xaml_descendant_match,
                     })
                 })
                 .collect();
 
+            let exe_packaged_path = exe_path.as_deref()
+                .map(crate::input::is_packaged_exe_path)
+                .unwrap_or(false);
+            let exe_descendant_evidence = ctx.hwnds.iter()
+                .any(|&h| crate::input::has_xaml_descendant_window(h as u64));
+            // An unambiguous UWP basename decides alone; an ambiguous one
+            // (`notepad.exe`) needs corroboration — see `AMBIGUOUS_XAML_HOST_EXES`.
             let exe_xaml_match = exe_basename.as_deref()
-                .map(|e| xaml_exes.contains(e))
+                .map(|e| {
+                    crate::input::exe_basename_is_xaml_host(e)
+                        || (crate::input::exe_basename_is_ambiguous_xaml_host(e)
+                            && (exe_packaged_path || exe_descendant_evidence))
+                })
                 .unwrap_or(false);
 
             let daemon_pid = unsafe { GetCurrentProcessId() };
@@ -10419,11 +10426,17 @@ impl Tool for DebugWindowInfoTool {
                 "exe_path": exe_path,
                 "exe_basename": exe_basename,
                 "exe_xaml_match": exe_xaml_match,
+                "exe_xaml_evidence": {
+                    "packaged_path": exe_packaged_path,
+                    "xaml_descendant_class": exe_descendant_evidence,
+                },
                 "windows": windows_json,
                 "focused_element": focused_info,
-                "xaml_routing_recommended": exe_xaml_match
-                    || windows_json.iter()
-                        .any(|w| w.get("xaml_class_match").and_then(|v| v.as_bool()).unwrap_or(false)),
+                // Ground truth: the predicate the input router actually calls,
+                // re-evaluated per window. Derived, never a second
+                // hand-maintained list.
+                "xaml_routing_recommended": ctx.hwnds.iter()
+                    .any(|&h| crate::input::is_xaml_host_hwnd(h as u64)),
             })
         }).await;
 

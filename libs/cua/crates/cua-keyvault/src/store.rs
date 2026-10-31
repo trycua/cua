@@ -761,13 +761,11 @@ impl Vault {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e.into()),
         };
-        let matches = |path: &Path, digest: &str| {
-            std::fs::read(path).is_ok_and(|bytes| {
-                crypto::ct_eq(
-                    hex::encode(crypto::sha256(&bytes)).as_bytes(),
-                    digest.as_bytes(),
-                )
-            })
+        let holds = |bytes: &[u8], digest: &str| {
+            crypto::ct_eq(
+                hex::encode(crypto::sha256(bytes)).as_bytes(),
+                digest.as_bytes(),
+            )
         };
         for entry in entries {
             let entry = entry?;
@@ -780,9 +778,20 @@ impl Vault {
             let indexed = name[1..]
                 .split_once(".sealed.")
                 .and_then(|(id, _)| Some((self.item_path(id).ok()?, meta.items.get(id)?)));
+            // A staged record the index still references must be read before it
+            // can be discarded; restore it unless the current record is the
+            // committed one.
             if let Some((path, item)) = indexed
-                && !matches(&path, &item.record_digest)
-                && matches(&staged, &item.record_digest)
+                && holds(
+                    &std::fs::read(&staged).map_err(|e| {
+                        Error::Corrupt(format!(
+                            "could not read the staged record {}: {e}",
+                            staged.display()
+                        ))
+                    })?,
+                    &item.record_digest,
+                )
+                && !std::fs::read(&path).is_ok_and(|bytes| holds(&bytes, &item.record_digest))
             {
                 // Keep the staged record (the only one the index trusts) until
                 // it is back in place.
@@ -1490,6 +1499,35 @@ mod tests {
         std::fs::remove_file(&items).unwrap();
         std::fs::rename(dir.join("items.moved"), &items).unwrap();
         v.unlock(&pp()).unwrap();
+    }
+
+    #[test]
+    fn unlock_keeps_a_staged_record_it_cannot_read() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("kv");
+        let mut v = Vault::create(&dir, &[&pp()]).unwrap();
+        let e = v
+            .upsert_items(vec![(sample_meta(), sample_payload("a"))])
+            .unwrap()[0]
+            .id
+            .clone();
+        drop(v);
+        let items = dir.join("items");
+        let record = items.join(format!("{e}.sealed"));
+        // An uncommitted record is in place, and the staged one cannot be read.
+        let staged = items.join(format!(".{e}.sealed.crash.prev"));
+        std::fs::create_dir(&staged).unwrap();
+        std::fs::write(staged.join("occupied"), b"").unwrap();
+        write_private(&record, b"uncommitted record").unwrap();
+
+        let mut reopened = Vault::open(&dir).unwrap();
+        let err = reopened.unlock(&pp()).unwrap_err();
+        assert!(err.to_string().contains("could not read"), "{err}");
+        assert!(
+            staged.exists(),
+            "an unreadable staged record must not be discarded"
+        );
+        assert!(reopened.meta().is_err());
     }
 
     #[test]

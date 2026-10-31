@@ -348,17 +348,28 @@ impl Vault {
     }
 
     fn save_meta(&mut self) -> Result<()> {
-        let head = self.audit.head().clone();
-        let meta = self.meta.as_mut().ok_or(Error::Locked)?;
-        meta.generation += 1;
-        meta.audit_head = head;
-        let generation = meta.generation;
-        let plain = Zeroizing::new(serde_json::to_vec(meta)?);
+        let next = self.meta()?.clone();
+        let generation = self.write_meta(next)?;
+        self.record_generation(generation)
+    }
+
+    /// Seals `next` as the following generation and adopts it once the write
+    /// lands. On error nothing was committed and the loaded metadata is kept.
+    fn write_meta(&mut self, mut next: Meta) -> Result<u64> {
+        next.generation += 1;
+        next.audit_head = self.audit.head().clone();
+        let plain = Zeroizing::new(serde_json::to_vec(&next)?);
         let keys = self.keys.as_ref().ok_or(Error::Locked)?;
         let sealed = crypto::seal(&keys.meta, &meta_aad(&self.header.vault_id), &plain)?;
         write_private(&self.dir.join("meta.sealed"), &serde_json::to_vec(&sealed)?)?;
-        // Advance the external anti-rollback high-water mark after the write
-        // lands (red-team F5).
+        let generation = next.generation;
+        self.meta = Some(next);
+        Ok(generation)
+    }
+
+    /// Advances the external anti-rollback high-water mark after a metadata
+    /// write lands (red-team F5).
+    fn record_generation(&self, generation: u64) -> Result<()> {
         if let Some(anchor) = &self.anchor {
             anchor.record(&self.header.vault_id, generation)?;
         }
@@ -372,11 +383,10 @@ impl Vault {
 
     /// Mutates and persists the metadata.
     pub fn update_meta<T>(&mut self, f: impl FnOnce(&mut Meta) -> Result<T>) -> Result<T> {
-        let meta = self.meta.as_mut().ok_or(Error::Locked)?;
-        let mut draft = meta.clone();
+        let mut draft = self.meta()?.clone();
         let out = f(&mut draft)?;
-        *meta = draft;
-        self.save_meta()?;
+        let generation = self.write_meta(draft)?;
+        self.record_generation(generation)?;
         Ok(out)
     }
 
@@ -670,7 +680,8 @@ impl Vault {
                 }
             }
         }
-        let res = self.update_meta(|m| {
+        let mut draft = self.meta()?.clone();
+        let res = (|m: &mut Meta| -> Result<()> {
             for c in changes {
                 match c {
                     Change::New(meta) => {
@@ -699,14 +710,17 @@ impl Vault {
                 }
             }
             Ok(())
-        });
-        match res {
-            Ok(()) => {
-                self.gc_blobs()?;
-                Ok(out)
-            }
-            Err(e) => Err(fail(self, &created_files, e)),
-        }
+        })(&mut draft)
+        .and_then(|()| self.write_meta(draft));
+        let generation = match res {
+            Ok(generation) => generation,
+            Err(e) => return Err(fail(self, &created_files, e)),
+        };
+        // The committed index now references every written payload, so a
+        // later failure must not delete them.
+        self.record_generation(generation)?;
+        self.gc_blobs()?;
+        Ok(out)
     }
 
     /// Decrypts an item's payload after checking its record against the
@@ -1074,6 +1088,60 @@ mod tests {
         let mut unguarded = Vault::open(&dir).unwrap();
         unguarded.unlock(&pp()).unwrap();
         assert!(!unguarded.meta().unwrap().settings.disabled);
+    }
+
+    #[test]
+    fn upsert_keeps_committed_payloads_when_the_anchor_write_fails() {
+        use crate::rollback::FileGenerationAnchor;
+        let ext = tempfile::tempdir().unwrap();
+        let anchor_dir = ext.path().join("anchor");
+        std::fs::create_dir(&anchor_dir).unwrap();
+        let anchor_path = anchor_dir.join("gen.json");
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("kv");
+        let mut v = Vault::create(&dir, &[&pp()])
+            .unwrap()
+            .with_anchor(Box::new(FileGenerationAnchor::new(&anchor_path)))
+            .unwrap();
+        let existing = sample_meta();
+        let seed = v
+            .upsert_items(vec![(existing.clone(), sample_payload("a"))])
+            .unwrap();
+        let e = seed[0].id.clone();
+        let generation = v.meta().unwrap().generation;
+
+        // The anchor write fails after the sealed index lands.
+        std::fs::remove_dir_all(&anchor_dir).unwrap();
+        let mut fresh = ItemMeta::draft(
+            ItemKind::Cookie,
+            "chrome",
+            "Google Chrome",
+            Some("github.com"),
+            "_gh_sess",
+        );
+        fresh.source = "Default".into();
+        let err = v
+            .upsert_items(vec![
+                (existing, sample_payload("b")),
+                (fresh, sample_payload("n")),
+            ])
+            .unwrap_err();
+        assert!(matches!(err, Error::Io(_)), "{err:?}");
+
+        // Every committed item stays readable, in memory and after reopening.
+        assert_eq!(v.meta().unwrap().generation, generation + 1);
+        for vault in [&v, &{
+            let mut reopened = Vault::open(&dir).unwrap();
+            reopened.unlock(&pp()).unwrap();
+            reopened
+        }] {
+            let meta = vault.meta().unwrap();
+            assert_eq!(meta.items.len(), 2);
+            assert_eq!(vault.read_payload(&e).unwrap(), sample_payload("b"));
+            for id in meta.items.keys() {
+                vault.read_payload(id).unwrap();
+            }
+        }
     }
 
     #[test]

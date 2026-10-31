@@ -2560,7 +2560,10 @@ impl Coordinator {
     /// Why queued job `id` is not placed (empty: it is placed, or not yet tried).
     pub fn queued_waiting(&self, id: i64) -> String {
         let g = self.sched.lock().expect("sched");
-        g.queued.get(&id).map(|q| q.waiting.clone()).unwrap_or_default()
+        g.queued
+            .get(&id)
+            .map(|q| q.waiting.clone())
+            .unwrap_or_default()
     }
 
     /// Jobs waiting in memory and in flight.

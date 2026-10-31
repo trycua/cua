@@ -462,7 +462,10 @@ mod tests {
         let v = json!({"name":"n","state":"running","epoch":2,"attempts":2,"max_attempts":5,
             "waiting":"waiting for a machine with 2 CPUs and 4 GB memory free"});
         let l = state_line(&v);
-        assert!(l.ends_with(", waiting for a machine with 2 CPUs and 4 GB memory free"), "{l}");
+        assert!(
+            l.ends_with(", waiting for a machine with 2 CPUs and 4 GB memory free"),
+            "{l}"
+        );
         let v = json!({"name":"n","state":"running","epoch":1,"attempts":1,"max_attempts":5});
         assert!(!state_line(&v).contains("waiting"));
     }

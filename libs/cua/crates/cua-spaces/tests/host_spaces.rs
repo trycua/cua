@@ -1554,7 +1554,7 @@ async fn an_offline_machine_set_up_for_spaces_is_listed_by_name() {
 /// so it never says which it applied). The third field: a host whose cua
 /// predates egress policies (it ignores `CreateHostSpaceRequest.egress` and
 /// has no `SetHostSpaceEgress`).
-struct HostSvc(Arc<HostSpacesServer>, bool, bool);
+struct HostSvc(Arc<HostSpacesServer>, bool, bool, Option<tonic::Status>);
 
 #[tonic::async_trait]
 impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
@@ -1649,6 +1649,9 @@ impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
         &self,
         _req: tonic::Request<pb::DiagnoseHostRequest>,
     ) -> Result<tonic::Response<pb::DiagnoseHostResponse>, tonic::Status> {
+        if let Some(status) = &self.3 {
+            return Err(status.clone());
+        }
         Ok(tonic::Response::new(pb::DiagnoseHostResponse {
             report: None,
             cua_version: "0.0.0-test".into(),
@@ -1698,6 +1701,16 @@ async fn client_fixture_full(
     no_egress: bool,
     ext: Option<Arc<dyn cua_spaces::extension::SpacesExtension>>,
 ) -> (String, Spaces, tempfile::TempDir) {
+    client_fixture_with_health_error(f, old_host, no_egress, ext, None).await
+}
+
+async fn client_fixture_with_health_error(
+    f: &Fixture,
+    old_host: bool,
+    no_egress: bool,
+    ext: Option<Arc<dyn cua_spaces::extension::SpacesExtension>>,
+    health_error: Option<tonic::Status>,
+) -> (String, Spaces, tempfile::TempDir) {
     let relay = cua_host::RelayClient::new(&f.relay.url).unwrap();
     let host = relay
         .machines("ada-token")
@@ -1716,6 +1729,7 @@ async fn client_fixture_full(
         f.server.clone(),
         old_host,
         no_egress,
+        health_error,
     ));
     let snaps = pb::host_snapshots_service_server::HostSnapshotsServiceServer::new(SnapSvc(
         f.server.clone(),
@@ -1750,6 +1764,60 @@ async fn client_fixture_full(
     }
     let spaces = builder.build();
     (host, spaces, other)
+}
+
+#[tokio::test]
+async fn machine_health_returns_the_hosts_response() {
+    let f = fixture(HostProfile::Spare).await;
+    let (host, spaces, _other) = client_fixture(&f).await;
+    let health = spaces.machine_health(&host).await.unwrap();
+    assert_eq!(health.cua_version, "0.0.0-test");
+    assert_eq!(health.os, "macos");
+    assert!(health.report.is_none());
+}
+
+#[tokio::test]
+async fn machine_health_unimplemented_does_not_assume_an_old_host() {
+    for reason in [
+        "providing Spaces from a Windows host is not supported yet",
+        "unknown method DiagnoseHost",
+    ] {
+        let f = fixture(HostProfile::Spare).await;
+        let (host, spaces, _other) = client_fixture_with_health_error(
+            &f,
+            false,
+            false,
+            None,
+            Some(tonic::Status::unimplemented(reason)),
+        )
+        .await;
+        let error = spaces.machine_health(&host).await.unwrap_err();
+        assert_eq!(error.tag(), "host_capability_missing");
+        assert_eq!(
+            error.to_string(),
+            "machine health is not available on this host: Mac mini (spare) does not support remote health checks; run `cua doctor --machine this` on that computer"
+        );
+    }
+}
+
+#[tokio::test]
+async fn machine_health_preserves_other_rpc_errors() {
+    for status in [
+        tonic::Status::permission_denied("health check denied"),
+        tonic::Status::unavailable("host disconnected"),
+    ] {
+        let expected = if status.code() == tonic::Code::PermissionDenied {
+            cua_spaces::Error::Relay(cua_host::Error::PermissionDenied(status.message().into()))
+        } else {
+            cua_spaces::Error::Env(cua_spacesd_client::Error::from(status.clone()))
+        };
+        let f = fixture(HostProfile::Spare).await;
+        let (host, spaces, _other) =
+            client_fixture_with_health_error(&f, false, false, None, Some(status)).await;
+        let error = spaces.machine_health(&host).await.unwrap_err();
+        assert_eq!(error.tag(), expected.tag());
+        assert_eq!(error.to_string(), expected.to_string());
+    }
 }
 
 /// The relay machines of ada's account a host provides (its Spaces).

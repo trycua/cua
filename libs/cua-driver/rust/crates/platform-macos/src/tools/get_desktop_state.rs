@@ -138,6 +138,9 @@ impl Tool for GetDesktopStateTool {
         let (png, file_path, screenshot_width, screenshot_height, full_size, overlay_capture) =
             match res {
                 Ok(Ok(v)) => v,
+                Ok(Err(e)) if e.is::<crate::display_awake::DisplayAsleep>() => {
+                    return display_asleep(format!("Desktop screenshot failed: {e}"));
+                }
                 Ok(Err(e)) => return ToolResult::error(format!("Desktop screenshot failed: {e}")),
                 Err(e) => return ToolResult::error(format!("Desktop screenshot task error: {e}")),
             };
@@ -201,6 +204,14 @@ impl Tool for GetDesktopStateTool {
     }
 }
 
+fn display_asleep(message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(serde_json::json!({
+        "status": "refused",
+        "code": crate::display_awake::DISPLAY_ASLEEP,
+        "refusal": { "code": crate::display_awake::DISPLAY_ASLEEP, "message": message }
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +240,19 @@ mod tests {
             d.input_schema["additionalProperties"],
             serde_json::json!(false)
         );
+    }
+
+    #[test]
+    fn a_display_that_stays_off_is_a_typed_refusal() {
+        let message = format!(
+            "Desktop screenshot failed: {}",
+            crate::display_awake::DisplayAsleep
+        );
+        let refused = display_asleep(message.clone());
+        assert_eq!(refused.is_error, Some(true));
+        let structured = refused.structured_content.unwrap();
+        assert_eq!(structured["code"], "display_asleep");
+        assert_eq!(structured["refusal"]["message"], message.as_str());
     }
 
     #[test]

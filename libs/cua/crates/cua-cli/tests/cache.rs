@@ -216,8 +216,6 @@ async fn orphaned_ephemeral_sandboxes_are_reaped_on_the_next_cli_run() {
     assert!(base.exists());
 }
 
-// Windows has no QEMU runtime here, so the runtime check fails before the disk guard.
-#[cfg(not(windows))]
 #[tokio::test]
 async fn low_disk_guard_fails_typed_with_a_prune_hint() {
     let mut h = home();

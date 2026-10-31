@@ -12621,6 +12621,16 @@ impl Tool for GetScreenSizeTool {
                 let (frame, monitors) = crate::wayland::hyprland::screen_report()?;
                 return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
             }
+            // Fractional-scale unification (#3061): on Wayland, report the
+            // compositor-logical frame and its backing scale when a single
+            // logical output is advertised, so callers can map screenshot
+            // pixels 1:1 onto input coordinates.
+            if crate::wayland::is_wayland() {
+                if let Some(frame) = crate::wayland::logical_desktop() {
+                    return Ok((frame.width, frame.height, frame.scale, None));
+                }
+                tracing::debug!("no logical desktop advertised, reporting the X11 root frame");
+            }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
             // assumption). Other Wayland compositors retain their existing

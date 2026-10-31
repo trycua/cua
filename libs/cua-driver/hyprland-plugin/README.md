@@ -290,7 +290,7 @@ The exact initial host acceptance baseline is:
 | Component                   | Required baseline |
 | --------------------------- | ----------------- |
 | Omarchy                     | `4.0.2-1`         |
-| Hyprland                    | `0.56.2`          |
+| Hyprland                    | `0.56.2`, `0.57.0`|
 | xdg-desktop-portal-hyprland | `1.4.1`           |
 | Cua Driver                  | `0.23.2`          |
 | Session and display manager | UWSM / SDDM       |

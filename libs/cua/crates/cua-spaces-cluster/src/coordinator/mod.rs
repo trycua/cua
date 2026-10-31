@@ -1407,10 +1407,7 @@ impl Coordinator {
                 ended.push(Change::EndQueued {
                     id,
                     state: state::ERROR.into(),
-                    error: format!(
-                        "gave up after {} attempts were lost (hosts went down or could not run it)",
-                        q.retries
-                    ),
+                    error: lost_attempts_words(q.retries),
                     at_ms: now_ms(),
                 });
                 Metrics::inc(&self.metrics.ended_other);
@@ -1846,7 +1843,12 @@ impl Coordinator {
                     g.land(&f);
                     let mut c = complete(id, h, state::ERROR);
                     if let Change::Complete { error, .. } = &mut c {
-                        *error = format!("gave up after {} attempts: {}", f.retries + 1, h.error);
+                        *error = format!(
+                            "gave up after {} attempt{}: {}",
+                            f.retries + 1,
+                            if f.retries == 0 { "" } else { "s" },
+                            h.error
+                        );
                     }
                     changes.push(c);
                     Metrics::inc(&self.metrics.ended_other);
@@ -3015,6 +3017,33 @@ fn member_end(id: i64, attempt: u32, state: &str, error: String) -> Change {
 /// Jobs a dispatch round may pass over (their shape found no host) before
 /// it stops: a bound on the work per round with a very long queue.
 const SKIP_MAX: usize = 200_000;
+
+/// Why a job that was lost and queued again is given up, in plain words
+/// ("1 attempt was lost", "3 attempts were lost").
+fn lost_attempts_words(n: u32) -> String {
+    format!(
+        "{n} {} lost: the machine it ran on stopped answering or could not run it",
+        if n == 1 {
+            "attempt was"
+        } else {
+            "attempts were"
+        }
+    )
+}
+
+#[cfg(test)]
+mod words_tests {
+    use super::lost_attempts_words;
+
+    #[test]
+    fn the_give_up_message_has_the_right_plural_and_no_job_names() {
+        assert_eq!(
+            lost_attempts_words(1),
+            "1 attempt was lost: the machine it ran on stopped answering or could not run it"
+        );
+        assert!(lost_attempts_words(3).starts_with("3 attempts were lost"));
+    }
+}
 
 #[cfg(test)]
 mod tests {

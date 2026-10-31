@@ -310,6 +310,12 @@ async fn a_session_that_keeps_crashing_ends_failed_exhausted_with_a_clear_error(
         v.error
     );
     assert!(v.error.contains("exit 3"), "{}", v.error);
+    // Plain words: the drive, not an internal job number.
+    assert!(
+        v.error.contains("drive 3 of 3: the driver ended") && !v.error.contains("driver job"),
+        "{}",
+        v.error
+    );
     tokio::time::sleep(Duration::from_secs(5)).await;
     assert_eq!(lab.starts().len(), 3, "no fourth drive");
     assert_eq!(

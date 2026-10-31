@@ -383,6 +383,9 @@ pub async fn status(name: &str, json: bool, out: &mut dyn Write) -> Result<i32, 
         return Ok(0);
     }
     line(out, state_line(&v));
+    if let Some(l) = drives_line(&v) {
+        line(out, l);
+    }
     if let Some(a) = v["last_output_age_secs"].as_i64() {
         line(
             out,
@@ -396,26 +399,64 @@ pub async fn status(name: &str, json: bool, out: &mut dyn Write) -> Result<i32, 
         line(out, format!("last problem: {e}"));
     }
     for h in v["history"].as_array().into_iter().flatten() {
-        line(
-            out,
-            format!(
-                "  epoch {} drive {}  {}{}{}",
-                h["epoch"],
-                h["attempt"],
-                h["event"].as_str().unwrap_or(""),
-                h["exit_code"]
-                    .as_i64()
-                    .map(|c| format!(" (exit {c})"))
-                    .unwrap_or_default(),
-                h["node"]
-                    .as_str()
-                    .filter(|n| !n.is_empty())
-                    .map(|n| format!(" on {n}"))
-                    .unwrap_or_default(),
-            ),
-        );
+        line(out, history_line(h));
     }
     Ok(0)
+}
+
+/// How many drives a session has used and how many of them failed, in words
+/// ("drive 2 of 5 so far, 1 failed"): a restart after a lost machine or a
+/// crashed driver is a drive of its own, and this says which ones.
+pub(crate) fn drives_line(v: &Value) -> Option<String> {
+    let (used, max) = (v["attempts"].as_u64()?, v["max_attempts"].as_u64()?);
+    let failed = v["history"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|h| matches!(h["event"].as_str(), Some("crashed" | "stalled" | "fenced")))
+        .count();
+    if used < 2 && failed == 0 {
+        return None;
+    }
+    Some(format!(
+        "drive {used} of {max} so far, {failed} failed ({} left)",
+        max.saturating_sub(used)
+    ))
+}
+
+/// One history entry of `cua agent status`. A drive that ended badly says why
+/// (the driver's last words when the machine kept them), cut to one line.
+pub(crate) fn history_line(h: &Value) -> String {
+    let event = h["event"].as_str().unwrap_or("");
+    let mut s = format!(
+        "  epoch {} drive {}  {}{}{}",
+        h["epoch"],
+        h["attempt"],
+        event,
+        h["exit_code"]
+            .as_i64()
+            .map(|c| format!(" (exit {c})"))
+            .unwrap_or_default(),
+        h["node"]
+            .as_str()
+            .filter(|n| !n.is_empty())
+            .map(|n| format!(" on {n}"))
+            .unwrap_or_default(),
+    );
+    if matches!(event, "crashed" | "stalled" | "fenced") {
+        let d = h["detail"]
+            .as_str()
+            .unwrap_or("")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !d.is_empty() {
+            let skip = d.chars().count().saturating_sub(200);
+            let tail: String = d.chars().skip(skip).collect();
+            s.push_str(&format!(": {}{tail}", if skip > 0 { "..." } else { "" }));
+        }
+    }
+    s
 }
 
 /// `cua agent logs session:NAME [-f]`: the output of each epoch's driver in
@@ -498,6 +539,31 @@ pub async fn rm(name: &str, json: bool, out: &mut dyn Write) -> Result<i32, CuaE
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn status_says_how_many_drives_failed_and_why() {
+        let v = json!({"attempts": 2, "max_attempts": 5, "history": [
+            {"event":"started"},{"event":"crashed"},{"event":"started"}]});
+        assert_eq!(
+            drives_line(&v).unwrap(),
+            "drive 2 of 5 so far, 1 failed (3 left)"
+        );
+        // A first drive with nothing failed needs no line.
+        let v = json!({"attempts": 1, "max_attempts": 5, "history": [{"event":"started"}]});
+        assert!(drives_line(&v).is_none());
+        // A crashed drive carries its reason, cut to one line from the end.
+        let h = json!({"epoch":1,"attempt":1,"event":"crashed","exit_code":1,"node":"m1",
+            "detail":"drive 1 of 5: the driver ended (failed), exit 1: Error: ENOSPC: no space left on device\n  at write"});
+        let l = history_line(&h);
+        assert!(
+            l.starts_with("  epoch 1 drive 1  crashed (exit 1) on m1: drive 1 of 5"),
+            "{l}"
+        );
+        assert!(l.contains("ENOSPC") && !l.contains('\n'), "{l}");
+        // A drive that started or finished has no detail.
+        let h = json!({"epoch":1,"attempt":1,"event":"started","detail":"x"});
+        assert_eq!(history_line(&h), "  epoch 1 drive 1  started");
+    }
+
     #[test]
     fn a_waiting_driver_says_what_it_waits_for() {
         let v = json!({"name":"n","state":"running","epoch":2,"attempts":2,"max_attempts":5,

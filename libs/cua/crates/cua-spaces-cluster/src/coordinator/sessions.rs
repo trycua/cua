@@ -840,9 +840,9 @@ impl Coordinator {
         let mut n = r.clone();
         n.node = j.node.clone();
         let why = format!(
-            "epoch {}: driver job {} wrote no output for {} s (limit {limit} s): wedged, cancelled",
-            n.epoch,
-            j.id,
+            "drive {} of {}: the driver wrote no output for {} s (limit {limit} s): wedged, cancelled",
+            n.attempts,
+            n.max_attempts,
             (now - changed) / 1000
         );
         if let Err(e) = self.cancel_job(j.id).await {
@@ -874,7 +874,10 @@ impl Coordinator {
         r.node = j.node.clone();
         let code = j.exit_code;
         let why = {
-            let mut w = format!("epoch {}: driver job {} {}", r.epoch, j.id, j.state);
+            let mut w = format!(
+                "drive {} of {}: the driver ended ({})",
+                r.attempts, r.max_attempts, j.state
+            );
             if let Some(c) = code {
                 w.push_str(&format!(", exit {c}"));
             }

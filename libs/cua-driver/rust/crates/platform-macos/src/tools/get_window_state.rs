@@ -1834,6 +1834,26 @@ mod tests {
     }
 
     #[test]
+    fn elements_publish_a_disabled_control() {
+        let mut nodes = vec![node(
+            Some(0),
+            "AXCheckBox",
+            Some("Reset"),
+            1,
+            None,
+            Some([10.0, 20.0, 16.0, 16.0]),
+            vec!["AXPress".into()],
+        )];
+        nodes[0].enabled = Some(false);
+        let elements = build_elements_array_with_token(&nodes, Some(3));
+        assert_eq!(elements.len(), 1);
+        assert_eq!(elements[0]["label"], "Reset");
+        assert_eq!(elements[0]["enabled"], false);
+        assert_eq!(elements[0]["element_token"], "s00000003:0");
+        assert!(elements[0]["frame"].is_object());
+    }
+
+    #[test]
     fn elements_surface_inherited_web_content_trust_marker() {
         let mut nodes = vec![node(
             Some(0),

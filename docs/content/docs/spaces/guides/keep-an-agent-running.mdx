@@ -70,7 +70,59 @@ cell, so read the times as rough).
 | The runner (the driver process) dies | Noticed at once; a new driver starts a new Space on the same machine, 40 to 80 s with Claude Code and Codex | Yes by the journal: the harness's own session files are gone with the old Space, so the recovery note carries the journal's summary instead of the conversation |
 | The driver's Space is killed or runs out of memory | The machine sees the Space stop within a few seconds and ends the driver; a new driver starts a new Space on the same machine, about 55 s from the kill to the resumed agent with Claude Code | Same as above |
 | The driver's Space is removed, or the driver freezes | Noticed only by the stall limit (`--stall-secs`, default 120 s): about 140 to 170 s from the fault to the resumed agent | Same as above |
-| The machine running the agent stops answering | After about 65 to 75 s the session records the lost machine and starts the next drive on **another machine** | **No.** The task starts from the beginning |
+| The machine running the agent stops answering | After about 65 to 75 s the session records the lost machine and starts the next drive on **another machine** (see the cases below) | **No.** The task starts from the beginning |
+| The daemon on the machine running the agent restarts (an update) | The driver is lost 2 to 11 s later (the job runner lives in the daemon) and the next drive starts on the same machine about a second after the 2 s backoff; it finishes 35 to 55 s after the restart. The old driver's Space is removed by the machine within 30 s | Yes, by the journal, on the same machine |
+| The daemon on the machine that coordinates restarts | Nothing visible; a run on another machine is not disturbed (down 0.7 to 14 s, five runs) | Not applicable |
+| The disk of the machine is full | Each drive crashes at its first write (`exit 1`, 38 to 61 s) and uses a try; the status line names `ENOSPC`. With the space freed in time the next drive finishes: two runs ended done on drive 4 of 5 | Yes, by the journal |
+| The machine's clock is 10 minutes ahead or behind | The machine is shown `down` and a session pinned to it waits; the message says the clock is off. When the coordinator machine's clock is 10 minutes ahead the first drive starts about 86 s late; 10 minutes behind made no difference | Not applicable |
+| The network is slow (300 ms added, 5% loss, three runs) | About 2.5 times slower (340 to 369 s against 138 s for a 20 step task); no restart and no move | Not applicable |
+
+The machine-lost case in numbers (three machines, Claude Code and Codex, a
+scripted model; the machine was cut off with a firewall rule):
+
+- **Cut off from the account but still running** (traffic to the relay dropped,
+  the model server still reachable), eight runs: the other machines declare it
+  lost after 64 to 66 s and the next drive is running 67 s after the cut. Its
+  first tool step comes 107 to 121 s after the cut (median 114 s, the six runs
+  where it was timed). **The old
+  driver keeps working meanwhile:** it did 32 to 36 steps on its own, and in
+  every run 2 to 4 of them while the new driver was already running (two
+  drivers at once for 8 to 17 s), and the new driver repeats every step the old
+  one had done. When the cut ends, the coordinator's cancel stops the old
+  driver within 2 to 11 s; the epoch fence does not, because it is a file on
+  each machine. A task whose side effects leave the machine (a `git push`, an
+  API call, a message) can run twice at the same time.
+- **Cut off completely**, four runs: lost after 65.6 to 65.9 s. The old driver
+  cannot reach the model, so it stops by itself within a step; no overlap.
+- **When the cut-off machine also held the coordinator**, six runs: the next
+  drive starts 94 to 186 s after the cut, because the new coordinator starts
+  counting the silence only when it takes over.
+- **Three machine losses in a row** on one session: it moved between the two
+  machines each time, finished on drive 4 of 5, and each drive started the task
+  from the beginning. A drive that comes back to a machine that ran an earlier
+  drive resumes that machine's old journal (and sees only its old working
+  folder), not the progress made elsewhere.
+- **Every machine unreachable:** the session waits (`waiting for a machine that
+  can take work`) with no deadline and uses no try; when the machines answer
+  again it carries on, or ends `failed` at the limit.
+
+Other measurements: signing out of the account on the machine you type on leaves a
+running session alone, but `cua agent sessions` then lists only the sessions of this
+machine without a warning and other commands wait about a minute before saying you
+are not signed in. Signing the machine that runs the agent out lets the driver
+finish, but the session stays `running` until the machine signs in again. Starting
+the same name again from another machine used to start a second driver; since
+#6236 it does not. Twenty agents pinned to one 4 CPU, 7.7 GB machine took 1643 s one
+at a time when each driver reserved 4 GiB; the driver now reserves 1.5 GiB and four
+run at once (12 of 12 sessions finished on drive 1 with no out-of-memory kill). A
+killed agent waits for a free slot when the machine is full: 158 s from the kill to
+the resumed request with six running.
+
+**By harness** (a runner kill, from the kill to the first model request that
+carries the recovery note): Claude Code 50 to 80 s, Codex 38 s, OpenCode 47 s
+(one run), Hermes 55 to 62 s since the fix that gives it a new session when it
+lost its own (three runs), Pi 49 s (one run, since Pi runs through the same driver
+as the others). Three runs per cell elsewhere, so read them as rough.
 
 When a drive moves to another machine, the new one does not have the journal,
 the conversation or the working folder of the old one. Plan for it:
@@ -79,20 +131,28 @@ the conversation or the working folder of the old one. Plan for it:
   [Cua Volume](/spaces/guides/cua-volume). The default storage, This Mac, is a
   folder on one machine, so another machine does not see it. Use your own
   S3-compatible bucket (AWS S3, R2, MinIO) so every machine reaches the same
-  files.
+  files. `cua agent add --durable --on auto` says so when more than one
+  machine is signed in and Cua Volume is still on This Mac. The same goes for
+  a durable Space (`durable=true`): it is created again on another machine
+  with an empty disk, and a Volume on This Mac is not visible from there.
 - Write the task so running it again from the start is safe.
 - A session makes at most 5 drives by default (`--max-attempts`), counting the
   first one and every restart for any reason. When they are used up it ends
   `failed` and says it gave up after 5 of 5 drives, with the last failure.
 - A drive that no machine has room for waits and says what it waits for, for
-  example `waiting for a machine with 2 CPUs and 4 GB memory free`. A driver
-  that runs a harness asks for 2 CPUs and 4 GiB.
+  example `waiting for a machine with 1 CPU and 1.5 GB memory free`. A driver
+  that runs a harness asks for 1 CPU and 1.5 GiB, so a machine with 8 GB runs
+  four of them at once.
 - A durable Space whose machine is lost is created again on another machine
   within about a minute, with the same name and an empty disk; the old record
   stays listed as offline until you delete it.
 
-Known problems today: `cua agent logs
-session:NAME` shows only the driver's heartbeat lines, not what the agent did.
+`cua agent logs session:NAME` shows one short line for each event: the driver
+and the agent's session starting, each turn starting and ending, the kind and
+outcome of each tool call (`tool execute completed`, never the command or its
+output), restarts and recovery notes, and errors. It never prints your prompt,
+a tool's input or output, or the agent's text. It shows the latest drive's
+output; `cua agent status` has the history of every drive.
 
 ## What happens when it crashes
 
@@ -100,8 +160,11 @@ session:NAME` shows only the driver's heartbeat lines, not what the agent did.
    machine that ran the last drive when it has room, else on another one (which
    starts the task from the beginning, see above).
 2. The new driver raises the fence first. An older driver that is still alive
-   sees the higher floor on its next write, stops, and exits with code 75
-   without writing anything.
+   **on the same machine** sees the higher floor on its next write, stops, and
+   exits with code 75 without writing anything. The fence is a file in the
+   machine's own run folder, so it cannot reach an old driver on a machine that
+   is cut off from the account; the coordinator's cancel stops that one when the
+   machine is reachable again.
 3. The driver reloads the agent's session (`session/resume`, else
    `session/load`). A harness with neither gets a **new** session and the run
    is marked `degraded`: the recovery note then carries a summary of the
@@ -203,7 +266,7 @@ Other limits:
 | Gemini CLI | `session/load` | Tools in the default approval mode (a permission was asked in the recorded run) | Read-only tools, and everything in yolo mode | Not run durably |
 | Google Antigravity | `session/resume` and `session/load` | Commands (asked in the recorded run) | Not known | Not run durably |
 | Goose | `session/load` | None seen in the recorded run | All tools seen | Not run durably |
-| Pi | `session/load` | None seen | All tools seen | Not run durably |
+| Pi | `session/load` | None seen | All tools seen | Runs through the same driver as the others (pi-acp adapter): 6 steps done, and one runner kill resumed with the recovery note in 49 s (one run each, so not a campaign) |
 | OpenClaw | `session/resume` and `session/load` | None seen | All tools seen | The driver spec is refused (needs a launch wrapper) |
 
 The four measured rows come from real harness binaries (installed by the cua

@@ -62,6 +62,10 @@ const MACOS_MIN: (u32, u64) = (4, 8192);
 /// Smallest macOS VM a member that asks for an accelerator gets.
 const MACOS_GPU_MIN: (u32, u64) = (6, 16384);
 
+/// How often the Spaces of jobs that are gone are looked for (the first look
+/// is this long after the daemon starts).
+const ORPHAN_SWEEP_EVERY: Duration = Duration::from_secs(30);
+
 /// How often a running job's Space is looked at for having stopped on its own.
 const SPACE_WATCH_EVERY: Duration = Duration::from_secs(3);
 
@@ -184,6 +188,13 @@ impl SpacesExecutor {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         });
+        let me = self.clone();
+        rt.spawn(async move {
+            loop {
+                tokio::time::sleep(ORPHAN_SWEEP_EVERY).await;
+                me.sweep_orphans().await;
+            }
+        });
         if cfg!(target_os = "macos") {
             let others = self.macos_others.clone();
             rt.spawn(async move {
@@ -202,6 +213,44 @@ impl SpacesExecutor {
         if let Some(m) = &self.machine {
             m.dirs().sweep(jobdir::KEEP, &busy);
         }
+    }
+
+    /// Removes the job Spaces nothing here runs in: the ones a restart of the
+    /// daemon left behind (the job runner ends the jobs the ledger says were
+    /// running and removes their Spaces once, at start, when the runtimes may
+    /// not answer yet) and any a failed delete left. A Space a job of this
+    /// process runs in is in `running` before it is created, so it is never
+    /// touched. Returns how many it removed.
+    pub async fn sweep_orphans(&self) -> usize {
+        let Ok(all) = self.spaces.list() else {
+            return 0;
+        };
+        let mut removed = 0;
+        for info in all {
+            if !is_job_space(&info.id) {
+                continue;
+            }
+            let name = info
+                .id
+                .strip_prefix("local:")
+                .unwrap_or(&info.id)
+                .to_string();
+            if self.running.lock().expect("running").contains(&name) {
+                continue;
+            }
+            self.remove_space(&name).await;
+            // Only what is gone counts: a Space a job created meanwhile (it
+            // is in `running` by now) stays, and one still there is retried.
+            if self
+                .spaces
+                .list()
+                .is_ok_and(|l| l.iter().all(|i| i.id != info.id))
+            {
+                tracing::info!(space = %name, "removed a job Space nothing runs in");
+                removed += 1;
+            }
+        }
+        removed
     }
 
     fn is_dedicated(&self) -> bool {
@@ -818,8 +867,11 @@ impl JobExecutor for SpacesExecutor {
             return;
         }
         let id = format!("local:{space}");
-        if self.spaces.delete(&id).await.is_err() {
-            let _ = self.spaces.sandboxes().delete_local_instance(space).await;
+        if let Err(first) = self.spaces.delete(&id).await
+            && let Err(e) = self.spaces.sandboxes().delete_local_instance(space).await
+        {
+            // The orphan sweep ([`SpacesExecutor::sweep_orphans`]) tries again.
+            tracing::warn!(space, "removing a job's Space failed: {first}; {e}");
         }
     }
 

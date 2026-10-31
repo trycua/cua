@@ -315,6 +315,60 @@ function emit(type, fields = {}) {
     JSON.stringify({ seq, ts: Date.now(), turn: state.turn, ...(durable ? { epoch: durable.epoch } : {}), type, ...fields }),
   );
   appendJournal("events.jsonl", line, Boolean(durable) && SYNC_EVENTS.has(type));
+  if (durable) logActivity({ turn: state.turn, epoch: durable.epoch, type, ...fields });
+}
+
+// A short readable line on stdout for what happens in a durable run, so
+// `cua agent logs session:NAME` shows the agent's progress and not only the
+// heartbeat. Only the kind of a tool (execute, read, edit, ...) and short
+// notices: never the prompt, a tool's input or output, or the agent's text.
+// (stdout growing also tells the coordinator the driver is alive.)
+const toolSeen = new Map();
+export function activityLine(ev, toolStatusSeen = toolSeen) {
+  const c = (x, n) => clip(String(x ?? "").replace(/\s+/g, " ").trim(), n);
+  switch (ev.type) {
+    case "driver_start":
+      return `driver: epoch ${ev.epoch} started${ev.journal ? ", continuing the journal of this session" : ""}`;
+    case "session":
+      return ev.resumed ? "agent: reloaded its session" : "agent: opened a session";
+    case "degraded":
+      return "agent: could not reload its conversation; the recovery note carries the journal's summary";
+    case "turn_started":
+      if (ev.recovery) return `turn ${ev.resumesTurn ?? ev.turn} resumed with a recovery note listing what already ran`;
+      return `turn ${ev.turn} started${ev.noteAttached ? " (with a recovery note)" : ""}`;
+    case "turn_ended":
+      return `turn ${ev.turn} ended (${c(ev.stopReason ?? "no reason", 40)})`;
+    case "update": {
+      const u = ev.update ?? {};
+      if (u.sessionUpdate !== "tool_call" && u.sessionUpdate !== "tool_call_update") return null;
+      const id = u.toolCallId;
+      const status = u.status ?? (u.sessionUpdate === "tool_call" ? "pending" : null);
+      if (!status || status === "pending" || toolStatusSeen.get(id) === status) return null;
+      toolStatusSeen.set(id, status);
+      const kind = c(u.kind ?? toolInfo.get(id)?.toolKind ?? "tool", 20);
+      return `tool ${kind} ${status === "in_progress" ? "started" : status}`;
+    }
+    case "permission":
+      return ev.action === "deny" ? "tool call refused: it was already asked for and may have run" : null;
+    case "agent_restart":
+      return `agent restarted (${ev.n} of ${ev.of}): ${c(ev.reason, 100)}`;
+    case "notice":
+      return `notice: ${c(ev.message, 120)}`;
+    case "error":
+      return `error: ${c(String(ev.message ?? "").split("\n")[0], 160)}`;
+    case "cancel_requested":
+      return "cancel requested";
+    case "run_exited":
+      return `driver exiting (code ${ev.code}${ev.reason ? `, ${c(ev.reason, 100)}` : ""})`;
+    default:
+      return null;
+  }
+}
+function logActivity(ev) {
+  try {
+    const line = activityLine(ev);
+    if (line) process.stdout.write(`${new Date().toISOString().slice(11, 19)} ${redact(line)}\n`);
+  } catch {}
 }
 
 function save(patch = {}) {

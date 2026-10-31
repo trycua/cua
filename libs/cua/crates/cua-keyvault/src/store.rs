@@ -614,11 +614,18 @@ impl Vault {
         }
         let mut changes = Vec::new();
         let mut created_files: Vec<String> = Vec::new();
+        // Sealed records this batch overwrote, restored if it never commits.
+        let mut overwritten: Vec<(String, Vec<u8>)> = Vec::new();
         let mut out = Vec::new();
-        let fail = |this: &Self, files: &[String], e: Error| -> Error {
+        let fail = |this: &Self, files: &[String], old: &[(String, Vec<u8>)], e: Error| -> Error {
             for id in files {
                 if let Ok(p) = this.item_path(id) {
                     let _ = std::fs::remove_file(p);
+                }
+            }
+            for (id, bytes) in old {
+                if let Ok(p) = this.item_path(id) {
+                    let _ = write_private(&p, bytes);
                 }
             }
             e
@@ -628,7 +635,7 @@ impl Vault {
             meta.updated_ms = now;
             let payload = match self.externalize(&mut meta, payload) {
                 Ok(p) => p,
-                Err(e) => return Err(fail(self, &created_files, e)),
+                Err(e) => return Err(fail(self, &created_files, &overwritten, e)),
             };
             match index.get(&k).cloned() {
                 Some(id) => {
@@ -641,9 +648,13 @@ impl Vault {
                         None
                     } else {
                         let rev = cur.rev + 1;
+                        match self.item_path(&id).and_then(|p| Ok(std::fs::read(p)?)) {
+                            Ok(bytes) => overwritten.push((id.clone(), bytes)),
+                            Err(e) => return Err(fail(self, &created_files, &overwritten, e)),
+                        }
                         match self.write_item(&id, rev, &payload) {
                             Ok(d) => Some((rev, d)),
-                            Err(e) => return Err(fail(self, &created_files, e)),
+                            Err(e) => return Err(fail(self, &created_files, &overwritten, e)),
                         }
                     };
                     out.push(Upsert {
@@ -664,7 +675,7 @@ impl Vault {
                     let id = crypto::random_id()?;
                     let digest = match self.write_item(&id, 1, &payload) {
                         Ok(d) => d,
-                        Err(e) => return Err(fail(self, &created_files, e)),
+                        Err(e) => return Err(fail(self, &created_files, &overwritten, e)),
                     };
                     created_files.push(id.clone());
                     meta.id = id.clone();
@@ -714,7 +725,7 @@ impl Vault {
         .and_then(|()| self.write_meta(draft));
         let generation = match res {
             Ok(generation) => generation,
-            Err(e) => return Err(fail(self, &created_files, e)),
+            Err(e) => return Err(fail(self, &created_files, &overwritten, e)),
         };
         // The committed index now references every written payload, so a
         // later failure must not delete them.
@@ -1142,6 +1153,47 @@ mod tests {
                 vault.read_payload(id).unwrap();
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn upsert_restores_overwritten_records_when_the_index_write_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("kv");
+        let mut v = Vault::create(&dir, &[&pp()]).unwrap();
+        let existing = sample_meta();
+        let e = v
+            .upsert_items(vec![(existing.clone(), sample_payload("a"))])
+            .unwrap()[0]
+            .id
+            .clone();
+        let mut fresh = ItemMeta::draft(
+            ItemKind::Cookie,
+            "chrome",
+            "Google Chrome",
+            Some("github.com"),
+            "_gh_sess",
+        );
+        fresh.source = "Default".into();
+
+        // items/ stays writable; the sealed index in the vault root cannot be replaced.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let res = v.upsert_items(vec![
+            (existing, sample_payload("b")),
+            (fresh, sample_payload("n")),
+        ]);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(matches!(res, Err(Error::Io(_))), "{res:?}");
+
+        let mut reopened = Vault::open(&dir).unwrap();
+        reopened.unlock(&pp()).unwrap();
+        for vault in [&v, &reopened] {
+            let meta = vault.meta().unwrap();
+            assert_eq!(meta.items.len(), 1);
+            assert_eq!(vault.read_payload(&e).unwrap(), sample_payload("a"));
+        }
+        assert_eq!(std::fs::read_dir(dir.join("items")).unwrap().count(), 1);
     }
 
     #[test]

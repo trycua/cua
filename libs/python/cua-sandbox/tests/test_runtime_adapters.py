@@ -12,10 +12,12 @@ from types import SimpleNamespace
 
 import pytest
 from cua_sandbox import Image, sandbox_state
+from cua_sandbox.options import tcp
 from cua_sandbox.runtime import native as native_module
 from cua_sandbox.runtime.docker import DockerRuntime
 from cua_sandbox.runtime.lume import LumeRuntime
 from cua_sandbox.runtime.qemu import (
+    NativeQEMURuntime,
     QEMUBaremetalRuntime,
     QEMUDockerRuntime,
     _native_eligible,
@@ -27,6 +29,7 @@ class FakeSandboxes:
         self.state_dir = state_dir
         self.created = []
         self.deleted = []
+        self.events = []
 
     async def create(self, options):
         self.created.append(options)
@@ -45,7 +48,12 @@ class FakeSandboxes:
                 }
             )
         )
-        return SimpleNamespace(info=lambda: None)
+        self.events.append(("create", [p.service or p.port for p in options.wait_for]))
+
+        async def wait_ready(probes, timeout_ms):
+            self.events.append(("wait", [p.service or p.port for p in probes]))
+
+        return SimpleNamespace(info=lambda: None, wait_ready=wait_ready)
 
     async def delete(self, name):
         self.deleted.append(name)
@@ -135,6 +143,111 @@ async def test_qemu_boots_a_local_disk_through_the_sdk(sdk, tmp_path):
     await QEMUBaremetalRuntime().start(Image.from_file(str(disk)), "cua-e2e-e")
 
     assert sdk.created[0].image == f"disk:{disk}"
+
+
+async def test_post_boot_layers_run_before_dependent_readiness(sdk, monkeypatch):
+    ref = "registry.example/desktop:1"
+    image = Image.from_registry(ref, kind="vm").run("systemctl enable --now app")
+
+    monkeypatch.setattr(
+        native_module.native(),
+        "resolve_image",
+        lambda reference, backend, arch: SimpleNamespace(spacesd=True),
+    )
+
+    async def apply_layers(self, info, layered):
+        sdk.events.append(("layers", info.name))
+
+    monkeypatch.setattr(native_module.NativeRuntime, "_apply_layers", apply_layers)
+
+    await QEMUBaremetalRuntime().start(
+        image, "cua-e2e-post-boot", services={"app": 8080}, wait_for=[tcp("app")]
+    )
+
+    assert sdk.created[0].image == f"vm:{ref}"
+    assert sdk.created[0].services["app"] == 8080
+    # The layer installs the service, so its probe waits until after the layers.
+    assert sdk.events == [
+        ("create", []),
+        ("layers", "cua-e2e-post-boot"),
+        ("wait", ["app"]),
+    ]
+
+
+@pytest.mark.parametrize("customization", ["run", "env", "copy"])
+@pytest.mark.parametrize("spacesd", [True, False, None])
+async def test_qemu_registry_layers_use_the_post_boot_owner(
+    sdk, monkeypatch, tmp_path, customization, spacesd
+):
+    from cua_sandbox import Unsupported
+    from cua_sandbox.builder import build
+
+    ref = "registry.example/desktop:1"
+    image = Image.from_registry(ref, kind="vm")
+    if customization == "run":
+        image = image.run("true")
+    elif customization == "env":
+        image = image.env(PROOF="1")
+    else:
+        source = tmp_path / "input.txt"
+        source.write_text("layer contents")
+        image = image.copy(str(source), "/input.txt")
+
+    resolutions, applications = [], []
+
+    def resolve(reference, backend, arch):
+        resolutions.append((reference, backend, arch))
+        return SimpleNamespace(spacesd=spacesd)
+
+    async def apply_layers(self, info, layered):
+        applications.append((info.name, layered))
+
+    async def no_pre_boot_build(*args, **kwargs):
+        raise AssertionError("registry VM layers belong to the post-boot owner")
+
+    monkeypatch.setattr(native_module.native(), "resolve_image", resolve)
+    monkeypatch.setattr(native_module.NativeRuntime, "_apply_layers", apply_layers)
+    monkeypatch.setattr(build, "create_session_disk", no_pre_boot_build)
+    name = "cua-e2e-registry-layers"
+
+    if spacesd is True:
+        await QEMUBaremetalRuntime().start(image, name)
+        assert [(o.image, o.build) for o in sdk.created] == [(f"vm:{ref}", None)]
+        assert applications == [(name, image)]
+    else:
+        with pytest.raises(Unsupported) as refusal:
+            await QEMUBaremetalRuntime().start(image, name)
+        assert str(refusal.value) == (
+            f"image layers on a VM image (vm:{ref}) are applied after boot through "
+            "cua-spacesd, which this image does not run. Use a container image "
+            "with pip_install/uv_install/apt_install/run/copy/env (they build locally), "
+            "or bake them into the image"
+        )
+        assert sdk.created == [] and applications == []
+    assert resolutions == [(ref, "vm", None)]
+
+
+@pytest.mark.parametrize("override", ["image", "option"])
+async def test_qemu_layered_disk_overrides_keep_disk_preparation(monkeypatch, tmp_path, override):
+    from cua_sandbox.builder import build
+
+    disk, prepared = tmp_path / "source.qcow2", tmp_path / "session.qcow2"
+    image = (
+        Image.from_file(str(disk))
+        if override == "image"
+        else Image.from_registry("registry.example/desktop:1", kind="vm")
+    ).run("true")
+    opts = {} if override == "image" else {"disk_path": str(disk)}
+    calls = []
+
+    async def prepare(layered, name, *, base_disk):
+        calls.append((layered, name, base_disk))
+        return prepared
+
+    monkeypatch.setattr(build, "create_session_disk", prepare)
+    result = await NativeQEMURuntime()._image_ref(image, "disk-override", **opts)
+    assert result == f"disk:{prepared}"
+    assert calls == [(image, "disk-override", disk)]
 
 
 async def test_qemu_docker_mode_is_the_same_sdk_backend(sdk):

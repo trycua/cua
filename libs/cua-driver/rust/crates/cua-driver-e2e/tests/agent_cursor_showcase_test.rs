@@ -151,8 +151,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         );
         settle(900);
 
-        call_ok(
-            &mut driver,
+        let typed = driver.call(
             "type_text",
             serde_json::json!({
                 "session": SESSION,
@@ -161,6 +160,21 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
                 "delivery_mode": "foreground"
             }),
         );
+        if niri_session() {
+            // The click landed on the empty desktop, so no window has
+            // keyboard focus. niri reports that and types nothing, where
+            // other compositors accept text that reaches no one.
+            assert!(
+                typed.is_error()
+                    && typed
+                        .text()
+                        .starts_with("foreground_unavailable: no niri window has keyboard focus"),
+                "type_text on the empty niri desktop did not refuse exactly: {}",
+                typed.text()
+            );
+        } else {
+            assert!(!typed.is_error(), "type_text failed: {}", typed.text());
+        }
         settle(900);
 
         call_ok(
@@ -885,6 +899,18 @@ fn recorded_turn_screenshot(driver: &McpDriver, tool: &str) -> Vec<u8> {
 fn call_ok(driver: &mut McpDriver, tool: &str, arguments: serde_json::Value) {
     let response = driver.call(tool, arguments);
     assert!(!response.is_error(), "{tool} failed: {}", response.text());
+}
+
+fn niri_session() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        platform_linux::wayland::wayland_input_enabled()
+            && platform_linux::wayland::niri::is_session()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
 }
 
 fn settle(milliseconds: u64) {

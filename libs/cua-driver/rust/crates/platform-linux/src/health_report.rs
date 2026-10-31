@@ -170,8 +170,8 @@ async fn check_ax_capability() -> CheckEntry {
 
 async fn check_screen_capture_capability() -> CheckEntry {
     // Native Wayland: capture flows through a cascade — wlroots screencopy
-    // (sway / labwc / kwin 5.27+ / hyprland) → ext-image-copy-capture-v1
-    // (sway 1.10+ / labwc 0.8+ / niri / KDE 6.2+ / GNOME 47+) →
+    // (sway / labwc / kwin 5.27+ / hyprland / niri) →
+    // ext-image-copy-capture-v1 (sway 1.10+ / labwc 0.8+ / KDE 6.2+ / GNOME 47+) →
     // xdg-desktop-portal Screenshot (GNOME / KDE / COSMIC + portal backend).
     // Report which tier is reachable so users on mutter / kwin don't see a
     // misleading "screen capture will fail" just because wlroots isn't
@@ -299,12 +299,20 @@ async fn check_wayland_backend() -> CheckEntry {
     } else {
         false
     };
-    classify_wayland_backend(
+    let mut entry = classify_wayland_backend(
         &snap,
         portal_input_enabled(),
         remote_desktop_portal_reachable,
         target_activation_available(),
-    )
+    );
+    if let Some(note) = tokio::task::spawn_blocking(compositor_note)
+        .await
+        .ok()
+        .flatten()
+    {
+        entry.message = format!("{} {note}", entry.message);
+    }
+    entry
 }
 
 fn classify_wayland_backend(
@@ -519,6 +527,16 @@ fn target_activation_available() -> bool {
 #[cfg(not(target_os = "linux"))]
 fn target_activation_available() -> bool {
     false
+}
+
+#[cfg(target_os = "linux")]
+fn compositor_note() -> Option<String> {
+    crate::wayland::niri::health_note()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn compositor_note() -> Option<String> {
+    None
 }
 
 #[cfg(target_os = "linux")]

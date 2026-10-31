@@ -284,6 +284,35 @@ struct Fixture {
     window_y: f64,
     name: &'static str,
     journal: FixtureJournal,
+    /// The last lines a Tauri host and its WebKit processes wrote to stderr.
+    stderr_tail: Option<StderrTail>,
+}
+
+type StderrTail = std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>;
+
+/// Copy a host's stderr to the test's own and keep its last lines.
+fn tee_stderr(stderr: std::process::ChildStderr) -> StderrTail {
+    use std::io::{BufRead as _, Write as _};
+    let tail = StderrTail::default();
+    let kept = tail.clone();
+    thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
+            // Write to fd 2 itself, as the inherited stream did, not
+            // through the test harness's output capture.
+            let _ = writeln!(std::io::stderr(), "{line}");
+            let mut kept = kept
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if kept.len() == 40 {
+                kept.pop_front();
+            }
+            kept.push_back(line);
+        }
+    });
+    tail
 }
 
 impl Drop for Fixture {
@@ -340,7 +369,11 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
         .args(&spec.args)
         .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stderr(if spec.name == "tauri" {
+            Stdio::piped()
+        } else {
+            Stdio::inherit()
+        });
     match spec.name {
         "electron" => {
             command.env(
@@ -367,8 +400,9 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
                 .collect::<std::collections::HashSet<_>>()
         })
         .unwrap_or_default();
-    let child = spawn_in_job(&mut command)
+    let mut child = spawn_in_job(&mut command)
         .unwrap_or_else(|error| panic!("failed to launch {} fixture: {error}", spec.name));
+    let stderr_tail = child.stderr.take().map(tee_stderr);
     let pid = child.id();
     driver.reaper().push(child);
 
@@ -395,6 +429,7 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
                         window_y: bounds["y"].as_f64().unwrap_or(0.0),
                         name: spec.name,
                         journal,
+                        stderr_tail,
                     };
                     // Electron and Tauri can need more than the generic fixture
                     // budget to start their renderer and expose the remote
@@ -403,12 +438,13 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
                     let ax_deadline = Instant::now() + ax_timeout;
                     let mut last_tree = String::new();
                     while Instant::now() < ax_deadline {
-                        let state = snapshot(&mut fixture);
+                        let state = window_state(&mut fixture);
                         last_tree.clear();
                         last_tree.push_str(state.tree_text());
                         if last_tree.contains("WEB_HARNESS_MARKER_v1")
                             && fixture.journal.contains("WEB_HARNESS_MARKER_v1")
                         {
+                            assert_laid_out(&fixture);
                             eprintln!("READY {scenario}: daemon usable, fixture pid={actual_pid} window_id={wid}, AX and journal marker present");
                             return fixture;
                         }
@@ -426,17 +462,68 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
     panic!("{} fixture window did not appear", spec.name);
 }
 
-fn snapshot(fixture: &mut Fixture) -> ToolResponse {
+fn window_state(fixture: &mut Fixture) -> ToolResponse {
     let state = fixture.driver.call(
         "get_window_state",
         serde_json::json!({
             "pid": fixture.pid as i64,
             "window_id": fixture.wid,
-            "capture_mode": "ax"
+            "capture_mode": "ax",
+            "timeout_ms": 10_000
         }),
     );
     refresh_wayland_window_geometry(fixture);
     state
+}
+
+/// A ready fixture's accessibility tree. A walk cut short at its deadline
+/// lacks elements a row then reads as missing, so it gets room on a slow
+/// runner and fails as truncated if that is not enough.
+fn snapshot(fixture: &mut Fixture) -> ToolResponse {
+    let state = window_state(fixture);
+    let structured = state.structured();
+    assert!(
+        structured["truncated"].as_bool() != Some(true),
+        "the accessibility walk of window {} was truncated ({}), so its tree is incomplete",
+        fixture.wid,
+        structured["truncation_reason"]
+            .as_str()
+            .unwrap_or("no reason given")
+    );
+    state
+}
+
+/// A web fixture page laid out collapsed (seen with WebKitGTK on a runner
+/// without a DRM render node) stacks its controls, so pointer rows would
+/// fail as misdelivered. Report the host's renderer instead, with what the
+/// page and the host process reported about it.
+fn assert_laid_out(fixture: &Fixture) {
+    let scroll = &fixture.journal.snapshot()["scroll-tall"];
+    if scroll["clientHeight"].as_u64() != Some(0) {
+        return;
+    }
+    let renderer_env: Vec<String> = std::env::vars()
+        .filter(|(name, _)| name.starts_with("WEBKIT_") || name.starts_with("GDK_"))
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect();
+    let stderr_tail = fixture.stderr_tail.as_ref().map_or_else(
+        || "not captured".to_owned(),
+        |tail| {
+            let tail = tail
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            tail.iter().cloned().collect::<Vec<_>>().join("\n")
+        },
+    );
+    panic!(
+        "environment: the {} fixture page laid out collapsed (#scroll-tall clientHeight 0), \
+         so its controls are not where its accessibility tree places them; this host's web \
+         renderer is broken, and no row on this fixture can be judged\n\
+         page layout: {}\nhost env: {}\nhost stderr tail:\n{stderr_tail}",
+        fixture.name,
+        scroll["layout"],
+        renderer_env.join(" "),
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -616,6 +703,11 @@ fn require_element(snapshot: &ToolResponse, id: &str) -> u64 {
 }
 
 fn element_center(snapshot: &ToolResponse, element_index: u64) -> (f64, f64) {
+    element_frame_center(snapshot, element_index)
+        .unwrap_or_else(|| panic!("element [{element_index}] has no frame"))
+}
+
+fn element_frame_center(snapshot: &ToolResponse, element_index: u64) -> Option<(f64, f64)> {
     let frame = snapshot.structured()["elements"]
         .as_array()
         .and_then(|elements| {
@@ -623,12 +715,22 @@ fn element_center(snapshot: &ToolResponse, element_index: u64) -> (f64, f64) {
                 .iter()
                 .find(|element| element["element_index"].as_u64() == Some(element_index))
         })
-        .and_then(|element| element["frame"].as_object())
-        .unwrap_or_else(|| panic!("element [{element_index}] has no frame"));
-    (
+        .and_then(|element| element["frame"].as_object())?;
+    Some((
         frame["x"].as_f64().unwrap_or(0.0) + frame["w"].as_f64().unwrap_or(0.0) / 2.0,
         frame["y"].as_f64().unwrap_or(0.0) + frame["h"].as_f64().unwrap_or(0.0) / 2.0,
-    )
+    ))
+}
+
+/// Native Wayland background pixel rows are typed refusals. A compositor may
+/// withhold the per-window crop size or the element frames for a window it
+/// hides (niri hides a floating window behind a fullscreen one and reports no
+/// geometry for it), so these rows aim at inert coordinates and let the
+/// driver publish its refusal without an unverifiable screenshot oracle.
+fn wayland_background_px_row(delivery: &str) -> bool {
+    delivery == "background"
+        && cua_driver_testkit::e2e::DisplayServer::current()
+            == cua_driver_testkit::e2e::DisplayServer::Wayland
 }
 
 fn assert_fixture_contains(fixture: &Fixture, marker: &str) {
@@ -789,27 +891,21 @@ fn action_target_args(
     } else {
         let origin = window_origin(fixture, state);
         let scale = screenshot_scale(state);
-        let screen_point = element_center(state, index);
-        let (local_x, local_y) = screenshot_local_point(screen_point, origin, scale);
         let width = state.structured()["screenshot_width"].as_f64();
         let height = state.structured()["screenshot_height"].as_f64();
-        if width.is_none() || height.is_none() {
-            // Native Wayland may intentionally omit a per-window crop size.
-            // Background pixel rows are typed refusals in that environment;
-            // use inert coordinates so the driver can publish that refusal
-            // without requiring an unverifiable screenshot oracle.
-            if delivery == "background"
-                && cua_driver_testkit::e2e::DisplayServer::current()
-                    == cua_driver_testkit::e2e::DisplayServer::Wayland
-            {
+        let frame_center = element_frame_center(state, index);
+        let (Some(width), Some(height), Some(screen_point)) = (width, height, frame_center) else {
+            if wayland_background_px_row(delivery) {
                 object.insert("x".to_owned(), serde_json::json!(0.0));
                 object.insert("y".to_owned(), serde_json::json!(0.0));
                 return args;
             }
+            if frame_center.is_none() {
+                panic!("element [{index}] has no frame");
+            }
             panic!("PX action requires screenshot dimensions for {delivery} delivery");
-        }
-        let width = width.unwrap();
-        let height = height.unwrap();
+        };
+        let (local_x, local_y) = screenshot_local_point(screen_point, origin, scale);
         eprintln!(
             "[shared-px] {} target={id} screen=({:.1},{:.1}) origin=({:.1},{:.1}) scale=({:.3},{:.3}) local=({local_x:.1},{local_y:.1}) capture=({width:.1}x{height:.1})",
             fixture.name, screen_point.0, screen_point.1, origin.0, origin.1, scale.0, scale.1
@@ -1436,9 +1532,15 @@ fn run_drag_action(fixture: &mut Fixture, delivery: &str) -> Observation {
     let target = require_element(&pre, "drop-target");
     let origin = window_origin(fixture, &pre);
     let scale = screenshot_scale(&pre);
-    let point = |index: u64| screenshot_local_point(element_center(&pre, index), origin, scale);
-    let (from_x, from_y) = point(source);
-    let (to_x, to_y) = point(target);
+    let frames = element_frame_center(&pre, source).zip(element_frame_center(&pre, target));
+    let ((from_x, from_y), (to_x, to_y)) = match frames {
+        Some((from, to)) => (
+            screenshot_local_point(from, origin, scale),
+            screenshot_local_point(to, origin, scale),
+        ),
+        None if wayland_background_px_row(delivery) => ((0.0, 0.0), (0.0, 0.0)),
+        None => (element_center(&pre, source), element_center(&pre, target)),
+    };
     let response = fixture.driver.call(
         "drag",
         serde_json::json!({
@@ -2067,7 +2169,7 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
     delivered_observation()
 }
 
-fn run_browser_tool_refusal(fixture: &mut Fixture) -> Observation {
+fn run_browser_tool_refusal(fixture: &mut Fixture, expected: RefusalCode) -> Observation {
     let session = format!("browser-embedded-refusal-{}", fixture.pid);
     let started = fixture
         .driver
@@ -2096,8 +2198,7 @@ fn run_browser_tool_refusal(fixture: &mut Fixture) -> Observation {
             )
         });
     assert_eq!(
-        code,
-        RefusalCode::BrowserRouteUnavailable,
+        code, expected,
         "embedded browser returned the wrong refusal: {}",
         response.raw
     );
@@ -2153,10 +2254,34 @@ fn embedded_browser_case(spec: &HostSpec) -> CaseSpec {
         cua_driver_testkit::e2e::DriverRoute::Cdp,
         oracles,
     );
-    if spec.name == "electron" {
-        case
+    match embedded_browser_refusal(spec) {
+        None => case,
+        Some(code) => case.expecting_refusal(vec![code]),
+    }
+}
+
+/// The refusal an embedded browser row declares, or `None` when it must
+/// bind. Browser identity is not accepted on niri: its Linux browser route
+/// has no exact window geometry there, so Electron binding fails closed.
+fn embedded_browser_refusal(spec: &HostSpec) -> Option<RefusalCode> {
+    if spec.name != "electron" {
+        Some(RefusalCode::BrowserRouteUnavailable)
+    } else if niri_session() {
+        Some(RefusalCode::BrowserWrongTargetRefused)
     } else {
-        case.expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable])
+        None
+    }
+}
+
+fn niri_session() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        platform_linux::wayland::wayland_input_enabled()
+            && platform_linux::wayland::niri::is_session()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
     }
 }
 
@@ -2171,10 +2296,11 @@ fn embedded_browser_routes_are_exact_or_refused() {
             continue;
         }
         selected += 1;
-        let result = if spec.name == "electron" {
-            run_host_case_with_outcome(case, &spec, run_browser_tool_roundtrip)
-        } else {
-            run_host_case_with_outcome(case, &spec, run_browser_tool_refusal)
+        let result = match embedded_browser_refusal(&spec) {
+            None => run_host_case_with_outcome(case, &spec, run_browser_tool_roundtrip),
+            Some(code) => run_host_case_with_outcome(case, &spec, |fixture| {
+                run_browser_tool_refusal(fixture, code)
+            }),
         };
         if failure.is_none() {
             failure = result;

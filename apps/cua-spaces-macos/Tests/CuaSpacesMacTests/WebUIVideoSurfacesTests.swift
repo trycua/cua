@@ -553,6 +553,8 @@ struct WebUIVideoSurfacesTests {
         let host = Host()
         let units = AccessUnit.split(Self.tinyH264)
         let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        // Shorter than the default, so the move back below does not wait it out.
+        s.slotGrace = .milliseconds(300)
         s.handle(message([entry("call", space: "a")]))
         await settle { host.phases("call").contains("live") }
         let callSlot = try #require(s.surfaces["call"])
@@ -604,6 +606,147 @@ struct WebUIVideoSurfacesTests {
         #expect(s.stats().isEmpty)
     }
 
+    // MARK: - Coming back to a Space (warm sessions)
+
+    /// Regression: leaving a Space for another page and returning sat on
+    /// "Connecting…" for as long as a fresh open takes, because the viewer's
+    /// session outlived its slot by only 1.5 s. Returning within the grace
+    /// binds the new slot to the live session: live on its first word, no
+    /// second open.
+    @Test func comingBackToASpaceWithinTheGraceIsLiveAtOnceOnTheSameSession() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        // The default is a minute or so, not the old 1.5 s.
+        #expect(s.slotGrace >= .seconds(30) && s.slotGrace <= .seconds(120))
+        s.slotGrace = .seconds(30)
+        s.handle(message([entry("v1", space: "a")]))
+        await settle { host.phases("v1").contains("live") }
+        let first = try #require(s.surfaces["v1"])
+        let session = try #require(s.sessionFor(first))
+
+        // The page goes to another route: its slot is removed. Well past the old grace.
+        s.handle(message([], remove: ["v1"]))
+        try? await Task.sleep(for: .milliseconds(1800))
+        #expect(s.stats().count == 1)
+        #expect(session.status == .streaming)
+
+        let returned = Date()
+        s.handle(message([entry("v2", space: "a")]))
+        await settle(tries: 5) { !host.phases("v2").isEmpty }
+        #expect(host.phases("v2") == ["live"])
+        // The timing guard: generous, it only catches a renegotiation creeping back in.
+        #expect(Date().timeIntervalSince(returned) < 1.0)
+        let slot2 = try #require(s.surfaces["v2"])
+        #expect(s.sessionFor(slot2) === session)
+        #expect(host.opened.count == 1)
+        s.removeAll()
+    }
+
+    @Test func comingBackAfterTheGraceOpensAFreshStream() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.slotGrace = .milliseconds(150)
+        s.handle(message([entry("v1", space: "a")]))
+        await settle { host.phases("v1").contains("live") }
+        let oldSlot = try #require(s.surfaces["v1"])
+        let old = try #require(s.sessionFor(oldSlot))
+        s.handle(message([], remove: ["v1"]))
+        await settle { s.stats().isEmpty }
+        #expect(s.stats().isEmpty)
+        s.handle(message([entry("v2", space: "a")]))
+        await settle { host.phases("v2").contains("live") }
+        #expect(host.opened.count == 2)
+        let slot2 = try #require(s.surfaces["v2"])
+        #expect(s.sessionFor(slot2) !== old)
+        s.removeAll()
+    }
+
+    /// A warm session is never kept for a Space that stopped or a machine
+    /// that went away: its transport drops, and it is released at once
+    /// instead of reconnecting for nobody.
+    @Test func aWarmSessionWhoseSpaceStoppedIsReleasedNotReconnected() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let provider = SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30)
+        let s = surfaces(host) { _, _ in provider }
+        s.slotGrace = .seconds(30)
+        s.handle(message([entry("v1", space: "a")]))
+        await settle { host.phases("v1").contains("live") }
+        let slot = try #require(s.surfaces["v1"])
+        let session = try #require(s.sessionFor(slot))
+        s.handle(message([], remove: ["v1"]))
+        #expect(s.stats().count == 1)
+
+        provider.lastMedia?.dropTransport()
+        await settle { s.stats().isEmpty }
+        #expect(s.stats().isEmpty)
+        await settle { session.status == .idle }
+        #expect(session.status == .idle)
+
+        // Coming back opens again (and would say why if it could not).
+        s.handle(message([entry("v2", space: "a")]))
+        await settle { host.phases("v2").contains("live") }
+        #expect(host.opened.count == 2)
+        s.removeAll()
+    }
+
+    @Test func aSessionThatAlreadyDroppedIsNotKeptWarm() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let provider = SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30)
+        let s = surfaces(host) { _, _ in provider }
+        s.slotGrace = .seconds(30)
+        s.handle(message([entry("v1", space: "a")]))
+        await settle { host.phases("v1").contains("live") }
+        let slot = try #require(s.surfaces["v1"])
+        let session = try #require(s.sessionFor(slot))
+        provider.lastMedia?.dropTransport()
+        await settle { session.status != .streaming }
+        s.handle(message([], remove: ["v1"]))
+        #expect(s.stats().isEmpty)
+        s.removeAll()
+    }
+
+    @Test func aHiddenWindowAndAClosedWindowKeepNothingWarm() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.slotGrace = .seconds(30)
+        s.handle(message([entry("v1", space: "a")]))
+        await settle { host.phases("v1").contains("live") }
+        s.handle(message([], remove: ["v1"]))
+        #expect(s.stats().count == 1)
+        s.setPaused(true)
+        #expect(s.stats().isEmpty)
+        s.setPaused(false)
+
+        // Closed window: every warm session goes.
+        s.handle(message([entry("v2", space: "a")]))
+        await settle { host.phases("v2").contains("live") }
+        s.handle(message([], remove: ["v2"]))
+        #expect(s.stats().count == 1)
+        s.removeAll()
+        #expect(s.stats().isEmpty)
+    }
+
+    @Test func atMostMaxWarmViewerSessionsStayWarmOldestFirst() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.slotGrace = .seconds(30)
+        s.maxWarm = 2
+        for space in ["a", "b", "c"] {
+            s.handle(message([entry("v-\(space)", space: space)]))
+            await settle { host.phases("v-\(space)").contains("live") }
+            s.handle(message([], remove: ["v-\(space)"]))
+        }
+        let warm = Set(s.stats().compactMap { $0["spaceId"] as? String })
+        #expect(warm == ["b", "c"])
+        s.removeAll()
+    }
+
     // MARK: - Holes
 
     @Test func readsHolesAndMapsThemIntoTheClipContainer() throws {
@@ -645,6 +788,36 @@ struct WebUIVideoSurfacesTests {
         // Closed: no mask.
         s.handle(message([entry("v", space: "a")]))
         #expect(view.layer?.mask == nil)
+        s.removeAll()
+    }
+
+    /// A modal dialog over the viewer (the page's dimmed layer is up): the page reports the
+    /// viewer occluded and non-interactive, so the native video is not drawn over the dialog
+    /// or the dimmed page, takes no clicks, and gives the keyboard back; the stream keeps
+    /// running, and the video, the pointer and the keys come back when the dialog closes.
+    /// (A popover or menu over it is still a hole: `aMenuOverTheViewerCutsAHoleAndTheVideoStaysLive`.)
+    @Test func aModalDialogOverTheViewerHidesItAndTakesItsKeysAndClicks() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.handle(message([entry("v", space: "a")]))
+        await settle { host.phases("v").contains("live") }
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == "v")
+        let view = try #require(s.surfaces["v"]?.view)
+        // The dialog opens: occluded, not interactive, no holes (the whole video is hidden).
+        s.handle(message([entry("v", space: "a", interactive: false, occluded: true)]))
+        #expect(view.isHidden)
+        #expect(s.focusedId == nil)
+        #expect(view.layer?.mask == nil)
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == nil)
+        // Closed: it is drawn again and takes the keyboard again, still live.
+        s.handle(message([entry("v", space: "a")]))
+        #expect(!view.isHidden)
+        #expect(host.phases("v").last == "live")
+        s.handle(["type": "focus", "surfaceId": "v"])
+        #expect(s.focusedId == "v")
         s.removeAll()
     }
 

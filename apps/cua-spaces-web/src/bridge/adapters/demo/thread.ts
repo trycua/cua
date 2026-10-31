@@ -57,6 +57,9 @@ import type { DemoHandlers } from "./context";
 
 type Json = Record<string, unknown>;
 
+/** What the pasted join line tells an agent to do next (the daemon's `line`, in `join.rs`). */
+export const JOIN_LINE_STEPS = "After you join: set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself.";
+
 /** The demo's own account in the thread (`DEMO_IDENTITY`). */
 export const DEMO_THREAD_ME = { kind: "person", id: "acct_ada", name: "Ada" } as const;
 const GRACE = { kind: "person", id: "acct_grace", name: "Grace" } as const;
@@ -123,7 +126,8 @@ function demoIdentities(now: number, owner: { id: string; name: string }): Recor
       device: { id: "dev_linus_tp", name: "linus-thinkpad" },
       joined: { method: "prompt", at_ms: at(5 * 3_600_000), by: ref(LINUS) },
       state: "active",
-      last_seen_ms: at(2 * 60_000),
+      // A CLI session that only runs when prompted: it last asked for its inbox a while ago.
+      last_seen_ms: at(40 * 60_000),
     },
     "claude-2": {
       origin: "external",
@@ -154,6 +158,8 @@ interface DemoMember {
   sessions: number;
   rights: AgentRights;
   identity: DemoIdentity;
+  /** A failed member's typed failure (the daemon's `status.failure`). */
+  failure?: Json;
 }
 
 export type DemoThreadRole = "owner" | "member" | "guest";
@@ -272,7 +278,7 @@ function demoSideThreads(now: number, me: { id: string; name: string }): [string
   ];
 }
 
-function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean } = {}): DemoThread {
+function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean; authFailed?: boolean; stranger?: boolean; paused?: boolean } = {}): DemoThread {
   const ids = demoIdentities(now, owner);
   // An agent's posts carry who it was when it posted (they stay after it leaves).
   const agent = (handle: string) => ({ kind: "agent", id: `agent:${handle}`, name: handle, identity: ids[handle] });
@@ -350,6 +356,73 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
     { name: "hermes", harness: "hermes", status: "asleep", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS, task: "owner" }, identity: ids.hermes! },
     { name: "cursor", harness: "cursor", status: "idle", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS, approve: [LINUS.id] }, identity: ids.cursor! },
   ];
+  if (opts.authFailed) {
+    // What the daemon posts when an agent has no working sign-in: plain words and the typed failure (CUA-2638).
+    const asked = (text: string, handle: string, ts: number) =>
+      add({ ts_ms: ts, author: DEMO_THREAD_ME, text, mentions: [handle], task: { to: handle, session: null } });
+    const failed = (task: number, ts: number, who: ReturnType<typeof agent>, text: string, failure: Json) => {
+      add({ ts_ms: ts, author: who, reply_to: task, text, failure });
+      update(ts, task, "failed", 1, "could not start " + who.name);
+    };
+    const hi = asked("@claude hi", "claude", min(2));
+    failed(hi, min(2), CLAUDE, "I can't reach Claude yet. Connect Claude, then try again.", {
+      class: "needs_connect",
+      provider: "anthropic",
+      retryable: true,
+      message: 'Internal error: Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}',
+    });
+    const hey = asked("@hermes hey", "hermes", min(1));
+    failed(hey, min(1), HERMES, "Hermes needs a connected provider. Connect one, then try again. Your Claude subscription sign-in only works in Claude Code.", {
+      class: "needs_connect",
+      provider: "anthropic",
+      retryable: true,
+      message: 'Internal error (code -32603) {"details":"Hermes is not connected to any AI provider. Run `hermes model` to set one up, or add an API key."}',
+    });
+    for (const m of members) {
+      if (m.name === "claude" || m.name === "hermes") {
+        m.status = "failed";
+        m.activity = "Not connected";
+        m.failure = { class: "needs_connect", provider: "anthropic", retryable: true, message: "Failed to authenticate. API Error: 401" };
+      }
+    }
+  }
+  if (opts.paused) {
+    // Agents asked each other three times in a row; the fourth ask is posted, wakes nobody, and the daemon says so once.
+    const ask = (from: ReturnType<typeof agent>, to: string, text: string, ts: number, hops: number) =>
+      add({ ts_ms: ts, author: from, text, mentions: [to], ...(hops <= 3 ? { task: { to, session: null }, hops } : {}) });
+    const first = add({ ts_ms: min(4), author: DEMO_THREAD_ME, text: "@claude look at the flaky ws_reconnect test and get a second opinion", mentions: ["claude"], task: { to: "claude", session: null } });
+    update(min(4), first, "done");
+    ask(CLAUDE, "hermes", "@hermes can you check the timeout I picked?", min(3), 1);
+    ask(HERMES, "claude", "@claude it looks fine, can you confirm with a rerun?", min(2), 2);
+    ask(CLAUDE, "hermes", "@hermes rerun is green, anything else?", min(1), 3);
+    ask(HERMES, "claude", "@claude nothing else from me, anything from you?", min(1), 4);
+    add({ ts_ms: min(1), author: { kind: "system", id: "system:limits", name: "Cua" }, kind: "system", text: "Paused agent to agent messages for a moment" });
+  }
+  if (opts.stranger) {
+    // Dana's Gemini CLI: Dana is not in this Space, so her card opens in place.
+    const dana = { id: "acct_dana", name: "Dana" };
+    members.push({
+      name: "gemini",
+      harness: "gemini-cli",
+      status: "idle",
+      activity: null,
+      sessions: 1,
+      rights: { ...DEFAULT_AGENT_RIGHTS },
+      identity: {
+        origin: "external",
+        handle: "gemini",
+        display_name: "Gemini CLI",
+        collides: false,
+        icon: "harness",
+        harness: { id: "gemini-cli", version: "0.12.0", reported: true },
+        owner: dana,
+        device: { id: "dev_dana_air", name: "Dana's MacBook Air" },
+        joined: { method: "prompt", at_ms: now - 2 * 3_600_000, by: dana },
+        state: "active",
+        last_seen_ms: now - 30_000,
+      },
+    });
+  }
   if (opts.lookalike) {
     // Linus's agent names itself Claude Code: both now show their owner after the tag.
     ids.claude!.collides = true;
@@ -380,6 +453,9 @@ export function demoThreadHandlers({
   enabled,
   role = "owner",
   lookalike = false,
+  authFailed = false,
+  stranger = false,
+  paused = false,
   joinRedeemMs,
   joinExpireMs,
   request = false,
@@ -391,6 +467,12 @@ export function demoThreadHandlers({
   role?: DemoThreadRole;
   /** `?demo=thread-lookalike`: Linus's agent that calls itself Claude Code. */
   lookalike?: boolean;
+  /** `?demo=thread-auth-failed`: Claude and Hermes answer with a typed "not connected" failure. */
+  authFailed?: boolean;
+  /** `?demo=thread-stranger`: an agent whose owner is not in the Space. */
+  stranger?: boolean;
+  /** `?demo=thread-paused`: the thread shows the daemon's note that agent to agent messages were paused. */
+  paused?: boolean;
   /** How long after it is made an open code is redeemed (null: never). Default 12 steps. */
   joinRedeemMs?: number | null;
   /** Codes expire this long after they are made, instead of their ttl. */
@@ -399,7 +481,7 @@ export function demoThreadHandlers({
   request?: boolean;
 }): DemoHandlers<ThreadOpName> {
   const owner = role === "owner" ? DEMO_THREAD_ME : GRACE;
-  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME) : [])]);
+  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike, authFailed, stranger, paused })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME) : [])]);
   let codeSeq = 0;
   const redeemAfter = joinRedeemMs === undefined ? stepMs * 12 : joinRedeemMs;
   const SYSTEM = { kind: "system", id: "system:members", name: "Cua" };
@@ -483,11 +565,11 @@ export function demoThreadHandlers({
   };
   const youCan = (m: DemoMember) =>
     Object.fromEntries((["task", "control", "approve"] as const).map((r) => [r, demoHolds(m.rights[r], role, DEMO_THREAD_ME.id)])) as Record<AgentRight, boolean>;
-  const memberJson = ({ activity, rights, ...m }: DemoMember) => ({
+  const memberJson = ({ activity, rights, failure, ...m }: DemoMember) => ({
     ...m,
     rights,
     you_can: youCan({ activity, rights, ...m }),
-    status: activity ? { state: m.status, activity } : { state: m.status },
+    status: { state: m.status, ...(activity ? { activity } : {}), ...(failure ? { failure } : {}) },
   });
   const denied = (message: string) => new HostError(message, "permission_denied");
   const GUEST = "view only: guests can read this thread but cannot post, answer or claim tasks";
@@ -501,6 +583,23 @@ export function demoThreadHandlers({
   const wake = (space: string) => {
     for (const w of waiting.get(space) ?? []) w();
     waiting.delete(space);
+  };
+  // Each agent's stage while it works on a task (`thread_read`'s `live`), by Space.
+  const stages = new Map<string, Map<string, { stage: string; since: number; text?: string }>>();
+  const liveOf = (space: string) => {
+    const agents = [...(stages.get(space) ?? [])]
+      .map(([agent, s]) => ({ agent, stage: s.stage, since_ms: s.since, ...(s.text ? { text: s.text } : {}) }))
+      .sort((a, b) => a.agent.localeCompare(b.agent));
+    // As the daemon keys it: the text's length moves it too, so a follow wakes for a new snapshot.
+    return { key: agents.map((a) => `${a.agent}=${a.stage}#${a.text?.length ?? 0}`).join(";"), agents };
+  };
+  /** Sets (or with null clears) an agent's stage, and what it has said so far, and wakes the thread's followers. */
+  const setStage = (space: string, agent: string, stage: string | null, text?: string) => {
+    const m = stages.get(space) ?? new Map<string, { stage: string; since: number; text?: string }>();
+    stages.set(space, m);
+    if (stage === null) m.delete(agent);
+    else m.set(agent, { stage, since: m.get(agent)?.since ?? now(), ...(text ? { text } : {}) });
+    wake(space);
   };
   const append = (space: string, e: Json) => {
     const t = thread(space);
@@ -568,19 +667,41 @@ export function demoThreadHandlers({
     const cursor = all.length ? (all[all.length - 1]!.seq as number) : (after ?? last);
     const unread = t.entries.filter((e) => (e.seq as number) > t.readSeq && (e.author as Json).id !== DEMO_THREAD_ME.id && e.kind !== "task_update").length;
     const hasMoreBefore = after == null && firstSeq !== null && t.entries.some((e) => (e.seq as number) < firstSeq);
-    return { entries: all, cursor, caught_up: cursor >= last, unread, read_seq: t.readSeq, me: { id: DEMO_THREAD_ME.id }, role, has_more_before: hasMoreBefore };
+    return { entries: all, cursor, caught_up: cursor >= last, unread, read_seq: t.readSeq, me: { id: DEMO_THREAD_ME.id }, role, has_more_before: hasMoreBefore, live: liveOf(space) };
   };
   // An agent picks up its task, works a little and answers.
   const play = async (space: string, task: number, agent: string) => {
     const t = thread(space);
     const member = t.members.find((m) => m.name === agent);
     const system = { kind: "system", id: "system:dispatcher", name: "Cua" };
+    // The live row shows at once, then each stage as the run reports it.
+    const cold = member?.status === "asleep";
+    setStage(space, agent, cold ? "starting" : "thinking");
+    if (member) Object.assign(member, { status: "working", activity: cold ? "Starting" : "Thinking" });
     await wait(stepMs);
-    if (member?.status === "asleep") append(space, { author: system, kind: "system", text: `${label(agent)} woke up and joined`, task_seq: task });
-    if (member) Object.assign(member, { status: "working", activity: "on your message" });
+    if (cold) {
+      setStage(space, agent, "installing");
+      await wait(stepMs);
+      setStage(space, agent, "starting");
+      await wait(stepMs);
+      // The note comes once the agent is up.
+      append(space, { author: system, kind: "system", text: `${label(agent)} woke up and joined`, task_seq: task });
+    }
     append(space, { author: system, kind: "task_update", update: { task, state: "working", session: 1, note: null } });
-    await wait(stepMs * 3);
-    append(space, { author: { kind: "agent", id: `agent:${agent}`, name: agent, ...(member ? { identity: member.identity } : {}) }, reply_to: task, text: "Done. Nothing else needed from me." });
+    setStage(space, agent, "thinking");
+    if (member) Object.assign(member, { activity: "Thinking" });
+    await wait(stepMs * 2);
+    setStage(space, agent, "using Bash");
+    if (member) Object.assign(member, { activity: "Using Bash" });
+    await wait(stepMs * 2);
+    // It starts to answer: what it has said so far streams as one entry, replaced whole each time.
+    const said = "Done. Nothing else needed from me.";
+    for (const part of [said.slice(0, 5), said.slice(0, 18)]) {
+      setStage(space, agent, "replying", part);
+      await wait(stepMs);
+    }
+    append(space, { author: { kind: "agent", id: `agent:${agent}`, name: agent, ...(member ? { identity: member.identity } : {}) }, reply_to: task, text: said });
+    setStage(space, agent, null);
     append(space, { author: system, kind: "task_update", update: { task, state: "done", session: 1, note: null } });
     if (member) Object.assign(member, { status: "idle", activity: null });
   };
@@ -592,7 +713,7 @@ export function demoThreadHandlers({
   const no = (op: ThreadOpName) => () => Promise.reject(new UnsupportedOperationError("demo", op));
   if (!enabled) return Object.fromEntries(THREAD_OPERATIONS.map((op) => [op, no(op)])) as unknown as DemoHandlers<ThreadOpName>;
   return {
-    "thread.read": async ({ spaceId, after, before, limit, markRead, followMs, with: withAgent }) => {
+    "thread.read": async ({ spaceId, after, before, limit, markRead, followMs, liveAfter, with: withAgent }) => {
       const t = thread(spaceId);
       const lim = Math.max(1, Math.min(500, limit ?? 100));
       if (withAgent) {
@@ -600,7 +721,7 @@ export function demoThreadHandlers({
         return threadPageFromTool(dmPage(spaceId, withAgent, after ?? null, lim, before ?? null, !!markRead));
       }
       let p = page(spaceId, after ?? null, lim, before ?? null);
-      if (p.entries.length === 0 && followMs && after != null) {
+      if (p.entries.length === 0 && followMs && after != null && (liveAfter == null || liveAfter === p.live.key)) {
         // Wait for the next entry, at most followMs.
         await new Promise<void>((resolve) => {
           const set = waiting.get(spaceId) ?? new Set();
@@ -665,10 +786,12 @@ export function demoThreadHandlers({
     "thread.members": async ({ spaceId, overview }) =>
       agentMembersFromTool({ members: thread(spaceId).members.map((m) => (overview ? { ...memberJson(m), ...dmSummary(spaceId, m) } : memberJson(m))) }),
     "thread.setRights": async ({ spaceId, name, task, control, approve }) => {
-      if (role !== "owner") throw denied(`only the owner and admins change who can task, stop and approve ${name}`);
       const t = thread(spaceId);
       const m = t.members.find((x) => x.name === name);
       if (!m) throw new HostError(`no agent member ${name}`, "not_found");
+      // The Space's owner and admins, and the agent's own owner.
+      const owns = m.identity.owner.id === DEMO_THREAD_ME.id;
+      if (role !== "owner" && !(role === "member" && owns)) throw denied(`only the owner, admins and ${name}'s owner change who can task, stop and approve ${name}`);
       const next = { ...m.rights, ...(task ? { task } : {}), ...(control ? { control } : {}), ...(approve ? { approve } : {}) };
       const changed = (["task", "control", "approve"] as const).filter((r) => JSON.stringify(next[r]) !== JSON.stringify(m.rights[r]));
       m.rights = next;
@@ -716,7 +839,7 @@ export function demoThreadHandlers({
       if (redeemAfter !== null) void wait(redeemAfter).then(() => redeem(spaceId, row));
       const name = spaceId.slice(spaceId.lastIndexOf("/") + 1).replace(/^[a-z]+:/, "");
       const url = `https://cua.ai/join/${code}`;
-      return joinCodeFromTool({ id: row.id, code, url, line: `Join my Cua Space "${name}": ${url}`, expires_at_ms: row.expires_at_ms });
+      return joinCodeFromTool({ id: row.id, code, url, line: `Join my Cua Space "${name}": ${url} ${JOIN_LINE_STEPS}`, expires_at_ms: row.expires_at_ms });
     },
     "thread.joinCodeList": async ({ spaceId }) => {
       const t = thread(spaceId);
@@ -767,6 +890,24 @@ export function demoThreadHandlers({
       return null;
     },
   };
+}
+
+/**
+ * `?demo=thread-slow`: the machine that has `space` does not answer, so
+ * every thread call for it waits (the Agents page keeps drawing the other
+ * Spaces and says it is still checking this one).
+ */
+export function hangingSpace(handlers: DemoHandlers<ThreadOpName>, space: string): DemoHandlers<ThreadOpName> {
+  return Object.fromEntries(
+    Object.entries(handlers).map(([op, h]) => [op, (args: { spaceId?: string }) => (args.spaceId === space ? new Promise<never>(() => undefined) : (h as (a: unknown) => unknown)(args))]),
+  ) as unknown as DemoHandlers<ThreadOpName>;
+}
+
+/** `?demo=thread-long`: `count` more tasks for Hermes in the demo's Space, so its DM is long (the agents answer a few steps later). */
+export function seedLongDm(handlers: DemoHandlers<ThreadOpName>, count: number): void {
+  void (async () => {
+    for (let i = 1; i <= count; i++) await handlers["thread.post"]({ spaceId: DEMO_THREAD_SPACE, text: `@hermes check item ${i} of the release list` } as never);
+  })();
 }
 
 const label = (agent: string) => (agent === "claude" ? "Claude Code" : agent.charAt(0).toUpperCase() + agent.slice(1));

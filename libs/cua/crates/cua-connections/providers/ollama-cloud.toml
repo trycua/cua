@@ -1,0 +1,21 @@
+id = "ollama-cloud"
+name = "Ollama Cloud"
+icon = "ollama-cloud"
+tier = "more"
+rank = 140
+kind = "hosted"
+aliases = ["ollama"]
+wire = "openai-chat"
+base_url = "https://ollama.com/v1"
+base_url_env = "OLLAMA_BASE_URL"
+default_model = ""
+hermes_id = "ollama-cloud"
+key_help = "Create a key at ollama.com/settings. For a server on your own machine use Custom endpoint."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "OLLAMA_API_KEY"
+
+[delivery]
+hermes = ["OLLAMA_API_KEY"]

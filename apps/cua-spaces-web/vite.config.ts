@@ -59,9 +59,6 @@ export default defineConfig({
     // runner under the whole suite's load takes seconds where a laptop
     // takes milliseconds (see src/test-setup.ts).
     setupFiles: ["src/test-setup.ts"],
-    // The suite tests the redesign (`spaces_redesign`); src/legacy/__tests__
-    // turn it off to keep the default UI working.
-    env: { VITE_CUA_FLAG_SPACES_REDESIGN: "1" },
     testTimeout: 15_000,
   },
 });

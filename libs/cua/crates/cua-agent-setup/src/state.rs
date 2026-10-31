@@ -67,7 +67,7 @@ pub struct ConnectionRecord {
 pub struct SignInRecord {
     /// The variable a run gets it as.
     pub env: String,
-    /// "Codex · ChatGPT sign-in".
+    /// "ChatGPT sign-in for Codex".
     pub label: String,
     /// RFC 3339.
     pub copied_at: String,

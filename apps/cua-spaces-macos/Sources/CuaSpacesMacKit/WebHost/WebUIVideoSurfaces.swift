@@ -165,6 +165,7 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
             stream.users = 1
             letGo(stream, key: key)
         }
+        warm.removeAll()
     }
 
     // MARK: - Surfaces
@@ -184,8 +185,10 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.view.input.showsCursorOverlay = u.interactive && surface.view.presence?.presenceView == nil
         surface.view.apply(surface.layout)
         show(surface)
-        // Keys never stay with a viewer that page UI covers or that left the screen.
-        if focusedId == surface.id, surface.view.isHidden { focus(nil) }
+        // Keys never stay with a viewer that page UI covers or that left the
+        // screen, nor with one the page made non-interactive (a modal dialog
+        // is open over it: the video keeps playing, the dialog takes the keys).
+        if focusedId == surface.id, surface.view.isHidden || !u.interactive { focus(nil) }
     }
 
     private func attach(_ u: VideoSurfaceUpdate, in webView: WKWebView) -> Surface {
@@ -201,6 +204,7 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         let stream = streams[surface.key] ?? Stream()
         streams[surface.key] = stream
         stream.users += 1
+        warm.removeAll { $0 == surface.key }
         if let failure = stream.failure {
             setPhase(surface, .failed(failure, opening: true))
         } else if let session = stream.session {
@@ -239,7 +243,21 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         }
     }
 
+    private func isSuspended(_ status: LiveStreamSession.Status) -> Bool {
+        if case .suspended = status { return true }
+        return false
+    }
+
     private func statusChanged(_ key: StreamKey, _ status: LiveStreamSession.Status) {
+        // A warm session no slot shows that stops streaming (the Space
+        // stopped, the machine went away, the daemon restarted) is let go
+        // now: reconnecting and backing off for nobody would hold the
+        // transport and its capture on a Space nobody is looking at. The
+        // slot that comes back opens a fresh stream and says why if it can't.
+        if isUnattended(key) {
+            if status != .streaming, !isSuspended(status) { dropWarm(key) }
+            return
+        }
         guard case let .failed(reason) = status else { return }
         for s in surfaces.values where s.key == key { setPhase(s, .failed(reason)) }
     }
@@ -343,10 +361,14 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.view.removeFromSuperview()
         if surfaces.isEmpty { unwatchWindow() }
         guard let stream = streams[surface.key] else { return }
-        guard grace, surface.key.tier == .full, stream.session != nil, slotGrace > .zero else {
+        // Only a session that is streaming now goes warm: one that is
+        // reconnecting or failed has nothing to come back to.
+        let healthy = stream.session.map { $0.status == .streaming || isSuspended($0.status) } ?? false
+        guard grace, surface.key.tier == .full, healthy, !paused, slotGrace > .zero else {
             return letGo(stream, key: surface.key)
         }
         let key = surface.key
+        goWarm(key)
         Task { @MainActor [weak self, weak stream] in
             try? await Task.sleep(for: self?.slotGrace ?? .zero)
             guard let self, let stream else { return }
@@ -354,10 +376,50 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         }
     }
 
-    /// How long a viewer's session outlives its slot: the page that moves
-    /// the viewer (call view to thread view and back) mounts its new slot
-    /// in that time, and it binds to the same live session.
-    var slotGrace: Duration = .milliseconds(1500)
+    /// How long a viewer's session outlives its slot. A page that moves the
+    /// viewer (call view to thread view and back) mounts its new slot at
+    /// once, and a person who leaves the Space and comes back (Spaces, another
+    /// page, then the Space again) comes within a minute: either way the new
+    /// slot binds to the same live session and shows its last frame, with no
+    /// reconnect. It was 1.5 s, so every real visit away reopened the stream
+    /// from scratch (list the Spaces, ask for a ticket, dial, wait for a
+    /// keyframe).
+    ///
+    /// Bounded in time, and never kept for nothing: a warm session whose
+    /// transport drops (the Space stopped, the machine went away) is
+    /// released at once, not reconnected for nobody (`statusChanged`); at
+    /// most `maxWarm` Spaces stay warm, the oldest going first; a hidden
+    /// window, a closed window and a page load release them all.
+    var slotGrace: Duration = .seconds(45)
+
+    /// The most viewer sessions kept warm with no slot at once.
+    var maxWarm = 3
+
+    /// Viewer streams with no slot, oldest first (the order they went warm).
+    private var warm: [StreamKey] = []
+
+    /// A stream no slot shows and no panel holds: warm, waiting for its
+    /// slot to come back.
+    private func isUnattended(_ key: StreamKey) -> Bool {
+        guard let stream = streams[key], stream.holds == 0 else { return false }
+        return !surfaces.values.contains { $0.key == key }
+    }
+
+    /// Stops a warm stream now (its grace timers find it gone and do nothing).
+    private func dropWarm(_ key: StreamKey) {
+        warm.removeAll { $0 == key }
+        guard let stream = streams[key], isUnattended(key) else { return }
+        stream.users = 1
+        letGo(stream, key: key)
+    }
+
+    /// Keeps `key` warm, and lets the oldest warm streams go beyond `maxWarm`.
+    private func goWarm(_ key: StreamKey) {
+        warm.removeAll { $0 == key }
+        warm.append(key)
+        warm.removeAll { !isUnattended($0) }
+        while warm.count > maxWarm { dropWarm(warm[0]) }
+    }
 
     /// One user fewer; the last one stops the session.
     private func letGo(_ stream: Stream, key: StreamKey) {
@@ -503,6 +565,9 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
     func setPaused(_ hidden: Bool) {
         guard hidden != paused else { return }
         paused = hidden
+        // A hidden window keeps nothing warm: its sessions stop, and a warm
+        // one has no slot to start again for.
+        if hidden { for key in warm { dropWarm(key) } }
         for stream in streams.values {
             // The picture-in-picture panel shows a held stream: it keeps going.
             guard let session = stream.session, stream.holds == 0 else { continue }

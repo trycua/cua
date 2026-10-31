@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Share and Add an agent lead to each other on the redesigned Space page:
+// Share and Add an agent lead to each other on the Space page:
 // Share's footer has "Add an agent" left of Done, and Add an agent has
 // "Share with a person". Each replaces the other (one dialog at a time,
-// focus in the one that opened, Escape closes it). With the redesign off
-// the Share sheet stays as it was.
+// focus in the one that opened, Escape closes it).
 
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -24,7 +23,6 @@ const HOST = { failsCreates: false, listsGhost: false };
 const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
 const q = (sel: string) => document.querySelector<HTMLElement>(sel);
 const dialogs = () => document.querySelectorAll("[role=dialog]").length;
-const flag = (on: boolean) => vi.stubEnv("VITE_CUA_FLAG_SPACES_REDESIGN", on ? "1" : "0");
 
 async function openShare() {
   const share = await screen.findAllByRole("button", { name: "Share" });
@@ -35,8 +33,7 @@ async function openShare() {
 }
 
 describe.skipIf(!wasmBuilt)("Share and Add an agent", () => {
-  it("redesign: Share opens Add an agent in its place, and Add an agent opens Share back", async () => {
-    flag(true);
+  it("Share opens Add an agent in its place, and Add an agent opens Share back", async () => {
     await mountApp(path, HOST);
     await waitFor(() => expect(q("[data-composer]")).not.toBeNull());
     await openShare();
@@ -62,14 +59,5 @@ describe.skipIf(!wasmBuilt)("Share and Add an agent", () => {
     await waitFor(() => expect(q("[data-share-sheet]")).not.toBeNull());
     await waitFor(() => expect(q("[data-add-agent]")).toBeNull());
     expect(dialogs()).toBe(1);
-  });
-
-  it("redesign off: the Share sheet has no Add an agent", async () => {
-    flag(false);
-    await mountApp(path, HOST);
-    await waitFor(() => expect(document.body.textContent).toContain("ubuntu-build"));
-    await openShare();
-    expect(q("[data-share-add-agent]")).toBeNull();
-    expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
   });
 });

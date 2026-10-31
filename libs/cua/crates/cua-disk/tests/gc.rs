@@ -102,6 +102,7 @@ fn qemu_sandbox(l: &Layout, name: &str, backing: &Path) {
         shared_memory: false,
         pinned: false,
         bulk: false,
+        tpm: false,
     };
     std::fs::write(dir.join("state.json"), serde_json::to_vec(&st).unwrap()).unwrap();
 }

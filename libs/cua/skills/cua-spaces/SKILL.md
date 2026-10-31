@@ -64,7 +64,7 @@ user's Tailscale, or the LAN):
 3. Sign in on the mini: `cua auth login --remote` prints a device code and a
    URL. Show both to the user and have them approve it (on another signed-in
    device or at the URL).
-4. `cua host setup --profile spare --name "<name>"` hosts Spaces only (no
+4. `cua host setup --share spaces --name "<name>"` hosts Spaces only (no
    desktop sharing), through the cua.ai relay.
 5. Tell the user: the mini needs an active GUI login session (cua-spacesd
    runs as a LaunchAgent in the Aqua session, so it won't start at the

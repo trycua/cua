@@ -49,9 +49,30 @@ export function sameSurface(a: SurfaceState | null, b: SurfaceState): boolean {
   );
 }
 
-/** Page UI that hides the video entirely when it overlaps a slot: a dialog
- * takes the keyboard and dims the page, so the video under it goes. */
+/** Page UI that hides a Space tile's video entirely when it overlaps the
+ * tile: a dialog takes the keyboard and dims the page, so the video under it
+ * goes. A dialog-role popup that is not modal (`keepUnderDialogs`, the viewer)
+ * is a hole, like a menu. A popover that marks itself a hole
+ * (`data-video-occluder`, a profile card) is no occluder for either. A modal
+ * dialog (one with the dimmed layer, [`modalOpen`]) hides the viewer too: see
+ * `VideoSlotReporter.measure`. */
 export const OCCLUDER_SELECTOR = ['[role="dialog"]', '[role="alertdialog"]'].join(",");
+
+/** The dimmed layer under a modal dialog (our Dialog and AlertDialog
+ * backdrops): it paints over the whole page. A native video layer sits above
+ * the web view and cannot be dimmed or covered by it, so while a modal dialog
+ * is open the viewer's video is hidden (`occluded`), takes no pointer or keys,
+ * and gives the keyboard back (`modalOpen`); it returns when the dialog closes. */
+export const DIM_SELECTOR = "[data-window-dim]";
+
+/** A dialog as a hole (a viewer that keeps its video under dialogs). */
+const DIALOG_HOLE_SELECTOR = [OCCLUDER_SELECTOR, DIM_SELECTOR].join(",");
+
+/** Whether a modal dialog is open: the page dims behind it and the Space
+ * under it must take neither the pointer nor the keys, nor draw over it. */
+export function modalOpen(doc: Document = document): boolean {
+  return doc.querySelector(`${DIM_SELECTOR}:not([data-closed]):not([data-ending-style])`) !== null;
+}
 
 /**
  * Small page UI that floats over a slot (menus, popovers, tooltips, toasts,
@@ -155,6 +176,8 @@ export class VideoSlotReporter {
   private mutations: MutationObserver | null = null;
   private dpr: MediaQueryList | null = null;
   private focused: string | null = null;
+  /** The keyboard was handed back to the page for the modal dialog open now (once per dialog). */
+  private releasedForModal = false;
   private next = 0;
 
   constructor(
@@ -208,6 +231,13 @@ export class VideoSlotReporter {
 
   /** Measures every slot now and sends what changed. */
   flush(): void {
+    // A modal dialog takes the keyboard from a viewer that has it (once; the host answers `video.focus`).
+    const modal = modalOpen(this.win.document);
+    if (modal && this.focused && !this.releasedForModal) {
+      this.releasedForModal = true;
+      this.focus(null);
+    }
+    if (!modal) this.releasedForModal = false;
     const update: SurfaceState[] = [];
     for (const slot of this.slots.values()) {
       const next = this.measure(slot);
@@ -229,6 +259,11 @@ export class VideoSlotReporter {
       width: Math.max(0, box.width - 2 * inset),
       height: Math.max(0, box.height - 2 * inset),
     });
+    // The Space viewer stays drawn under every popup, card, menu and tooltip (CUA-2641: they are holes); a tile hides under a dialog.
+    // A modal dialog hides both: the native video layer cannot sit under the page's dimmed layer or the dialog, and it must never
+    // capture the pointer or keys while one is up.
+    const keep = slot.tier === "full";
+    const modal = modalOpen(this.win.document);
     const clipRaw = visiblePart(slot.el, rect, this.win);
     const clip = clipRaw ? roundRect(clipRaw) : null;
     const shown = this.win.document.visibilityState !== "hidden" && clip !== null && clip.width > 0 && clip.height > 0;
@@ -236,12 +271,13 @@ export class VideoSlotReporter {
       surfaceId: slot.id,
       spaceId: slot.spaceId,
       tier: slot.tier,
-      interactive: slot.interactive,
+      // Under a modal dialog nothing takes the pointer or keys.
+      interactive: slot.interactive && !modal,
       rect,
       clip,
       radius: Math.max(0, slot.radius - inset),
-      occluded: shown && clip ? isOccluded(slot.el, clip, this.win.document, slot.radius) : false,
-      holes: shown && clip ? videoHoles(slot.el, clip, this.win.document).map(roundRect) : [],
+      occluded: shown && clip ? modal || isOccluded(slot.el, clip, this.win.document, slot.radius, keep) : false,
+      holes: shown && clip && !modal ? videoHoles(slot.el, clip, this.win.document, keep).map(roundRect) : [],
       visible: shown,
     };
   }
@@ -347,9 +383,11 @@ export function visiblePart(el: Element, rect: SurfaceRect, win: Window = window
  * (`INERT_SELECTOR`) and the slot's own ancestors (hit when an open modal
  * menu made the page `inert`) don't count.
  */
-export function isOccluded(el: Element, clip: SurfaceRect, doc: Document = document, radius = 0): boolean {
+export function isOccluded(el: Element, clip: SurfaceRect, doc: Document = document, radius = 0, keepUnderDialogs = false): boolean {
   for (const o of doc.querySelectorAll(OCCLUDER_SELECTOR)) {
     if (el.contains(o) || o.contains(el)) continue;
+    // A dialog-role popup that is a hole (a profile card) never hides the video, nor does any dialog over a viewer.
+    if (keepUnderDialogs || o.closest(HOLE_SELECTOR)) continue;
     const r = o.getBoundingClientRect();
     if (r.width > 0 && r.height > 0 && intersect(clip, { x: r.x, y: r.y, width: r.width, height: r.height })) return true;
   }
@@ -365,7 +403,7 @@ export function isOccluded(el: Element, clip: SurfaceRect, doc: Document = docum
       // An ancestor of the slot can't paint over it: it is what hit-testing
       // reaches when the slot itself takes no hits (a modal menu makes the
       // rest of the page `inert`).
-      if (hit && !hit.contains(el) && !el.contains(hit) && !hit.closest(HOLE_SELECTOR)) return true;
+      if (hit && !hit.contains(el) && !el.contains(hit) && !hit.closest(keepUnderDialogs ? `${HOLE_SELECTOR},${DIALOG_HOLE_SELECTOR}` : HOLE_SELECTOR)) return true;
     }
   }
   return false;
@@ -387,10 +425,12 @@ function topmostPainted(doc: Document, x: number, y: number): Element | null {
  * viewer's key bar, a tile's checkbox and power button while they show),
  * each clipped to it: the host draws no video there.
  */
-export function videoHoles(el: Element, clip: SurfaceRect, doc: Document = document): SurfaceRect[] {
+export function videoHoles(el: Element, clip: SurfaceRect, doc: Document = document, keepUnderDialogs = false): SurfaceRect[] {
   const holes: SurfaceRect[] = [];
   const win = doc.defaultView;
-  for (const o of doc.querySelectorAll(HOLE_SELECTOR)) {
+  // Over a viewer that keeps its video under dialogs, a dialog's popup is a hole (its dimmed backdrop is not: the video shows through it).
+  const holeSelector = keepUnderDialogs ? `${HOLE_SELECTOR},${OCCLUDER_SELECTOR}` : HOLE_SELECTOR;
+  for (const o of doc.querySelectorAll(holeSelector)) {
     // Floating UI inside the slot counts only when it asks (`data-video-hole`).
     if (o.contains(el) || (el.contains(o) && !o.hasAttribute("data-video-hole"))) continue;
     if (o.hasAttribute("data-video-hole")) {
@@ -400,7 +440,7 @@ export function videoHoles(el: Element, clip: SurfaceRect, doc: Document = docum
       if (win && !showsNow(o, scope, win)) continue;
     }
     // One hole for a nested pair (a menu inside a marked popup).
-    if (o.parentElement?.closest(HOLE_SELECTOR)) continue;
+    if (o.parentElement?.closest(holeSelector)) continue;
     const r = o.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) continue;
     const hole = intersect(clip, { x: r.x, y: r.y, width: r.width, height: r.height });

@@ -14,29 +14,52 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// What `cua host setup --share` shares, the app's sharing switch.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostShare {
+    /// Share this computer's own desktop only.
+    Desktop,
+    /// Provide Spaces for your devices; keep this desktop private.
+    Spaces,
+    /// Share this desktop and provide Spaces.
+    Both,
+    /// Share nothing (setup refuses: there is nothing to set up).
+    None,
+}
+
+impl HostShare {
+    /// `(share_desktop, provide_spaces)` the value asks for.
+    pub fn settings(self) -> (bool, bool) {
+        match self {
+            Self::Desktop => (true, false),
+            Self::Spaces => (false, true),
+            Self::Both => (true, true),
+            Self::None => (false, false),
+        }
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum HostCmd {
     /// Set this computer up for unattended access: install cua-spacesd as
     /// a service that joins the cua.ai relay as your account (default) or
-    /// serves on a direct ip:port. By default (the `desktop` profile) it
+    /// serves on a direct ip:port. By default it
     /// shares this computer's desktop and, on a computer set up for the
     /// first time through the relay, provides Spaces to your devices (a
     /// host in your pool: `cua run` jobs and `--on auto` Spaces can run
-    /// here, within its limits); `--no-provide-spaces` leaves that off, and
-    /// `cua host config --provide-spaces off` turns it off later. A
-    /// computer set up before keeps what it provides. `--profile spare` or
-    /// `--no-desktop` provides Spaces only, so its own desktop stays
-    /// private. Running it again with the same options changes nothing (a
-    /// stopped service starts again).
+    /// here, within its limits). `--share` picks what it shares: `desktop`,
+    /// `spaces` (its own desktop stays private), `both` or `none`;
+    /// `cua host config` changes it later. A computer set up before keeps
+    /// what it provides. Running it again with the same options changes
+    /// nothing (a stopped service starts again).
     #[command(after_help = "Examples:
   # Join the cua.ai relay as your account (shares this desktop and
   # provides Spaces to your devices)
   cua host setup
   # Share this desktop only
-  cua host setup --no-provide-spaces
+  cua host setup --share desktop
   # A spare computer: do not share its desktop, run Spaces for your devices
-  cua host setup --profile spare --name \"Mac mini (spare)\"
-  cua host setup --no-desktop --provide-spaces
+  cua host setup --share spaces --name \"Mac mini (spare)\"
   # Add this computer with a one-time code from the Cua Spaces app
   # (Add a computer) or `cua host pair`: no sign-in needed here
   cua host setup --pair K7QM-4XPB-2RHD
@@ -75,29 +98,32 @@ pub enum HostCmd {
         /// service runs as the app's own login item ("Cua Spaces").
         #[arg(long, default_value = "auto")]
         runner: String,
-        /// What this computer is for: `desktop` (share this desktop, and
-        /// provide Spaces on a new relay setup; the default) or `spare` (do
-        /// not share the desktop; provide Spaces).
-        #[arg(long, value_parser = ["desktop", "spare"])]
+        /// What this computer shares: its own desktop (screen, input,
+        /// shell, files), the Spaces it creates for your enrolled devices
+        /// (Lume macOS VMs, Docker Linux containers), both, or neither
+        /// (refused). Default: the desktop, plus Spaces on a new relay
+        /// setup; a computer set up before keeps what it provides.
+        #[arg(
+            long,
+            value_enum,
+            value_name = "WHAT",
+            conflicts_with_all = ["profile", "desktop", "no_desktop", "provide_spaces", "no_provide_spaces"]
+        )]
+        share: Option<HostShare>,
+        /// Hidden alias: `--share spaces` is `--profile spare`.
+        #[arg(long, hide = true, value_parser = ["desktop", "spare"])]
         profile: Option<String>,
-        /// Share this computer's own desktop as a Space.
-        #[arg(long, overrides_with = "no_desktop")]
+        /// Hidden alias of the desktop half of `--share`.
+        #[arg(long, hide = true, overrides_with = "no_desktop")]
         desktop: bool,
-        /// Do not share this computer's own desktop (screen, input, shell,
-        /// files): relayed callers reach only the Spaces it provides.
-        #[arg(long)]
+        /// Hidden alias of `--share spaces` with `--provide-spaces`.
+        #[arg(long, hide = true)]
         no_desktop: bool,
-        /// Create Spaces for your enrolled devices on this computer's
-        /// runtimes (Lume macOS VMs, Docker Linux containers). The default
-        /// for a new relay setup; a computer set up before keeps its
-        /// setting unless this (or `--no-provide-spaces`) is given. On its
-        /// own it keeps the default `desktop` profile, so this computer's
-        /// desktop is shared too; add `--no-desktop` (or use `--profile
-        /// spare`) to provide Spaces only.
-        #[arg(long, overrides_with = "no_provide_spaces")]
+        /// Hidden alias: with the default profile, `--share both`.
+        #[arg(long, hide = true, overrides_with = "no_provide_spaces")]
         provide_spaces: bool,
-        /// Do not create Spaces for other devices (only share this desktop).
-        #[arg(long)]
+        /// Hidden alias: with the default profile, `--share desktop`.
+        #[arg(long, hide = true)]
         no_provide_spaces: bool,
         /// Provided Spaces at once (default 4; 0: no limit).
         #[arg(long)]
@@ -166,7 +192,13 @@ pub enum HostCmd {
   cua host config
   # Stop sharing this desktop; keep providing Spaces
   cua host config --desktop off --provide-spaces on
-  cua host config --max-spaces 6")]
+  cua host config --max-spaces 6
+  # Give the Spaces other machines create here at most 32 GB of memory and
+  # 200 GB of disk in total, and stop each after 8 hours (0: no limit)
+  cua host config --max-memory 32 --max-disk 200 --max-run-time 480
+  # Keep no copies of public git repositories on this machine, or at most 2 GB
+  cua host config --repo-cache off
+  cua host config --repo-cache on --repo-cache-size 2")]
     Config {
         /// Share this computer's own desktop: on | off.
         #[arg(long, value_parser = ["on", "off"])]
@@ -180,7 +212,33 @@ pub enum HostCmd {
         /// macOS VMs at once, 0 to 2 (Apple's license allows two per Mac).
         #[arg(long)]
         max_macos_vms: Option<u32>,
+        /// Memory in GB the Spaces other machines create here may use in
+        /// total (0: no limit).
+        #[arg(long, value_name = "GB")]
+        max_memory: Option<u32>,
+        /// Disk in GB the Spaces other machines create here may use in
+        /// total (0: no limit).
+        #[arg(long, value_name = "GB")]
+        max_disk: Option<u32>,
+        /// Minutes a Space created here by another machine may run before
+        /// it is stopped (0: no limit).
+        #[arg(long, value_name = "MINUTES")]
+        max_run_time: Option<u32>,
+        /// The repo cache: on | off. It keeps verified copies of public git
+        /// repositories on this machine so a repeat `git clone` in a Space
+        /// starts from one (never private repositories, never anything off
+        /// this machine's disk).
+        #[arg(long, value_parser = ["on", "off"])]
+        repo_cache: Option<String>,
+        /// The most disk the repo cache may use, in GB (`auto`: the smaller
+        /// of 5 GB and a tenth of the free disk). The least recently used
+        /// repositories go first.
+        #[arg(long, value_name = "GB")]
+        repo_cache_size: Option<String>,
     },
+    /// What the repo cache holds, and empty it.
+    #[command(subcommand)]
+    Cache(HostCacheCmd),
     /// Show whether this computer is set up, the service, and who is
     /// connected.
     #[command(after_help = "Examples:
@@ -265,6 +323,26 @@ pub enum HostCmd {
     },
 }
 
+/// `cua machines`: your computers on the relay.
+#[derive(Subcommand, Debug)]
+pub enum MachinesCmd {
+    /// Remove a computer that is gone: its row leaves your relay directory,
+    /// then the signed-in device with exactly its name is revoked (never this
+    /// device; nothing when several match). A computer that is connected now
+    /// is refused: run `cua host remove` on it.
+    #[command(after_help = "Examples:
+  cua machines rm old-laptop
+  cua machines rm relay:0123abcd4567ef89 --yes --json")]
+    Rm {
+        /// The computer's name, machine id or `relay:<id>` (`cua spaces ls`).
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Remove without asking.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+}
+
 #[derive(Subcommand, Debug)]
 pub enum SpacesCmd {
     /// Registered Spaces and your computers on the relay.
@@ -302,7 +380,7 @@ Examples:
   cua spaces add local:my-sandbox
   cua spaces add http://127.0.0.1:8765/mcp --service tools
   # A computer that provides Spaces over Tailscale, without the relay
-  # (`cua host setup --direct ... --provide-spaces` on it prints this)
+  # (`cua host setup --direct ... --share both` on it prints this)
   cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"")]
     Add {
         /// The Space's cua-spacesd (`http(s)://host:port`, `host:port`,
@@ -326,7 +404,7 @@ Examples:
         host: bool,
     },
     /// Create Spaces: on this computer, on one of your computers that
-    /// provides Spaces (`cua host setup --no-desktop --provide-spaces` there),
+    /// provides Spaces (`cua host setup --share spaces` there),
     /// or in your own cloud account.
     #[command(after_help = "Examples:
   cua spaces create linux
@@ -704,6 +782,40 @@ pub fn daemon_share_gate(yes: bool, terminal: bool) -> std::result::Result<(), C
          with Touch ID or your password on this computer. Pass --yes (-y) when someone there \
          will confirm it; sharing through the daemon cannot skip that confirmation"
             .into(),
+    ))
+}
+
+/// Says how to confirm when a share was stopped because nobody confirmed it
+/// on this computer (CUA-2837). The confirmation is a security gate: sharing
+/// hands a desktop to another account, so no flag skips it. A cancelled,
+/// denied or timed-out prompt used to end with only "biometric authorization
+/// was cancelled".
+pub fn explain_share_presence_failure(err: CuaError) -> CuaError {
+    let msg = match &err {
+        CuaError::PermissionDenied(m) => m.clone(),
+        other => other.to_string(),
+    };
+    // A free account: "Start a team" used to lead nowhere (CUA-2791).
+    if msg.contains(cua_spaces::share::NO_TEAM) && !msg.contains("app.cua.ai") {
+        return CuaError::PermissionDenied(format!(
+            "{msg} Start Teams at {} (from 1 seat), then run `cua auth login` again.",
+            cua_host::spaces_api::BUY_TEAMS_URL
+        ));
+    }
+    if !msg.contains("user presence was not confirmed") || msg.contains("To share:") {
+        return err;
+    }
+    CuaError::PermissionDenied(format!(
+        "{msg}. To share: run the command again at this computer and confirm the prompt with \
+         {}, or share from the Cua app. A script or agent cannot confirm for you; \
+         `--yes` only says someone is there to answer.",
+        if cfg!(target_os = "macos") {
+            "Touch ID or your password"
+        } else if cfg!(target_os = "windows") {
+            "Windows Hello or your password"
+        } else {
+            "your password (the desktop's polkit prompt)"
+        }
     ))
 }
 
@@ -1602,6 +1714,188 @@ impl AccountTokens for SessionTokens {
     }
 }
 
+/// `cua machines rm`: removes a computer that is gone (its relay row, then
+/// the one signed-in device named like it). The caller folds `--yes` into
+/// `confirm`.
+pub async fn remove_machine(
+    cua: &cua_sdk::Cua,
+    auth: &DeviceAuth,
+    tokens: &dyn AccountTokens,
+    name: &str,
+    confirm: &dyn Fn(&str) -> bool,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    use cua_host::DeviceState;
+    // The row is removed through `cua`, the lookup and the device through
+    // `auth`: they must be one relay (a daemon keeps its own).
+    let bound = cua
+        .embedded_runtime()
+        .and_then(|r| r.spaces().relay_account())
+        .map(|a| a.url);
+    let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/');
+    if !bound.is_some_and(|u| same(&u, auth.relay_url())) {
+        return Err(CuaError::InvalidArgument(format!(
+            "this runtime is not bound to the relay {} that your account uses; run it with --embedded",
+            auth.relay_url()
+        )));
+    }
+    // Fresh from the relay: the Space resolver reads a possibly cold cache.
+    let relay = RelayClient::new(auth.relay_url()).map_err(host_err)?;
+    let token = tokens.access_token().await.map_err(host_err)?;
+    let machines = auth.machines_for(&relay, &token).await.map_err(host_err)?;
+    let mut hits: Vec<_> = machines
+        .iter()
+        .filter(|m| m.id == name || format!("relay:{}", m.id) == name || m.name == name)
+        .collect();
+    hits.sort_by(|a, b| a.id.cmp(&b.id));
+    let m = match hits.as_slice() {
+        [] => {
+            return Err(CuaError::NotFound(format!(
+                "no computer named {name:?} in your relay directory (`cua spaces ls` lists them)"
+            )));
+        }
+        [m] => *m,
+        many => {
+            let ids: Vec<_> = many.iter().map(|m| format!("relay:{}", m.id)).collect();
+            return Err(CuaError::InvalidArgument(format!(
+                "several computers are named {name:?}: pass one of {}",
+                ids.join(", ")
+            )));
+        }
+    };
+    let rid = format!("relay:{}", m.id);
+    if m.role != "owner" {
+        return Err(CuaError::PermissionDenied(format!(
+            "{rid} is shared with you; only its owner can remove it"
+        )));
+    }
+    let hosted = m.host.as_deref().is_some_and(|h| !h.is_empty());
+    let cloud = m
+        .meta
+        .get(cua_sandbox_core::byoc::meta::PROVIDER)
+        .is_some_and(|p| !p.is_empty());
+    let registered = !hosted
+        && !m.meta.contains_key(cua_host::META_PROVIDES_SPACES)
+        && m.id.starts_with("space-");
+    if hosted || cloud || registered {
+        return Err(CuaError::InvalidArgument(format!(
+            "{rid} is a Space, not a computer; manage it with `cua spaces`"
+        )));
+    }
+    if m.online {
+        return Err(CuaError::InvalidArgument(format!(
+            "{rid} ({}) is connected now; run `cua host remove` on that computer",
+            m.name
+        )));
+    }
+    if !confirm(&format!(
+        "Remove {} ({rid}) from your relay directory and revoke the signed-in device named {}?",
+        m.name, m.name
+    )) {
+        return Err(CuaError::PermissionDenied(
+            "not removed (pass --yes to remove without a prompt)".into(),
+        ));
+    }
+    // Refuses again if the computer connected meanwhile.
+    let removed = cua.spaces().relay_unregister(rid.clone()).await?;
+    let report = |out: &mut dyn Write, status: &str, ids: &[String], text: String| {
+        if json {
+            let v = serde_json::json!({
+                "machine": { "id": rid, "name": m.name },
+                "removed": removed,
+                "device": { "status": status, "ids": ids, "message": text },
+            });
+            line(out, v.to_string());
+        } else {
+            if removed {
+                line(
+                    out,
+                    format!("Removed {} ({rid}) from your relay directory.", m.name),
+                );
+            } else {
+                line(
+                    out,
+                    format!("{rid} was already gone from your relay directory."),
+                );
+            }
+            line(out, text);
+        }
+    };
+    if !removed {
+        report(out, "not_attempted", &[], "No device was touched.".into());
+        return Ok(0);
+    }
+    let this = auth.device_id().ok().flatten();
+    let found = auth.devices().await.map(|all| {
+        let mut ids: Vec<_> = all
+            .into_iter()
+            .filter(|d| {
+                !m.name.is_empty()
+                    && d.name == m.name
+                    && !d.current
+                    && Some(&d.id) != this.as_ref()
+                    && d.state != DeviceState::Revoked
+            })
+            .map(|d| d.id)
+            .collect();
+        ids.sort();
+        ids
+    });
+    let fail = |out: &mut dyn Write, e: cua_host::Error| {
+        report(
+            out,
+            "failed",
+            &[],
+            "Finish with `cua devices ls` and `cua devices revoke <id>`.".into(),
+        );
+        host_err(e)
+    };
+    let ids = match found {
+        Ok(ids) => ids,
+        Err(e) => return Err(fail(out, e)),
+    };
+    match ids.as_slice() {
+        [] => report(
+            out,
+            "not_found",
+            &[],
+            format!(
+                "No signed-in device named {}; no device was revoked.",
+                m.name
+            ),
+        ),
+        [id] => match crate::devices_cmd::revoke_device(auth, id).await {
+            Ok(d) => report(
+                out,
+                "revoked",
+                &ids,
+                format!("Revoked {} ({}).", d.name, d.id),
+            ),
+            Err(e) => {
+                report(
+                    out,
+                    "failed",
+                    &ids,
+                    "Finish with `cua devices ls` and `cua devices revoke <id>`.".into(),
+                );
+                return Err(e);
+            }
+        },
+        many => report(
+            out,
+            "ambiguous",
+            many,
+            format!(
+                "Several devices are named {} ({}): revoke the right one with `cua devices revoke <id>`.",
+                m.name,
+                many.join(", ")
+            ),
+        ),
+    }
+    Ok(0)
+}
+
 pub fn host_err(e: cua_host::Error) -> CuaError {
     let message = e.to_string();
     host_error(e, message)
@@ -1666,7 +1960,7 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
     line(
         out,
         format!(
-            "  service: {} {}{}",
+            "  runner: {} {}{}",
             s.service.kind,
             if s.service.running {
                 "running"
@@ -1682,6 +1976,9 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
             }
         ),
     );
+    if s.service.kind == "process" {
+        hint_line(out, cua_host::service::PROCESS_RUNNER_NOTE);
+    }
     if s.service.kind == "app-helper" && s.legacy_service {
         hint_line(
             out,
@@ -1790,6 +2087,38 @@ fn render_settings(s: &HostStatus, out: &mut dyn Write) {
                 }
             ),
         );
+        let gb = |used: u32, max: u32, total: u32| {
+            let of = if total > 0 {
+                format!(" (this machine has {total} GB)")
+            } else {
+                String::new()
+            };
+            if max == 0 {
+                format!("{used} GB in use, no limit{of}")
+            } else {
+                format!("{used} of {max} GB{of}")
+            }
+        };
+        line(
+            out,
+            format!(
+                "  memory for those Spaces: {}",
+                gb(s.used_memory_gb, s.max_memory_gb, s.total_memory_gb)
+            ),
+        );
+        line(
+            out,
+            format!(
+                "  disk for those Spaces: {}",
+                gb(s.used_disk_gb, s.max_disk_gb, s.total_disk_gb)
+            ),
+        );
+        if s.max_run_minutes > 0 {
+            line(
+                out,
+                format!("  each Space stops after {} minutes", s.max_run_minutes),
+            );
+        }
     } else {
         line(out, "  provides Spaces: off");
     }
@@ -1909,6 +2238,58 @@ pub async fn run_host(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
+    run_host_to(
+        cmd,
+        home,
+        tokens,
+        device,
+        manager,
+        json,
+        out,
+        &mut std::io::stderr(),
+        RunnerKind::detect(),
+    )
+    .await
+}
+
+/// `cua host cache`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum HostCacheCmd {
+    /// What the repo cache holds: repositories, size and what the last week
+    /// saved.
+    #[command(after_help = "Examples:
+  cua host cache status")]
+    Status,
+    /// Copy one public repository into the cache now, instead of when a Space
+    /// first clones it (or bring a copy up to date). A repository that needs
+    /// a sign-in is never cached.
+    #[command(after_help = "Examples:
+  cua host cache fill https://github.com/vitejs/vite")]
+    Fill {
+        /// The repository's `https` address.
+        url: String,
+    },
+    /// Delete every repository the cache holds. They are copied again the
+    /// next time a Space clones them.
+    #[command(after_help = "Examples:
+  cua host cache clear")]
+    Clear,
+}
+
+/// [`run_host`] with an explicit stderr stream (warnings under `--json`) and
+/// the runner `auto` detects on this machine.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_host_to(
+    cmd: HostCmd,
+    home: &Path,
+    tokens: &dyn AccountTokens,
+    device: Option<&DeviceAuth>,
+    manager: Option<Arc<dyn ServiceManager>>,
+    json: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    detected: RunnerKind,
+) -> Result<i32, CuaError> {
     let mut host = Host::new(home);
     if let Some(m) = manager {
         host = host.with_service_manager(m);
@@ -1923,6 +2304,7 @@ pub async fn run_host(
             allow,
             driver_bin,
             runner,
+            share,
             profile,
             desktop,
             no_desktop,
@@ -1967,6 +2349,7 @@ pub async fn run_host(
             opts.allow = allow;
             opts.driver_bin = driver_bin;
             opts.runner = RunnerKind::parse(&runner).map_err(host_err)?;
+            let requested_runner = opts.runner;
             opts = opts.profile(
                 cua_host::HostProfile::parse(profile.as_deref().unwrap_or("desktop"))
                     .map_err(host_err)?,
@@ -1983,6 +2366,11 @@ pub async fn run_host(
             if no_provide_spaces {
                 opts.provide_spaces = Some(false);
             }
+            if let Some(share) = share {
+                let (desktop, spaces) = share.settings();
+                opts.share_desktop = desktop;
+                opts.provide_spaces = Some(spaces);
+            }
             opts.max_spaces = max_spaces;
             opts.allow_any_address = allow_any_address;
             opts.dedicated = dedicated;
@@ -1995,12 +2383,15 @@ pub async fn run_host(
                 && opts.driver_bin.is_none()
                 && opts.allow.is_empty()
                 && opts.max_spaces.is_none()
+                // `--share none` is always refused, even by a computer that
+                // `host config` set to share nothing.
+                && share != Some(HostShare::None)
             {
                 // Only what this command line says: a re-run that leaves out
                 // the profile keeps what the machine shares.
                 let want = crate::onboard::Want {
                     relay: url.clone(),
-                    share_desktop: (profile.is_some() || desktop || no_desktop)
+                    share_desktop: (share.is_some() || profile.is_some() || desktop || no_desktop)
                         .then_some(opts.share_desktop),
                     // Providing Spaces: what the flags or a spare profile
                     // say; the desktop profile keeps the machine's own.
@@ -2011,7 +2402,10 @@ pub async fn run_host(
                 };
                 let state = crate::onboard::HostState::read(&host).await;
                 if state.is_up(&want) || state.is_down(&want) {
-                    return setup_unchanged(&host, state, &want, pair.is_some(), json, out).await;
+                    let code =
+                        setup_unchanged(&host, state, &want, pair.is_some(), json, out).await?;
+                    warn_setup_runner(&host, requested_runner, detected, json, out, err)?;
+                    return Ok(code);
                 }
             }
             // A pairing code stands in for the account: nothing to sign in.
@@ -2038,6 +2432,7 @@ pub async fn run_host(
                     host_error(e, message)
                 })?;
             emit(&s, json, out)?;
+            warn_setup_runner(&host, requested_runner, detected, json, out, err)?;
             if s.provide_spaces && !json {
                 line(
                     out,
@@ -2196,15 +2591,36 @@ pub async fn run_host(
             provide_spaces,
             max_spaces,
             max_macos_vms,
+            max_memory,
+            max_disk,
+            max_run_time,
+            repo_cache,
+            repo_cache_size,
         } => {
             let on = |v: Option<String>| v.map(|v| v == "on");
+            let repo_flags = repo_cache.is_some() || repo_cache_size.is_some();
+            if repo_flags {
+                crate::repo_cache_cmd::set(
+                    home,
+                    repo_cache.as_deref(),
+                    repo_cache_size.as_deref(),
+                )?;
+            }
             let change = cua_host::HostSettingsChange {
                 share_desktop: on(desktop),
                 provide_spaces: on(provide_spaces),
                 max_spaces,
                 max_macos_vms,
+                max_memory_gb: max_memory,
+                max_disk_gb: max_disk,
+                max_run_minutes: max_run_time,
                 cua_bin: None,
             };
+            if repo_flags && change == cua_host::HostSettingsChange::default() {
+                // Only the repo cache changed: that needs no host setup.
+                crate::repo_cache_cmd::status(home, json, out);
+                return Ok(0);
+            }
             let s = if change == cua_host::HostSettingsChange::default() {
                 host.status().await.map_err(host_err)?
             } else {
@@ -2217,9 +2633,19 @@ pub async fn run_host(
                 return Ok(1);
             } else {
                 render_settings(&s, out);
+                for l in crate::repo_cache_cmd::lines(&crate::repo_cache_cmd::cache_for(home)) {
+                    line(out, l);
+                }
                 render_provided(&s, now_ms(), out);
             }
         }
+        HostCmd::Cache(cmd) => match cmd {
+            HostCacheCmd::Status => crate::repo_cache_cmd::status(home, json, out),
+            HostCacheCmd::Clear => crate::repo_cache_cmd::clear(home, json, out),
+            HostCacheCmd::Fill { url } => {
+                return crate::repo_cache_cmd::fill(home, &url, json, out).await;
+            }
+        },
         HostCmd::Stop => emit(&host.stop_sharing().await.map_err(host_err)?, json, out)?,
         HostCmd::Start => emit(&host.start_sharing().await.map_err(host_err)?, json, out)?,
         HostCmd::Share {
@@ -2291,6 +2717,31 @@ pub async fn run_host(
         }
     }
     Ok(0)
+}
+
+/// Warns after `cua host setup --runner auto` fell back to a plain process:
+/// to `out`, or to `err` with `--json` so stdout stays JSON. Reads the
+/// stored runner (the resolved name), not the live service kind.
+fn warn_setup_runner(
+    host: &Host,
+    requested: RunnerKind,
+    detected: RunnerKind,
+    json: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CuaError> {
+    // Warn only when auto detection here really finds no systemd: a process
+    // runner kept from an explicit choice (or another OS) is not a fallback.
+    if requested != RunnerKind::Auto || detected != RunnerKind::Process {
+        return Ok(());
+    }
+    let Some(config) = host.config().map_err(host_err)? else {
+        return Ok(());
+    };
+    if let Some(text) = cua_host::service::auto_fallback_warning(requested, &config.runner) {
+        hint_line(if json { err } else { out }, text);
+    }
+    Ok(())
 }
 
 /// `cua host setup` on a machine that already is the host asked for: says
@@ -2848,7 +3299,8 @@ fn ls_json(list: &[cua_spaces::SpaceInfo]) -> Vec<serde_json::Value> {
 /// `cua spaces ls` rows: every Space (its id, then its name as the apps
 /// show it), with the Spaces a machine provides indented under it (or,
 /// when that machine is not listed, marked with its name), and how loaded
-/// each of your computers is (`load`, by machine).
+/// each of your computers is (`load`, by machine). This computer's own
+/// row says "(this computer)".
 /// [`grouped_lines_with`] for the tests of `resources_view`.
 #[cfg(test)]
 pub(crate) fn grouped_lines_for_tests(
@@ -2867,13 +3319,15 @@ fn grouped_lines(
 }
 
 /// [`grouped_lines`] with the CPU, MEMORY and DISK ON THIS MAC columns (and
-/// their header) when `columns` is given.
+/// their header) when `columns` is given; their `own_machine` (this
+/// install's relay machine id) is the row tagged "(this computer)".
 fn grouped_lines_with(
     list: &[cua_spaces::SpaceInfo],
     columns: Option<&crate::resources_view::Columns<'_>>,
     load: &std::collections::HashMap<String, String>,
 ) -> Vec<String> {
     use crate::resources_view::{CPU_WIDTH, MEMORY_WIDTH};
+    let this_computer = columns.and_then(|c| c.own_machine.as_deref());
     let row = |s: &cua_spaces::SpaceInfo, indent: &str| {
         let key = s.id.strip_prefix("relay:").unwrap_or(&s.name);
         let s_load = load.get(key).filter(|l| !l.is_empty());
@@ -2899,6 +3353,14 @@ fn grouped_lines_with(
                     cells.disk,
                 )
             }
+        };
+        // The computer this runs on says so, not a Space on it.
+        let line = if s.host.is_empty()
+            && this_computer.is_some_and(|m| s.id.strip_prefix("relay:") == Some(m))
+        {
+            format!("{} (this computer)", line.trim_end())
+        } else {
+            line
         };
         // A durable Space says so (it moves when its machine goes away).
         let line = if s.durable.is_empty() {
@@ -3337,16 +3799,10 @@ mod tests {
             } => assert_eq!((profile.as_deref(), max_spaces), (Some("spare"), Some(6))),
             other => panic!("{other:?}"),
         }
-        match parse(&["setup", "--no-desktop", "--provide-spaces"]) {
-            HostCmd::Setup {
-                profile,
-                no_desktop,
-                provide_spaces,
-                ..
-            } => assert_eq!(
-                (profile.as_deref(), no_desktop, provide_spaces),
-                (None, true, true)
-            ),
+        match parse(&["setup", "--share", "spaces"]) {
+            HostCmd::Setup { share, profile, .. } => {
+                assert_eq!((share, profile), (Some(HostShare::Spaces), None))
+            }
             other => panic!("{other:?}"),
         }
         match parse(&["config", "--desktop", "off", "--provide-spaces", "on"]) {
@@ -3392,8 +3848,8 @@ mod tests {
             "setup",
             "--direct",
             "0.0.0.0:3211",
-            "--profile",
-            "spare",
+            "--share",
+            "spaces",
             "--allow-any-address",
         ]) {
             HostCmd::Setup {
@@ -3602,9 +4058,10 @@ mod tests {
         assert_eq!(json[0]["power_state"], "suspended");
     }
 
-    #[test]
-    fn spaces_on_a_host_list_under_it() {
-        let space = |id: &str, host: &str| cua_spaces::SpaceInfo {
+    /// A relay row for the `cua spaces ls` list tests: `host` set means a
+    /// Space on that machine.
+    fn space(id: &str, host: &str) -> cua_spaces::SpaceInfo {
+        cua_spaces::SpaceInfo {
             id: id.into(),
             name: id.into(),
             display_name: String::new(),
@@ -3642,7 +4099,11 @@ mod tests {
             egress_enforced: None,
             sharing: None,
             stop_reason: String::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn spaces_on_a_host_list_under_it() {
         let none = std::collections::HashMap::new();
         let lines = grouped_lines(
             &[
@@ -3698,6 +4159,62 @@ mod tests {
             lines[0].ends_with("· 2 running · 40% CPU · 55% memory"),
             "{lines:?}"
         );
+    }
+
+    #[test]
+    fn this_computers_own_row_says_so() {
+        let resources = cua_spaces::resources::Resources::default();
+        let lines = |list: &[cua_spaces::SpaceInfo], own: Option<&str>| {
+            let columns = crate::resources_view::Columns {
+                resources: &resources,
+                own_machine: own.map(str::to_string),
+            };
+            grouped_lines_for_tests(list, Some(&columns))
+        };
+        let tagged = |lines: &[String]| {
+            lines
+                .iter()
+                .filter(|l| l.contains("(this computer)"))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        // With this computer in the list: its own row, and only that row.
+        let with = [
+            space("relay:space-1", "studio99"),
+            space("relay:studio99", ""),
+            space("relay:mini1234", ""),
+        ];
+        let out = lines(&with, Some("studio99"));
+        let own = tagged(&out);
+        assert_eq!(own.len(), 1, "{out:?}");
+        assert!(own[0].starts_with("relay:studio99 "), "{out:?}");
+        assert!(
+            out.iter().any(|l| l.starts_with("  relay:space-1")),
+            "{out:?}"
+        );
+        assert!(
+            out.iter().any(|l| l.starts_with("relay:mini1234")),
+            "{out:?}"
+        );
+        // A Space on another machine whose id reads like this computer's
+        // is not this computer.
+        let child = [
+            space("relay:mini1234", ""),
+            space("relay:studio99", "mini1234"),
+        ];
+        let out = lines(&child, Some("studio99"));
+        assert!(
+            out.iter().any(|l| l.starts_with("  relay:studio99")),
+            "{out:?}"
+        );
+        assert!(tagged(&out).is_empty(), "{out:?}");
+        // Without this computer in the list (or no machine id at all): the
+        // rows are what they were.
+        let without = [space("relay:mini1234", ""), space("local:aurora", "")];
+        let out = lines(&without, Some("studio99"));
+        assert!(tagged(&out).is_empty(), "{out:?}");
+        assert_eq!(out, lines(&without, None));
+        assert!(tagged(&lines(&with, None)).is_empty());
     }
 
     #[test]
@@ -3887,6 +4404,32 @@ mod tests {
     }
 
     #[test]
+    fn share_presence_failure_says_how_to_confirm() {
+        let raw = CuaError::PermissionDenied(
+            "not shared: user presence was not confirmed: biometric authorization was cancelled"
+                .into(),
+        );
+        let e = explain_share_presence_failure(raw).to_string();
+        assert!(
+            e.contains("To share: run the command again at this computer"),
+            "{e}"
+        );
+        assert!(e.contains("Cua app"), "{e}");
+        // Applied twice, or to an unrelated error, it changes nothing more.
+        let again =
+            explain_share_presence_failure(CuaError::PermissionDenied(e.clone())).to_string();
+        assert_eq!(again.matches("To share:").count(), 1, "{again}");
+        let free = explain_share_presence_failure(CuaError::PermissionDenied(
+            cua_spaces::share::NO_TEAM.into(),
+        ))
+        .to_string();
+        assert!(free.contains("https://app.cua.ai/buy/teams"), "{free}");
+        assert!(free.contains("cua auth login"), "{free}");
+        let other = CuaError::NotFound("space".into());
+        assert_eq!(explain_share_presence_failure(other.clone()), other);
+    }
+
+    #[test]
     fn daemon_share_fails_fast_without_a_terminal_or_yes() {
         let err = daemon_share_gate(false, false).unwrap_err().to_string();
         assert!(err.contains("stdin is not a terminal"), "{err}");
@@ -4024,6 +4567,22 @@ mod tests {
         assert!(v["resources"]["thisMac"]["memoryTotal"].as_u64().unwrap() > 0);
         let id = v["machineId"].as_str().unwrap().to_string();
 
+        // Another of the owner's computers, on the same relay account.
+        cua_host::RelayClient::new(&relay.url)
+            .unwrap()
+            .register(
+                "acct",
+                &cua_host::relay::RegisterRequest {
+                    id: "bbbb000000000002".into(),
+                    name: "other-box".into(),
+                    allow: vec![],
+                    host: None,
+                    meta: Default::default(),
+                },
+            )
+            .await
+            .unwrap();
+
         // `cua spaces ls` as the owner shows the machine.
         let mut out = Vec::new();
         // No --relay: the relay this machine joined.
@@ -4052,6 +4611,36 @@ mod tests {
         let row = text.lines().find(|l| l.contains("lab-box")).unwrap();
         assert!(row.contains(" busy"), "{row}");
         assert!(row.contains(" free of "), "{row}");
+        // This computer's own row says so; the other computer's does not.
+        assert!(row.contains("(this computer)"), "{text}");
+        assert_eq!(text.matches("(this computer)").count(), 1, "{text}");
+        let other = text.lines().find(|l| l.contains("other-box")).unwrap();
+        assert!(!other.contains("(this computer)"), "{text}");
+
+        // The same account listed from a computer that is not set up as one
+        // of them: no row is this computer.
+        let elsewhere = tempfile::tempdir().unwrap();
+        let mut out = Vec::new();
+        run_spaces(
+            SpacesCmd::Ls {
+                relay: Some(relay.url.clone()),
+                label: vec![],
+                no_size: true,
+            },
+            &elsewhere.path().join(".cua"),
+            Some(Arc::new(StaticToken("acct".into()))),
+            None,
+            false,
+            &mut out,
+        )
+        .await
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("lab-box") && text.contains("other-box"),
+            "{text}"
+        );
+        assert!(!text.contains("(this computer)"), "{text}");
 
         // `--json` carries the same numbers.
         let mut out = Vec::new();
@@ -4213,6 +4802,9 @@ mod tests {
             fn state(&self) -> cua_host::ServiceState {
                 panic!("must not read service state")
             }
+            fn port_free(&self, _: std::net::SocketAddr, _: cua_host::ports::Transport) -> bool {
+                true
+            }
         }
         let relay = FakeRelay::start().await;
         let dir = tempfile::tempdir().unwrap();
@@ -4244,7 +4836,7 @@ mod tests {
                 args.extend(["--direct", "127.0.0.1:3211"]);
             }
             if stage == "preflight" {
-                args.extend(["--no-desktop", "--no-provide-spaces"]);
+                args.extend(["--share", "none"]);
             }
             if stage == "download" {
                 args[2] = missing.to_str().unwrap();
@@ -4392,6 +4984,240 @@ mod tests {
         assert!(text.contains("direct http://127.0.0.1:3299"), "{text}");
     }
 
+    /// Runs `cua host <args>` against the fake manager on a machine where
+    /// `auto` finds no systemd; returns (stdout, stderr).
+    async fn run_fake_io(
+        home: &Path,
+        manager: &Arc<FakeServiceManager>,
+        args: &[&str],
+        json: bool,
+        detected: RunnerKind,
+    ) -> (String, String) {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        run_host_to(
+            parse(args),
+            home,
+            &StaticToken("acct".into()),
+            None,
+            Some(manager.clone()),
+            json,
+            &mut out,
+            &mut err,
+            detected,
+        )
+        .await
+        .unwrap();
+        (
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    /// Runs `cua host <args>` against the fake manager; returns stdout.
+    async fn run_fake(home: &Path, manager: &Arc<FakeServiceManager>, args: &[&str]) -> String {
+        run_fake_io(home, manager, args, false, RunnerKind::Process)
+            .await
+            .0
+    }
+
+    fn direct_args<'a>(driver: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
+        let mut v = vec![
+            "setup",
+            "--direct",
+            "127.0.0.1:3299",
+            "--driver-bin",
+            driver,
+        ];
+        v.extend_from_slice(extra);
+        v
+    }
+
+    #[tokio::test]
+    async fn auto_setup_that_falls_back_to_a_process_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let driver = dir.path().join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        let manager = Arc::new(FakeServiceManager::default());
+        let text = run_fake(
+            &dir.path().join(".cua"),
+            &manager,
+            &direct_args(driver.to_str().unwrap(), &[]),
+        )
+        .await;
+        assert_eq!(
+            text.matches("will not come back after a reboot").count(),
+            1,
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_process_runner_setup_does_not_warn() {
+        let dir = tempfile::tempdir().unwrap();
+        let driver = dir.path().join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        let manager = Arc::new(FakeServiceManager::default());
+        let text = run_fake(
+            &dir.path().join(".cua"),
+            &manager,
+            &direct_args(driver.to_str().unwrap(), &["--runner", "process"]),
+        )
+        .await;
+        assert!(!text.contains("will not come back"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn setup_runner_warning_goes_to_stderr_with_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = dir.path().join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        let manager = Arc::new(FakeServiceManager::default());
+        let mut out = Vec::new();
+        run_host(
+            parse(&direct_args(
+                driver.to_str().unwrap(),
+                &["--runner", "process"],
+            )),
+            &home,
+            &StaticToken("acct".into()),
+            None,
+            Some(manager.clone()),
+            true,
+            &mut out,
+        )
+        .await
+        .unwrap();
+        let host = Host::new(&home).with_service_manager(manager.clone());
+        for json in [true, false] {
+            let (mut o, mut e) = (Vec::new(), Vec::new());
+            warn_setup_runner(
+                &host,
+                RunnerKind::Auto,
+                RunnerKind::Process,
+                json,
+                &mut o,
+                &mut e,
+            )
+            .unwrap();
+            let (o, e) = (String::from_utf8(o).unwrap(), String::from_utf8(e).unwrap());
+            let (warned, quiet) = if json { (e, o) } else { (o, e) };
+            assert!(warned.contains("will not come back"), "{warned}");
+            assert!(quiet.is_empty(), "{quiet}");
+        }
+        // A full --json auto setup keeps stdout as JSON; the warning is on stderr.
+        let dir2 = tempfile::tempdir().unwrap();
+        let home2 = dir2.path().join(".cua");
+        let m2 = Arc::new(FakeServiceManager::default());
+        let args = direct_args(driver.to_str().unwrap(), &[]);
+        let (o, e) = run_fake_io(&home2, &m2, &args, true, RunnerKind::Process).await;
+        assert!(!o.contains("warning:"), "{o}");
+        serde_json::from_str::<serde_json::Value>(o.trim()).unwrap();
+        assert_eq!(e.matches("will not come back").count(), 1, "{e}");
+        // Re-running (unchanged path) keeps JSON on stdout, warning on stderr.
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", Some("ada@example.com"));
+        let m3 = Arc::new(FakeServiceManager::default());
+        let home3 = dir2.path().join(".cua3");
+        let setup = ["setup", "--relay", relay.url.as_str(), "--name", "lab-box"];
+        let first = [&setup[..], &["--driver-bin", driver.to_str().unwrap()]].concat();
+        run_fake_io(&home3, &m3, &first, true, RunnerKind::Process).await;
+        let (o, e) = run_fake_io(&home3, &m3, &setup, true, RunnerKind::Process).await;
+        serde_json::from_str::<serde_json::Value>(o.trim()).unwrap();
+        assert_eq!(e.matches("will not come back").count(), 1, "{e}");
+    }
+
+    #[tokio::test]
+    async fn retained_process_runner_without_auto_detection_does_not_warn() {
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", Some("ada@example.com"));
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = dir.path().join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        let manager = Arc::new(FakeServiceManager::default());
+        let setup = ["setup", "--relay", relay.url.as_str(), "--name", "lab-box"];
+        let first = [
+            &setup[..],
+            &[
+                "--driver-bin",
+                driver.to_str().unwrap(),
+                "--runner",
+                "process",
+            ],
+        ]
+        .concat();
+        run_fake(&home, &manager, &first).await;
+        // Default rerun (unchanged path) where auto detection would pick systemd.
+        let (o, e) = run_fake_io(&home, &manager, &setup, false, RunnerKind::Systemd).await;
+        assert!(!o.contains("will not come back") && e.is_empty(), "{o}{e}");
+        let host = Host::new(&home).with_service_manager(manager.clone());
+        assert_eq!(host.config().unwrap().unwrap().runner, "process");
+    }
+
+    #[tokio::test]
+    async fn auto_setup_rerun_on_a_process_host_warns() {
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", Some("ada@example.com"));
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = dir.path().join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        let manager = Arc::new(FakeServiceManager::default());
+        let setup = ["setup", "--relay", relay.url.as_str(), "--name", "lab-box"];
+        let first = run_fake(
+            &home,
+            &manager,
+            &[&setup[..], &["--driver-bin", driver.to_str().unwrap()]].concat(),
+        )
+        .await;
+        assert_eq!(first.matches("will not come back").count(), 1, "{first}");
+        let again = run_fake(&home, &manager, &setup).await;
+        assert_eq!(again.matches("will not come back").count(), 1, "{again}");
+        manager.stop().unwrap();
+        let restarted = run_fake(&home, &manager, &setup).await;
+        assert!(
+            restarted.contains("Started the host service again"),
+            "{restarted}"
+        );
+        assert_eq!(
+            restarted.matches("will not come back").count(),
+            1,
+            "{restarted}"
+        );
+    }
+
+    #[test]
+    fn status_names_the_runner_and_notes_a_process_runner() {
+        let text = |kind: &str, running: bool, detail: &str| {
+            let s = HostStatus {
+                configured: true,
+                mode: Some("relay".into()),
+                service: cua_host::ServiceState {
+                    installed: true,
+                    running,
+                    kind: kind.into(),
+                    detail: detail.into(),
+                },
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            render(&s, &mut out);
+            String::from_utf8(out).unwrap()
+        };
+        let p = text("process", true, "pid 42");
+        assert!(p.contains("\n  runner: process running (pid 42)\n"), "{p}");
+        assert!(
+            p.contains("does not start the host again after a reboot"),
+            "{p}"
+        );
+        let s = text("systemd", false, "");
+        assert!(
+            s.contains("  runner: systemd installed, not running"),
+            "{s}"
+        );
+        assert!(!s.contains("does not start the host again"), "{s}");
+    }
     #[test]
     fn relay_and_direct_conflict() {
         #[derive(clap::Parser)]
@@ -4410,6 +5236,362 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    mod machines_rm {
+        use super::*;
+        use cua_host::MemoryKeySlot;
+        use cua_host::relay::{DeviceState, RegisterRequest};
+        use std::cell::Cell;
+
+        const ID: &str = "0123abcd4567ef89";
+
+        struct Fx {
+            _env: crate::util::test_env::Guard,
+            relay: FakeRelay,
+            cua: Arc<cua_sdk::Cua>,
+            _dir: tempfile::TempDir,
+            auth: Arc<DeviceAuth>,
+            laptop: String,
+            remote: Vec<String>,
+        }
+
+        async fn device(relay: &FakeRelay, name: &str, i: usize) -> (Arc<DeviceAuth>, String) {
+            let d = Arc::new(
+                DeviceAuth::new(
+                    &relay.url,
+                    Arc::new(StaticToken("acct".into())),
+                    Arc::new(MemoryKeySlot::default()),
+                    name,
+                )
+                .unwrap()
+                .with_machine_id(Some(format!("machine-of-{i}"))),
+            );
+            relay.fresh_sign_in("user-1");
+            d.enroll().await.unwrap();
+            let id = d.device_id().unwrap().unwrap();
+            (d, id)
+        }
+
+        async fn register(
+            relay: &FakeRelay,
+            id: &str,
+            name: &str,
+            host: Option<&str>,
+            meta: std::collections::BTreeMap<String, String>,
+        ) {
+            RelayClient::new(&relay.url)
+                .unwrap()
+                .register(
+                    "acct",
+                    &RegisterRequest {
+                        id: id.into(),
+                        name: name.into(),
+                        allow: vec![],
+                        host: host.map(Into::into),
+                        meta,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+
+        async fn fx(remote_names: &[&str]) -> Fx {
+            let env = crate::util::test_env::isolated();
+            let relay = FakeRelay::start().await;
+            relay.add_account("acct", "user-1", Some("ada@example.com"));
+            relay.require_devices(true);
+            relay.fresh_sign_in("user-1");
+            let (auth, laptop) = device(&relay, "laptop", 0).await;
+            let mut remote = vec![];
+            for (i, n) in remote_names.iter().enumerate() {
+                remote.push(device(&relay, n, i + 1).await.1);
+            }
+            register(&relay, ID, "old-laptop", None, Default::default()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let cua = cua_sdk::Cua::embedded(cua_sdk::CuaConfig {
+                state_dir: Some(dir.path().join("sandboxes").display().to_string()),
+                spaces_home: Some(dir.path().join("cua").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+            let (url, dev) = (relay.url.clone(), auth.clone());
+            attach_relay_account(&cua, || {
+                cua_spaces::RelayAccount::new(url, Arc::new(StaticToken("acct".into())))
+                    .with_device(dev)
+            });
+            Fx {
+                _env: env,
+                relay,
+                cua,
+                _dir: dir,
+                auth,
+                laptop,
+                remote,
+            }
+        }
+
+        /// Runs `rm`; returns the result, the output and the prompt count.
+        async fn rm(
+            f: &Fx,
+            arg: &str,
+            json: bool,
+            answer: impl Fn() -> bool,
+        ) -> (Result<i32, CuaError>, String, u32) {
+            let asked = Cell::new(0);
+            let mut out = Vec::new();
+            let r = remove_machine(
+                &f.cua,
+                &f.auth,
+                &StaticToken("acct".into()),
+                arg,
+                &|_| {
+                    asked.set(asked.get() + 1);
+                    answer()
+                },
+                json,
+                &mut out,
+            )
+            .await;
+            (r, String::from_utf8(out).unwrap(), asked.get())
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_removes_a_gone_computer_then_revokes_its_device() {
+            let f = fx(&["old-laptop"]).await;
+            let (r, text, _) = rm(&f, "old-laptop", false, || true).await;
+            assert_eq!(r.unwrap(), 0, "{text}");
+            assert!(f.relay.machine(ID).is_none());
+            assert_eq!(
+                f.relay.device_state(&f.remote[0]),
+                Some(DeviceState::Revoked)
+            );
+            assert_eq!(f.relay.device_state(&f.laptop), Some(DeviceState::Enrolled));
+            assert!(
+                text.contains("Removed old-laptop (relay:0123abcd4567ef89)"),
+                "{text}"
+            );
+            assert!(text.contains("Revoked old-laptop ("), "{text}");
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_by_bare_id_reports_json() {
+            let f = fx(&["old-laptop"]).await;
+            let (r, text, _) = rm(&f, ID, true, || true).await;
+            assert_eq!(r.unwrap(), 0, "{text}");
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(v["removed"], true, "{text}");
+            assert_eq!(v["machine"]["id"], "relay:0123abcd4567ef89");
+            assert_eq!(v["device"]["status"], "revoked", "{text}");
+            assert_eq!(v["device"]["ids"], serde_json::json!([f.remote[0]]));
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_refuses_a_connected_computer() {
+            let f = fx(&["old-laptop"]).await;
+            f.relay.set_online(ID, true, "1.0");
+            let (r, _, asked) = rm(&f, "old-laptop", false, || true).await;
+            let Err(CuaError::InvalidArgument(m)) = r else {
+                panic!("{r:?}")
+            };
+            assert!(
+                m.contains("is connected now") && m.contains("cua host remove"),
+                "{m}"
+            );
+            assert_eq!(asked, 0);
+            assert!(f.relay.machine(ID).is_some());
+            assert_eq!(
+                f.relay.device_state(&f.remote[0]),
+                Some(DeviceState::Enrolled)
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_unknown_name_is_not_found() {
+            let f = fx(&["old-laptop"]).await;
+            let (r, text, asked) = rm(&f, "no-such-box", false, || true).await;
+            let Err(CuaError::NotFound(m)) = r else {
+                panic!("{r:?}")
+            };
+            assert!(m.contains("no-such-box"), "{m}");
+            assert_eq!(asked, 0);
+            assert!(text.is_empty());
+            assert!(f.relay.machine(ID).is_some());
+            assert_eq!(
+                f.relay.device_state(&f.remote[0]),
+                Some(DeviceState::Enrolled)
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_rechecks_after_confirmation() {
+            let f = fx(&["old-laptop"]).await;
+            let (r, _, asked) = rm(&f, "old-laptop", false, || {
+                f.relay.set_online(ID, true, "1.0");
+                true
+            })
+            .await;
+            assert!(matches!(r, Err(CuaError::InvalidArgument(_))), "{r:?}");
+            assert_eq!(asked, 1);
+            assert!(f.relay.machine(ID).is_some());
+            assert_eq!(
+                f.relay.device_state(&f.remote[0]),
+                Some(DeviceState::Enrolled)
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_never_revokes_this_device_or_guesses() {
+            // (a) A machine named like this device: this device stays.
+            let f = fx(&[]).await;
+            let other = "fedcba9876543210";
+            register(&f.relay, other, "laptop", None, Default::default()).await;
+            let (r, text, _) = rm(&f, "laptop", false, || true).await;
+            assert_eq!(r.unwrap(), 0, "{text}");
+            assert!(f.relay.machine(other).is_none());
+            assert_eq!(f.relay.device_state(&f.laptop), Some(DeviceState::Enrolled));
+            assert!(text.contains("no device was revoked"), "{text}");
+            drop(f); // releases the isolated environment
+
+            // (b) Two devices share the name: neither is revoked.
+            let f = fx(&["old-laptop", "old-laptop"]).await;
+            let (r, text, _) = rm(&f, "old-laptop", false, || true).await;
+            assert_eq!(r.unwrap(), 0, "{text}");
+            assert!(f.relay.machine(ID).is_none());
+            for id in &f.remote {
+                assert_eq!(f.relay.device_state(id), Some(DeviceState::Enrolled));
+                assert!(text.contains(id.as_str()), "{text}");
+            }
+            assert!(text.contains("cua devices revoke <id>"), "{text}");
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_refuses_a_runtime_bound_to_another_relay() {
+            // A daemon-like runtime on relay B, the caller's account on A.
+            let f = fx(&["old-laptop"]).await;
+            let other = FakeRelay::start().await;
+            let dir = tempfile::tempdir().unwrap();
+            let cua = cua_sdk::Cua::embedded(cua_sdk::CuaConfig {
+                state_dir: Some(dir.path().join("sandboxes").display().to_string()),
+                spaces_home: Some(dir.path().join("cua").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+            let url = other.url.clone();
+            attach_relay_account(&cua, || {
+                cua_spaces::RelayAccount::new(url, Arc::new(StaticToken("acct".into())))
+            });
+            let g = Fx { cua, ..f };
+            let (r, text, asked) = rm(&g, "old-laptop", false, || true).await;
+            let Err(CuaError::InvalidArgument(m)) = r else {
+                panic!("{r:?}")
+            };
+            assert!(m.contains("--embedded"), "{m}");
+            assert_eq!(asked, 0);
+            assert!(text.is_empty(), "{text}");
+            assert!(g.relay.machine(ID).is_some());
+            assert_eq!(
+                g.relay.device_state(&g.remote[0]),
+                Some(DeviceState::Enrolled)
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_device_failure_keeps_recovery_steps() {
+            // This device is revoked while the prompt is open (and the relay
+            // stops requiring devices): the row goes, the revoke is refused.
+            for json in [false, true] {
+                let f = fx(&["old-laptop"]).await;
+                let dir = tempfile::tempdir().unwrap();
+                let cua = cua_sdk::Cua::embedded(cua_sdk::CuaConfig {
+                    state_dir: Some(dir.path().join("sandboxes").display().to_string()),
+                    spaces_home: Some(dir.path().join("cua").display().to_string()),
+                    ..Default::default()
+                })
+                .unwrap();
+                let url = f.relay.url.clone();
+                attach_relay_account(&cua, || {
+                    cua_spaces::RelayAccount::new(url, Arc::new(StaticToken("acct".into())))
+                });
+                let g = Fx { cua, ..f };
+                let (admin, _) = device(&g.relay, "admin", 9).await;
+                let mut out = Vec::new();
+                let r = remove_machine(
+                    &g.cua,
+                    &g.auth,
+                    &StaticToken("acct".into()),
+                    "old-laptop",
+                    &|_| {
+                        g.relay.require_devices(false);
+                        std::thread::scope(|s| {
+                            s.spawn(|| {
+                                tokio::runtime::Runtime::new()
+                                    .unwrap()
+                                    .block_on(admin.revoke(&g.laptop))
+                                    .unwrap()
+                            });
+                        });
+                        true
+                    },
+                    json,
+                    &mut out,
+                )
+                .await;
+                let text = String::from_utf8(out).unwrap();
+                assert!(
+                    matches!(r, Err(CuaError::PermissionDenied(_))),
+                    "{r:?} {text}"
+                );
+                assert!(g.relay.machine(ID).is_none(), "{text}");
+                assert_eq!(
+                    g.relay.device_state(&g.remote[0]),
+                    Some(DeviceState::Enrolled)
+                );
+                assert!(text.contains("cua devices revoke <id>"), "{text}");
+                if json {
+                    assert!(text.contains(r#""status":"failed""#), "{text}");
+                }
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_declined_changes_nothing() {
+            let f = fx(&["old-laptop"]).await;
+            let (r, _, asked) = rm(&f, "old-laptop", false, || false).await;
+            let Err(CuaError::PermissionDenied(m)) = r else {
+                panic!("{r:?}")
+            };
+            assert!(m.contains("pass --yes"), "{m}");
+            assert_eq!(asked, 1);
+            assert!(f.relay.machine(ID).is_some());
+            assert_eq!(
+                f.relay.device_state(&f.remote[0]),
+                Some(DeviceState::Enrolled)
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_refuses_spaces() {
+            let f = fx(&[]).await;
+            let none = Default::default;
+            register(&f.relay, "space-hosted1", "hosted", Some(ID), none()).await;
+            let meta = [("cua.cloud.provider".to_string(), "hetzner".to_string())].into();
+            register(&f.relay, "space-cloud001", "cloudy", None, meta).await;
+            register(&f.relay, "space-selfreg1", "selfreg", None, none()).await;
+            for (id, name) in [
+                ("space-hosted1", "hosted"),
+                ("space-cloud001", "cloudy"),
+                ("space-selfreg1", "selfreg"),
+            ] {
+                let (r, _, asked) = rm(&f, name, false, || true).await;
+                let Err(CuaError::InvalidArgument(m)) = r else {
+                    panic!("{name}: {r:?}")
+                };
+                assert!(m.contains("not a computer"), "{m}");
+                assert_eq!(asked, 0);
+                assert!(f.relay.machine(id).is_some());
+            }
+        }
     }
 
     /// `cua mcp` without a daemon (embedded) sees the account's relay
@@ -4458,5 +5640,345 @@ mod tests {
         assert!(text.contains("lab-box"), "{text}");
         // Already attached: left alone.
         assert!(!attach_relay_account(&cua, || unreachable!()));
+    }
+
+    fn try_parse(args: &[&str]) -> Result<HostCmd, clap::Error> {
+        #[derive(clap::Parser)]
+        struct W {
+            #[command(subcommand)]
+            c: HostCmd,
+        }
+        <W as clap::Parser>::try_parse_from(std::iter::once("host").chain(args.iter().copied()))
+            .map(|w| w.c)
+    }
+
+    /// What a setup left on the machine: config and policy settings, and
+    /// whether the service runs without the desktop services.
+    type Seen = ((bool, bool), (bool, bool), bool);
+
+    fn seen(home: &Path, manager: &FakeServiceManager) -> Seen {
+        let host = Host::new(home);
+        let c = host.config().unwrap().unwrap();
+        let p = host.policy().unwrap().unwrap();
+        let spec = manager.spec.lock().unwrap().clone().unwrap();
+        (
+            (c.share_desktop, c.provide_spaces),
+            (p.share_desktop, p.provide_spaces),
+            spec.args.iter().any(|a| a == "--no-desktop"),
+        )
+    }
+
+    async fn setup_run(
+        home: &Path,
+        manager: &Arc<FakeServiceManager>,
+        args: &[&str],
+        json: bool,
+    ) -> Result<String, CuaError> {
+        let mut out = Vec::new();
+        run_host(
+            parse(args),
+            home,
+            &StaticToken("acct".into()),
+            None,
+            Some(manager.clone()),
+            json,
+            &mut out,
+        )
+        .await?;
+        Ok(String::from_utf8(out).unwrap())
+    }
+
+    fn fixture_driver(dir: &Path) -> PathBuf {
+        let driver = dir.join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        driver
+    }
+
+    /// Each `--share` value and each old flag spelling of it set up the
+    /// same host: config, driver policy and service arguments.
+    #[tokio::test]
+    async fn share_values_and_their_old_aliases_set_up_the_same_host() {
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", Some("ada@example.com"));
+        let rows: [(&[&[&str]], Seen); 3] = [
+            (
+                &[
+                    &["--share", "desktop"],
+                    &["--no-provide-spaces"],
+                    &["--desktop", "--no-provide-spaces"],
+                ],
+                ((true, false), (true, false), false),
+            ),
+            (
+                &[
+                    &["--share", "spaces"],
+                    &["--profile", "spare"],
+                    &["--no-desktop", "--provide-spaces"],
+                ],
+                ((false, true), (false, true), true),
+            ),
+            (
+                &[
+                    &["--share", "both"],
+                    &["--provide-spaces"],
+                    &["--desktop", "--provide-spaces"],
+                    &["--profile", "desktop", "--provide-spaces"],
+                ],
+                ((true, true), (true, true), false),
+            ),
+        ];
+        for (spellings, want) in rows {
+            for extra in spellings {
+                let dir = tempfile::tempdir().unwrap();
+                let home = dir.path().join(".cua");
+                let driver = fixture_driver(dir.path());
+                let manager = Arc::new(FakeServiceManager::default());
+                let mut args = vec![
+                    "setup",
+                    "--relay",
+                    &relay.url,
+                    "--driver-bin",
+                    driver.to_str().unwrap(),
+                ];
+                args.extend_from_slice(extra);
+                setup_run(&home, &manager, &args, true).await.unwrap();
+                assert_eq!(seen(&home, &manager), want, "relay {extra:?}");
+            }
+        }
+        // Direct mode needs no account.
+        let direct = |extra: &'static [&'static str]| async move {
+            let dir = tempfile::tempdir().unwrap();
+            let home = dir.path().join(".cua");
+            let driver = fixture_driver(dir.path());
+            let manager = Arc::new(FakeServiceManager::default());
+            let mut args = vec![
+                "setup",
+                "--direct",
+                "127.0.0.1:3211",
+                "--driver-bin",
+                driver.to_str().unwrap(),
+            ];
+            args.extend_from_slice(extra);
+            setup_run(&home, &manager, &args, true).await.unwrap();
+            seen(&home, &manager)
+        };
+        let share = direct(&["--share", "spaces"]).await;
+        assert_eq!(share, ((false, true), (false, true), true));
+        assert_eq!(share, direct(&["--profile", "spare"]).await);
+    }
+
+    /// `none` (and its old spelling) is refused before anything happens.
+    #[tokio::test]
+    async fn share_none_and_its_old_alias_refuse_before_registering() {
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", None);
+        for extra in [
+            &["--share", "none"][..],
+            &["--no-desktop", "--no-provide-spaces"][..],
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let home = dir.path().join(".cua");
+            let driver = fixture_driver(dir.path());
+            let manager = Arc::new(FakeServiceManager::default());
+            let mut args = vec![
+                "setup",
+                "--relay",
+                &relay.url,
+                "--driver-bin",
+                driver.to_str().unwrap(),
+            ];
+            args.extend_from_slice(extra);
+            let e = setup_run(&home, &manager, &args, true).await.unwrap_err();
+            assert!(matches!(e, CuaError::InvalidArgument(_)), "{e:?}");
+            assert_eq!(crate::exit_code(&e), 2);
+            let text = e.to_string();
+            assert!(text.contains("host setup failed at preflight:"), "{text}");
+            assert!(
+                text.contains("use --share desktop, spaces or both"),
+                "{text}"
+            );
+            assert!(!home.join("host").join("config.json").exists());
+            assert!(manager.calls.lock().unwrap().is_empty());
+        }
+        assert_eq!(relay.register_calls(), 0);
+    }
+
+    #[test]
+    fn share_conflicts_with_the_old_flags_and_rejects_other_values() {
+        for old in [
+            &["--profile", "spare"][..],
+            &["--desktop"][..],
+            &["--no-desktop"][..],
+            &["--provide-spaces"][..],
+            &["--no-provide-spaces"][..],
+        ] {
+            let mut args = vec!["setup", "--share", "both"];
+            args.extend_from_slice(old);
+            let e = try_parse(&args).unwrap_err();
+            assert_eq!(
+                e.kind(),
+                clap::error::ErrorKind::ArgumentConflict,
+                "{old:?}"
+            );
+        }
+        let e = try_parse(&["setup", "--share", "some"]).unwrap_err();
+        assert_eq!(e.kind(), clap::error::ErrorKind::InvalidValue);
+        assert!(
+            e.to_string()
+                .contains("[possible values: desktop, spaces, both, none]")
+        );
+        match try_parse(&["setup", "--pair", "K7QM-4XPB-2RHD", "--share", "spaces"]).unwrap() {
+            HostCmd::Setup { pair, share, .. } => assert_eq!(
+                (pair.as_deref(), share),
+                (Some("K7QM-4XPB-2RHD"), Some(HostShare::Spaces))
+            ),
+            other => panic!("{other:?}"),
+        }
+        // Help shows only --share.
+        let help = <HostCmd as clap::Subcommand>::augment_subcommands(clap::Command::new("host"))
+            .find_subcommand_mut("setup")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(help.contains("--share"), "{help}");
+        for old in [
+            "--profile",
+            "--no-desktop",
+            "--provide-spaces",
+            "--no-provide-spaces",
+        ] {
+            assert!(!help.contains(old), "{old} is hidden: {help}");
+        }
+    }
+
+    /// A computer configured to share nothing (`host config`) still refuses
+    /// `--share none`; the unchanged shortcut must not answer for it.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn share_none_is_refused_even_by_a_host_configured_to_share_nothing() {
+        let _env = crate::util::test_env::isolated();
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", None);
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = fixture_driver(dir.path());
+        // SAFETY: test_env::isolated holds the environment lock.
+        unsafe { std::env::set_var("CUA_SPACESD_BIN", &driver) };
+        let manager = Arc::new(FakeServiceManager::default());
+        setup_run(&home, &manager, &["setup", "--relay", &relay.url], true)
+            .await
+            .unwrap();
+        Host::new(&home)
+            .with_service_manager(manager.clone())
+            .configure(cua_host::HostSettingsChange {
+                share_desktop: Some(false),
+                provide_spaces: Some(false),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let e = setup_run(
+            &home,
+            &manager,
+            &["setup", "--relay", &relay.url, "--share", "none"],
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(crate::exit_code(&e), 2, "{e}");
+        assert!(
+            e.to_string()
+                .contains("use --share desktop, spaces or both"),
+            "{e}"
+        );
+    }
+
+    /// Setup again with `--share` applies both settings, and changes
+    /// nothing when they already match.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn setup_again_with_share_applies_only_a_change() {
+        let _env = crate::util::test_env::isolated();
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", None);
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = fixture_driver(dir.path());
+        // SAFETY: test_env::isolated holds the environment lock.
+        unsafe { std::env::set_var("CUA_SPACESD_BIN", &driver) };
+        let manager = Arc::new(FakeServiceManager::default());
+        let run = |share: &'static str| {
+            let (home, manager, url) = (home.clone(), manager.clone(), relay.url.clone());
+            async move {
+                setup_run(
+                    &home,
+                    &manager,
+                    &["setup", "--relay", &url, "--share", share],
+                    true,
+                )
+                .await
+                .unwrap()
+            }
+        };
+        let both = ((true, true), (true, true), false);
+        run("both").await;
+        assert_eq!(seen(&home, &manager), both);
+        assert_eq!(relay.register_calls(), 1);
+        let out = run("both").await;
+        assert!(out.contains("\"changed\":false"), "{out}");
+        assert_eq!((seen(&home, &manager), relay.register_calls()), (both, 1));
+        run("spaces").await;
+        assert_eq!(seen(&home, &manager), ((false, true), (false, true), true));
+        assert_eq!(relay.register_calls(), 2);
+        run("both").await;
+        assert_eq!(seen(&home, &manager), both);
+        assert_eq!(relay.register_calls(), 3);
+        run("desktop").await;
+        assert_eq!(seen(&home, &manager), ((true, false), (true, false), false));
+    }
+
+    /// The old flags re-run exactly as before `--share`: a flag that does
+    /// not name the desktop is not checked against it.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn old_flags_on_a_rerun_keep_mains_behaviour() {
+        let _env = crate::util::test_env::isolated();
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", None);
+        let dir = tempfile::tempdir().unwrap();
+        let driver = fixture_driver(dir.path());
+        // SAFETY: test_env::isolated holds the environment lock.
+        unsafe { std::env::set_var("CUA_SPACESD_BIN", &driver) };
+        let url = relay.url.clone();
+        let run =
+            |home: PathBuf, manager: Arc<FakeServiceManager>, flags: &'static [&'static str]| {
+                let url = url.clone();
+                async move {
+                    let mut args = vec!["setup", "--relay", &url];
+                    args.extend_from_slice(flags);
+                    setup_run(&home, &manager, &args, true).await.unwrap()
+                }
+            };
+        let spare = ((false, true), (false, true), true);
+        let home = dir.path().join("a");
+        let manager = Arc::new(FakeServiceManager::default());
+        run(home.clone(), manager.clone(), &["--profile", "spare"]).await;
+        assert_eq!(seen(&home, &manager), spare);
+        let calls = relay.register_calls();
+        let out = run(home.clone(), manager.clone(), &["--provide-spaces"]).await;
+        assert!(out.contains("\"changed\":false"), "{out}");
+        assert_eq!(
+            (seen(&home, &manager), relay.register_calls()),
+            (spare, calls)
+        );
+        run(home.clone(), manager.clone(), &["--no-provide-spaces"]).await;
+        assert_eq!(seen(&home, &manager), ((true, false), (true, false), false));
+        assert_eq!(relay.register_calls(), calls + 1);
+
+        let home = dir.path().join("b");
+        let manager = Arc::new(FakeServiceManager::default());
+        run(home.clone(), manager.clone(), &["--no-provide-spaces"]).await;
+        run(home.clone(), manager.clone(), &["--provide-spaces"]).await;
+        assert_eq!(seen(&home, &manager), ((true, true), (true, true), false));
     }
 }

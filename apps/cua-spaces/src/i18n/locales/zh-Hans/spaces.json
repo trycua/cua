@@ -63,7 +63,7 @@
   "spaces.create.creating": "正在创建 Space…",
   "spaces.sidebar.section.this_mac": "这台 Mac",
   "spaces.sidebar.section.connected": "已连接",
-  "spaces.sidebar.section.my_computers": "我的电脑",
+  "spaces.sidebar.section.my_computers": "我的机器",
   "spaces.sidebar.empty": "还没有任何 Spaces",
   "spaces.sidebar.no_matches": "没有匹配项",
   "spaces.status.failed": "失败",

@@ -855,7 +855,7 @@ pub fn cloud_sheet_view(input: &CloudSheetInput, state: &CloudSheetState) -> Clo
                 kind: "secret".into(),
                 value: String::new(),
                 placeholder: if found(input, id) {
-                    "Using the token on this computer".into()
+                    "Using the token on this machine".into()
                 } else {
                     "Project token (Read & Write)".into()
                 },
@@ -895,14 +895,14 @@ pub fn cloud_sheet_view(input: &CloudSheetInput, state: &CloudSheetState) -> Clo
                 .to_string()
         }
         Kind::Oidc => "Cua signs in to AWS on its own each time; there's no key to copy or store.".to_string(),
-        Kind::Token => "Hetzner has no OIDC, so it takes an API token. Cua keeps it on this computer and uses it only for your Spaces.".to_string(),
-        Kind::Local => "Modal uses the sign-in on this computer. Cua keeps no copy of it.".to_string(),
+        Kind::Token => "Hetzner has no OIDC, so it takes an API token. Cua keeps it on this machine and uses it only for your Spaces.".to_string(),
+        Kind::Local => "Modal uses the sign-in on this machine. Cua keeps no copy of it.".to_string(),
         Kind::Soon => format!("Cua signs in to {name} on its own each time. This arrives in a later update."),
     };
     let note = match kind {
         Kind::Token => "Revoke it any time in the Hetzner console.".to_string(),
         Kind::Local if !found(input, id) => {
-            "No Modal sign-in on this computer. Run `modal token new`, then come back.".to_string()
+            "No Modal sign-in on this machine. Run `modal token new`, then come back.".to_string()
         }
         Kind::Soon => String::new(),
         _ => SAFETY_NOTE.to_string(),

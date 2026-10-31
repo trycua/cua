@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.19.2](https://github.com/trycua/cua/compare/cua-spaces-v0.19.1...cua-spaces-v0.19.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **spaces:** show running Spaces first in the notch, never cut them for stopped ones ([#6215](https://github.com/trycua/cua/issues/6215)) ([a68e2c9](https://github.com/trycua/cua/commit/a68e2c986eb29cf70c38dcde1f9fa961af3144e6))
+
+## [0.19.1](https://github.com/trycua/cua/compare/cua-spaces-v0.19.0...cua-spaces-v0.19.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **spaces:** one teleport setup sheet and a profile picker (CUA-2855, CUA-2853) ([#6194](https://github.com/trycua/cua/issues/6194)) ([2d974f1](https://github.com/trycua/cua/commit/2d974f1843c7343a70affba9d21e7362979edec3))
+
+## [0.19.0](https://github.com/trycua/cua/compare/cua-spaces-v0.18.0...cua-spaces-v0.19.0) (2026-10-30)
+
+
+### Features
+
+* **connections:** per-provider model lists and a connectors.models op ([#6173](https://github.com/trycua/cua/issues/6173)) ([1976208](https://github.com/trycua/cua/commit/19762088609eeac34becee1848459ed3da75019a))
+* **settings:** Providers section as compact rows, per-app Uses switcher, bundled provider marks ([#6170](https://github.com/trycua/cua/issues/6170)) ([34f12df](https://github.com/trycua/cua/commit/34f12df58fc0d9f58c0a4134f0dfaf3424ceb3fc))
+
+
+### Performance Improvements
+
+* **spaces:** fill in the Agents page as Spaces answer, bound slow machines ([#6177](https://github.com/trycua/cua/issues/6177)) ([886179f](https://github.com/trycua/cua/commit/886179f87f2610d143de9e0a24012dbb80704126))
+* **spaces:** reconnect to a Space's desktop in under a second (CUA-2850) ([#6176](https://github.com/trycua/cua/issues/6176)) ([8aa59c7](https://github.com/trycua/cua/commit/8aa59c7eb48b67c0cd8e363cbdef6a9219db9b4b))
+
+## [0.18.0](https://github.com/trycua/cua/compare/cua-spaces-v0.17.0...cua-spaces-v0.18.0) (2026-10-30)
+
+
+### Features
+
+* **spaces:** pin Spaces and shared machine desktops to the notch ([#6163](https://github.com/trycua/cua/issues/6163)) ([b269d38](https://github.com/trycua/cua/commit/b269d38db580afbd7b9f3b1d8409d0df540e1b21))
+
+
+### Bug Fixes
+
+* **cua-spaces:** say "machine" in the macOS app's last device and computer messages ([#6162](https://github.com/trycua/cua/issues/6162)) ([204acb4](https://github.com/trycua/cua/commit/204acb4e5e81fa52affad28f4e9b0b8756f7842a))
+
+## [0.17.0](https://github.com/trycua/cua/compare/cua-spaces-v0.16.0...cua-spaces-v0.17.0) (2026-10-29)
+
+
+### Features
+
+* **connections:** one Connections list driven by a provider registry ([#6134](https://github.com/trycua/cua/issues/6134)) ([74ff486](https://github.com/trycua/cua/commit/74ff486506e5e203b3a6fd371931ed717a405dba))
+* **spaces-macos:** bundle the pinned Cua Driver in Contents/Helpers (CUA-2770) ([#6144](https://github.com/trycua/cua/issues/6144)) ([a6a2713](https://github.com/trycua/cua/commit/a6a2713a25b25cca62b18b18ee3c26e48a4284b1))
+* **spaces-macos:** pass creatingElsewhere through the WKWebView host (CUA-2349) ([#6012](https://github.com/trycua/cua/issues/6012)) ([4b84caa](https://github.com/trycua/cua/commit/4b84caa4053bd86be7746c5527cee3d1626612ed))
+* **spaces:** drop the line under Kind; MicroVM status in Settings, Advanced (CUA-2446) ([#6048](https://github.com/trycua/cua/issues/6048)) ([a87d74c](https://github.com/trycua/cua/commit/a87d74c401778bff4a5371cbab0c751cbe8a14dc))
+* **spaces:** list signed-in devices under "Your devices" on the Machines page ([#6085](https://github.com/trycua/cua/issues/6085)) ([9758f85](https://github.com/trycua/cua/commit/9758f8518b6e6b37a7bfb5d23c97378319046c0f))
+* **spaces:** Sentry crash reporting for the desktop app + crash gate in auto rollout (CUA-2343) ([#6011](https://github.com/trycua/cua/issues/6011)) ([d991e3b](https://github.com/trycua/cua/commit/d991e3b4cc229881a6b5a3018956668a14b61e5b))
+* **spaces:** start a run and reply to it from the app (agents.start, agents.message) (CUA-2347) ([#6005](https://github.com/trycua/cua/issues/6005)) ([06afb7c](https://github.com/trycua/cua/commit/06afb7cda6cbc80e3aadbb7122a9d06338fc4f8f))
+* **spaces:** thread view with a floating mini-player on the Space page (CUA-2480) ([#6059](https://github.com/trycua/cua/issues/6059)) ([6cd675e](https://github.com/trycua/cua/commit/6cd675e8ce2c949d155a562a328070a77a7174a4))
+
+
+### Bug Fixes
+
+* **agents:** import the Claude Code sign-in instead of running claude setup-token ([#6136](https://github.com/trycua/cua/issues/6136)) ([08a2f0d](https://github.com/trycua/cua/commit/08a2f0df1cf2ac61014b8c49c700fc5c7a277cb9))
+* **spaces-macos:** install-local.sh says a locked Keychain is locked, not new (CUA-2213) ([#5883](https://github.com/trycua/cua/issues/5883)) ([fd93182](https://github.com/trycua/cua/commit/fd93182fcfee4f178e881cefb8e8cb9202f83150))
+* **spaces-macos:** the host service never checks in as the app (Cua Spaces could not be reopened) ([#6057](https://github.com/trycua/cua/issues/6057)) ([e337937](https://github.com/trycua/cua/commit/e3379370551ac1db9ea0345d97344424bee4b2f2))
+* **spaces-macos:** the host service restarts onto an updated app (CUA-2457) ([#6054](https://github.com/trycua/cua/issues/6054)) ([dacf7e7](https://github.com/trycua/cua/commit/dacf7e70d29126074aa561cf2603b23ff9831a15))
+* **spaces:** app icon keycap 20% larger inside the squircle (CUA-2369) ([#6017](https://github.com/trycua/cua/issues/6017)) ([97e96b0](https://github.com/trycua/cua/commit/97e96b00ab4f1ce78d58bf58b27ed99fddf722d0))
+* **spaces:** honest numbers in a Space's resources dialog ([#6058](https://github.com/trycua/cua/issues/6058)) ([9c7d8b5](https://github.com/trycua/cua/commit/9c7d8b5c4a4e945f0c2c740166a02787b13ba03f))
+* **spaces:** picture in picture hands the live desktop back; the ⋯ menu no longer blacks it out (CUA-2473) ([#6055](https://github.com/trycua/cua/issues/6055)) ([3d6be51](https://github.com/trycua/cua/commit/3d6be5173e4feb3e0b2f5c303e3196216d33d216))
+* **spaces:** retry 'too many requests' and say so in plain words (CUA-2275) ([#5929](https://github.com/trycua/cua/issues/5929)) ([c421b1c](https://github.com/trycua/cua/commit/c421b1caa948c3f54f72425d70c0891ac08074d0))
+* **spaces:** show a machine's shared desktop in its Machines row instead of "No Spaces" ([#6084](https://github.com/trycua/cua/issues/6084)) ([d537387](https://github.com/trycua/cua/commit/d5373879e9e0baf5a63999ac4d26902340c0ce20))
+
+
+### Performance Improvements
+
+* **spaces:** a Space starting or stopping on another computer shows within a second, pushed by the daemon ([#5915](https://github.com/trycua/cua/issues/5915)) ([74a6057](https://github.com/trycua/cua/commit/74a6057dba1bbb04ff624ef92685366307f79e2d))
+
 ## [0.16.0](https://github.com/trycua/cua/compare/cua-spaces-v0.15.0...cua-spaces-v0.16.0) (2026-10-25)
 
 

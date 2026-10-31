@@ -558,9 +558,9 @@
           "os-linux demo [spaces.status.running] - -"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Failed - Failed",
           "os-linux New Space, Linux, This Mac, Starting 805 Booting…",
-          "os-linux demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -",
+          "os-macos Mac, macOS, This Mac, Failed - Failed"
         ]
       }
     },
@@ -642,9 +642,9 @@
           "os-linux demo [spaces.status.running] - -"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Failed - Failed",
           "os-linux New Space, Linux, This Mac, Starting 985 Connecting…",
-          "os-linux demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -",
+          "os-macos Mac, macOS, This Mac, Failed - Failed"
         ]
       }
     },
@@ -726,9 +726,9 @@
           "os-linux demo [spaces.status.running] - -"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Failed - Failed",
           "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
-          "os-linux demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -",
+          "os-macos Mac, macOS, This Mac, Failed - Failed"
         ]
       }
     },
@@ -954,9 +954,9 @@
           "os-linux Omarchy [spaces.status.failed] - The Cua daemon isn't running. Start Cua, or run `cua daemon start`."
         ],
         "tiles": [
-          "os-linux Omarchy, Linux, pending:3, Failed - Failed",
           "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
-          "os-linux demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -",
+          "os-linux Omarchy, Linux, pending:3, Failed - Failed"
         ]
       }
     },

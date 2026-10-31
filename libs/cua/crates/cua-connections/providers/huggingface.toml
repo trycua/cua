@@ -1,0 +1,22 @@
+id = "huggingface"
+name = "Hugging Face"
+icon = "huggingface"
+tier = "more"
+rank = 100
+kind = "hosted"
+aliases = ["hf"]
+wire = "openai-chat"
+base_url = "https://router.huggingface.co/v1"
+base_url_env = "HF_BASE_URL"
+default_model = "moonshotai/Kimi-K2.5"
+hermes_id = "huggingface"
+key_help = "Create a token at huggingface.co/settings/tokens with the Inference Providers permission."
+placeholder = "hf_…"
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "HF_TOKEN"
+
+[delivery]
+hermes = ["HF_TOKEN"]

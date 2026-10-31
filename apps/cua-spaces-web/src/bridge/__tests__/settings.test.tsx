@@ -96,7 +96,7 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     await waitFor(() => expect(hooks.login.data?.input.status).toBe("enabled"));
     await hooks.login.setLaunchAtLogin(false);
     await waitFor(() => expect(hooks.login.data?.input.status).toBe("notRegistered"));
-    expect(hooks.login.data?.rows?.[1]?.label).toBe("This computer runs persistent agents, which stop after a restart until you open Cua Spaces.");
+    expect(hooks.login.data?.rows?.[1]?.label).toBe("This machine runs persistent agents, which stop after a restart until you open Cua Spaces.");
   });
 
   it("lists the account's devices, approves the waiting one by code and revokes another", async () => {
@@ -108,7 +108,7 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     hooks.devices.setApprovalCode("k7qx m2rp");
     await waitFor(() => expect(hooks.devices.data?.approve?.view?.code).toBe("K7QX-M2RP"));
     await hooks.devices.approve();
-    await waitFor(() => expect(hooks.devices.data?.view?.rows.find((r) => r.id === "dev_work")?.subtitle).toMatch(/^Enrolled/));
+    await waitFor(() => expect(hooks.devices.data?.view?.rows.find((r) => r.id === "dev_work")?.subtitle).toMatch(/^Trusted/));
     expect(hooks.devices.data?.approve).toBeNull();
     await hooks.devices.revoke("dev_studio");
     await waitFor(() => expect(hooks.devices.data?.view?.rows.find((r) => r.id === "dev_studio")?.subtitle).toBe("Revoked"));

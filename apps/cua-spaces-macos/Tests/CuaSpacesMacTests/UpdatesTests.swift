@@ -4,6 +4,7 @@
 import CuaSDK
 import CuaSpacesFFI
 @testable import CuaSpacesMacKit
+import AppKit
 import Foundation
 import Sparkle
 import Testing
@@ -221,26 +222,23 @@ struct UpdatesTests {
 
     @Test func nothingFoundAndBackgroundErrorsStayQuiet() {
         let driver = UpdateUserDriver(currentVersion: "0.9.2")
-        var alerts: [String] = []
-        driver.presentError = { alerts.append($0) }
         var acks = 0
         driver.showUpdateNotFoundWithError(NSError(domain: "t", code: 1)) { acks += 1 }
         #expect(acks == 1 && driver.state.status == .idle)
         driver.showUpdaterError(NSError(domain: "t", code: 2, userInfo: [NSLocalizedDescriptionKey: "offline"])) { acks += 1 }
-        #expect(acks == 2 && alerts.isEmpty)
+        #expect(acks == 2)
         #expect(driver.state.status == .error && driver.state.message == "offline")
         driver.dismissUpdateInstallation()
         #expect(driver.state.status == .error)
     }
 
-    @Test func aUserCheckErrorShowsAnAlert() {
+    /// A failed check is a plain line in the menus and Settings, never a dialog.
+    @Test func aUserCheckErrorStaysInTheState() {
         let driver = UpdateUserDriver(currentVersion: "0.9.2")
-        var alerts: [String] = []
-        driver.presentError = { alerts.append($0) }
         driver.beginUserCheck()
         #expect(driver.state.status == .checking)
         driver.showUpdaterError(NSError(domain: "t", code: 2, userInfo: [NSLocalizedDescriptionKey: "offline"])) {}
-        #expect(alerts == ["offline"])
+        #expect(driver.state.status == .error && driver.state.message == "offline")
     }
 
     @Test func aUserCheckThatFindsNothingEndsQuietly() {
@@ -415,5 +413,107 @@ struct LaunchedBundleTests {
         let launched = LaunchedBundle(url: app, executable: exe)
         try FileManager.default.removeItem(at: app)
         #expect(launched.replacement() == LaunchedBundle.Replacement(version: nil))
+    }
+}
+
+/// "Check for Updates…" in the app menu and the menu bar menu, and the
+/// up-arrow badge: all from the one `UpdatesModel`.
+@Suite("Update menu")
+@MainActor
+struct UpdateMenuTests {
+    static let info = AboutBundleInfo(version: "0.2.0-staging.5", build: "0.2.0.105", os: "macOS 26.0 (arm64)")
+
+    func made() -> (UpdatesModel, FixtureUpdater) {
+        let updater = FixtureUpdater()
+        updater.state = .idle(currentVersion: Self.info.version)
+        return (UpdatesModel(updater: updater, channel: .stable, info: Self.info), updater)
+    }
+
+    @Test func upToDateOffersACheckAndNoBadge() throws {
+        let (model, _) = made()
+        let item = try #require(model.menuItem)
+        #expect(item.title == "Check for Updates\u{2026}" && item.detail == nil)
+        #expect(item.action == .check && item.enabled && !item.badge)
+        #expect(!item.title.contains("\u{00B7}"))
+    }
+
+    @Test func aFoundUpdateShowsTheBadgeAndTheVersionLine() throws {
+        let (model, updater) = made()
+        updater.simulateFound(version: "0.17.0-beta.11")
+        var item = try #require(model.menuItem)
+        #expect(item.title == "Version 0.17.0-beta.11 available" && item.detail == "Click to install")
+        #expect(item.badge && item.action == .install)
+        updater.simulateProgress(percent: 40)
+        item = try #require(model.menuItem)
+        #expect(item.detail == "Downloading 40%" && item.badge && !item.enabled)
+        updater.simulateDownloaded()
+        item = try #require(model.menuItem)
+        #expect(item.title == "Version 0.17.0-beta.11 available" && item.detail == "Restart to update")
+        #expect(item.badge && item.action == .install)
+    }
+
+    @Test func installingClearsTheBadge() throws {
+        let (model, updater) = made()
+        updater.simulateFound(version: "1.0.0")
+        updater.simulateDownloaded()
+        model.perform(try #require(model.menuItem).action)
+        #expect(updater.installs == 1)
+        let item = try #require(model.menuItem)
+        #expect(!item.badge && item.title == "Check for Updates\u{2026}")
+    }
+
+    @Test func aClickBeforeTheDownloadEndsInstallsWhenItEnds() throws {
+        let (model, updater) = made()
+        updater.simulateFound(version: "1.0.0")
+        model.perform(.install)
+        #expect(updater.installs == 0)
+        updater.simulateDownloaded()
+        #expect(updater.installs == 1)
+    }
+
+    @Test func aFailedCheckIsAPlainLineWithNoBadge() throws {
+        let (model, updater) = made()
+        updater.simulateError("offline")
+        let item = try #require(model.menuItem)
+        #expect(item.title == "Check for Updates\u{2026}" && item.detail == "Could not check for updates")
+        #expect(!item.badge && item.action == .check)
+    }
+
+    @Test func aCheckInProgressIsNotClickable() throws {
+        let (model, updater) = made()
+        updater.state = UpdateState(status: .checking, currentVersion: Self.info.version)
+        let item = try #require(model.menuItem)
+        #expect(item.title == "Checking for Updates\u{2026}" && !item.enabled && !item.badge)
+    }
+
+    @Test func theMenuCheckIsTheSettingsCheck() throws {
+        let (model, updater) = made()
+        model.perform(try #require(model.menuItem).action)
+        #expect(updater.checks == 1)
+        model.checkNow()
+        #expect(updater.checks == 2)
+    }
+
+    @Test func noUpdaterNoMenuItem() {
+        #expect(UpdatesModel(updater: nil, info: Self.info).menuItem == nil)
+    }
+
+    /// Both menus and Settings read the AppModel's one `UpdatesModel`: the
+    /// state the menus show is the page's `update.get`.
+    @Test func bothMenusAndSettingsShareTheOneModel() throws {
+        let (model, updater) = made()
+        updater.simulateFound(version: "1.2.3")
+        updater.simulateDownloaded()
+        let menuBar = UpdateMenuButton(updates: model)
+        let appMenu = UpdateMenuButton(updates: model)
+        #expect(menuBar.updates === appMenu.updates)
+        #expect(menuBar.updates.menuItem == appMenu.updates.menuItem)
+        #expect(model.updateState.status == .downloaded && model.updateState.version == "1.2.3")
+        #expect(model.menuItem?.badge == true)
+    }
+
+    @Test func theBadgedIconStaysATemplate() throws {
+        let base = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in true }
+        #expect(MenuBarIcon.badge(base).isTemplate)
     }
 }

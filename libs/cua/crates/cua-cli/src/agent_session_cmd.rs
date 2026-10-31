@@ -25,13 +25,20 @@ use std::time::Duration;
 /// The prefix that names a durable session where a sandbox goes.
 pub const PREFIX: &str = "session:";
 
-/// The driver's entry in its bundle, for the `pi` harness.
-pub const PI_DRIVER_ENTRY: &str = "pi-durable-driver";
-
 /// The session `s` names (`session:NAME`), if it does.
 pub fn session_of(s: &str) -> Option<&str> {
     s.strip_prefix(PREFIX).filter(|n| !n.is_empty())
 }
+
+/// The Space size of an ACP harness driver (the harness and its install
+/// run in it; the job default of 1 CPU and 1 GiB runs out of memory: the
+/// OpenCode install is killed). Measured on a Linux machine with a scripted
+/// model: the four durable harnesses finish with 1536 MiB (OpenCode, the
+/// largest, 3 of 3 runs; killed at 1024), and a machine with 8 GB then holds
+/// four drivers at once instead of one. The reservation is what the host sets
+/// aside and what limits the Space.
+const ACP_DRIVER_CPUS: u32 = 1;
+const ACP_DRIVER_MEMORY_MB: u64 = 1536;
 
 /// The driver of a session: what the coordinator runs, and how it is
 /// packaged.
@@ -44,9 +51,9 @@ struct Driver {
     state_dir: String,
 }
 
-/// The driver of `harness`: `--driver-cmd` (testing), the pi-durable driver
-/// for `pi`, and for every other ACP harness the durable ACP driver of
-/// `cua-agents`.
+/// The driver of `harness`: `--driver-cmd` (testing), else the durable ACP
+/// driver of `cua-agents` (every harness, Pi included, through its ACP
+/// adapter).
 fn driver_of(
     a: &RunArgs,
     name: &str,
@@ -59,14 +66,6 @@ fn driver_of(
         }
         return Ok(Driver {
             argv,
-            env: keys,
-            bundle: String::new(),
-            state_dir: String::new(),
-        });
-    }
-    if a.harness == "pi" {
-        return Ok(Driver {
-            argv: vec!["node".into(), PI_DRIVER_ENTRY.into()],
             env: keys,
             bundle: String::new(),
             state_dir: String::new(),
@@ -163,7 +162,7 @@ pub(crate) fn start_params(
     }
     let driver = driver_of(a, name, keys)?;
     let mut env = driver.env;
-    // The pi driver (and a --driver-cmd) reads the task from its environment;
+    // A --driver-cmd reads the task from its environment;
     // an ACP driver has it in its bundle.
     if driver.bundle.is_empty() {
         env.insert("CUA_AGENT_HARNESS".into(), a.harness.clone().into());
@@ -188,6 +187,7 @@ pub(crate) fn start_params(
         ),
         None => driver.bundle,
     };
+    let bundle_is_empty = bundle.is_empty();
     let space = match a.sandbox.trim() {
         "" | "auto" => String::new(),
         s if s.contains(':') => {
@@ -206,6 +206,13 @@ pub(crate) fn start_params(
         "label": a.harness,
         "bundle": bundle,
     });
+    // A harness driver installs and runs the harness in its Space: the job
+    // default (1 CPU, 1 GiB) is not enough for it (Claude Code's install
+    // is killed for memory), so it gets a bigger one.
+    if !bundle_is_empty {
+        spec["cpus"] = ACP_DRIVER_CPUS.into();
+        spec["memory_mb"] = ACP_DRIVER_MEMORY_MB.into();
+    }
     if let Some(l) = &a.label {
         spec["label"] = l.clone().into();
     }
@@ -256,11 +263,20 @@ fn state_line(v: &Value) -> String {
     if let Some(n) = v["node"].as_str().filter(|n| !n.is_empty()) {
         s.push_str(&format!(", on {n}"));
     }
+    // No machine has room for the driver yet.
+    if let Some(w) = v["waiting"].as_str().filter(|w| !w.is_empty()) {
+        s.push_str(&format!(", {w}"));
+    }
     s
 }
 
 /// `cua agent run --durable`.
-pub async fn start(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
+pub async fn start(
+    cua: &std::sync::Arc<cua_sdk::Cua>,
+    a: RunArgs,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
     let name = a
         .name
         .clone()
@@ -277,6 +293,11 @@ pub async fn start(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, C
                 v["epoch"]
             ))
         );
+        if a.on.as_deref() == Some("auto")
+            && let Some(w) = storage_warning(cua).await
+        {
+            eprintln!("{}", crate::util::hint(&w));
+        }
     }
     if !a.follow {
         return Ok(0);
@@ -284,6 +305,43 @@ pub async fn start(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, C
     logs(&name, true, json, out).await?;
     let v = ask("session_get", json!({"name": name})).await?;
     Ok(if v["state"] == "done" { 0 } else { 1 })
+}
+
+/// What a durable agent placed on `auto` should know when Cua may move it to
+/// another machine and the Cua Volume keeps its files on one machine: `None`
+/// when one machine is signed in or the Volume is in a bucket every machine
+/// reaches (`machines` machines, Volume `backend`).
+pub(crate) fn storage_warning_text(machines: usize, backend: &str) -> Option<String> {
+    if machines < 2 || backend != "fs" {
+        return None;
+    }
+    Some(format!(
+        "{machines} machines are signed in, but Cua Volume keeps its files on This Mac, so a machine \
+         that takes over this agent after a failure does not see the files the agent wrote or needs; \
+         the task starts from the beginning there. Put Cua Volume in your own S3 bucket so every \
+         machine reaches the same files: `cua volume config set --backend s3` (see \
+         https://cua.ai/docs/spaces/guides/keep-an-agent-running)."
+    ))
+}
+
+/// [`storage_warning_text`] for this account now. Best effort: a question
+/// that is not answered quickly is no warning.
+async fn storage_warning(cua: &std::sync::Arc<cua_sdk::Cua>) -> Option<String> {
+    let ask = async {
+        let status = crate::runs::request("pool", "status", Value::Null)
+            .await
+            .ok()?;
+        let machines = status["machines"].as_array().map_or(0, |m| m.len());
+        if machines < 2 {
+            return None;
+        }
+        let backend = cua.spaces().volume_storage().await.ok()?.backend;
+        storage_warning_text(machines, &backend)
+    };
+    tokio::time::timeout(Duration::from_secs(4), ask)
+        .await
+        .ok()
+        .flatten()
 }
 
 /// `cua agent sessions`.
@@ -325,6 +383,9 @@ pub async fn status(name: &str, json: bool, out: &mut dyn Write) -> Result<i32, 
         return Ok(0);
     }
     line(out, state_line(&v));
+    if let Some(l) = drives_line(&v) {
+        line(out, l);
+    }
     if let Some(a) = v["last_output_age_secs"].as_i64() {
         line(
             out,
@@ -338,26 +399,64 @@ pub async fn status(name: &str, json: bool, out: &mut dyn Write) -> Result<i32, 
         line(out, format!("last problem: {e}"));
     }
     for h in v["history"].as_array().into_iter().flatten() {
-        line(
-            out,
-            format!(
-                "  epoch {} drive {}  {}{}{}",
-                h["epoch"],
-                h["attempt"],
-                h["event"].as_str().unwrap_or(""),
-                h["exit_code"]
-                    .as_i64()
-                    .map(|c| format!(" (exit {c})"))
-                    .unwrap_or_default(),
-                h["node"]
-                    .as_str()
-                    .filter(|n| !n.is_empty())
-                    .map(|n| format!(" on {n}"))
-                    .unwrap_or_default(),
-            ),
-        );
+        line(out, history_line(h));
     }
     Ok(0)
+}
+
+/// How many drives a session has used and how many of them failed, in words
+/// ("drive 2 of 5 so far, 1 failed"): a restart after a lost machine or a
+/// crashed driver is a drive of its own, and this says which ones.
+pub(crate) fn drives_line(v: &Value) -> Option<String> {
+    let (used, max) = (v["attempts"].as_u64()?, v["max_attempts"].as_u64()?);
+    let failed = v["history"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|h| matches!(h["event"].as_str(), Some("crashed" | "stalled" | "fenced")))
+        .count();
+    if used < 2 && failed == 0 {
+        return None;
+    }
+    Some(format!(
+        "drive {used} of {max} so far, {failed} failed ({} left)",
+        max.saturating_sub(used)
+    ))
+}
+
+/// One history entry of `cua agent status`. A drive that ended badly says why
+/// (the driver's last words when the machine kept them), cut to one line.
+pub(crate) fn history_line(h: &Value) -> String {
+    let event = h["event"].as_str().unwrap_or("");
+    let mut s = format!(
+        "  epoch {} drive {}  {}{}{}",
+        h["epoch"],
+        h["attempt"],
+        event,
+        h["exit_code"]
+            .as_i64()
+            .map(|c| format!(" (exit {c})"))
+            .unwrap_or_default(),
+        h["node"]
+            .as_str()
+            .filter(|n| !n.is_empty())
+            .map(|n| format!(" on {n}"))
+            .unwrap_or_default(),
+    );
+    if matches!(event, "crashed" | "stalled" | "fenced") {
+        let d = h["detail"]
+            .as_str()
+            .unwrap_or("")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !d.is_empty() {
+            let skip = d.chars().count().saturating_sub(200);
+            let tail: String = d.chars().skip(skip).collect();
+            s.push_str(&format!(": {}{tail}", if skip > 0 { "..." } else { "" }));
+        }
+    }
+    s
 }
 
 /// `cua agent logs session:NAME [-f]`: the output of each epoch's driver in
@@ -440,6 +539,44 @@ pub async fn rm(name: &str, json: bool, out: &mut dyn Write) -> Result<i32, CuaE
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn status_says_how_many_drives_failed_and_why() {
+        let v = json!({"attempts": 2, "max_attempts": 5, "history": [
+            {"event":"started"},{"event":"crashed"},{"event":"started"}]});
+        assert_eq!(
+            drives_line(&v).unwrap(),
+            "drive 2 of 5 so far, 1 failed (3 left)"
+        );
+        // A first drive with nothing failed needs no line.
+        let v = json!({"attempts": 1, "max_attempts": 5, "history": [{"event":"started"}]});
+        assert!(drives_line(&v).is_none());
+        // A crashed drive carries its reason, cut to one line from the end.
+        let h = json!({"epoch":1,"attempt":1,"event":"crashed","exit_code":1,"node":"m1",
+            "detail":"drive 1 of 5: the driver ended (failed), exit 1: Error: ENOSPC: no space left on device\n  at write"});
+        let l = history_line(&h);
+        assert!(
+            l.starts_with("  epoch 1 drive 1  crashed (exit 1) on m1: drive 1 of 5"),
+            "{l}"
+        );
+        assert!(l.contains("ENOSPC") && !l.contains('\n'), "{l}");
+        // A drive that started or finished has no detail.
+        let h = json!({"epoch":1,"attempt":1,"event":"started","detail":"x"});
+        assert_eq!(history_line(&h), "  epoch 1 drive 1  started");
+    }
+
+    #[test]
+    fn a_waiting_driver_says_what_it_waits_for() {
+        let v = json!({"name":"n","state":"running","epoch":2,"attempts":2,"max_attempts":5,
+            "waiting":"waiting for a machine with 1 CPUs and 1.5 GB memory free"});
+        let l = state_line(&v);
+        assert!(
+            l.ends_with(", waiting for a machine with 1 CPUs and 1.5 GB memory free"),
+            "{l}"
+        );
+        let v = json!({"name":"n","state":"running","epoch":1,"attempts":1,"max_attempts":5});
+        assert!(!state_line(&v).contains("waiting"));
+    }
+
     use super::*;
     use crate::agent_cmd::AgentCmd;
     use clap::Parser;
@@ -483,12 +620,16 @@ mod tests {
         let p = start_params(&a, "refactor", shell).unwrap();
         assert_eq!(p["name"], "refactor");
         assert_eq!(p["max_attempts"], 8);
-        assert_eq!(p["spec"]["argv"], json!(["node", PI_DRIVER_ENTRY]));
+        // Pi runs the same durable ACP driver as every other harness (it
+        // has no `node` of its own on the job image: the driver installs one).
+        assert_eq!(p["spec"]["argv"], json!(["/bin/sh", "driver.sh"]));
+        assert!(!p["spec"]["bundle"].as_str().unwrap().is_empty());
         assert_eq!(p["spec"]["space"], "research");
         assert_eq!(p["spec"]["stall_secs"], 45);
         assert_eq!(p["spec"]["on"], "auto");
-        assert_eq!(p["spec"]["env"]["CUA_AGENT_PROMPT"], "keep going");
-        assert_eq!(p["spec"]["env"]["CUA_AGENT_MODEL"], "m1");
+        // The task is in the bundle, not the environment; the key is in the
+        // environment only.
+        assert!(p["spec"]["env"].get("CUA_AGENT_PROMPT").is_none());
         assert_eq!(p["spec"]["env"]["ANTHROPIC_API_KEY"], "sk-ant-test");
         // Only fields the coordinator's SessionSpec has (it keeps the same
         // list in a test of its own).
@@ -522,6 +663,16 @@ mod tests {
             target_of_start(&args(&["--durable", "auto", "pi", "x"])).unwrap(),
             "local"
         );
+    }
+
+    #[test]
+    fn the_storage_warning_is_for_several_machines_and_the_fs_volume_only() {
+        let w = storage_warning_text(3, "fs").unwrap();
+        assert!(w.contains("3 machines") && w.contains("S3 bucket"), "{w}");
+        assert!(!w.contains("computer") && !w.contains("device") && !w.contains('\u{b7}'));
+        assert!(storage_warning_text(1, "fs").is_none());
+        assert!(storage_warning_text(0, "fs").is_none());
+        assert!(storage_warning_text(3, "s3").is_none());
     }
 
     #[test]
@@ -564,6 +715,26 @@ mod tests {
         assert_eq!(p["spec"]["argv"], json!(["sh", "-c", "true"]));
     }
 
+    /// The driver Space is sized for what the harnesses need (CUA-3002):
+    /// OpenCode's install is killed at 1024 MiB and runs at 1536, and a
+    /// machine with 8 GB (about 6.7 GB of it offered to jobs) must hold four
+    /// drivers at once, not one.
+    #[test]
+    fn four_drivers_fit_a_machine_with_8_gb_and_opencode_still_fits_one() {
+        const {
+            assert!(ACP_DRIVER_MEMORY_MB >= 1536, "OpenCode needs 1.5 GiB");
+            assert!(4 * ACP_DRIVER_MEMORY_MB <= 6777, "four drivers on 8 GB");
+            assert!(
+                4 * (ACP_DRIVER_CPUS as u64) * 1000 <= 4000,
+                "four drivers on 4 CPUs"
+            );
+        }
+        let a = args(&["--durable", "auto", "opencode", "x"]);
+        let p = start_params(&a, "n", |_: &str| None).unwrap();
+        assert_eq!(p["spec"]["memory_mb"], 1536);
+        assert_eq!(p["spec"]["cpus"], 1);
+    }
+
     #[test]
     fn an_acp_harness_runs_the_durable_acp_driver_from_cua_agents() {
         let a = args(&[
@@ -583,7 +754,6 @@ mod tests {
         let p = start_params(&a, "fix-it", shell).unwrap();
         let spec = &p["spec"];
         assert!(!spec["argv"].as_array().unwrap().is_empty());
-        assert_ne!(spec["argv"], json!(["node", PI_DRIVER_ENTRY]));
         // Packaged for the job: a bundle, no prompt in the environment, the
         // key in the environment only (never in the bundle).
         let bundle = spec["bundle"].as_str().unwrap();
@@ -591,7 +761,12 @@ mod tests {
         assert!(spec["env"].get("CUA_AGENT_PROMPT").is_none());
         assert_eq!(spec["env"]["ANTHROPIC_API_KEY"], "sk-ant-secret");
         assert!(!bundle.contains("sk-ant-secret"));
-        assert_eq!(spec["state_dir"], "~/.cua/durable/fix-it");
+        // The journal stays in the job's data directory, which outlives the
+        // driver's Space on the same machine (never `~/.cua/...` in the Space).
+        assert_eq!(spec["state_dir"], "");
+        // The harness installs and runs in the driver's Space: sized for it.
+        assert_eq!(spec["cpus"], ACP_DRIVER_CPUS);
+        assert_eq!(spec["memory_mb"], ACP_DRIVER_MEMORY_MB);
         assert_eq!(spec["label"], "claude-code");
         // Same inputs, same driver.
         let again = start_params(&a, "fix-it", shell).unwrap();

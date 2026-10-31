@@ -925,6 +925,9 @@ A change to this machine's Spaces settings (`None` keeps a value).
 | `provide_spaces` / `provideSpaces` | `Option<bool>` | `None` | Provide Spaces. |
 | `max_spaces` / `maxSpaces` | `Option<u32>` | `None` | Provided Spaces at once (0: no limit). |
 | `max_macos_vms` / `maxMacosVms` | `Option<u32>` | `None` | macOS VMs at once (0 to 2, Apple's license). |
+| `max_memory_gb` / `maxMemoryGb` | `Option<u32>` | `None` | Memory the provided Spaces may use in total, in GB (0: no limit). |
+| `max_disk_gb` / `maxDiskGb` | `Option<u32>` | `None` | Disk the provided Spaces may use in total, in GB (0: no limit). |
+| `max_run_minutes` / `maxRunMinutes` | `Option<u32>` | `None` | How long a provided Space may run, in minutes (0: no limit). |
 
 ## `HostSetupOptions` record
 
@@ -986,6 +989,13 @@ Returned by [`Host.configure`](#hostconfigure), [`Host.pause_signed_out`](#hostp
 | `provide_spaces` / `provideSpaces` | `bool` | `false` | This machine provides Spaces to your other devices. |
 | `max_spaces` / `maxSpaces` | `u32` | `0` | Provided Spaces at once (0: no limit). |
 | `max_macos_vms` / `maxMacosVms` | `u32` | `0` | macOS VMs at once (at most two). |
+| `max_memory_gb` / `maxMemoryGb` | `u32` | `0` | Memory the provided Spaces may use in total, in GB (0: no limit). |
+| `max_disk_gb` / `maxDiskGb` | `u32` | `0` | Disk the provided Spaces may use in total, in GB (0: no limit). |
+| `max_run_minutes` / `maxRunMinutes` | `u32` | `0` | How long a provided Space may run, in minutes (0: no limit). |
+| `used_memory_gb` / `usedMemoryGb` | `u32` | `0` | What the provided Spaces were given now, in GB. |
+| `used_disk_gb` / `usedDiskGb` | `u32` | `0` |  |
+| `total_memory_gb` / `totalMemoryGb` | `u32` | `0` | This machine's own memory and disk, in GB (0: not known). |
+| `total_disk_gb` / `totalDiskGb` | `u32` | `0` |  |
 | `provided_spaces` / `providedSpaces` | [`Vec<HostProvidedSpace>`](#hostprovidedspace-record) | `[]` | The Spaces this machine provides now. |
 | `spaces_audit` / `spacesAudit` | [`Vec<HostSpacesAuditRecord>`](#hostspacesauditrecord-record) | `[]` | The Spaces audit, newest first. |
 | `spaces_audit_error` / `spacesAuditError` | `Option<String>` | `None` | Set when the Spaces audit does not verify. |

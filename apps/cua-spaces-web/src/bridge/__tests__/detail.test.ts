@@ -10,7 +10,7 @@ import type { TelemetryView } from "../contracts/host";
 import { sanitizeSignals } from "../ops/telemetry";
 import { TelemetryForwarder, telemetryAllowed } from "../telemetry";
 import { toMachineRows } from "../adapters/webkit";
-import { machineIdOf, rowsToSpaces, toMachines } from "../derive";
+import { machineIdOf, machinesView, rowsToSpaces, toMachines } from "../derive";
 import { agentRunLines, desktopCover, PIP_CHANGED_EVENT, SpaceDetailStore, spaceDetail } from "../space-detail";
 import type { CoreClient } from "../core";
 import { parseDropped, sendFiles, splitDrop } from "../space-files";
@@ -171,20 +171,20 @@ describe("this device's access to its machines", () => {
   });
 });
 
-describe("this computer on the relay (CUA-1527)", () => {
+describe("this machine on the relay (CUA-1527)", () => {
   const HOST = "09c8b17b5a55f89bc1e376eaeabf111f";
   const wkSpace = (id: string, name: string, host?: string) => ({ space: { id, name, provider: "relay", status: "running", os: "linux", host, hostName: host ? "lg-x11" : undefined } });
   const status = { configured: true, mode: "relay", machineId: HOST, name: "lg-x11", sharing: true, serviceInstalled: true, serviceRunning: true, serviceKind: "systemd", clients: [], permissions: [] };
 
-  it("lists the machine that is set up for access once, as This computer, with its Spaces", () => {
+  it("lists the machine that is set up for access once, as This machine, with its Spaces", () => {
     const spaces = { spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST), wkSpace(`relay:${HOST}`, "lg-x11")] };
     const rows = toMachineRows(spaces as never, { devices: null, signedIn: true, host: status } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
+    expect(rows.map((r) => r.name)).toEqual(["This machine"]);
     const machines = toMachines(rows, []);
     expect(machines).toHaveLength(1);
   });
 
-  it("puts the Spaces this machine provides on This computer", () => {
+  it("puts the Spaces this machine provides on This machine", () => {
     const rows = toMachineRows({ spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST)] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
     const here = rows.find((r) => r.current)!;
     expect(machineIdOf({ id: "relay:space-16dec1e7810d08b6", provider: "relay", host: HOST }, rows)).toBe(here.id);
@@ -192,12 +192,12 @@ describe("this computer on the relay (CUA-1527)", () => {
 
   it("does not list a Space registered on the relay as a machine", () => {
     const rows = toMachineRows({ spaces: [wkSpace("relay:space-32179dffc4bd8902", "lin-local")] } as never, { devices: null, signedIn: true } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
+    expect(rows.map((r) => r.name)).toEqual(["This machine"]);
   });
 
   it("still lists another machine's Spaces under that machine", () => {
     const rows = toMachineRows({ spaces: [wkSpace("relay:space-aaaa", "job", "feedfacefeedfacefeedfacefeedface")] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This computer", "lg-x11"]);
+    expect(rows.map((r) => r.name)).toEqual(["This machine", "lg-x11"]);
   });
 });
 
@@ -309,5 +309,34 @@ describe("the Machines page's rows from the host (machines.pageRows)", () => {
       ["Not sharing", "No Spaces"],
       ["Offline", ""],
     ]);
+  });
+});
+
+describe("the Machines rows listed here for an older host (machinesView)", () => {
+  const desktop = (id: string, over: object = {}) =>
+    ({ id: `relay:${id}`, name: id, os: "macos", status: "running", provider: "relay", sdk: { features: ["desktop_stream"], reachable: true }, ...over }) as never;
+  const hosted = (id: string, n: number) => ({ id: `relay:${id}/space-${n}`, name: `s${n}`, status: "running", provider: "relay", host: id }) as never;
+  const machine = (id: string, over: object = {}) => ({ id, name: id, os: "macos", via: "relay", connection: "relay", online: true, current: false, spaceIds: [], limits: [], ...over }) as never;
+
+  /** The rows the core is asked to draw. */
+  function rowsFor(machines: never[], spaces: never[]) {
+    let rows: { id: string; spacesLabel: string }[] = [];
+    const core = {
+      tryCall: (op: string, args: { input: { rows: typeof rows } }) => {
+        if (op !== "machines.view") return null;
+        rows = args.input.rows;
+        return {};
+      },
+    } as unknown as CoreClient;
+    machinesView(core, { hostView: null, machines, spaces, host: null });
+    return Object.fromEntries(rows.map((r) => [r.id, r.spacesLabel]));
+  }
+
+  it("says a shared desktop, a desktop with Spaces, Spaces only, and a machine that stopped sharing", () => {
+    const labels = rowsFor(
+      [machine("solo"), machine("both"), machine("box"), machine("stopped", { notSharing: "stopped sharing" })],
+      [desktop("solo"), desktop("both"), hosted("both", 1), hosted("box", 1), hosted("box", 2), desktop("stopped", { sdk: { features: [], reachable: false, error: "stopped sharing" } })],
+    );
+    expect(labels).toEqual({ solo: "Desktop shared", both: "Desktop and 1 Space", box: "2 Spaces", stopped: "No Spaces" });
   });
 });

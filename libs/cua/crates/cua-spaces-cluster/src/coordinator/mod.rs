@@ -39,6 +39,7 @@ pub mod metrics;
 pub mod requests;
 pub mod sessions;
 pub mod store;
+mod telemetry;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -188,6 +189,8 @@ struct Queued {
     /// Not placed before this (a failed attempt's backoff).
     not_before: Instant,
     submitted_ms: i64,
+    /// Why no machine took it at the last look (empty: not tried yet).
+    waiting: String,
 }
 
 /// A gang run as the scheduler keeps it (its row is in the database).
@@ -295,6 +298,10 @@ struct Sched {
     /// Start barriers to release with each host's next feed call: host ->
     /// job -> attempt.
     releases: HashMap<String, BTreeMap<i64, u32>>,
+    /// Run -> the host it is placed on first when that host fits (a durable
+    /// session's next drive: its journal is on the host that ran the last).
+    /// A preference, never a pin: a host that is gone or full is passed over.
+    prefer: HashMap<String, String>,
 }
 
 /// A member's start barrier and progress as its host last reported them.
@@ -344,6 +351,7 @@ impl Sched {
                 ready_at: now,
                 not_before: now + delay,
                 submitted_ms: f.submitted_ms,
+                waiting: String::new(),
             },
         );
         self.queue.push_front(id);
@@ -1196,6 +1204,7 @@ impl Coordinator {
                     ready_at: now,
                     not_before: now,
                     submitted_ms: r.submitted_ms,
+                    waiting: String::new(),
                 },
             );
             g.queue.push_back(r.id);
@@ -1312,6 +1321,9 @@ impl Coordinator {
                     r.short = r.min.max(1);
                 }
             }
+            for q in g.queued.values_mut() {
+                q.waiting = "waiting for a machine that can take work".into();
+            }
             return (vec![], vec![], vec![]);
         }
         if g.queue.is_empty() && !gangs_ready {
@@ -1361,7 +1373,7 @@ impl Coordinator {
         // later job of the same shape is passed over at once, so jobs that
         // fit elsewhere (another OS, a pinned host, the elastic capacity)
         // behind thousands that do not are still placed.
-        let mut missed: std::collections::HashSet<NeedKey> = std::collections::HashSet::new();
+        let mut missed: HashMap<NeedKey, String> = HashMap::new();
         while let Some(id) = g.queue.pop_front() {
             let Some(q) = g.queued.get(&id) else {
                 continue;
@@ -1374,7 +1386,10 @@ impl Coordinator {
             let (retries, max_attempts, run) = (q.retries, q.max_attempts, q.run.clone());
             let need = need_of(&q.spec);
             let key = need_key(&need);
-            if retries < max_attempts && missed.contains(&key) {
+            if retries < max_attempts && missed.contains_key(&key) {
+                if let Some(q) = g.queued.get_mut(&id) {
+                    q.waiting = missed[&key].clone();
+                }
                 deferred.push(id);
                 skipped += 1;
                 if skipped >= SKIP_MAX {
@@ -1392,10 +1407,7 @@ impl Coordinator {
                 ended.push(Change::EndQueued {
                     id,
                     state: state::ERROR.into(),
-                    error: format!(
-                        "gave up after {} attempts were lost (hosts went down or could not run it)",
-                        q.retries
-                    ),
+                    error: lost_attempts_words(q.retries),
                     at_ms: now_ms(),
                 });
                 Metrics::inc(&self.metrics.ended_other);
@@ -1409,10 +1421,19 @@ impl Coordinator {
                     continue;
                 }
             }
-            let Some(&best) = placement::rank(&cands, &need, self.cfg.policy).first() else {
+            let ranked = placement::rank(&cands, &need, self.cfg.policy);
+            let preferred = g
+                .prefer
+                .get(&run)
+                .and_then(|n| ranked.iter().copied().find(|&i| &cands[i].name == n));
+            let Some(best) = preferred.or_else(|| ranked.first().copied()) else {
                 deferred.push(id);
                 misses += 1;
-                missed.insert(key);
+                let why = waiting_reason(&need);
+                if let Some(q) = g.queued.get_mut(&id) {
+                    q.waiting = why.clone();
+                }
+                missed.insert(key, why);
                 continue;
             };
             misses = 0;
@@ -1422,6 +1443,7 @@ impl Coordinator {
             c.pending_jobs += 1;
             let node = c.name.clone();
             let q = g.queued.remove(&id).expect("queued");
+            g.prefer.remove(&q.run);
             let attempt = q.attempt + 1;
             let mut spec = (*q.spec).clone();
             spec.job_id = host_job_id(&self.cluster_id, id);
@@ -1821,7 +1843,12 @@ impl Coordinator {
                     g.land(&f);
                     let mut c = complete(id, h, state::ERROR);
                     if let Change::Complete { error, .. } = &mut c {
-                        *error = format!("gave up after {} attempts: {}", f.retries + 1, h.error);
+                        *error = format!(
+                            "gave up after {} attempt{}: {}",
+                            f.retries + 1,
+                            if f.retries == 0 { "" } else { "s" },
+                            h.error
+                        );
                     }
                     changes.push(c);
                     Metrics::inc(&self.metrics.ended_other);
@@ -2518,6 +2545,29 @@ impl Coordinator {
         self.sched.lock().expect("sched").nodes.contains_key(name)
     }
 
+    /// Whether a job is running on host `name` now.
+    pub fn node_busy(&self, name: &str) -> bool {
+        let g = self.sched.lock().expect("sched");
+        g.inflight.values().any(|f| f.node == name)
+    }
+
+    /// Places `run` on `host` first when it fits (see `Sched::prefer`).
+    pub(crate) fn prefer_host(&self, run: &str, host: &str) {
+        if !host.is_empty() {
+            let mut g = self.sched.lock().expect("sched");
+            g.prefer.insert(run.to_string(), host.to_string());
+        }
+    }
+
+    /// Why queued job `id` is not placed (empty: it is placed, or not yet tried).
+    pub fn queued_waiting(&self, id: i64) -> String {
+        let g = self.sched.lock().expect("sched");
+        g.queued
+            .get(&id)
+            .map(|q| q.waiting.clone())
+            .unwrap_or_default()
+    }
+
     /// Jobs waiting in memory and in flight.
     pub fn depth(&self) -> (usize, usize) {
         let g = self.sched.lock().expect("sched");
@@ -2902,6 +2952,25 @@ fn need_key(n: &Need) -> NeedKey {
 }
 
 /// What a job needs of its host.
+/// What a job that no machine took is waiting for, in plain words.
+fn waiting_reason(need: &Need) -> String {
+    if !need.on.is_empty() && need.on != "auto" {
+        return format!("waiting for {} to have room", need.on);
+    }
+    let mut parts = vec![];
+    if need.millicpus > 0 {
+        let c = need.millicpus.div_ceil(1000);
+        parts.push(format!("{c} CPU{}", if c == 1 { "" } else { "s" }));
+    }
+    if need.memory_mb > 0 {
+        parts.push(format!("{} GB memory", need.memory_mb.div_ceil(1024)));
+    }
+    if parts.is_empty() {
+        return "waiting for a machine with room".into();
+    }
+    format!("waiting for a machine with {} free", parts.join(" and "))
+}
+
 fn need_of(spec: &JobSpec) -> Need {
     Need {
         private_image: cua_cluster::placement::image_is_private(&spec.image),
@@ -2948,6 +3017,33 @@ fn member_end(id: i64, attempt: u32, state: &str, error: String) -> Change {
 /// Jobs a dispatch round may pass over (their shape found no host) before
 /// it stops: a bound on the work per round with a very long queue.
 const SKIP_MAX: usize = 200_000;
+
+/// Why a job that was lost and queued again is given up, in plain words
+/// ("1 attempt was lost", "3 attempts were lost").
+fn lost_attempts_words(n: u32) -> String {
+    format!(
+        "{n} {} lost: the machine it ran on stopped answering or could not run it",
+        if n == 1 {
+            "attempt was"
+        } else {
+            "attempts were"
+        }
+    )
+}
+
+#[cfg(test)]
+mod words_tests {
+    use super::lost_attempts_words;
+
+    #[test]
+    fn the_give_up_message_has_the_right_plural_and_no_job_names() {
+        assert_eq!(
+            lost_attempts_words(1),
+            "1 attempt was lost: the machine it ran on stopped answering or could not run it"
+        );
+        assert!(lost_attempts_words(3).starts_with("3 attempts were lost"));
+    }
+}
 
 #[cfg(test)]
 mod tests {

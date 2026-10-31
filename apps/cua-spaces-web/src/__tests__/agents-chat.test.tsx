@@ -10,6 +10,7 @@ import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { chatKey, mergeChats } from "@/bridge/agents-dm";
+import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
 import { demoDmEntries } from "@/bridge/adapters/demo/thread";
 import type { AgentMember, MemberIdentity } from "@/bridge/ops/thread";
 import { needText } from "@/components/agents/agent-chat";
@@ -130,11 +131,11 @@ describe("the Agents tab", () => {
     expect(row.querySelector('[data-harness-mark="bot"]')).toBeNull();
     const agent = row.dataset.agentsEmptyRow!.replace("connect-mac-", "");
     await click(row);
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connectors"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connections"));
     expect((router.state.location.search as { app?: string }).app).toBe(agent);
     // The row is there, and still off: opening the page did not connect it.
-    const appRow = await found(`[data-connected-app="${agent}"]`);
-    expect(appRow.dataset.on).toBe("false");
+    const appRow = await found(`[data-connector-app="${agent}"]`);
+    expect(appRow.dataset.state).toBe("not-connected");
   });
 
   it("New agent opens Add an agent with the Space in its title", async () => {
@@ -153,10 +154,11 @@ describe("the Agents tab", () => {
     expect(page.querySelector("[data-agent-page-all]")).not.toBeNull();
   });
 
-  it("the thread's card links to the agent's DM (Activity)", async () => {
+  it("the thread's card links to the agent's DM (Activity, under Details)", async () => {
     await mountApp(`/spaces/${encodeURIComponent("relay:linux-box/ubuntu-build")}`, { failsCreates: false, listsGhost: false });
     const name = await found("[data-author-name='claude']");
     await click(name);
+    await click(await found("[data-profile-card='agent'] [data-card-details]"));
     await click(await found("[data-agent-activity='claude']"));
     await found(`[data-dm='${CLAUDE}']`);
   });
@@ -179,10 +181,11 @@ describe("the DM and the list, as data", () => {
   const member = (name: string, i: MemberIdentity | null, over: Partial<AgentMember> = {}): AgentMember => ({ name, harness: i?.harness.id ?? "", status: "idle", activity: null, sessions: 1, rights: null, youCan: null, heldBy: null, identity: i, ...over });
   const space = (id: string) => ({ id, name: id.split(":").pop()!, os: "linux" as const }) as never;
 
-  it("keys one agent across Spaces on owner, harness and name; without an identity, on its Space", () => {
+  it.skipIf(!wasmBuilt)("keys one agent across Spaces on owner, harness and name; without an identity, on its Space", async () => {
+    const core = await testCore();
     expect(chatKey("a", member("hermes-2", ident("ada", "hermes", "Hermes")))).toBe("ada/hermes/hermes");
     expect(chatKey("local:x", member("bot", null))).toBe("local:x/bot");
-    const chats = mergeChats([
+    const chats = mergeChats(core, [
       { space: space("local:a"), role: "owner", members: [member("hermes", ident("ada", "hermes", "Hermes"), { status: "asleep" })] },
       { space: space("local:b"), role: "owner", members: [member("hermes-2", ident("ada", "hermes", "Hermes"), { status: "working", activity: "drafting notes", dm: { unread: 2, last: null }, needsYou: [] })] },
       { space: space("local:b"), role: "owner", members: [member("hermes-3", ident("grace", "hermes", "Hermes"))] },

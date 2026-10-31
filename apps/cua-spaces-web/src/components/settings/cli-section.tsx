@@ -11,6 +11,7 @@
 import { firstRunCliView, useBridge, useCliInstall, useSettings } from "@/bridge";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { Button } from "@/components/ui/button";
+import { useQuiet } from "@/hooks/use-quiet";
 
 /** "~/.local/bin, in ~/.zshrc" as a sentence. */
 function pathLine(value: string): string {
@@ -22,6 +23,9 @@ export function CliSettingsSection() {
   const { core } = useBridge();
   const cli = useCliInstall();
   const name = useSettings().data?.cli?.name ?? null;
+  // The plan is a host read that answers after the page draws: hold its room until it has, so the page does not jump (CUA-1951).
+  const settled = useQuiet(`${cli.state.plan ? 1 : 0}|${name ? 1 : 0}`);
+  if (!settled) return <div aria-hidden className="mb-8 h-[84px]" />;
   if (!cli.state.plan) return null;
   const view = firstRunCliView(core, { cli: cli.state, cliName: name });
   if (!view) return null;

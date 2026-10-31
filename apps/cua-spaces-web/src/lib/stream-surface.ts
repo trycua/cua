@@ -55,7 +55,7 @@ export interface SurfaceState {
   /** The part of `rect` its scroll containers and the viewport leave visible; null when none is. */
   clip: SurfaceRect | null;
   radius: number;
-  /** A dialog (or anything else on top, but floating UI) covers part of the slot: the host hides the video. */
+  /** A dialog (or anything else on top, but floating UI) covers part of the slot, or a modal dialog is open (any slot, the viewer too): the host hides the video. */
   occluded: boolean;
   /** Floating page UI over the slot (a menu, a popover, a tooltip, a toast, a tile's checkbox and power button while they show), in the same coordinates,
    * inside `clip`: the host cuts the video out there and keeps the rest playing. */

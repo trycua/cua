@@ -14,7 +14,8 @@ import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { bindingFor } from "@/lib/keybindings";
-import { realSpaces, spaceState } from "@/lib/spaces";
+import { useListedSpaces } from "@/components/spaces/listed";
+import { spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
 import { Shortcut } from "@/components/ui/kbd";
@@ -22,6 +23,7 @@ import { SignInLink } from "@/components/sign-in-link";
 import { useNavItems } from "./nav";
 import { SidebarUpdateButton } from "./update-indicator";
 import { SidebarTip } from "@/components/tips";
+import { useMachinesAccount } from "@/components/machines/account-parts";
 import { AccountLine, ProBanner } from "./account-area";
 
 export function Sidebar() {
@@ -31,7 +33,10 @@ export function Sidebar() {
   const notifications = useNotifications();
   // No count before the list was read (not "0" while the daemon starts); while computers still answer, the
   // Spaces known so far.
-  const spacesCount = spaces && listStatus.loaded ? realSpaces(spaces).length : undefined;
+  const { counted } = useListedSpaces(spaces);
+  const spacesCount = spaces && listStatus.loaded ? counted.length : undefined;
+  // Machines waiting to be added show beside the item, so they are seen from every page.
+  const { pending } = useMachinesAccount();
   const counts: Partial<Record<string, number>> = { "/spaces": spacesCount, "/machines": machines?.length };
   const navItems = useNavItems();
   const unread = notifications.data?.unread ?? 0;
@@ -64,6 +69,11 @@ export function Sidebar() {
                     <span data-unread-badge className="flex items-center gap-1" aria-label={`${unread} unread`}>
                       <CuaKey size={16} />
                       <span className="text-2xs font-medium tabular-nums text-foreground">{unread}</span>
+                    </span>
+                  ) : null}
+                  {item.to === "/machines" && pending.length > 0 ? (
+                    <span data-pending-badge className="rounded-full bg-warning/20 px-1.5 text-2xs font-medium tabular-nums text-foreground" aria-label={`${pending.length} waiting to be added`}>
+                      {pending.length}
                     </span>
                   ) : null}
                   {counts[item.to] !== undefined ? (

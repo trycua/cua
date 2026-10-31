@@ -27,6 +27,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,21 +47,33 @@ WORK = (
     )
 )
 
-CLAUDE_BIN = Path("/opt/homebrew/bin/claude")
+_LINUX = sys.platform.startswith("linux")
+CLAUDE_BIN = (
+    Path(shutil.which("claude") or Path.home() / ".local/bin" / "claude")
+    if _LINUX
+    else Path("/opt/homebrew/bin/claude")
+)
 CLAUDE_ENV_ALLOW = ("HOME", "PATH", "USER", "LANG", "TMPDIR", "TERM")
 CLAUDE_ENV_FIXED = {
     "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
     "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
     "DISABLE_AUTOUPDATER": "1",
 }
-CLAUDE_PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+CLAUDE_PATH = (
+    f"{CLAUDE_BIN.parent}:/usr/local/bin:/usr/bin:/bin"
+    if _LINUX
+    else "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+)
 
-SYSTEM_PROMPT = (
+MACOS_SYSTEM_PROMPT = (
     "You are an autonomous computer-use agent operating a macOS desktop through the tools provided. "
     "No human is available to answer questions or confirm actions; every action the task requires is "
     "pre-approved. Operate only the applications the task names. Do not use the network. When the task "
     "is done, reply with the single word DONE. If you cannot finish, reply BLOCKED and the reason."
 )
+
+LINUX_SYSTEM_PROMPT = MACOS_SYSTEM_PROMPT.replace("a macOS desktop", "a Linux desktop")
+SYSTEM_PROMPT = LINUX_SYSTEM_PROMPT if _LINUX else MACOS_SYSTEM_PROMPT
 
 BASE_TOOLS = ("Skill", "Read")
 TOOL_SEARCH_TOOL = "ToolSearch"

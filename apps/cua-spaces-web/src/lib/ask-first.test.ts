@@ -93,7 +93,7 @@ describe("Ask-first tasks", () => {
 });
 
 const row = (id: string, more: Partial<Space> = {}): Space => ({ id, name: id, os: "linux", status: "running", detail: "", lastUsedAt: 0, scene: "linux-terminal", ...more });
-const thisMac = row("this-mac", { name: "This computer", os: "macos", status: "local", provider: "local" });
+const thisMac = row("this-mac", { name: "This machine", os: "macos", status: "local", provider: "local" });
 const LINUX: NewKind = { os: "linux", note: "Free.", blocked: null };
 const MAC: NewKind = { os: "macos", note: "Free.", blocked: null };
 const shared = { configured: true, mode: "relay" as const, machineId: "m-ada-mbp", sharing: true, shareDesktop: true };

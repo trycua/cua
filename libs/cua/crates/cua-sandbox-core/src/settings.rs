@@ -35,7 +35,7 @@ pub struct Key {
 }
 
 /// Every setting, in display order.
-pub const KEYS: [Key; 13] = [
+pub const KEYS: [Key; 19] = [
     Key {
         name: "default.on",
         env: "CUA_DEFAULT_ON",
@@ -61,16 +61,40 @@ pub const KEYS: [Key; 13] = [
         description: "anonymous usage telemetry (on, off; alias `telemetry`); DO_NOT_TRACK=1 also turns it off. See `cua telemetry status`",
     },
     Key {
-        name: "runtime.lume",
-        env: "CUA_RUNTIME_LUME",
+        name: "runtime.container",
+        env: "CUA_RUNTIME_CONTAINER",
         default: "auto",
-        description: "the Lume macOS Spaces run on: auto (this Mac's own, else built-in), builtin (cua's pinned, signed Lume, set up on first use) or system (only this Mac's own; nothing is downloaded)",
+        description: "what runs container Spaces: auto (a working Docker engine here, else on a Mac cua's own; cua's own once it exists), builtin (cua's own: on a Mac a VM with Docker and gVisor, set up on first use) or system (only the engine already installed here; nothing is downloaded). Was runtime.linux",
     },
     Key {
-        name: "runtime.linux",
-        env: "CUA_RUNTIME_LINUX",
+        name: "runtime.container_path",
+        env: "CUA_RUNTIME_CONTAINER_PATH",
+        default: "",
+        description: "with runtime.container = system: the docker or podman binary to use instead of the one found on PATH (its engine is the one Spaces use)",
+    },
+    Key {
+        name: "runtime.vm",
+        env: "CUA_RUNTIME_VM",
         default: "auto",
-        description: "the engine local Linux Spaces run on, on a Mac: auto (a working Docker engine on this Mac, else built-in; built-in once it exists), builtin (cua's own VM with Docker and gVisor, set up on first use) or system (only this Mac's own engine; nothing is downloaded)",
+        description: "what runs virtual machine Spaces: auto (on a Mac this Mac's own Lume when new enough, else cua's own), builtin (cua's own: on a Mac its pinned, signed Lume, set up on first use) or system (only the one already installed here; nothing is downloaded). Was runtime.lume",
+    },
+    Key {
+        name: "runtime.vm_path",
+        env: "CUA_RUNTIME_VM_PATH",
+        default: "",
+        description: "with runtime.vm = system: the lume (Mac) or qemu-system-<arch> (Linux) binary to use instead of the one found on PATH",
+    },
+    Key {
+        name: "runtime.microvm",
+        env: "CUA_RUNTIME_MICROVM",
+        default: "auto",
+        description: "what runs microVM Spaces: auto (cua's own when this machine runs it, else what is installed here), builtin (cua's own: on a Mac its monitor, on Linux its Firecracker) or system (only what is already installed here: on a Mac Apple's container, on Linux Firecracker)",
+    },
+    Key {
+        name: "runtime.microvm_path",
+        env: "CUA_RUNTIME_MICROVM_PATH",
+        default: "",
+        description: "with runtime.microvm = system: the container (Mac) or firecracker (Linux) binary to use instead of the one found on PATH",
     },
     Key {
         name: "runtime.linux_cpus",
@@ -97,6 +121,18 @@ pub const KEYS: [Key; 13] = [
         description: "when no location is given and a linked cloud has a budget (`cua cloud budget`), Spaces go to this machine first and overflow into your clouds when it is full, never past the budget (off: this machine only)",
     },
     Key {
+        name: "cache.repos",
+        env: "CUA_CACHE_REPOS",
+        default: "on",
+        description: "the repo cache: public git repositories this machine keeps a verified copy of, so a repeat `git clone` in a Space starts from it (on, off). Only public repositories, only on this machine's disk; `cua host cache clear` empties it",
+    },
+    Key {
+        name: "cache.repos_size_gb",
+        env: "CUA_CACHE_REPOS_SIZE_GB",
+        default: "auto",
+        description: "the most disk the repo cache may use, in GB (auto: the smaller of 5 GB and a tenth of the free disk); the least recently used repositories go first",
+    },
+    Key {
         name: "pool.memory_percent",
         env: "CUA_POOL_MEMORY_PERCENT",
         default: "15",
@@ -117,7 +153,44 @@ pub const KEYS: [Key; 13] = [
 ];
 
 /// Short names `cua config` accepts for a setting.
-const ALIASES: &[(&str, &str)] = &[("telemetry", "telemetry.enabled")];
+const ALIASES: &[(&str, &str)] = &[
+    ("telemetry", "telemetry.enabled"),
+    // The per-OS runtime settings became per kind (`runtime.container`,
+    // `runtime.vm`): the old names still work.
+    ("runtime.linux", "runtime.container"),
+    ("runtime.lume", "runtime.vm"),
+];
+
+/// The settings that replaced a per-OS one: the new name, the old name
+/// in the config file's `[runtime]` table and the old environment
+/// variable. Both are still read (the new ones win), and a write keeps the
+/// old name in step for an older `cua-spacesd` that reads only it.
+pub const LEGACY_RUNTIME: &[(&str, &str, &str)] = &[
+    ("runtime.container", "linux", "CUA_RUNTIME_LINUX"),
+    ("runtime.vm", "lume", "CUA_RUNTIME_LUME"),
+];
+
+fn legacy_of(key: &Key) -> Option<(&'static str, &'static str)> {
+    LEGACY_RUNTIME
+        .iter()
+        .find(|(n, _, _)| *n == key.name)
+        .map(|(_, toml, env)| (*toml, *env))
+}
+
+/// The kinds of Space with a runtime setting each (`runtime.<kind>` and
+/// `runtime.<kind>_path`), as `--kind` names them.
+pub const RUNTIME_KINDS: [&str; 3] = ["container", "vm", "microvm"];
+
+/// `auto`, `builtin` or `system` (`built-in` too), as a runtime setting
+/// takes it.
+pub fn runtime_source_word(v: &str) -> Option<&'static str> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "auto" | "" => Some("auto"),
+        "builtin" | "built-in" | "cua" => Some("builtin"),
+        "system" | "installed" => Some("system"),
+        _ => None,
+    }
+}
 
 /// The setting named `name`.
 pub fn key(name: &str) -> Result<Key, SettingsError> {
@@ -221,7 +294,11 @@ pub struct Settings {
 impl Settings {
     /// The process environment and `$CUA_HOME/config.toml`.
     pub fn load() -> Result<Self, SettingsError> {
-        Self::load_with(config_path(), |k| std::env::var(k).ok())
+        let mut s = Self::load_with(config_path(), |k| std::env::var(k).ok())?;
+        // The per-OS runtime settings under their per-kind names (a read
+        // still works without: a read-only home only skips this).
+        let _ = s.migrate_legacy();
+        Ok(s)
     }
 
     /// `path` and an arbitrary environment (tests).
@@ -238,7 +315,7 @@ impl Settings {
         let doc = text
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| SettingsError(format!("{}: {e}", path.display())))?;
-        let env = KEYS
+        let mut vars: Vec<(&'static str, String)> = KEYS
             .iter()
             .filter_map(|k| {
                 env(k.env)
@@ -246,7 +323,23 @@ impl Settings {
                     .map(|v| (k.env, v.trim().to_string()))
             })
             .collect();
-        Ok(Self { path, doc, env })
+        // The old per-OS variables, when the new one is not set.
+        for (name, _, old) in LEGACY_RUNTIME {
+            let k = KEYS
+                .iter()
+                .find(|k| k.name == *name)
+                .expect("legacy keys exist");
+            if !vars.iter().any(|(e, _)| *e == k.env)
+                && let Some(v) = env(old).filter(|v| !v.trim().is_empty())
+            {
+                vars.push((old, v.trim().to_string()));
+            }
+        }
+        Ok(Self {
+            path,
+            doc,
+            env: vars,
+        })
     }
 
     /// The config file this reads and writes.
@@ -256,6 +349,13 @@ impl Settings {
 
     fn config_value(&self, key: &Key) -> Option<String> {
         let (section, name) = key.name.split_once('.')?;
+        self.config_value_at(section, name).or_else(|| {
+            let (old, _) = legacy_of(key)?;
+            self.config_value_at(section, old)
+        })
+    }
+
+    fn config_value_at(&self, section: &str, name: &str) -> Option<String> {
         let item = self.doc.get(section)?.get(name)?;
         let v = item.as_value()?;
         Some(match v {
@@ -270,11 +370,16 @@ impl Settings {
     /// The effective value of `key` (environment, then config, then the
     /// built-in default).
     pub fn entry(&self, key: Key) -> Entry {
-        if let Some((_, v)) = self.env.iter().find(|(e, _)| *e == key.env) {
+        let old_env = legacy_of(&key).map(|(_, e)| e);
+        if let Some((e, v)) = self
+            .env
+            .iter()
+            .find(|(e, _)| *e == key.env || Some(*e) == old_env)
+        {
             return Entry {
                 key,
                 value: v.clone(),
-                source: Source::Env(key.env),
+                source: Source::Env(e),
             };
         }
         if let Some(v) = self.config_value(&key) {
@@ -319,20 +424,51 @@ impl Settings {
             }
             _ => toml_edit::value(value.clone()),
         };
-        self.doc[section][name] = item;
+        self.doc[section][name] = item.clone();
+        // An older cua-spacesd reads only the per-OS name: keep it in step.
+        if let Some((old, _)) = legacy_of(&key) {
+            self.doc[section][old] = item;
+        }
         self.save()?;
         Ok(value)
+    }
+
+    /// Writes each per-kind runtime setting that the config file holds
+    /// only under its old per-OS name (`[runtime] linux`, `lume`) under its
+    /// new one too. Returns whether anything was written. [`Settings::load`]
+    /// runs it, so the file says the new names from then on.
+    pub fn migrate_legacy(&mut self) -> Result<bool, SettingsError> {
+        let mut changed = false;
+        for (name, old, _) in LEGACY_RUNTIME {
+            let (section, new) = name.split_once('.').expect("keys are section.name");
+            if self.config_value_at(section, new).is_some() {
+                continue;
+            }
+            let Some(v) = self.config_value_at(section, old) else {
+                continue;
+            };
+            let v = runtime_source_word(&v).unwrap_or("auto");
+            self.doc[section][new] = toml_edit::value(v);
+            changed = true;
+        }
+        if changed {
+            self.save()?;
+        }
+        Ok(changed)
     }
 
     /// Removes `key` from the config file. Returns whether it was set.
     pub fn unset(&mut self, key: Key) -> Result<bool, SettingsError> {
         let (section, name) = key.name.split_once('.').expect("keys are section.name");
-        let removed = self
-            .doc
-            .get_mut(section)
-            .and_then(|t| t.as_table_like_mut())
-            .and_then(|t| t.remove(name))
-            .is_some();
+        let mut removed = false;
+        for n in std::iter::once(name).chain(legacy_of(&key).map(|(old, _)| old)) {
+            removed |= self
+                .doc
+                .get_mut(section)
+                .and_then(|t| t.as_table_like_mut())
+                .and_then(|t| t.remove(n))
+                .is_some();
+        }
         if removed {
             if self
                 .doc
@@ -393,6 +529,27 @@ impl Settings {
             .unwrap_or(true)
     }
 
+    /// The repo cache's settings: whether it is on (`cache.repos`, default
+    /// on) and its size cap in bytes (`cache.repos_size_gb`; `None`: auto).
+    pub fn repo_cache(&self) -> (bool, Option<u64>) {
+        let on = key("cache.repos")
+            .map(|k| self.entry(k).value)
+            .map(|v| {
+                !matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "off" | "false" | "0" | "no"
+                )
+            })
+            .unwrap_or(true);
+        let cap = key("cache.repos_size_gb")
+            .map(|k| self.entry(k).value)
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|g| g.is_finite() && *g >= 0.0)
+            .map(|g| (g * f64::from(1u32 << 30)) as u64);
+        (on, cap)
+    }
+
     /// The default kind and where it came from.
     pub fn default_kind(&self) -> Result<(Kind, Source), SettingsError> {
         self.parsed(KEYS[1], Kind::parse)
@@ -441,6 +598,38 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
                 )));
             }
         },
+        "cache.repos" => match v.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => "on".into(),
+            "0" | "false" | "no" | "off" => "off".into(),
+            _ => {
+                return Err(SettingsError(format!(
+                    "cache.repos: expected on or off, got {v:?}"
+                )));
+            }
+        },
+        "cache.repos_size_gb" => {
+            if v.eq_ignore_ascii_case("auto") || v.is_empty() {
+                "auto".into()
+            } else {
+                let g: f64 = v.parse().map_err(|_| {
+                    SettingsError(format!(
+                        "cache.repos_size_gb: expected auto or a number of GB, got {v:?}"
+                    ))
+                })?;
+                if !g.is_finite() || !(0.0..=100_000.0).contains(&g) {
+                    return Err(SettingsError(
+                        "cache.repos_size_gb: expected auto or a number of GB between 0 and 100000"
+                            .into(),
+                    ));
+                }
+                // 0 means nothing is cached.
+                if g.fract() == 0.0 {
+                    format!("{}", g as u64)
+                } else {
+                    format!("{g}")
+                }
+            }
+        }
         "pool.auto" => match v.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => "on".into(),
             "0" | "false" | "no" | "off" => "off".into(),
@@ -492,22 +681,30 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
                 out.join(",")
             }
         }
-        "runtime.lume" => cua_vmm::lume::builtin::LumeSource::parse(v)
+        "runtime.container" | "runtime.vm" | "runtime.microvm" => runtime_source_word(v)
             .ok_or_else(|| {
                 SettingsError(format!(
-                    "runtime.lume: expected auto, builtin or system, got {v:?}"
+                    "{}: expected auto, builtin or system, got {v:?}",
+                    key.name
                 ))
             })?
-            .as_str()
             .to_string(),
-        "runtime.linux" => cua_vmm::managed::LinuxSource::parse(v)
-            .ok_or_else(|| {
-                SettingsError(format!(
-                    "runtime.linux: expected auto, builtin or system, got {v:?}"
-                ))
-            })?
-            .as_str()
-            .to_string(),
+        "runtime.container_path" | "runtime.vm_path" | "runtime.microvm_path" => {
+            let path = match v.strip_prefix("~/") {
+                Some(rest) => std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_default()
+                    .join(rest),
+                None => PathBuf::from(v),
+            };
+            if !path.is_absolute() {
+                return Err(SettingsError(format!(
+                    "{}: expected the full path of a program (unset it to use the one found), got {v:?}",
+                    key.name
+                )));
+            }
+            path.display().to_string()
+        }
         "nudges.risky_actions" => match v.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => "on".into(),
             "0" | "false" | "no" | "off" => "off".into(),
@@ -640,6 +837,30 @@ mod tests {
         assert!(list.iter().all(|e| e.source == Source::Default));
     }
 
+    /// The repo cache is on by default with an automatic size; the words and
+    /// numbers a person sets are checked.
+    #[test]
+    fn the_repo_cache_settings() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = settings(d.path(), &[]);
+        assert_eq!(s.repo_cache(), (true, None));
+        s.set(key("cache.repos").unwrap(), "off").unwrap();
+        s.set(key("cache.repos_size_gb").unwrap(), "2.5").unwrap();
+        assert_eq!(s.repo_cache(), (false, Some(2_684_354_560)));
+        s.set(key("cache.repos").unwrap(), "yes").unwrap();
+        s.set(key("cache.repos_size_gb").unwrap(), "auto").unwrap();
+        assert_eq!(s.repo_cache(), (true, None));
+        let e = s
+            .set(key("cache.repos_size_gb").unwrap(), "lots")
+            .unwrap_err();
+        assert!(e.0.contains("cache.repos_size_gb"), "{e}");
+        let e = s.set(key("cache.repos").unwrap(), "maybe").unwrap_err();
+        assert!(e.0.contains("expected on or off"), "{e}");
+        // The environment wins over the file.
+        let s = settings(d.path(), &[("CUA_CACHE_REPOS", "off")]);
+        assert!(!s.repo_cache().0);
+    }
+
     /// explicit > env > config > default, for each axis.
     #[test]
     fn precedence() {
@@ -697,6 +918,93 @@ mod tests {
         let s = settings(d.path(), &[]);
         assert_eq!(s.default_on().unwrap(), (On::Local, Source::Default));
         assert_eq!(s.default_kind().unwrap().0, Kind::Vm);
+    }
+
+    /// The per-OS runtime settings became per kind: an old config file
+    /// and old variables still count, `cua config` takes the old names, a
+    /// write keeps the old name in step (an older cua-spacesd reads it) and
+    /// the migration writes the new names.
+    #[test]
+    fn per_os_runtime_settings_migrate_to_per_kind() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("config.toml");
+        std::fs::write(&path, "[runtime]\nlinux = \"builtin\"\nlume = \"system\"\n").unwrap();
+        let s = settings(d.path(), &[]);
+        let container = s.entry(key("runtime.container").unwrap());
+        assert_eq!(
+            (container.value.as_str(), container.source.kind()),
+            ("builtin", "config")
+        );
+        assert_eq!(s.entry(key("runtime.vm").unwrap()).value, "system");
+        assert_eq!(s.entry(key("runtime.microvm").unwrap()).value, "auto");
+        // The old names are aliases.
+        assert_eq!(key("runtime.linux").unwrap().name, "runtime.container");
+        assert_eq!(key("runtime.lume").unwrap().name, "runtime.vm");
+
+        let mut s = settings(d.path(), &[]);
+        assert!(s.migrate_legacy().unwrap());
+        assert!(!s.migrate_legacy().unwrap());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("container = \"builtin\""), "{text}");
+        assert!(text.contains("vm = \"system\""), "{text}");
+
+        // A new value wins and the old name follows it.
+        let mut s = settings(d.path(), &[]);
+        s.set(key("runtime.container").unwrap(), "system").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("container = \"system\"") && text.contains("linux = \"system\""),
+            "{text}"
+        );
+        assert_eq!(
+            settings(d.path(), &[])
+                .entry(key("runtime.container").unwrap())
+                .value,
+            "system"
+        );
+        // Unset removes both.
+        let mut s = settings(d.path(), &[]);
+        assert!(s.unset(key("runtime.container").unwrap()).unwrap());
+        let s = settings(d.path(), &[]);
+        let e = s.entry(key("runtime.container").unwrap());
+        assert_eq!((e.value.as_str(), e.source.kind()), ("auto", "default"));
+
+        // The old variable counts; the new one wins over it.
+        let s = settings(d.path(), &[("CUA_RUNTIME_LINUX", "builtin")]);
+        assert_eq!(
+            s.entry(key("runtime.container").unwrap()).source,
+            Source::Env("CUA_RUNTIME_LINUX")
+        );
+        let s = settings(
+            d.path(),
+            &[
+                ("CUA_RUNTIME_LINUX", "builtin"),
+                ("CUA_RUNTIME_CONTAINER", "system"),
+            ],
+        );
+        assert_eq!(s.entry(key("runtime.container").unwrap()).value, "system");
+    }
+
+    /// A runtime path is a full path (`~/` is the home folder); unset goes
+    /// back to the one found.
+    #[test]
+    fn runtime_paths_are_full_paths() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = settings(d.path(), &[]);
+        let k = key("runtime.container_path").unwrap();
+        assert_eq!(s.entry(k).value, "");
+        assert_eq!(
+            s.set(k, " /opt/homebrew/bin/podman ").unwrap(),
+            "/opt/homebrew/bin/podman"
+        );
+        assert!(s.set(k, "podman").unwrap_err().0.contains("full path"));
+        assert!(s.set(key("runtime.microvm").unwrap(), "docker").is_err());
+        assert_eq!(
+            s.set(key("runtime.microvm").unwrap(), "Built-in").unwrap(),
+            "builtin"
+        );
+        assert!(s.unset(k).unwrap());
+        assert_eq!(settings(d.path(), &[]).entry(k).source, Source::Default);
     }
 
     #[test]

@@ -9,8 +9,6 @@ import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
 import type { CloudConnectWire, CloudSheetAction, CloudSheetView, CloudTarget, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
-import type { SettingsPage, SettingsRow } from "./contracts/host";
-import { hostOs } from "./host-os";
 import { useMachines, useSettings, useSpaces } from "./hooks";
 import { newPendingId } from "./store";
 import {
@@ -72,6 +70,8 @@ export interface NewSpaceWizardHook {
   /** Opens the wizard; `on` presets "Run on" (`host:<machine>`, a cloud);
    * `os` opens it on that system, on this machine (an empty home tile). */
   show(on?: string | null, os?: SpaceOs): void;
+  /** Opens "Add a machine by its address" (New Space's menu): the address form, not the wizard's steps. */
+  showAddress(): void;
   close(): void;
   send(action: WizardAction): void;
   /** Starts the plan's create through the bridge's creates flow and closes:
@@ -87,7 +87,7 @@ export interface NewSpaceWizardHook {
 }
 
 /** The Settings, Runtimes row a New Space runtime switch changes. */
-export const RUNTIME_SWITCH_ROW: Record<string, string> = { "runtime.lume": "macos-runtime", "runtime.linux": "linux-runtime" };
+export const RUNTIME_SWITCH_ROW: Record<string, string> = { "runtime.lume": "runtime:vm", "runtime.linux": "runtime:container" };
 
 /** New Space: the core's wizard over the bridge's data. */
 export function useNewSpaceWizard(): NewSpaceWizardHook {
@@ -112,6 +112,12 @@ export function useNewSpaceWizard(): NewSpaceWizardHook {
       let state = wizardInitial(core, local);
       if (os) state = wizardReduce(core, state, { type: "choose-os", os }, local);
       update((x) => ({ ...x, open: true, pinnedEnv: null, state, placeOn: on ?? null }));
+      void ctx.ready.then(loadHostData);
+    },
+    showAddress() {
+      if (!offered) return;
+      const state = wizardReduce(core, wizardInitial(core, env), { type: "show-address" }, env);
+      update((x) => ({ ...x, open: true, pinnedEnv: null, state, placeOn: null }));
       void ctx.ready.then(loadHostData);
     },
     close: () => update((x) => ({ ...x, open: false, state: null, pinnedEnv: null, placeOn: null })),
@@ -432,23 +438,3 @@ export function useRuntimeFix(): RuntimeFixHook {
   };
 }
 
-/**
- * Settings, Advanced, Runtimes' MicroVM row (`settings::microvm_rows`):
- * whether this computer runs microVMs and on what, or why not, from the
- * same runtime doctor New Space's MicroVM tile follows. New Space only
- * greys MicroVM out; the reason is told here. Empty until the host's
- * options are in (asked for here when not yet).
- */
-export function useMicrovmRows(): SettingsRow[] {
-  const ctx = useContext(BridgeContext)!;
-  const { core, env, s } = useNewSpaceEnv();
-  const needsOptions = optionsPending(s.options);
-  useEffect(() => {
-    if (needsOptions && core.status === "ready") void ctx.ready.then(loadHostData);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsOptions, core.status, ctx.ready]);
-  if (!s.options || core.status !== "ready") return [];
-  const microvm = { os: hostOs(), localBackends: env.localBackends ?? null, localDetails: env.localDetails ?? null, hostArch: env.hostArch ?? null };
-  const page = core.tryCall<SettingsPage>("settings.page", { input: { microvm } });
-  return page?.sections.find((x) => x.id === "runtimes")?.rows.filter((r) => r.id.startsWith("microvm-")) ?? [];
-}

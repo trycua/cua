@@ -22,6 +22,7 @@ name: "CI: Cua Spaces for macOS (SwiftUI)"
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "apps/cua-spaces-macos/**"
       - "libs/cua/crates/cua-spaces-app-core/**"
@@ -88,7 +89,7 @@ env:
 
 jobs:
   core:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: app core (Rust) + FFI mirror gate
     runs-on: ubuntu-24.04
     defaults:
@@ -127,9 +128,10 @@ jobs:
   # each compiling it (the checks that need the Rust toolchain compile only
   # the small bindgen tools).
   ffi:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Cua Spaces app library (built once)
-    runs-on: macos-26-xlarge
+    runs-on: macos-26
+    timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: 4
       # The slice cache key names the repository (same value as the producer).
@@ -175,9 +177,11 @@ jobs:
           retention-days: 1
 
   swift-tests:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: SwiftUI app (swift tests, bridge contract)
     needs: ffi
-    runs-on: macos-26-xlarge
+    runs-on: macos-26
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Download the Cua Spaces app library
@@ -201,6 +205,12 @@ jobs:
         working-directory: apps/cua-spaces-macos
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-mac --format log --rerun-failed -- scripts/test.sh
+      # The bundled Cua Driver is checked against the size and SHA-256
+      # committed in cua-driver.release.json and the Cua team's signature;
+      # a mismatched, incomplete or unsigned download is refused.
+      - name: fetch-cua-driver.sh refuses a download that isn't the pinned release
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/fetch-cua-driver-test.sh
       # install-local.sh and uninstall-local.sh against a fake HOME and a fake
       # build: a Stable install stays byte-identical, a wrong bundle id is
       # refused. Needs no build, certificate or network.
@@ -241,9 +251,11 @@ jobs:
   # shell's TypeScript) still match the library. These run the bindgen tools
   # with cargo, so this job has the Rust toolchain; the other Swift jobs do not.
   bindings:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: SwiftUI and Electron bindings are up to date
     needs: ffi
     runs-on: macos-26
+    timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: 4
     steps:
@@ -283,9 +295,11 @@ jobs:
           pnpm native -- --skip-build --check-bindings
 
   app-bundle:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: SwiftUI app (bundle, launch check, XCUITest)
     needs: ffi
-    runs-on: macos-26-xlarge
+    runs-on: macos-26
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Download the Cua Spaces app library

@@ -537,8 +537,9 @@ mod secret_tests {
 #[cfg(test)]
 pub mod test_env {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    const VARS: [&str; 4] = [
+    const VARS: [&str; 5] = [
         "CUA_HOME",
+        "CUA_SPACESD_BIN",
         "CUA_DEFAULT_ON",
         "CUA_DEFAULT_KIND",
         "CUA_DEFAULT_RUNTIME",

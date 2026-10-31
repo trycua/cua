@@ -60,23 +60,25 @@ describe("MainWindow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     // No Cua Volume page without its experiment (Settings, Experiments).
     expect(screen.queryByRole("heading", { name: "Cua Volume" })).toBeNull();
-    await screen.findByText("Just use this Mac to open my other computers");
+    await screen.findByText("Just use this Mac to open my other machines");
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Start using Cua Spaces" }));
-    expect(await screen.findByRole("listbox", { name: "My computers" })).toBeInTheDocument();
+    expect(await screen.findByRole("listbox", { name: "My machines" })).toBeInTheDocument();
     expect(host.state.onboarding).toMatchObject({ completed: true, mode: "client" });
   });
 
   it("lists Spaces by where they run, with This machine first", async () => {
     setup();
-    const cloud = await screen.findByRole("listbox", { name: "My computers" });
+    const cloud = await screen.findByRole("listbox", { name: "My machines" });
     expect(within(cloud).getByRole("option", { name: /aurora/ })).toBeInTheDocument();
-    expect(within(screen.getByRole("listbox", { name: "This Mac" })).getByRole("option", { name: /cua-e2e-vm/ })).toBeInTheDocument();
-    expect(within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option")).toBeInTheDocument();
+    // The section named for this Mac holds its Spaces; the entry for This Mac is a list of its own.
+    const lists = screen.getAllByRole("listbox", { name: "This Mac" });
+    expect(within(lists.find((l) => within(l).queryByRole("option", { name: /cua-e2e-vm/ }))!).getByRole("option", { name: /cua-e2e-vm/ })).toBeInTheDocument();
+    expect(within(lists.find((l) => !within(l).queryByRole("option", { name: /cua-e2e-vm/ }))!).getByRole("option")).toBeInTheDocument();
     // Each row leads with its OS mark (the notch tiles' icon); This machine is this Mac.
     const aurora = within(cloud).getByRole("option", { name: /aurora/ });
     expect(aurora.querySelector("[data-os-icon]")).not.toBeNull();
-    const host = within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option");
+    const host = within(lists.find((l) => !within(l).queryByRole("option", { name: /cua-e2e-vm/ }))!).getByRole("option");
     expect(host.querySelector('[data-os-icon="os-macos"]')).not.toBeNull();
   });
 
@@ -119,13 +121,22 @@ describe("MainWindow", () => {
     expect(screen.queryByRole("dialog", { name: "New Space" })).toBeNull();
   });
 
+  it("New Space's arrow adds a machine by its address: the address form, not a Run on entry", async () => {
+    setup();
+    fireEvent.click(await screen.findByRole("button", { name: "More ways to add" }));
+    fireEvent.mouseDown(await screen.findByRole("menuitem", { name: "Add a machine by its address\u2026" }));
+    const dialog = await screen.findByRole("dialog", { name: "Connect by address" });
+    expect(within(dialog).getByPlaceholderText("10.0.0.5:3211")).toBeTruthy();
+    expect(within(dialog).queryByRole("combobox", { name: "Run on" })).toBeNull();
+  });
+
   it("runs on this Mac, offers no cloud with Your cloud turned off, never Cua Cloud", async () => {
     window.localStorage.setItem("cua.settings.experiments", JSON.stringify({ yourCloud: false }));
     setup();
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
     expect(within(within(dialog).getByRole("combobox", { name: "Run on" })).getAllByRole("option").map((o) => o.textContent)).toEqual(["This Mac"]);
-    expect(within(dialog).queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
+    expect(within(dialog).queryByRole("option", { name: /Add your cloud account/ })).toBeNull();
     expect(within(dialog).queryByText(/Cua Cloud/)).toBeNull();
     window.localStorage.removeItem("cua.settings.experiments");
   });
@@ -136,7 +147,7 @@ describe("MainWindow", () => {
     const { createSpace } = setup({}, true, cloud);
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
-    fireEvent.click(within(dialog).getByRole("button", { name: /Connect a cloud/ }));
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Run on" }), { target: { value: "add:cloud" } });
     const sheet = await screen.findByRole("dialog", { name: "Connect a cloud" });
     expect(await within(sheet).findByRole("radio", { name: /AWS/ })).toBeChecked();
     fireEvent.click(within(sheet).getByRole("button", { name: "Test" }));
@@ -386,13 +397,13 @@ describe("MainWindow", () => {
       "Agents",
       "Teleport",
     ]);
-    fireEvent.click(within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option"));
+    fireEvent.click(within(screen.getAllByRole("listbox", { name: "This Mac" })[0]!).getByRole("option"));
     fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
-    expect(await screen.findByText("Set up this computer")).toBeInTheDocument();
+    expect(await screen.findByText("Set up this machine")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));
     expect(await screen.findByRole("button", { name: "Stop sharing" })).toBeInTheDocument();
     await waitFor(() =>
-      expect(within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option")).toHaveAttribute(
+      expect(within(screen.getAllByRole("listbox", { name: "This Mac" })[0]!).getByRole("option")).toHaveAttribute(
         "aria-selected",
         "true",
       ),
@@ -443,7 +454,7 @@ describe("MainWindow", () => {
     const theirs = screen.getByRole("alertdialog", { name: "Delete their-box?" });
     const permanent = within(theirs).getByRole("button", { name: "Delete Permanently" });
     expect(permanent).toBeDisabled();
-    expect(permanent).toHaveAttribute("title", "Created on another device: delete it there, or remove it from this list.");
+    expect(permanent).toHaveAttribute("title", "Created on another machine: delete it there, or remove it from this list.");
     fireEvent.click(within(theirs).getByRole("button", { name: "Remove from List" }));
     await waitFor(() => expect(removeSpace).toHaveBeenCalledWith("relay:cloud-0000000000000e01"));
     expect(deleteSpace).toHaveBeenCalledTimes(1);
@@ -563,7 +574,7 @@ describe("empty home", () => {
     setup({ listSpaces: async () => [] });
     expect(await screen.findByRole("heading", { name: "No Spaces yet" })).toBeInTheDocument();
     expect(screen.getByText("Pick a system to start it.")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "This computer" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "This Mac" })).toBeNull();
     expect(screen.getByRole("button", { name: "Linux, About 3 minutes · 3.3–7.3 GB of disk" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^macOS, About .+ download$/ })).toBeInTheDocument();
   });

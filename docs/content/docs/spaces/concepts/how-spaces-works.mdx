@@ -1,28 +1,31 @@
 ---
 title: How Spaces works
-description: 'Computers and Spaces, bring-your-own compute, where a Space can run, and how you and your agents reach it directly or through the relay.'
+description: 'Machines and Spaces, bring-your-own compute, where a Space can run, and how you and your agents reach it directly or through the relay.'
 ---
 
-Cua Spaces connects three things: the computers you own, the Spaces on them, and
+Cua Spaces connects three things: the machines you own, the Spaces on them, and
 the people and agents who use those Spaces.
 
-## Computers and Spaces
+## Machines and Spaces
 
-A **computer** is a Mac, Windows or Linux computer
-you own or rent. A **Space** is one desktop on a computer, set up for a task. A
-Space is a container, a VM or a microVM, or the computer's own desktop. See
-[Space kinds](/spaces/concepts/space-kinds).
+A **machine** is a Mac, Windows or Linux computer you own or rent. Sign in and
+all your machines appear in one list, **Machines**, each with its state on the
+row. A machine provides **Spaces**. A **Space** is the isolated sandbox: an
+image plus a kind (`vm`, `gvisor`, `microvm` or `container`), set up for a
+task. A machine can also share its own desktop as a Space. See
+[Machines and Spaces](/spaces/concepts/machines-and-spaces) for how they relate
+and [Space kinds](/spaces/concepts/space-kinds) for the kinds.
 
-Cua doesn't rent computers. You bring them, and your cloud provider bills you for
+Cua doesn't rent machines. You bring them, and your cloud provider bills you for
 any VM you run in your own account. Cua provides the app, sharing and the relay
-that lets your devices reach your computers.
+that lets your machines reach each other.
 
 ## Where a Space runs
 
 | Location | What it is |
 |---|---|
-| This computer | A container or VM on the Mac, Windows or Linux PC you are using. |
-| Another of your computers | A computer you [added](/spaces/guides/add-a-computer) that provides Spaces, such as a [spare Mac mini](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces). |
+| This machine | A container or VM on the Mac, Windows or Linux PC you are using. |
+| Another of your machines | A machine you [added](/spaces/guides/add-a-computer) that provides Spaces, such as a [spare Mac mini](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces). |
 | Your own cloud | A VM in your own AWS, Google Cloud or Modal account. See [Choose where sandboxes run](/cua-sdk/guides/your-cloud). |
 
 Cua Cloud, the hosted option, has ended. See
@@ -33,12 +36,12 @@ Every Space runs `cua-spacesd`. It streams the screen, takes input through
 
 ## How you reach a Space
 
-- **Directly.** On the same network, or over Tailscale, your device connects to
+- **Directly.** On the same network, or over Tailscale, your machine connects to
   the Space with its address and a token. No account is needed, and the traffic
   doesn't use the relay.
-- **Through the relay.** A computer set up with `cua host setup` joins the cua.ai
-  relay with an outbound connection, so you don't open ports. Your enrolled
-  devices, and people you share a Space with, reach it through the relay. Relay
+- **Through the relay.** A machine set up with `cua host setup` joins the cua.ai
+  relay with an outbound connection, so you don't open ports. Your other
+  machines, and people you share a Space with, reach it through the relay. Relay
   use counts toward your [plan's](/spaces/guides/teams#plans) live sessions and
   remote hours.
 
@@ -49,18 +52,18 @@ For what the relay can and can't see, see
 
 | Kind | Id | Comes from |
 |------|----|------------|
-| Local | `local:<name>` | `spaces.create(options)`: a new Space, on this computer by default |
-| Direct | `direct:<host:port>` | `spaces.add(url, token)`: an existing computer |
-| Relay | `relay:<machine-id>` | Your computers set up with `cua host setup`, listed automatically |
+| Local | `local:<name>` | `spaces.create(options)`: a new Space, on this machine by default |
+| Direct | `direct:<host:port>` | `spaces.add(url, token)`: an existing machine |
+| Relay | `relay:<machine-id>` | Your machines set up with `cua host setup`, listed automatically |
 
 The app, the `cua` CLI, the SDKs and `cua daemon` share one registry
-(`~/.cua/spaces.json`). Relay computers come from your account's directory and
+(`~/.cua/spaces.json`). Relay machines come from your account's directory and
 are never written to `spaces.json`.
 
 ## Who can do what
 
-You own your computers and the Spaces on them. You can
+You own your machines and the Spaces on them. You can
 [share a Space](/spaces/guides/share-a-space) with another account as a viewer or
-an editor, and with [Teams](/spaces/guides/teams) a computer can belong to the
+an editor, and with [Teams](/spaces/guides/teams) a machine can belong to the
 team instead of one person. Your agents act through the `cua` MCP server, and you
 choose what each one may do. See [Connect your agent](/spaces/guides/connect-your-agent).

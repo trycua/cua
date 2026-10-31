@@ -168,8 +168,9 @@ function Steps({ steps }: { steps: WizardView["steps"] }) {
 /* ---- Layout ---------------------------------------------------------------- */
 
 function Group({ children, className, ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string>) {
+  // Not clipped: the image field's suggestions float over the rows below the card's edge.
   return (
-    <GroupedSection className={className} {...rest}>
+    <GroupedSection className={className} contentClassName="overflow-visible" {...rest}>
       {children}
     </GroupedSection>
   );
@@ -260,7 +261,8 @@ const labelOf = (v: WizardView, id: string) => fieldOf(v, id)?.label ?? "";
 
 /* ---- System ---------------------------------------------------------------- */
 
-const LINKS = new Set(["connect-cloud", "connect-by-address"]);
+// "Add your cloud account" is the last entry of Run on, not a row of its own.
+const LINKS = new Set(["connect-cloud"]);
 
 function SystemStep({ v }: { v: WizardView }) {
   const { send } = useNewSpaceWizard();
@@ -269,7 +271,6 @@ function SystemStep({ v }: { v: WizardView }) {
   const advanced = v.fields.filter((f) => f.advanced);
   const rest = firstAdvanced < 0 ? [] : v.fields.slice(firstAdvanced).filter((f) => !f.advanced);
   const rows = (fields: WizardField[]) => fields.filter((f) => !LINKS.has(f.id));
-  const links = [...main, ...rest].filter((f) => LINKS.has(f.id));
 
   return (
     <div className="space-y-4">
@@ -306,34 +307,15 @@ function SystemStep({ v }: { v: WizardView }) {
           ))}
         </Group>
       ) : null}
-      {links.length ? (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 px-1">
-          {links.map((f) => (
-            <LinkField key={f.id} field={f} />
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function LinkField({ field }: { field: WizardField }) {
-  const { send } = useNewSpaceWizard();
-  const connect = useConnectCloud();
-  return (
-    <button
-      type="button"
-      data-field={field.id}
-      onClick={() => (field.id === "connect-cloud" ? connect.show() : send({ type: "show-address" }))}
-      className="text-[13px] text-brand-strong outline-none hover:underline focus-visible:underline"
-    >
-      {field.label}
-    </button>
-  );
-}
+const ADD_CLOUD = "add:cloud";
 
 function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
   const { send } = useNewSpaceWizard();
+  const connect = useConnectCloud();
   const error = f.error ? <FieldError id={f.id}>{f.error}</FieldError> : null;
   switch (f.id) {
     case "os":
@@ -373,8 +355,12 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
             aria-label={f.label}
             dataName="run-on"
             value={v.placementId}
-            items={v.placements.map((o) => ({ value: o.id, label: o.label, detail: o.detail, disabled: !o.enabled, group: o.group }))}
-            onValueChange={(on) => send({ type: "choose-placement", on })}
+            items={[
+              ...v.placements.map((o) => ({ value: o.id, label: o.label, detail: o.detail, disabled: !o.enabled, group: o.group })),
+              // Only with the Your cloud experiment (the core offers the field); it opens the connect sheet.
+              ...(v.fields.some((x) => x.id === "connect-cloud") ? [{ value: ADD_CLOUD, label: "Add your cloud account\u2026", detail: "AWS, Google Cloud, Hetzner and others", group: ADD_CLOUD }] : []),
+            ]}
+            onValueChange={(on) => (on === ADD_CLOUD ? connect.show() : send({ type: "choose-placement", on }))}
           />
         </Row>
       );

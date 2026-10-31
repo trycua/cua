@@ -1,6 +1,6 @@
 ---
 title: "Agents, MCP and skills"
-description: "Agents in a Space, connecting your AI agents, the stdio MCP server, and recorded skills."
+description: "Agents in a Space, connecting your AI agents and the AI providers they use, the stdio MCP server, and recorded skills."
 ---
 
 {/*
@@ -31,9 +31,10 @@ description: "Agents in a Space, connecting your AI agents, the stdio MCP server
 | [`cua agent schedule disable`](#cua-agent-schedule-disable) | Turn a schedule off. |
 | [`cua agent sessions`](#cua-agent-sessions) | Durable sessions: agents your machines keep alive (`run --durable`). |
 | [`cua agent harnesses`](#cua-agent-harnesses) | The harnesses: readiness, installs, key variables, limits. |
-| [`cua agent keys`](#cua-agent-keys) | The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connectors). |
+| [`cua agent keys`](#cua-agent-keys) | The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connections). |
 | [`cua agent keys ls`](#cua-agent-keys-ls) | List the saved keys (never their values). |
 | [`cua agent keys set`](#cua-agent-keys-set) | Add or replace a key, read from stdin. |
+| [`cua agent keys check`](#cua-agent-keys-check) | Ask each provider whether the saved API keys still work (a cheap read-only request; nothing is sent that is not a key's own request). |
 | [`cua agent keys rm`](#cua-agent-keys-rm) | Remove the key a run gets as ENV. |
 | [`cua agent create`](#cua-agent-create) | Deprecated alias of `add`. |
 | [`cua agent persistent`](#cua-agent-persistent) | Deprecated alias of `ls` (without a sandbox). |
@@ -64,6 +65,11 @@ description: "Agents in a Space, connecting your AI agents, the stdio MCP server
 | [`cua connect status`](#cua-connect-status) | Whether each agent is really connected: installed and its version, signed in, Cua's MCP entry present and answering, and its sign-in copied to Keyvault. |
 | [`cua connect remove`](#cua-connect-remove) | Remove the Cua Spaces skills and MCP entries cua added (nothing else). |
 | [`cua connect update`](#cua-connect-update) | Refresh installed cua skills and managed MCP entries to this version. |
+| [`cua connections`](#cua-connections) | The AI providers connected once for every app that can use them: list, add (a key from stdin), test, remove. |
+| [`cua connections list`](#cua-connections-list) | List the providers with their state (Connected, Needs reconnect, Not connected) and the apps each works with. |
+| [`cua connections add`](#cua-connections-add) | Connect a provider. |
+| [`cua connections test`](#cua-connections-test) | Ask each provider whether its saved key still works (a read-only request on the provider's own host, bounded in time; offline is not a failure). |
+| [`cua connections remove`](#cua-connections-remove) | Disconnect a provider: remove what is saved for it. |
 | [`cua agents`](#cua-agents) | Deprecated alias of `connect`. |
 | [`cua agents detect`](#cua-agents-detect) | List supported AI coding agents and which are installed (read-only). |
 | [`cua agents setup`](#cua-agents-setup) | Install the default cua skills and configure the cua MCP server. |
@@ -114,6 +120,8 @@ cua agent add [OPTIONS] --harness <HARNESS> <NAME> [PROMPT]
 | <span id="cua-agent-add--base-url"></span>`--base-url` | string |  |  |
 | <span id="cua-agent-add--env-from-host"></span>`--env-from-host` | string |  | Provider key variable to forward at each start. Repeatable. |
 | <span id="cua-agent-add--on"></span>`--on` | string |  | With --durable: the machine the driver runs on (`auto`, or a machine's name; default: this machine). |
+| <span id="cua-agent-add--max-attempts"></span>`--max-attempts` | integer |  | With --durable: drives allowed in total before the session fails (default 5). |
+| <span id="cua-agent-add--stall-secs"></span>`--stall-secs` | integer |  | With --durable: seconds the driver may write no output before it counts as wedged, is cancelled and started again (default 120; 0: never). Drivers print a heartbeat every quarter of it. |
 | <span id="cua-agent-add--every"></span>`--every` | integer |  | Schedule PROMPT every N minutes. |
 | <span id="cua-agent-add--daily"></span>`--daily` | string |  | Schedule PROMPT every day at HH:MM. |
 | <span id="cua-agent-add--weekly"></span>`--weekly` | string |  | Schedule PROMPT every week, `mon 09:00`. |
@@ -513,7 +521,7 @@ cua --json agent harnesses
 
 ### `cua agent keys`
 
-The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connectors). Values are read from stdin and never printed.
+The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connections). Values are read from stdin and never printed.
 
 ```text output
 cua agent keys [OPTIONS] [COMMAND]
@@ -563,6 +571,20 @@ cua agent keys set [OPTIONS] <PROVIDER>
 ```bash test="cli-shape" id="ref-cua-agent-keys-set"
 cua agent keys set anthropic
 cua agent keys set other --env GEMINI_API_KEY
+```
+
+#### `cua agent keys check`
+
+Ask each provider whether the saved API keys still work (a cheap read-only request; nothing is sent that is not a key's own request). A key the provider refuses is listed as needing a reconnect, and runs are not given it until it is saved again.
+
+```text output
+cua agent keys check [OPTIONS]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-keys-check"
+cua agent keys check
 ```
 
 #### `cua agent keys rm`
@@ -1053,7 +1075,7 @@ cua connect setup [OPTIONS]
 | <span id="cua-connect-setup--yes"></span>`--yes` | `-y` | boolean | `false` | Answer yes to every prompt. |
 | <span id="cua-connect-setup--force"></span>`--force` |  | boolean | `false` | Replace skill folders cua did not write (the old one is backed up). |
 | <span id="cua-connect-setup--cua-driver"></span>`--cua-driver` |  | boolean | `false` | Set up background computer-use instead: the cua-driver skill and the cua-driver MCP server (`cua-driver mcp`). --mcp-command then names the cua-driver binary. |
-| <span id="cua-connect-setup--sign-in"></span>`--sign-in` |  | boolean | `false` | Also copy each agent's sign-in to Keyvault on This Mac, so its runs in your Spaces use it: Codex's ChatGPT sign-in (`~/.codex/auth.json`), Claude Code's `claude setup-token` (one browser approval), Hermes' provider key (`~/.hermes/.env`). The agent's own sign-in is never changed. |
+| <span id="cua-connect-setup--sign-in"></span>`--sign-in` |  | boolean | `false` | Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connections). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed. |
 
 **Examples**
 
@@ -1073,7 +1095,7 @@ cua connect setup --mcp-only
 # Background computer-use: the cua-driver skill and MCP server
 cua connect setup --cua-driver --agents all -y
 
-# Also copy each agent's sign-in to Keyvault on This Mac (Codex's ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)
+# Also copy each agent's sign-in to Keyvault on This Mac (Codex's ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)
 cua connect setup --agents codex,claude --sign-in -y
 ```
 
@@ -1139,6 +1161,113 @@ cua connect update [OPTIONS]
 cua connect update
 ```
 
+## `cua connections`
+
+The AI providers connected once for every app that can use them: list, add (a key from stdin), test, remove. What Cua Spaces shows in Settings, Connections. (`cua connect` connects your coding apps to Cua.).
+
+```text output
+cua connections [OPTIONS] <COMMAND>
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-connections"
+cua connections list
+cua connections add deepseek
+cua connections test
+cua connections remove deepseek
+```
+
+### `cua connections list`
+
+List the providers with their state (Connected, Needs reconnect, Not connected) and the apps each works with. Never prints a key.
+
+```text output
+cua connections list [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-connections-list--all"></span>`--all` | boolean | `false` | Also list every provider that is not connected (by default: the ones up front and the ones with something saved). |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-connections-list"
+cua connections list
+cua connections list --all
+cua --json connections list
+```
+
+### `cua connections add`
+
+Connect a provider. The key is read from stdin (pipe it in; a terminal is refused so it isn't echoed). Saving never waits on the provider: `cua connections test` asks it afterwards.
+
+.
+
+The provider is one of the ids `cua connections list --all` prints. Pipe the key in: `pbpaste | cua connections add deepseek`. Sign-ins another app made on this machine are imported with `cua connect setup <app> --sign-in`.
+
+```text output
+cua connections add [OPTIONS] <PROVIDER>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<PROVIDER>` | string | required | The provider id (`cua connections list --all`). |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-connections-add--method"></span>`--method` | string |  | How: `key` (an API key from stdin; the default) or `endpoint` (a custom endpoint: its base URL, model and API style; a key is optional). |
+| <span id="cua-connections-add--region"></span>`--region` | string |  | The plan or region, for a provider that has them (Z.AI: global, cn, coding-global, coding-cn). |
+| <span id="cua-connections-add--model"></span>`--model` | string |  | The model to use, for a provider with no default model or to choose another. |
+| <span id="cua-connections-add--base-url"></span>`--base-url` | string |  | A custom endpoint's base URL. |
+| <span id="cua-connections-add--wire"></span>`--wire` | string |  | A custom endpoint's API style: openai-chat (default), openai-responses or anthropic. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-connections-add"
+cua connections add deepseek
+cua connections add zai --region coding-global
+cua connections add deepinfra --model meta-llama/Meta-Llama-3.1-70B-Instruct
+cua connections add custom --base-url http://host:1234/v1 --model qwen
+```
+
+### `cua connections test`
+
+Ask each provider whether its saved key still works (a read-only request on the provider's own host, bounded in time; offline is not a failure). A key the provider refuses is listed as Needs reconnect.
+
+```text output
+cua connections test [OPTIONS] [PROVIDER]
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<PROVIDER>` | string | optional | Only this provider. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-connections-test"
+cua connections test
+cua connections test openrouter
+```
+
+### `cua connections remove`
+
+Disconnect a provider: remove what is saved for it.
+
+```text output
+cua connections remove [OPTIONS] <PROVIDER>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<PROVIDER>` | string | required |  |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-connections-remove"
+cua connections remove deepseek
+```
+
 ## `cua agents`
 
 Deprecated alias of `connect`.
@@ -1178,7 +1307,7 @@ cua agents setup [OPTIONS]
 | <span id="cua-agents-setup--yes"></span>`--yes` | `-y` | boolean | `false` | Answer yes to every prompt. |
 | <span id="cua-agents-setup--force"></span>`--force` |  | boolean | `false` | Replace skill folders cua did not write (the old one is backed up). |
 | <span id="cua-agents-setup--cua-driver"></span>`--cua-driver` |  | boolean | `false` | Set up background computer-use instead: the cua-driver skill and the cua-driver MCP server (`cua-driver mcp`). --mcp-command then names the cua-driver binary. |
-| <span id="cua-agents-setup--sign-in"></span>`--sign-in` |  | boolean | `false` | Also copy each agent's sign-in to Keyvault on This Mac, so its runs in your Spaces use it: Codex's ChatGPT sign-in (`~/.codex/auth.json`), Claude Code's `claude setup-token` (one browser approval), Hermes' provider key (`~/.hermes/.env`). The agent's own sign-in is never changed. |
+| <span id="cua-agents-setup--sign-in"></span>`--sign-in` |  | boolean | `false` | Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connections). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed. |
 
 **Examples**
 
@@ -1198,7 +1327,7 @@ cua connect setup --mcp-only
 # Background computer-use: the cua-driver skill and MCP server
 cua connect setup --cua-driver --agents all -y
 
-# Also copy each agent's sign-in to Keyvault on This Mac (Codex's ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)
+# Also copy each agent's sign-in to Keyvault on This Mac (Codex's ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)
 cua connect setup --agents codex,claude --sign-in -y
 ```
 

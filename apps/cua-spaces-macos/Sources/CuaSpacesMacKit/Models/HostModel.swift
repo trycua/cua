@@ -22,7 +22,7 @@ public protocol HostRunning: AnyObject, Sendable {
     func resumeSignedIn(account: String) async throws -> HostStatus
     func remove() async throws
     /// Changes what this machine shares: its desktop, and Spaces for your
-    /// other devices.
+    /// other machines.
     func configure(change: HostSettingsChange) async throws -> HostStatus
     /// Moves the host service from the old LaunchAgent into this app, as
     /// its own login item ("Cua Spaces"), keeping this machine's id,
@@ -106,6 +106,10 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         }
         if let d = change.shareDesktop { current.shareDesktop = d }
         if let p = change.provideSpaces { current.provideSpaces = p }
+        if let n = change.maxSpaces { current.maxSpaces = n }
+        if let n = change.maxMemoryGb { current.maxMemoryGb = n }
+        if let n = change.maxDiskGb { current.maxDiskGb = n }
+        if let n = change.maxRunMinutes { current.maxRunMinutes = n }
         // Both off: nothing to share, so sharing stops (as the host does).
         if !current.shareDesktop && !current.provideSpaces {
             current.sharing = false
@@ -633,6 +637,24 @@ public final class HostModel {
             failedAction = id
             // The page shows what the failure left behind (a stopped
             // service is offline), not the state before the button.
+            await refresh()
+        }
+    }
+
+    /// Changes the limits on the Spaces other machines create here (0 is no
+    /// limit; nil keeps a value). A failure stays in `actionFailure`.
+    public func setLimits(maxSpaces: UInt32?, maxMemoryGb: UInt32?, maxDiskGb: UInt32?, maxRunMinutes: UInt32?) async {
+        guard let host, !busy else { return }
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            apply(try await host.configure(change: HostSettingsChange(
+                shareDesktop: nil, provideSpaces: nil, maxSpaces: maxSpaces, maxMacosVms: nil,
+                maxMemoryGb: maxMemoryGb, maxDiskGb: maxDiskGb, maxRunMinutes: maxRunMinutes)))
+            actionFailure = nil
+        } catch {
+            actionFailure = HostSetupFailure.presenting(LiveSpacesBackend.words(error))
             await refresh()
         }
     }

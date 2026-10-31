@@ -17,6 +17,8 @@ const TILE_RADIUS = 8;
  */
 export function canStreamTile(space: Space): boolean {
   if (spaceState(space) !== "running") return false;
+  // This Mac's own desktop is never streamed here: it would only mirror itself.
+  if (space.id === "this-mac") return false;
   const sdk = space.sdk;
   return !sdk || (sdk.reachable && sdk.features.includes("desktop_stream"));
 }

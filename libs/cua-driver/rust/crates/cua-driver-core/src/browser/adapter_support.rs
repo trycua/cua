@@ -3,11 +3,14 @@
 //!
 //! Every platform adapter reads Chromium's `DevToolsActivePort` file,
 //! re-proves that a discovered websocket stays on the attested loopback
-//! listener, recognizes Firefox, and keeps one visible browser cursor per
-//! native window. Those semantics are platform-independent, so they live here
+//! listener, reads the `/json/version` discovery surface, recognizes Firefox,
+//! and keeps one visible browser cursor per native window. Those semantics are platform-independent, so they live here
 //! and the adapters stay thin.
 
 use std::collections::HashMap;
+use std::time::Duration;
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Parse Chromium's `DevToolsActivePort` file.
 ///
@@ -45,6 +48,55 @@ pub fn loopback_websocket_port(url: &str) -> Option<u16> {
                 .parse::<u16>()
                 .ok()
         })
+}
+
+/// Read `webSocketDebuggerUrl` from `GET /json/version` on `127.0.0.1:<port>`.
+///
+/// Uses a raw HTTP/1.1 request under a 2 second timeout and refuses responses
+/// over 256 KiB. Returns `None` on any failure. The URL is returned exactly as
+/// the browser reported it: callers must re-prove it against the attested
+/// listener port (and canonicalize it if they need to) before trusting it.
+pub async fn fetch_json_version_ws_url(port: u16) -> Option<String> {
+    tokio::time::timeout(Duration::from_secs(2), async move {
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .ok()?;
+        let request = format!(
+            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await.ok()?;
+        let mut bytes = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let read = stream.read(&mut chunk).await.ok()?;
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+            if bytes.len() > 256 * 1024 {
+                return None;
+            }
+            if let Some(header_end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&bytes[..header_end]);
+                if let Some(length) = headers.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                }) {
+                    if bytes.len() >= header_end + 4 + length {
+                        break;
+                    }
+                }
+            }
+        }
+        let body_start = bytes.windows(4).position(|part| part == b"\r\n\r\n")? + 4;
+        let value: serde_json::Value = serde_json::from_slice(&bytes[body_start..]).ok()?;
+        Some(value.get("webSocketDebuggerUrl")?.as_str()?.to_owned())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Whether a process identity names Firefox.
@@ -117,6 +169,7 @@ impl BrowserCursorTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn active_port_parser_requires_one_exact_browser_path() {
@@ -215,5 +268,130 @@ mod tests {
             vec![("session-green".to_owned(), true)],
             "an active tab in another native window must not hide this window"
         );
+    }
+
+    /// Serve one canned response per accepted connection and report each
+    /// request. `hold_open` keeps the socket open after the response.
+    async fn serve_once(
+        response: Vec<u8>,
+        hold_open: bool,
+    ) -> (u16, tokio::sync::oneshot::Receiver<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![0u8; 4096];
+            let read = stream.read(&mut request).await.unwrap();
+            let _ = tx.send(String::from_utf8_lossy(&request[..read]).into_owned());
+            let _ = stream.write_all(&response).await;
+            if hold_open {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+        });
+        (port, rx)
+    }
+
+    fn http_ok(body: &str, with_length: bool) -> Vec<u8> {
+        let length = if with_length {
+            format!("Content-Length: {}\r\n", body.len())
+        } else {
+            String::new()
+        };
+        format!("HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n{body}").into_bytes()
+    }
+
+    const CAP: usize = 256 * 1024;
+
+    /// A valid response of exactly `total` bytes, headers included.
+    fn response_of_total_size(total: usize) -> Vec<u8> {
+        let build = |pad: usize| {
+            let body = format!(
+                "{{\"webSocketDebuggerUrl\":\"ws://127.0.0.1:1/devtools/browser/id\",\"pad\":\"{}\"}}",
+                "a".repeat(pad)
+            );
+            http_ok(&body, true)
+        };
+        let base = build(0).len();
+        // The Content-Length digit count can change with the pad; solve by retry.
+        for pad in total.saturating_sub(base + 8)..=total {
+            let bytes = build(pad);
+            if bytes.len() == total {
+                return bytes;
+            }
+        }
+        panic!("no response of {total} bytes");
+    }
+
+    #[tokio::test]
+    async fn json_version_probe_sends_the_exact_request_and_returns_the_raw_url() {
+        let body = r#"{"webSocketDebuggerUrl":"ws://localhost:1/devtools/browser/id"}"#;
+        let (port, request) = serve_once(http_ok(body, true), true).await;
+        let url = fetch_json_version_ws_url(port).await;
+        assert_eq!(
+            request.await.unwrap(),
+            format!(
+                "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            )
+        );
+        // Raw URL: neither host nor port is canonicalised or checked here, and
+        // the open socket proves the read stopped at Content-Length.
+        assert_eq!(url.as_deref(), Some("ws://localhost:1/devtools/browser/id"));
+    }
+
+    #[tokio::test]
+    async fn json_version_probe_reads_to_eof_without_content_length() {
+        let body = r#"{"webSocketDebuggerUrl":"ws://127.0.0.1:1/devtools/browser/id"}"#;
+        let (port, _) = serve_once(http_ok(body, false), false).await;
+        assert_eq!(
+            fetch_json_version_ws_url(port).await.as_deref(),
+            Some("ws://127.0.0.1:1/devtools/browser/id")
+        );
+    }
+
+    #[tokio::test]
+    async fn json_version_probe_refuses_oversized_missing_or_malformed_bodies() {
+        let oversized = format!("{{\"pad\":\"{}\"}}", "a".repeat(CAP));
+        for body in [
+            oversized.as_str(),
+            "{}",
+            r#"{"webSocketDebuggerUrl":7}"#,
+            "not json",
+        ] {
+            let (port, _) = serve_once(http_ok(body, true), false).await;
+            assert_eq!(fetch_json_version_ws_url(port).await, None, "{body:.40}");
+        }
+        let closed = {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        assert_eq!(fetch_json_version_ws_url(closed).await, None);
+    }
+
+    #[tokio::test]
+    async fn json_version_probe_cap_boundary_is_exactly_256_kib() {
+        let at_cap = response_of_total_size(CAP);
+        assert_eq!(at_cap.len(), CAP);
+        let (port, _) = serve_once(at_cap, false).await;
+        assert_eq!(
+            fetch_json_version_ws_url(port).await.as_deref(),
+            Some("ws://127.0.0.1:1/devtools/browser/id")
+        );
+
+        let over_cap = response_of_total_size(CAP + 1);
+        assert_eq!(over_cap.len(), CAP + 1);
+        let (port, _) = serve_once(over_cap, false).await;
+        assert_eq!(fetch_json_version_ws_url(port).await, None);
+    }
+
+    #[tokio::test]
+    async fn json_version_probe_times_out_after_two_seconds() {
+        let (port, _) = serve_once(Vec::new(), true).await;
+        let started = std::time::Instant::now();
+        let url = tokio::time::timeout(Duration::from_secs(5), fetch_json_version_ws_url(port))
+            .await
+            .expect("probe must give up on its own timeout");
+        assert_eq!(url, None);
+        assert!(started.elapsed() >= Duration::from_secs(2));
     }
 }

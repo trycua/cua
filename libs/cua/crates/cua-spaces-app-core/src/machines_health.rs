@@ -145,11 +145,11 @@ pub fn issues(
         && let Some(h) = host
         && h.configured
     {
-        if h.service_installed && !h.service_running {
+        if crate::machines_view::service_down(h) {
             out.push(issue(
                 "service",
                 "fail",
-                "The Cua service isn\u{2019}t running, so your other devices can\u{2019}t reach \
+                "The Cua service isn\u{2019}t running, so your other machines can\u{2019}t reach \
                  this Mac."
                     .into(),
                 Some(MachinesViewIssueAction {
@@ -163,7 +163,7 @@ pub fn issues(
             out.push(issue(
                 "relay",
                 "warn",
-                "This Mac can\u{2019}t reach the Cua relay, so your other devices can\u{2019}t \
+                "This Mac can\u{2019}t reach the Cua relay, so your other machines can\u{2019}t \
                  reach it. Check its internet connection."
                     .into(),
                 None,
@@ -522,9 +522,19 @@ mod tests {
             configured: true,
             service_installed: true,
             service_running: false,
+            sharing: true,
+            provide_spaces: true,
             ..HostState::default()
         };
         let i = issues(&THIS, None, Some(&host));
+        // Nothing to share (both switches off): the stopped service is
+        // expected, so it is no issue.
+        let nothing = HostState {
+            provide_spaces: false,
+            share_desktop: false,
+            ..host.clone()
+        };
+        assert!(issues(&THIS, None, Some(&nothing)).is_empty());
         assert_eq!(i[0].id, "service");
         let a = i[0].action.as_ref().unwrap();
         assert_eq!(

@@ -3305,3 +3305,35 @@ html.is-teleport-picker .hp-panel {
   color: var(--dw-danger);
   font-size: 12px;
 }
+
+/* New Space's arrow: the other way to add, a machine by its address. */
+.dw-split-more {
+  position: relative;
+  display: inline-flex;
+}
+.dw-split-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface);
+  box-shadow: var(--dw-shadow-sheet);
+}
+.dw-split-item {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dw-text);
+  text-align: left;
+}
+.dw-split-item:hover {
+  background: var(--dw-accent);
+  color: #fff;
+}

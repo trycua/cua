@@ -11,6 +11,31 @@ import Foundation
 /// The platform side of Spaces: the cua SDK calls the app makes. Every
 /// decision about what they mean (names, status, grouping, what is allowed)
 /// is the app core's; this only moves data.
+/// What the repo cache holds and saved, in the plain words Settings shows
+/// (the SDK's `repo_cache_status`; never a repository name).
+public struct RepoCacheState: Equatable, Sendable {
+    public var enabled: Bool
+    public var repos: UInt32
+    public var bytes: UInt64
+    public var capBytes: UInt64
+    /// `auto`, or the number of GB.
+    public var sizeSetting: String
+    /// `Repos: 3, 1.2 GB of 5 GB`.
+    public var summary: String
+    /// `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+    public var week: String
+    public var hits: UInt32
+    public var misses: UInt32
+    public var secondsSaved: UInt64
+
+    public init(enabled: Bool, repos: UInt32, bytes: UInt64, capBytes: UInt64, sizeSetting: String,
+                summary: String, week: String, hits: UInt32, misses: UInt32, secondsSaved: UInt64) {
+        self.enabled = enabled; self.repos = repos; self.bytes = bytes; self.capBytes = capBytes
+        self.sizeSetting = sizeSetting; self.summary = summary; self.week = week
+        self.hits = hits; self.misses = misses; self.secondsSaved = secondsSaved
+    }
+}
+
 public protocol SpacesBackend: AnyObject, Sendable {
     /// The registry, one row per Space, with a bounded reachability probe.
     func rows() async throws -> [AppSpaceRow]
@@ -88,6 +113,22 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func placementOverflow() async -> Bool?
     /// Sets `placement.overflow`.
     func setPlacementOverflow(_ on: Bool) async throws
+    /// Each kind of Space's runtime setting (`runtime.<kind>`, its path) and
+    /// what is installed on this Mac for it (`runtime_kinds`), when known.
+    func runtimeKinds() async -> [AppRuntimeKindInput]?
+    /// What `path` is for `kind` (`container`, `vm`, `microvm`).
+    func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck
+    /// Writes a runtime setting (`runtime.container`, `runtime.vm_path`), or
+    /// unsets it (`nil`).
+    func setRuntimeSetting(key: String, value: String?) async throws
+    /// The repo cache (Settings, General): on or off, what it holds and what
+    /// the last week saved; `nil` when this backend has none.
+    func repoCacheStatus() async -> RepoCacheState?
+    /// Turns the repo cache on or off (`cache.repos`) and sets its size
+    /// (`cache.repos_size_gb`: `auto` or a number of GB); `nil` keeps a value.
+    func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState?
+    /// Deletes every repository the repo cache holds.
+    func clearRepoCache() async throws -> RepoCacheState?
     /// Free space where local Spaces are written and which images are
     /// pulled (`local().storage()`), when known.
     func localStorage() async -> LocalStorage?
@@ -271,6 +312,14 @@ public extension SpacesBackend {
     func setLinuxSource(_ value: String) async throws {}
     func placementOverflow() async -> Bool? { nil }
     func setPlacementOverflow(_ on: Bool) async throws {}
+    func runtimeKinds() async -> [AppRuntimeKindInput]? { nil }
+    func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
+        throw FixtureError(message: "Runtimes can't be checked here")
+    }
+    func setRuntimeSetting(key: String, value: String?) async throws {}
+    func repoCacheStatus() async -> RepoCacheState? { nil }
+    func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? { nil }
+    func clearRepoCache() async throws -> RepoCacheState? { nil }
 }
 
 /// The wizard's GPU choices from the SDK's `gpu_support`: the first option
@@ -543,7 +592,9 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
 
     public func streamProvider(id: String) async throws -> SpaceStreamSourceProviding {
-        let space = try await connection.attach(to: SpaceID(id), requireReady: false)
+        // Not `attach(to:)`: that lists every Space on every machine (and
+        // waits for the relay) before the stream is even asked for.
+        let space = try await connection.attachForStream(to: SpaceID(id))
         return SpaceStreamProvider(space: space)
     }
 
@@ -594,6 +645,55 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func placementOverflow() async -> Bool? {
         (try? configGet(key: "placement.overflow")).map { $0.value != "off" }
+    }
+
+    public func runtimeKinds() async -> [AppRuntimeKindInput]? {
+        let result = await withTimeout(seconds: Self.probeSeconds) { [cua] in try await cua.local().runtimeKinds() }
+        guard case .success(let kinds) = result else { return nil }
+        return kinds.map(Self.runtimeKind)
+    }
+
+    public func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
+        Self.pathCheck(try await cua.local().runtimeCheckPath(kind: kind, path: path))
+    }
+
+    public func setRuntimeSetting(key: String, value: String?) async throws {
+        if let value { _ = try configSet(key: key, value: value) } else { _ = try configUnset(key: key) }
+    }
+
+    static func repoCache(_ s: RepoCacheStatus) -> RepoCacheState {
+        RepoCacheState(enabled: s.enabled, repos: s.repos, bytes: s.bytes, capBytes: s.capBytes,
+                       sizeSetting: s.sizeSetting, summary: s.summary, week: s.week,
+                       hits: s.hits, misses: s.misses, secondsSaved: s.secondsSaved)
+    }
+
+    public func repoCacheStatus() async -> RepoCacheState? {
+        (try? CuaSDK.repoCacheStatus()).map(Self.repoCache)
+    }
+
+    public func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? {
+        if let enabled { _ = try configSet(key: "cache.repos", value: enabled ? "on" : "off") }
+        if let size { _ = try configSet(key: "cache.repos_size_gb", value: size) }
+        return await repoCacheStatus()
+    }
+
+    public func clearRepoCache() async throws -> RepoCacheState? {
+        Self.repoCache(try CuaSDK.repoCacheClear())
+    }
+
+    /// The SDK's kind as the app core's Settings input takes it.
+    static func runtimeKind(_ k: RuntimeKindState) -> AppRuntimeKindInput {
+        AppRuntimeKindInput(
+            kind: k.kind, source: k.source, path: k.path,
+            detected: k.detected.map {
+                AppDetectedRuntime(tool: $0.tool, name: $0.name, path: $0.path, version: $0.version, guests: $0.guests)
+            },
+            check: k.check.map(pathCheck), expected: k.expected)
+    }
+
+    static func pathCheck(_ p: RuntimePathProbe) -> AppRuntimePathCheck {
+        AppRuntimePathCheck(path: p.path, exists: p.exists, executable: p.executable, tool: p.tool, name: p.name,
+                            version: p.version, minVersion: p.minVersion, expected: p.expected, guests: p.guests)
     }
 
     public func setPlacementOverflow(_ on: Bool) async throws {
@@ -1240,6 +1340,68 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     public var fixturePlacementOverflow: Bool? = true
     public func placementOverflow() async -> Bool? { await MainActor.run { fixturePlacementOverflow } }
     public func setPlacementOverflow(_ on: Bool) async throws { await MainActor.run { fixturePlacementOverflow = on } }
+    /// The fixture Mac's runtime settings (`runtime.<kind>`, `runtime.<kind>_path`).
+    public var fixtureRuntimeSettings: [String: String] = [:]
+    /// What the fixture Mac has installed, per kind (path, version).
+    public var fixtureInstalled: [String: [AppDetectedRuntime]] = [
+        "container": [AppDetectedRuntime(tool: "docker", name: "Docker", path: "/usr/local/bin/docker", version: "27.3.1", guests: nil)],
+        "vm": [AppDetectedRuntime(tool: "lume", name: "Lume", path: "/opt/homebrew/bin/lume", version: "0.6.1", guests: "macOS")],
+        "microvm": [],
+    ]
+    static let fixtureExpected = ["container": ["Docker", "Podman"], "vm": ["Lume"], "microvm": ["Apple container"]]
+    public func runtimeKinds() async -> [AppRuntimeKindInput]? {
+        await MainActor.run {
+            ["container", "vm", "microvm"].map { kind in
+                let found = fixtureInstalled[kind] ?? []
+                let path = fixtureRuntimeSettings["runtime.\(kind)_path"]
+                let inUse = path ?? found.first?.path
+                return AppRuntimeKindInput(kind: kind, source: fixtureRuntimeSettings["runtime.\(kind)"] ?? "auto", path: path,
+                                           detected: found, check: inUse.map { fixtureCheck(kind: kind, path: $0) },
+                                           expected: Self.fixtureExpected[kind] ?? [])
+            }
+        }
+    }
+    public func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
+        await MainActor.run { fixtureCheck(kind: kind, path: path) }
+    }
+    public func setRuntimeSetting(key: String, value: String?) async throws {
+        await MainActor.run { fixtureRuntimeSettings[key] = value }
+    }
+    /// The fixture Mac's repo cache.
+    public var fixtureRepoCache = RepoCacheState(
+        enabled: true, repos: 3, bytes: 1_288_490_189, capBytes: 5 << 30, sizeSetting: "auto",
+        summary: "Repos: 3, 1.2 GB of 5 GB",
+        week: "Last week: 80% of clones came from the cache, about 2 minutes saved",
+        hits: 8, misses: 2, secondsSaved: 125)
+    public func repoCacheStatus() async -> RepoCacheState? { await MainActor.run { fixtureRepoCache } }
+    public func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? {
+        await MainActor.run {
+            if let enabled { fixtureRepoCache.enabled = enabled }
+            if let size {
+                fixtureRepoCache.sizeSetting = size
+                let gb = size == "auto" ? 5.0 : (Double(size) ?? 5.0)
+                fixtureRepoCache.capBytes = UInt64(gb * 1024 * 1024 * 1024)
+                fixtureRepoCache.summary = "Repos: \(fixtureRepoCache.repos), 1.2 GB of \(size == "auto" ? "5" : size) GB"
+            }
+            return fixtureRepoCache
+        }
+    }
+    public func clearRepoCache() async throws -> RepoCacheState? {
+        await MainActor.run {
+            fixtureRepoCache.repos = 0
+            fixtureRepoCache.bytes = 0
+            fixtureRepoCache.summary = "Repos: 0, 0 MB of 5 GB"
+            fixtureRepoCache.week = "No clones yet this week"
+            return fixtureRepoCache
+        }
+    }
+    func fixtureCheck(kind: String, path: String) -> AppRuntimePathCheck {
+        let known = (fixtureInstalled[kind] ?? []).first { $0.path == path }
+        return AppRuntimePathCheck(path: path, exists: known != nil, executable: known != nil, tool: known?.tool,
+                                   name: known?.name, version: known?.version,
+                                   minVersion: known?.tool == "lume" ? "0.6.0" : nil,
+                                   expected: Self.fixtureExpected[kind] ?? [], guests: known?.guests)
+    }
     public func localBackends() async -> [String]? { await MainActor.run { fixtureBackends } }
     /// Why each of the fixture Mac's runtimes that is not ready is not.
     public var fixtureRuntimeDetails: [String: String] = [:]

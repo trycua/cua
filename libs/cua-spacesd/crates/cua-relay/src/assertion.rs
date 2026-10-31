@@ -461,14 +461,37 @@ impl TrustedKeys {
                         return Err("assertion: lifetime too long".into());
                     }
                     if c.iat > now_secs() + LEEWAY_SECS {
-                        return Err("assertion: issued in the future".into());
+                        return Err(
+                            "assertion: issued in the future; the clock on this machine or on the \
+                             machine that checks it is off, so set both to automatic time"
+                                .into(),
+                        );
                     }
                     return Ok(c);
                 }
-                Err(e) => last = format!("assertion: {e}"),
+                Err(e) => last = assertion_error(&e),
             }
         }
         Err(last)
+    }
+}
+
+/// The words for a token that did not verify. An expired or not yet valid
+/// token is nearly always a clock that is off, so it says so (it used to
+/// read `assertion: ExpiredSignature`, and the machine looked broken for no
+/// reason a person could find).
+fn assertion_error(e: &jsonwebtoken::errors::Error) -> String {
+    use jsonwebtoken::errors::ErrorKind as K;
+    match e.kind() {
+        K::ExpiredSignature => "assertion: the sign-in proof has expired; the clock on this \
+             machine or on the machine that checks it is more than a few minutes off, so set both \
+             to automatic time"
+            .into(),
+        K::ImmatureSignature => "assertion: the sign-in proof is not valid yet; the clock on this \
+             machine or on the machine that checks it is more than a few minutes off, so set both \
+             to automatic time"
+            .into(),
+        _ => format!("assertion: {e}"),
     }
 }
 
@@ -693,7 +716,10 @@ mod tests {
         let mut old = claims("machine-01", 60);
         old.iat -= 600;
         old.exp -= 600;
-        assert!(trusted.verify(&key.sign(&old), "machine-01").is_err());
+        let e = trusted.verify(&key.sign(&old), "machine-01").unwrap_err();
+        // A clock that is off is named, not `ExpiredSignature`.
+        assert!(e.contains("clock") && e.contains("automatic time"), "{e}");
+        assert!(!e.contains("ExpiredSignature"), "{e}");
     }
 
     #[test]

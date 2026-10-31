@@ -10,7 +10,7 @@ description: "cua.env.v1 HostSpacesService: Spaces a host creates for its owner'
   Version: 0.9.0
 */}
 
-Spaces a machine set up with `cua host setup --provide-spaces` creates for its owner's enrolled devices: settings, capacity, create and delete. The host's cua-spacesd forwards each call to its cua daemon. What a host reports for placement is on [Host capacity](/cua-sdk/reference/protocol/env-host-capacity).
+Spaces a machine set up with `cua host setup --share both` creates for its owner's enrolled devices: settings, capacity, create and delete. The host's cua-spacesd forwards each call to its cua daemon. What a host reports for placement is on [Host capacity](/cua-sdk/reference/protocol/env-host-capacity).
 
 Source: `libs/cua/proto/cua/env/v1/host.proto`.
 
@@ -19,7 +19,7 @@ Source: `libs/cua/proto/cua/env/v1/host.proto`.
 `cua.env.v1.HostSpacesService`
 
 Spaces a host provides: a machine set up with `cua host setup
---provide-spaces` creates Spaces (macOS VMs with Lume on a Mac, Linux
+--share both` creates Spaces (macOS VMs with Lume on a Mac, Linux
 containers with Docker, whatever else runs locally) for the owner's
 enrolled devices and the accounts it is shared with, through the relay.
 
@@ -34,7 +34,7 @@ host's hash-chained audit log (`~/.cua/host/spaces-audit.jsonl`).
 With `share_desktop` off, a relayed caller reaches only this service and
 `GetCapabilities` / `Health`, never the host's desktop or files.
 
-A host set up with `cua host setup --direct <ip:port> --provide-spaces`
+A host set up with `cua host setup --direct <ip:port> --share both`
 also serves it on its direct listener, to the holder of its env token,
 by default only from loopback, Tailscale and private LAN addresses. A
 Space created with `direct` is reached on a TCP port the host forwards
@@ -250,6 +250,9 @@ The host's two independent settings and its limits.
 | `provide_spaces` | 2 | `bool` | The host accepts Space create, list and delete requests. |
 | `max_spaces` | 3 | `uint32` | At most this many provided Spaces at once (0: no limit besides the runtimes' own). |
 | `max_macos_vms` | 4 | `uint32` | At most this many macOS VMs at once on this Mac (Apple's license allows two; 0 on a host that cannot run macOS VMs). |
+| `max_memory_gb` | 5 | `uint32` | The Spaces other machines create here may use at most this much memory in total, in GB (0: no limit). |
+| `max_disk_gb` | 6 | `uint32` | The Spaces other machines create here may use at most this much disk in total, in GB (0: no limit). |
+| `max_run_minutes` | 7 | `uint32` | A Space created here by another machine stops after running this many minutes (0: no limit). |
 
 ### HostSpacesCapacity
 
@@ -257,7 +260,7 @@ How much of one limit is in use.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `resource` | 1 | `string` | `spaces` (every provided Space) or `macos_vms` (macOS VMs on this Mac, provided or not). |
+| `resource` | 1 | `string` | `spaces` (every provided Space), `macos_vms` (macOS VMs on this Mac, provided or not), `memory_gb` or `disk_gb` (what the provided Spaces were given, in GB). |
 | `used` | 2 | `uint32` | In use now. |
 | `limit` | 3 | `uint32` | The limit (0: none). |
 | `reason` | 4 | `string` | Why the limit exists, for people ("Apple's macOS license allows two macOS VMs per Mac"). |

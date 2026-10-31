@@ -300,7 +300,6 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
   const telemetryOn = telemetry ? active(telemetry) === "on" : DEFAULT_SETTINGS.telemetry;
   // The rows only this host lays out: what they show now, so the core lays
   // them out again on the page (null: the host has none).
-  const source = (id: string) => (rows.has(id) ? (active(rows.get(id)) ?? "auto") : null);
   const on = (id: string) => (rows.has(id) ? active(rows.get(id)) === "on" : null);
   const protection = [...rows.values()]
     .filter((r) => r.id.startsWith("keyvault-protection:"))
@@ -319,6 +318,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
       // The core's own settings the page changes (`settings.update`); an older host has none.
       ...(s.tips ? { tips: { off: s.tips.off === true, done: Array.isArray(s.tips.done) ? s.tips.done : [] } } : {}),
+      ...(Array.isArray(s.notchPinned) ? { notchPinned: s.notchPinned.filter((id): id is string => typeof id === "string") } : {}),
     },
     defaultLocation: null,
     telemetry: telemetry
@@ -332,9 +332,9 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
         }
       : null,
     hostSettings: {
-      lumeSource: source("macos-runtime"),
-      linuxSource: source("linux-runtime"),
+      runtimes: s.runtimes ?? null,
       autoConnect: on("auto-connect"),
+      overflow: on("placement-overflow"),
       keyvaultAutoWipe: on("keyvault-auto-wipe"),
       keyvaultUnlockPrompt: on("keyvault-unlock-prompt"),
       keyvaultSiteIcons: on("keyvault-site-icons"),
@@ -433,6 +433,13 @@ export function toHostStatus(h: WkHostState): HostStatus {
     // The rest of the core's state, as the host sends it: the logs, the
     // provided Spaces, and whether sharing waits for a sign-in.
     maxMacosVms: h.maxMacosVms ?? 0,
+    maxMemoryGb: h.maxMemoryGb ?? 0,
+    maxDiskGb: h.maxDiskGb ?? 0,
+    maxRunMinutes: h.maxRunMinutes ?? 0,
+    usedMemoryGb: h.usedMemoryGb ?? 0,
+    usedDiskGb: h.usedDiskGb ?? 0,
+    totalMemoryGb: h.totalMemoryGb ?? 0,
+    totalDiskGb: h.totalDiskGb ?? 0,
     recentAccess: list(h.recentAccess) as HostStatus["recentAccess"],
     accessLogError: h.accessLogError ?? null,
     providedSpaces: list(h.providedSpaces) as HostStatus["providedSpaces"],
@@ -645,6 +652,7 @@ export function createWebkitAdapter(
           break;
         // The app core's own settings (`AppSettings`), saved as given.
         case "tips":
+        case "notchPinned":
           return toSettingsSnapshot(await request<WkSettings>("settings.update", { [key]: value ?? null }), page);
       }
       return settingsSnapshot();
@@ -710,7 +718,10 @@ export function createWebkitAdapter(
     "agents.connect": async ({ agents, signIn, skills, mcp }) =>
       // No timeout: Claude Code's sign-in waits for its one browser approval.
       list(await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true }, null)) as ConnectResult[],
-    "agents.disconnect": ({ agents, signIn }) => request<{ removed_sign_ins: string[] }>("agents.disconnect", { agents, signIn }),
+    "agents.disconnect": ({ agents, signIn, skills, mcp }) =>
+      request<{ removed_sign_ins: string[] }>("agents.disconnect", { agents, signIn, ...(skills === undefined ? {} : { skills }), ...(mcp === undefined ? {} : { mcp }) }),
+    "agents.signInStart": ({ agent }) => request<OpResult<"agents.signInStart">>("agents.signInStart", { agent }),
+    "agents.signInWait": ({ id }) => request<OpResult<"agents.signInWait">>("agents.signInWait", { id }),
     "session.openExternal": async ({ url }) => {
       win.open?.(url, "_blank", "noopener");
       return null;

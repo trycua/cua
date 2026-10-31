@@ -2343,9 +2343,11 @@ version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "cua-agent-setup",
+ "cua-connections",
  "cua-proto",
  "cua-spacesd-client",
  "flate2",
+ "futures-util",
  "hex",
  "rand 0.9.5",
  "serde",
@@ -2480,6 +2482,7 @@ dependencies = [
  "cua-host",
  "cua-image",
  "cua-proto",
+ "cua-repo-cache",
  "cua-sandbox-core",
  "cua-sdk",
  "cua-spaces",
@@ -2595,6 +2598,15 @@ dependencies = [
  "tower",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "cua-connections"
+version = "0.9.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -2978,6 +2990,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-repo-cache"
+version = "0.9.0"
+dependencies = [
+ "cua-home",
+ "cua-telemetry",
+ "hex",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "cua-sandbox-core"
 version = "0.9.0"
 dependencies = [
@@ -2987,6 +3016,7 @@ dependencies = [
  "bytes",
  "cua-home",
  "cua-image",
+ "cua-repo-cache",
  "cua-sandbox-core",
  "cua-spacesd-client",
  "cua-vmm",
@@ -3175,7 +3205,9 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "cua-agent-setup",
+ "cua-agents",
  "cua-auth",
+ "cua-connections",
  "cua-create-failure",
  "cua-home",
  "cua-keyvault",
@@ -3243,6 +3275,7 @@ dependencies = [
  "cua-host",
  "cua-proto",
  "cua-spaces",
+ "cua-telemetry",
  "flate2",
  "hex",
  "hpke",
@@ -3436,6 +3469,7 @@ dependencies = [
 name = "cua-telemetry"
 version = "0.9.0"
 dependencies = [
+ "cua-connections",
  "hex",
  "rand 0.9.5",
  "serde",

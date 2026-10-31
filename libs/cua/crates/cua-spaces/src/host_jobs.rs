@@ -62,6 +62,13 @@ const MACOS_MIN: (u32, u64) = (4, 8192);
 /// Smallest macOS VM a member that asks for an accelerator gets.
 const MACOS_GPU_MIN: (u32, u64) = (6, 16384);
 
+/// How often the Spaces of jobs that are gone are looked for (the first look
+/// is this long after the daemon starts).
+const ORPHAN_SWEEP_EVERY: Duration = Duration::from_secs(30);
+
+/// How often a running job's Space is looked at for having stopped on its own.
+const SPACE_WATCH_EVERY: Duration = Duration::from_secs(3);
+
 /// Where a macOS member sees its directories: links without spaces to the
 /// shared directories (`/Volumes/My Shared Files/<name>`), since a path with
 /// a space breaks the `#!` line of every console script a Python
@@ -181,6 +188,13 @@ impl SpacesExecutor {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         });
+        let me = self.clone();
+        rt.spawn(async move {
+            loop {
+                tokio::time::sleep(ORPHAN_SWEEP_EVERY).await;
+                me.sweep_orphans().await;
+            }
+        });
         if cfg!(target_os = "macos") {
             let others = self.macos_others.clone();
             rt.spawn(async move {
@@ -199,6 +213,44 @@ impl SpacesExecutor {
         if let Some(m) = &self.machine {
             m.dirs().sweep(jobdir::KEEP, &busy);
         }
+    }
+
+    /// Removes the job Spaces nothing here runs in: the ones a restart of the
+    /// daemon left behind (the job runner ends the jobs the ledger says were
+    /// running and removes their Spaces once, at start, when the runtimes may
+    /// not answer yet) and any a failed delete left. A Space a job of this
+    /// process runs in is in `running` before it is created, so it is never
+    /// touched. Returns how many it removed.
+    pub async fn sweep_orphans(&self) -> usize {
+        let Ok(all) = self.spaces.list() else {
+            return 0;
+        };
+        let mut removed = 0;
+        for info in all {
+            if !is_job_space(&info.id) {
+                continue;
+            }
+            let name = info
+                .id
+                .strip_prefix("local:")
+                .unwrap_or(&info.id)
+                .to_string();
+            if self.running.lock().expect("running").contains(&name) {
+                continue;
+            }
+            self.remove_space(&name).await;
+            // Only what is gone counts: a Space a job created meanwhile (it
+            // is in `running` by now) stays, and one still there is retried.
+            if self
+                .spaces
+                .list()
+                .is_ok_and(|l| l.iter().all(|i| i.id != info.id))
+            {
+                tracing::info!(space = %name, "removed a job Space nothing runs in");
+                removed += 1;
+            }
+        }
+        removed
     }
 
     fn is_dedicated(&self) -> bool {
@@ -385,7 +437,7 @@ impl SpacesExecutor {
         let job = &job;
         out.create_ms = t0.elapsed().as_millis() as u32;
         let t1 = Instant::now();
-        let end = member::run(
+        let run = member::run(
             MemberCommand {
                 client: &client,
                 job,
@@ -406,8 +458,21 @@ impl SpacesExecutor {
             },
             space,
             cancel,
-        )
-        .await;
+        );
+        // A Space that stops on its own (killed, out of memory) ends the job
+        // now: left to the command's output stream, the host would retry
+        // reaching a Space that is gone for minutes before it said so.
+        let end = tokio::select! {
+            end = run => end,
+            why = self.space_stopped(id) => {
+                let note = format!("the job's Space stopped while its command ran: {why}");
+                jobdir::append(
+                    &self.dirs.output_log(&job.job_id, job.attempt),
+                    format!("cua: {note}\n").as_bytes(),
+                );
+                ExecEnd::Error(note)
+            }
+        };
         drop(routed);
         drop(services);
         out.run_ms = t1.elapsed().as_millis() as u32;
@@ -418,6 +483,18 @@ impl SpacesExecutor {
             }
         }
         Ok(end)
+    }
+
+    /// Resolves with why the job's Space `id` stopped without being asked
+    /// to, as soon as it did (looked at every [`SPACE_WATCH_EVERY`]). Never
+    /// resolves while it runs, and never for a Space that is not local.
+    async fn space_stopped(&self, id: &str) -> String {
+        loop {
+            tokio::time::sleep(SPACE_WATCH_EVERY).await;
+            if let Some(why) = self.spaces.unasked_stop_of(id).await {
+                return why;
+            }
+        }
     }
 
     /// Starts `job`'s host services ([`crate::job_services`]): their files
@@ -790,8 +867,11 @@ impl JobExecutor for SpacesExecutor {
             return;
         }
         let id = format!("local:{space}");
-        if self.spaces.delete(&id).await.is_err() {
-            let _ = self.spaces.sandboxes().delete_local_instance(space).await;
+        if let Err(first) = self.spaces.delete(&id).await
+            && let Err(e) = self.spaces.sandboxes().delete_local_instance(space).await
+        {
+            // The orphan sweep ([`SpacesExecutor::sweep_orphans`]) tries again.
+            tracing::warn!(space, "removing a job's Space failed: {first}; {e}");
         }
     }
 

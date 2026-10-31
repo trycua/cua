@@ -9,6 +9,7 @@
 //   selectAll   ⌘A (select every Space shown) to the selection bar drawn
 //   pickOne     one Space's checkbox clicked to the selection bar drawn
 //   longTasks   main-thread tasks over 50 ms while the page settles, total ms
+//   drawn       tiles in the page: one screen of rows once the list is long (windowing)
 // and fails when a number is over its budget in scale-budget.json.
 //
 // Usage:
@@ -34,7 +35,7 @@ if (!has("--no-build")) {
     ["node", ["scripts/build-core-wasm.mjs"]],
     ["npx", ["vite", "build", "--logLevel", "warn"]],
   ]) {
-    const r = spawnSync(cmd, a, { cwd: root, stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, VITE_CUA_FLAG_SPACES_REDESIGN: "1" } });
+    const r = spawnSync(cmd, a, { cwd: root, stdio: ["ignore", "ignore", "inherit"], env: process.env });
     if (r.status !== 0) process.exit(r.status ?? 1);
   }
 }
@@ -65,29 +66,36 @@ async function once(n) {
   // Settled: no long task for a second.
   await page.waitForTimeout(1500);
   const longTasks = await page.evaluate(() => window.__long);
+  // Tiles drawn: all of them for a short list, one screen of rows for a long one.
   const total = await page.locator("[data-space-id]").count();
 
   // One character in the filter, to the grid redrawn with fewer tiles.
   const filter = page.locator("[data-spaces-filter]").first();
   await filter.click();
+  // One Space's name: the list drops to that one, so the first tile and the count change.
+  const name = `scale-${String(n - 1).padStart(4, "0")}`;
   const filterKey = await page.evaluate(
-    () =>
+    (name) =>
       new Promise((resolve) => {
-        const before = document.querySelectorAll("[data-space-id]").length;
+        // The grid draws only what is on screen, so the number of tiles may not change: the
+        // first tile and the "N Spaces" line do.
+        const sig = () => `${document.querySelector("[data-space-id]")?.getAttribute("data-space-id")}|${document.querySelectorAll("[data-space-id]").length}|${document.querySelector("h1")?.parentElement?.textContent}`;
+        const before = sig();
         const input = document.activeElement;
         const t0 = performance.now();
         const obs = new MutationObserver(() => {
-          if (document.querySelectorAll("[data-space-id]").length !== before) {
+          if (sig() !== before) {
             obs.disconnect();
             requestAnimationFrame(() => resolve(performance.now() - t0));
           }
         });
         obs.observe(document.body, { childList: true, subtree: true });
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-        setter.call(input, "scale-00");
+        setter.call(input, name);
         input.dispatchEvent(new Event("input", { bubbles: true }));
         setTimeout(() => resolve(-1), 10_000);
       }),
+    name,
   );
   await filter.fill("");
   await page.waitForTimeout(500);
@@ -119,14 +127,14 @@ async function once(n) {
       }),
   );
   await page.close();
-  return { firstTile, filterKey, selectAll, pickOne, longTasks, total };
+  return { firstTile, filterKey, selectAll, pickOne, longTasks, drawn: total, total };
 }
 
 const results = {};
 for (const n of SIZES) {
   const runs = [];
   for (let i = 0; i < RUNS; i++) runs.push(await once(n));
-  results[n] = Object.fromEntries(["firstTile", "filterKey", "selectAll", "pickOne", "longTasks"].map((k) => [k, Math.round(median(runs.map((r) => r[k])))]));
+  results[n] = Object.fromEntries(["firstTile", "filterKey", "selectAll", "pickOne", "longTasks", "drawn"].map((k) => [k, Math.round(median(runs.map((r) => r[k])))]));
   results[n].tiles = runs[0].total;
   console.log(`N=${n}`, JSON.stringify(results[n]));
 }
@@ -134,14 +142,18 @@ await browser.close();
 stop();
 
 if (has("--update")) {
-  const budget = Object.fromEntries(Object.entries(results).map(([n, r]) => [n, Object.fromEntries(Object.entries(r).filter(([k]) => k !== "tiles").map(([k, v]) => [k, Math.max(50, Math.round(v * 1.5))]))]));
+  const budget = Object.fromEntries(Object.entries(results).map(([n, r]) => [n, Object.fromEntries(Object.entries(r).filter(([k]) => k !== "tiles").map(([k, v]) => [k, Math.max(k === "drawn" ? 20 : 50, Math.round(v * 1.5))]))]));
   writeFileSync(budgetFile, JSON.stringify(budget, null, 2) + "\n");
   console.log(`wrote ${budgetFile}`);
 } else if (existsSync(budgetFile)) {
   const budget = JSON.parse(readFileSync(budgetFile, "utf8"));
   const over = [];
   for (const [n, r] of Object.entries(results))
-    for (const [k, v] of Object.entries(budget[n] ?? {})) if (r[k] > v) over.push(`N=${n} ${k} ${r[k]} > ${v}`);
+    for (const [k, v] of Object.entries(budget[n] ?? {})) {
+      // -1: the redraw never came (a measurement that timed out is a failure, not a fast run).
+      if (r[k] < 0) over.push(`N=${n} ${k} was not measured`);
+      else if (r[k] > v) over.push(`N=${n} ${k} ${r[k]} > ${v}`);
+    }
   if (over.length) {
     console.error(`over budget:\n  ${over.join("\n  ")}`);
     process.exit(1);

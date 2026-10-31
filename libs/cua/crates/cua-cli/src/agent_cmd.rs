@@ -168,7 +168,7 @@ pub enum AgentCmd {
   cua --json agent harnesses")]
     Harnesses,
     /// The provider keys agents get, kept in the Keychain by the Cua daemon
-    /// (Cua Spaces → Settings → Connectors). Values are read from stdin and never
+    /// (Cua Spaces → Settings → Connections). Values are read from stdin and never
     /// printed.
     #[command(after_help = "Examples:
   cua agent keys
@@ -295,6 +295,15 @@ pub struct AddArgs {
     /// machine's name; default: this machine).
     #[arg(long, value_name = "MACHINE", requires = "durable")]
     pub(crate) on: Option<String>,
+    /// With --durable: drives allowed in total before the session fails
+    /// (default 5).
+    #[arg(long, value_name = "N", requires = "durable")]
+    pub(crate) max_attempts: Option<u32>,
+    /// With --durable: seconds the driver may write no output before it
+    /// counts as wedged, is cancelled and started again (default 120; 0:
+    /// never). Drivers print a heartbeat every quarter of it.
+    #[arg(long, value_name = "SECS", requires = "durable")]
+    pub(crate) stall_secs: Option<u32>,
     /// Schedule PROMPT every N minutes.
     #[arg(long, value_name = "MINUTES", requires = "prompt", conflicts_with_all = ["daily", "weekly"])]
     pub(crate) every: Option<i64>,
@@ -343,8 +352,8 @@ pub(crate) fn desugar(cmd: AgentCmd) -> Result<Vec<AgentCmd>, CuaError> {
                 follow: false,
                 durable,
                 on: a.on.clone(),
-                max_attempts: None,
-                stall_secs: None,
+                max_attempts: a.max_attempts,
+                stall_secs: a.stall_secs,
                 name: durable.then(|| a.name.clone()),
                 driver_cmd: None,
                 driver_bundle: None,
@@ -478,7 +487,7 @@ async fn follow(
 
 /// The harnesses with the readiness the Spaces server reports
 /// (`agent_capabilities`, which counts the keys saved in Cua Spaces →
-/// Settings → Connectors and the server's environment), so `cua agent
+/// Settings → Connections and the server's environment), so `cua agent
 /// harnesses`, MCP and the app agree. Without a server: the static list.
 async fn harnesses(cua: &Arc<Cua>) -> serde_json::Value {
     let caps = cua
@@ -800,7 +809,7 @@ async fn run_one(
     }
     if let AgentCmd::Run(a) = cmd {
         if a.durable {
-            return crate::agent_session_cmd::start(*a, json, out).await;
+            return crate::agent_session_cmd::start(cua, *a, json, out).await;
         }
         return start(cua, *a, json, out).await;
     }
@@ -993,6 +1002,47 @@ mod tests {
     fn runs(argv: &[&str]) -> String {
         let cmd = parse(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
         format!("{:?}", desugar(cmd).unwrap())
+    }
+
+    /// `agent add --durable` takes the same `--max-attempts` and
+    /// `--stall-secs` as `agent run --durable`, and they reach the session.
+    #[test]
+    fn add_durable_passes_max_attempts_and_stall_secs() {
+        let argv = [
+            "add",
+            "nightly",
+            "fix the tests",
+            "--harness",
+            "claude-code",
+            "--durable",
+            "--on",
+            "auto",
+            "--max-attempts",
+            "8",
+            "--stall-secs",
+            "45",
+        ];
+        let steps = desugar(parse(&argv).unwrap()).unwrap();
+        let [AgentCmd::Run(r)] = steps.as_slice() else {
+            panic!("one run: {steps:?}")
+        };
+        assert!(r.durable);
+        assert_eq!((r.max_attempts, r.stall_secs), (Some(8), Some(45)));
+        // Left out, they stay unset (the coordinator's defaults apply).
+        let steps =
+            desugar(parse(&["add", "n", "x", "--harness", "claude-code", "--durable"]).unwrap())
+                .unwrap();
+        let [AgentCmd::Run(r)] = steps.as_slice() else {
+            panic!("one run: {steps:?}")
+        };
+        assert_eq!((r.max_attempts, r.stall_secs), (None, None));
+        // Without --durable they mean nothing, so they are refused.
+        for flag in ["--max-attempts", "--stall-secs"] {
+            assert!(
+                parse(&["add", "n", "x", "--harness", "h", "--once", flag, "3"]).is_err(),
+                "{flag} needs --durable"
+            );
+        }
     }
 
     /// Alias equivalence: each new spelling runs exactly what the old

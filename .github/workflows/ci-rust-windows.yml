@@ -2,6 +2,7 @@ name: "CI: Rust Windows unit"
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "libs/cua-driver/rust/.cargo/**"
       - "libs/cua-driver/rust/Cargo.toml"
@@ -60,9 +61,9 @@ env:
 
 jobs:
   unit:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Rust Windows unit and compile
-    runs-on: cua-windows-8core
+    runs-on: windows-latest
     # The suite below has been running within a hair of this budget for months:
     # the last green run on `main` (359fad56) took 28m31s of 30m. The tests this
     # branch adds push it past the line, and the failure mode is silent -- every
@@ -74,7 +75,7 @@ jobs:
     # A warm Rust cache runs in about 15 minutes (trycua/cua); the cache is
     # saved only from main, so a repository without one builds cold, where
     # the first test step alone took 22 minutes and the job passed 45.
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_idle_seconds > 1 && 90 || 75 }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_idle_seconds > 1 && 90 || 60 }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1

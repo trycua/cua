@@ -1,20 +1,18 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { Link } from "@tanstack/react-router";
-import { ChevronRightIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { useAgents, useSpaces, useSpaceThumbnail, type AgentRunSummary, type Space } from "@/bridge";
+import { useAgentChats, useAgents, useSpaces, type AgentRunSummary } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
+import { useAgentAttempts } from "@/hooks/use-agent-attempts";
 import { OsIcon } from "@/components/os-icon";
-import { SpaceCanvas } from "@/components/space-canvas";
-import { Button } from "@/components/ui/button";
-import { currentWhere, mostUsedAgent, orderTasks, startErrorView, SUGGESTIONS, taskState, TASK_STATE_TEXT, taskTitle, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
-import { realSpaces, spaceState } from "@/lib/spaces";
+import { currentWhere, mostUsedAgent, SUGGESTIONS, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
+import { useListedSpaces } from "@/components/spaces/listed";
 import { cn } from "@/lib/utils";
 
-import { agentName, AppMark, AskBox, TASK_AGENTS, type TaskWhere } from "./ask-box";
+import { agentName, AskBox, TASK_AGENTS, type TaskWhere } from "./ask-box";
+import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
 import { useWhereOptions } from "./where-options";
@@ -42,7 +40,8 @@ export function StateDot({ state }: { state: TaskState }) {
 export function AskFirstHome() {
   const tasks = useAskTasks();
   const { data: spaces } = useSpaces();
-  const { data: agents, agentSetup } = useAgents();
+  const listed = useListedSpaces(spaces);
+  const { agentSetup } = useAgents();
   const { kinds, spaces: pickable } = useWhereOptions();
   const { start } = useStartTask();
   const [installed, setInstalled] = useState<ReadonlySet<string>>(new Set());
@@ -75,13 +74,11 @@ export function AskFirstHome() {
     setText("");
   };
 
-  const rows = orderTasks(
-    tasks.map((task) => {
-      const run = taskRun(agents?.runs, task);
-      return { task, run, state: taskState(task, run ? { status: run.status, needsYou: Boolean(run.needsYou), lastEventMs: null } : null) };
-    }),
-  );
-  const first = tasks.length === 0;
+  // Home lists agents and Spaces, not tasks: with neither (a first run,
+  // or tasks whose Spaces are gone), Home is the welcome again.
+  const attempts = useAgentAttempts();
+  const { chats } = useAgentChats(attempts);
+  const first = !chats?.length && listed.counted.length === 0;
 
   return (
     <div className="h-full overflow-y-auto [scrollbar-gutter:stable]" data-ask-first-home="">
@@ -128,111 +125,12 @@ export function AskFirstHome() {
               <CuaKey size={24} />A fresh computer does the work, so yours stays untouched. Watch it live, step in any time, and throw it away when you're done.
             </p>
           </>
-        ) : (
-          <TaskList rows={rows} spaces={spaces ?? []} />
-        )}
-        {!first && realSpaces(spaces ?? []).length > 0 ? <YourSpaces spaces={realSpaces(spaces ?? [])} /> : null}
+        ) : null}
+        {/* The Agents page's own list, then the Spaces page's tiles. */}
+        <YourAgents chats={chats} />
+        <YourSpacesRow />
       </div>
       {pick.dialog}
     </div>
-  );
-}
-
-function TaskList({ rows, spaces }: { rows: { task: AskTask; run: AgentRunSummary | undefined; state: TaskState }[]; spaces: Space[] }) {
-  const live = rows.filter((r) => r.state === "working" || r.state === "starting").length;
-  return (
-    <section>
-      <h2 className="mb-3 flex items-baseline gap-2 text-[17px] font-semibold">
-        Tasks {live ? <span className="text-[14px] font-normal text-muted-foreground">{live} running</span> : null}
-      </h2>
-      <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
-        {rows.map((r) => (
-          <TaskRow key={r.task.id} {...r} space={spaces.find((s) => s.id === r.task.spaceId)} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ago(ms: number, now = Date.now()): string {
-  const m = Math.round((now - ms) / 60_000);
-  if (m < 2) return "Now";
-  if (m < 60) return `${m} min ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h} h ago`;
-  return h < 48 ? "Yesterday" : `${Math.round(h / 24)} days ago`;
-}
-
-function TaskRow({ task, run, state, space }: { task: AskTask; run: AgentRunSummary | undefined; state: TaskState; space: Space | undefined }) {
-  const thumb = useSpaceThumbnail(task.spaceId ?? "", Boolean(space) && task.ending !== "thrown");
-  const line =
-    state === "needs-you" && run?.needsYou
-      ? run.needsYou.title
-      : state === "didnt-start" && task.error
-        ? `Didn't start: ${startErrorView(task.error, agentName(task.agent)).title}`
-        : TASK_STATE_TEXT[state];
-  const where = task.ending === "thrown" ? "Thrown away" : task.onHost ? "This Mac" : (space?.name ?? "");
-  return (
-    <Link
-      to="/home/$taskId"
-      params={{ taskId: task.id }}
-      data-task-row={task.id}
-      className="flex min-h-[72px] items-center gap-4 px-5 py-3 hover:bg-accent/60"
-    >
-      <AppMark agent={task.agent} size={36} />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[14px] font-medium">{taskTitle(task.prompt)}</div>
-        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <StateDot state={state} />
-          <span className="truncate">{line}</span>
-        </div>
-      </div>
-      <span className="hidden w-40 truncate text-right text-[13px] text-muted-foreground md:block">{where}</span>
-      <span className="w-24 text-right text-[13px] text-muted-foreground">{ago(task.createdMs)}</span>
-      <span className="hidden w-24 lg:block">
-        {thumb ? <img src={thumb} alt="" className="aspect-[16/10] w-24 rounded-md border object-cover" /> : null}
-      </span>
-      {state === "needs-you" ? (
-        <Button variant="secondary" className="h-10 px-4" render={<span />}>
-          Answer
-        </Button>
-      ) : null}
-    </Link>
-  );
-}
-
-function YourSpaces({ spaces }: { spaces: Space[] }) {
-  const on = spaces.filter((s) => spaceState(s) === "running").length;
-  return (
-    <section>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="flex items-baseline gap-2 text-[17px] font-semibold">
-          Your Spaces <span className="text-[14px] font-normal text-muted-foreground">{on} on</span>
-        </h2>
-        <Link to="/spaces" className="flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground">
-          See all {spaces.length} <ChevronRightIcon className="size-4" />
-        </Link>
-      </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {spaces.slice(0, 4).map((s) => (
-          <SpaceCard key={s.id} space={s} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function SpaceCard({ space }: { space: Space }) {
-  const thumb = useSpaceThumbnail(space.id, spaceState(space) === "running");
-  return (
-    <Link to="/spaces/$spaceId" params={{ spaceId: space.id }} className="overflow-hidden rounded-xl border bg-card shadow-xs hover:bg-accent/60">
-      <SpaceCanvas className="rounded-none">
-        {thumb ? <img src={thumb} alt="" className="absolute inset-0 size-full object-cover" /> : <OsIcon os={space.os} className="size-6 text-muted-foreground" />}
-      </SpaceCanvas>
-      <div className="px-4 py-3">
-        <div className="truncate text-[14px] font-medium">{space.name}</div>
-        <div className="text-[12px] text-muted-foreground">{spaceState(space) === "running" ? "On" : "Off"}</div>
-      </div>
-    </Link>
   );
 }

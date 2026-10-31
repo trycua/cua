@@ -814,7 +814,13 @@ impl Sandboxes {
             }
         })
         .await;
-        let sandbox = sandbox?;
+        let sandbox = match sandbox {
+            Ok(s) => s,
+            Err(e) => {
+                self.discard_failed_start(&options, preexisting).await;
+                return Err(e);
+            }
+        };
         let started_ms = started.elapsed().as_millis() as u64;
         let clock = image_ready.unwrap_or(started);
         if !options.wait_for.is_empty() {
@@ -864,6 +870,29 @@ impl Sandboxes {
             "create"
         );
         Ok(sandbox)
+    }
+
+    /// A local create that failed while starting (the runtime's own
+    /// readiness wait, a boot error) can leave the instance it made: a
+    /// running container, an overlay. A named create deletes it, and its
+    /// record, unless the caller keeps it (`keep_on_failure`) or the name
+    /// was already in use (that instance is not this create's to delete).
+    /// A failed delete is logged and never replaces the create's error.
+    /// An unnamed (ephemeral) create is cleaned up by `create_local`.
+    async fn discard_failed_start(&self, options: &CreateOptions, preexisting: bool) {
+        if options.provider != ProviderKind::Local {
+            return;
+        }
+        let Some(name) = options.name.as_deref().filter(|n| !n.is_empty()) else {
+            return;
+        };
+        if preexisting {
+            tracing::warn!(sandbox = %name, "start failed; pre-existing sandbox retained");
+        } else if options.keep_on_failure {
+            tracing::warn!(sandbox = %name, "sandbox failed to start and is kept (keep_on_failure)");
+        } else if let Err(d) = self.delete_local_instance(name).await {
+            tracing::warn!(sandbox = %name, error = %d, "could not delete a sandbox that failed to start");
+        }
     }
 
     /// [`Sandboxes::create`] that stops when `cancel` fires, and when this
@@ -1794,6 +1823,19 @@ impl Sandboxes {
             }
         }
         out
+    }
+
+    /// [`Self::note_unasked_stops`] for the one local sandbox `name`, looked
+    /// at now: `Some` (and recorded as stopped) when it was running and its
+    /// engine says it stopped without being asked to. A job's Space is
+    /// watched this way while its command runs.
+    pub async fn unasked_stop(&self, name: &str) -> Option<crate::StopReason> {
+        self.inner.local.as_ref()?;
+        let s = self.inner.state.load(name)?;
+        if provider_of(&s) != ProviderKind::Local || s.status() != "running" {
+            return None;
+        }
+        self.note_stop(name, s.runtime_type()).await
     }
 
     /// [`Self::note_unasked_stops`] for one sandbox.

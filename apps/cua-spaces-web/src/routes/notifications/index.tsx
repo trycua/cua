@@ -12,10 +12,8 @@ import { Button } from "@/components/ui/button";
 import { PlainList, plainRowClass } from "@/components/ui/grouped";
 import { toastError } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { useFlag } from "@/bridge/flags";
-import { LegacyNotificationsPage } from "@/legacy/routes/notifications/index";
 
-export const Route = createFileRoute("/notifications/")({ component: NotificationsPageSwitch });
+export const Route = createFileRoute("/notifications/")({ component: NotificationsPage });
 
 /**
  * Notifications: the daemon's feed, one line each, newest first, unread in
@@ -116,9 +114,4 @@ function NotificationRow({ row, entry, open, onToggle }: { row: NotificationLine
       ) : null}
     </div>
   );
-}
-
-/** The redesign behind `spaces_redesign` (Settings → Advanced → Labs); off, the page as it was. */
-function NotificationsPageSwitch() {
-  return useFlag("spaces_redesign") ? <NotificationsPage /> : <LegacyNotificationsPage />;
 }

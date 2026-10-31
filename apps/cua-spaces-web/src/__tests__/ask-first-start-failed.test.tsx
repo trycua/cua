@@ -9,7 +9,7 @@
 // words, with Try again and Change computer in the card.
 
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
@@ -22,7 +22,10 @@ const CORE_NOT_FOUND = 'Space "this-mac" (use its id, such as local:<name> or cl
 const HOST_SPACE = "relay:this-mac";
 const HOST = { failsCreates: false, listsGhost: false };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
@@ -49,7 +52,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
   it("defaults to a new Linux computer, and This Mac asks once, then starts on this Mac's Space id", async () => {
     await mountApp("/home", HOST);
     await screen.findByText("What do you want to do?");
-    expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("A new Linux computer");
+    expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("New Space");
     await pickThisMac();
     await screen.findByText("Work on this Mac?");
     expect(screen.getByText(/Claude Code will work directly on this Mac, with your files and apps\. It can't be undone by throwing the computer away\./)).toBeTruthy();
@@ -60,8 +63,8 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
     await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
     await startJob("Tidy my Downloads folder");
     const id = askTasks()[0]!.id;
-    await waitFor(() => expect(askTask(id)?.runId).toBeTruthy(), { timeout: 5000 });
-    expect(askTask(id)).toMatchObject({ spaceId: HOST_SPACE, onHost: true, error: null });
+    // The job goes to this Mac's own Space, as the first message of its thread.
+    await waitFor(() => expect(askTask(id)).toMatchObject({ spaceId: HOST_SPACE, onHost: true, error: null }), { timeout: 5000 });
   });
 
   it("Pick another keeps the default and reopens the picker", async () => {
@@ -73,7 +76,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
     });
     await screen.findByRole("menuitem", { name: /A new Linux computer on this Mac/ });
     expect(thisMacConfirmed()).toBe(false);
-    expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("A new Linux computer");
+    expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("New Space");
   });
 
   it("doesn't ask again once answered on this device", async () => {

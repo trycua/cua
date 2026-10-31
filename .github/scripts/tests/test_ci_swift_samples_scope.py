@@ -303,7 +303,7 @@ class WorkflowWiringTests(unittest.TestCase):
             swift = jobs["swift"]
             self.assertEqual(swift["needs"], "changes")
             # The arm64 larger runner of the same macOS image (macos-26 is 3-core).
-            self.assertEqual(swift["runs-on"], "macos-26-xlarge")
+            self.assertEqual(swift["runs-on"], "macos-26")
 
     def test_effective_job_conditions(self):
         # The scope decision is final, except that release-please branches skip the

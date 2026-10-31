@@ -64,13 +64,13 @@ impl ChecklistStep {
     fn copy(self) -> (&'static str, &'static str, &'static str) {
         match self {
             ChecklistStep::AddMachine => (
-                "Add a computer",
-                "Connect a Mac, Linux or Windows computer you own.",
-                "Add computer",
+                "Add a machine",
+                "Connect a Mac, Linux or Windows machine you own.",
+                "Add machine",
             ),
             ChecklistStep::CreateSpace => (
                 "Create a Space",
-                "A computer for one task, on one of your computers.",
+                "A computer for one task, on one of your machines.",
                 "Create",
             ),
             ChecklistStep::Teleport => (
@@ -556,7 +556,7 @@ mod tests {
         assert_eq!(
             rows,
             [
-                ("Add a computer", "Add computer", false),
+                ("Add a machine", "Add machine", false),
                 ("Create a Space", "Create", false),
                 ("Teleport an app", "Teleport", true),
                 ("Share a Space", "Share", false),

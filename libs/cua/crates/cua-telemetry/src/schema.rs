@@ -403,6 +403,29 @@ pub const INSTALL_ERROR_KINDS: &[&str] = &[
 pub const INSTALLERS: &[&str] = &["sh", "ps1"];
 /// What the install was asked to put on the machine (joined with `+`).
 pub const INSTALL_ITEMS: &[&str] = &["cli", "spaces", "cua_driver", "host"];
+/// What the repo cache did for one clone (`cua_repo_cache`): a hit (served
+/// from a mirror), a miss (no mirror yet), or a fallback (a mirror that could
+/// not be used).
+pub const REPO_CACHE_OUTCOMES: &[&str] = &["hit", "miss", "fallback"];
+/// Where a cloned repository came from.
+pub const REPO_CACHE_SOURCES: &[&str] = &["local", "network"];
+/// Why the repo cache did not serve a clone: a fixed list, `none` for a hit
+/// or a first sighting.
+pub const REPO_CACHE_REASONS: &[&str] = &[
+    "none",
+    "disabled",
+    "no_git",
+    "unsupported_url",
+    "host_not_public",
+    "private",
+    "unreachable",
+    "too_big",
+    "cache_full",
+    "disk_full",
+    "verify_failed",
+    "fill_failed",
+    "other",
+];
 /// The kind of Spaces tool an agent's call used (`cua_agent_used_space`).
 pub const SPACE_TOOL_GROUPS: &[&str] =
     &["shell", "files", "computer", "services", "agents", "other"];
@@ -664,9 +687,167 @@ pub const HARNESSES: &[&str] = &[
     "openclaw",
     "other",
 ];
+/// The steps of an agent joining a Space, in order (`cua_agent_join_phase`).
+pub const JOIN_PHASES: &[&str] = &[
+    "posted",
+    "dispatch_picked",
+    "host_prepared",
+    "guest_spawned",
+    "install_done",
+    "runner_started",
+    "agent_spawned",
+    "acp_initialized",
+    "acp_authenticated",
+    "session_ready",
+    "turn_started",
+    "first_token",
+    "turn_ended",
+    "failed",
+];
+/// What the Space an agent joined runs on: the guest OS and whether it is a
+/// container or a VM, `other` when not known.
+pub const JOIN_RUNTIMES: &[&str] = &[
+    "linux_container",
+    "linux_vm",
+    "macos_vm",
+    "windows_vm",
+    "other",
+];
+/// What an agent's join failed on: a sign-in, an install, a timeout, or
+/// anything else. `none` for a step that worked.
+pub const JOIN_FAILURES: &[&str] = &["none", "auth", "install", "timeout", "other"];
+/// What happened to a durable agent session (`cua_durable_agent`).
+pub const DURABLE_PHASES: &[&str] = &[
+    "started",
+    "restarted",
+    "failed_over",
+    "exhausted",
+    "ended",
+    "space_recreated",
+    "refused",
+];
+/// Why a durable session's driver was started again, or could not be.
+pub const DURABLE_REASONS: &[&str] = &[
+    "none",
+    "process_exit",
+    "stall",
+    "driver_lost",
+    "host_down",
+    "fenced",
+    "permanent",
+    "other",
+];
+/// How a durable session ended.
+pub const DURABLE_ENDS: &[&str] = &["none", "done", "failed", "stopped"];
+/// Where a durable session was asked to run: any machine or one named one
+/// (never which).
+pub const DURABLE_PLACEMENTS: &[&str] = &["auto", "host"];
+/// What a durable session gave up on, as a fixed word (never the message).
+pub const DURABLE_FAILURES: &[&str] = &[
+    "none",
+    "exhausted",
+    "permanent",
+    "space_gone",
+    "setup_failed",
+    "lease_refused",
+    "epoch_refused",
+    "other",
+];
+/// The tools an agent's start installs (`cua-agents` installables), `other`
+/// for any other, `none` for a phase that is not an install.
+pub const JOIN_TOOLS: &[&str] = &[
+    "none",
+    "node",
+    "uv",
+    "acp-sdk",
+    "mcp-remote",
+    "claude-agent-acp",
+    "claude-code",
+    "codex-acp",
+    "gemini-cli",
+    "opencode",
+    "pi",
+    "openclaw",
+    "goose",
+    "hermes",
+    "antigravity-acp",
+    "other",
+];
 /// Agents whose sign-in Connect copies into Keyvault on This Mac
 /// (`cua-agent-setup` ids), or `other`.
 pub const SIGNIN_HARNESSES: &[&str] = &["hermes", "claude-code", "codex", "other"];
+/// How a copied sign-in was made: read from Claude Code's own sign-in (its
+/// Keychain item or its credentials file), a device code, a pasted token.
+pub const SIGNIN_VIAS: &[&str] = &[
+    "claude_login_keychain",
+    "claude_login_file",
+    "device_code",
+    "token",
+    "other",
+];
+/// Why Connect did not copy a sign-in (`cua-agent-setup`'s refusal kinds).
+pub const SIGNIN_REFUSALS: &[&str] = &["not_signed_in", "cancelled", "not_yet", "failed", "other"];
+/// The providers of the Connections registry (`cua-connections`), or `other`.
+/// A test holds this equal to the registry's ids.
+pub const CONNECTION_PROVIDERS: &[&str] = &[
+    "actual",
+    "ai-gateway",
+    "alibaba",
+    "anthropic",
+    "arcee",
+    "azure-foundry",
+    "bedrock",
+    "commandcode",
+    "custom",
+    "deepinfra",
+    "deepseek",
+    "fireworks",
+    "github",
+    "gmi",
+    "google",
+    "huggingface",
+    "kilocode",
+    "kimi",
+    "meta-ai",
+    "minimax",
+    "minimax-oauth",
+    "nebius-token-factory",
+    "nous",
+    "novita",
+    "nvidia",
+    "ollama-cloud",
+    "openai",
+    "opencode-go",
+    "opencode-zen",
+    "openrouter",
+    "qwen-oauth",
+    "router",
+    "stepfun",
+    "tencent-tokenhub",
+    "upstage",
+    "vertex",
+    "xai",
+    "xai-oauth",
+    "xiaomi",
+    "zai",
+    "other",
+];
+/// The kinds of way to connect a provider (the registry's closed set), or `other`.
+pub const CONNECTION_METHODS: &[&str] = &[
+    "api_key",
+    "import_login",
+    "device_code",
+    "browser_oauth",
+    "subscription_login",
+    "adc",
+    "local_server",
+    "custom_endpoint",
+    "other",
+];
+/// What was done to a connection.
+pub const CONNECTION_ACTIONS: &[&str] = &["connect", "reconnect", "remove", "check"];
+/// How it ended; `needs_reconnect` is a check that found the provider refusing the key.
+pub const CONNECTION_OUTCOMES: &[&str] = &["ok", "failed", "cancelled", "needs_reconnect"];
 /// Where an agent run was started from: a Spaces tool call (the MCP
 /// `agent_start`, the SDKs' `Space.agent_start`, the Spaces app), the
 /// `cua agent` CLI, the SDKs' sandbox `Agents.run`, a persistent agent's
@@ -691,6 +872,8 @@ pub const AGENT_PRODUCTS: &[&str] = &[
     "sdk_kotlin",
     "spaces_app",
 ];
+/// The products whose process hosts a session coordinator (the daemon).
+pub const DURABLE_PRODUCTS: &[&str] = &["daemon", "cli"];
 /// cua-bench dataset names (`cua_bench/registry.json`) or `custom`.
 pub const TASKSETS: &[&str] = &[
     "cua-bench-basic",
@@ -859,6 +1042,11 @@ const PLAN: Prop = p(
 // Events
 // ---------------------------------------------------------------------------
 
+/// A per-install salted hash value (16 lowercase hex).
+pub fn is_salted_hash(s: &str) -> bool {
+    is_hex(s, 16)
+}
+
 pub mod event {
     pub const FIRST_RUN: &str = "cua_first_run";
     pub const CLI_COMMAND: &str = "cua_cli_command";
@@ -873,6 +1061,9 @@ pub mod event {
     pub const ONBOARDING_STEP: &str = "cua_onboarding_step";
     pub const AGENT_RUN_STARTED: &str = "cua_agent_run_started";
     pub const AGENT_RUN_COMPLETED: &str = "cua_agent_run_completed";
+    pub const AGENT_JOIN_PHASE: &str = "cua_agent_join_phase";
+    pub const DURABLE_AGENT: &str = "cua_durable_agent";
+    pub const REPO_CACHE: &str = "cua_repo_cache";
     pub const BENCH_RUN_COMPLETED: &str = "cua_bench_run_completed";
     pub const DAEMON_STARTED: &str = "cua_daemon_started";
     pub const DAEMON_HEALTH: &str = "cua_daemon_health";
@@ -901,6 +1092,8 @@ pub mod event {
     pub const INSTALLER_STEP: &str = "cua_installer_step";
     pub const AGENT_USED_SPACE: &str = "cua_agent_used_space";
     pub const AGENT_SIGNIN_IMPORTED: &str = "cua_agent_signin_imported";
+    pub const AGENT_SIGNIN_REFUSED: &str = "cua_agent_signin_refused";
+    pub const CONNECTION_CHANGED: &str = "cua_connection_changed";
     pub const PLAN_LIMIT_SHOWN: &str = "cua_plan_limit_shown";
     pub const UPGRADE_LINK_OPENED: &str = "cua_upgrade_link_opened";
 }
@@ -1197,16 +1390,73 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::AGENT_SIGNIN_IMPORTED,
+        version: 2,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: ALL,
+        props: &[
+            p(
+                "harness",
+                Kind::Enum(SIGNIN_HARNESSES),
+                "The agent whose sign-in Connect copied into Keyvault on This Mac. Never the sign-in, the account or the provider.",
+            ),
+            p(
+                "via",
+                Kind::Enum(SIGNIN_VIAS),
+                "How it was made: read from Claude Code's own sign-in (Keychain or file), a device code, or a pasted token. Never the account.",
+            ),
+        ],
+        purpose: "One-click Connect: how often an agent's sign-in is copied, per agent and way.",
+    },
+    EventSpec {
+        name: event::AGENT_SIGNIN_REFUSED,
         version: 1,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: ALL,
-        props: &[p(
-            "harness",
-            Kind::Enum(SIGNIN_HARNESSES),
-            "The agent whose sign-in Connect copied into Keyvault on This Mac. Never the sign-in, the account or the provider.",
-        )],
-        purpose: "One-click Connect: how often an agent's sign-in is copied, per agent.",
+        props: &[
+            p(
+                "harness",
+                Kind::Enum(SIGNIN_HARNESSES),
+                "The agent whose sign-in Connect could not copy.",
+            ),
+            p(
+                "reason",
+                Kind::Enum(SIGNIN_REFUSALS),
+                "Why: not signed in, cancelled, not supported yet, or failed. Never the error text or the account.",
+            ),
+        ],
+        purpose: "One-click Connect: how often importing a sign-in fails, and why, so the import can be made to work for more people.",
+    },
+    EventSpec {
+        name: event::CONNECTION_CHANGED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: ALL,
+        props: &[
+            p(
+                "provider",
+                Kind::Enum(CONNECTION_PROVIDERS),
+                "The provider, by its id in the Connections registry (a fixed list), or other.",
+            ),
+            p(
+                "method",
+                Kind::Enum(CONNECTION_METHODS),
+                "The kind of way it was connected: an API key, an imported sign-in, a custom endpoint and so on.",
+            ),
+            p(
+                "action",
+                Kind::Enum(CONNECTION_ACTIONS),
+                "Connected, reconnected, removed or checked.",
+            ),
+            p(
+                "outcome",
+                Kind::Enum(CONNECTION_OUTCOMES),
+                "How it ended, or needs_reconnect when a check found the provider refusing the key. Never a key, a URL, an account or error text.",
+            ),
+        ],
+        purpose: "Which providers people connect and how, how often a connect fails, and how often a saved key stops working, so the providers and methods that matter get the work.",
     },
     EventSpec {
         name: event::AGENT_RUN_STARTED,
@@ -1238,6 +1488,160 @@ pub const EVENTS: &[EventSpec] = &[
             DURATION,
         ],
         purpose: "Activation (first agent run) and which coding-agent harnesses finish their first turn, and how reliably. Sent once per run, by the install that started it.",
+    },
+    EventSpec {
+        name: event::AGENT_JOIN_PHASE,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: AGENT_PRODUCTS,
+        props: &[
+            p(
+                "phase",
+                Kind::Enum(JOIN_PHASES),
+                "The step of an agent joining a Space that was just reached (posted, dispatch_picked, host_prepared, guest_spawned, install_done, runner_started, agent_spawned, acp_initialized, acp_authenticated, session_ready, turn_started, first_token, turn_ended) or failed.",
+            ),
+            AGENT_HARNESS,
+            p(
+                "runtime",
+                Kind::Enum(JOIN_RUNTIMES),
+                "What the Space the agent joined runs on: linux_container, linux_vm, macos_vm, windows_vm or other.",
+            ),
+            p(
+                "cold",
+                Kind::Bool,
+                "The agent had to start from nothing (no run to send to), not a follow-up to a running agent.",
+            ),
+            p(
+                "ms_since_post",
+                Kind::Count { max: 3_600_000 },
+                "Milliseconds from the message that woke the agent to this step.",
+            ),
+            p(
+                "run",
+                Kind::SaltedHash,
+                "A per-install salted hash of the run, so the steps of one join can be put together. Not the run id.",
+            ),
+            p(
+                "tool",
+                Kind::Enum(JOIN_TOOLS),
+                "install_done only: which tool was installed (or found cached); none otherwise.",
+            ),
+            p(
+                "failure",
+                Kind::Enum(JOIN_FAILURES),
+                "failed only: auth, install, timeout or other; none otherwise. Never the message.",
+            ),
+        ],
+        purpose: "How long an agent takes to join a Space and answer, step by step, per agent and runtime, cold and warm; where joins fail.",
+    },
+    EventSpec {
+        name: event::DURABLE_AGENT,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: DURABLE_PRODUCTS,
+        props: &[
+            p(
+                "phase",
+                Kind::Enum(DURABLE_PHASES),
+                "What happened: started, restarted, failed_over (a drive ran on another machine than the one before), exhausted (out of attempts), ended, space_recreated (a durable Space was placed again on another machine) or refused (a lease or epoch was refused).",
+            ),
+            AGENT_HARNESS,
+            p(
+                "placement",
+                Kind::Enum(DURABLE_PLACEMENTS),
+                "auto (any machine of the account) or host (pinned to one machine). Never which.",
+            ),
+            p(
+                "attempt",
+                Kind::Count { max: 100 },
+                "Which drive of the session this is (1 is the first); 0 when not about a drive.",
+            ),
+            p(
+                "max_attempts",
+                Kind::Count { max: 100 },
+                "Drives allowed in total.",
+            ),
+            p(
+                "reason",
+                Kind::Enum(DURABLE_REASONS),
+                "Why the driver was started again: process_exit, stall, driver_lost, host_down, fenced, permanent or other; none otherwise.",
+            ),
+            p(
+                "end",
+                Kind::Enum(DURABLE_ENDS),
+                "ended only: done, failed or stopped; none otherwise.",
+            ),
+            p(
+                "failure",
+                Kind::Enum(DURABLE_FAILURES),
+                "A fixed word for what it gave up on or was refused; none otherwise. Never the message.",
+            ),
+            p(
+                "failover",
+                Kind::Bool,
+                "This drive ran on another machine than the one before.",
+            ),
+            p(
+                "machines",
+                Kind::Count { max: 1000 },
+                "How many machines of the account were available to place it on; 0 when unknown.",
+            ),
+            p(
+                "recovery_time_ms",
+                Kind::Count { max: 86_400_000 },
+                "restarted, failed_over: milliseconds from the end of the driver that failed to the start of the next one (includes the wait before it); 0 otherwise.",
+            ),
+            p(
+                "interrupted_calls",
+                Kind::Count { max: 10_000 },
+                "How many tool calls may have run halfway when the driver stopped; 0 when not known.",
+            ),
+            p(
+                "session",
+                Kind::SaltedHash,
+                "A per-install salted hash of the session, so the events of one session can be put together. Not its name.",
+            ),
+        ],
+        purpose: "How durable agents behave in the field: starts, restarts and why, failover between machines, how long recovery takes, how often attempts run out, and how sessions end.",
+    },
+    EventSpec {
+        name: event::REPO_CACHE,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: AGENT_PRODUCTS,
+        props: &[
+            p(
+                "outcome",
+                Kind::Enum(REPO_CACHE_OUTCOMES),
+                "What the repo cache did for one clone: hit (served from a mirror on this machine), miss (no mirror yet) or fallback (a mirror that could not be used, so the clone went the normal way).",
+            ),
+            p(
+                "source",
+                Kind::Enum(REPO_CACHE_SOURCES),
+                "Where the repository came from: local (a mirror on this machine) or network.",
+            ),
+            p(
+                "bytes_saved",
+                Kind::Count {
+                    max: 1_000_000_000_000,
+                },
+                "Bytes a hit did not download (the mirror's size); 0 otherwise.",
+            ),
+            p(
+                "seconds_saved",
+                Kind::Count { max: 86_400 },
+                "Seconds a hit saved against the network clone that filled the mirror; 0 otherwise.",
+            ),
+            p(
+                "reason",
+                Kind::Enum(REPO_CACHE_REASONS),
+                "Why a clone was not served from the cache: a fixed word (private, host_not_public, verify_failed, cache_full, disk_full, and so on); none for a hit or a first sighting. Never a URL, a repository name or a path.",
+            ),
+        ],
+        purpose: "Whether the repo cache makes repeat clones in Spaces faster, how often it can be used, and why it cannot. Counts and fixed words only.",
     },
     EventSpec {
         name: event::BENCH_RUN_COMPLETED,
@@ -1576,7 +1980,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "profile",
                 Kind::Enum(HOST_PROFILES),
-                "Share this desktop, only run Spaces for other devices, or both.",
+                "Share this desktop, only run Spaces for other machines, or both.",
             ),
             OUTCOME,
             ERROR_KIND,

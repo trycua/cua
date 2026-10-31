@@ -570,6 +570,13 @@ impl Coordinator {
                 self.audit("durable", "coordinator", &row.name, &detail)
                     .await;
                 let row = self.durable_save(row).await?;
+                if row.generation > 1 {
+                    super::telemetry::space_recreated(
+                        &row.name,
+                        !from.is_empty() && from != row.node,
+                        self.nodes().len() as u32,
+                    );
+                }
                 self.durable_setup_spawn(&row);
                 Ok(row)
             }
@@ -703,6 +710,7 @@ impl Coordinator {
             .ok_or_else(|| CoordError::NotFound(format!("no durable Space {name}")))?;
         let now = now_ms();
         if r.leased(now) && r.holder != holder.trim() {
+            super::telemetry::lease_refused(name, self.nodes().len() as u32);
             return Err(CoordError::Denied(format!(
                 "{name} is held by {} for {} s more",
                 r.holder,
@@ -736,6 +744,7 @@ impl Coordinator {
             .filter(|r| r.state != state::DELETED)
             .ok_or_else(|| CoordError::NotFound(format!("no durable Space {name}")))?;
         if r.lease_token != token || !r.leased(now_ms()) {
+            super::telemetry::lease_refused(name, self.nodes().len() as u32);
             return Err(CoordError::Denied(format!(
                 "the lease of {name} with token {token} is no longer held (it ran out or was taken); acquire it again"
             )));

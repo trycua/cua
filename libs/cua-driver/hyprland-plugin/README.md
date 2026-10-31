@@ -92,7 +92,11 @@ For a pinned acceptance build, also set
 version). The build refuses a different header version. The status-command
 adapter supports both Hyprland `0.56.2`'s `SHyprCtlCommand` API and the newer
 Socket1 API. CMake compile-checks the installed `PluginAPI.hpp` and selects a
-declared tier; an unknown command API fails configuration. The probes use
+declared tier; an unknown command API fails configuration. Input builds
+likewise compile-check the window and layer-surface internals they read
+(the 0.57 window-backend API or the earlier one) instead of pinning a Hyprland
+version, and unknown internals fail configuration. The nightly requalification
+below proves each new Hyprland build with a headless load and input smoke. The probes use
 C++26 and repeat on reconfiguration so a header upgrade cannot reuse a cached
 tier. Both adapter paths run in the local mock suite. A separate configuration
 test checks tier selection, compiler flags, and unsupported headers. Real-header

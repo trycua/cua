@@ -72,7 +72,7 @@ constexpr bool kProduction = false;
 #endif
 
 #ifndef CUA_HYPRLAND_WINDOW_BACKEND_API
-#error CUA_HYPRLAND_WINDOW_BACKEND_API must name the qualified Hyprland window API
+#error CUA_HYPRLAND_WINDOW_BACKEND_API must name the detected Hyprland window API
 #endif
 // Hyprland 0.57 moved window identity onto the window backend and renamed the
 // exclusive layer list when pointer focus stopped following it (#15899). The

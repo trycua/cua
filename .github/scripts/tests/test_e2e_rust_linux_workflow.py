@@ -307,7 +307,17 @@ def test_cache_saves_never_write_pull_request_scope_but_keep_dispatches() -> Non
     save_guards = [line for line in workflow.splitlines() if 'save-if:' in line]
     assert not any("ref_type == 'branch'" in line for line in save_guards)
 
+    # `needs.source.outputs.sha == github.sha` must survive: a dispatch can
+    # certify an older SHA, and that run must not seed main's scope with it.
     swatinem = workflow.split("- uses: Swatinem/rust-cache", 1)[1].split("- uses:", 1)[0]
-    assert "save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}" in swatinem
+    assert (
+        "save-if: ${{ (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')"
+        " && needs.source.outputs.sha == github.sha }}" in swatinem
+    )
 
-    assert workflow.count("save-if: ${{ github.event_name != 'pull_request' }}") == 4
+    assert (
+        workflow.count(
+            "save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}"
+        )
+        == 4
+    )

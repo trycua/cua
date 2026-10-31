@@ -110,7 +110,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-shared
-          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+          save-if: ${{ (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && needs.source.outputs.sha == github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -157,7 +157,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-shared
-          save-if: ${{ github.event_name != 'pull_request' }}
+          save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -206,7 +206,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-native
-          save-if: ${{ github.event_name != 'pull_request' }}
+          save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -256,7 +256,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-capture
-          save-if: ${{ github.event_name != 'pull_request' }}
+          save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -306,7 +306,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-installer
-          save-if: ${{ github.event_name != 'pull_request' }}
+          save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}
       - name: Install Rust build dependencies
         uses: ./.github/actions/apt-install
         with:

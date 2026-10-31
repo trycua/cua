@@ -58,16 +58,22 @@ The audit's diagnosis needs one correction. For eight of the nine sites the
 guard was **inert**: `.github/actions/rust-cache` decides `save` itself
 (`refs/heads/main`, `workflow_dispatch`, or `pr-save`) and only drops a save when
 `save-if` is the literal `"false"`. Verified against the live cache inventory:
-of 376 entries, **zero** sccache entries exist under `refs/pull`, so no PR was
-writing one. Those eight lines are now
-`github.event_name != 'pull_request'`, which preserves the documented
-`workflow_dispatch` path (the action's own comment calls it "how a change to a
-workflow's cache is measured before it merges") while making the intent explicit.
+of 376 entries, **zero** entries carrying the action's own `sccache-v2-*` key
+prefix exist under `refs/pull` (all 28 are `refs/heads/main`), so none of those
+eight sites was writing PR-scoped data. Those eight lines are now
+`github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha`,
+which preserves the documented `workflow_dispatch` path (the action's own
+comment calls it "how a change to a workflow's cache is measured before it
+merges") while making the intent explicit. The `sha == github.sha` half is kept
+deliberately: a dispatch or `workflow_call` can certify an older commit, and
+that run must not seed main's scope with it.
 
 The ninth site, `e2e-rust-linux.yml:113`, is `Swatinem/rust-cache`, which *does*
 honour `save-if` itself — and it is the only site that really wrote PR-scoped
-data (`refs/pull/5957/merge`, 1006 MB, key `v0-rust-e2e-shared-verify-skill-*`).
-It now reads `github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'`.
+data (`refs/pull/5957/merge` and `refs/pull/5661/merge`, ~1,005 MB each, key
+`v0-rust-e2e-shared-verify-skill-*`). That is the entry this PR stops recurring.
+It now reads
+`(github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && needs.source.outputs.sha == github.sha`.
 
 **2. `ci-gate` timeout 360 → 180 minutes.** The only change with a measured
 before/after.

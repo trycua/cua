@@ -114,7 +114,16 @@ def test_cache_saves_never_write_pull_request_scope_but_keep_dispatches() -> Non
     workflow = (ROOT / ".github/workflows/e2e-rust-windows.yml").read_text(encoding="utf-8")
     save_guards = [line for line in workflow.splitlines() if 'save-if:' in line]
     assert not any("ref_type == 'branch'" in line for line in save_guards)
-    assert workflow.count(
-        "save-if: ${{ github.event_name != 'pull_request' && inputs.runner == 'windows-latest' }}"
-    ) == 3
-    assert workflow.count("save-if: ${{ github.event_name != 'pull_request' }}") == 1
+    assert (
+        workflow.count(
+            "save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha"
+            " && inputs.runner == 'windows-latest' }}"
+        )
+        == 3
+    )
+    assert (
+        workflow.count(
+            "save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}"
+        )
+        == 1
+    )

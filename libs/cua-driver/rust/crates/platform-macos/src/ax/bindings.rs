@@ -306,7 +306,7 @@ pub struct StringishAttrValue {
 }
 
 /// Convert a borrowed CF value without taking ownership of it.
-unsafe fn coerce_stringish_value(value: CFTypeRef) -> Option<StringishAttrValue> {
+pub(crate) unsafe fn coerce_stringish_value(value: CFTypeRef) -> Option<StringishAttrValue> {
     use core_foundation::boolean::CFBoolean;
     use core_foundation::number::CFNumber;
     let type_id = core_foundation::base::CFGetTypeID(value);

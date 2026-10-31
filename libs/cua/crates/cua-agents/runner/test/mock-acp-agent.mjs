@@ -62,6 +62,20 @@ async function runSteps(steps, sid, cx) {
       const t = st.tool;
       const base = { toolCallId: t.id, title: t.title ?? t.id, kind: t.kind ?? "execute", rawInput: t.input ?? { id: t.id } };
       await note({ sessionUpdate: "tool_call", ...base, status: "pending" });
+      if (t.permission !== false && t.askTwice) {
+        // OpenCode: a command that touches a folder outside the workspace is asked for twice under one call id,
+        // first as an "external directory" request (kind other), then for the command.
+        const first = await cx.request("session/request_permission", {
+          sessionId: sid,
+          toolCall: { ...base, kind: "other", title: "external_directory: /outside", status: "pending" },
+          options: [
+            { kind: "allow_once", name: "Allow", optionId: "allow" },
+            { kind: "reject_once", name: "Reject", optionId: "reject" },
+          ],
+        });
+        log({ ev: "permission_first", id: t.id, outcome: first.outcome });
+        if (first.outcome.outcome !== "selected" || first.outcome.optionId === "reject") continue;
+      }
       if (t.permission !== false) {
         const res = await cx.request("session/request_permission", {
           sessionId: sid,

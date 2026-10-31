@@ -3429,6 +3429,21 @@ impl Spaces {
             .unwrap_or_default()
     }
 
+    /// Why the local Space `id` stopped without being asked to, looked at
+    /// now (its engine is asked, never started): `None` while it runs, for
+    /// a Space that is not local, or one that was stopped on purpose. Unlike
+    /// [`Self::stop_reason_of`] this does not wait for the next stop watch.
+    pub async fn unasked_stop_of(&self, id: &str) -> Option<String> {
+        let Ok(SpaceId::Local { name }) = SpaceId::parse(id) else {
+            return None;
+        };
+        self.inner
+            .sandboxes
+            .unasked_stop(&name)
+            .await
+            .map(|r| r.words())
+    }
+
     /// [`Self::power_of`] for the sandbox `name` (a local Space's, or the
     /// cloud sandbox behind a `relay:` Space).
     fn sandbox_power(&self, name: &str) -> (String, String) {

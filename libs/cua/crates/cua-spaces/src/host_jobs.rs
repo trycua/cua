@@ -62,6 +62,9 @@ const MACOS_MIN: (u32, u64) = (4, 8192);
 /// Smallest macOS VM a member that asks for an accelerator gets.
 const MACOS_GPU_MIN: (u32, u64) = (6, 16384);
 
+/// How often a running job's Space is looked at for having stopped on its own.
+const SPACE_WATCH_EVERY: Duration = Duration::from_secs(3);
+
 /// Where a macOS member sees its directories: links without spaces to the
 /// shared directories (`/Volumes/My Shared Files/<name>`), since a path with
 /// a space breaks the `#!` line of every console script a Python
@@ -385,7 +388,7 @@ impl SpacesExecutor {
         let job = &job;
         out.create_ms = t0.elapsed().as_millis() as u32;
         let t1 = Instant::now();
-        let end = member::run(
+        let run = member::run(
             MemberCommand {
                 client: &client,
                 job,
@@ -406,8 +409,21 @@ impl SpacesExecutor {
             },
             space,
             cancel,
-        )
-        .await;
+        );
+        // A Space that stops on its own (killed, out of memory) ends the job
+        // now: left to the command's output stream, the host would retry
+        // reaching a Space that is gone for minutes before it said so.
+        let end = tokio::select! {
+            end = run => end,
+            why = self.space_stopped(id) => {
+                let note = format!("the job's Space stopped while its command ran: {why}");
+                jobdir::append(
+                    &self.dirs.output_log(&job.job_id, job.attempt),
+                    format!("cua: {note}\n").as_bytes(),
+                );
+                ExecEnd::Error(note)
+            }
+        };
         drop(routed);
         drop(services);
         out.run_ms = t1.elapsed().as_millis() as u32;
@@ -418,6 +434,18 @@ impl SpacesExecutor {
             }
         }
         Ok(end)
+    }
+
+    /// Resolves with why the job's Space `id` stopped without being asked
+    /// to, as soon as it did (looked at every [`SPACE_WATCH_EVERY`]). Never
+    /// resolves while it runs, and never for a Space that is not local.
+    async fn space_stopped(&self, id: &str) -> String {
+        loop {
+            tokio::time::sleep(SPACE_WATCH_EVERY).await;
+            if let Some(why) = self.spaces.unasked_stop_of(id).await {
+                return why;
+            }
+        }
     }
 
     /// Starts `job`'s host services ([`crate::job_services`]): their files

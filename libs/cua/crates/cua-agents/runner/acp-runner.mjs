@@ -1039,6 +1039,20 @@ async function drive(a) {
       }
     }
     const request = { cwd: cfg.cwd, mcpServers };
+    const openNewSession = async () => {
+      try {
+        return await requestStartup(acp.methods.agent.session.new, request, "session");
+      } catch (e) {
+        // Some agents reject session MCP servers they cannot start; keep
+        // the run and say so rather than failing it.
+        if (fatal(e) || !request.mcpServers.length) throw e;
+        emit("notice", {
+          message: `the agent refused the run's MCP servers (${e?.message ?? e}${e?.data ? ": " + JSON.stringify(e.data) : ""}); continuing without them`,
+        });
+        request.mcpServers = [];
+        return await requestStartup(acp.methods.agent.session.new, request, "session");
+      }
+    };
     const wantSession = state.sessionId;
     let sessionId = null;
     let resumed = false;
@@ -1074,19 +1088,7 @@ async function drive(a) {
           lostSessionId: wantSession,
         });
       }
-      let res;
-      try {
-        res = await requestStartup(acp.methods.agent.session.new, request, "session");
-      } catch (e) {
-        // Some agents reject session MCP servers they cannot start; keep
-        // the run and say so rather than failing it.
-        if (fatal(e) || !request.mcpServers.length) throw e;
-        emit("notice", {
-          message: `the agent refused the run's MCP servers (${e?.message ?? e}${e?.data ? ": " + JSON.stringify(e.data) : ""}); continuing without them`,
-        });
-        request.mcpServers = [];
-        res = await requestStartup(acp.methods.agent.session.new, request, "session");
-      }
+      const res = await openNewSession();
       sessionId = res.sessionId;
       modes = res.modes ?? null;
     }
@@ -1114,18 +1116,23 @@ async function drive(a) {
     // Guard mode keeps the harness asking: it selects the harness's own
     // ask-for-approval mode when its default does not ask (Codex), else none.
     const want = (durable?.guard ? cfg.guardModeKinds : cfg.modeKinds) ?? [];
-    const mode = (modes?.availableModes ?? []).find((m) => want.includes(m?._meta?.kind) || want.includes(m.id));
-    // A resume response without modes: select the mode the first drive chose (kept in state.json).
-    const modeId = mode?.id ?? (resumed && !modes?.availableModes ? state.modeId : undefined);
-    if (modeId && modeId !== modes?.currentModeId) {
-      try {
-        await ctx.request(acp.methods.agent.session.setMode, { sessionId, modeId });
-        save({ modeId });
-        emit("mode", { modeId, ...(resumed ? { resumed: true } : {}) });
-      } catch (e) {
-        emit("notice", { message: `could not switch to mode ${modeId}: ${e?.message ?? e}` });
+    const applyMode = async () => {
+      const mode = (modes?.availableModes ?? []).find((m) => want.includes(m?._meta?.kind) || want.includes(m.id));
+      // A resume response without modes: select the mode the first drive chose (kept in state.json).
+      const modeId = mode?.id ?? (resumed && !modes?.availableModes ? state.modeId : undefined);
+      if (modeId && modeId !== modes?.currentModeId) {
+        try {
+          await ctx.request(acp.methods.agent.session.setMode, { sessionId, modeId });
+          save({ modeId });
+          emit("mode", { modeId, ...(resumed ? { resumed: true } : {}) });
+        } catch (e) {
+          emit("notice", { message: `could not switch to mode ${modeId}: ${e?.message ?? e}` });
+        }
       }
-    }
+    };
+    await applyMode();
+    // Set once the agent has answered a prompt of this session with anything but a refusal.
+    let sessionProven = false;
 
     const promptTurn = async (msg) => {
       state.turn += 1;
@@ -1178,6 +1185,49 @@ async function drive(a) {
         return;
       }
       if (stale()) return;
+      if (durable && resumed && !sessionProven && res?.stopReason === "refusal") {
+        // The first prompt of a session the agent "resumed" came back refused
+        // at once: the agent does not have it. (Hermes answers session/resume
+        // for an id it lost, for example with the Space its database lived
+        // in, by making another session, and then refuses the old id.) Open
+        // a new session and send the recovery note again, as when the agent
+        // could not reload the session at all.
+        resumed = false;
+        degraded = true;
+        emit("degraded", { reason: "the agent refused the resumed session; it no longer has it", lostSessionId: sessionId });
+        try {
+          const ns = await openNewSession();
+          sessionId = ns.sessionId;
+          modes = ns.modes ?? null;
+        } catch (e) {
+          if (stale()) return;
+          emit("error", { message: withAuthHint(e?.message ?? String(e), e), code: e?.code ?? null, data: e?.data ?? null });
+          throw new AgentFailure(`prompt failed: could not open a new session: ${e?.message ?? e}`, isAuthError(e));
+        }
+        save({ sessionId, degraded: true });
+        emit("session", { sessionId, resumed: false, modes });
+        await applyMode();
+        const p = planFromJournal();
+        const note = buildRecoveryNote({
+          epoch: durable.epoch,
+          prevEpoch: p.prevEpoch,
+          entries: entries.slice(),
+          degraded: true,
+          history: p.history,
+          interrupted: extra.recovery ? p.open : null,
+        });
+        const again = extra.recovery ? note : `${note}\n\n${msg.text}`;
+        try {
+          res = await ctx.request(acp.methods.agent.session.prompt, { sessionId, prompt: blocks(again, msg.files) });
+        } catch (e) {
+          if (stale()) return;
+          flush();
+          emit("error", { message: withAuthHint(e?.message ?? String(e), e), code: e?.code ?? null, data: e?.data ?? null });
+          throw new AgentFailure(`prompt failed: ${e?.message ?? e}`, isAuthError(e));
+        }
+        if (stale()) return;
+      }
+      if (res?.stopReason !== "refusal") sessionProven = true;
       endTurn(res?.stopReason ?? null, res?.usage ?? null);
     };
 

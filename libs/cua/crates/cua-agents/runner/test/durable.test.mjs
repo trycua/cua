@@ -387,6 +387,51 @@ t("an agent with session/resume is resumed with it, and secrets never reach the 
   assert.match(box.tools().find((x) => x.kind === "outcome").summary, /token \[redacted\] used/);
 });
 
+t("an agent that lost the session and refuses its id gets a new session and the recovery note (CUA-2966)", async (box) => {
+  // Hermes: session/resume of an id it no longer has (the Space with its database is gone) succeeds by making
+  // another session, and the next prompt for the old id is refused at once with no model request.
+  box.script({
+    resume: true,
+    loadSession: true,
+    forgets: true,
+    prompts: [
+      { match: "recovery", steps: [{ say: "carrying on" }] },
+      { match: ".", steps: [tool("call-1", { output: "first" }), { crash: true, once: "c1" }] },
+    ],
+  });
+  box.config({ durable: { maxAgentRestarts: 0 }, prompt: "Ship the release" });
+  assert.equal((await box.go({ epoch: 1, resume: false })).code, 1);
+  // The new Space: the agent's own session store is empty.
+  fs.rmSync(path.join(box.mock, "sessions.json"), { force: true });
+  const r = await box.go({ epoch: 2 });
+  assert.equal(r.code, 0, r.stderr);
+  const log = box.agentLog();
+  assert.ok(log.some((l) => l.ev === "session_resume_forgot"), "the agent was asked to resume the lost id");
+  assert.equal(log.filter((l) => l.ev === "prompt_refused").length, 1, "its id was refused once");
+  assert.ok(log.some((l) => l.ev === "session_new" && l.id !== undefined), "a new session was opened");
+  // The recovery note reached the agent, as the degraded kind: the journal is all that is known.
+  const note = box.prompts().find((x) => x.includes("[cua durable recovery]"));
+  assert.ok(note, "the recovery note was sent to the new session");
+  assert.match(note, /starting with a fresh context/);
+  assert.match(note, /Tool calls that completed \(do not repeat them\):/);
+  assert.match(note, /run call-1/);
+  const ev = box.events();
+  assert.ok(ev.some((e) => e.type === "degraded"), "the degraded notice is in the journal");
+  assert.ok(ev.filter((e) => e.type === "turn_ended").pop()?.stopReason !== "refusal", "the turn did not end as a refusal");
+  assert.equal(ev.filter((e) => e.type === "run_exited").pop()?.status ?? "done", "done");
+  // The next drive finds the session the runner saved, no longer lost.
+  assert.equal(JSON.parse(fs.readFileSync(path.join(box.state, "state.json"), "utf8")).degraded, true);
+});
+
+t("a refusal after the session has answered is the agent's own answer, not a lost session", async (box) => {
+  box.script({ resume: true, forgets: true, prompts: [{ match: ".", steps: [{ say: "ok" }] }] });
+  box.config({ durable: { maxAgentRestarts: 0 } });
+  const r = await box.go({ epoch: 1, resume: false });
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(!box.events().some((e) => e.type === "degraded"));
+  assert.equal(box.agentLog().filter((l) => l.ev === "prompt_refused").length, 0);
+});
+
 // ---- the recovery note, exactly -----------------------------------------------------
 
 t("the recovery note text", async (box) => {

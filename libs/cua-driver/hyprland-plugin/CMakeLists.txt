@@ -246,10 +246,19 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
 
     add_library(cua_hyprland_plugin MODULE src/plugin.cpp)
     if(CUA_HYPRLAND_TEST_INPUT OR CUA_HYPRLAND_INPUT)
-        if(NOT HYPRLAND_VERSION STREQUAL "0.56.2")
-            message(FATAL_ERROR "Input is pinned to Hyprland 0.56.2")
+        # Input uses compositor internals, so each Hyprland version is
+        # qualified explicitly. 0.57 moved window identity onto the backend.
+        if(HYPRLAND_VERSION STREQUAL "0.56.2")
+            set(cua_hyprland_window_backend_api 0)
+        elseif(HYPRLAND_VERSION STREQUAL "0.57.0")
+            set(cua_hyprland_window_backend_api 1)
+        else()
+            message(FATAL_ERROR
+                "Input is pinned to Hyprland 0.56.2 or 0.57.0, found ${HYPRLAND_VERSION}")
         endif()
         target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp)
+        target_compile_definitions(cua_hyprland_plugin PRIVATE
+            CUA_HYPRLAND_WINDOW_BACKEND_API=${cua_hyprland_window_backend_api})
     endif()
     if(CUA_HYPRLAND_INPUT)
         target_compile_definitions(cua_hyprland_plugin PRIVATE CUA_HYPRLAND_INPUT=1)

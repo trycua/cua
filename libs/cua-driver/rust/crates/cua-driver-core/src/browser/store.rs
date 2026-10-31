@@ -209,7 +209,11 @@ pub struct TabRecord {
 pub struct TargetRecord {
     pub target_id: String,
     pub pid: i64,
-    pub window_id: u64,
+    /// Native window anchor. `None` only for a driver-owned headless binding,
+    /// which has no native window and is anchored by `headless_target`.
+    pub window_id: Option<u64>,
+    /// Opaque launch anchor of a driver-owned headless browser.
+    pub headless_target: Option<String>,
     pub ws_url: String,
     pub endpoint_owner_pid: i64,
     pub endpoint_transport: EndpointTransport,
@@ -471,7 +475,8 @@ mod tests {
         TargetRecord {
             target_id: String::new(),
             pid: 42,
-            window_id: 7,
+            window_id: Some(7),
+            headless_target: None,
             ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
             endpoint_owner_pid: 42,
             endpoint_transport: EndpointTransport::LegacyJsonVersion,

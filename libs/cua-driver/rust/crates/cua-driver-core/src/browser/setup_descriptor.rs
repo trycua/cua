@@ -9,6 +9,16 @@ use super::types::BrowserProduct;
 /// first render does not become platform-specific behavior.
 pub const EXISTING_PROFILE_SETUP_READY_TIMEOUT: Duration = Duration::from_secs(12);
 
+/// Outer bound for one browser consent attempt. A Linux AT-SPI walk of a full
+/// browser tree can take seconds, so that adapter scales its own deadline from
+/// observed walk time and settles at least a second inside this bound. Other
+/// platforms keep their fixed 4s attempt.
+pub const EXISTING_PROFILE_CONSENT_TIMEOUT: Duration = if cfg!(target_os = "linux") {
+    Duration::from_secs(13)
+} else {
+    Duration::from_secs(4)
+};
+
 /// Accessibility-visible anchors for a Chromium product's internal remote
 /// debugging page. Adapters still require an exact native window and exact
 /// control matches; these values only describe the product surface.

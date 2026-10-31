@@ -14,6 +14,11 @@
 //!    matches remain ambiguous.
 //! 5. No bounds match → a unique title match degrades to **Heuristic**
 //!    (read-only); otherwise **None**.
+//!
+//! Core upgrades a heuristic or missing match to **Exact** only with a
+//! platform-attested cardinality proof ([`cardinality_exact_candidate`]) or
+//! a one-to-one scaled-size pairing of every owned window
+//! ([`scaled_size_bijection_candidate`]).
 
 use super::types::{BindingQuality, NativeWindowInfo, Rect};
 
@@ -204,6 +209,145 @@ pub fn correlate(
             }
         }
     }
+}
+
+/// Size of one native top-level window owned by the browser process, as
+/// attested by the window system.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NativeWindowSize {
+    pub window_id: u64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Largest window set the size pairing enumerates (`n!` pairings).
+const SCALED_SIZE_MAX_WINDOWS: usize = 6;
+/// Plausible browser-unit to window-system scale range.
+const SCALED_SIZE_SCALE_RANGE: (f64, f64) = (0.5, 4.0);
+
+/// Pair `native_window_id` with its CDP window by size alone. Chromium on
+/// Wayland cannot see its global position (it reports 0,0) and reports
+/// window sizes in its own scaled units, so bounds never match the
+/// compositor's rect. The pairing is exact when every native window of the
+/// process pairs one-to-one with every CDP window under one common scale, and
+/// every such pairing gives this window the same CDP window. A finite set of
+/// sizes maps onto itself under a common scale only by identity, so pairings
+/// differ only between windows of (nearly) the same size; when this window is
+/// one of them, the bind refuses.
+pub fn scaled_size_bijection_candidate(
+    native_title: &str,
+    native_window_id: u64,
+    native_sizes: &[NativeWindowSize],
+    candidates: &[CdpWindowCandidate],
+    tolerance: f64,
+) -> Option<CdpWindowCandidate> {
+    let representatives = window_representatives(native_title, candidates);
+    let count = native_sizes.len();
+    if count == 0
+        || count > SCALED_SIZE_MAX_WINDOWS
+        || representatives.len() != count
+        || native_sizes
+            .iter()
+            .filter(|size| size.window_id == native_window_id)
+            .count()
+            != 1
+        || native_sizes
+            .iter()
+            .any(|size| !(size.width > 0.0 && size.height > 0.0))
+    {
+        return None;
+    }
+    let cdp_sizes = representatives
+        .iter()
+        .map(|candidate| {
+            candidate.cdp_window_id?;
+            let bounds = candidate.bounds?;
+            (bounds.width > 0.0 && bounds.height > 0.0).then_some((bounds.width, bounds.height))
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    let native = native_sizes
+        .iter()
+        .map(|size| (size.width, size.height))
+        .collect::<Vec<_>>();
+    let native_index = native_sizes
+        .iter()
+        .position(|size| size.window_id == native_window_id)?;
+    let partner = unique_scaled_partner(&native, &cdp_sizes, native_index, tolerance)?;
+    Some(representatives[partner].clone())
+}
+
+/// The entry of `scaled` (an application's own scaled units) that pairs with
+/// `native[target]` (window-system units) when every native size pairs
+/// one-to-one with every scaled size under a single common scale. Other
+/// windows may be interchangeable (equal sizes); the result is `Some` only when
+/// every valid pairing gives `native[target]` the same partner. Lists of
+/// different lengths, more than [`SCALED_SIZE_MAX_WINDOWS`] entries, or
+/// non-positive sizes yield `None`.
+pub fn unique_scaled_partner(
+    native: &[(f64, f64)],
+    scaled: &[(f64, f64)],
+    target: usize,
+    tolerance: f64,
+) -> Option<usize> {
+    let count = native.len();
+    let positive = |sizes: &[(f64, f64)]| sizes.iter().all(|&(w, h)| w > 0.0 && h > 0.0);
+    if count == 0
+        || count > SCALED_SIZE_MAX_WINDOWS
+        || scaled.len() != count
+        || target >= count
+        || !positive(native)
+        || !positive(scaled)
+    {
+        return None;
+    }
+    let mut pairing: Vec<usize> = (0..count).collect();
+    let mut partner: Option<usize> = None;
+    loop {
+        if scaled_pairing_holds(native, scaled, &pairing, tolerance) {
+            match partner {
+                Some(previous) if previous != pairing[target] => return None,
+                _ => partner = Some(pairing[target]),
+            }
+        }
+        if !next_permutation(&mut pairing) {
+            return partner;
+        }
+    }
+}
+
+/// Whether `native[i]` pairs with `scaled[pairing[i]]` for every `i` under
+/// one common scale, within `tolerance` scaled units per edge.
+fn scaled_pairing_holds(
+    native: &[(f64, f64)],
+    scaled: &[(f64, f64)],
+    pairing: &[usize],
+    tolerance: f64,
+) -> bool {
+    let native_total: f64 = native.iter().map(|(w, h)| w + h).sum();
+    let scaled_total: f64 = pairing.iter().map(|&i| scaled[i].0 + scaled[i].1).sum();
+    let scale = native_total / scaled_total;
+    if !(SCALED_SIZE_SCALE_RANGE.0..=SCALED_SIZE_SCALE_RANGE.1).contains(&scale) {
+        return false;
+    }
+    native.iter().zip(pairing).all(|(&(width, height), &i)| {
+        (width / scale - scaled[i].0).abs() <= tolerance
+            && (height / scale - scaled[i].1).abs() <= tolerance
+    })
+}
+
+/// Advance `items` to the next lexicographic permutation; false after the last.
+fn next_permutation(items: &mut [usize]) -> bool {
+    let Some(pivot) = (1..items.len()).rev().find(|&i| items[i - 1] < items[i]) else {
+        return false;
+    };
+    let successor = (pivot..items.len())
+        .rev()
+        .find(|&i| items[i] > items[pivot - 1])
+        .expect("a larger element follows the pivot");
+    items.swap(pivot - 1, successor);
+    items[pivot..].reverse();
+    true
 }
 
 #[cfg(test)]
@@ -526,5 +670,115 @@ mod tests {
             }
             other => panic!("expected t2 exact, got {other:?}"),
         }
+    }
+
+    fn sized(id: &str, window: i64, width: f64, height: f64) -> CdpWindowCandidate {
+        CdpWindowCandidate {
+            cdp_window_id: Some(window),
+            ..cand(id, id, Rect::new(0.0, 0.0, width, height))
+        }
+    }
+
+    fn native_size(window_id: u64, width: f64, height: f64) -> NativeWindowSize {
+        NativeWindowSize {
+            window_id,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn scaled_sizes_pair_each_native_window_with_its_cdp_window() {
+        // Measured on Hyprland: Chrome reports 0,0 and DIP sizes at a 1.3636
+        // GTK scale; a tiled browser window plus a full-screen app window.
+        let natives = [
+            native_size(7, 1913.0, 1041.0),
+            native_size(9, 3832.0, 2087.0),
+        ];
+        let cands = [
+            sized("app", 2, 2810.0, 1531.0),
+            sized("main-a", 1, 1403.0, 764.0),
+            sized("main-b", 1, 1403.0, 764.0),
+        ];
+        let main = scaled_size_bijection_candidate("main-b - Chrome", 7, &natives, &cands, 8.0)
+            .expect("main window pairs");
+        assert_eq!(main.cdp_window_id, Some(1));
+        let app = scaled_size_bijection_candidate("app", 9, &natives, &cands, 8.0)
+            .expect("app window pairs");
+        assert_eq!(app.cdp_window_id, Some(2));
+    }
+
+    #[test]
+    fn scaled_sizes_bind_a_unique_window_beside_interchangeable_ones() {
+        // An installed web app and a PDF window share one size; the tiled
+        // browser window still has exactly one partner.
+        let natives = [
+            native_size(7, 1913.0, 1041.0),
+            native_size(8, 3832.0, 2087.0),
+            native_size(9, 3832.0, 2087.0),
+        ];
+        let cands = [
+            sized("app", 2, 2819.0, 1536.0),
+            sized("main", 1, 1408.0, 766.0),
+            sized("pdf", 3, 2819.0, 1536.0),
+        ];
+        let main = scaled_size_bijection_candidate("main", 7, &natives, &cands, 8.0)
+            .expect("main window pairs");
+        assert_eq!(main.cdp_window_id, Some(1));
+        assert!(scaled_size_bijection_candidate("app", 8, &natives, &cands, 8.0).is_none());
+    }
+
+    #[test]
+    fn scaled_sizes_refuse_equal_sized_windows() {
+        let natives = [
+            native_size(7, 1913.0, 1041.0),
+            native_size(9, 1913.0, 1041.0),
+        ];
+        let cands = [sized("a", 1, 1403.0, 764.0), sized("b", 2, 1403.0, 764.0)];
+        assert!(scaled_size_bijection_candidate("a", 7, &natives, &cands, 8.0).is_none());
+    }
+
+    #[test]
+    fn scaled_sizes_refuse_without_a_common_scale() {
+        // Each window matches some scale on its own, but not the same one.
+        let natives = [
+            native_size(7, 1913.0, 1041.0),
+            native_size(9, 3832.0, 2087.0),
+        ];
+        let cands = [sized("a", 1, 1403.0, 764.0), sized("b", 2, 1916.0, 1044.0)];
+        assert!(scaled_size_bijection_candidate("a", 7, &natives, &cands, 8.0).is_none());
+    }
+
+    #[test]
+    fn scaled_sizes_refuse_unequal_window_counts_and_missing_target() {
+        let natives = [
+            native_size(7, 1913.0, 1041.0),
+            native_size(9, 3832.0, 2087.0),
+        ];
+        let one = [sized("a", 1, 1403.0, 764.0)];
+        assert!(scaled_size_bijection_candidate("a", 7, &natives, &one, 8.0).is_none());
+        let two = [sized("a", 1, 1403.0, 764.0), sized("b", 2, 2810.0, 1531.0)];
+        assert!(scaled_size_bijection_candidate("a", 8, &natives, &two, 8.0).is_none());
+        let unbounded = [
+            sized("a", 1, 1403.0, 764.0),
+            CdpWindowCandidate {
+                bounds: None,
+                ..sized("b", 2, 2810.0, 1531.0)
+            },
+        ];
+        assert!(scaled_size_bijection_candidate("a", 7, &natives, &unbounded, 8.0).is_none());
+    }
+
+    #[test]
+    fn next_permutation_visits_every_ordering_once() {
+        let mut items = vec![0, 1, 2];
+        let mut seen = vec![items.clone()];
+        while next_permutation(&mut items) {
+            seen.push(items.clone());
+        }
+        assert_eq!(seen.len(), 6);
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), 6);
     }
 }

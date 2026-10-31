@@ -1825,6 +1825,19 @@ impl Sandboxes {
         out
     }
 
+    /// [`Self::note_unasked_stops`] for the one local sandbox `name`, looked
+    /// at now: `Some` (and recorded as stopped) when it was running and its
+    /// engine says it stopped without being asked to. A job's Space is
+    /// watched this way while its command runs.
+    pub async fn unasked_stop(&self, name: &str) -> Option<crate::StopReason> {
+        self.inner.local.as_ref()?;
+        let s = self.inner.state.load(name)?;
+        if provider_of(&s) != ProviderKind::Local || s.status() != "running" {
+            return None;
+        }
+        self.note_stop(name, s.runtime_type()).await
+    }
+
     /// [`Self::note_unasked_stops`] for one sandbox.
     async fn note_stop(&self, name: &str, runtime_type: &str) -> Option<crate::StopReason> {
         let rt = self.inner.local.as_ref()?;

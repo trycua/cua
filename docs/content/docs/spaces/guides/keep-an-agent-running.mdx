@@ -79,7 +79,10 @@ the conversation or the working folder of the old one. Plan for it:
   [Cua Volume](/spaces/guides/cua-volume). The default storage, This Mac, is a
   folder on one machine, so another machine does not see it. Use your own
   S3-compatible bucket (AWS S3, R2, MinIO) so every machine reaches the same
-  files.
+  files. `cua agent add --durable --on auto` says so when more than one
+  machine is signed in and Cua Volume is still on This Mac. The same goes for
+  a durable Space (`durable=true`): it is created again on another machine
+  with an empty disk, and a Volume on This Mac is not visible from there.
 - Write the task so running it again from the start is safe.
 - A session makes at most 5 drives by default (`--max-attempts`), counting the
   first one and every restart for any reason. When they are used up it ends

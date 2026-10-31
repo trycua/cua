@@ -809,7 +809,7 @@ async fn run_one(
     }
     if let AgentCmd::Run(a) = cmd {
         if a.durable {
-            return crate::agent_session_cmd::start(*a, json, out).await;
+            return crate::agent_session_cmd::start(cua, *a, json, out).await;
         }
         return start(cua, *a, json, out).await;
     }

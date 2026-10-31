@@ -271,7 +271,12 @@ fn state_line(v: &Value) -> String {
 }
 
 /// `cua agent run --durable`.
-pub async fn start(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
+pub async fn start(
+    cua: &std::sync::Arc<cua_sdk::Cua>,
+    a: RunArgs,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
     let name = a
         .name
         .clone()
@@ -288,6 +293,11 @@ pub async fn start(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, C
                 v["epoch"]
             ))
         );
+        if a.on.as_deref() == Some("auto")
+            && let Some(w) = storage_warning(cua).await
+        {
+            eprintln!("{}", crate::util::hint(&w));
+        }
     }
     if !a.follow {
         return Ok(0);
@@ -295,6 +305,43 @@ pub async fn start(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, C
     logs(&name, true, json, out).await?;
     let v = ask("session_get", json!({"name": name})).await?;
     Ok(if v["state"] == "done" { 0 } else { 1 })
+}
+
+/// What a durable agent placed on `auto` should know when Cua may move it to
+/// another machine and the Cua Volume keeps its files on one machine: `None`
+/// when one machine is signed in or the Volume is in a bucket every machine
+/// reaches (`machines` machines, Volume `backend`).
+pub(crate) fn storage_warning_text(machines: usize, backend: &str) -> Option<String> {
+    if machines < 2 || backend != "fs" {
+        return None;
+    }
+    Some(format!(
+        "{machines} machines are signed in, but Cua Volume keeps its files on This Mac, so a machine \
+         that takes over this agent after a failure does not see the files the agent wrote or needs; \
+         the task starts from the beginning there. Put Cua Volume in your own S3 bucket so every \
+         machine reaches the same files: `cua volume config set --backend s3` (see \
+         https://cua.ai/docs/spaces/guides/keep-an-agent-running)."
+    ))
+}
+
+/// [`storage_warning_text`] for this account now. Best effort: a question
+/// that is not answered quickly is no warning.
+async fn storage_warning(cua: &std::sync::Arc<cua_sdk::Cua>) -> Option<String> {
+    let ask = async {
+        let status = crate::runs::request("pool", "status", Value::Null)
+            .await
+            .ok()?;
+        let machines = status["machines"].as_array().map_or(0, |m| m.len());
+        if machines < 2 {
+            return None;
+        }
+        let backend = cua.spaces().volume_storage().await.ok()?.backend;
+        storage_warning_text(machines, &backend)
+    };
+    tokio::time::timeout(Duration::from_secs(4), ask)
+        .await
+        .ok()
+        .flatten()
 }
 
 /// `cua agent sessions`.
@@ -550,6 +597,16 @@ mod tests {
             target_of_start(&args(&["--durable", "auto", "pi", "x"])).unwrap(),
             "local"
         );
+    }
+
+    #[test]
+    fn the_storage_warning_is_for_several_machines_and_the_fs_volume_only() {
+        let w = storage_warning_text(3, "fs").unwrap();
+        assert!(w.contains("3 machines") && w.contains("S3 bucket"), "{w}");
+        assert!(!w.contains("computer") && !w.contains("device") && !w.contains('\u{b7}'));
+        assert!(storage_warning_text(1, "fs").is_none());
+        assert!(storage_warning_text(0, "fs").is_none());
+        assert!(storage_warning_text(3, "s3").is_none());
     }
 
     #[test]

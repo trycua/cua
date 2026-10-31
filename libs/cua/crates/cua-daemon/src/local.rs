@@ -2751,6 +2751,7 @@ pub async fn setup(
         dry_run,
         cua_vmm::qemu::install_qemu,
         cua_vmm::lume::install_lume,
+        install_managed,
         kvm_step,
     )
     .await
@@ -2762,6 +2763,7 @@ async fn setup_with(
     dry_run: bool,
     install_qemu: impl AsyncFn() -> cua_vmm::Result<()>,
     install_lume: impl AsyncFn() -> cua_vmm::Result<()>,
+    install_managed: impl AsyncFn() -> cua_vmm::Result<()>,
     kvm: impl AsyncFn(bool) -> Option<cua_proto::daemon::v1::SetupStep>,
 ) -> Result<Vec<cua_proto::daemon::v1::SetupStep>> {
     use cua_proto::daemon::v1::{CheckStatus, SetupStep};
@@ -2775,21 +2777,24 @@ async fn setup_with(
     } else {
         components.to_vec()
     };
+    // Resolve every name before any installer runs: a bad name must not
+    // leave earlier components installed but unreported.
+    let kinds = wanted
+        .iter()
+        .map(|c| match c.as_str() {
+            "qemu" => Ok(BackendKind::Qemu),
+            "lume" => Ok(BackendKind::Lume),
+            "container" | "runsc" | "gvisor" => Ok(BackendKind::Container),
+            "firecracker" => Ok(BackendKind::Firecracker),
+            "microvm" | "vz" if cfg!(target_os = "macos") => Ok(BackendKind::Vz),
+            "microvm" => Ok(BackendKind::Firecracker),
+            "containerization" | "apple" => Ok(BackendKind::Containerization),
+            "managed" => Ok(BackendKind::Managed),
+            _ => Err(Error::InvalidArgument(format!("unknown component {c:?}"))),
+        })
+        .collect::<Result<Vec<_>>>()?;
     let mut steps = Vec::new();
-    for c in wanted {
-        let kind = match c.as_str() {
-            "qemu" => Some(BackendKind::Qemu),
-            "lume" => Some(BackendKind::Lume),
-            "container" | "runsc" | "gvisor" => Some(BackendKind::Container),
-            "firecracker" => Some(BackendKind::Firecracker),
-            "microvm" | "vz" if cfg!(target_os = "macos") => Some(BackendKind::Vz),
-            "microvm" => Some(BackendKind::Firecracker),
-            "containerization" | "apple" => Some(BackendKind::Containerization),
-            _ => None,
-        };
-        let Some(kind) = kind else {
-            return Err(Error::InvalidArgument(format!("unknown component {c:?}")));
-        };
+    for (c, kind) in wanted.into_iter().zip(kinds) {
         let b = report.backend(kind).cloned();
         let plan = b
             .as_ref()
@@ -2821,6 +2826,7 @@ async fn setup_with(
                     .ensure_ready()
                     .await
             }
+            BackendKind::Managed => install_managed().await,
             _ => Err(VmmError::Unsupported {
                 backend: "container",
                 op: "unattended runsc install (run the plan shown by --dry-run)",
@@ -2911,6 +2917,11 @@ async fn install_microvm() -> std::result::Result<(), VmmError> {
     }
     cua_vmm::microvm::assets::ensure_kernel(&MicroVmConfig::default().root).await?;
     Ok(())
+}
+
+/// Downloads and boots the built-in Linux runtime.
+async fn install_managed() -> cua_vmm::Result<()> {
+    cua_vmm::managed::ensure().await.map(|_| ())
 }
 
 async fn kvm_step(dry_run: bool) -> Option<cua_proto::daemon::v1::SetupStep> {
@@ -3751,6 +3762,16 @@ mod tests {
         }
     }
 
+    /// A Mac with no container engine: `managed` is the provisionable
+    /// backend doctor reports (`cua_vmm::auto::managed_status`).
+    fn managed_report() -> cua_vmm::auto::DoctorReport {
+        let mut report = qemu_report(false);
+        report.backends[0].backend = super::BackendKind::Managed;
+        report.backends[0].provisioning =
+            vec!["download the built-in Linux runtime (about 455 MB); boot its VM".into()];
+        report
+    }
+
     #[test]
     fn doctor_preserves_backend_contract() {
         use cua_proto::daemon::v1::CheckStatus;
@@ -3786,12 +3807,20 @@ mod tests {
             false => Err(super::VmmError::PermissionDenied("sudo".into())),
         };
         let kvm = async |_| kvm_step();
-        super::setup_with(report, &components, dry_run, &install, &install, kvm)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|s| (s.name, s.status.try_into().unwrap()))
-            .collect()
+        super::setup_with(
+            report,
+            &components,
+            dry_run,
+            &install,
+            &install,
+            &install,
+            kvm,
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| (s.name, s.status.try_into().unwrap()))
+        .collect()
     }
 
     fn steps(
@@ -3815,6 +3844,52 @@ mod tests {
             setup_steps(qemu_report(false), &["qemu"], true, true).await,
             steps(&[("qemu", Installable), ("kvm", Ok)])
         );
+    }
+
+    #[tokio::test]
+    async fn the_default_set_includes_a_provisionable_managed_backend() {
+        use cua_proto::daemon::v1::CheckStatus::{Installable, Ok};
+        assert_eq!(
+            setup_steps(managed_report(), &[], true, false).await,
+            steps(&[("managed", Installable)])
+        );
+        assert_eq!(
+            setup_steps(managed_report(), &["managed"], false, true).await,
+            steps(&[("managed", Ok)])
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_component_installs_nothing() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let ran = Arc::new(AtomicBool::new(false));
+        let install = || {
+            let ran = ran.clone();
+            async move {
+                ran.store(true, Ordering::SeqCst);
+                cua_vmm::Result::Ok(())
+            }
+        };
+        let kvm = async |_| kvm_step();
+        let err = super::setup_with(
+            qemu_report(false),
+            &["qemu".into(), "bogus".into()],
+            false,
+            &install,
+            &install,
+            &install,
+            kvm,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            r#"invalid argument: unknown component "bogus""#
+        );
+        assert!(!ran.load(Ordering::SeqCst));
     }
 
     #[tokio::test]

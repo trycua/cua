@@ -10,7 +10,7 @@
 //! the system input queue, not posted messages. This module exposes
 //! [`is_xaml_host_hwnd`] so callers (e.g. the `type_text` tool) can route
 //! around the PostMessage path for those targets — see CUA-543 and
-//! `tools::impl_::TypeTextTool` for the routing logic. The actual UIA
+//! `tools::type_text::TypeTextTool` for the routing logic. The actual UIA
 //! `ValuePattern.SetValue` injection lives in the tools layer alongside
 //! the existing `set_value` tool; this module deliberately stays
 //! Win32-only so the unit tests don't depend on UIA initialisation.

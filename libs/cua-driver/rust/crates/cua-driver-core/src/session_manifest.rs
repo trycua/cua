@@ -995,6 +995,7 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 "mouse_button_up",
                 "mouse_drag",
                 "parallel_mouse_drag",
+                "get_accessibility_surfaces",
                 "get_accessibility_tree",
                 "get_window_state",
                 "verify_state",
@@ -2089,7 +2090,7 @@ allow:
         assert!(loaded.is_idle_expired());
         assert!(loaded.commit_authorized_dispatch().is_err());
 
-        for bypass_tool in ["page", "verify_state"] {
+        for bypass_tool in ["page", "verify_state", "get_accessibility_surfaces"] {
             let policy = format!(
                 r#"
 version: 1

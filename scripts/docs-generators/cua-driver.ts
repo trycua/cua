@@ -224,7 +224,7 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
     slug: 'window-state',
     title: 'Window state tools',
     summary: 'Screenshots, accessibility trees, verification and visual regions of a window',
-    tools: ['get_window_state', 'get_accessibility_tree', 'verify_state', 'parse_visual_regions'],
+    tools: ['get_window_state', 'get_accessibility_tree', 'get_accessibility_surfaces', 'verify_state', 'parse_visual_regions'],
   },
   {
     slug: 'screen',

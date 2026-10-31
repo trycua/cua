@@ -144,34 +144,34 @@
   "current": {
     "arch": {
       "cua-driver-rs-v0.33.2": {
-        "checked_at": "2026-10-30T06:50:27Z",
+        "checked_at": "2026-10-31T06:45:35Z",
         "status": "fail",
         "tree": "5b3d63841bb61cf07d20f964e545bed5e23dd787"
       },
       "cua-driver-rs-v0.38.0": {
-        "checked_at": "2026-10-30T06:50:14Z",
+        "checked_at": "2026-10-31T06:45:25Z",
         "status": "fail",
         "tree": "aa330aebe172dcc6372a23965fd01ab8c50da03f"
       },
       "main": {
-        "checked_at": "2026-10-30T06:50:14Z",
+        "checked_at": "2026-10-31T06:45:25Z",
         "status": "fail",
         "tree": "aa330aebe172dcc6372a23965fd01ab8c50da03f"
       }
     },
     "omarchy-edge": {
       "cua-driver-rs-v0.33.2": {
-        "checked_at": "2026-10-30T06:50:27Z",
+        "checked_at": "2026-10-31T06:45:35Z",
         "status": "fail",
         "tree": "5b3d63841bb61cf07d20f964e545bed5e23dd787"
       },
       "cua-driver-rs-v0.38.0": {
-        "checked_at": "2026-10-30T06:50:14Z",
+        "checked_at": "2026-10-31T06:45:25Z",
         "status": "fail",
         "tree": "aa330aebe172dcc6372a23965fd01ab8c50da03f"
       },
       "main": {
-        "checked_at": "2026-10-30T06:50:14Z",
+        "checked_at": "2026-10-31T06:45:25Z",
         "status": "fail",
         "tree": "aa330aebe172dcc6372a23965fd01ab8c50da03f"
       }
@@ -220,7 +220,7 @@
         "arch",
         "omarchy-edge"
       ],
-      "checked_at": "2026-10-30T06:50:27Z",
+      "checked_at": "2026-10-31T06:45:35Z",
       "checks": {
         "build": {
           "status": "fail",
@@ -260,7 +260,7 @@
         ],
         "tree": "5b3d63841bb61cf07d20f964e545bed5e23dd787"
       },
-      "run_url": "https://github.com/trycua/cua/actions/runs/41016263122",
+      "run_url": "https://github.com/trycua/cua/actions/runs/41177782352",
       "runtime": {
         "basename": "libstdc++.so.6.0.36",
         "packages": {
@@ -301,7 +301,7 @@
           "libgomp": "16.2.1+r23+gd564253eb6c8-1",
           "libgudev": "238-4",
           "libinput": "1.32.0-1",
-          "libjpeg-turbo": "3.2.0-2",
+          "libjpeg-turbo": "3.2.1-1",
           "libjxl": "0.12.0-1",
           "libogg": "1.3.6-1",
           "libpng": "1.6.59-1",
@@ -373,7 +373,7 @@
         "arch",
         "omarchy-edge"
       ],
-      "checked_at": "2026-10-30T06:50:14Z",
+      "checked_at": "2026-10-31T06:45:25Z",
       "checks": {
         "build": {
           "status": "fail",
@@ -414,7 +414,7 @@
         ],
         "tree": "aa330aebe172dcc6372a23965fd01ab8c50da03f"
       },
-      "run_url": "https://github.com/trycua/cua/actions/runs/41016263122",
+      "run_url": "https://github.com/trycua/cua/actions/runs/41177782352",
       "runtime": {
         "basename": "libstdc++.so.6.0.36",
         "packages": {
@@ -455,7 +455,7 @@
           "libgomp": "16.2.1+r23+gd564253eb6c8-1",
           "libgudev": "238-4",
           "libinput": "1.32.0-1",
-          "libjpeg-turbo": "3.2.0-2",
+          "libjpeg-turbo": "3.2.1-1",
           "libjxl": "0.12.0-1",
           "libogg": "1.3.6-1",
           "libpng": "1.6.59-1",
@@ -2002,9 +2002,9 @@
       }
     }
   ],
-  "generated_at": "2026-10-30T06:50:46Z",
+  "generated_at": "2026-10-31T06:45:51Z",
   "note": "CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.",
-  "run_url": "https://github.com/trycua/cua/actions/runs/41016263122",
+  "run_url": "https://github.com/trycua/cua/actions/runs/41177782352",
   "schema": 1,
   "tracked_packages": [
     "hyprland",

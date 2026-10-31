@@ -192,20 +192,58 @@ pub(crate) fn transaction<A, S, T>(
     }
 }
 
+/// One foreground transaction runs at a time across threads.
+static TRANSACTION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+std::thread_local! {
+    /// Whether this thread already holds the transaction. A body that opens
+    /// another foreground transaction — the libei fallback of
+    /// [`crate::wayland::click_focused`] re-enters the guard after a blocking
+    /// portal readiness wait — runs inside the one it already holds, so it
+    /// must not wait for the mutex its own thread took.
+    static HOLDS_TRANSACTION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Wait for any other foreground transaction to give focus back, then hold
 /// this one until it does. The holder's waits are bounded, and a caller
 /// whose own call ends stops waiting.
-fn hold_transaction() -> Result<std::sync::MutexGuard<'static, ()>> {
-    static TRANSACTION: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    loop {
+fn hold_transaction() -> Result<HeldTransaction> {
+    let already_held = HOLDS_TRANSACTION
+        .try_with(std::cell::Cell::get)
+        .unwrap_or(false);
+    if already_held {
+        // The outer transaction already holds focus for its body, so this one
+        // takes no lock and its drop must not release the outer one.
+        return Ok(HeldTransaction { guard: None });
+    }
+    let guard = loop {
         match TRANSACTION.try_lock() {
-            Ok(held) => return Ok(held),
-            Err(std::sync::TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
+            Ok(held) => break held,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => {
                 crate::input::action::admit(|| ())?;
                 pause(POLL);
             }
         }
+    };
+    let _ = HOLDS_TRANSACTION.try_with(|held| held.set(true));
+    Ok(HeldTransaction { guard: Some(guard) })
+}
+
+/// The foreground transaction this thread holds. Only the outermost
+/// transaction locks [`TRANSACTION`]; a nested one holds nothing and releases
+/// nothing, so the outer transaction still runs last.
+struct HeldTransaction {
+    guard: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+impl Drop for HeldTransaction {
+    fn drop(&mut self) {
+        let released = self.guard.take();
+        if released.is_some() {
+            let _ = HOLDS_TRANSACTION.try_with(|held| held.set(false));
+        }
+        drop(released);
     }
 }
 
@@ -353,6 +391,54 @@ mod tests {
             || "unsettled",
         );
         assert_eq!((moving, reads), (Err("unsettled"), 0));
+    }
+
+    #[test]
+    fn a_nested_transaction_runs_inside_the_one_its_thread_holds() {
+        // A GNOME click reaches `click_focused`'s libei fallback from inside
+        // the foreground guard it already holds and re-enters it there. The
+        // bound action is what an outer caller would carry, so a nested
+        // transaction that waited for its own lock would spend it and fail.
+        let _bound = bind(Action::new(Duration::from_millis(200)));
+        let sent = transaction(
+            &mut (),
+            |()| Ok(Some("prior")),
+            |(), _| Ok(()),
+            || {
+                transaction(
+                    &mut (),
+                    |()| Ok(Some("prior")),
+                    |(), _| Ok(()),
+                    || Ok("click sent"),
+                    |(), _, _| Ok(()),
+                )
+            },
+            |(), _, _| Ok(()),
+        );
+        assert_eq!(sent.unwrap(), "click sent");
+    }
+
+    #[test]
+    fn only_the_outermost_transaction_locks_and_its_drop_releases_it() {
+        let outer = hold_transaction().unwrap();
+        assert!(outer.guard.is_some());
+        drop(hold_transaction().unwrap());
+        assert!(
+            outer.guard.is_some(),
+            "a nested hold released the outer transaction"
+        );
+        let (entered, entered_rx) = std::sync::mpsc::channel();
+        let other = std::thread::spawn(move || {
+            let held = hold_transaction();
+            entered.send(held.is_ok()).unwrap();
+        });
+        assert!(
+            entered_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "a second thread entered the transaction its holder still holds"
+        );
+        drop(outer);
+        assert!(entered_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        other.join().unwrap();
     }
 
     #[test]

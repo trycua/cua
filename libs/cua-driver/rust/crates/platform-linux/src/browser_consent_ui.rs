@@ -274,7 +274,16 @@ async fn consent_action<T: Send + 'static>(
     check_deadline(deadline)?;
     // Commit before scheduling: dropping a running blocking task cannot cancel it.
     let worker = action.perform(|| {
+        // Made here, where the call's desktop lease is in scope, so the worker
+        // keeps the lane until every wait it makes has stopped. The worker
+        // waits on the one foreground transaction and is not dispatched under
+        // a tool call's action, so it binds this one: every wait it makes,
+        // that one included, ends at the consent deadline instead of
+        // outliving the attempt it serves.
+        let bound =
+            crate::input::action::Action::new(deadline.saturating_duration_since(Instant::now()));
         tokio::task::spawn_blocking(move || {
+            let _bound = crate::input::action::bind(bound);
             check_deadline(deadline)?;
             operation().map_err(|error| {
                 BrowserRefusal::new(

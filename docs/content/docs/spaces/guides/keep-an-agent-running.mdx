@@ -85,8 +85,9 @@ the conversation or the working folder of the old one. Plan for it:
   first one and every restart for any reason. When they are used up it ends
   `failed` and says it gave up after 5 of 5 drives, with the last failure.
 - A drive that no machine has room for waits and says what it waits for, for
-  example `waiting for a machine with 2 CPUs and 4 GB memory free`. A driver
-  that runs a harness asks for 2 CPUs and 4 GiB.
+  example `waiting for a machine with 1 CPU and 1.5 GB memory free`. A driver
+  that runs a harness asks for 1 CPU and 1.5 GiB, so a machine with 8 GB runs
+  four of them at once.
 - A durable Space whose machine is lost is created again on another machine
   within about a minute, with the same name and an empty disk; the old record
   stays listed as offline until you delete it.

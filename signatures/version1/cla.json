@@ -767,6 +767,14 @@
       "created_at": "2026-10-30T22:02:44Z",
       "repoId": 925270205,
       "pullRequestNo": 6198
+    },
+    {
+      "name": "alexey-vostrikov",
+      "id": 13052015,
+      "comment_id": 6537026043,
+      "created_at": "2026-10-31T01:14:52Z",
+      "repoId": 925270205,
+      "pullRequestNo": 6226
     }
   ]
 }

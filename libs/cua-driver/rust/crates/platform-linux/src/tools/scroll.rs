@@ -9,17 +9,47 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use super::impl_::{
-    coordinate_frame_schema, desktop_frame_requested, desktop_input_space, desktop_to_window_local,
-    explicit_keyboard_cursor_target, foreground_hyprland_refusal, hyprland_foreground,
-    hyprland_input_result, input_error_result, invalid_pointer_arguments, is_webkitgtk_embedder,
-    isolated_hyprland_background, isolated_hyprland_refusal, isolated_hyprland_result,
-    isolated_hyprland_task_error, keyboard_window_center, named_session_cursor_key,
-    prove_token_element, resolve_cursor_key, resolve_element_local_coords,
-    reveal_pointer_action_for, screenshot_scale, spawn_isolated_hyprland, stale_observed_element,
+    coordinate_frame_schema, desktop_frame_requested, desktop_frame_unmapped, desktop_input_space,
+    desktop_to_window_local, explicit_keyboard_cursor_target, foreground_budget,
+    foreground_hyprland_refusal, hyprland_foreground, hyprland_input_result, input_error_result,
+    invalid_pointer_arguments, is_webkitgtk_embedder, isolated_hyprland_background,
+    isolated_hyprland_refusal, isolated_hyprland_result, isolated_hyprland_task_error,
+    keyboard_window_center, named_session_cursor_key, prove_token_element, resolve_cursor_key,
+    resolve_element_local_coords, reveal_pointer_action_for, screenshot_scale,
+    spawn_blocking_bounded, spawn_isolated_hyprland, stale_observed_element,
     unavailable_chromium_background, unavailable_gtk_pointer_background,
     unavailable_wayland_focused_input_background, unavailable_webkit_background,
     window_local_to_screen, window_screen_center, ToolState,
 };
+
+/// Wheel detents for a compositor scroll: one per line. On niri a page is
+/// the detent approximation the Hyprland route documents; other compositors
+/// keep one detent per page, which no run has measured against.
+fn wheel_ticks(amount: usize, by: cua_driver_contract::ScrollBy, niri: bool) -> u32 {
+    let detents = match by {
+        cua_driver_contract::ScrollBy::Page if niri => {
+            amount * crate::wayland::hyprland_input::PAGE_WHEEL_DETENTS
+        }
+        _ => amount,
+    };
+    detents as u32
+}
+
+#[cfg(test)]
+#[test]
+fn a_niri_page_scroll_sends_more_than_one_detent_per_page() {
+    // `by: "page"` used to send `amount` detents, the same as lines: two
+    // pages moved a WebKitGTK scroller 80 px under niri, less than its
+    // 128 px viewport.
+    use cua_driver_contract::ScrollBy;
+    assert_eq!(wheel_ticks(2, ScrollBy::Line, true), 2);
+    assert_eq!(
+        wheel_ticks(2, ScrollBy::Page, true),
+        2 * crate::wayland::hyprland_input::PAGE_WHEEL_DETENTS as u32
+    );
+    // Sway, KWin and GNOME keep their earlier page scroll.
+    assert_eq!(wheel_ticks(2, ScrollBy::Page, false), 2);
+}
 
 /// Pixel scroll shares click and drag's refusal order: an unsupported native
 /// background delivery must report `background_unavailable` before the
@@ -253,6 +283,11 @@ impl Tool for ScrollTool {
             let x = x.round() as i32;
             let y = y.round() as i32;
             let amount = input.amount.unwrap_or(3).clamp(1, 50) as usize;
+            let ticks = wheel_ticks(
+                amount,
+                input.by.unwrap_or(cua_driver_contract::ScrollBy::Line),
+                crate::wayland::niri::is_session(),
+            );
             let display = direction.clone();
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_desktop" } else { "xtest" };
@@ -271,19 +306,26 @@ impl Tool for ScrollTool {
                 )
                 .await;
             }
-            let result = tokio::task::spawn_blocking(move || {
-                if wayland {
-                    crate::wayland::scroll_desktop(&space, x, y, &direction, amount as u32)
-                } else {
-                    crate::input::send_scroll_xtest_desktop(x, y, &direction, amount)
-                }
-            })
+            let result = spawn_blocking_bounded(
+                "desktop scroll",
+                foreground_budget(ticks as usize),
+                move || {
+                    if wayland {
+                        crate::wayland::scroll_desktop(&space, x, y, &direction, ticks)
+                    } else {
+                        crate::input::send_scroll_xtest_desktop(x, y, &direction, amount)
+                    }
+                },
+            )
             .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!("Scrolled desktop {display} × {amount}."))
                     .with_structured(
                         json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
                     ),
+                Ok(Err(error)) if crate::input::foreground::error_code(&error).is_some() => {
+                    input_error_result(error)
+                }
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
@@ -384,11 +426,7 @@ impl Tool for ScrollTool {
                 match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await
                 {
                     Ok(Ok(local)) => Some(local),
-                    Ok(Err(e)) => {
-                        return ToolResult::error(format!(
-                            "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                        ))
-                    }
+                    Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                     Err(e) => return ToolResult::error(format!("Task error: {e}")),
                 }
             }
@@ -606,16 +644,36 @@ impl Tool for ScrollTool {
                 }
                 (None, None) => None,
             };
-            let output_point = local_point.map(|(x, y)| {
-                crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32)
-            });
-            let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::scroll_at(xid, output_point, &direction_for_wayland, amount as u32)
-            })
-            .await;
+            let output_point = match local_point
+                .map(|(x, y)| {
+                    crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32)
+                })
+                .transpose()
+            {
+                Ok(point) => point,
+                Err(error) => return input_error_result(error),
+            };
+            let ticks = wheel_ticks(amount, by, crate::wayland::niri::is_session());
+            let result =
+                spawn_blocking_bounded("scroll", foreground_budget(ticks as usize), move || {
+                    crate::interaction::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::pointer_gesture_restore(),
+                        || {
+                            crate::wayland::scroll_at(
+                                xid,
+                                output_point,
+                                &direction_for_wayland,
+                                ticks,
+                            )
+                        },
+                    )
+                })
+                .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "Scrolled {direction} {amount} ticks (delivery_mode=foreground)."
+                    "Scrolled {direction} {ticks} ticks (delivery_mode=foreground)."
                 ))
                 .with_structured(json!({ "verified": false, "delivery_mode": "foreground" })),
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
@@ -675,74 +733,90 @@ impl Tool for ScrollTool {
         let cursor_id_for_task = cursor_id.clone();
         let direction_for_wayland = direction.clone();
         let amount_u32 = amount as u32;
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            if crate::wayland::wayland_input_enabled() {
-                return crate::wayland::scroll(xid, &direction_for_wayland, amount_u32);
-            }
-            // foreground: activate the window, then scroll, then restore — for
-            // surfaces that only route wheel events to the active window.
-            let x11_scroll = || -> anyhow::Result<()> {
-                // X11: synthetic Button4-7 XSendEvents are dropped by XInput2
-                // toolkits (GTK never scrolls). On a real Xorg host, drive a real
-                // wheel detent through the MPX uinput pointer over the window's
-                // center — libinput turns it into the XI2 smooth-scroll GTK reads —
-                // without stealing focus. Falls back to the legacy XSendEvent
-                // Button4-7 path on Xvfb / unsupported servers.
-                // Button → axis/sign: 4=up(+v) 5=down(-v) 6=left(-h) 7=right(+h).
-                if crate::input::real_pointer_input_available() {
-                    let pointer_point = element_point
-                        .and_then(|(_, screen)| screen)
-                        .map(|(x, y)| (x as i32, y as i32))
-                        .or_else(|| window_screen_center(xid).ok());
-                    if let Some((cx, cy)) = pointer_point {
-                        let horizontal = matches!(button, 6 | 7);
-                        let ticks = match button {
-                            4 | 7 => amount as i32,
-                            _ => -(amount as i32), // 5 (down) and 6 (left)
-                        };
-                        match crate::input::send_virtual_pointer_scroll(
-                            &cursor_id_for_task,
-                            &crate::input::VirtualPointerScroll {
-                                target_window: xid,
-                                x: cx,
-                                y: cy,
-                                horizontal,
-                                ticks,
-                            },
-                        ) {
-                            Ok(()) => return Ok(()),
-                            Err(error) if crate::input::is_uinput_unavailable(&error) => {
-                                return Err(error)
+        let result = spawn_blocking_bounded(
+            "scroll",
+            foreground_budget(amount_u32 as usize),
+            move || -> anyhow::Result<()> {
+                if crate::wayland::wayland_input_enabled() {
+                    return crate::interaction::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::pointer_gesture_restore(),
+                        || crate::wayland::scroll(xid, &direction_for_wayland, amount_u32),
+                    );
+                }
+                // foreground: activate the window, then scroll, then restore — for
+                // surfaces that only route wheel events to the active window.
+                let x11_scroll = || -> anyhow::Result<()> {
+                    // X11: synthetic Button4-7 XSendEvents are dropped by XInput2
+                    // toolkits (GTK never scrolls). On a real Xorg host, drive a real
+                    // wheel detent through the MPX uinput pointer over the window's
+                    // center — libinput turns it into the XI2 smooth-scroll GTK reads —
+                    // without stealing focus. Falls back to the legacy XSendEvent
+                    // Button4-7 path on Xvfb / unsupported servers.
+                    // Button → axis/sign: 4=up(+v) 5=down(-v) 6=left(-h) 7=right(+h).
+                    if crate::input::real_pointer_input_available() {
+                        let pointer_point = element_point
+                            .and_then(|(_, screen)| screen)
+                            .map(|(x, y)| (x as i32, y as i32))
+                            .or_else(|| window_screen_center(xid).ok());
+                        if let Some((cx, cy)) = pointer_point {
+                            let horizontal = matches!(button, 6 | 7);
+                            let ticks = match button {
+                                4 | 7 => amount as i32,
+                                _ => -(amount as i32), // 5 (down) and 6 (left)
+                            };
+                            match crate::input::send_virtual_pointer_scroll(
+                                &cursor_id_for_task,
+                                &crate::input::VirtualPointerScroll {
+                                    target_window: xid,
+                                    x: cx,
+                                    y: cy,
+                                    horizontal,
+                                    ticks,
+                                },
+                            ) {
+                                Ok(()) => return Ok(()),
+                                Err(error) if crate::input::is_uinput_unavailable(&error) => {
+                                    return Err(error)
+                                }
+                                Err(e) => tracing::warn!("MPX scroll fell back to XSendEvent: {e}"),
                             }
-                            Err(e) => tracing::warn!("MPX scroll fell back to XSendEvent: {e}"),
                         }
                     }
-                }
-                let (local_x, local_y) =
-                    element_point.map(|(local, _)| local).unwrap_or((0.0, 0.0));
-                crate::input::send_click(xid, local_x as i32, local_y as i32, amount, button)
-            };
-            if delivery.is_foreground() {
-                let point = element_point
-                    .and_then(|(_, screen)| screen)
-                    .or_else(|| {
-                        window_screen_center(xid)
-                            .ok()
-                            .map(|(x, y)| (x as f64, y as f64))
-                    })
-                    .ok_or_else(|| anyhow::anyhow!("could not resolve foreground scroll point"))?;
-                crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_click_xtest_desktop(
-                        point.0 as i32,
-                        point.1 as i32,
-                        button,
-                        amount,
+                    let (local_x, local_y) =
+                        element_point.map(|(local, _)| local).unwrap_or((0.0, 0.0));
+                    crate::input::send_click(xid, local_x as i32, local_y as i32, amount, button)
+                };
+                if delivery.is_foreground() {
+                    let point = element_point
+                        .and_then(|(_, screen)| screen)
+                        .or_else(|| {
+                            window_screen_center(xid)
+                                .ok()
+                                .map(|(x, y)| (x as f64, y as f64))
+                        })
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("could not resolve foreground scroll point")
+                        })?;
+                    crate::interaction::with_x11_foreground(
+                        xid,
+                        crate::input::ForegroundOptions::pointer(),
+                        || {
+                            crate::input::send_click_xtest_desktop(
+                                point.0 as i32,
+                                point.1 as i32,
+                                button,
+                                amount,
+                            )
+                        },
                     )
-                })
-            } else {
-                x11_scroll()
-            }
-        })
+                    .map(|(value, _report)| value)
+                } else {
+                    x11_scroll()
+                }
+            },
+        )
         .await;
         let mode_label = if delivery.is_foreground() {
             "foreground"

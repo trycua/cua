@@ -9,6 +9,7 @@ import { SfIcon } from "../SfIcon";
  */
 const PATHS: Record<string, string> = {
   plus: "M12 5v14M5 12h14",
+  "chevron.down": "m6 9.5 6 6 6-6",
   terminal: "M3.5 5h17v14h-17zM7.5 10l3 2.5-3 2.5M12.5 15.5h4",
   magnifyingglass: "M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Zm4.7-1.8L20 20",
   cloud: "M7 18h10a4 4 0 0 0 .5-7.97A5.5 5.5 0 0 0 6.6 9.1 4.5 4.5 0 0 0 7 18Z",

@@ -11,16 +11,15 @@ use std::{fs, sync::Arc};
 use super::impl_::{
     announce_keyboard_target, atspi_up, background_keyboard_refusal, background_virtual_text,
     coordinate_frame_is_desktop, coordinate_frame_schema, focus_by_pixel,
-    focus_hyprland_foreground, focus_nested_inject_target, foreground_budget,
-    foreground_hyprland_refusal, foreground_structured, hyprland_foreground, hyprland_input_result,
-    inject_terminal_input, input_error_result, invalid_pointer_arguments, is_chromium_embedder,
-    is_popup_keyboard_grab, is_terminal_process, is_webkitgtk_embedder,
-    isolated_hyprland_background, isolated_hyprland_refusal, isolated_hyprland_result,
-    isolated_hyprland_task_error, named_session_cursor_key, position_named_session_keyboard_cursor,
-    prove_token_element, resolve_cursor_key, spawn_blocking_bounded, spawn_isolated_hyprland,
-    stale_observed_element, unavailable_chromium_background,
-    unavailable_wayland_focused_input_background, unavailable_webkit_keyboard_background,
-    values_agree, KeyRoute, ToolState,
+    focus_hyprland_foreground, focus_nested_inject_target, foreground_hyprland_refusal,
+    foreground_structured, hyprland_foreground, hyprland_input_result, inject_terminal_input,
+    input_error_result, invalid_pointer_arguments, is_chromium_embedder, is_popup_keyboard_grab,
+    is_terminal_process, is_webkitgtk_embedder, isolated_hyprland_background,
+    isolated_hyprland_refusal, isolated_hyprland_result, isolated_hyprland_task_error,
+    named_session_cursor_key, position_named_session_keyboard_cursor, prove_token_element,
+    resolve_cursor_key, spawn_blocking_bounded, spawn_isolated_hyprland, stale_observed_element,
+    typing_budget, unavailable_chromium_background, unavailable_wayland_focused_input_background,
+    unavailable_webkit_keyboard_background, values_agree, KeyRoute, ToolState,
 };
 
 /// Structured payload for a `type_text` response. Keeps the legacy
@@ -263,13 +262,17 @@ impl Tool for TypeTextTool {
                 .await;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
-            let result = tokio::task::spawn_blocking(move || {
-                if wayland {
-                    crate::wayland::type_text_focused(&text)
-                } else {
-                    crate::input::send_type_text_xtest(&text)
-                }
-            })
+            let result = spawn_blocking_bounded(
+                "desktop type_text",
+                typing_budget(text.chars().count(), crate::wayland::niri::is_session()),
+                move || {
+                    if wayland {
+                        crate::wayland::type_text_focused(&text)
+                    } else {
+                        crate::input::send_type_text_xtest(&text)
+                    }
+                },
+            )
             .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text("Typed text into the focused desktop application.")
@@ -611,16 +614,25 @@ impl Tool for TypeTextTool {
             if let Some(element) = token.clone() {
                 let idx = element.index;
                 let text_w = text.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    crate::wayland::with_target_foreground(pid, xid, || {
-                        if !crate::atspi::focus_token(pid, &element)? {
-                            anyhow::bail!(
-                                "AT-SPI Component.GrabFocus returned false for element {idx}"
-                            );
-                        }
-                        crate::wayland::type_text_focused(&text_w)
-                    })
-                })
+                let result = spawn_blocking_bounded(
+                    "type_text",
+                    typing_budget(text_w.chars().count(), crate::wayland::niri::is_session()),
+                    move || {
+                        crate::interaction::with_target_foreground(
+                            pid,
+                            xid,
+                            crate::interaction::RestoreMode::RestorePrevious,
+                            || {
+                                if !crate::atspi::focus_token(pid, &element)? {
+                                    anyhow::bail!(
+                                    "AT-SPI Component.GrabFocus returned false for element {idx}"
+                                );
+                                }
+                                crate::wayland::type_text_focused(&text_w)
+                            },
+                        )
+                    },
+                )
                 .await;
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
@@ -686,19 +698,28 @@ impl Tool for TypeTextTool {
             }
             let text_w = text.clone();
             let element = token.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::with_target_foreground(pid, xid, || {
-                    if let Some(element) = &element {
-                        if !crate::atspi::focus_token(pid, element)? {
-                            anyhow::bail!(
-                                "AT-SPI Component.GrabFocus returned false for element {}",
-                                element.index
-                            );
-                        }
-                    }
-                    crate::wayland::type_text_focused(&text_w)
-                })
-            })
+            let result = spawn_blocking_bounded(
+                "type_text",
+                typing_budget(text_w.chars().count(), crate::wayland::niri::is_session()),
+                move || {
+                    crate::interaction::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::RestoreMode::RestorePrevious,
+                        || {
+                            if let Some(element) = &element {
+                                if !crate::atspi::focus_token(pid, element)? {
+                                    anyhow::bail!(
+                                        "AT-SPI Component.GrabFocus returned false for element {}",
+                                        element.index
+                                    );
+                                }
+                            }
+                            crate::wayland::type_text_focused(&text_w)
+                        },
+                    )
+                },
+            )
             .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
@@ -736,7 +757,7 @@ impl Tool for TypeTextTool {
             let cursor_id = resolve_cursor_key(&args);
             let result = spawn_blocking_bounded(
                 "type_text terminal",
-                foreground_budget(text_len),
+                typing_budget(text_len, crate::wayland::niri::is_session()),
                 move || -> anyhow::Result<(&'static str, Option<crate::input::KeyboardDeliveryReport>)> {
                 // pty-master injection is preferred — it skips the X event
                 // queue entirely. Falls through to key events if the terminal
@@ -745,9 +766,9 @@ impl Tool for TypeTextTool {
                     return Ok(("pty", None));
                 }
                 if foreground {
-                    crate::input::with_x11_foreground(xid, 80, || {
+                    crate::interaction::with_x11_foreground(xid, crate::input::ForegroundOptions::pointer(), || {
                         crate::input::send_type_text_xtest(&text_t)
-                    })?;
+                    }).map(|(value, _report)| value)?;
                     return Ok(("key_events_fg", None));
                 }
                 // Background: real key events through the XI2 virtual master
@@ -782,9 +803,9 @@ impl Tool for TypeTextTool {
             let element = token.clone();
             let result = spawn_blocking_bounded(
                 "foreground type_text",
-                foreground_budget(text_len),
+                typing_budget(text_len, crate::wayland::niri::is_session()),
                 move || {
-                    crate::input::with_x11_foreground_opts(
+                    crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
                         || {
@@ -837,7 +858,7 @@ impl Tool for TypeTextTool {
             let cursor_id = resolve_cursor_key(&args);
             let result = spawn_blocking_bounded(
                 "background type_text",
-                foreground_budget(text_len),
+                typing_budget(text_len, crate::wayland::niri::is_session()),
                 move || background_text_route(&cursor_id, pid, xid, &text_b),
             )
             .await;
@@ -875,7 +896,7 @@ impl Tool for TypeTextTool {
                 let cursor_id = resolve_cursor_key(&args);
                 let result = spawn_blocking_bounded(
                     "background type_text",
-                    foreground_budget(text_len),
+                    typing_budget(text_len, crate::wayland::niri::is_session()),
                     move || -> anyhow::Result<Option<KeyRoute>> {
                         if inject_terminal_input(pid, xid, &text_b)? {
                             return Ok(Some(KeyRoute::Terminal));
@@ -896,18 +917,25 @@ impl Tool for TypeTextTool {
                 };
             }
             let text_f = text.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                if inject_terminal_input(pid, xid, &text_f)? {
-                    return Ok(());
-                }
-                // XTest (real input to the focused window), NOT XSendEvent: GTK/Qt
-                // drop synthetic key events, so a spreadsheet cell / canvas would
-                // stay empty. The click that gave this widget focus already put it
-                // under the X input focus, so XTest-to-focus lands correctly.
-                crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_type_text_xtest(&text_f)
-                })
-            })
+            let result = spawn_blocking_bounded(
+                "foreground type_text",
+                typing_budget(text_len, crate::wayland::niri::is_session()),
+                move || {
+                    if inject_terminal_input(pid, xid, &text_f)? {
+                        return Ok(());
+                    }
+                    // XTest (real input to the focused window), NOT XSendEvent: GTK/Qt
+                    // drop synthetic key events, so a spreadsheet cell / canvas would
+                    // stay empty. The click that gave this widget focus already put it
+                    // under the X input focus, so XTest-to-focus lands correctly.
+                    crate::interaction::with_x11_foreground(
+                        xid,
+                        crate::input::ForegroundOptions::pointer(),
+                        || crate::input::send_type_text_xtest(&text_f),
+                    )
+                    .map(|(value, _report)| value)
+                },
+            )
             .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
@@ -946,22 +974,26 @@ impl Tool for TypeTextTool {
         // expose the widget tree, type via AT-SPI, then send FocusOut.
         // This doesn't change the X11 active window, so the test's focus check passes.
         let text_clone2 = text.clone();
-        let qt5_result = tokio::task::spawn_blocking(move || {
-            if !is_qt5_process(pid) {
-                anyhow::bail!("not a Qt5 process; synthetic-FocusIn bridge workaround skipped");
-            }
-            // Send FocusIn to trigger Qt5's bridge
-            crate::input::send_focus_in(xid)?;
-            std::thread::sleep(std::time::Duration::from_millis(100));
+        let qt5_result = spawn_blocking_bounded(
+            "Qt5 type_text",
+            typing_budget(text_len, crate::wayland::niri::is_session()),
+            move || {
+                if !is_qt5_process(pid) {
+                    anyhow::bail!("not a Qt5 process; synthetic-FocusIn bridge workaround skipped");
+                }
+                // Send FocusIn to trigger Qt5's bridge
+                crate::input::send_focus_in(xid)?;
+                std::thread::sleep(std::time::Duration::from_millis(100));
 
-            // Try AT-SPI again now that widgets should be exposed
-            let result = crate::atspi::type_into_editable(pid, &text_clone2);
+                // Try AT-SPI again now that widgets should be exposed
+                let result = crate::atspi::type_into_editable(pid, &text_clone2);
 
-            // Restore state with FocusOut
-            crate::input::send_focus_out(xid)?;
+                // Restore state with FocusOut
+                crate::input::send_focus_out(xid)?;
 
-            result
-        })
+                result
+            },
+        )
         .await;
 
         match qt5_result {
@@ -984,7 +1016,7 @@ impl Tool for TypeTextTool {
         let cursor_id = resolve_cursor_key(&args);
         let result = spawn_blocking_bounded(
             "type_text",
-            foreground_budget(text_len),
+            typing_budget(text_len, crate::wayland::niri::is_session()),
             move || -> anyhow::Result<(&'static str, Option<crate::input::KeyboardDeliveryReport>)> {
             // Terminals: write to the pty master (focus-free, below the toolkit).
             if inject_terminal_input(pid, xid, &text)? {
@@ -1003,9 +1035,9 @@ impl Tool for TypeTextTool {
                 return Ok(("key_events", None));
             }
             if delivery.is_foreground() {
-                crate::input::with_x11_foreground(xid, 80, || {
+                crate::interaction::with_x11_foreground(xid, crate::input::ForegroundOptions::pointer(), || {
                     crate::input::send_type_text_xtest(&text)
-                })?;
+                }).map(|(value, _report)| value)?;
                 return Ok(("key_events_fg", None));
             }
             // No a11y editable, no pty: real key events through the XI2 virtual

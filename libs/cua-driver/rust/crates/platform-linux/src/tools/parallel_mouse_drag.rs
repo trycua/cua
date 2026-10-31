@@ -6,7 +6,10 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use super::impl_::{linux_input_error, parse_mouse_button, window_local_to_screen, ToolState};
+use super::impl_::{
+    foreground_budget, linux_input_error, parse_mouse_button, spawn_blocking_bounded,
+    window_local_to_screen, ToolState,
+};
 
 pub struct ParallelMouseDragTool {
     pub(crate) state: Arc<ToolState>,
@@ -282,7 +285,15 @@ impl Tool for ParallelMouseDragTool {
         }
 
         let drags_for_task = drags.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        // The drags run side by side, so the longest one bounds the call.
+        let budget = drags
+            .iter()
+            .map(|(_, drag)| {
+                foreground_budget(drag.steps) + std::time::Duration::from_millis(drag.duration_ms)
+            })
+            .max()
+            .unwrap_or_default();
+        let result = spawn_blocking_bounded("parallel_mouse_drag", budget, move || {
             crate::input::send_parallel_virtual_pointer_drags(&drags_for_task)
         })
         .await;

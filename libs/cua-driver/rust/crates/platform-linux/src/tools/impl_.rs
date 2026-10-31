@@ -12,6 +12,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use crate::atspi::Snapshots;
+pub(crate) use crate::input::action::spawn_blocking_bounded;
+pub(crate) use crate::wayland::AimedPoint;
 use cursor_overlay::CursorRegistry;
 
 use super::{
@@ -391,6 +393,14 @@ pub(crate) fn screenshot_scale(
     state
         .snapshots
         .screenshot_scale(pid as i32, window_id, args)
+        .map_err(|missing| {
+            // A tiled niri window never has a screenshot: say why instead of
+            // asking for the get_window_state read that cannot give one.
+            window_id
+                .filter(|_| crate::wayland::is_wayland() && crate::wayland::niri::is_session())
+                .and_then(crate::wayland::niri::tiled_refusal)
+                .map_or(missing, input_error_result)
+        })
 }
 
 /// Return the lowercase basename of an executable token, stripping any
@@ -1010,8 +1020,248 @@ pub(crate) fn desktop_frame_requested(args: &Value) -> bool {
 /// Convert desktop (screen) coordinates to `xid`'s window-local frame so the
 /// rest of the pointer pipeline (which is window-local by contract) is reused.
 pub(crate) fn desktop_to_window_local(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)> {
+    // A niri window id is no X11 window: never ask XWayland about it.
+    if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+        return Err(crate::wayland::niri::desktop_frame_window_refusal(xid));
+    }
     let (ox, oy) = window_local_to_screen(xid, 0.0, 0.0)?;
     Ok((x - ox, y - oy))
+}
+
+/// A failed desktop-to-window mapping; a coded refusal keeps its structure.
+pub(crate) fn desktop_frame_unmapped(xid: u64, error: anyhow::Error) -> ToolResult {
+    if crate::input::foreground::error_code(&error).is_some() {
+        return input_error_result(error);
+    }
+    ToolResult::error(format!(
+        "desktop-frame coordinates could not be mapped into window {xid}: {error}"
+    ))
+}
+
+#[cfg(test)]
+#[test]
+fn a_niri_desktop_frame_window_refusal_is_structured() {
+    let refused =
+        desktop_frame_unmapped(31, crate::wayland::niri::desktop_frame_window_refusal(31));
+    let structured = refused.structured_content.unwrap();
+    assert_eq!(structured["code"], "foreground_unavailable");
+    assert_eq!(structured["effect"], "none");
+    assert!(structured["suggestion"]
+        .as_str()
+        .unwrap()
+        .starts_with("Drop pid and window_id"));
+}
+
+/// The `steps` of a `drag` or `mouse_drag`, held to the advertised 1..=200
+/// before the button goes down: every step is a motion sent with the
+/// button held.
+pub(crate) fn drag_steps(args: &Value) -> usize {
+    args.u64_or("steps", 20).clamp(1, 200) as usize
+}
+
+#[cfg(test)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_timed_out_call_holds_the_desktop_until_its_late_cleanup_is_done() {
+    use cua_driver_core::tool::DesktopCall;
+    // niri: call 1 focused its window, then waited in niri past its budget.
+    // Its worker gives focus back afterwards. Desktop typing that started in
+    // between would have focus moved away under it.
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let call_1 = {
+        let events = events.clone();
+        DesktopCall::acquire()
+            .await
+            .unwrap()
+            .scope(spawn_blocking_bounded(
+                "call 1",
+                std::time::Duration::from_millis(50),
+                move || {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    // The next key is refused, but focus still goes back.
+                    assert!(crate::input::action::admit(|| ()).is_err());
+                    events.lock().unwrap().push("call 1 gave focus back");
+                    Ok(())
+                },
+            ))
+            .await
+            .unwrap()
+    };
+    assert!(call_1.is_err());
+    DesktopCall::acquire()
+        .await
+        .unwrap()
+        .scope(async { events.lock().unwrap().push("call 2 typed") })
+        .await;
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["call 1 gave focus back", "call 2 typed"]
+    );
+}
+
+#[cfg(test)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn input_that_cannot_be_cancelled_never_overlaps_the_next_desktop_action() {
+    use cua_driver_core::tool::DesktopCall;
+    // A wtype child does not read the call's action, and an abandoned XTest
+    // call still sends its releases: a worker whose call timed out, or whose
+    // caller went away, can still send input. That input must not reach
+    // whatever the next desktop action targets.
+    for budget in [50, 60_000] {
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let worker_events = events.clone();
+        let call = DesktopCall::acquire().await.unwrap();
+        let call_1 = async move {
+            call.scope(spawn_blocking_bounded(
+                "call 1",
+                std::time::Duration::from_millis(budget),
+                move || {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    worker_events.lock().unwrap().push("call 1 typed");
+                    Ok(())
+                },
+            ))
+            .await
+        };
+        // A 50 ms budget times out; with 60 s the caller is dropped first.
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(100), call_1).await;
+        DesktopCall::acquire()
+            .await
+            .unwrap()
+            .scope(async { events.lock().unwrap().push("call 2 typed") })
+            .await;
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["call 1 typed", "call 2 typed"],
+            "budget {budget} ms"
+        );
+    }
+}
+
+#[cfg(test)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancelled_x11_press_is_recorded_before_the_next_call_on_its_cursor() {
+    use cua_driver_core::tool::DesktopCall;
+    let state = ToolState::new();
+    let hold = |xid| MouseHoldState {
+        pid: 1,
+        xid,
+        button: 1,
+        x: 0.0,
+        y: 0.0,
+    };
+    // Call 1: XTest is slow, and its client cancels the call.
+    let call = DesktopCall::acquire().await.unwrap();
+    let first = {
+        let state = state.clone();
+        async move {
+            call.scope(press_and_record_x11_hold(
+                state,
+                "default".to_owned(),
+                hold(1),
+                || {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    Ok(())
+                },
+            ))
+            .await
+        }
+    };
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(50), first).await;
+    // Call 2 on the same cursor checks for a hold once it has the desktop.
+    let _call = DesktopCall::acquire().await.unwrap();
+    let held = state
+        .mouse_hold
+        .lock()
+        .unwrap()
+        .get("default")
+        .map(|hold| hold.xid);
+    assert_eq!(
+        held,
+        Some(1),
+        "call 2 would find no hold, press window 2, and have call 1 overwrite its hold"
+    );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_late_x11_drag_press_is_followed_by_its_release() {
+    // The X server answers the press only after the call timed out. The
+    // drag then sends its own release, which arrives first.
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let pressed = press_x11_drag_start(
+        std::time::Duration::from_millis(50),
+        {
+            let events = events.clone();
+            move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                events.lock().unwrap().push("press");
+                Ok(())
+            }
+        },
+        {
+            let events = events.clone();
+            move || {
+                events.lock().unwrap().push("release");
+                Ok(())
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert!(pressed.is_err());
+    events.lock().unwrap().push("release");
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let events = events.lock().unwrap();
+    assert!(events.contains(&"press"), "{events:?}");
+    assert_eq!(events.last(), Some(&"release"), "{events:?}");
+}
+
+#[cfg(test)]
+#[test]
+fn drag_steps_stay_within_the_advertised_bounds() {
+    // Without the bound, steps = u32::MAX holds the button through about
+    // 4.3 billion motions.
+    assert_eq!(drag_steps(&json!({ "steps": u32::MAX })), 200);
+    assert_eq!(drag_steps(&json!({ "steps": 0 })), 1);
+    assert_eq!(drag_steps(&json!({ "steps": 20 })), 20);
+}
+
+/// The press of an X11 step-by-step drag. A press that goes down after its
+/// call ended is released here, in the same worker: the drag's own release
+/// runs in another worker on its own X connection and can reach the app
+/// first, which would leave the app's last event a press.
+pub(crate) async fn press_x11_drag_start(
+    budget: std::time::Duration,
+    press: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+    release: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
+    spawn_blocking_bounded("drag", budget, move || {
+        press()?;
+        if crate::input::action::admit(|| ()).is_err() {
+            release()?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// Press an X11 button and record its hold as soon as it is down, so a caller
+/// that goes away before the await resumes still leaves a hold that
+/// mouse_button_up can release. The worker keeps the call's desktop lease
+/// through both, so the next call on the cursor sees this hold instead of
+/// pressing and recording its own, which this one would then overwrite.
+pub(crate) async fn press_and_record_x11_hold(
+    state: Arc<ToolState>,
+    cursor_id: String,
+    hold: MouseHoldState,
+    press: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
+    spawn_blocking_bounded("mouse_button_down", foreground_budget(0), move || {
+        press()?;
+        state.mouse_hold.lock().unwrap().insert(cursor_id, hold);
+        Ok(())
+    })
+    .await
 }
 
 /// Upper bound for one foreground input transaction: focus confirmation plus
@@ -1020,23 +1270,53 @@ pub(crate) fn foreground_budget(chars: usize) -> std::time::Duration {
     std::time::Duration::from_millis(12_000 + (chars as u64) * 40)
 }
 
-/// `spawn_blocking` with a hard deadline. A wedged X server (or a client
-/// holding a server grab) must surface as a structured `foreground_timeout`
-/// error instead of a tool call that never returns. The blocking task is not
-/// cancellable; it is left to finish (or leak) on the blocking pool.
-pub(crate) async fn spawn_blocking_bounded<T: Send + 'static>(
-    label: &'static str,
-    budget: std::time::Duration,
-    f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
-) -> Result<anyhow::Result<T>, tokio::task::JoinError> {
-    match tokio::time::timeout(budget, tokio::task::spawn_blocking(f)).await {
-        Ok(joined) => joined,
-        Err(_elapsed) => Ok(Err(anyhow::anyhow!(
-            "{}: {label} did not complete within {budget:?}; the X server or the target \
-             application may be wedged. Take a screenshot before retrying",
-            crate::input::foreground::CODE_TIMEOUT
-        ))),
+/// The budget of a `type_text` call that types `chars` characters. niri's
+/// keyboard gives itself its own deadline, which starts once the window is
+/// focused and stops the call with how far it got; the call allows that
+/// plus the foreground setup, so that deadline ends it first.
+pub(crate) fn typing_budget(chars: usize, niri: bool) -> std::time::Duration {
+    let budget = foreground_budget(chars);
+    if niri {
+        budget.max(foreground_budget(0) + crate::wayland::niri_keyboard_budget(chars))
+    } else {
+        budget
     }
+}
+
+#[cfg(test)]
+#[test]
+fn niri_typing_outlasts_the_keyboard_deadline() {
+    // niri's keyboard allows itself a deadline per key and reports how far
+    // it got when that passes. A call budget that ran out first would cut
+    // the text off with a bare timeout, and a retry would type its start
+    // again.
+    for chars in [0, 1, 150, 1_000, 100_000] {
+        assert!(
+            typing_budget(chars, true) > crate::wayland::niri_keyboard_budget(chars),
+            "{chars} characters"
+        );
+        assert_eq!(typing_budget(chars, false), foreground_budget(chars));
+    }
+}
+
+/// [`foreground_budget`] for `chars` characters with `delay_ms` between them.
+/// The delay comes from the caller unbounded.
+pub(crate) fn paced_typing_budget(chars: usize, delay_ms: u64) -> std::time::Duration {
+    foreground_budget(chars)
+        + std::time::Duration::from_millis(delay_ms.saturating_mul(chars as u64))
+}
+
+#[cfg(test)]
+#[test]
+fn any_typing_delay_gives_a_budget() {
+    assert_eq!(
+        paced_typing_budget(2, 30),
+        foreground_budget(2) + std::time::Duration::from_millis(60)
+    );
+    // Sizing the call must not panic, however long the caller's delay.
+    let longest = paced_typing_budget(3, u64::MAX);
+    assert!(longest >= std::time::Duration::from_millis(u64::MAX));
+    crate::input::action::Action::new(longest);
 }
 
 /// Map an input-path error to a tool error, attaching the structured
@@ -1065,11 +1345,27 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
             "suggestion": if code == crate::input::foreground::CODE_TIMEOUT {
                 "Take a screenshot (get_desktop_state) to confirm the desktop is responsive, then retry once."
             } else {
-                "Call bring_to_front on the window (or its modal dialog), confirm with get_window_state, then retry."
+                crate::wayland::niri::refusal_suggestion(&text).unwrap_or(
+                    "Call bring_to_front on the window (or its modal dialog), confirm with get_window_state, then retry.",
+                )
             },
         })),
         None => linux_input_error(e),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_niri_refusal_suggests_its_own_remedy_instead_of_bring_to_front() {
+    let refused = input_error_result(anyhow::anyhow!(
+        "foreground_unavailable: the niri layout changed after the get_desktop_state screenshot, so its pixels may be elsewhere now; take a new screenshot"
+    ));
+    let structured = refused.structured_content.unwrap();
+    assert_eq!(structured["code"], "foreground_unavailable");
+    assert!(structured["suggestion"]
+        .as_str()
+        .unwrap()
+        .starts_with("Take a new screenshot"));
 }
 
 /// Structured payload for a completed foreground transaction.
@@ -2726,8 +3022,13 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
                 .as_str()
                 .unwrap_or("input refused")
                 .to_owned();
+            let refusal = if code == "stale_geometry" {
+                "stale_observation"
+            } else {
+                unavailable
+            };
             value["reason"] = json!(code);
-            value["code"] = json!(unavailable);
+            value["code"] = json!(refusal);
             value["route"] = json!(if foreground {
                 "global_input"
             } else {
@@ -2755,7 +3056,7 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
             .detail(&detail)
             .build()
             .expect("isolated input outcome is valid");
-            ToolResult::error(format!("{unavailable} ({code}): {detail}"))
+            ToolResult::error(format!("{refusal} ({code}): {detail}"))
                 .with_structured(value)
                 .with_action_record(outcome)
         }
@@ -3088,14 +3389,14 @@ fn background_keyboard_refusal_names_missing_atspi_bus() {
 fn persistent_wayland_pointer_coordinates_include_window_origin() {
     let output = persistent_pointer_coordinates(true, 7, 10, 20, |window_id, x, y| {
         assert_eq!(window_id, 7);
-        (x + 100, y + 200)
+        Ok((x + 100, y + 200).into())
     });
-    assert_eq!(output, (110, 220));
+    assert_eq!(output.unwrap().point, (110, 220));
 
     let x11 = persistent_pointer_coordinates(false, 7, 10, 20, |_, _, _| {
         panic!("X11 coordinates must remain window-local")
     });
-    assert_eq!(x11, (10, 20));
+    assert_eq!(x11.unwrap().point, (10, 20));
 }
 
 #[cfg(test)]
@@ -3224,6 +3525,24 @@ fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
     let public = refused.action_record.unwrap().public_result().unwrap();
     assert!(public.delivery.is_none());
     public.validate_invariants().unwrap();
+
+    for foreground in [false, true] {
+        let stale = hyprland_input_result(
+            Ok(json!({"ok":false,"code":"stale_geometry","detail":"stale_geometry"})),
+            foreground,
+        );
+        let value = stale.structured_content.as_ref().unwrap();
+        assert_eq!(value["code"], "stale_observation");
+        assert_eq!(value["reason"], "stale_geometry");
+        assert_eq!(value["effect"], "refused");
+        assert!(stale
+            .action_record
+            .unwrap()
+            .public_result()
+            .unwrap()
+            .delivery
+            .is_none());
+    }
 
     let partial = isolated_hyprland_result(Ok(
         json!({"ok":false,"code":"cancelled","detail":"cancelled",
@@ -3460,12 +3779,12 @@ pub(crate) fn persistent_pointer_coordinates(
     window_id: u64,
     x: i32,
     y: i32,
-    window_local_to_output: impl FnOnce(u64, i32, i32) -> (i32, i32),
-) -> (i32, i32) {
+    window_local_to_output: impl FnOnce(u64, i32, i32) -> anyhow::Result<AimedPoint>,
+) -> anyhow::Result<AimedPoint> {
     if is_wayland {
         window_local_to_output(window_id, x, y)
     } else {
-        (x, y)
+        Ok((x, y).into())
     }
 }
 
@@ -3553,12 +3872,18 @@ async fn overlay_glide_to_target_for(cursor_id: &str, sx: f64, sy: f64, target: 
 /// snapshot converts the action's points, places the overlay and sizes the
 /// virtual pointer, so they cannot disagree about the monitor layout.
 pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::DesktopInputSpace> {
-    if !crate::wayland::wayland_input_enabled() {
-        return Ok(crate::wayland::DesktopInputSpace::default());
-    }
-    tokio::task::spawn_blocking(crate::wayland::DesktopInputSpace::current)
-        .await
-        .map_err(|error| anyhow::anyhow!("task error: {error}"))?
+    tokio::task::spawn_blocking(|| {
+        crate::interaction::admit_lock(
+            crate::interaction::policy::Scope::DesktopInput,
+            crate::interaction::facts::Fact::Unknown("desktop input addresses no window".into()),
+        )?;
+        if !crate::wayland::wayland_input_enabled() {
+            return Ok(crate::wayland::DesktopInputSpace::default());
+        }
+        crate::wayland::DesktopInputSpace::current()
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("task error: {error}"))?
 }
 
 /// Keep the logical cursor position in sync with every visibly targeted

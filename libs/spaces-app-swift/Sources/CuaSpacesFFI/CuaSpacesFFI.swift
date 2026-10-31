@@ -44684,7 +44684,7 @@ public func FfiConverterTypeAppWizardFact_lower(_ value: AppWizardFact) -> RustB
 public struct AppWizardField: Equatable, Hashable {
     /**
      * `os`, `image`, `placement`, `kind`, `runtime`, `connect-cloud`,
-     * `connect-by-address`, `cpus`, `memory`, `disk`, `name`,
+     * `cpus`, `memory`, `disk`, `name`,
      * `open-when-ready`, `address`, `token`, `address-name`.
      */
     public var id: String
@@ -44710,7 +44710,7 @@ public struct AppWizardField: Equatable, Hashable {
     public init(
         /**
          * `os`, `image`, `placement`, `kind`, `runtime`, `connect-cloud`,
-         * `connect-by-address`, `cpus`, `memory`, `disk`, `name`,
+         * `cpus`, `memory`, `disk`, `name`,
          * `open-when-ready`, `address`, `token`, `address-name`.
          */id: String,
         /**

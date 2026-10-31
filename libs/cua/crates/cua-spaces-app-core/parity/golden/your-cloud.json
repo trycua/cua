@@ -13,8 +13,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -60,8 +59,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -696,8 +694,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",

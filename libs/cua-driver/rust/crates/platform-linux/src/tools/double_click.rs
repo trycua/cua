@@ -11,13 +11,14 @@ use super::{
     click::ClickTool,
     impl_::{
         checked_element_local_coords, coordinate_frame_schema, desktop_frame_requested,
-        desktop_to_window_local, element_screen_center_and_rect, hyprland_foreground,
-        input_error_result, prove_token_element, require_point_args, resolve_cursor_key,
-        reveal_pointer_action_for, reveal_pointer_action_target_for, screenshot_scale,
+        desktop_frame_unmapped, desktop_to_window_local, element_screen_center_and_rect,
+        foreground_budget, hyprland_foreground, input_error_result, prove_token_element,
+        require_point_args, resolve_cursor_key, reveal_pointer_action_for,
+        reveal_pointer_action_target_for, screenshot_scale, spawn_blocking_bounded,
         unavailable_chromium_background, unavailable_gtk_pointer_background,
         unavailable_wayland_focused_input_background, unavailable_webkit_background,
-        window_local_to_screen, with_pixel_points, x11_pixel_click_no_focus_steal, PointerRoute,
-        ToolState,
+        window_local_to_screen, with_pixel_points, x11_pixel_click_no_focus_steal, AimedPoint,
+        PointerRoute, ToolState,
     },
 };
 
@@ -135,36 +136,54 @@ impl Tool for DoubleClickTool {
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
-                    let wayland_point = crate::wayland::wayland_input_enabled()
-                        .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi));
+                    let wayland_point = match crate::wayland::wayland_input_enabled()
+                        .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi))
+                        .transpose()
+                    {
+                        Ok(point) => point,
+                        Err(error) => return input_error_result(error),
+                    };
                     let cursor_id_for_task = cursor_id.clone();
-                    let click_result =
-                        tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
+                    let click_result = spawn_blocking_bounded(
+                        "double_click",
+                        foreground_budget(0),
+                        move || -> anyhow::Result<PointerRoute> {
                             if crate::wayland::is_inject_mode() {
                                 return crate::wayland::inject_click(pid, xid, lx, ly, 2, 1)
                                     .map(|()| PointerRoute::Wayland);
                             }
                             if crate::wayland::wayland_input_enabled() {
-                                let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
-                                return crate::wayland::click(xid, output_x, output_y, 2, 1)
-                                    .map(|()| PointerRoute::Wayland);
+                                let aimed = wayland_point.unwrap_or_else(|| (lxi, lyi).into());
+                                return crate::interaction::with_target_foreground(
+                                    pid,
+                                    xid,
+                                    crate::interaction::pointer_gesture_restore(),
+                                    || crate::wayland::click(xid, aimed, 2, 1),
+                                )
+                                .map(|()| PointerRoute::Wayland);
                             }
                             if delivery.is_foreground() {
-                                return crate::input::with_x11_foreground(xid, 80, || {
-                                    let (sx, sy) =
-                                        window_local_to_screen(xid, lxi as f64, lyi as f64)?;
-                                    crate::input::send_click_xtest_desktop(
-                                        sx.round() as i32,
-                                        sy.round() as i32,
-                                        1,
-                                        2,
-                                    )
-                                })
+                                return crate::interaction::with_x11_foreground(
+                                    xid,
+                                    crate::input::ForegroundOptions::pointer(),
+                                    || {
+                                        let (sx, sy) =
+                                            window_local_to_screen(xid, lxi as f64, lyi as f64)?;
+                                        crate::input::send_click_xtest_desktop(
+                                            sx.round() as i32,
+                                            sy.round() as i32,
+                                            1,
+                                            2,
+                                        )
+                                    },
+                                )
+                                .map(|(value, _report)| value)
                                 .map(|()| PointerRoute::Foreground);
                             }
                             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 1, 2)
-                        })
-                        .await;
+                        },
+                    )
+                    .await;
                     let mode_label = if delivery.is_foreground() {
                         "foreground"
                     } else {
@@ -220,11 +239,7 @@ impl Tool for DoubleClickTool {
                     x = lx;
                     y = ly;
                 }
-                Ok(Err(e)) => {
-                    return ToolResult::error(format!(
-                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                    ))
-                }
+                Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
         }
@@ -233,15 +248,17 @@ impl Tool for DoubleClickTool {
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
         let wayland_output_point = if crate::wayland::wayland_input_enabled() {
-            Some(crate::wayland::window_local_to_output(
-                xid,
-                x.round() as i32,
-                y.round() as i32,
-            ))
+            match crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32) {
+                Ok(point) => Some(point),
+                Err(error) => return input_error_result(error),
+            }
         } else {
             None
         };
-        let glide_target = if let Some((sx, sy)) = wayland_output_point {
+        let glide_target = if let Some(AimedPoint {
+            point: (sx, sy), ..
+        }) = wayland_output_point
+        {
             Some((sx as f64, sy as f64))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
@@ -254,38 +271,53 @@ impl Tool for DoubleClickTool {
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
-            if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(pid, xid, x, y, 2, 1)
+        let result = spawn_blocking_bounded(
+            "double_click",
+            foreground_budget(0),
+            move || -> anyhow::Result<PointerRoute> {
+                if crate::wayland::is_inject_mode() {
+                    return crate::wayland::inject_click(pid, xid, x, y, 2, 1)
+                        .map(|()| PointerRoute::Wayland);
+                }
+                if crate::wayland::wayland_input_enabled() {
+                    let aimed = wayland_output_point.unwrap_or_else(|| (xi, yi).into());
+                    return crate::interaction::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::pointer_gesture_restore(),
+                        || crate::wayland::click(xid, aimed, 2, 1),
+                    )
                     .map(|()| PointerRoute::Wayland);
-            }
-            if crate::wayland::wayland_input_enabled() {
-                let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
-                return crate::wayland::click(xid, output_x, output_y, 2, 1)
-                    .map(|()| PointerRoute::Wayland);
-            }
-            if delivery.is_foreground() {
-                return crate::input::with_x11_foreground(xid, 80, || {
-                    // Real XTest double-click at the screen point — synthetic
-                    // XSendEvent button events are dropped by GTK/Qt and the MPX
-                    // uinput path needs /dev/uinput (absent on Xvfb/Xtigervnc), so
-                    // neither lands. Mirrors the single-click foreground path.
-                    if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
-                        crate::input::send_click_xtest_desktop(
-                            sx.round() as i32,
-                            sy.round() as i32,
-                            1,
-                            2,
-                        )?;
-                        return Ok(());
-                    }
-                    x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
-                        .map(|_| ())
-                })
-                .map(|()| PointerRoute::Foreground);
-            }
-            x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
-        })
+                }
+                if delivery.is_foreground() {
+                    return crate::interaction::with_x11_foreground(
+                        xid,
+                        crate::input::ForegroundOptions::pointer(),
+                        || {
+                            // Real XTest double-click at the screen point — synthetic
+                            // XSendEvent button events are dropped by GTK/Qt and the MPX
+                            // uinput path needs /dev/uinput (absent on Xvfb/Xtigervnc), so
+                            // neither lands. Mirrors the single-click foreground path.
+                            if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64)
+                            {
+                                crate::input::send_click_xtest_desktop(
+                                    sx.round() as i32,
+                                    sy.round() as i32,
+                                    1,
+                                    2,
+                                )?;
+                                return Ok(());
+                            }
+                            x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
+                                .map(|_| ())
+                        },
+                    )
+                    .map(|(value, _report)| value)
+                    .map(|()| PointerRoute::Foreground);
+                }
+                x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
+            },
+        )
         .await;
         let mode_label = if delivery.is_foreground() {
             "foreground"

@@ -678,10 +678,10 @@
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
-          "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Running - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -",
+          "os-linux box, Linux, This Mac, Stopped - -"
         ]
       },
       "powering": [],
@@ -907,10 +907,10 @@
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
-          "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Running - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -",
+          "os-linux box, Linux, This Mac, Stopped - -"
         ]
       },
       "powering": [
@@ -1023,10 +1023,10 @@
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
-          "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Turning off… - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -",
+          "os-linux box, Linux, This Mac, Stopped - -"
         ]
       },
       "powering": [
@@ -1140,10 +1140,10 @@
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
-          "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Turning off… - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -",
+          "os-linux box, Linux, This Mac, Stopped - -"
         ]
       },
       "powering": [
@@ -1257,10 +1257,10 @@
           "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
-          "os-linux box, Linux, This Mac, Stopped - -",
-          "os-macos mac, macOS, This Mac, Stopped - -",
           "os-linux studio, Linux, Mac mini, Running - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -",
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Stopped - -"
         ]
       },
       "powering": [
@@ -1373,10 +1373,10 @@
           "os-linux studio [spaces.status.turning_off] - - <power spaces.status.turning_off busy>"
         ],
         "tiles": [
-          "os-linux box, Linux, This Mac, Stopped - -",
-          "os-macos mac, macOS, This Mac, Stopped - -",
           "os-linux studio, Linux, Mac mini, Turning off… - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -",
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Stopped - -"
         ]
       },
       "powering": [
@@ -1490,10 +1490,10 @@
           "os-linux studio [spaces.status.turning_off] - - <power spaces.status.turning_off busy>"
         ],
         "tiles": [
-          "os-linux box, Linux, This Mac, Stopped - -",
-          "os-macos mac, macOS, This Mac, Stopped - -",
           "os-linux studio, Linux, Mac mini, Turning off… - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -",
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Stopped - -"
         ]
       },
       "powering": [
@@ -1607,10 +1607,10 @@
           "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
+          "os-linux pool-c, Linux, pool-c, Running - -",
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Stopped - -",
-          "os-linux studio, Linux, Mac mini, Stopped - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux studio, Linux, Mac mini, Stopped - -"
         ]
       },
       "powering": [
@@ -1723,10 +1723,10 @@
           "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
-          "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Turning on… - -",
-          "os-linux studio, Linux, Mac mini, Stopped - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux pool-c, Linux, pool-c, Running - -",
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-linux studio, Linux, Mac mini, Stopped - -"
         ]
       },
       "powering": [
@@ -1839,10 +1839,10 @@
           "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
+          "os-linux pool-c, Linux, pool-c, Running - -",
           "os-linux box, Linux, This Mac, Stopped - -",
           "os-macos mac, macOS, This Mac, Deleting… - Deleting…",
-          "os-linux studio, Linux, Mac mini, Stopped - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux studio, Linux, Mac mini, Stopped - -"
         ]
       },
       "powering": [
@@ -1933,9 +1933,9 @@
           "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
+          "os-linux pool-c, Linux, pool-c, Running - -",
           "os-linux box, Linux, This Mac, Stopped - -",
-          "os-linux studio, Linux, Mac mini, Stopped - -",
-          "os-linux pool-c, Linux, pool-c, Running - -"
+          "os-linux studio, Linux, Mac mini, Stopped - -"
         ]
       },
       "powering": [

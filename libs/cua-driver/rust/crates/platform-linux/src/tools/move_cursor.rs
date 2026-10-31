@@ -8,7 +8,10 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use super::impl_::{resolve_cursor_key, reveal_pointer_action_for, ToolState};
+use super::impl_::{
+    foreground_budget, input_error_result, resolve_cursor_key, reveal_pointer_action_for,
+    spawn_blocking_bounded, ToolState,
+};
 
 // ── move_cursor ───────────────────────────────────────────────────────────────
 
@@ -64,14 +67,16 @@ impl Tool for MoveCursorTool {
                 "xtest_desktop"
             };
             let result = if wayland {
-                tokio::task::spawn_blocking(move || {
+                spawn_blocking_bounded("move_cursor", foreground_budget(0), move || {
                     let space = crate::wayland::DesktopInputSpace::current()?;
                     crate::wayland::move_cursor_desktop(&space, xi, yi)
                 })
                 .await
             } else {
-                tokio::task::spawn_blocking(move || crate::input::send_move_xtest_desktop(xi, yi))
-                    .await
+                spawn_blocking_bounded("move_cursor", foreground_budget(0), move || {
+                    crate::input::send_move_xtest_desktop(xi, yi)
+                })
+                .await
             };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
@@ -80,6 +85,9 @@ impl Tool for MoveCursorTool {
                 .with_structured(
                     json!({"scope":"desktop","path":path,"x":xi,"y":yi,"effect":"unverifiable"}),
                 ),
+                Ok(Err(error)) if crate::input::foreground::error_code(&error).is_some() => {
+                    input_error_result(error)
+                }
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };

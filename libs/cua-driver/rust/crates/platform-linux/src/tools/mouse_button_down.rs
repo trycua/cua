@@ -8,10 +8,11 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use super::impl_::{
-    coordinate_frame_schema, desktop_frame_requested, desktop_to_window_local, mouse_button_name,
+    coordinate_frame_schema, desktop_frame_requested, desktop_frame_unmapped,
+    desktop_to_window_local, foreground_budget, input_error_result, mouse_button_name,
     mouse_hold_json, overlay_glide_to_for, overlay_snap_to_for, parse_mouse_button,
-    persistent_pointer_coordinates, resolve_cursor_key, screenshot_scale, window_local_to_screen,
-    MouseHoldState, ToolState,
+    persistent_pointer_coordinates, press_and_record_x11_hold, resolve_cursor_key,
+    screenshot_scale, spawn_blocking_bounded, window_local_to_screen, MouseHoldState, ToolState,
 };
 
 // ── mouse_button_down / mouse_drag / mouse_button_up ────────────────────────
@@ -100,11 +101,7 @@ impl Tool for MouseButtonDownTool {
                     x = lx;
                     y = ly;
                 }
-                Ok(Err(e)) => {
-                    return ToolResult::error(format!(
-                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                    ))
-                }
+                Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
         }
@@ -131,20 +128,42 @@ impl Tool for MouseButtonDownTool {
         // the existing input::send_button_down behaviour.
         let result = if is_wl {
             let cid = cursor_id.clone();
-            let (output_x, output_y) = persistent_pointer_coordinates(
+            let aimed = match persistent_pointer_coordinates(
                 is_wl,
                 xid,
                 xi,
                 yi,
                 crate::wayland::window_local_to_output,
-            );
-            tokio::task::spawn_blocking(move || {
-                crate::wayland::persistent_vptr::press(&cid, xid, output_x, output_y, button)
+            ) {
+                Ok(point) => point,
+                Err(error) => return input_error_result(error),
+            };
+            let state = self.state.clone();
+            let hold = MouseHoldState {
+                pid,
+                xid,
+                button,
+                x,
+                y,
+            };
+            spawn_blocking_bounded("mouse_button_down", foreground_budget(0), move || {
+                crate::wayland::persistent_vptr::press(&cid, xid, aimed, button, || {
+                    state.mouse_hold.lock().unwrap().insert(cid.clone(), hold);
+                })
             })
             .await
         } else {
-            tokio::task::spawn_blocking(move || crate::input::send_button_down(xid, xi, yi, button))
-                .await
+            let hold = MouseHoldState {
+                pid,
+                xid,
+                button,
+                x,
+                y,
+            };
+            press_and_record_x11_hold(self.state.clone(), cursor_id.clone(), hold, move || {
+                crate::input::send_button_down(xid, xi, yi, button)
+            })
+            .await
         };
         match result {
             Ok(Ok(())) => {
@@ -155,11 +174,6 @@ impl Tool for MouseButtonDownTool {
                     x,
                     y,
                 };
-                self.state
-                    .mouse_hold
-                    .lock()
-                    .unwrap()
-                    .insert(cursor_id.clone(), hold.clone());
                 if let Ok(Ok((sx, sy))) =
                     tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
                 {

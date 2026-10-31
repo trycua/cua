@@ -8,8 +8,9 @@
 //!
 //! A focus check followed by global input therefore has an unavoidable TOCTOU
 //! race. Until Cua has a KWin input API that binds each mutation to the target
-//! token/window, this module intentionally refuses raw target-addressed input.
-//! Window discovery remains available; input authorization does not.
+//! token/window, [`available`] reports no target-bound input and the shared
+//! delivery policy refuses raw target-addressed input. Window discovery
+//! remains available; input authorization does not.
 
 use std::collections::HashSet;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -82,24 +83,6 @@ pub fn trusted_window_for_id(pid: u32, token: u64) -> Option<KwinWindow> {
     snapshot_for_owner(&helper_owner()?)?
         .into_iter()
         .find(|window| window.pid == pid && window.token == token)
-}
-
-/// Refuse a focus-bound KWin foreground transaction.
-///
-/// `body` is deliberately never invoked. The current helper can identify an
-/// exact KWin window, but its D-Bus API is read-only; even a separate activation
-/// step would not bind a later libei event to that target. More pre-dispatch
-/// focus checks therefore cannot make the operation target-safe.
-pub fn with_focused_window<T>(
-    pid: u32,
-    token: u64,
-    _body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    anyhow::bail!(
-        "foreground_unavailable: KWin target pid={pid} token={token} is verified, but only \
-         focus-bound portal/libei input is available; refusing raw input until a target-bound \
-         KWin input path is implemented"
-    )
 }
 
 fn helper_owner() -> Option<String> {
@@ -290,7 +273,7 @@ fn wait_timeout(mut child: std::process::Child, timeout: Duration) -> Option<Str
         stdout.read_to_end(&mut bytes).ok()?;
         String::from_utf8(bytes).ok()
     });
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = crate::interaction::operation_deadline(timeout);
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return reader.join().ok().flatten(),
@@ -301,7 +284,7 @@ fn wait_timeout(mut child: std::process::Child, timeout: Duration) -> Option<Str
                 let _ = reader.join();
                 return None;
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => crate::interaction::pause(Duration::from_millis(10)),
         }
     }
 }

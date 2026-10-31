@@ -9,15 +9,17 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use super::impl_::{
-    coordinate_frame_schema, desktop_frame_requested, desktop_input_space, desktop_to_window_local,
-    foreground_hyprland_refusal, hyprland_foreground, hyprland_input_result, input_error_result,
-    invalid_pointer_arguments, isolated_hyprland_background, isolated_hyprland_refusal,
-    isolated_hyprland_result, isolated_hyprland_task_error, named_session_cursor_key,
-    overlay_glide_to_for, overlay_snap_to_for, parse_mouse_button, resolve_cursor_key,
-    screenshot_scale, spawn_isolated_hyprland, synthetic_pointer_is_dropped,
-    unavailable_chromium_background, unavailable_gtk_pointer_background,
-    unavailable_wayland_focused_input_background, unavailable_webkit_background,
-    window_local_to_screen, CoordinateContext, PointerRoute, ToolState,
+    coordinate_frame_schema, desktop_frame_requested, desktop_frame_unmapped, desktop_input_space,
+    desktop_to_window_local, drag_steps, foreground_budget, foreground_hyprland_refusal,
+    hyprland_foreground, hyprland_input_result, input_error_result, invalid_pointer_arguments,
+    isolated_hyprland_background, isolated_hyprland_refusal, isolated_hyprland_result,
+    isolated_hyprland_task_error, named_session_cursor_key, overlay_glide_to_for,
+    overlay_snap_to_for, parse_mouse_button, press_x11_drag_start, resolve_cursor_key,
+    screenshot_scale, spawn_blocking_bounded, spawn_isolated_hyprland,
+    synthetic_pointer_is_dropped, unavailable_chromium_background,
+    unavailable_gtk_pointer_background, unavailable_wayland_focused_input_background,
+    unavailable_webkit_background, window_local_to_screen, CoordinateContext, PointerRoute,
+    ToolState,
 };
 
 fn coordinate_drag_context(
@@ -244,32 +246,37 @@ impl Tool for DragTool {
             };
             let (overlay_from, overlay_to) =
                 (overlay_point(from_x, from_y), overlay_point(to_x, to_y));
-            let result = tokio::task::spawn_blocking(move || {
-                if wayland {
-                    crate::wayland::drag_desktop(
-                        &space,
-                        from_x.round() as i32,
-                        from_y.round() as i32,
-                        to_x.round() as i32,
-                        to_y.round() as i32,
-                        steps as u32,
-                        duration_ms,
-                        button,
-                    )
-                } else {
-                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    crate::input::send_drag_xtest_desktop_with_modifiers(
-                        from_x.round() as i32,
-                        from_y.round() as i32,
-                        to_x.round() as i32,
-                        to_y.round() as i32,
-                        button,
-                        duration_ms,
-                        steps,
-                        &modifier_refs,
-                    )
-                }
-            });
+            let result = spawn_blocking_bounded(
+                "desktop drag",
+                foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
+                move || {
+                    if wayland {
+                        crate::wayland::drag_desktop(
+                            &space,
+                            from_x.round() as i32,
+                            from_y.round() as i32,
+                            to_x.round() as i32,
+                            to_y.round() as i32,
+                            steps as u32,
+                            duration_ms,
+                            button,
+                        )
+                    } else {
+                        let modifier_refs: Vec<&str> =
+                            modifiers.iter().map(String::as_str).collect();
+                        crate::input::send_drag_xtest_desktop_with_modifiers(
+                            from_x.round() as i32,
+                            from_y.round() as i32,
+                            to_x.round() as i32,
+                            to_y.round() as i32,
+                            button,
+                            duration_ms,
+                            steps,
+                            &modifier_refs,
+                        )
+                    }
+                },
+            );
             let visual_drag = track_overlay_drag_for(
                 cursor_id.clone(),
                 overlay_from,
@@ -287,6 +294,9 @@ impl Tool for DragTool {
                 Ok(Ok(())) => ToolResult::text("Dragged on the desktop.").with_structured(
                     json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
                 ),
+                Ok(Err(error)) if crate::input::foreground::error_code(&error).is_some() => {
+                    input_error_result(error)
+                }
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
@@ -370,7 +380,7 @@ impl Tool for DragTool {
         };
 
         let duration_ms = args.u64_or("duration_ms", 500);
-        let steps = args.u64_or("steps", 20) as usize;
+        let steps = drag_steps(&args);
         let button_str = args.str_or("button", "left");
         let button = parse_mouse_button(button_str.as_str());
         match context {
@@ -400,11 +410,7 @@ impl Tool for DragTool {
                     to_x = tx;
                     to_y = ty;
                 }
-                Ok(Err(e)) => {
-                    return ToolResult::error(format!(
-                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                    ))
-                }
+                Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
         }
@@ -421,16 +427,23 @@ impl Tool for DragTool {
                 );
             }
             let owner = named_session_cursor_key(&args);
-            let from = crate::wayland::window_local_to_output(
+            let points = crate::wayland::window_local_to_output(
                 xid,
                 from_x.round() as i32,
                 from_y.round() as i32,
-            );
-            let to = crate::wayland::window_local_to_output(
-                xid,
-                to_x.round() as i32,
-                to_y.round() as i32,
-            );
+            )
+            .and_then(|from| {
+                crate::wayland::window_local_to_output(
+                    xid,
+                    to_x.round() as i32,
+                    to_y.round() as i32,
+                )
+                .map(|to| (from.point, to.point))
+            });
+            let (from, to) = match points {
+                Ok(points) => points,
+                Err(error) => return input_error_result(error),
+            };
             let (started, acknowledged) = tokio::sync::oneshot::channel();
             let (_cancellation, mut dispatch) =
                 match spawn_isolated_hyprland(&args, move |cancellation| {
@@ -484,16 +497,23 @@ impl Tool for DragTool {
                 );
             }
             let owner = named_session_cursor_key(&args);
-            let from = crate::wayland::window_local_to_output(
+            let points = crate::wayland::window_local_to_output(
                 xid,
                 from_x.round() as i32,
                 from_y.round() as i32,
-            );
-            let to = crate::wayland::window_local_to_output(
-                xid,
-                to_x.round() as i32,
-                to_y.round() as i32,
-            );
+            )
+            .and_then(|from| {
+                crate::wayland::window_local_to_output(
+                    xid,
+                    to_x.round() as i32,
+                    to_y.round() as i32,
+                )
+                .map(|to| (from.point, to.point))
+            });
+            let (from, to) = match points {
+                Ok(points) => points,
+                Err(error) => return input_error_result(error),
+            };
             let (started, acknowledged) = tokio::sync::oneshot::channel();
             let (_cancellation, mut dispatch) =
                 match spawn_isolated_hyprland(&args, move |cancellation| {
@@ -536,22 +556,29 @@ impl Tool for DragTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
-        let wayland_points = crate::wayland::wayland_input_enabled().then(|| {
-            (
+        let wayland_points = match crate::wayland::wayland_input_enabled()
+            .then(|| {
                 crate::wayland::window_local_to_output(
                     xid,
                     from_x.round() as i32,
                     from_y.round() as i32,
-                ),
-                crate::wayland::window_local_to_output(
-                    xid,
-                    to_x.round() as i32,
-                    to_y.round() as i32,
-                ),
-            )
-        });
+                )
+                .and_then(|from| {
+                    crate::wayland::window_local_to_output(
+                        xid,
+                        to_x.round() as i32,
+                        to_y.round() as i32,
+                    )
+                    .map(|to| (from, to))
+                })
+            })
+            .transpose()
+        {
+            Ok(points) => points,
+            Err(error) => return input_error_result(error),
+        };
         let screen_from = if let Some((from, _)) = wayland_points {
-            Some((from.0 as f64, from.1 as f64))
+            Some((from.point.0 as f64, from.point.1 as f64))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y))
                 .await
@@ -577,38 +604,46 @@ impl Tool for DragTool {
         // coords. Returns early so we don't fall into the X11 XSendEvent loop below.
         if crate::wayland::wayland_input_enabled() {
             let steps_u32 = steps as u32;
-            let drag_result = if crate::wayland::is_inject_mode() {
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::inject_drag(
+            let inject = crate::wayland::is_inject_mode();
+            let (from_aimed, to_aimed) = wayland_points.unwrap_or_else(|| {
+                (
+                    (from_x.round() as i32, from_y.round() as i32).into(),
+                    (to_x.round() as i32, to_y.round() as i32).into(),
+                )
+            });
+            let drag_result = spawn_blocking_bounded(
+                "drag",
+                foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
+                move || {
+                    if inject {
+                        return crate::wayland::inject_drag(
+                            pid,
+                            xid,
+                            (from_x, from_y),
+                            (to_x, to_y),
+                            steps,
+                            button as u32,
+                        );
+                    }
+                    crate::interaction::with_target_foreground(
                         pid,
                         xid,
-                        (from_x, from_y),
-                        (to_x, to_y),
-                        steps,
-                        button as u32,
+                        crate::interaction::pointer_gesture_restore(),
+                        || {
+                            crate::wayland::drag(
+                                xid,
+                                from_aimed,
+                                to_aimed,
+                                steps_u32,
+                                duration_ms,
+                                button,
+                            )
+                        },
                     )
-                })
-            } else {
-                let ((fxi, fyi), (txi, tyi)) = wayland_points.unwrap_or((
-                    (from_x.round() as i32, from_y.round() as i32),
-                    (to_x.round() as i32, to_y.round() as i32),
-                ));
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::drag(
-                        xid,
-                        (fxi, fyi),
-                        (txi, tyi),
-                        steps_u32,
-                        duration_ms,
-                        button,
-                    )
-                })
-            };
-            let ((from_output_x, from_output_y), (to_output_x, to_output_y)) = wayland_points
-                .unwrap_or((
-                    (from_x.round() as i32, from_y.round() as i32),
-                    (to_x.round() as i32, to_y.round() as i32),
-                ));
+                },
+            );
+            let ((from_output_x, from_output_y), (to_output_x, to_output_y)) =
+                (from_aimed.point, to_aimed.point);
             let visual_drag = track_overlay_drag_for(
                 cursor_id.clone(),
                 (f64::from(from_output_x), f64::from(from_output_y)),
@@ -648,21 +683,30 @@ impl Tool for DragTool {
                 Ok(Err(e)) => return ToolResult::error(e.to_string()),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             };
-            let drag_result = tokio::task::spawn_blocking(move || {
-                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_drag_xtest_desktop_with_modifiers(
-                        screen_from_x.round() as i32,
-                        screen_from_y.round() as i32,
-                        screen_to_x.round() as i32,
-                        screen_to_y.round() as i32,
-                        button,
-                        duration_ms,
-                        steps,
-                        &modifier_refs,
+            let drag_result = spawn_blocking_bounded(
+                "foreground drag",
+                foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
+                move || {
+                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::interaction::with_x11_foreground(
+                        xid,
+                        crate::input::ForegroundOptions::pointer(),
+                        || {
+                            crate::input::send_drag_xtest_desktop_with_modifiers(
+                                screen_from_x.round() as i32,
+                                screen_from_y.round() as i32,
+                                screen_to_x.round() as i32,
+                                screen_to_y.round() as i32,
+                                button,
+                                duration_ms,
+                                steps,
+                                &modifier_refs,
+                            )
+                        },
                     )
-                })
-            });
+                    .map(|(value, _report)| value)
+                },
+            );
             let visual_drag = track_overlay_drag_for(
                 cursor_id.clone(),
                 (screen_from_x, screen_from_y),
@@ -715,28 +759,32 @@ impl Tool for DragTool {
                 cursor_overlay::OverlayCommand::SetPressed(true),
             );
             let cursor_id_for_task = cursor_id.clone();
-            let drag_result = tokio::task::spawn_blocking(move || {
-                let (outcome, guard) =
-                    crate::input::focus_guard::guarded_settled(Some(pid), || {
-                        Ok(crate::input::send_virtual_pointer_drag(
-                            &cursor_id_for_task,
-                            &crate::input::VirtualPointerDrag {
-                                target_window: xid,
-                                button,
-                                path: vec![
-                                    (sfx.round() as i32, sfy.round() as i32),
-                                    (stx.round() as i32, sty.round() as i32),
-                                ],
-                                duration_ms,
-                                steps,
-                            },
-                        ))
-                    })?;
-                outcome.map(|mut effect| {
-                    effect.focus_guard = guard;
-                    effect
-                })
-            })
+            let drag_result = spawn_blocking_bounded(
+                "drag",
+                foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
+                move || {
+                    let (outcome, guard) =
+                        crate::input::focus_guard::guarded_settled(Some(pid), || {
+                            Ok(crate::input::send_virtual_pointer_drag(
+                                &cursor_id_for_task,
+                                &crate::input::VirtualPointerDrag {
+                                    target_window: xid,
+                                    button,
+                                    path: vec![
+                                        (sfx.round() as i32, sfy.round() as i32),
+                                        (stx.round() as i32, sty.round() as i32),
+                                    ],
+                                    duration_ms,
+                                    steps,
+                                },
+                            ))
+                        })?;
+                    outcome.map(|mut effect| {
+                        effect.focus_guard = guard;
+                        effect
+                    })
+                },
+            )
             .await;
             crate::overlay::send_command_for(
                 cursor_id.clone(),
@@ -778,14 +826,25 @@ impl Tool for DragTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::SetPressed(true),
         );
-        let press_result = tokio::task::spawn_blocking(move || {
-            crate::input::send_button_down(
-                xid,
-                from_x.round() as i32,
-                from_y.round() as i32,
-                button,
-            )
-        })
+        let press_result = press_x11_drag_start(
+            foreground_budget(0),
+            move || {
+                crate::input::send_button_down(
+                    xid,
+                    from_x.round() as i32,
+                    from_y.round() as i32,
+                    button,
+                )
+            },
+            move || {
+                crate::input::send_button_up(
+                    xid,
+                    from_x.round() as i32,
+                    from_y.round() as i32,
+                    button,
+                )
+            },
+        )
         .await;
         let mut result: anyhow::Result<()> = match press_result {
             Ok(Ok(())) => Ok(()),
@@ -803,15 +862,16 @@ impl Tool for DragTool {
                 let t = i as f64 / steps.max(1) as f64;
                 let ix = from_x + (to_x - from_x) * t;
                 let iy = from_y + (to_y - from_y) * t;
-                let motion_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_motion(
-                        xid,
-                        ix.round() as i32,
-                        iy.round() as i32,
-                        Some(button),
-                    )
-                })
-                .await;
+                let motion_result =
+                    spawn_blocking_bounded("drag", foreground_budget(0), move || {
+                        crate::input::send_motion(
+                            xid,
+                            ix.round() as i32,
+                            iy.round() as i32,
+                            Some(button),
+                        )
+                    })
+                    .await;
                 match motion_result {
                     Ok(Ok(())) => {
                         if let Ok(Ok((sx, sy))) =
@@ -843,7 +903,9 @@ impl Tool for DragTool {
             }
         }
 
-        let release_result = tokio::task::spawn_blocking(move || {
+        // XSendEvent does not read the call's action, so the release still
+        // goes out if the call ends first.
+        let release_result = spawn_blocking_bounded("drag", foreground_budget(0), move || {
             crate::input::send_button_up(xid, to_x.round() as i32, to_y.round() as i32, button)
         })
         .await;

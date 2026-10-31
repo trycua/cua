@@ -17,6 +17,11 @@ fn publish(
     native_action_dimensions: (u32, u32),
     screenshot_to_action: ScreenshotToActionTransform,
 ) -> anyhow::Result<String> {
+    #[cfg(target_os = "linux")]
+    crate::interaction::admit_lock(
+        crate::interaction::policy::Scope::Capture,
+        crate::interaction::facts::Fact::Unknown("capture needs no focus".into()),
+    )?;
     let binding = service.binding_from_args(args)?;
     let capture_id = service.publish(CapturePublication {
         png_bytes: png_bytes.to_vec(),

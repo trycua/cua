@@ -48,6 +48,12 @@ impl Tool for GetScreenSizeTool {
                 let (frame, monitors) = crate::wayland::hyprland::screen_report()?;
                 return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
             }
+            if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+                // niri reports logical output geometry and its fractional
+                // scale over attested IPC, for a single-output layout.
+                let (frame, monitors) = crate::wayland::niri::screen_report()?;
+                return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
+            }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
             // assumption). Other Wayland compositors retain their existing

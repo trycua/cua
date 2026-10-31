@@ -46316,7 +46316,7 @@ const FfiConverterTypeAppWizardFact = (() => {
 export type AppWizardField = {
     /**
      * `os`, `image`, `placement`, `kind`, `runtime`, `connect-cloud`,
-     * `connect-by-address`, `cpus`, `memory`, `disk`, `name`,
+     * `cpus`, `memory`, `disk`, `name`,
      * `open-when-ready`, `address`, `token`, `address-name`.
      */
     id: string,

@@ -83,15 +83,16 @@ impl Tool for HotkeyTool {
                 .await;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
-            let result = tokio::task::spawn_blocking(move || {
-                if wayland {
-                    crate::wayland::hotkey_focused(&keys)
-                } else {
-                    let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    crate::input::send_key_xtest(&key, &refs)
-                }
-            })
-            .await;
+            let result =
+                spawn_blocking_bounded("desktop hotkey", foreground_budget(1), move || {
+                    if wayland {
+                        crate::wayland::hotkey_focused(&keys)
+                    } else {
+                        let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                        crate::input::send_key_xtest(&key, &refs)
+                    }
+                })
+                .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!("Pressed desktop hotkey {display}."))
                     .with_structured(
@@ -434,7 +435,7 @@ impl Tool for HotkeyTool {
                 // (`send_key`) are dropped by GTK/Qt/Chromium/Firefox, so the
                 // foreground rung must use XTest, which reaches the focused window.
                 if deliver_fg {
-                    return crate::input::with_x11_foreground_opts(
+                    return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
                         || crate::input::send_key_xtest(&key, &m),

@@ -143,19 +143,20 @@ impl Tool for PressKeyTool {
                 .await;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
-            let result = tokio::task::spawn_blocking(move || {
-                if wayland && modifiers.is_empty() {
-                    crate::wayland::press_key_focused(&key)
-                } else if wayland {
-                    let mut keys = modifiers;
-                    keys.push(key);
-                    crate::wayland::hotkey_focused(&keys)
-                } else {
-                    let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    crate::input::send_key_xtest(&key, &refs)
-                }
-            })
-            .await;
+            let result =
+                spawn_blocking_bounded("desktop press_key", foreground_budget(1), move || {
+                    if wayland && modifiers.is_empty() {
+                        crate::wayland::press_key_focused(&key)
+                    } else if wayland {
+                        let mut keys = modifiers;
+                        keys.push(key);
+                        crate::wayland::hotkey_focused(&keys)
+                    } else {
+                        let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                        crate::input::send_key_xtest(&key, &refs)
+                    }
+                })
+                .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!("Pressed desktop key '{display}'."))
                     .with_structured(
@@ -413,21 +414,26 @@ impl Tool for PressKeyTool {
             let key_w = key.clone();
             let chord = press_key_chord(&mods, &key);
             let element = token.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::with_target_foreground(pid, xid, || {
-                    if let Some(element) = &element {
-                        if !crate::atspi::focus_token(pid, element)? {
-                            anyhow::bail!(
-                                "AT-SPI Component.GrabFocus returned false for element {}",
-                                element.index
-                            );
+            let result = spawn_blocking_bounded("press_key", foreground_budget(1), move || {
+                crate::interaction::with_target_foreground(
+                    pid,
+                    xid,
+                    crate::interaction::RestoreMode::RestorePrevious,
+                    || {
+                        if let Some(element) = &element {
+                            if !crate::atspi::focus_token(pid, element)? {
+                                anyhow::bail!(
+                                    "AT-SPI Component.GrabFocus returned false for element {}",
+                                    element.index
+                                );
+                            }
                         }
-                    }
-                    match chord {
-                        Some(keys) => crate::wayland::hotkey_focused(&keys),
-                        None => crate::wayland::press_key_focused(&key_w),
-                    }
-                })
+                        match chord {
+                            Some(keys) => crate::wayland::hotkey_focused(&keys),
+                            None => crate::wayland::press_key_focused(&key_w),
+                        }
+                    },
+                )
             })
             .await;
             return match result {
@@ -466,7 +472,7 @@ impl Tool for PressKeyTool {
             // events through the XI2 virtual master keyboard (no focus steal),
             // else direct XSendEvent for apps that accept it.
             if deliver_fg {
-                return crate::input::with_x11_foreground_opts(
+                return crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::keyboard(),
                     || {

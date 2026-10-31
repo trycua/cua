@@ -1,7 +1,7 @@
 //! Persistent session-bus transport for synchronous compositor helpers.
 //! A separate runtime also serves callers already inside Tokio without nested block_on.
 use std::sync::{mpsc, OnceLock};
-use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::Mutex;
 use zbus::{Connection, Message};
 
@@ -23,8 +23,12 @@ pub(super) fn call(
     path: &str,
     method: &str,
     args: &[String],
-    timeout: Duration,
+    deadline: Instant,
 ) -> Option<String> {
+    let timeout = deadline.saturating_duration_since(Instant::now());
+    if timeout.is_zero() {
+        return None;
+    }
     let destination = destination.to_owned();
     let path = path.to_owned();
     let method = method.to_owned();
@@ -56,7 +60,7 @@ pub(super) fn call(
         }
         let _ = tx.send(result.ok());
     });
-    rx.recv_timeout(timeout + Duration::from_millis(100))
+    rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .ok()
         .flatten()
 }

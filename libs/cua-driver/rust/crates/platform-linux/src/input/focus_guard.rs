@@ -23,6 +23,7 @@
 //! hidden: a toolkit keyboard grab held by an open menu cannot be undone
 //! without closing the menu, so it is surfaced as `grab_held_by`.
 
+use crate::interaction::policy::{guard_restore, GuardRestore};
 use anyhow::{anyhow, Result};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -45,11 +46,6 @@ const SETTLE_WATCH: Duration = Duration::from_millis(220);
 /// its own and there is nothing to wait for.
 const SETTLE_WATCH_NEW_WINDOW: Duration = Duration::from_millis(900);
 const SETTLE_POLL: Duration = Duration::from_millis(30);
-/// Bound on the restore loop: re-activation, verification, one re-send.
-// Together with the extended settle watch this bounds the guard at
-// ~1.5 s worst case (menubar clicks were spending 4-9 s here while a popup's
-// keyboard grab kept every re-activation from sticking).
-const RESTORE_BUDGET: Duration = Duration::from_millis(600);
 const RESTORE_POLL: Duration = Duration::from_millis(50);
 /// Consecutive stable polls before the restore is called done.
 const STABLE_POLLS: u32 = 3;
@@ -286,34 +282,6 @@ impl X {
             let _ = cookie.check();
         }
         let _ = self.conn.flush();
-    }
-}
-
-/// Where a focus move went, relative to the action's target application.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FocusMove {
-    /// The target app owned the focus before and still does: it opened one
-    /// of its own windows (a dialog). Not an intrusion; leave it.
-    SameAppDialog,
-    /// The focus left the user's application (or arrived in the target from
-    /// another app): restore it.
-    OtherApp,
-}
-
-/// The same-app rule: a move is the app's own dialog only when the target
-/// pid owned the focus before the action *and* owns it now. A move from a
-/// decoy (another pid) into the target's dialog is a steal, as is a move
-/// from the target to anything else.
-pub fn classify_focus_move(
-    target_pid: Option<u32>,
-    previous_owner: Option<u32>,
-    new_owner: Option<u32>,
-) -> FocusMove {
-    match (target_pid, previous_owner, new_owner) {
-        (Some(target), Some(previous), Some(new)) if previous == target && new == target => {
-            FocusMove::SameAppDialog
-        }
-        _ => FocusMove::OtherApp,
     }
 }
 
@@ -585,16 +553,15 @@ impl FocusSnapshot {
             return FocusGuardReport::default();
         };
         let mut report = FocusGuardReport::default();
-        // The target app owns the focus: whatever it maps next is its own.
-        let target_owns_focus = target_pid.is_some() && self.previous_owner == target_pid;
 
         // Settle watch: stop at the first observed change. A new top-level
         // (dialog being mapped) extends the watch when the focus belongs to
         // another application, since the WM focuses it only once mapped and
         // that steal must be undone; when the target app already owns the
         // focus the new window is its own and the watch ends at once.
+        let action_deadline = crate::interaction::operation_deadline(SETTLE_WATCH_NEW_WINDOW);
         let mut watch_until = if settle_watch {
-            started + SETTLE_WATCH
+            (started + SETTLE_WATCH).min(action_deadline)
         } else {
             started
         };
@@ -604,16 +571,18 @@ impl FocusSnapshot {
         let mut own_window = self.own_new_window(&x, target_pid, &new_clients);
         if !settle_watch && !new_clients.is_empty() && own_window.is_none() {
             extended = true;
-            watch_until = started + SETTLE_WATCH_NEW_WINDOW;
+            watch_until = (started + SETTLE_WATCH_NEW_WINDOW).min(action_deadline);
         }
         while changes.is_empty() && own_window.is_none() && Instant::now() < watch_until {
-            std::thread::sleep(SETTLE_POLL);
+            std::thread::sleep(
+                SETTLE_POLL.min(watch_until.saturating_duration_since(Instant::now())),
+            );
             changes = self.diff(&x);
             new_clients = self.new_clients(&x);
             own_window = self.own_new_window(&x, target_pid, &new_clients);
             if !extended && !new_clients.is_empty() && own_window.is_none() {
                 extended = true;
-                watch_until = started + SETTLE_WATCH_NEW_WINDOW;
+                watch_until = (started + SETTLE_WATCH_NEW_WINDOW).min(action_deadline);
             }
         }
 
@@ -648,43 +617,42 @@ impl FocusSnapshot {
         // The action closed the window that held the focus (Escape / OK on
         // a dialog): nothing to restore to, the WM already moved on.
         let focus_window = self.current_focus_window(&x);
-        if let Some(previous) = self
+        let closed = self
             .previous_focus_window()
-            .filter(|w| !x.window_viewable(*w))
-        {
-            report.closed_window = Some(u64::from(previous));
-            report.same_app_window = focus_window.map(|w| SameAppWindow {
-                window: u64::from(w),
-                title: x.window_title(w),
-                focused: true,
-            });
-            report.elapsed_ms = started.elapsed().as_millis() as u64;
-            return report;
-        }
-
-        // Same-app rule: the focus stayed inside the target application
-        // (it opened a dialog). Leave it and say so.
+            .filter(|w| !x.window_viewable(*w));
         let new_owner = focus_window.and_then(|w| x.owner_pid(w));
-        if target_owns_focus
-            && classify_focus_move(target_pid, self.previous_owner, new_owner)
-                == FocusMove::SameAppDialog
-        {
-            let window = focus_window.unwrap_or(0);
-            report.same_app_window = Some(SameAppWindow {
-                window: u64::from(window),
-                title: x.window_title(window),
-                focused: true,
-            });
-            report.elapsed_ms = started.elapsed().as_millis() as u64;
-            return report;
-        }
-
-        // A popup (menu, combo list) that the action opened holds a keyboard
-        // grab: re-activating the previous window cannot take effect until it
-        // closes, and closing it would undo the action. Report and return.
-        if report.grab_held_by.is_some() {
-            report.elapsed_ms = started.elapsed().as_millis() as u64;
-            return report;
+        match guard_restore(
+            closed.is_some(),
+            target_pid,
+            self.previous_owner,
+            new_owner,
+            report.grab_held_by.is_some(),
+        ) {
+            GuardRestore::PriorClosed => {
+                report.closed_window = closed.map(u64::from);
+                report.same_app_window = focus_window.map(|w| SameAppWindow {
+                    window: u64::from(w),
+                    title: x.window_title(w),
+                    focused: true,
+                });
+                report.elapsed_ms = started.elapsed().as_millis() as u64;
+                return report;
+            }
+            GuardRestore::SameAppDialog => {
+                let window = focus_window.unwrap_or(0);
+                report.same_app_window = Some(SameAppWindow {
+                    window: u64::from(window),
+                    title: x.window_title(window),
+                    focused: true,
+                });
+                report.elapsed_ms = started.elapsed().as_millis() as u64;
+                return report;
+            }
+            GuardRestore::GrabHeld => {
+                report.elapsed_ms = started.elapsed().as_millis() as u64;
+                return report;
+            }
+            GuardRestore::Restore => {}
         }
 
         // Restore. EWMH re-activation makes the WM restore stacking and its
@@ -692,10 +660,12 @@ impl FocusSnapshot {
         // treat _NET_ACTIVE_WINDOW as raise-only and the no-WM case.
         let mut stable = 0;
         let mut resent = 0;
-        let deadline = started + RESTORE_BUDGET;
+        let deadline = Instant::now() + crate::interaction::CLEANUP_CAP;
         self.reassert(&x);
         while Instant::now() < deadline {
-            std::thread::sleep(RESTORE_POLL);
+            std::thread::sleep(
+                RESTORE_POLL.min(deadline.saturating_duration_since(Instant::now())),
+            );
             let now = self.diff(&x);
             if now.is_empty() {
                 stable += 1;
@@ -909,39 +879,6 @@ mod tests {
     }
 
     #[test]
-    fn same_app_rule_only_when_the_target_owned_the_focus_before_and_after() {
-        // The target app was active and opened its own dialog: leave it.
-        assert_eq!(
-            classify_focus_move(Some(7), Some(7), Some(7)),
-            FocusMove::SameAppDialog
-        );
-        // Decoy case: another app owned the focus and the target's dialog
-        // stole it -> restore.
-        assert_eq!(
-            classify_focus_move(Some(7), Some(3), Some(7)),
-            FocusMove::OtherApp
-        );
-        // The target was active and something else took the focus -> restore.
-        assert_eq!(
-            classify_focus_move(Some(7), Some(7), Some(3)),
-            FocusMove::OtherApp
-        );
-        // Unknown owners never qualify.
-        assert_eq!(
-            classify_focus_move(Some(7), None, Some(7)),
-            FocusMove::OtherApp
-        );
-        assert_eq!(
-            classify_focus_move(Some(7), Some(7), None),
-            FocusMove::OtherApp
-        );
-        assert_eq!(
-            classify_focus_move(None, Some(7), Some(7)),
-            FocusMove::OtherApp
-        );
-    }
-
-    #[test]
     fn capture_without_display_degrades_to_none() {
         let display = crate::test_env::unreachable_x11_display();
         let snapshot = FocusSnapshot::capture();
@@ -977,6 +914,9 @@ mod grab_tests {
 
     #[test]
     fn restore_and_settle_budgets_bound_the_guard_under_1500ms() {
-        assert!(SETTLE_WATCH_NEW_WINDOW + RESTORE_BUDGET <= Duration::from_millis(1500));
+        assert!(
+            SETTLE_WATCH_NEW_WINDOW + crate::interaction::CLEANUP_CAP
+                <= Duration::from_millis(1500)
+        );
     }
 }

@@ -377,7 +377,16 @@ Wayland session. Linux does not need GIF output; MP4, screenshots, accessibility
 trees, trajectories, and logs are the useful evidence.
 
 Wayland results are compositor-specific. The hosted lane uses Sway to prove
-wlroots protocols. GNOME requires the optional WinRects Shell helper for
+wlroots protocols. The niri lane (`CUA_E2E_WAYLAND_SESSION=niri` in
+`nix develop .#cua-driver-niri-e2e`) runs niri's winit backend inside a
+headless cage; its observer reads niri IPC, which reports no stacking order and
+no tiled-window positions, and cannot tell a fullscreen tile from a maximized
+one. It reports a floating harness window as occluded only behind the focused
+sentinel while the sentinel itself reports being fullscreen, and one that
+overlaps no other floating window as visible. It refuses tiled targets,
+overlapping floating windows, an open overview, and any other output-sized
+tile, including a maximized sentinel.
+GNOME requires the optional WinRects Shell helper for
 authoritative frame and buffer geometry, observation, capture, and verified
 target activation. A portal/libei grant persists until the user revokes it, so
 subsequent driver processes do not reopen the consent dialog.

@@ -11,7 +11,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use self::protocol::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use self::protocol::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1;
 
-mod protocol {
+pub(super) mod protocol {
     use wayland_client;
     use wayland_client::protocol::*;
 
@@ -160,7 +160,7 @@ fn send_key(
 ) -> anyhow::Result<()> {
     keyboard.key(super::event_time_ms(), keycode, key_state);
     queue.roundtrip(state)?;
-    std::thread::sleep(std::time::Duration::from_millis(4));
+    crate::interaction::pause(std::time::Duration::from_millis(4));
     Ok(())
 }
 

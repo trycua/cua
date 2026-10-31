@@ -8,9 +8,10 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use super::impl_::{
-    held_target_mismatch, mouse_button_name, mouse_hold_json, overlay_glide_to_for,
-    overlay_move_to_target_for, overlay_snap_to_for, persistent_pointer_coordinates,
-    require_point_args, resolve_cursor_key, screenshot_scale, window_local_to_screen, ToolState,
+    drag_steps, foreground_budget, held_target_mismatch, mouse_button_name, mouse_hold_json,
+    overlay_glide_to_for, overlay_move_to_target_for, overlay_snap_to_for,
+    persistent_pointer_coordinates, require_point_args, resolve_cursor_key, screenshot_scale,
+    spawn_blocking_bounded, window_local_to_screen, AimedPoint, ToolState,
 };
 
 fn overlay_move_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) {
@@ -94,7 +95,7 @@ impl Tool for MouseDragTool {
         let from_x = hold.x;
         let from_y = hold.y;
         let duration_ms = args.u64_or("duration_ms", 500);
-        let steps = args.u64_or("steps", 20).max(1) as usize;
+        let steps = drag_steps(&args);
         crate::overlay::send_command_for(
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
@@ -120,6 +121,7 @@ impl Tool for MouseDragTool {
             duration_ms
         };
         let mut result: anyhow::Result<()> = Ok(());
+        let mut moved = 0;
         let mut prev_x = from_x;
         let mut prev_y = from_y;
         let is_wl = crate::wayland::is_wayland();
@@ -132,19 +134,26 @@ impl Tool for MouseDragTool {
             // X11 keeps the existing input::send_motion path.
             let cid_inner = cursor_id.clone();
             let move_result = if is_wl {
-                let (output_x, output_y) = persistent_pointer_coordinates(
+                match persistent_pointer_coordinates(
                     is_wl,
                     xid,
                     ix.round() as i32,
                     iy.round() as i32,
                     crate::wayland::window_local_to_output,
-                );
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::persistent_vptr::move_to(&cid_inner, output_x, output_y)
-                })
-                .await
+                ) {
+                    Ok(AimedPoint {
+                        point: (output_x, output_y),
+                        ..
+                    }) => {
+                        spawn_blocking_bounded("mouse_drag", foreground_budget(0), move || {
+                            crate::wayland::persistent_vptr::move_to(&cid_inner, output_x, output_y)
+                        })
+                        .await
+                    }
+                    Err(error) => Ok(Err(error)),
+                }
             } else {
-                tokio::task::spawn_blocking(move || {
+                spawn_blocking_bounded("mouse_drag", foreground_budget(0), move || {
                     crate::input::send_motion(
                         xid,
                         ix.round() as i32,
@@ -174,6 +183,7 @@ impl Tool for MouseDragTool {
                     }
                     prev_x = ix;
                     prev_y = iy;
+                    moved = i;
                     if step_delay_ms > 0 {
                         tokio::time::sleep(std::time::Duration::from_millis(step_delay_ms)).await;
                     }
@@ -221,6 +231,21 @@ impl Tool for MouseDragTool {
                     mouse_button_name(hold.button),
                 ))
                 .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
+            }
+            Err(e) if e.is::<crate::wayland::persistent_vptr::HeldPointerEnded>() => {
+                // The persistent pointer released the button and discarded
+                // the cursor: it holds nothing any more.
+                self.state.mouse_hold.lock().unwrap().remove(&cursor_id);
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::SetPressed(false),
+                );
+                let mut structured = mouse_hold_json(&cursor_id, None);
+                structured["effect"] = json!("partial");
+                ToolResult::error(format!(
+                    "mouse_drag stopped after {moved} of {steps} steps: {e}"
+                ))
+                .with_structured(structured)
             }
             Err(e) => ToolResult::error(e.to_string())
                 .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),

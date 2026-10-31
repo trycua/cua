@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use super::impl_::{
     clear_mouse_hold_after_release, coordinate_frame_schema, desktop_frame_requested,
-    desktop_to_window_local, held_target_mismatch, mouse_button_name, mouse_hold_json,
-    overlay_glide_to_for, overlay_snap_to_for, resolve_cursor_key, screenshot_scale,
-    window_local_to_screen, MouseHoldState, ToolState,
+    desktop_to_window_local, foreground_budget, held_target_mismatch, mouse_button_name,
+    mouse_hold_json, overlay_glide_to_for, overlay_snap_to_for, resolve_cursor_key,
+    screenshot_scale, spawn_blocking_bounded, window_local_to_screen, MouseHoldState, ToolState,
 };
 
 #[cfg(test)]
@@ -131,6 +131,35 @@ impl Tool for MouseButtonUpTool {
             .get(&cursor_id)
             .cloned()
         else {
+            // A press whose recording failed and whose release niri did not
+            // confirm stays with the persistent pointer: release it there.
+            if crate::wayland::is_wayland() {
+                let cid = cursor_id.clone();
+                let released =
+                    spawn_blocking_bounded("mouse_button_up", foreground_budget(0), move || {
+                        crate::wayland::persistent_vptr::release_unrecorded(&cid)
+                    })
+                    .await;
+                let unheld = mouse_hold_json(&cursor_id, None);
+                match released {
+                    Ok(Ok(true)) => {
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::SetPressed(false),
+                        );
+                        return ToolResult::text(format!(
+                            "✅ Cursor '{cursor_id}' released a button an earlier call pressed but could not record."
+                        ))
+                        .with_structured(unheld);
+                    }
+                    Ok(Ok(false)) => {}
+                    Ok(Err(e)) => return ToolResult::error(e.to_string()).with_structured(unheld),
+                    Err(e) => {
+                        return ToolResult::error(format!("Task error: {e}"))
+                            .with_structured(unheld)
+                    }
+                }
+            }
             return ToolResult::error(format!(
                 "No mouse button is currently held for cursor '{cursor_id}'."
             ))
@@ -191,13 +220,17 @@ impl Tool for MouseButtonUpTool {
         // (single logical drag rather than a click pair).
         let result = if crate::wayland::is_wayland() {
             let cid = cursor_id.clone();
-            tokio::task::spawn_blocking(move || {
+            spawn_blocking_bounded("mouse_button_up", foreground_budget(0), move || {
                 crate::wayland::persistent_vptr::release(&cid, button)
             })
             .await
         } else {
-            tokio::task::spawn_blocking(move || crate::input::send_button_up(xid, xi, yi, button))
-                .await
+            // XSendEvent does not read the call's action, so the release
+            // still goes out if the call ends first.
+            spawn_blocking_bounded("mouse_button_up", foreground_budget(0), move || {
+                crate::input::send_button_up(xid, xi, yi, button)
+            })
+            .await
         };
         match result {
             Ok(Ok(())) => {

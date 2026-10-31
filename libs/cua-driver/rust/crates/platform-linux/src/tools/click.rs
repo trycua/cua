@@ -11,8 +11,8 @@ use std::sync::Arc;
 use super::impl_::{
     apply_foreground_report, attach_focus_guard, capture_admission_error,
     checked_element_local_coords, coordinate_frame_schema, desktop_frame_requested,
-    desktop_input_space, desktop_to_window_local, element_is_menu_role, element_needs_real_click,
-    element_screen_center, foreground_budget, foreground_hyprland_action,
+    desktop_frame_unmapped, desktop_input_space, desktop_to_window_local, element_is_menu_role,
+    element_needs_real_click, element_screen_center, foreground_budget, foreground_hyprland_action,
     foreground_hyprland_refusal, foreground_structured, hyprland_foreground, input_error_result,
     isolated_hyprland_action, isolated_hyprland_background, isolated_hyprland_refusal,
     isolated_hyprland_result, isolated_hyprland_task_error, named_session_cursor_key,
@@ -21,7 +21,7 @@ use super::impl_::{
     reveal_pointer_action_target_for, screenshot_scale, spawn_blocking_bounded,
     spawn_isolated_hyprland, synthetic_pointer_is_dropped, unavailable_chromium_background,
     unavailable_wayland_focused_input_background, window_local_to_screen,
-    window_scope_unproven_refusal, with_pixel_points, x11_pixel_click_no_focus_steal,
+    window_scope_unproven_refusal, with_pixel_points, x11_pixel_click_no_focus_steal, AimedPoint,
     CoordinateContext, PointerRoute, ToolState,
 };
 
@@ -404,6 +404,30 @@ pub struct ClickTool {
 
 static CLICK_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Presses in one click train: 1 to 3, as the contract states. A niri click
+/// train is one gated action, so a larger count would mean seconds of
+/// presses no recheck covers.
+fn click_train(requested: u64) -> usize {
+    requested.clamp(1, 3) as usize
+}
+
+#[cfg(test)]
+#[test]
+fn click_trains_stop_at_the_advertised_triple_click() {
+    // A niri click train is rechecked once, before its first press, so a
+    // `count: 20` must not become seconds of ungated presses.
+    let tool = ClickTool {
+        state: ToolState::new(),
+    };
+    let count = &tool.def().input_schema["properties"]["count"];
+    assert_eq!(
+        (count["minimum"].as_u64(), count["maximum"].as_u64()),
+        (Some(1), Some(3))
+    );
+    assert_eq!(click_train(20), 3);
+    assert_eq!(click_train(2), 2);
+}
+
 /// Where a foreground element click may put the real pointer.
 enum ForegroundElementPlacement {
     /// The element centre lies inside the target window (or a popup of the
@@ -521,7 +545,7 @@ impl ClickTool {
                     move || {
                         let modifier_refs: Vec<&str> =
                             modifier_owned.iter().map(String::as_str).collect();
-                        crate::input::with_x11_foreground_opts(
+                        crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
                             || {
@@ -615,7 +639,7 @@ impl ClickTool {
                     "foreground element action",
                     foreground_budget(0),
                     move || {
-                        crate::input::with_x11_foreground_opts(
+                        crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
                             || crate::atspi::perform_action_observed(&observed_for_ax),
@@ -833,7 +857,7 @@ impl Tool for ClickTool {
                     // [left,right,middle]); kept inline to carry the Linux/Wayland
                     // back-compat prose the click button-schema test asserts on.
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
-                    "count":{"type":"integer","minimum":1,"description":"Number of clicks in one press train: 1 (default), 2 = double-click, 3 = triple-click (line/paragraph selection). There is no separate triple_click tool — pass count: 3 here."},
+                    "count":{"type":"integer","minimum":1,"maximum":3,"description":"Number of clicks in one press train: 1 (default), 2 = double-click, 3 = triple-click (line/paragraph selection). There is no separate triple_click tool — pass count: 3 here."},
                     "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window","description":"Coordinate frame (default \"window\"). Pass \"desktop\" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates."},
@@ -879,11 +903,12 @@ impl Tool for ClickTool {
                 Err(result) => return result,
             };
             let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
-            let n = input.count.unwrap_or(1) as usize;
+            let n = input.count.unwrap_or(1);
             if n == 0 {
                 return ToolResult::error("click.count must be at least 1.")
                     .with_structured(json!({ "code": "invalid_arguments" }));
             }
+            let n = click_train(u64::from(n));
             let space = match desktop_input_space().await {
                 Ok(space) => space,
                 Err(error) => {
@@ -920,7 +945,7 @@ impl Tool for ClickTool {
                 true,
             )
             .await;
-            let r = tokio::task::spawn_blocking(move || {
+            let r = spawn_blocking_bounded("desktop click", foreground_budget(0), move || {
                 if crate::wayland::wayland_input_enabled() {
                     if !modifiers.is_empty() {
                         anyhow::bail!(
@@ -950,6 +975,9 @@ impl Tool for ClickTool {
                 .with_structured(
                     json!({ "path": if crate::wayland::wayland_input_enabled() { "wayland_desktop" } else { "xtest_desktop" }, "verified": false, "effect": "unverifiable" }),
                 ),
+                Ok(Err(e)) if crate::input::foreground::error_code(&e).is_some() => {
+                    input_error_result(e)
+                }
                 Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
                 Err(e) => ToolResult::error(format!("task error: {e}")),
             };
@@ -960,7 +988,7 @@ impl Tool for ClickTool {
             Err(e) => return e,
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        let count = args.u64_or("count", 1) as usize;
+        let count = click_train(args.u64_or("count", 1));
         let isolated_background = isolated_hyprland_background(delivery);
         // Surface 5: reject unknown buttons so a typo can't silently fall through
         // to a left-click. Empty string keeps back-compat with old clients.
@@ -1298,54 +1326,66 @@ impl Tool for ClickTool {
             // click at the element (no focus steal), then to a target-addressed
             // X11 event for toolkits that accept it.
             let cursor_id_for_fallback = cursor_id.clone();
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
-                let (xid2, lx, ly) = checked_element_local_coords(pid, &token, xid_hint)?;
-                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                if crate::wayland::wayland_input_enabled() && !modifier_refs.is_empty() {
-                    anyhow::bail!(
-                        "modified element clicks are unavailable on native Wayland: \
+            let result = spawn_blocking_bounded(
+                "element click",
+                foreground_budget(0),
+                move || -> anyhow::Result<PointerRoute> {
+                    // Refuse before resolving coordinates: the refusal does not
+                    // depend on where the element is, and a window without
+                    // compositor geometry must not turn it into a lookup error.
+                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    if crate::wayland::wayland_input_enabled() && !modifier_refs.is_empty() {
+                        anyhow::bail!(
+                            "modified element clicks are unavailable on native Wayland: \
                          the pointer route cannot carry keyboard modifier state"
-                    );
-                }
-                // An explicit X11 foreground request needs the real XTest path
-                // even for a plain click. Some native widgets (notably GTK
-                // selectable rows) expose bounds but no AT-SPI Action and
-                // ignore a targeted XSendEvent; limiting XTest to modified
-                // clicks made those rows addressable but not selectable.
-                if delivery.is_foreground() && !crate::wayland::wayland_input_enabled() {
-                    let (_, sx, sy) = placement
-                        .ok_or_else(|| anyhow::anyhow!("element screen bounds unavailable"))?;
-                    crate::input::with_x11_foreground(xid2, 80, || {
-                        crate::input::send_click_xtest_desktop_with_modifiers(
-                            sx.round() as i32,
-                            sy.round() as i32,
+                        );
+                    }
+                    let (xid2, lx, ly) = checked_element_local_coords(pid, &token, xid_hint)?;
+                    // An explicit X11 foreground request needs the real XTest path
+                    // even for a plain click. Some native widgets (notably GTK
+                    // selectable rows) expose bounds but no AT-SPI Action and
+                    // ignore a targeted XSendEvent; limiting XTest to modified
+                    // clicks made those rows addressable but not selectable.
+                    if delivery.is_foreground() && !crate::wayland::wayland_input_enabled() {
+                        let (_, sx, sy) = placement
+                            .ok_or_else(|| anyhow::anyhow!("element screen bounds unavailable"))?;
+                        crate::interaction::with_x11_foreground(
+                            xid2,
+                            crate::input::ForegroundOptions::pointer(),
+                            || {
+                                crate::input::send_click_xtest_desktop_with_modifiers(
+                                    sx.round() as i32,
+                                    sy.round() as i32,
+                                    button,
+                                    count,
+                                    &modifier_refs,
+                                )
+                            },
+                        )
+                        .map(|(value, _report)| value)
+                        .map(|()| PointerRoute::Foreground)
+                    } else if modifier_refs.is_empty() && !crate::wayland::wayland_input_enabled() {
+                        x11_pixel_click_no_focus_steal(
+                            &cursor_id_for_fallback,
+                            xid2,
+                            lx as i32,
+                            ly as i32,
                             button,
                             count,
+                        )
+                    } else {
+                        crate::input::send_click_with_modifiers(
+                            xid2,
+                            lx as i32,
+                            ly as i32,
+                            count,
+                            button,
                             &modifier_refs,
                         )
-                    })
-                    .map(|()| PointerRoute::Foreground)
-                } else if modifier_refs.is_empty() && !crate::wayland::wayland_input_enabled() {
-                    x11_pixel_click_no_focus_steal(
-                        &cursor_id_for_fallback,
-                        xid2,
-                        lx as i32,
-                        ly as i32,
-                        button,
-                        count,
-                    )
-                } else {
-                    crate::input::send_click_with_modifiers(
-                        xid2,
-                        lx as i32,
-                        ly as i32,
-                        count,
-                        button,
-                        &modifier_refs,
-                    )
-                    .map(|()| PointerRoute::Synthetic)
-                }
-            })
+                        .map(|()| PointerRoute::Synthetic)
+                    }
+                },
+            )
             .await;
             let mode_label = if delivery.is_foreground() {
                 "foreground"
@@ -1456,11 +1496,7 @@ impl Tool for ClickTool {
                     x = lx;
                     y = ly;
                 }
-                Ok(Err(e)) => {
-                    return ToolResult::error(format!(
-                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                    ))
-                }
+                Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
         }
@@ -1473,15 +1509,17 @@ impl Tool for ClickTool {
         // always window-local screenshot pixels; native Wayland translates
         // through compositor/AT-SPI geometry while X11 uses XTranslateCoordinates.
         let wayland_output_point = if crate::wayland::wayland_input_enabled() {
-            Some(crate::wayland::window_local_to_output(
-                xid,
-                x.round() as i32,
-                y.round() as i32,
-            ))
+            match crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32) {
+                Ok(point) => Some(point),
+                Err(error) => return input_error_result(error),
+            }
         } else {
             None
         };
-        let glide_target = if let Some((sx, sy)) = wayland_output_point {
+        let glide_target = if let Some(AimedPoint {
+            point: (sx, sy), ..
+        }) = wayland_output_point
+        {
             Some((sx as f64, sy as f64))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
@@ -1496,7 +1534,8 @@ impl Tool for ClickTool {
         let (xi, yi) = (x as i32, y as i32);
         let pixel_screen_point =
             glide_target.map(|(sx, sy)| (sx.round() as i32, sy.round() as i32));
-        let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
+        let aimed = wayland_output_point.unwrap_or_else(|| (xi, yi).into());
+        let (output_x, output_y) = aimed.point;
         if hyprland_foreground(delivery) {
             if !modifiers.is_empty() {
                 return foreground_hyprland_refusal("modified clicks are unsupported");
@@ -1585,8 +1624,8 @@ impl Tool for ClickTool {
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
                 // button events. Wayland injection routes to the compositor focus.
-                crate::wayland::with_target_foreground(pid, xid, || {
-                    crate::wayland::click_focused(output_x, output_y, count as u32, button)
+                crate::interaction::with_target_foreground(pid, xid, crate::interaction::RestoreMode::RestorePrevious, || {
+                    crate::wayland::click_focused(aimed, count as u32, button)
                 })?;
                 return Ok(("wayland_activate", None, None, None));
             }
@@ -1679,7 +1718,7 @@ impl Tool for ClickTool {
                 Ok((if fg { "x11_pixel_fg" } else { "x11_pixel" }, None, None))
             };
             if delivery.is_foreground() {
-                crate::input::with_x11_foreground_opts(
+                crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::pointer(),
                     || inject(true),

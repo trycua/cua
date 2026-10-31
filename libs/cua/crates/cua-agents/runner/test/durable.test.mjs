@@ -26,6 +26,19 @@ async function withBox(fn) {
 const tool = (id, extra = {}) => ({ tool: { id, title: `run ${id}`, kind: "execute", input: { cmd: id }, ...extra } });
 const floor = (box) => Number(fs.readFileSync(path.join(box.state, "epoch"), "utf8"));
 
+// ---- the working folder ----------------------------------------------------
+
+t("a state directory given as ~/... gives the harness an absolute working folder", async (box) => {
+  box.script({ prompts: [{ match: ".", steps: [{ say: "hi" }] }] });
+  // What `cua agent add --durable` sends: state dir `~/.cua/durable/NAME`, cwd `${CUA_SESSION_STATE_DIR}/work`.
+  box.config({ cwd: "${CUA_SESSION_STATE_DIR}/work", durable: { stateDir: "~/.cua/durable/s1" } });
+  const r = await box.go({ epoch: 1, resume: false, env: { HOME: box.root, CUA_SESSION_STATE_DIR: "~/.cua/durable/s1" } });
+  assert.equal(r.code, 0, r.stderr);
+  const cwd = box.agentLog().find((l) => l.ev === "session_new")?.cwd;
+  assert.ok(path.isAbsolute(cwd), `cwd ${cwd} is not absolute`);
+  assert.equal(cwd, path.join(box.root, ".cua/durable/s1/work"));
+});
+
 // ---- the fence -----------------------------------------------------------
 
 t("a stale epoch is refused: exit 75, nothing written, the agent never starts", async (box) => {
@@ -103,6 +116,24 @@ t("the intent is on disk before the approval is answered; one approval per call 
   assert.equal(outcome.status, "completed");
   assert.equal(outcome.summary, "ok call-1");
   assert.equal(outcome.unguarded, undefined);
+});
+
+t("a second permission request for one call from the same agent process is approved, not refused as a repeat (CUA-2958)", async (box) => {
+  // OpenCode asks for an external directory and then for the command, both under one call id.
+  box.script({ prompts: [{ match: ".", steps: [tool("call-1", { askTwice: true }), { say: "done" }] }] });
+  box.config();
+  const r = await box.go({ epoch: 1, resume: false });
+  assert.equal(r.code, 0, r.stderr);
+  const log = box.agentLog();
+  assert.equal(log.filter((l) => l.ev === "permission_first").length, 1);
+  assert.equal(log.find((l) => l.ev === "permission_first").outcome.outcome, "selected");
+  assert.equal(log.filter((l) => l.ev === "permission").length, 1);
+  assert.equal(log.find((l) => l.ev === "permission").outcome.outcome, "selected", "the second request was approved");
+  assert.deepEqual(box.effects(), ["call-1"], "the command ran once");
+  // One intent, one outcome: the second request added nothing to the journal.
+  assert.deepEqual(box.tools().map((x) => x.kind), ["intent", "outcome"]);
+  const perms = box.events().filter((e) => e.type === "permission");
+  assert.deepEqual(perms.map((e) => e.action), ["approve", "again"]);
 });
 
 t("guard: the harness is not switched to full access and is approved with allow-once, so it keeps asking", async (box) => {
@@ -372,6 +403,51 @@ t("an agent with session/resume is resumed with it, and secrets never reach the 
     assert.ok(!fs.readFileSync(path.join(box.state, f), "utf8").includes("sk-live-0123456789abcdef"), `${f} has no secret`);
   }
   assert.match(box.tools().find((x) => x.kind === "outcome").summary, /token \[redacted\] used/);
+});
+
+t("an agent that lost the session and refuses its id gets a new session and the recovery note (CUA-2966)", async (box) => {
+  // Hermes: session/resume of an id it no longer has (the Space with its database is gone) succeeds by making
+  // another session, and the next prompt for the old id is refused at once with no model request.
+  box.script({
+    resume: true,
+    loadSession: true,
+    forgets: true,
+    prompts: [
+      { match: "recovery", steps: [{ say: "carrying on" }] },
+      { match: ".", steps: [tool("call-1", { output: "first" }), { crash: true, once: "c1" }] },
+    ],
+  });
+  box.config({ durable: { maxAgentRestarts: 0 }, prompt: "Ship the release" });
+  assert.equal((await box.go({ epoch: 1, resume: false })).code, 1);
+  // The new Space: the agent's own session store is empty.
+  fs.rmSync(path.join(box.mock, "sessions.json"), { force: true });
+  const r = await box.go({ epoch: 2 });
+  assert.equal(r.code, 0, r.stderr);
+  const log = box.agentLog();
+  assert.ok(log.some((l) => l.ev === "session_resume_forgot"), "the agent was asked to resume the lost id");
+  assert.equal(log.filter((l) => l.ev === "prompt_refused").length, 1, "its id was refused once");
+  assert.ok(log.some((l) => l.ev === "session_new" && l.id !== undefined), "a new session was opened");
+  // The recovery note reached the agent, as the degraded kind: the journal is all that is known.
+  const note = box.prompts().find((x) => x.includes("[cua durable recovery]"));
+  assert.ok(note, "the recovery note was sent to the new session");
+  assert.match(note, /starting with a fresh context/);
+  assert.match(note, /Tool calls that completed \(do not repeat them\):/);
+  assert.match(note, /run call-1/);
+  const ev = box.events();
+  assert.ok(ev.some((e) => e.type === "degraded"), "the degraded notice is in the journal");
+  assert.ok(ev.filter((e) => e.type === "turn_ended").pop()?.stopReason !== "refusal", "the turn did not end as a refusal");
+  assert.equal(ev.filter((e) => e.type === "run_exited").pop()?.status ?? "done", "done");
+  // The next drive finds the session the runner saved, no longer lost.
+  assert.equal(JSON.parse(fs.readFileSync(path.join(box.state, "state.json"), "utf8")).degraded, true);
+});
+
+t("a refusal after the session has answered is the agent's own answer, not a lost session", async (box) => {
+  box.script({ resume: true, forgets: true, prompts: [{ match: ".", steps: [{ say: "ok" }] }] });
+  box.config({ durable: { maxAgentRestarts: 0 } });
+  const r = await box.go({ epoch: 1, resume: false });
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(!box.events().some((e) => e.type === "degraded"));
+  assert.equal(box.agentLog().filter((l) => l.ev === "prompt_refused").length, 0);
 });
 
 // ---- the recovery note, exactly -----------------------------------------------------

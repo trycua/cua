@@ -1,4 +1,5 @@
-//! X11 foreground transaction (`delivery_mode:"foreground"`).
+//! X11 foreground steps (`delivery_mode:"foreground"`) that
+//! [`crate::interaction::with_x11_foreground`] runs.
 //!
 //! A foreground action behaves like a user at the keyboard: activate + raise the
 //! target toplevel, wait until the window manager confirms that it is the
@@ -16,6 +17,7 @@
 //! is used: protocol errors come back as `Result`s rather than going through
 //! Xlib's process-wide error handler.
 
+use crate::interaction::operation_deadline;
 use anyhow::{anyhow, Result};
 use cua_driver_core::window_observation::WindowObservationBounds;
 use std::sync::mpsc;
@@ -67,13 +69,6 @@ impl ForegroundOptions {
             keyboard: true,
             target_pid: None,
         }
-    }
-
-    /// Legacy `settle_ms` hint: folded into the pointer budget (never shorter).
-    pub fn from_settle_hint(settle_ms: u64) -> Self {
-        let mut opts = Self::pointer();
-        opts.settle = opts.settle.max(Duration::from_millis(settle_ms));
-        opts
     }
 
     /// Name the process the target window belongs to (see `target_pid`).
@@ -285,15 +280,15 @@ fn wait_for_window_change(
     pid: Option<u32>,
     before: &[WindowEntry],
     bounds: WindowObservationBounds,
+    deadline: Instant,
 ) -> (Vec<WindowEntry>, Option<WindowChange>) {
     if bounds.skips_observation() {
         return (pid_window_set(pid), None);
     }
-    let deadline = Instant::now() + bounds.timeout;
     loop {
         let after = pid_window_set(pid);
         if let Some(change) = describe_window_change(before, &after) {
-            std::thread::sleep(WINDOW_CHANGE_TITLE_GRACE);
+            std::thread::sleep(remaining(deadline).min(WINDOW_CHANGE_TITLE_GRACE));
             let settled = pid_window_set(pid);
             return match describe_window_change(before, &settled) {
                 Some(change) => (settled, Some(change)),
@@ -303,7 +298,7 @@ fn wait_for_window_change(
         if Instant::now() >= deadline {
             return (after, None);
         }
-        std::thread::sleep(bounds.poll);
+        std::thread::sleep(remaining(deadline).min(bounds.poll));
     }
 }
 
@@ -337,7 +332,7 @@ pub fn error_code(error: &anyhow::Error) -> Option<&'static str> {
 /// late result from a leaked thread is silently dropped instead of crashing
 /// the caller that already moved on.
 fn run_with_deadline<T: Send + 'static>(
-    deadline: Duration,
+    deadline: Instant,
     f: impl FnOnce() -> T + Send + 'static,
 ) -> Option<T> {
     let (tx, rx) = mpsc::channel();
@@ -347,7 +342,11 @@ fn run_with_deadline<T: Send + 'static>(
             let _ = tx.send(f());
         })
         .ok()?;
-    rx.recv_timeout(deadline).ok()
+    rx.recv_timeout(remaining(deadline)).ok()
+}
+
+fn remaining(deadline: Instant) -> Duration {
+    deadline.saturating_duration_since(Instant::now())
 }
 
 struct X11 {
@@ -373,6 +372,7 @@ impl X11 {
         let (conn, screen) = RustConnection::connect(None).map_err(|e| {
             anyhow!("{CODE_UNAVAILABLE}: cannot open DISPLAY to verify X11 input focus: {e}")
         })?;
+        super::action::fence(conn.stream())?;
         let root = conn.setup().roots[screen].root;
         let resource_id_mask = conn.setup().resource_id_mask;
         let net_active_window = conn
@@ -439,8 +439,9 @@ impl X11 {
 
     /// Current server time via the PropertyNotify round-trip. `_NET_ACTIVE_WINDOW`
     /// stamped `CurrentTime` (0) loses to focus-stealing prevention whenever any
-    /// newer user input exists. Bounded: falls back to 0 after 300 ms.
-    fn server_time(&self) -> u32 {
+    /// newer user input exists. Bounded: falls back to 0 after 300 ms or at
+    /// `deadline`.
+    fn server_time(&self, deadline: Instant) -> u32 {
         let probe = match self.conn.generate_id() {
             Ok(id) => id,
             Err(_) => return 0,
@@ -476,7 +477,7 @@ impl X11 {
             &[0u8],
         );
         let _ = self.conn.flush();
-        let deadline = Instant::now() + Duration::from_millis(300);
+        let deadline = deadline.min(Instant::now() + Duration::from_millis(300));
         let mut time = 0;
         while Instant::now() < deadline {
             match self.conn.poll_for_event() {
@@ -485,7 +486,7 @@ impl X11 {
                     break;
                 }
                 Ok(Some(_)) => continue,
-                Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+                Ok(None) => std::thread::sleep(remaining(deadline).min(Duration::from_millis(5))),
                 Err(_) => break,
             }
         }
@@ -494,17 +495,19 @@ impl X11 {
         time
     }
 
-    fn activate(&self, target: Window, prior: Window) -> Result<()> {
-        let time = self.server_time();
+    fn activate(&self, target: Window, prior: Window, deadline: Instant) -> Result<()> {
+        let time = self.server_time(deadline);
         let event =
             ClientMessageEvent::new(32, target, self.net_active_window, [2, time, prior, 0, 0]);
         debug_assert_eq!(event.response_type, CLIENT_MESSAGE_EVENT);
-        self.conn.send_event(
-            false,
-            self.root,
-            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-            event,
-        )?;
+        super::action::admit(|| {
+            self.conn.send_event(
+                false,
+                self.root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            )
+        })??;
         // Set the core focus explicitly as well (what `xdotool windowactivate`
         // does): WMs with focus-stealing prevention honour `_NET_ACTIVE_WINDOW`
         // as raise-only. BadMatch on a not-yet-viewable window is expected and
@@ -617,14 +620,21 @@ struct ConfirmOutcome {
     focus_holder: Option<String>,
 }
 
-fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
+fn confirmed(target: Window, active: Option<Window>, focus_within: bool) -> bool {
+    crate::interaction::policy::focused(
+        &target,
+        &crate::interaction::facts::Fact::Known(active.filter(|_| focus_within)),
+    )
+}
+
+fn confirm_phase(target: Window, deadline: Instant) -> Result<ConfirmOutcome> {
     let x = X11::open()?;
     let start = Instant::now();
     let prior = x.active_window().unwrap_or(0);
     let mut retried = false;
     // Already active and focused: leave the window (and any open menu / grab)
     // untouched — re-activating is what popped GTK menus back down.
-    if prior == target && x.focus_is_within(target) {
+    if confirmed(target, Some(prior), x.focus_is_within(target)) {
         return Ok(ConfirmOutcome {
             confirmed: true,
             already_active: true,
@@ -635,14 +645,12 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
             focus_holder: None,
         });
     }
-    x.activate(target, prior)?;
-    let deadline = start + settle;
-    let retry_at = start + settle.mul_f32(0.4);
+    x.activate(target, prior, deadline)?;
+    let retry_at = start + deadline.saturating_duration_since(start).mul_f32(0.4);
     let mut retry_pending = true;
     loop {
-        let active = x.active_window() == Some(target);
         let focus_within = x.focus_is_within(target);
-        if active && focus_within {
+        if confirmed(target, x.active_window(), focus_within) {
             return Ok(ConfirmOutcome {
                 confirmed: true,
                 already_active: false,
@@ -668,9 +676,9 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
         if retry_pending && now >= retry_at {
             retry_pending = false;
             retried = true;
-            x.activate(target, x.active_window().unwrap_or(0))?;
+            x.activate(target, x.active_window().unwrap_or(0), deadline)?;
         }
-        std::thread::sleep(Duration::from_millis(15));
+        std::thread::sleep(remaining(deadline).min(Duration::from_millis(15)));
     }
 }
 
@@ -689,7 +697,7 @@ fn await_focus_destination(
         if Instant::now() >= deadline {
             return None;
         }
-        std::thread::sleep(Duration::from_millis(25));
+        std::thread::sleep(remaining(deadline).min(Duration::from_millis(25)));
     }
 }
 
@@ -700,54 +708,56 @@ fn await_focus_destination(
 /// click, the popup that the click opened). A focus that is unset or parked
 /// on the window manager's own window for the whole `FOCUS_RETRY` is
 /// `Unknown`: it names no client the input could have reached.
-fn post_check(target: Window, target_pid: Option<u32>, pid_windows: &[WindowEntry]) -> FocusAfter {
+fn post_check(
+    target: Window,
+    target_pid: Option<u32>,
+    pid_windows: &[WindowEntry],
+    deadline: Instant,
+) -> FocusAfter {
     let Ok(x) = X11::open() else {
         return FocusAfter::Unknown;
     };
     let Some(focused) = await_focus_destination(
-        Instant::now() + FOCUS_RETRY,
+        deadline,
         || x.focused(),
         |focused| x.held_by_window_manager(focused),
     ) else {
         return FocusAfter::Unknown;
     };
-    if x.is_within(focused, target) {
-        return FocusAfter::Target;
-    }
-    if pid_windows
-        .iter()
-        .any(|entry| x.is_within(focused, entry.window as Window))
-    {
-        return FocusAfter::SamePid;
-    }
-    // The body may have closed the target itself (Escape on a dialog, alt+F4,
-    // a popup item click): its pid was read (or named by the caller) before
-    // the body, so the comparison still works once the window is gone.
-    match (
+    crate::interaction::policy::focus_after(
+        x.is_within(focused, target),
+        pid_windows
+            .iter()
+            .any(|entry| x.is_within(focused, entry.window as Window)),
         target_pid.or_else(|| x.owning_pid(target)),
         x.owning_pid(focused),
-    ) {
-        (Some(a), Some(b)) if a == b => FocusAfter::SamePid,
-        _ => FocusAfter::Elsewhere,
-    }
+    )
 }
 
-/// Activate `xid`, confirm it holds the active window + input focus within
-/// `opts.settle`, run `body`, then (for keyboard actions) report where focus
-/// ended up. Returns `foreground_unavailable` (no input sent) when the WM never
-/// confirms, and `foreground_timeout` when the X server stops answering.
-pub fn with_x11_foreground_opts<T>(
-    xid: u64,
-    opts: ForegroundOptions,
-    body: impl FnOnce() -> Result<T>,
-) -> Result<(T, ForegroundReport)> {
+/// The target window confirmed active and focused, with the target
+/// process's window set read before the body for [`Activated::report`].
+pub struct Activated {
+    target: Window,
+    target_pid: Option<u32>,
+    outcome: ConfirmOutcome,
+    windows_before: Vec<WindowEntry>,
+}
+
+/// Activate `xid` and read back that it holds the active window + input
+/// focus within `opts.settle`, capped by the action's deadline. Returns `foreground_unavailable` (no input
+/// sent) when the WM never confirms, and `foreground_timeout` when the X
+/// server stops answering.
+pub fn activate(xid: u64, opts: ForegroundOptions) -> Result<Activated> {
     let target = xid as Window;
-    let phase_budget = opts.settle + Duration::from_millis(1500);
-    let outcome = run_with_deadline(phase_budget, move || confirm_phase(target, opts.settle))
-        .ok_or_else(|| {
+    let started = Instant::now();
+    let settle = operation_deadline(opts.settle);
+    let phase = operation_deadline(opts.settle + Duration::from_millis(1500));
+    let outcome =
+        run_with_deadline(phase, move || confirm_phase(target, settle)).ok_or_else(|| {
             anyhow!(
                 "{CODE_TIMEOUT}: the X server did not answer the activation of window \
-                 0x{xid:x} within {phase_budget:?}; no input was sent"
+                 0x{xid:x} within {:?}; no input was sent",
+                started.elapsed()
             )
         })??;
     if !outcome.confirmed {
@@ -764,31 +774,53 @@ pub fn with_x11_foreground_opts<T>(
             "{CODE_UNAVAILABLE}: window 0x{xid:x} did not become the active, focused \
              window within {:?} (active=0x{:x}, focus_within_target={}, \
              input focus: {holder}); no input was sent. {cause}",
-            opts.settle,
+            outcome.elapsed,
             outcome.active_after,
             outcome.focus_within
         ));
     }
     let target_pid = crate::x11::window_pid(xid).or(opts.target_pid);
-    let windows_before = pid_window_set(target_pid);
-    let value = body()?;
-    // The post-check is what the tool reports as evidence for both keyboard
-    // and pointer bodies: a real click that opened a menu or a dialog moves
-    // the window set / focus within the target's process, and one that
-    // landed elsewhere moves focus out of it. The window set is polled
-    // rather than read after a fixed settle: it returns on the first change.
-    let bounds = window_change_bounds();
-    let (windows_after, window_change) = run_with_deadline(
-        bounds.timeout + bounds.poll + WINDOW_CHANGE_TITLE_GRACE + Duration::from_millis(1500),
-        move || wait_for_window_change(target_pid, &windows_before, bounds),
-    )
-    .unwrap_or((Vec::new(), None));
-    let focus_after = run_with_deadline(Duration::from_millis(1500), move || {
-        post_check(target, target_pid, &windows_after)
+    Ok(Activated {
+        target,
+        target_pid,
+        outcome,
+        windows_before: pid_window_set(target_pid),
     })
-    .unwrap_or(FocusAfter::Unknown);
-    Ok((
-        value,
+}
+
+impl Activated {
+    /// Where focus and the target process's window set ended up once the
+    /// body ran.
+    pub fn report(self) -> ForegroundReport {
+        let Activated {
+            target,
+            target_pid,
+            outcome,
+            windows_before,
+        } = self;
+        // The post-check is what the tool reports as evidence for both keyboard
+        // and pointer bodies: a real click that opened a menu or a dialog moves
+        // the window set / focus within the target's process, and one that
+        // landed elsewhere moves focus out of it. The window set is polled
+        // rather than read after a fixed settle: it returns on the first change.
+        let bounds = window_change_bounds();
+        let observed = operation_deadline(bounds.timeout);
+        let (windows_after, window_change) = run_with_deadline(
+            operation_deadline(
+                bounds.timeout
+                    + bounds.poll
+                    + WINDOW_CHANGE_TITLE_GRACE
+                    + Duration::from_millis(1500),
+            ),
+            move || wait_for_window_change(target_pid, &windows_before, bounds, observed),
+        )
+        .unwrap_or((Vec::new(), None));
+        let focus_retry = operation_deadline(FOCUS_RETRY);
+        let focus_after =
+            run_with_deadline(operation_deadline(Duration::from_millis(1500)), move || {
+                post_check(target, target_pid, &windows_after, focus_retry)
+            })
+            .unwrap_or(FocusAfter::Unknown);
         ForegroundReport {
             already_active: outcome.already_active,
             retried_activation: outcome.retried,
@@ -796,8 +828,8 @@ pub fn with_x11_foreground_opts<T>(
             focus_after,
             window_change_owned: window_change.as_ref().is_some_and(|c| c.owned),
             window_change: window_change.map(|c| c.summary),
-        },
-    ))
+        }
+    }
 }
 
 /// `0x…` plus what owns it: the class and process of a client window, or a
@@ -864,7 +896,7 @@ mod tests {
     #[test]
     fn deadline_returns_none_when_work_hangs() {
         let started = Instant::now();
-        let result = run_with_deadline(Duration::from_millis(50), || {
+        let result = run_with_deadline(Instant::now() + Duration::from_millis(50), || {
             std::thread::sleep(Duration::from_secs(5));
             1
         });
@@ -905,7 +937,12 @@ mod tests {
         );
         let before = vec![entry(u64::MAX, "window that never existed", true)];
         let started = Instant::now();
-        let (_after, change) = wait_for_window_change(Some(u32::MAX), &before, bounds);
+        let (_after, change) = wait_for_window_change(
+            Some(u32::MAX),
+            &before,
+            bounds,
+            Instant::now() + bounds.timeout,
+        );
         assert_eq!(change, None);
         assert!(started.elapsed() < WINDOW_CHANGE_DEADLINE);
     }
@@ -967,17 +1004,15 @@ mod tests {
 
     #[test]
     fn deadline_returns_value_when_work_finishes() {
-        assert_eq!(run_with_deadline(Duration::from_secs(2), || 7), Some(7));
+        assert_eq!(
+            run_with_deadline(Instant::now() + Duration::from_secs(2), || 7),
+            Some(7)
+        );
     }
 
     #[test]
     fn keyboard_budget_exceeds_pointer_budget() {
         assert!(ForegroundOptions::keyboard().settle > ForegroundOptions::pointer().settle);
-        assert!(ForegroundOptions::from_settle_hint(80).settle >= Duration::from_millis(400));
-        assert_eq!(
-            ForegroundOptions::from_settle_hint(5000).settle,
-            Duration::from_millis(5000)
-        );
     }
 
     #[test]
@@ -987,7 +1022,7 @@ mod tests {
             ForegroundOptions::keyboard().for_pid(42).target_pid,
             Some(42)
         );
-        assert!(!ForegroundOptions::from_settle_hint(80).for_pid(1).keyboard);
+        assert!(!ForegroundOptions::pointer().for_pid(1).keyboard);
     }
 
     #[test]
@@ -1055,9 +1090,11 @@ mod tests {
     #[test]
     fn unavailable_display_is_structured() {
         let display = crate::test_env::unreachable_x11_display();
-        let result = with_x11_foreground_opts(0x1234, ForegroundOptions::pointer(), || Ok(()));
+        let result = activate(0x1234, ForegroundOptions::pointer());
         drop(display);
-        let error = result.expect_err("connect must fail");
+        let Err(error) = result else {
+            panic!("connect must fail")
+        };
         assert!(error_code(&error).is_some(), "{error}");
     }
 }

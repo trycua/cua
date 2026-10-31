@@ -170,7 +170,7 @@ impl Tool for SetValueTool {
                 }
                 if foreground_route {
                     let (sx, sy) = window_local_to_screen(win, lx, ly)?;
-                    crate::input::with_x11_foreground_opts(
+                    crate::interaction::with_x11_foreground(
                         win,
                         crate::input::ForegroundOptions::pointer(),
                         || {
@@ -268,7 +268,7 @@ fn pick_from_popup(
             return Ok(());
         }
         if foreground {
-            crate::input::with_x11_foreground_opts(
+            crate::interaction::with_x11_foreground(
                 win,
                 crate::input::ForegroundOptions::keyboard(),
                 || crate::input::send_key_xtest("Escape", &[]),
@@ -301,7 +301,7 @@ fn pick_from_popup(
     };
     if foreground {
         let (sx, sy) = window_local_to_screen(win, lx, ly)?;
-        crate::input::with_x11_foreground_opts(
+        crate::interaction::with_x11_foreground(
             win,
             crate::input::ForegroundOptions::pointer(),
             || crate::input::send_click_xtest_desktop(sx.round() as i32, sy.round() as i32, 1, 1),

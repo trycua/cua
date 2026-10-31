@@ -615,20 +615,28 @@ impl Vault {
         let mut changes = Vec::new();
         let mut created_files: Vec<String> = Vec::new();
         // Sealed records this batch overwrote, restored if it never commits.
-        let mut overwritten: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut overwritten: Vec<(String, Backup)> = Vec::new();
         let mut out = Vec::new();
-        let fail = |this: &Self, files: &[String], old: &[(String, Vec<u8>)], e: Error| -> Error {
+        let fail = |this: &Self, files: &[String], old: &[(String, Backup)], e: Error| -> Error {
             for id in files {
                 if let Ok(p) = this.item_path(id) {
                     let _ = std::fs::remove_file(p);
                 }
             }
-            for (id, bytes) in old {
-                if let Ok(p) = this.item_path(id) {
-                    let _ = write_private(&p, bytes);
+            let mut unrestored = Vec::new();
+            for (id, backup) in old {
+                if let Err(restore) = this.item_path(id).and_then(|p| backup.restore(&p)) {
+                    unrestored.push(format!("{id} ({restore})"));
                 }
             }
-            e
+            if unrestored.is_empty() {
+                e
+            } else {
+                Error::Corrupt(format!(
+                    "{e}; restoring overwritten items also failed: {}",
+                    unrestored.join(", ")
+                ))
+            }
         };
         for k in order {
             let (mut meta, payload) = last.remove(&k).expect("keyed above");
@@ -648,8 +656,8 @@ impl Vault {
                         None
                     } else {
                         let rev = cur.rev + 1;
-                        match self.item_path(&id).and_then(|p| Ok(std::fs::read(p)?)) {
-                            Ok(bytes) => overwritten.push((id.clone(), bytes)),
+                        match self.item_path(&id).and_then(|p| Backup::take(&p)) {
+                            Ok(backup) => overwritten.push((id.clone(), backup)),
                             Err(e) => return Err(fail(self, &created_files, &overwritten, e)),
                         }
                         match self.write_item(&id, rev, &payload) {
@@ -727,6 +735,9 @@ impl Vault {
             Ok(generation) => generation,
             Err(e) => return Err(fail(self, &created_files, &overwritten, e)),
         };
+        for (_, backup) in &overwritten {
+            backup.discard();
+        }
         // The committed index now references every written payload, so a
         // later failure must not delete them.
         self.record_generation(generation)?;
@@ -875,6 +886,49 @@ impl Vault {
         let keys = self.keys()?;
         let anchor = self.meta()?.audit_head.clone();
         self.audit.verify(Some(&keys.audit), Some(&anchor))
+    }
+}
+
+/// The record an upsert replaces, kept until the batch commits. A hard link
+/// keeps it without copying, so restoring needs no free space.
+enum Backup {
+    /// No record was on disk (an already-missing item); restoring removes the new one.
+    Absent,
+    Linked(PathBuf),
+    Copied(Vec<u8>),
+}
+
+impl Backup {
+    fn take(path: &Path) -> Result<Self> {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("item");
+        let staged = path.with_file_name(format!(".{name}.{}.prev", crypto::random_id()?));
+        match std::fs::hard_link(path, &staged) {
+            Ok(()) => Ok(Backup::Linked(staged)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Backup::Absent),
+            // A filesystem without hard links: keep the bytes instead.
+            Err(_) => match std::fs::read(path) {
+                Ok(bytes) => Ok(Backup::Copied(bytes)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Backup::Absent),
+                Err(e) => Err(e.into()),
+            },
+        }
+    }
+
+    fn restore(&self, path: &Path) -> Result<()> {
+        match self {
+            Backup::Absent => match std::fs::remove_file(path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+                _ => Ok(()),
+            },
+            Backup::Linked(staged) => Ok(std::fs::rename(staged, path)?),
+            Backup::Copied(bytes) => write_private(path, bytes),
+        }
+    }
+
+    fn discard(&self) {
+        if let Backup::Linked(staged) = self {
+            let _ = std::fs::remove_file(staged);
+        }
     }
 }
 
@@ -1194,6 +1248,38 @@ mod tests {
             assert_eq!(vault.read_payload(&e).unwrap(), sample_payload("a"));
         }
         assert_eq!(std::fs::read_dir(dir.join("items")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn upsert_repairs_an_indexed_item_whose_record_is_missing() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("kv");
+        let mut v = Vault::create(&dir, &[&pp()]).unwrap();
+        let e = v
+            .upsert_items(vec![(sample_meta(), sample_payload("a"))])
+            .unwrap()[0]
+            .id
+            .clone();
+        std::fs::remove_file(dir.join("items").join(format!("{e}.sealed"))).unwrap();
+        assert!(v.read_payload(&e).is_err());
+
+        let out = v
+            .upsert_items(vec![(sample_meta(), sample_payload("b"))])
+            .unwrap();
+        assert_eq!(
+            (out[0].id.as_str(), out[0].outcome),
+            (e.as_str(), UpsertOutcome::Updated)
+        );
+        assert_eq!(v.read_payload(&e).unwrap(), sample_payload("b"));
+        // An ordinary update stages the old record; committing removes it.
+        v.upsert_items(vec![(sample_meta(), sample_payload("c"))])
+            .unwrap();
+        assert_eq!(v.read_payload(&e).unwrap(), sample_payload("c"));
+        let names: Vec<_> = std::fs::read_dir(dir.join("items"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from(format!("{e}.sealed"))]);
     }
 
     #[test]

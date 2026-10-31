@@ -4,6 +4,7 @@ name: "CI: Nix Linux Rust source"
 # desktop behavior is owned by the Rust E2E workflows.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "flake.nix"
       - "flake.lock"
@@ -60,9 +61,9 @@ env:
 
 jobs:
   rust-source:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Nix / ${{ matrix.name }}
-    runs-on: cua-linux-16core
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false

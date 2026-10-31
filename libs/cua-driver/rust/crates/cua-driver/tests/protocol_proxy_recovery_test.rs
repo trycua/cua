@@ -180,6 +180,15 @@ fn recovery_idle_seconds() -> u64 {
 
 impl Drop for Process {
     fn drop(&mut self) {
+        // An unbundled macOS `serve` re-execs itself, and that grandchild is the
+        // real daemon. It stays in this child's process group (`spawn_in_job`
+        // made the child a group leader), so killing only the child orphans it.
+        #[cfg(unix)]
+        if let Ok(pid) = i32::try_from(self.0.id()) {
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }

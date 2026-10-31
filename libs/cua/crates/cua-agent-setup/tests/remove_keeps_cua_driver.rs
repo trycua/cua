@@ -8,6 +8,11 @@
 //! Configs in the formats of Claude Code (JSON), Codex (TOML) and Cursor
 //! (JSON), in a temporary HOME, never the real one.
 
+// The stand-in cua-driver these tests set up is a shell script.
+#![cfg(unix)]
+
+mod common;
+
 use cua_agent_setup::{
     AgentSetup, Change, CuaChannel, HostEnv, KEPT_CUA_DRIVER, McpServer, Outcome, Parts,
     RemoveOptions, Target, hash_dir, is_cua_driver_name,
@@ -104,7 +109,7 @@ fn ids(v: &[&str]) -> Vec<String> {
 }
 
 fn driver() -> McpServer {
-    McpServer::driver("/opt/drv/bin/cua-driver")
+    McpServer::driver(common::answering_driver())
 }
 
 /// Cua Spaces' setup (default skills + the `cua` server) and Cua Driver's
@@ -206,7 +211,7 @@ fn remove_takes_cua_spaces_entries_and_leaves_cua_driver_in_every_agent() {
     for (a, before) in AGENTS.iter().zip(&driver_entry_before) {
         let after = mcp_text(&h, a);
         assert!(after.len() < before.len(), "{a}");
-        assert!(after.contains("/opt/drv/bin/cua-driver"), "{a}: {after}");
+        assert!(after.contains(common::answering_driver()), "{a}: {after}");
     }
     for dir in [".claude/skills", ".agents/skills"] {
         for name in SPACES_SKILLS {

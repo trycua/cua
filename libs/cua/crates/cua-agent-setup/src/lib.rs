@@ -18,6 +18,7 @@
 pub mod claude_login;
 pub mod config;
 pub mod connection;
+pub mod driver;
 mod edit;
 mod fsutil;
 pub mod registry;
@@ -413,21 +414,13 @@ impl McpServer {
         }
     }
 
-    /// `cua-driver mcp`, with `cua-driver` resolved to an absolute path on
-    /// `env`'s PATH, else in `~/.local/bin` (where cua-driver's installer
-    /// puts it; GUI apps often run without the user's shell PATH), else the
-    /// bare name.
+    /// `cua-driver mcp`, with `cua-driver` resolved to an absolute path
+    /// ([`driver::locate`]: `env`'s PATH, `~/.local/bin` where cua-driver's
+    /// installer links it, then `CuaDriver.app`; GUI apps often run without
+    /// the user's shell PATH), else the bare name, which
+    /// [`AgentSetup::setup_cua_driver`] refuses to write.
     pub fn driver_for(env: &HostEnv) -> Self {
-        let bin = if env.os == Os::Windows {
-            "cua-driver.exe"
-        } else {
-            "cua-driver"
-        };
-        let cmd = env
-            .which("cua-driver")
-            .or_else(|| {
-                Some(env.home.join(".local").join("bin").join(bin)).filter(|p| is_executable(p))
-            })
+        let cmd = driver::locate(env)
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "cua-driver".into());
         McpServer::driver(cmd)
@@ -1425,15 +1418,51 @@ impl AgentSetup {
             out.extend(self.install_skills(agents, &[DRIVER_SKILL.to_string()], force)?);
         }
         if parts.mcp {
-            let with_mcp: Vec<String> = self
-                .specs(agents)?
-                .iter()
-                .filter(|a| a.mcp.is_some())
-                .map(|a| a.id.to_string())
-                .collect();
-            out.extend(self.configure_mcp(&with_mcp, server)?);
+            // Only a cua-driver that runs and answers MCP is written, by
+            // absolute path: a bare or missing command would leave every
+            // agent with a server that fails to start (ENOENT).
+            let checked = driver::resolve(&self.env, &server.command)
+                .ok_or_else(|| "cua-driver isn't installed".to_string())
+                .and_then(|p| driver::check(&p).map(|_| p));
+            match checked {
+                Ok(path) => {
+                    let server = McpServer {
+                        command: path.display().to_string(),
+                        ..server.clone()
+                    };
+                    let with_mcp: Vec<String> = self
+                        .specs(agents)?
+                        .iter()
+                        .filter(|a| a.mcp.is_some())
+                        .map(|a| a.id.to_string())
+                        .collect();
+                    out.extend(self.configure_mcp(&with_mcp, &server)?);
+                }
+                Err(why) => out.extend(self.driver_unavailable(agents, &why)?),
+            }
         }
         Ok(out)
+    }
+
+    /// One failed `cua-driver` MCP row per agent in `agents` that supports
+    /// MCP, saying `why`; no config is touched.
+    pub fn driver_unavailable(&self, agents: &[String], why: &str) -> Result<Vec<Outcome>> {
+        Ok(self
+            .specs(agents)?
+            .iter()
+            .filter_map(|a| {
+                let m = a.mcp.as_ref()?;
+                Some(Outcome {
+                    agents: vec![a.id.into()],
+                    target: Target::Mcp,
+                    item: DRIVER_MCP_SERVER_NAME.into(),
+                    path: self.mcp_file(m),
+                    change: Change::Failed,
+                    detail: why.to_string(),
+                    backup: None,
+                })
+            })
+            .collect())
     }
 
     /// Refreshes every skill folder cua installed to this build's content

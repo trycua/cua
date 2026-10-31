@@ -778,10 +778,11 @@ impl Vault {
             let indexed = name[1..]
                 .split_once(".sealed.")
                 .and_then(|(id, _)| Some((self.item_path(id).ok()?, meta.items.get(id)?)));
-            // A staged record the index still references must be read before it
-            // can be discarded; restore it unless the current record is the
-            // committed one.
+            // When the current record is the committed one the staged record is
+            // obsolete. Otherwise the staged record must be read before it can
+            // be discarded, and restored when it is the committed one.
             if let Some((path, item)) = indexed
+                && !std::fs::read(&path).is_ok_and(|bytes| holds(&bytes, &item.record_digest))
                 && holds(
                     &std::fs::read(&staged).map_err(|e| {
                         Error::Corrupt(format!(
@@ -791,7 +792,6 @@ impl Vault {
                     })?,
                     &item.record_digest,
                 )
-                && !std::fs::read(&path).is_ok_and(|bytes| holds(&bytes, &item.record_digest))
             {
                 // Keep the staged record (the only one the index trusts) until
                 // it is back in place.
@@ -1528,6 +1528,31 @@ mod tests {
             "an unreadable staged record must not be discarded"
         );
         assert!(reopened.meta().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unlock_discards_an_obsolete_staged_record_without_reading_it() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("kv");
+        let mut v = Vault::create(&dir, &[&pp()]).unwrap();
+        let e = v
+            .upsert_items(vec![(sample_meta(), sample_payload("a"))])
+            .unwrap()[0]
+            .id
+            .clone();
+        drop(v);
+        // The update committed but the process exited before discarding the
+        // staged record; that record cannot be read.
+        use std::os::unix::fs::PermissionsExt;
+        let staged = dir.join("items").join(format!(".{e}.sealed.crash.prev"));
+        std::fs::write(&staged, b"old record").unwrap();
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let mut reopened = Vault::open(&dir).unwrap();
+        reopened.unlock(&pp()).unwrap();
+        assert_eq!(reopened.read_payload(&e).unwrap(), sample_payload("a"));
+        assert!(!staged.exists());
     }
 
     #[test]

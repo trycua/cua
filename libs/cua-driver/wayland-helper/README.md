@@ -20,6 +20,18 @@ It exposes `org.cua.WinRects` on the session bus:
   whether the request was accepted. cua-driver verifies focus through a second
   `GetRects` snapshot before sending focus-bound portal/libei input, preventing
   input from leaking into whichever application happened to be focused.
+- `Move(id,x,y) -> bool` (API 13): place a window on the screen, which a
+  Wayland client cannot ask for itself. `x`/`y` are the frame top-left corner in
+  stage pixels, the same space `GetRects` reports; the id is the same stable
+  sequence `Activate` takes. A maximized window is unmaximized first, because
+  Mutter ignores a geometry request while maximized. The call answers whether
+  the request was accepted, not where the window landed: read a fresh
+  `GetRects` afterwards — the same accepted-then-verify contract `Activate`
+  already uses. Refused (with `false`) for a fullscreen window, for a window
+  that does not allow moving, and for an id that is no longer mapped.
+  Resizing is deliberately not offered: a Wayland client owns its own size, and
+  `move_resize_frame` on it sends a `xdg_toplevel.configure` the client is free
+  to ignore, so a `Resize` method would report success while nothing changed.
 - `Capture() -> png_base64`: capture the compositor stage through Shell's
   screenshot API. cua-driver crops it with the same authoritative geometry.
 - `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()`: position and hide
@@ -72,7 +84,8 @@ Existing v8/v10 users on GNOME 50 must run
 `gnome-extensions disable winrects@cua` before further diagnostics and keep
 it disabled. Replacing files does not unload an already-active extension.
 
-API 11 adds `PlayCursorPath` and `SetCursorLook` and keeps this guard. T3 Code's v10 does
+API 11 adds `PlayCursorPath` and `SetCursorLook`, API 13 adds `Move`, and both
+keep this guard. T3 Code's v10 does
 not have this safety guard. Both installers overwrite an installed helper
 of the same version, so whichever app installed last determines whether the
 guard is present. Keep `winrects@cua` disabled on GNOME 50 regardless.

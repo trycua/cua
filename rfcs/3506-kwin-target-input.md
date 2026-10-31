@@ -3,7 +3,7 @@ title: Target-addressable KWin input delivery for KDE/Wayland
 authors:
   - netbospl
 created: 2026-09-01
-last_updated: 2026-10-19
+last_updated: 2026-10-31
 status: review
 discussion: https://github.com/trycua/cua/issues/3506
 rfc_pr: https://github.com/trycua/cua/pull/3507
@@ -33,7 +33,7 @@ after confirmation during a forced focus takeover. The report records the
 API calls, identity bridge, operation journals, and reproduction procedure.
 The recording is included with the RFC at
 [`3506/evidence/plasma-6.6.4-AB.webm`](3506/evidence/plasma-6.6.4-AB.webm)
-and will be reviewer-accessible from the PR branch when this change is pushed.
+and is available on the PR branch.
 It covers operations 1–6 only; no video shows the postcheck counterexample.
 A focus check does not establish atomic target-bound delivery. Any accepted
 foreground increment must describe its measured timing and residual focus race

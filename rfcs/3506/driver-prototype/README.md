@@ -2,7 +2,28 @@
 
 This is a **focus-bound experiment, not a target-bound input capability**. Production sources are unchanged. `kwin_helper::available()` remains false. No default Cargo feature, runtime environment switch, installed daemon, CLI, or MCP surface enables this experiment.
 
-## Artifacts and verification
+## Offline review checks
+
+Run from the repository root with the distro Python that provides `dbus-python`
+and PyGObject (`python3-dbus` and `python3-gi` on Kubuntu):
+
+```sh
+python3 -m unittest discover -s rfcs/3506 -p 'test_*.py'
+python3 rfcs/3506/driver-prototype/test_contract.py
+```
+
+These checks do not open a desktop or certify input delivery. For the completed
+6.6.4 result and version-pinned reproduction, use the
+[proof report](../plasma-6.6-proof.md#reproduction-and-provenance).
+`prepare.py` is a historical local build helper, not a reproducible current-HEAD
+entry point: it archives HEAD and may reuse an existing scratch source cache.
+Do not treat a cached build as evidence for a different source revision.
+
+## Artifacts and historical verification
+
+The verification notes below describe the original sidecar preparation, not a
+fresh validation of the current PR head. Later live execution and its negative
+result are recorded in the proof report linked above.
 
 - `driver.patch`: exact unified patch against `93f7afc89a09e7f9d39da22990e26036a74adfbd`, applied only to a scratch archive.
 - `prototype.rs`: reviewable source of the module added by that patch.

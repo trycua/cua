@@ -88,8 +88,8 @@ end tell"#
     /// Patch the browser Preferences JSON to enable Allow JavaScript from Apple Events,
     /// then relaunch the browser.
     pub async fn enable_javascript_apple_events(bundle_id: &str) -> anyhow::Result<()> {
-        let app_name = app_name_for_bundle(bundle_id)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
+        let home = std::env::var("HOME").unwrap_or_default();
+        let (app_name, prefs_files) = javascript_apple_events_targets(bundle_id, &home)?;
 
         // Quit the browser.
         let quit_script = format!("tell application \"{app_name}\" to quit");
@@ -101,28 +101,7 @@ end tell"#
 
         tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Find profile directory.
-        let home = std::env::var("HOME").unwrap_or_default();
-        let profiles_dir = match bundle_id {
-            "com.google.Chrome" => format!("{home}/Library/Application Support/Google/Chrome"),
-            _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => {
-                format!("{home}/Library/Application Support/Google/Chrome")
-            }
-            "com.brave.Browser" => {
-                format!("{home}/Library/Application Support/BraveSoftware/Brave-Browser")
-            }
-            "com.microsoft.edgemac" => format!("{home}/Library/Application Support/Microsoft Edge"),
-            _ => anyhow::bail!("No profiles directory for {bundle_id}"),
-        };
-
-        // Find all Preferences files.
-        let prefs_files = find_preferences_files(&profiles_dir);
-
-        for path in prefs_files {
-            if let Err(e) = patch_preferences_file(&path) {
-                tracing::warn!("Failed to patch {path}: {e}");
-            }
-        }
+        let patched = patch_preferences_files(&prefs_files);
 
         // Relaunch.
         tokio::process::Command::new("open")
@@ -130,6 +109,9 @@ end tell"#
             .arg(app_name)
             .spawn()?;
 
+        if patched == 0 {
+            anyhow::bail!("could not patch any {app_name} Preferences file; {app_name} was relaunched unchanged");
+        }
         Ok(())
     }
 }
@@ -268,10 +250,39 @@ fn rounded_i64(value: f64) -> i64 {
     value.round() as i64
 }
 
-fn find_preferences_files(profiles_dir: &str) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(profiles_dir) else {
-        return vec![];
+fn javascript_apple_events_targets(
+    bundle_id: &str,
+    home: &str,
+) -> anyhow::Result<(&'static str, Vec<String>)> {
+    let app_name = app_name_for_bundle(bundle_id)
+        .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
+    let profiles_dir = match bundle_id {
+        "com.google.Chrome" => format!("{home}/Library/Application Support/Google/Chrome"),
+        _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => {
+            format!("{home}/Library/Application Support/Google/Chrome")
+        }
+        "com.brave.Browser" => {
+            format!("{home}/Library/Application Support/BraveSoftware/Brave-Browser")
+        }
+        "com.microsoft.edgemac" => format!("{home}/Library/Application Support/Microsoft Edge"),
+        _ => anyhow::bail!("No profiles directory for {bundle_id}"),
     };
+    let files = find_preferences_files(&profiles_dir)?;
+    if files.is_empty() {
+        anyhow::bail!("no Preferences file under {profiles_dir}");
+    }
+    Ok((app_name, files))
+}
+
+fn find_preferences_files(profiles_dir: &str) -> anyhow::Result<Vec<String>> {
+    let entries = std::fs::read_dir(profiles_dir).map_err(|error| {
+        if super::platform::is_profile_protection_denial(&error) {
+            let hint = super::platform::PROFILE_PROTECTION_HINT;
+            anyhow::anyhow!("could not read {profiles_dir}: {error}; {hint}")
+        } else {
+            anyhow::anyhow!("could not read {profiles_dir}: {error}")
+        }
+    })?;
     let mut result = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
@@ -282,7 +293,19 @@ fn find_preferences_files(profiles_dir: &str) -> Vec<String> {
             }
         }
     }
-    result
+    Ok(result)
+}
+
+/// Returns how many Preferences files now allow JavaScript from Apple Events.
+fn patch_preferences_files(files: &[String]) -> usize {
+    let mut patched = 0;
+    for path in files {
+        match patch_preferences_file(path) {
+            Ok(()) => patched += 1,
+            Err(e) => tracing::warn!("Failed to patch {path}: {e}"),
+        }
+    }
+    patched
 }
 
 fn patch_preferences_file(path: &str) -> anyhow::Result<()> {
@@ -402,6 +425,74 @@ fn rand_u64() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn chrome_home(profiles: &[&str]) -> tempfile::TempDir {
+        let home = tempfile::tempdir().expect("temporary home");
+        let root = home
+            .path()
+            .join("Library/Application Support/Google/Chrome");
+        std::fs::create_dir_all(root.join("Crashpad")).expect("non-profile folder");
+        for profile in profiles {
+            std::fs::create_dir_all(root.join(profile)).expect("profile folder");
+            std::fs::write(root.join(profile).join("Preferences"), "{}").expect("Preferences");
+        }
+        home
+    }
+
+    #[test]
+    fn apple_events_targets_list_every_profile_preferences_file() {
+        let home = chrome_home(&["Default", "Profile 1"]);
+        let (app_name, mut files) =
+            javascript_apple_events_targets("com.google.Chrome", home.path().to_str().unwrap())
+                .expect("two readable profiles");
+        files.sort();
+        assert_eq!(app_name, "Google Chrome");
+        assert_eq!(files.len(), 2);
+        assert!(files[0].ends_with("Google/Chrome/Default/Preferences"));
+        assert!(files[1].ends_with("Google/Chrome/Profile 1/Preferences"));
+    }
+
+    #[test]
+    fn apple_events_targets_refuse_unknown_empty_and_unreadable_profile_folders() {
+        let home = chrome_home(&[]);
+        let home_path = home.path().to_str().unwrap();
+        let error = javascript_apple_events_targets("com.apple.Safari", home_path).unwrap_err();
+        assert!(
+            error.to_string().contains("No profiles directory"),
+            "{error}"
+        );
+        let error = javascript_apple_events_targets("com.google.Chrome", home_path).unwrap_err();
+        assert!(error.to_string().contains("no Preferences file"), "{error}");
+
+        let chrome = home
+            .path()
+            .join("Library/Application Support/Google/Chrome");
+        std::fs::set_permissions(&chrome, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = javascript_apple_events_targets("com.google.Chrome", home_path);
+        std::fs::set_permissions(&chrome, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Root reads through mode bits, so only a non-root run observes the denial.
+        if unsafe { libc::geteuid() } != 0 {
+            let error = unreadable.unwrap_err();
+            assert!(error.to_string().contains("could not read"), "{error}");
+        }
+    }
+
+    #[test]
+    fn patching_counts_only_the_preferences_files_it_rewrote() {
+        let home = chrome_home(&["Default", "Profile 1"]);
+        let (_, mut files) =
+            javascript_apple_events_targets("com.google.Chrome", home.path().to_str().unwrap())
+                .expect("two readable profiles");
+        files.sort();
+        std::fs::write(&files[1], "not json").expect("corrupt Profile 1");
+
+        assert_eq!(patch_preferences_files(&files), 1);
+        let default: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&files[0]).unwrap()).unwrap();
+        assert_eq!(default["browser"]["allow_javascript_apple_events"], true);
+        assert_eq!(patch_preferences_files(&files[1..]), 0);
+    }
 
     fn target(title: &str, same_bounds_ordinal: usize) -> NativeWindowTarget {
         NativeWindowTarget {

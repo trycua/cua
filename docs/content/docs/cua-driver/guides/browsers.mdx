@@ -194,6 +194,12 @@ Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
 Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
 with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
 
+On macOS 27 and later, reading the Chrome and Edge profile folders needs Full
+Disk Access or a per-app grant, so attachment through the daemon refuses with
+`browser_route_unavailable` until CuaDriver.app has that access. Grant it Full
+Disk Access in System Settings, then restart the daemon. A runtime started with
+`cua-driver mcp --direct` reads the folder with its host app's access instead.
+
 ## Refusals
 
 | Code | Meaning |

@@ -120,6 +120,8 @@ cua agent add [OPTIONS] --harness <HARNESS> <NAME> [PROMPT]
 | <span id="cua-agent-add--base-url"></span>`--base-url` | string |  |  |
 | <span id="cua-agent-add--env-from-host"></span>`--env-from-host` | string |  | Provider key variable to forward at each start. Repeatable. |
 | <span id="cua-agent-add--on"></span>`--on` | string |  | With --durable: the machine the driver runs on (`auto`, or a machine's name; default: this machine). |
+| <span id="cua-agent-add--max-attempts"></span>`--max-attempts` | integer |  | With --durable: drives allowed in total before the session fails (default 5). |
+| <span id="cua-agent-add--stall-secs"></span>`--stall-secs` | integer |  | With --durable: seconds the driver may write no output before it counts as wedged, is cancelled and started again (default 120; 0: never). Drivers print a heartbeat every quarter of it. |
 | <span id="cua-agent-add--every"></span>`--every` | integer |  | Schedule PROMPT every N minutes. |
 | <span id="cua-agent-add--daily"></span>`--daily` | string |  | Schedule PROMPT every day at HH:MM. |
 | <span id="cua-agent-add--weekly"></span>`--weekly` | string |  | Schedule PROMPT every week, `mon 09:00`. |

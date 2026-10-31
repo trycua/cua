@@ -320,6 +320,7 @@ impl Vault {
                     }
                     self.keys = Some(keys);
                     self.meta = Some(meta);
+                    self.settle_staged_records();
                     return Ok(());
                 }
                 Err(e) => last = e,
@@ -586,7 +587,7 @@ impl Vault {
     /// the sealed record is rewritten only when its value changed.
     pub fn upsert_items(&mut self, items: Vec<(ItemMeta, ItemPayload)>) -> Result<Vec<Upsert>> {
         let now = crate::now_ms();
-        self.remove_stale_backups();
+        self.settle_staged_records();
         // (provider, unique key) -> id, for what the vault already holds.
         let mut index: std::collections::HashMap<(String, String), String> = self
             .meta()?
@@ -746,18 +747,42 @@ impl Vault {
         Ok(out)
     }
 
-    /// Removes records an interrupted upsert staged (`.<id>.sealed.<random>.prev`),
-    /// so a replaced or deleted item's old record does not outlive it.
-    fn remove_stale_backups(&self) {
+    /// Settles records an interrupted upsert staged (`.<id>.sealed.<random>.prev`).
+    /// A staged record the sealed index still references replaces an uncommitted
+    /// one; every other staged record is removed, so a replaced or deleted item's
+    /// old record does not outlive it.
+    fn settle_staged_records(&self) {
+        let Ok(meta) = self.meta() else {
+            return;
+        };
         let Ok(entries) = std::fs::read_dir(self.dir.join("items")) else {
             return;
+        };
+        let matches = |path: &Path, digest: &str| {
+            std::fs::read(path).is_ok_and(|bytes| {
+                crypto::ct_eq(
+                    hex::encode(crypto::sha256(&bytes)).as_bytes(),
+                    digest.as_bytes(),
+                )
+            })
         };
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with('.') && name.ends_with(".prev") {
-                let _ = std::fs::remove_file(entry.path());
+            if !(name.starts_with('.') && name.ends_with(".prev")) {
+                continue;
             }
+            let staged = entry.path();
+            let indexed = name[1..]
+                .split_once(".sealed.")
+                .and_then(|(id, _)| Some((self.item_path(id).ok()?, meta.items.get(id)?)));
+            if let Some((path, item)) = indexed
+                && !matches(&path, &item.record_digest)
+                && matches(&staged, &item.record_digest)
+            {
+                let _ = std::fs::rename(&staged, &path);
+            }
+            let _ = std::fs::remove_file(&staged);
         }
     }
 
@@ -878,7 +903,7 @@ impl Vault {
             }
         }
         // An interrupted upsert's staged record would outlive the delete.
-        self.remove_stale_backups();
+        self.settle_staged_records();
         self.gc_blobs()?;
         Ok(removed)
     }
@@ -1343,6 +1368,34 @@ mod tests {
         std::fs::write(&stale, b"old sealed record").unwrap();
         v.delete_item(&id).unwrap();
         assert!(!stale.exists());
+    }
+
+    #[test]
+    fn unlock_restores_a_staged_record_the_index_still_references() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("kv");
+        let mut v = Vault::create(&dir, &[&pp()]).unwrap();
+        let e = v
+            .upsert_items(vec![(sample_meta(), sample_payload("a"))])
+            .unwrap()[0]
+            .id
+            .clone();
+        drop(v);
+        // A crash after an update replaced the record but before its index
+        // committed: the staged link holds the committed record.
+        let items = dir.join("items");
+        let record = items.join(format!("{e}.sealed"));
+        std::fs::hard_link(&record, items.join(format!(".{e}.sealed.crash.prev"))).unwrap();
+        write_private(&record, b"uncommitted record").unwrap();
+
+        let mut reopened = Vault::open(&dir).unwrap();
+        reopened.unlock(&pp()).unwrap();
+        assert_eq!(reopened.read_payload(&e).unwrap(), sample_payload("a"));
+        let names: Vec<_> = std::fs::read_dir(&items)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from(format!("{e}.sealed"))]);
     }
 
     #[test]

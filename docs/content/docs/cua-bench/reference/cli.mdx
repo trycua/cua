@@ -109,6 +109,7 @@ cb run task [OPTIONS] <task_path>
 | <span id="cb-run-task--output-dir"></span>`--output-dir` |  | string |  | Output directory for session results. |
 | <span id="cb-run-task--attempts"></span>`--attempts` |  | integer | `1` | Run every variant this many times (fresh sandbox each); summary.json reports pass@k (default: 1). |
 | <span id="cb-run-task--retries"></span>`--retries` |  | integer | `0` | Retry a variant that failed before evaluation (sandbox start, connection) up to this many times, with backoff (default: 0). |
+| <span id="cb-run-task--variant-timeout"></span>`--variant-timeout` |  | number |  | Time bound on one variant's setup, agent and evaluation (not sandbox start): a variant past it is cancelled the way Ctrl-C cancels it and recorded failed (default: at least 10800, higher with a larger CUA_BENCH_HARNESS_TIMEOUT; 0 = no limit). |
 | <span id="cb-run-task--keep-runs"></span>`--keep-runs` |  | integer |  | After the run, delete all but the N newest runs in the runs directory (default: keep everything; env CUA_BENCH_KEEP_RUNS). |
 | <span id="cb-run-task--max-age"></span>`--max-age` |  | number |  | After the run, delete runs older than DAYS (env CUA_BENCH_MAX_AGE_DAYS). |
 | <span id="cb-run-task--max-results-size"></span>`--max-results-size` |  | string |  | After the run, delete the oldest runs until the runs directory fits in SIZE, e.g. 20G (env CUA_BENCH_MAX_RESULTS_SIZE). |
@@ -160,6 +161,7 @@ cb run dataset [OPTIONS] <dataset_path>
 | <span id="cb-run-dataset--output-dir"></span>`--output-dir` |  | string |  | Output directory for session results. |
 | <span id="cb-run-dataset--attempts"></span>`--attempts` |  | integer | `1` | Run every variant this many times (fresh sandbox each); summary.json reports pass@k (default: 1). |
 | <span id="cb-run-dataset--retries"></span>`--retries` |  | integer | `0` | Retry a variant that failed before evaluation (sandbox start, connection) up to this many times, with backoff (default: 0). |
+| <span id="cb-run-dataset--variant-timeout"></span>`--variant-timeout` |  | number |  | Time bound on one variant's setup, agent and evaluation (not sandbox start): a variant past it is cancelled the way Ctrl-C cancels it and recorded failed (default: at least 10800, higher with a larger CUA_BENCH_HARNESS_TIMEOUT; 0 = no limit). |
 | <span id="cb-run-dataset--keep-runs"></span>`--keep-runs` |  | integer |  | After the run, delete all but the N newest runs in the runs directory (default: keep everything; env CUA_BENCH_KEEP_RUNS). |
 | <span id="cb-run-dataset--max-age"></span>`--max-age` |  | number |  | After the run, delete runs older than DAYS (env CUA_BENCH_MAX_AGE_DAYS). |
 | <span id="cb-run-dataset--max-results-size"></span>`--max-results-size` |  | string |  | After the run, delete the oldest runs until the runs directory fits in SIZE, e.g. 20G (env CUA_BENCH_MAX_RESULTS_SIZE). |

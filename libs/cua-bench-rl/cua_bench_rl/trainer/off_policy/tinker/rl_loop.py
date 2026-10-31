@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -60,6 +61,15 @@ class TrainingConfig:
 
     # --- Rollout subprocess environment ---
     rollout_env: dict[str, str] = field(default_factory=dict)
+
+    # --- Rollout bounds (online mode) ---
+    # Forwarded to `cb run --variant-timeout`: a bound on one variant's
+    # setup, agent and evaluation; None leaves cb's default.
+    variant_timeout: Optional[float] = None
+    # Bound on the whole `cb run` subprocess (SIGTERM, then SIGKILL after
+    # 60 s); the run directory is still returned so finished variants are
+    # kept. None waits on cb indefinitely.
+    run_timeout: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +174,8 @@ def run(config: TrainingConfig) -> None:
                 model=config.model,
                 max_steps=config.max_steps_per_episode,
                 num_rollouts=config.num_rollouts,
+                variant_timeout=config.variant_timeout,
+                run_timeout=config.run_timeout,
                 extra_env=config.rollout_env or None,
             )
             run_ids = [r[0] for r in rollout_results]
@@ -252,6 +264,16 @@ def run(config: TrainingConfig) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _bounded_seconds(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid number of seconds: {value!r}")
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError("must be a finite number of seconds, 0 or more")
+    return seconds
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Off-policy RL training loop using Tinker (GRPO-style).",
@@ -280,6 +302,22 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="Number of rollouts per task per epoch (>= 2 for GRPO)",
+    )
+    p.add_argument(
+        "--variant-timeout",
+        type=_bounded_seconds,
+        default=None,
+        metavar="SECONDS",
+        help="Bound on one variant's setup, agent and evaluation, forwarded "
+        "to cb run --variant-timeout; unset uses cb's own default",
+    )
+    p.add_argument(
+        "--run-timeout",
+        type=_bounded_seconds,
+        default=None,
+        metavar="SECONDS",
+        help="Bound on the whole cb run subprocess (SIGTERM, then SIGKILL); "
+        "finished variants are kept; unset or 0 waits on cb indefinitely",
     )
     p.add_argument(
         "--offline-run-ids",
@@ -319,6 +357,8 @@ if __name__ == "__main__":
         num_rollouts=args.num_rollouts,
         offline_run_ids=args.offline_run_ids,
         resume_from=args.resume_from,
+        variant_timeout=args.variant_timeout,
+        run_timeout=args.run_timeout,
         grpo=GRPOConfig(
             gamma=args.gamma,
             learning_rate=args.lr,

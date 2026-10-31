@@ -449,6 +449,8 @@ fn compositor_from_env() -> Option<String> {
                 .to_ascii_lowercase();
             if desktop.contains("sway") {
                 Some("sway".to_owned())
+            } else if desktop.contains("niri") {
+                Some("niri".to_owned())
             } else if desktop.contains("gnome") {
                 Some("gnome-mutter".to_owned())
             } else if desktop.contains("kde") || desktop.contains("plasma") {

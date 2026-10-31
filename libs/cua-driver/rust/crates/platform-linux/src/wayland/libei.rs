@@ -1043,7 +1043,7 @@ impl EisState {
                         let _ = context.flush();
                     }
                     if !delay.is_zero() {
-                        std::thread::sleep(delay);
+                        crate::interaction::pause(delay);
                     }
                 }
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Released);

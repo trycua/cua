@@ -510,6 +510,7 @@
      },
      "count": {
       "description": "Number of clicks in one press train: 1 (default), 2 = double-click, 3 = triple-click (line/paragraph selection). There is no separate triple_click tool — pass count: 3 here.",
+      "maximum": 3,
       "minimum": 1,
       "type": "integer"
      },

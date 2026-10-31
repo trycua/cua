@@ -320,7 +320,10 @@ impl Vault {
                     }
                     self.keys = Some(keys);
                     self.meta = Some(meta);
-                    self.settle_staged_records();
+                    if let Err(e) = self.settle_staged_records() {
+                        self.lock();
+                        return Err(e);
+                    }
                     return Ok(());
                 }
                 Err(e) => last = e,
@@ -587,7 +590,7 @@ impl Vault {
     /// the sealed record is rewritten only when its value changed.
     pub fn upsert_items(&mut self, items: Vec<(ItemMeta, ItemPayload)>) -> Result<Vec<Upsert>> {
         let now = crate::now_ms();
-        self.settle_staged_records();
+        self.settle_staged_records()?;
         // (provider, unique key) -> id, for what the vault already holds.
         let mut index: std::collections::HashMap<(String, String), String> = self
             .meta()?
@@ -751,12 +754,10 @@ impl Vault {
     /// A staged record the sealed index still references replaces an uncommitted
     /// one; every other staged record is removed, so a replaced or deleted item's
     /// old record does not outlive it.
-    fn settle_staged_records(&self) {
-        let Ok(meta) = self.meta() else {
-            return;
-        };
+    fn settle_staged_records(&self) -> Result<()> {
+        let meta = self.meta()?;
         let Ok(entries) = std::fs::read_dir(self.dir.join("items")) else {
-            return;
+            return Ok(());
         };
         let matches = |path: &Path, digest: &str| {
             std::fs::read(path).is_ok_and(|bytes| {
@@ -780,10 +781,19 @@ impl Vault {
                 && !matches(&path, &item.record_digest)
                 && matches(&staged, &item.record_digest)
             {
-                let _ = std::fs::rename(&staged, &path);
+                // Keep the staged record (the only one the index trusts) until
+                // it is back in place.
+                std::fs::rename(&staged, &path).map_err(|e| {
+                    Error::Corrupt(format!(
+                        "could not restore {} from {}: {e}",
+                        path.display(),
+                        staged.display()
+                    ))
+                })?;
             }
             let _ = std::fs::remove_file(&staged);
         }
+        Ok(())
     }
 
     /// Decrypts an item's payload after checking its record against the
@@ -903,7 +913,7 @@ impl Vault {
             }
         }
         // An interrupted upsert's staged record would outlive the delete.
-        self.settle_staged_records();
+        self.settle_staged_records()?;
         self.gc_blobs()?;
         Ok(removed)
     }
@@ -932,13 +942,13 @@ impl Vault {
     }
 }
 
-/// The record an upsert replaces, kept until the batch commits. A hard link
-/// keeps it without copying, so restoring needs no free space.
+/// The record an upsert replaces, kept on disk under a staged name until the
+/// batch commits, so a crash before the commit can still restore it. A hard
+/// link keeps it without copying, so restoring needs no free space.
 enum Backup {
     /// No record was on disk (an already-missing item); restoring removes the new one.
     Absent,
-    Linked(PathBuf),
-    Copied(Vec<u8>),
+    Staged(PathBuf),
 }
 
 impl Backup {
@@ -946,11 +956,15 @@ impl Backup {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("item");
         let staged = path.with_file_name(format!(".{name}.{}.prev", crypto::random_id()?));
         match std::fs::hard_link(path, &staged) {
-            Ok(()) => Ok(Backup::Linked(staged)),
+            Ok(()) => Ok(Backup::Staged(staged)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Backup::Absent),
-            // A filesystem without hard links: keep the bytes instead.
+            // A filesystem without hard links: stage a durable copy, or refuse
+            // the replacement when even that fails.
             Err(_) => match std::fs::read(path) {
-                Ok(bytes) => Ok(Backup::Copied(bytes)),
+                Ok(bytes) => {
+                    write_private(&staged, &bytes)?;
+                    Ok(Backup::Staged(staged))
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Backup::Absent),
                 Err(e) => Err(e.into()),
             },
@@ -963,7 +977,7 @@ impl Backup {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
                 _ => Ok(()),
             },
-            Backup::Linked(staged) => {
+            Backup::Staged(staged) => {
                 std::fs::rename(staged, path)?;
                 // Renaming a link onto another name of the same file is a
                 // no-op that leaves both names (the write failed before
@@ -973,12 +987,11 @@ impl Backup {
                     _ => Ok(()),
                 }
             }
-            Backup::Copied(bytes) => write_private(path, bytes),
         }
     }
 
     fn discard(&self) {
-        if let Backup::Linked(staged) = self {
+        if let Backup::Staged(staged) = self {
             let _ = std::fs::remove_file(staged);
         }
     }
@@ -1261,10 +1274,8 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn upsert_restores_overwritten_records_when_the_index_write_fails() {
-        use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
         let dir = d.path().join("kv");
         let mut v = Vault::create(&dir, &[&pp()]).unwrap();
@@ -1283,13 +1294,19 @@ mod tests {
         );
         fresh.source = "Default".into();
 
-        // items/ stays writable; the sealed index in the vault root cannot be replaced.
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        // A directory where the sealed index belongs makes its replacement fail
+        // deterministically (even with CAP_DAC_OVERRIDE); items/ stays writable.
+        let index = dir.join("meta.sealed");
+        let committed = std::fs::read(&index).unwrap();
+        std::fs::remove_file(&index).unwrap();
+        std::fs::create_dir(&index).unwrap();
+        std::fs::write(index.join("occupied"), b"").unwrap();
         let res = v.upsert_items(vec![
             (existing, sample_payload("b")),
             (fresh, sample_payload("n")),
         ]);
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_dir_all(&index).unwrap();
+        std::fs::write(&index, committed).unwrap();
         assert!(matches!(res, Err(Error::Io(_))), "{res:?}");
 
         let mut reopened = Vault::open(&dir).unwrap();
@@ -1341,7 +1358,7 @@ mod tests {
         std::fs::write(&path, b"old record").unwrap();
         // The write failed before replacing `path`: both names are one file.
         let backup = Backup::take(&path).unwrap();
-        assert!(matches!(backup, Backup::Linked(_)));
+        assert!(matches!(backup, Backup::Staged(_)));
         backup.restore(&path).unwrap();
         let names: Vec<_> = std::fs::read_dir(d.path())
             .unwrap()
@@ -1396,6 +1413,41 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(names, vec![std::ffi::OsString::from(format!("{e}.sealed"))]);
+    }
+
+    #[test]
+    fn unlock_keeps_a_staged_record_it_cannot_restore() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("kv");
+        let mut v = Vault::create(&dir, &[&pp()]).unwrap();
+        let e = v
+            .upsert_items(vec![(sample_meta(), sample_payload("a"))])
+            .unwrap()[0]
+            .id
+            .clone();
+        drop(v);
+        let items = dir.join("items");
+        let record = items.join(format!("{e}.sealed"));
+        let staged = items.join(format!(".{e}.sealed.crash.prev"));
+        std::fs::hard_link(&record, &staged).unwrap();
+        // The canonical name cannot be replaced (a non-empty directory).
+        std::fs::remove_file(&record).unwrap();
+        std::fs::create_dir(&record).unwrap();
+        std::fs::write(record.join("occupied"), b"").unwrap();
+
+        let mut reopened = Vault::open(&dir).unwrap();
+        let err = reopened.unlock(&pp()).unwrap_err();
+        assert!(err.to_string().contains("could not restore"), "{err}");
+        assert!(staged.exists(), "the only committed record must survive");
+        assert!(
+            reopened.meta().is_err(),
+            "a failed recovery leaves the vault locked"
+        );
+
+        std::fs::remove_dir_all(&record).unwrap();
+        reopened.unlock(&pp()).unwrap();
+        assert_eq!(reopened.read_payload(&e).unwrap(), sample_payload("a"));
+        assert!(!staged.exists());
     }
 
     #[test]

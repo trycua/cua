@@ -384,6 +384,7 @@ class CdbTask:
                     start_new_session=True,
                 )
             self.procs.append(proc)
+            desktop.record_pid(proc.pid, app["id"])
             ready = (app.get("ready") or {}).get("http")
             if ready:
                 self._wait_http(self.sub(ready), float(app["ready"].get("timeout_seconds", 20)))

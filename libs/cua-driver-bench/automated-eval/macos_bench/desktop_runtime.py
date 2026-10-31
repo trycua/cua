@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import hashlib
 import json
 import os
 import platform
@@ -10,8 +13,10 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
+import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, Mapping, Sequence
 
@@ -98,6 +103,36 @@ def bench_app_argv(name: str, build_dir: Path | None = None) -> list[str]:
     return [str(next(p for p in exes if p.is_file() and os.access(p, os.X_OK)))]
 
 
+class _CancelScope:
+    """Cancellation state of one doctor invocation."""
+
+    defer = 0
+    pending: int | None = None
+
+
+# SIGTERM cancels a doctor run, but never between creating a daemon and owning it.
+# The scope exists only while `main` runs a doctor; elsewhere these helpers do nothing.
+_scope: _CancelScope | None = None
+
+
+def check_cancel() -> None:
+    """Raise the cancellation deferred by `deferred_cancel`, at a point where cleanup owns everything."""
+    if _scope is not None and _scope.pending is not None:
+        raise SystemExit(_scope.pending)
+
+
+@contextlib.contextmanager
+def deferred_cancel():
+    scope = _scope
+    if scope is not None:
+        scope.defer += 1
+    try:
+        yield
+    finally:
+        if scope is not None:
+            scope.defer -= 1
+
+
 def stop_group(pid: int) -> None:
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
@@ -106,6 +141,41 @@ def stop_group(pid: int) -> None:
             return
         if sig == signal.SIGTERM:
             time.sleep(0.3)
+
+
+def proc_start(pid: int) -> int | None:
+    """Kernel start time of a process (Linux), which tells a recycled pid from the original."""
+    try:
+        return int(Path(f"/proc/{pid}/stat").read_text("utf-8").rsplit(")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def record_pid(pid: int, role: str) -> None:
+    """Append a created process group to the launcher's ledger (Linux, when CDB_BENCH_PID_LOG is set)."""
+    path = os.environ.get("CDB_BENCH_PID_LOG")
+    if not path or detect_platform() != "linux":
+        return
+    try:
+        pgid: int | None = os.getpgid(pid)
+    except OSError:
+        pgid = None
+    # An enabled ledger that cannot be written must fail the caller: the cleanup proof
+    # would otherwise certify an incomplete ownership record.
+    with open(path, "a", encoding="utf-8") as handle:
+        entry = {"pid": pid, "pgid": pgid, "role": role, "start": proc_start(pid)}
+        handle.write(json.dumps(entry) + "\n")
+
+
+def record_or_reap(proc: subprocess.Popen, role: str) -> None:
+    """Record a new process group; on any failure stop and reap it, then re-raise."""
+    try:
+        record_pid(proc.pid, role)
+    except BaseException:
+        stop_group(proc.pid)
+        with contextlib.suppress(OSError):
+            proc.wait()
+        raise
 
 
 def start_app(
@@ -122,11 +192,15 @@ def start_app(
             stderr=output,
             start_new_session=True,
         )
-    time.sleep(0.15)
-    if proc.poll() is not None:
+    try:
+        record_pid(proc.pid, Path(argv[0]).name)
+        time.sleep(0.15)
+        if proc.poll() is not None:
+            raise RuntimeError(f"{argv[0]} exited ({proc.returncode}); see {log}")
+    except BaseException:
         stop_group(proc.pid)
         proc.wait()
-        raise RuntimeError(f"{argv[0]} exited ({proc.returncode}); see {log}")
+        raise
     return proc
 
 
@@ -147,6 +221,7 @@ def start_driver(
     try:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
+            check_cancel()
             if proc.poll() is not None:
                 raise RuntimeError(f"driver exited ({proc.returncode}); see {state / log_name}")
             done = subprocess.run(
@@ -271,3 +346,136 @@ def capture_screenshot(display: str, destination: Path) -> Path:
             timeout=20,
         )
     return destination
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _at_spi_address() -> str | None:
+    try:
+        done = subprocess.run(
+            [
+                "gdbus",
+                "call",
+                "--session",
+                "--dest",
+                "org.a11y.Bus",
+                "--object-path",
+                "/org/a11y/bus",
+                "--method",
+                "org.a11y.Bus.GetAddress",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else None
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="desktop_runtime.py")
+    sub = parser.add_subparsers(dest="command", required=True)
+    doc = sub.add_parser("doctor", help="run the desktop doctor without a full preflight")
+    doc.add_argument("--cua-bin", type=Path, required=True)
+    doc.add_argument("--socket", default=None)
+    doc.add_argument("--out", type=Path, default=Path.cwd())
+    doc.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    global _scope
+    fired = False
+    scope = _CancelScope()
+    outer = _scope
+
+    def terminate(signum: int, _frame: object) -> None:
+        # Only the first signal unwinds; later ones must not interrupt teardown.
+        nonlocal fired
+        if fired:
+            return
+        if scope.defer:
+            scope.pending = 128 + signum
+            return
+        fired = True
+        raise SystemExit(128 + signum)
+
+    # SIGTERM must unwind through the cleanup below instead of killing the process outright.
+    _scope = scope
+    previous = signal.signal(signal.SIGTERM, terminate)
+    try:
+        return _doctor(args)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        _scope = outer
+
+
+def _doctor(args: argparse.Namespace) -> int:
+    binary = args.cua_bin
+    args.out.mkdir(parents=True, exist_ok=True)
+    state = Path(tempfile.mkdtemp(prefix="cdb-doctor-"))
+    (state / "home").mkdir()
+    proc: subprocess.Popen | None = None
+    checks: list[Check] = []
+    health: dict = {}
+    mode = "existing" if args.socket else "private"
+    try:
+        socket = args.socket or str(state / "d.sock")
+        if not args.socket:
+            try:
+                with deferred_cancel():
+                    proc = start_driver(binary, socket, state, overlay=False, log_name="driver.log")
+            except (OSError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
+                checks.append(Check("driver-start", "fail", f"{type(error).__name__}: {error}"))
+            check_cancel()
+        if not checks:
+            checks = doctor(binary, socket, state / "home")
+            health = cua_health(binary, socket, state / "home")
+        try:
+            version = subprocess.run(
+                [str(binary), "--version"], capture_output=True, text=True, timeout=10
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            version = ""
+        try:
+            digest = _sha256_file(binary)
+        except OSError:
+            digest = None
+        report = {
+            "schema": 1,
+            "platform": detect_platform(),
+            "display": os.environ.get("DISPLAY", ""),
+            "driver_version": version,
+            "driver_sha256": digest,
+            "build": health.get("build", {}),
+            "at_spi_address": _at_spi_address(),
+            "daemon": mode,
+            "daemon_pid": proc.pid if proc else None,
+            "checks": [asdict(c) for c in checks],
+            "ok": bool(checks) and all(c.status != "fail" for c in checks),
+        }
+    finally:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        if proc is not None:
+            stop_group(proc.pid)
+            try:
+                proc.wait(5)
+            except subprocess.TimeoutExpired:
+                pass
+        log = state / "driver.log"
+        if log.is_file():
+            shutil.copy2(log, args.out / "driver.log")
+        shutil.rmtree(state, ignore_errors=True)
+    (args.out / "doctor.json").write_text(json.dumps(report, indent=2) + "\n", "utf-8")
+    if args.json:
+        print(json.dumps(report, indent=2))
+    return 0 if report["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

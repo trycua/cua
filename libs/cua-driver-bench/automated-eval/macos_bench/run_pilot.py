@@ -15,6 +15,7 @@ arms differ only in the computer-use tool layer; see PREREGISTRATION.md.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -349,6 +350,7 @@ def run_agent(
             stderr=err,
             start_new_session=True,
         )
+        desktop.record_or_reap(proc, "codex")
 
         def pump() -> None:
             assert proc.stdout is not None
@@ -409,47 +411,55 @@ def launch_apps(
 ) -> list[subprocess.Popen[bytes]]:
     procs: list[subprocess.Popen[bytes]] = []
     log_dir.mkdir(parents=True, exist_ok=True)
-    for raw in descriptor["apps"]:
-        app = compare.expand_placeholders(raw, variables)
-        if app.get("kind") in SKIP_APP_KINDS:
-            continue
-        env = {**app_env, **{k: str(v) for k, v in dict(app.get("env", {})).items()}}
-        for name in app.get("unset_env", []):
-            env.pop(str(name), None)
-        cwd = Path(app.get("cwd", variables["bundle"]))
-        command = compare._resolve_executable(app["command"])
-        out = (log_dir / f"{app['id']}.log").open("wb")
-        proc = subprocess.Popen(
-            command,
-            cwd=cwd,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=out,
-            stderr=out,
-            start_new_session=True,
-        )
-        procs.append(proc)
-        ready = app.get("ready")
-        url = ready.get("http", ready.get("url")) if isinstance(ready, dict) else None
-        if url:
-            import urllib.request
+    try:
+        for raw in descriptor["apps"]:
+            app = compare.expand_placeholders(raw, variables)
+            if app.get("kind") in SKIP_APP_KINDS:
+                continue
+            env = {**app_env, **{k: str(v) for k, v in dict(app.get("env", {})).items()}}
+            for name in app.get("unset_env", []):
+                env.pop(str(name), None)
+            cwd = Path(app.get("cwd", variables["bundle"]))
+            command = compare._resolve_executable(app["command"])
+            out = (log_dir / f"{app['id']}.log").open("wb")
+            proc = subprocess.Popen(
+                command,
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=out,
+                start_new_session=True,
+            )
+            desktop.record_or_reap(proc, str(app["id"]))
+            procs.append(proc)
+            ready = app.get("ready")
+            url = ready.get("http", ready.get("url")) if isinstance(ready, dict) else None
+            if url:
+                import urllib.request
 
-            deadline = time.monotonic() + float(ready.get("timeout_seconds", 20))
-            while time.monotonic() < deadline:
-                if proc.poll() is not None:
-                    raise RuntimeError(f"app {app['id']} exited before readiness")
-                try:
-                    with urllib.request.urlopen(url, timeout=1.0) as response:
-                        if response.status < 500:
-                            break
-                except OSError:
-                    time.sleep(0.3)
-            else:
-                raise TimeoutError(f"app {app['id']} readiness timed out")
-    time.sleep(6.0)
-    for proc in procs:
-        if proc.poll() is not None:
-            raise RuntimeError("an app exited during startup")
+                deadline = time.monotonic() + float(ready.get("timeout_seconds", 20))
+                while time.monotonic() < deadline:
+                    if proc.poll() is not None:
+                        raise RuntimeError(f"app {app['id']} exited before readiness")
+                    try:
+                        with urllib.request.urlopen(url, timeout=1.0) as response:
+                            if response.status < 500:
+                                break
+                    except OSError:
+                        time.sleep(0.3)
+                else:
+                    raise TimeoutError(f"app {app['id']} readiness timed out")
+        time.sleep(6.0)
+        for proc in procs:
+            if proc.poll() is not None:
+                raise RuntimeError("an app exited during startup")
+    except BaseException:
+        for child in procs:
+            desktop.stop_group(child.pid)
+            with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+                child.wait(timeout=5)
+        raise
     return procs
 
 

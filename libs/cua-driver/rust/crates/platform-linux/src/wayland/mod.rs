@@ -1172,7 +1172,8 @@ fn crop_png_to_rect(
 ///    consent).
 /// 3. ext-image-copy-capture-v1 on supported compositors.
 /// 4. xdg-desktop-portal Screenshot via ashpd. Triggers a consent prompt on
-///    first use per session.
+///    first use per session. A refusal from the portal is terminal; the
+///    request has a 30-second deadline, after which the cascade continues.
 /// 5. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if is_wayland() && hyprland::is_session() {
@@ -1214,15 +1215,11 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 4: xdg-desktop-portal (GNOME, KDE, COSMIC fallback).
-        match portal_screenshot::screenshot_via_portal() {
-            Ok(bytes) => return Ok(bytes),
-            Err(e) => {
-                tracing::debug!(
-                    "xdg-desktop-portal Screenshot unavailable ({e}); falling through to X11"
-                );
-            }
-        }
+        // Tier 4: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
+        return portal_or_x11(
+            portal_screenshot::screenshot_via_portal,
+            crate::capture::screenshot_display_bytes_x11,
+        );
     }
     // Final fallback: X11 root window. Call the X11-only path explicitly
     // so we don't re-enter screenshot_display_bytes (which routes back here
@@ -1273,6 +1270,19 @@ fn checked_shell_helper_capture(
 ) -> Option<anyhow::Result<Vec<u8>>> {
     available
         .then(|| capture().ok_or_else(|| anyhow::anyhow!("GNOME compositor helper capture failed")))
+}
+
+/// The cascade tail: the portal tier, then the X11 root window. A portal
+/// refusal (`Err`) ends the cascade; only an unavailable portal (`Ok(None)`)
+/// falls through to X11.
+fn portal_or_x11(
+    portal: impl FnOnce() -> anyhow::Result<Option<Vec<u8>>>,
+    x11: impl FnOnce() -> anyhow::Result<Vec<u8>>,
+) -> anyhow::Result<Vec<u8>> {
+    if let Some(bytes) = portal()? {
+        return Ok(bytes);
+    }
+    x11()
 }
 
 /// Per-window capture dispatcher. Kept as the explicit window-capture entry
@@ -4325,6 +4335,45 @@ mod tests {
         });
         assert!(result.is_none());
         assert!(!called.get());
+    }
+
+    /// Run the display cascade's portal-then-X11 tail with a portal request
+    /// that resolves to `outcome`, reporting whether X11 was captured. The
+    /// refusal contract is owned by `tests/portal_screenshot_cascade.rs`,
+    /// which drives the public capture path against a portal on D-Bus.
+    fn portal_tail(
+        outcome: Result<String, portal_screenshot::RequestError>,
+    ) -> (anyhow::Result<Vec<u8>>, bool) {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let x11_called = std::cell::Cell::new(false);
+        let result = portal_or_x11(
+            || {
+                rt.block_on(portal_screenshot::request_outcome(
+                    async { outcome },
+                    portal_screenshot::SCREENSHOT_TIMEOUT,
+                ))
+            },
+            || {
+                x11_called.set(true);
+                Ok(b"x11-root".to_vec())
+            },
+        );
+        (result, x11_called.get())
+    }
+
+    #[test]
+    fn portal_unavailable_falls_through_to_x11() {
+        for unavailable in [
+            ashpd::Error::NoResponse.into(),
+            portal_screenshot::RequestError::Connect(anyhow::anyhow!("session bus unreachable")),
+        ] {
+            let (result, x11_called) = portal_tail(Err(unavailable));
+            assert_eq!(result.unwrap(), b"x11-root");
+            assert!(x11_called);
+        }
     }
 
     #[test]

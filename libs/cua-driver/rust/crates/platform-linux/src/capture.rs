@@ -947,7 +947,8 @@ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
 ///   routes through [`crate::wayland::screenshot_display_dispatch`] which
 ///   owns the complete GNOME helper → wlroots screencopy →
 ///   ext-image-copy-capture-v1 → portal Screenshot → X11 cascade. An
-///   available GNOME helper's capture failure is terminal.
+///   available GNOME helper's capture failure is terminal, and so is a
+///   refusal from a reachable portal.
 /// - X11 / Wayland-disabled: ImageMagick `import` → x11rb `XGetImage`.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
     screenshot_display_bytes_with_dispatch(

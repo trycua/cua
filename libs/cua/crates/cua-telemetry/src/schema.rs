@@ -162,6 +162,12 @@ pub const ERROR_KINDS: &[&str] = &[
     // Cua Cloud has ended: a cloud create is refused up front. Expected, so
     // reports can leave it out of the failures that need a fix.
     "cloud_ended",
+    // QEMU, Lume or UEFI firmware missing; a container that exited at
+    // start; QEMU or Lume refusing or failing; any other engine error.
+    "vm_runtime_missing",
+    "container_exited",
+    "vm_error",
+    "engine_error",
     "env",
     "http",
     "unauthenticated",

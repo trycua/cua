@@ -113,9 +113,23 @@ pub enum VmmError {
     Other(String),
 }
 
+/// Lume's refusal at Apple's two running macOS guests per Mac (HTTP 409,
+/// "VM start rejected: host limit of 2 running macOS guests reached"), or
+/// Virtualization.framework's own `virtualMachineLimitExceeded`, as the
+/// Spaces app reads it. `lower` is the lowercased message.
+pub fn is_vm_limit(lower: &str) -> bool {
+    lower.contains("running macos guests reached")
+        || lower.contains("virtualmachinelimitexceeded")
+        || ((lower.contains("virtual machine") || lower.contains("vms"))
+            && lower.contains("limit")
+            && (lower.contains("exceed") || lower.contains("maximum") || lower.contains("reached")))
+}
+
 /// Why a local create failed, as a bounded word for telemetry (never the
-/// message): `runtime_missing`, `runtime_not_running`,
-/// `runtime_permission`, `image_pull`, else `None`.
+/// message): `image_pull`, `runtime_permission`, `runtime_not_running`,
+/// `local_network`, `vm_limit`, `vm_runtime_missing` (QEMU, Lume or UEFI
+/// firmware), `runtime_missing` (container engine, gVisor), `container_exited`,
+/// `vm_error` (QEMU or Lume refused or failed), `engine_error`, else `None`.
 pub fn failure_kind(message: &str) -> Option<&'static str> {
     let m = message.to_ascii_lowercase();
     if m.contains("container engine: pull ")
@@ -129,11 +143,31 @@ pub fn failure_kind(message: &str) -> Option<&'static str> {
         Some("runtime_permission")
     } else if m.contains(" is not running: ") {
         Some("runtime_not_running")
-    } else if m.contains(" is not available: ")
-        && !m.contains("local network access")
+    } else if m.contains("local network access")
+        || (m.contains("192.168.64.")
+            && (m.contains("no route to host") || m.contains("os error 65")))
+    {
+        Some("local_network")
+    } else if is_vm_limit(&m) {
+        Some("vm_limit")
+    } else if let Some((what, _)) = m.split_once(" is not available: ")
         && !m.contains("network route")
     {
-        Some("runtime_missing")
+        // `what` is the missing piece (behind any `local runtime: [local] `).
+        let vm = ["qemu", "lume", "uefi firmware", "homebrew"]
+            .iter()
+            .any(|w| what.contains(w));
+        Some(if vm {
+            "vm_runtime_missing"
+        } else {
+            "runtime_missing"
+        })
+    } else if m.contains("exited right after start") || m.contains("' exited (code ") {
+        Some("container_exited")
+    } else if m.contains("lume api ") || m.contains("qmp: ") || m.contains("could not launch ") {
+        Some("vm_error")
+    } else if m.contains("container engine: ") || m.contains("did not answer ping") {
+        Some("engine_error")
     } else {
         None
     }
@@ -187,6 +221,35 @@ mod tests {
         assert_eq!(failure_kind(&wrap(stopped)), Some("image_pull"));
         assert_eq!(failure_kind(&VmmError::other("boom").to_string()), None);
         let lan = VmmError::missing("Local Network access", "click Allow");
-        assert_eq!(failure_kind(&lan.to_string()), None);
+        assert_eq!(failure_kind(&wrap(lan)), Some("local_network"));
+        let unroutable =
+            VmmError::other("connect 192.168.64.7:8000: No route to host (os error 65)");
+        assert_eq!(failure_kind(&wrap(unroutable)), Some("local_network"));
+        let cap = VmmError::Lume {
+            status: 409,
+            message: "VM start rejected: host limit of 2 running macOS guests reached".into(),
+        };
+        assert_eq!(failure_kind(&wrap(cap)), Some("vm_limit"));
+        for missing in [
+            VmmError::missing("QEMU", "download QEMU for Windows"),
+            VmmError::missing("qemu-system-x86_64", "install QEMU"),
+            VmmError::missing("lume serve at http://127.0.0.1:7777", "start it"),
+            VmmError::missing("UEFI firmware for x86_64", "install edk2"),
+        ] {
+            assert_eq!(failure_kind(&wrap(missing)), Some("vm_runtime_missing"));
+        }
+        let gvisor = VmmError::missing("gVisor (runsc)", "install it");
+        assert_eq!(failure_kind(&wrap(gvisor)), Some("runtime_missing"));
+        let exited = VmmError::other("container 'a' exited (code 1) before Tcp(8000) passed");
+        assert_eq!(failure_kind(&wrap(exited)), Some("container_exited"));
+        let lume = VmmError::Lume {
+            status: 500,
+            message: "boom".into(),
+        };
+        assert_eq!(failure_kind(&wrap(lume)), Some("vm_error"));
+        let qmp = VmmError::Qmp("closed".into());
+        assert_eq!(failure_kind(&wrap(qmp)), Some("vm_error"));
+        let engine = VmmError::Engine("create: conflict".into());
+        assert_eq!(failure_kind(&wrap(engine)), Some("engine_error"));
     }
 }

@@ -238,6 +238,17 @@ impl LumeClient {
                 .unwrap_or(message);
             return Err(VmmError::NotFound(name));
         }
+        // Apple's license allows two running macOS VMs per Mac: say how to
+        // free one rather than only that Lume refused.
+        let message = if crate::error::is_vm_limit(&message.to_ascii_lowercase()) {
+            format!(
+                "{message}. This Mac is already running two macOS VMs, the most Apple allows at \
+                 once: stop one (in Cua Spaces, or `cua sb ls` then `cua sb suspend <name>`) and \
+                 try again"
+            )
+        } else {
+            message
+        };
         Err(VmmError::Lume {
             status: status.as_u16(),
             message,
@@ -944,6 +955,19 @@ pub(crate) mod tests {
             }),
             heard,
         )
+    }
+
+    /// Lume's 409 at Apple's two macOS VMs says how to free one, and
+    /// telemetry reads it as `vm_limit`.
+    #[tokio::test]
+    async fn the_macos_vm_limit_says_how_to_free_one() {
+        let body =
+            r#"{"message":"VM start rejected: host limit of 2 running macOS guests reached"}"#;
+        let (lume, _) = scripted_lume(vec![(409, body.to_string())]).await;
+        let e = lume.get("b").await.unwrap_err().to_string();
+        assert!(e.starts_with("lume API 409: VM start rejected"), "{e}");
+        assert!(e.contains("`cua sb suspend <name>`"), "{e}");
+        assert_eq!(crate::error::failure_kind(&e), Some("vm_limit"));
     }
 
     #[tokio::test]

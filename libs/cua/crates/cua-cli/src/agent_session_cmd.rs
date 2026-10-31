@@ -34,9 +34,14 @@ pub fn session_of(s: &str) -> Option<&str> {
 }
 
 /// The Space size of an ACP harness driver (the harness and its install
-/// run in it; the job default of 1 CPU and 1 GiB runs out of memory).
-const ACP_DRIVER_CPUS: u32 = 2;
-const ACP_DRIVER_MEMORY_MB: u64 = 4096;
+/// run in it; the job default of 1 CPU and 1 GiB runs out of memory: the
+/// OpenCode install is killed). Measured on a Linux machine with a scripted
+/// model: the four durable harnesses finish with 1536 MiB (OpenCode, the
+/// largest, 3 of 3 runs; killed at 1024), and a machine with 8 GB then holds
+/// four drivers at once instead of one. The reservation is what the host sets
+/// aside and what limits the Space.
+const ACP_DRIVER_CPUS: u32 = 1;
+const ACP_DRIVER_MEMORY_MB: u64 = 1536;
 
 /// The driver of a session: what the coordinator runs, and how it is
 /// packaged.
@@ -460,10 +465,10 @@ mod tests {
     #[test]
     fn a_waiting_driver_says_what_it_waits_for() {
         let v = json!({"name":"n","state":"running","epoch":2,"attempts":2,"max_attempts":5,
-            "waiting":"waiting for a machine with 2 CPUs and 4 GB memory free"});
+            "waiting":"waiting for a machine with 1 CPUs and 1.5 GB memory free"});
         let l = state_line(&v);
         assert!(
-            l.ends_with(", waiting for a machine with 2 CPUs and 4 GB memory free"),
+            l.ends_with(", waiting for a machine with 1 CPUs and 1.5 GB memory free"),
             "{l}"
         );
         let v = json!({"name":"n","state":"running","epoch":1,"attempts":1,"max_attempts":5});
@@ -592,6 +597,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p["spec"]["argv"], json!(["sh", "-c", "true"]));
+    }
+
+    /// The driver Space is sized for what the harnesses need (CUA-3002):
+    /// OpenCode's install is killed at 1024 MiB and runs at 1536, and a
+    /// machine with 8 GB (about 6.7 GB of it offered to jobs) must hold four
+    /// drivers at once, not one.
+    #[test]
+    fn four_drivers_fit_a_machine_with_8_gb_and_opencode_still_fits_one() {
+        const {
+            assert!(ACP_DRIVER_MEMORY_MB >= 1536, "OpenCode needs 1.5 GiB");
+            assert!(4 * ACP_DRIVER_MEMORY_MB <= 6777, "four drivers on 8 GB");
+            assert!(
+                4 * (ACP_DRIVER_CPUS as u64) * 1000 <= 4000,
+                "four drivers on 4 CPUs"
+            );
+        }
+        let a = args(&["--durable", "auto", "opencode", "x"]);
+        let p = start_params(&a, "n", |_: &str| None).unwrap();
+        assert_eq!(p["spec"]["memory_mb"], 1536);
+        assert_eq!(p["spec"]["cpus"], 1);
     }
 
     #[test]

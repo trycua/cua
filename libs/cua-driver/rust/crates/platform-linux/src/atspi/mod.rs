@@ -295,6 +295,19 @@ pub fn perform_action_walked(pid: u32, xid: u64, node: &AtspiNode) -> Result<(St
     native::perform_action_ref(object_ref)
 }
 
+/// [`perform_action_walked`] that runs `before_dispatch` immediately before the
+/// action is sent, after the window-membership proof.
+pub fn perform_action_walked_guarded(
+    pid: u32,
+    xid: u64,
+    node: &AtspiNode,
+    before_dispatch: impl Fn() -> Result<()>,
+) -> Result<(String, bool, bool)> {
+    let (identity, object_ref) = walked_object(node)?;
+    require_window_element(pid, xid, WindowElement::Identity(identity))?;
+    native::perform_action_ref_guarded(object_ref, before_dispatch)
+}
+
 /// The proven identity and the D-Bus object of a walked node: what an action
 /// on that node addresses.
 fn walked_object(node: &AtspiNode) -> Result<(AtspiIdentity, &native::ObjectRef)> {

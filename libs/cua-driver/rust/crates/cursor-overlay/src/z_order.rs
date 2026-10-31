@@ -23,9 +23,11 @@
 //!   transition through that band when required to defeat a foreground lock,
 //!   provided the operation ends in the ordinary band.
 //!
-//! - `wid` no longer maps to a live window — fall back to the `None`
-//!   behaviour for this tick. Do not error; the next tick may have a
-//!   new target.
+//! - `wid` no longer maps to a live on-screen window (the action closed or
+//!   hid it): keep the overlay's current stacking for this tick. Never
+//!   fall back to the `None` behaviour here: that would lift the cursor above
+//!   the user's foreground windows. Do not error; the next tick may have a
+//!   new target. (macOS implements this; Windows and Linux still fall back.)
 //!
 //! - Implementations must be cheap and idempotent. `reassert` is called
 //!   on every render tick; doing redundant work is acceptable, but

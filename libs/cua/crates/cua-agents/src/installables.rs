@@ -510,9 +510,12 @@ fn step(id: &str, it: &Installable) -> String {
             // GitHub repository the pinned commit's own archive is fetched
             // instead (the commit is in the URL; the dependencies are still
             // checked against the project's `uv.lock` hashes).
-            let archive = repo
-                .strip_prefix("https://github.com/")
-                .map(|r| format!("https://github.com/{}/archive/{commit}.tar.gz", r.trim_end_matches('/')));
+            let archive = repo.strip_prefix("https://github.com/").map(|r| {
+                format!(
+                    "https://github.com/{}/archive/{commit}.tar.gz",
+                    r.trim_end_matches('/')
+                )
+            });
             let no_git = match &archive {
                 Some(url) => format!(
                     "cua_progress {qid} download {commit_q}\n\
@@ -830,7 +833,10 @@ mod tests {
         let Source::GitUv { repo, commit, .. } = &get("hermes").unwrap().how else {
             panic!("hermes is a git-uv item");
         };
-        assert!(s.contains(&format!("{repo}/archive/{commit}.tar.gz")), "{s}");
+        assert!(
+            s.contains(&format!("{repo}/archive/{commit}.tar.gz")),
+            "{s}"
+        );
         assert!(s.contains("--strip-components=1"));
         assert!(!s.contains("'git is not available'"));
         // With git present the commit is still checked.

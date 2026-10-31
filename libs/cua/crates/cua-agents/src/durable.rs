@@ -345,8 +345,7 @@ pub fn guard_env(h: &harness::Harness) -> Vec<(String, String)> {
 /// add, a checksum or commit that does not match, no build for this CPU): the
 /// driver exits 78 and the session fails at once instead of five drives later.
 /// A failed download or a package manager error stays a plain exit 1 (retried).
-const PERMANENT_INSTALL_ERRORS: &str =
-    "git is not available|commit mismatch|integrity mismatch|sha256 mismatch|not published for|npm is not available";
+const PERMANENT_INSTALL_ERRORS: &str = "git is not available|commit mismatch|integrity mismatch|sha256 mismatch|not published for|npm is not available";
 
 /// What the driver does when its install step fails (run in `sh`, in the
 /// driver's directory): exit 78 for an error no retry fixes, else exit 1.
@@ -755,11 +754,17 @@ mod tests {
                 .arg(format!("false || {{ {} }}", install_failure_handler()))
                 .output()
                 .unwrap();
-            (out.status.code(), String::from_utf8_lossy(&out.stderr).to_string())
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr).to_string(),
+            )
         };
         let (code, err) = run("git is not available");
         assert_eq!(code, Some(78), "{err}");
-        assert!(err.contains("cannot be installed in the job Space"), "{err}");
+        assert!(
+            err.contains("cannot be installed in the job Space"),
+            "{err}"
+        );
         assert_eq!(run("commit mismatch").0, Some(78));
         assert_eq!(run("download failed").0, Some(1));
         assert_eq!(run("uv sync failed").0, Some(1));

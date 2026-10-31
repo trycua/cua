@@ -1,0 +1,98 @@
+---
+title: Record external events
+description: Import synthetic collector observations into a Cua Bench trace and inspect them in the existing viewer.
+---
+
+Use `Tracing.record()` to include JSON metadata from an external collector
+alongside action events and images. This guide demonstrates the existing trace
+format with a separate, synthetic JSONL producer. It needs no sandbox, device,
+credentials, or capture permissions.
+
+## Run the example
+
+From a checkout of the [Cua repository](https://github.com/trycua/cua), install
+the Cua Bench development environment and run `examples/external_collector.py`
+from `libs/cua-bench`.
+Use a new output directory; the example refuses to overwrite an existing one.
+
+```bash skip="no-runner"
+cd libs/cua-bench
+uv sync --frozen --extra dev
+uv run python examples/external_collector.py --output /tmp/collector-trace
+uv run cb trace view /tmp/collector-trace
+```
+
+The viewer opens a completed trace containing four rows: a synthetic click with
+a generated image, followed by a network response, an application operation,
+and a network request. Expand the JSON fields to inspect their metadata and click
+the image to enlarge it. Press Enter in the terminal to stop the viewer server.
+Use an absolute path when opening this standalone trace directory.
+
+The recorder and tests run offline. The viewer's expandable JSON component
+currently loads JavaScript from `pfau-software.de`, so rendering that component
+in a browser requires access to that host.
+
+## How the bridge works
+
+The script launches itself with `--emit` as a separate process. That mode emits
+three fictional observations as JSONL, without importing Cua Bench. The parent
+waits for the finite batch, starts one `Tracing(env=None)` instance, records a
+synthetic action, and passes each observation to `record(event_name, data)`.
+It saves the combined dataset with `save_to_disk()`.
+
+All events and the image use the existing trace schema and viewer. The example
+adds no collector registration API, event schema, or viewer plugin. Its JSONL
+envelope and metadata names are example conventions:
+
+| Field                 | Purpose                                                                          |
+| --------------------- | -------------------------------------------------------------------------------- |
+| `action_id`           | Connect observations to the example's synthetic action.                          |
+| `collector`           | Identify the producer.                                                           |
+| `source_sequence`     | Preserve the producer's emission order.                                          |
+| `source_timestamp_ms` | Preserve the observation time supplied by the producer.                          |
+| `clock_domain`        | Describe the source clock; this example uses a fictional session-relative clock. |
+| `synthetic`           | Mark these observations as generated fixtures.                                   |
+| `payload`             | Hold collector-specific nested JSON.                                             |
+
+The recorder's top-level `timestamp` is the time of ingestion. It does not
+replace or normalize source timestamps. Rows remain in recording order: the
+example deliberately emits its response before its request to demonstrate that
+late observations are preserved without automatic sorting.
+
+## Adapt it to a collector
+
+Replace the synthetic producer with a collector you operate, and translate its
+output into JSON-serializable metadata before calling `record()`. Start the
+trajectory first; calls made before `start()` are ignored. Calling `start()`
+again clears the current recording.
+
+Keep one owner of the recorder. For concurrent collectors, queue observations
+to that owner and define ordering and shutdown behavior in your integration.
+This example buffers a small, finite batch; a long-running collector needs
+bounded buffering, input validation, error handling, and a stop/flush mechanism.
+Save after draining the queue. The existing viewer displays a saved snapshot,
+not a live event stream.
+
+Preserve each source's clock domain and any available process, request, or
+operation identifiers. Establish clock offsets before comparing observations
+from different devices. Temporal proximity alone does not prove that a click
+caused an OS operation or network request. The example assigns its action ID
+explicitly; it does not discover causal relationships.
+
+Only collect data you are authorized to inspect. Remove credentials, cookies,
+tokens, and sensitive payload fields before recording. Large captures should
+stay in access-controlled artifacts, with suitable references and checksums in
+the trace metadata. The viewer displays those references as JSON; it does not
+automatically load external artifacts.
+
+## Validate the integration
+
+The regression tests run the example in a subprocess, reload the dataset, and
+fetch the HTML served by the existing viewer over loopback. They verify event
+order, correlation metadata, nested JSON with Unicode and HTML-sensitive text,
+and the embedded image. They do not launch a browser or capture real OS/network
+events.
+
+```bash skip="no-runner"
+uv run --frozen pytest -q cua_bench/tests/test_external_collector.py
+```

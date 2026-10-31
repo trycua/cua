@@ -15,14 +15,17 @@ use tokio::sync::Notify;
 
 #[test]
 fn background_window_sources_delegate_without_space_queries_or_refiltering() {
-    let gate = include_str!("../../platform-macos/src/ax/exact_target.rs");
+    // A Windows checkout with core.autocrlf has CRLF sources; the searches below
+    // look for LF-only `\n}\n`, so normalize first.
+    let gate = include_str!("../../platform-macos/src/ax/exact_target.rs").replace("\r\n", "\n");
     let start = gate.find("pub fn gather_background_facts(").unwrap();
     let end = start + gate[start..].find("\n}\n").unwrap();
     let gate = &gate[start..end];
     assert!(gate.contains("all_windows_without_spaces()"));
     assert!(!gate.contains("all_windows()"));
 
-    let detector = include_str!("../../platform-macos/src/window_change_detector.rs");
+    let detector =
+        include_str!("../../platform-macos/src/window_change_detector.rs").replace("\r\n", "\n");
     let start = detector
         .find("fn host_windows() -> Vec<WindowInfo> {")
         .unwrap();

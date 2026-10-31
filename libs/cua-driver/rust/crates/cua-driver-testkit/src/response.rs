@@ -95,15 +95,6 @@ impl ToolResponse {
             .and_then(Value::as_str)
     }
 
-    /// `get_window_state` degraded flag: an AX walk that ran but returned zero
-    /// actionable elements (non-AX surface / tree not ready). `false` when absent.
-    pub fn degraded(&self) -> bool {
-        self.structured
-            .get("degraded")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    }
-
     pub fn snapshot_id(&self) -> &str {
         self.structured
             .get("snapshot_id")

@@ -341,6 +341,24 @@ pub fn guard_env(h: &harness::Harness) -> Vec<(String, String)> {
     }
 }
 
+/// Install errors that no retry fixes (a missing tool the job Space cannot
+/// add, a checksum or commit that does not match, no build for this CPU): the
+/// driver exits 78 and the session fails at once instead of five drives later.
+/// A failed download or a package manager error stays a plain exit 1 (retried).
+const PERMANENT_INSTALL_ERRORS: &str =
+    "git is not available|commit mismatch|integrity mismatch|sha256 mismatch|not published for|npm is not available";
+
+/// What the driver does when its install step fails (run in `sh`, in the
+/// driver's directory): exit 78 for an error no retry fixes, else exit 1.
+fn install_failure_handler() -> String {
+    format!(
+        "tail -n 20 install.log >&2; \
+         if grep '\"phase\":\"error\"' install.log | tail -n 1 | grep -Eq '{PERMANENT_INSTALL_ERRORS}'; then \
+         echo 'driver: this harness cannot be installed in the job Space; not retrying' >&2; exit 78; fi; \
+         echo 'driver: install failed; see install.log' >&2; exit 1;"
+    )
+}
+
 /// The driver's launcher: installs what the harness needs (idempotent, fast
 /// when present), then runs the durable runner under the session env.
 fn driver_script(ids: &[&str], install: bool) -> Result<String> {
@@ -356,8 +374,9 @@ fn driver_script(ids: &[&str], install: bool) -> Result<String> {
          exec \"$HOME/.cua/bin/node\" ./acp-runner.mjs \"$CUA_RUN_DIR\"\n",
         if install {
             format!(
-                "(\n{}\n) >> install.log 2>&1 || {{ echo 'driver: install failed; see install.log' >&2; tail -n 20 install.log >&2; exit 1; }}\n",
-                installables::script(ids)?
+                "(\n{}\n) >> install.log 2>&1 || {{ {} }}\n",
+                installables::script(ids)?,
+                install_failure_handler()
             )
         } else {
             "export PATH=\"$HOME/.cua/bin:$PATH\"\n".to_string()
@@ -719,6 +738,31 @@ mod tests {
                 Err(e) => panic!("{}: {e}", h.id),
             }
         }
+    }
+
+    #[test]
+    fn a_permanent_install_failure_exits_78_and_a_transient_one_exits_1() {
+        let run = |detail: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(
+                dir.path().join("install.log"),
+                format!("{{\"id\":\"hermes\",\"phase\":\"error\",\"detail\":\"{detail}\"}}\n"),
+            )
+            .unwrap();
+            let out = std::process::Command::new("/bin/sh")
+                .current_dir(dir.path())
+                .arg("-c")
+                .arg(format!("false || {{ {} }}", install_failure_handler()))
+                .output()
+                .unwrap();
+            (out.status.code(), String::from_utf8_lossy(&out.stderr).to_string())
+        };
+        let (code, err) = run("git is not available");
+        assert_eq!(code, Some(78), "{err}");
+        assert!(err.contains("cannot be installed in the job Space"), "{err}");
+        assert_eq!(run("commit mismatch").0, Some(78));
+        assert_eq!(run("download failed").0, Some(1));
+        assert_eq!(run("uv sync failed").0, Some(1));
     }
 
     #[test]

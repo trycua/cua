@@ -25,9 +25,6 @@ use std::time::Duration;
 /// The prefix that names a durable session where a sandbox goes.
 pub const PREFIX: &str = "session:";
 
-/// The driver's entry in its bundle, for the `pi` harness.
-pub const PI_DRIVER_ENTRY: &str = "pi-durable-driver";
-
 /// The session `s` names (`session:NAME`), if it does.
 pub fn session_of(s: &str) -> Option<&str> {
     s.strip_prefix(PREFIX).filter(|n| !n.is_empty())
@@ -49,9 +46,9 @@ struct Driver {
     state_dir: String,
 }
 
-/// The driver of `harness`: `--driver-cmd` (testing), the pi-durable driver
-/// for `pi`, and for every other ACP harness the durable ACP driver of
-/// `cua-agents`.
+/// The driver of `harness`: `--driver-cmd` (testing), else the durable ACP
+/// driver of `cua-agents` (every harness, Pi included, through its ACP
+/// adapter).
 fn driver_of(
     a: &RunArgs,
     name: &str,
@@ -64,14 +61,6 @@ fn driver_of(
         }
         return Ok(Driver {
             argv,
-            env: keys,
-            bundle: String::new(),
-            state_dir: String::new(),
-        });
-    }
-    if a.harness == "pi" {
-        return Ok(Driver {
-            argv: vec!["node".into(), PI_DRIVER_ENTRY.into()],
             env: keys,
             bundle: String::new(),
             state_dir: String::new(),
@@ -168,7 +157,7 @@ pub(crate) fn start_params(
     }
     let driver = driver_of(a, name, keys)?;
     let mut env = driver.env;
-    // The pi driver (and a --driver-cmd) reads the task from its environment;
+    // A --driver-cmd reads the task from its environment;
     // an ACP driver has it in its bundle.
     if driver.bundle.is_empty() {
         env.insert("CUA_AGENT_HARNESS".into(), a.harness.clone().into());
@@ -513,12 +502,16 @@ mod tests {
         let p = start_params(&a, "refactor", shell).unwrap();
         assert_eq!(p["name"], "refactor");
         assert_eq!(p["max_attempts"], 8);
-        assert_eq!(p["spec"]["argv"], json!(["node", PI_DRIVER_ENTRY]));
+        // Pi runs the same durable ACP driver as every other harness (it
+        // has no `node` of its own on the job image: the driver installs one).
+        assert_eq!(p["spec"]["argv"], json!(["/bin/sh", "driver.sh"]));
+        assert!(!p["spec"]["bundle"].as_str().unwrap().is_empty());
         assert_eq!(p["spec"]["space"], "research");
         assert_eq!(p["spec"]["stall_secs"], 45);
         assert_eq!(p["spec"]["on"], "auto");
-        assert_eq!(p["spec"]["env"]["CUA_AGENT_PROMPT"], "keep going");
-        assert_eq!(p["spec"]["env"]["CUA_AGENT_MODEL"], "m1");
+        // The task is in the bundle, not the environment; the key is in the
+        // environment only.
+        assert!(p["spec"]["env"].get("CUA_AGENT_PROMPT").is_none());
         assert_eq!(p["spec"]["env"]["ANTHROPIC_API_KEY"], "sk-ant-test");
         // Only fields the coordinator's SessionSpec has (it keeps the same
         // list in a test of its own).
@@ -613,7 +606,6 @@ mod tests {
         let p = start_params(&a, "fix-it", shell).unwrap();
         let spec = &p["spec"];
         assert!(!spec["argv"].as_array().unwrap().is_empty());
-        assert_ne!(spec["argv"], json!(["node", PI_DRIVER_ENTRY]));
         // Packaged for the job: a bundle, no prompt in the environment, the
         // key in the environment only (never in the bundle).
         let bundle = spec["bundle"].as_str().unwrap();

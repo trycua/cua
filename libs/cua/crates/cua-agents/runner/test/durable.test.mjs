@@ -504,6 +504,53 @@ t("CUA_SESSION_HEARTBEAT_SECS makes the runner print heartbeat lines on stdout; 
   }
 });
 
+// ---- the activity lines (CUA-2957) ----------------------------------------------------
+
+t("a durable run prints a short line for each turn and tool call, never the prompt, a tool's input or the agent's text", async (box) => {
+  box.script({ prompts: [{ match: ".", steps: [tool("secret-input-1"), { say: "the agent said something private" }] }] });
+  box.config({ prompt: "private prompt text" });
+  const r = await box.go({ epoch: 1, resume: false });
+  assert.equal(r.code, 0, r.stderr);
+  const lines = r.stdout.split("\n").filter(Boolean).map((l) => l.replace(/^\d\d:\d\d:\d\d /, ""));
+  assert.ok(lines.includes("driver: epoch 1 started"), JSON.stringify(lines));
+  assert.ok(lines.includes("turn 1 started"), JSON.stringify(lines));
+  assert.ok(lines.includes("tool execute started") || lines.includes("tool execute completed"), JSON.stringify(lines));
+  assert.ok(lines.includes("tool execute completed"), JSON.stringify(lines));
+  assert.ok(lines.some((l) => /^turn 1 ended \(/.test(l)), JSON.stringify(lines));
+  assert.ok(lines.some((l) => /^driver exiting \(code 0/.test(l)), JSON.stringify(lines));
+  for (const l of lines) assert.match(r.stdout, /^\d\d:\d\d:\d\d /m, l);
+  for (const secret of ["private prompt text", "secret-input-1", "something private"]) {
+    assert.ok(!r.stdout.includes(secret), `${secret} leaked into the log: ${r.stdout}`);
+  }
+  // Each tool status once: a repeat of a status adds no line.
+  assert.equal(lines.filter((l) => l === "tool execute completed").length, 1);
+});
+
+t("a restart prints that the driver continued the journal and that a recovery note listing what ran was sent", async (box) => {
+  box.script({
+    prompts: [
+      { match: "recovery", steps: [{ say: "ok" }] },
+      { match: ".", steps: [tool("done-1"), tool("sh-1", { killRunnerBeforeOutcome: true })] },
+    ],
+  });
+  box.config();
+  const first = await box.go({ epoch: 1, resume: false });
+  assert.equal(first.signal, "SIGKILL");
+  const r = await box.go({ epoch: 2 });
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /driver: epoch 2 started, continuing the journal of this session/);
+  assert.match(r.stdout, /turn 1 resumed with a recovery note listing what already ran/);
+  assert.match(r.stdout, /agent: reloaded its session/);
+});
+
+t("the heartbeat line is unchanged next to the activity lines", async (box) => {
+  box.script({ prompts: [{ match: ".", steps: [{ say: "hi" }, { pause: 1500 }] }] });
+  box.config();
+  const r = await box.go({ epoch: 6, env: { CUA_SESSION_HEARTBEAT_SECS: "1" } });
+  assert.ok(r.stdout.split("\n").some((l) => /^CUA-HEARTBEAT 6 \d{13}$/.test(l)), r.stdout);
+  assert.ok(r.stdout.includes("turn 1 started"), r.stdout);
+});
+
 // ---- drift guards -------------------------------------------------------------------
 
 test("drift guard: the env contract and the ledger records match the design", () => {

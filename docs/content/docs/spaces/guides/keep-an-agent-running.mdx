@@ -91,8 +91,12 @@ the conversation or the working folder of the old one. Plan for it:
   within about a minute, with the same name and an empty disk; the old record
   stays listed as offline until you delete it.
 
-Known problems today: `cua agent logs
-session:NAME` shows only the driver's heartbeat lines, not what the agent did.
+`cua agent logs session:NAME` shows one short line for each event: the driver
+and the agent's session starting, each turn starting and ending, the kind and
+outcome of each tool call (`tool execute completed`, never the command or its
+output), restarts and recovery notes, and errors. It never prints your prompt,
+a tool's input or output, or the agent's text. It shows the latest drive's
+output; `cua agent status` has the history of every drive.
 
 ## What happens when it crashes
 

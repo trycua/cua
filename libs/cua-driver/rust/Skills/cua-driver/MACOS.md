@@ -624,10 +624,13 @@ A popup button, a `<select>`, or a context menu opened in a background
 app takes key focus from the user's front window for as long as the menu
 is open (AppKit's menu tracking steals it). While a background action
 runs, Cua Driver watches for that and hands key focus straight back, so
-the user's window never loses it. The menu stays open and its items are
-chosen with `click` on the `AXMenuItem` (or in one call with
-`set_value` on the popup). Keyboard navigation of such a menu with
-`press_key` is not the route; pick the item by element.
+the user's window never loses it. A background `click` on a popup button
+opens its menu only to read the options: the result lists them and the menu
+is closed again in the same call, because it would cover the user's front
+app. Choose an option with `set_value` on the popup, which selects in one
+call. A context menu stays open and its items are chosen with `click` on the
+`AXMenuItem`. Keyboard navigation of such a menu with `press_key` is not the
+route; pick the item by element.
 
 Opening a menu also brings the app's window above the user's window for a
 moment, and no client can stop that. So in the background, a `click` on a

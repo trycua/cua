@@ -252,6 +252,10 @@ pub(crate) struct Row {
     max_attempts: u32,
     driver_job: i64,
     node: String,
+    /// The machine of the previous drive (kept when `node` is cleared for
+    /// the next one): the next drive starts there first, where the journal is.
+    #[serde(default)]
+    last_node: String,
     error: String,
     next_attempt_ms: i64,
     /// The Space lease's fencing token of the current epoch.
@@ -317,6 +321,10 @@ pub struct SessionView {
     pub error: String,
     /// Seconds since the running driver last wrote output (stall watch on).
     pub last_output_age_secs: Option<i64>,
+    /// Why the driver is not running yet: no machine has room for it (empty
+    /// when it runs or has not been tried).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub waiting: String,
     /// What it runs (no secrets).
     pub spec: SpecView,
     /// What happened, oldest first.
@@ -343,6 +351,7 @@ impl Row {
             node: self.node.clone(),
             error: self.error.clone(),
             last_output_age_secs: None,
+            waiting: String::new(),
             spec: SpecView {
                 argv: self.spec.argv.clone(),
                 env_keys: self.spec.env.keys().cloned().collect(),
@@ -544,6 +553,9 @@ impl Coordinator {
             && !j.node.is_empty()
         {
             v.node = j.node;
+        }
+        if r.state == sstate::RUNNING && r.driver_job > 0 {
+            v.waiting = self.queued_waiting(r.driver_job);
         }
         if r.state == sstate::RUNNING
             && let Some((job, _, at)) = self
@@ -1001,6 +1013,9 @@ impl Coordinator {
         next.attempts += 1;
         next.state = sstate::RUNNING.into();
         next.driver_job = 0;
+        if !next.node.is_empty() {
+            next.last_node = next.node.clone();
+        }
         next.node.clear();
         next.error.clear();
         next.next_attempt_ms = 0;
@@ -1062,6 +1077,9 @@ impl Coordinator {
         let run = format!("session-{}", r.name);
         let key = format!("session:{}:{}", r.name, r.epoch);
         let spec = driver_job(&r, &run, lease.as_ref())?;
+        // The journal is in the data folder of the machine that ran the last
+        // drive: start there again when that machine has room.
+        self.prefer_host(&run, &r.last_node);
         let ids = self
             .submit(
                 &run,

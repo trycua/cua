@@ -16,7 +16,8 @@
 //!
 //! The diff works on the rendered markdown rows, which every backend emits in
 //! the same `- [N] Role "label" ...` shape, so it also sees display-only rows
-//! (static text) that the structured `elements` array omits.
+//! (static text) that the structured `elements` array omits unless the read
+//! asked for them with `include_display_only: true`.
 
 use crate::protocol::{Content, ToolResult};
 use serde_json::{json, Value};
@@ -65,6 +66,9 @@ impl TreeFormat {
 #[derive(Clone, Debug)]
 pub struct ViewOptions {
     pub tree_format: TreeFormat,
+    /// Return the display-only rows in `elements` too. Never set for a
+    /// `markdown` read, which has no `elements` and shows those rows anyway.
+    pub include_display_only: bool,
     pub verbose: bool,
     pub full_output: bool,
     pub since: Option<String>,
@@ -78,6 +82,10 @@ pub fn schema_properties() -> Value {
             "type": "string",
             "enum": ["markdown", "elements", "both"],
             "description": "Which tree representation to return. Default \"markdown\": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. \"elements\": the structured `elements` array only (per-element element_token, frame, parent_index, value). \"both\": the two together, as before; roughly doubles the size."
+        },
+        "include_display_only": {
+            "type": "boolean",
+            "description": "Default false. Set true to include the display-only rows in `elements` — static text, labels, read-only values and disabled controls, which `elements` otherwise omits — each with `display_only: true`, `automation_id` where the platform reports one, and no element_index or element_token (no input tool can address them). Use it to read a label's text or identify a label by its id without parsing `tree_markdown`. Implies `tree_format` \"elements\" when none is given; a no-op with \"markdown\", which already shows these rows. `query` and `since` project rows by their `[N]`, so with either of them only the actionable rows come back."
         },
         "since": {
             "type": "string",
@@ -154,10 +162,18 @@ pub fn extend_input_schema(mut schema: Value) -> Value {
 impl ViewOptions {
     pub fn from_args(args: &Value) -> Result<Self, ToolResult> {
         let full_output = args.get("full_output").and_then(Value::as_bool) == Some(true);
+        let include_display_only = match args.get("include_display_only") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => return Err(ToolResult::error("include_display_only must be a boolean.")),
+        };
         let tree_format = match args.get("tree_format") {
             None | Some(Value::Null) => {
                 if full_output {
                     TreeFormat::Both
+                } else if include_display_only {
+                    // The rows asked for live in `elements`.
+                    TreeFormat::Elements
                 } else {
                     TreeFormat::Markdown
                 }
@@ -195,6 +211,9 @@ impl ViewOptions {
         };
         Ok(Self {
             tree_format,
+            // A markdown read has no `elements` to add rows to; its counts stay
+            // the actionable ones.
+            include_display_only: include_display_only && tree_format != TreeFormat::Markdown,
             verbose: args.get("verbose").and_then(Value::as_bool) == Some(true),
             full_output,
             since: if full_output { None } else { since },
@@ -1202,6 +1221,15 @@ mod tests {
             opts(json!({"tree_format": "elements"})).tree_format,
             TreeFormat::Elements
         );
+        assert!(!o.include_display_only);
+        let o = opts(json!({"include_display_only": true}));
+        assert!(o.include_display_only && o.tree_format == TreeFormat::Elements);
+        let o = opts(json!({"include_display_only": true, "tree_format": "both"}));
+        assert!(o.include_display_only && o.tree_format == TreeFormat::Both);
+        let o = opts(json!({"include_display_only": true, "tree_format": "markdown"}));
+        assert!(!o.include_display_only && o.tree_format == TreeFormat::Markdown);
+        assert!(!opts(json!({"include_display_only": false})).include_display_only);
+        assert!(ViewOptions::from_args(&json!({"include_display_only": "yes"})).is_err());
         assert!(ViewOptions::from_args(&json!({"tree_format": "xml"})).is_err());
         assert!(ViewOptions::from_args(&json!({"since": 3})).is_err());
         // full_output is a full read, never a diff.

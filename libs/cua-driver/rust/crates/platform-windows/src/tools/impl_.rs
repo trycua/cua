@@ -1114,12 +1114,19 @@ mod get_window_state_actions_tests;
 // ── get_window_state ─────────────────────────────────────────────────────────
 
 /// Build a single structured element entry for `get_window_state`.
-/// Returns `None` when the node has no `element_index` (non-actionable rows).
+/// Returns `None` when the node has no `element_index` (non-actionable rows),
+/// unless `display_only_rows`: such a row is returned with `display_only: true`
+/// and no index or token.
 fn build_element_entry(
     n: &crate::uia::UiaNode,
     snapshot_id: Option<u32>,
+    display_only_rows: bool,
 ) -> Option<serde_json::Value> {
-    let idx = n.element_index?;
+    let idx = match n.element_index {
+        Some(idx) => Some(idx),
+        None if display_only_rows => None,
+        None => return None,
+    };
     // `label`: name → value → automation_id → help_text.
     let label = n
         .name
@@ -1128,12 +1135,21 @@ fn build_element_entry(
         .or_else(|| n.automation_id.clone())
         .or_else(|| n.help_text.clone());
     let mut entry = json!({
-        "element_index": idx,
         "role": n.control_type,
         "depth": n.depth,
     });
-    if let Some(snapshot_id) = snapshot_id {
-        entry["element_token"] = json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+    match idx {
+        Some(idx) => {
+            entry["element_index"] = json!(idx);
+            if let Some(snapshot_id) = snapshot_id {
+                entry["element_token"] =
+                    json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+            }
+        }
+        None => entry["display_only"] = json!(true),
+    }
+    if let Some(id) = n.automation_id.as_deref().filter(|id| !id.is_empty()) {
+        entry["automation_id"] = json!(id);
     }
     if n.in_web_content {
         entry["in_web_content"] = json!(true);
@@ -1198,7 +1214,9 @@ impl Tool for GetWindowStateTool {
                 `snapshot_id` is printed in the response header and returned in structuredContent. \
                 Pass `tree_format:\"elements\"` for the structured `elements` array instead \
                 (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), \
-                or `\"both\"` for both (about twice the size).\n\n\
+                or `\"both\"` for both (about twice the size); `include_display_only:true` \
+                adds the display-only rows to that array (static text, labels, disabled \
+                controls: `display_only:true`, `automation_id`, no token).\n\n\
                 Size: a read is bounded by default (`max_elements` 250). When the walk stops at \
                 that budget the response says `Tree truncated at max_elements=…` and `truncated: \
                 true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. \
@@ -1596,10 +1614,11 @@ impl Tool for GetWindowStateTool {
                     // `{element_index, element_token, role, label, depth,
                     // actions?, parent_index?, frame?: {x,y,w,h}}`. Frame is
                     // included when UIA reported a usable BoundingRectangle.
+                    let display_only_rows = view.include_display_only;
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
                         .iter()
-                        .filter_map(|n| build_element_entry(n, snapshot_id))
+                        .filter_map(|n| build_element_entry(n, snapshot_id, display_only_rows))
                         .collect();
                     let elements = cua_driver_core::element_query::project_elements_for_query(
                         elements,
@@ -1620,7 +1639,12 @@ impl Tool for GetWindowStateTool {
                         }
                         _ => elements,
                     };
-                    structured["total_element_count"] = json!(count);
+                    // Every row counts when the display-only ones are returned.
+                    structured["total_element_count"] = json!(if display_only_rows {
+                        tr.nodes.len()
+                    } else {
+                        count
+                    });
                     structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.

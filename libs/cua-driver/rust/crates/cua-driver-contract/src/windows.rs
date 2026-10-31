@@ -110,6 +110,12 @@ pub struct GetWindowStateInput {
     #[schemars(schema_with = "tree_format_schema")]
     #[uniffi(default = None)]
     pub tree_format: Option<String>,
+    /// Return the display-only rows in `elements` too (default false; implies
+    /// `tree_format: "elements"` when none is given).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "bool_schema")]
+    #[uniffi(default = None)]
+    pub include_display_only: Option<bool>,
     /// Return only what changed since this earlier `snapshot_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
@@ -262,11 +268,21 @@ pub struct ElementFrame {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct WindowElement {
-    pub element_index: u64,
+    /// The row's `[N]`; absent on a display-only row, which no input tool
+    /// can address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_index: Option<u64>,
     pub role: String,
     pub depth: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub element_token: Option<String>,
+    /// Static text, a label, a read-only value, a disabled control; returned
+    /// only with `include_display_only`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_only: Option<bool>,
+    /// UIA `AutomationId` on Windows, `AXIdentifier` on macOS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -457,6 +473,42 @@ mod tests {
             assert!(output.elements.is_some());
             output.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn display_only_rows_without_an_index_round_trip() {
+        // A staff-ID label (no index, no token) beside the date field.
+        let output: WindowStateOutput = serde_json::from_value(json!({
+            "pid":7,"window_id":9,"tree_format":"elements",
+            "elements":[
+                {"role":"text","depth":2,"display_only":true,"label":"RP-20417",
+                 "automation_id":"lblAgent"},
+                {"element_index":0,"element_token":"s1:0","role":"edit","depth":2,
+                 "label":"Book return time","value":"10/29/2026 10:15 AM",
+                 "automation_id":"dtReturn","enabled":true}
+            ],
+            "returned_element_count":2,"total_element_count":2
+        }))
+        .unwrap();
+        output.validate().unwrap();
+        let rows = output.elements.as_ref().unwrap();
+        assert_eq!(rows[0].element_index, None);
+        assert_eq!(rows[0].display_only, Some(true));
+        assert_eq!(rows[0].automation_id.as_deref(), Some("lblAgent"));
+        assert_eq!(rows[1].element_index, Some(0));
+        let back = serde_json::to_value(&rows[0]).unwrap();
+        assert!(back.get("element_index").is_none());
+        assert!(back.get("element_token").is_none());
+        assert_eq!(
+            GetWindowStateInput::input_schema()["properties"]["include_display_only"]["type"],
+            json!("boolean")
+        );
+        let input: GetWindowStateInput = serde_json::from_value(json!({
+            "pid":7,"window_id":9,"tree_format":"elements","include_display_only":true
+        }))
+        .unwrap();
+        assert_eq!(input.include_display_only, Some(true));
+        input.validate().unwrap();
     }
 
     #[test]

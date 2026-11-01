@@ -186,6 +186,12 @@ pub fn spaces_cli() -> Option<PathBuf> {
     if std::env::var_os("CUA_ENV_TEST_SANDBOX").is_some() {
         return None;
     }
+    // A `cua` inside an app bundle is that app's: it runs its own daemon and
+    // never borrows another install's (a copy of the app outside
+    // /Applications, beside an installed one, keeps to its own build).
+    if me.as_deref().is_some_and(in_app_bundle) {
+        return None;
+    }
     app_bundle_candidates()
         .into_iter()
         .find_map(not_me)
@@ -197,6 +203,69 @@ pub fn spaces_cli() -> Option<PathBuf> {
             })
             .and_then(not_me)
         })
+}
+
+/// What `cua --version` of `helper` prints as a version (`None` when it does
+/// not run in five seconds or prints none).
+fn helper_version(helper: &Path) -> Option<String> {
+    let mut child = std::process::Command::new(helper)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) if status.success() => break,
+            Some(_) => return None,
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(20)),
+        }
+    }
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut text).ok()?;
+    text.lines().next().map(|l| l.trim().to_string())
+}
+
+/// The Cua Spaces `cua` a `cua daemon start` may hand the daemon to: the
+/// one [`spaces_cli`] finds, unless it is older than this `cua` (an app
+/// not updated yet), whose daemon would be a downgrade of the CLI the user
+/// upgraded. `Err` says why, so the caller can tell the user. A helper whose
+/// version cannot be read is used, as before.
+pub fn spaces_cli_not_older() -> Result<Option<PathBuf>, String> {
+    let Some(helper) = spaces_cli() else {
+        return Ok(None);
+    };
+    Ok(match helper_version(&helper) {
+        Some(v) if cua_home::version::is_newer(cua_daemon::VERSION, &v) => {
+            return Err(format!(
+                "the Cua Spaces app's cua at {} is {v}, older than this cua {}; starting this cua's daemon \
+                 instead. Update Cua Spaces to use its features",
+                helper.display(),
+                cua_daemon::VERSION
+            ));
+        }
+        _ => Some(helper),
+    })
+}
+
+/// Whether `exe` is an app bundle's executable (`<X>.app/Contents/MacOS/<exe>`).
+fn in_app_bundle(exe: &Path) -> bool {
+    let mut parts = exe
+        .components()
+        .rev()
+        .skip(1)
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+    matches!(
+        (parts.next().as_deref(), parts.next().as_deref(), parts.next()),
+        (Some("MacOS"), Some("Contents"), Some(app)) if app.ends_with(".app")
+    )
 }
 
 fn app_bundle_candidates() -> Vec<PathBuf> {
@@ -252,6 +321,18 @@ pub(crate) async fn missing_daemon_extensions() -> Vec<String> {
         .collect()
 }
 
+/// The running daemon's version when it is strictly newer than this
+/// `cua` (so it is never replaced by it), else `None`.
+pub(crate) async fn newer_daemon_version() -> Option<String> {
+    let info = cua_daemon::client::existing_daemon()
+        .await
+        .ok()?
+        .info()
+        .await
+        .ok()?;
+    cua_home::version::is_newer(&info.version, cua_daemon::VERSION).then_some(info.version)
+}
+
 /// How long [`stop_daemon`] waits for the daemon to go: one with Spaces
 /// running unmounts their volumes and lets go of their VMs first, which
 /// took 12 s on a Mac with one running macOS Space (10 s was too short:
@@ -298,7 +379,11 @@ async fn stop_daemon_within(
         .await
         .unwrap_or(false)
     {
-        eprintln!("cua: the running cua daemon (pid {pid}) did not exit when asked; ended it");
+        eprintln!(
+            "{}: the running {} daemon (pid {pid}) did not exit when asked; ended it",
+            crate::util::cli(),
+            crate::util::cli()
+        );
         if cua_daemon::client::live_address().is_none() {
             return Ok(());
         }
@@ -367,5 +452,51 @@ mod tests {
             .expect("the stuck daemon is ended");
         assert!(!reaper.join().unwrap().success());
         assert!(!cua_daemon::pid_alive(pid));
+    }
+
+    /// UL2: a `cua daemon start` does not hand the daemon to an app's cua
+    /// that is older than itself.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_older_than_this_cua_is_not_handed_the_daemon() {
+        use std::os::unix::fs::PermissionsExt;
+        let _env = crate::util::test_env::isolated();
+        let dir = tempfile::tempdir().unwrap();
+        let helper = dir.path().join("helper-cua");
+        let write = |version: &str| {
+            let _ = std::fs::remove_file(&helper);
+            std::fs::write(&helper, format!("#!/bin/sh\necho 'cua {version}'\n")).unwrap();
+            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        // SAFETY: the test holds the environment lock.
+        unsafe { std::env::set_var(ENV_SPACES_CLI, &helper) };
+        write("0.0.1-old");
+        let err = spaces_cli_not_older().unwrap_err();
+        assert!(err.contains("older than this cua"), "{err}");
+        write("99.0.0");
+        assert_eq!(spaces_cli_not_older().unwrap(), Some(helper.clone()));
+        write(cua_daemon::VERSION);
+        assert_eq!(spaces_cli_not_older().unwrap(), Some(helper.clone()));
+        // SAFETY: as above.
+        unsafe { std::env::remove_var(ENV_SPACES_CLI) };
+    }
+}
+
+#[cfg(test)]
+mod app_bundle_tests {
+    use super::in_app_bundle;
+    use std::path::Path;
+
+    #[test]
+    fn a_cua_inside_any_app_bundle_is_that_apps() {
+        assert!(in_app_bundle(Path::new(
+            "/Applications/Cua Spaces.app/Contents/MacOS/cua"
+        )));
+        assert!(in_app_bundle(Path::new(
+            "/Users/ada/Downloads/Cua Spaces Copy.app/Contents/MacOS/cua"
+        )));
+        assert!(!in_app_bundle(Path::new("/Users/ada/.local/bin/cua")));
+        assert!(!in_app_bundle(Path::new("/usr/local/bin/cua")));
+        assert!(!in_app_bundle(Path::new("/opt/Contents/MacOS/cua")));
     }
 }

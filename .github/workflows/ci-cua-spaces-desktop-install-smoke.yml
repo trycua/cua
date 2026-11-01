@@ -2,14 +2,16 @@ name: "CI: Cua Spaces desktop install smoke"
 
 # Installs the built Cua Spaces Electron app on GitHub-hosted Windows and Linux
 # runners, launches it, checks that a window opens, screenshots it, and
-# uninstalls. The artifacts come from an existing "CD: Cua Spaces" run.
+# uninstalls. The artifacts come from the latest "CD: Cua Spaces" run that still
+# has unexpired electron-windows and electron-linux artifacts (they expire, so
+# the run id is looked up each time instead of being pinned).
 
 on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: "trycua/cua workflow run id holding the electron-windows and electron-linux artifacts"
-        default: "38501026143"
+        description: "Optional trycua/cua workflow run id holding the electron-windows and electron-linux artifacts. Empty = latest run whose artifacts have not expired."
+        default: ""
   pull_request:
     paths:
       - ".github/workflows/ci-cua-spaces-desktop-install-smoke.yml"
@@ -19,14 +21,43 @@ permissions:
   actions: read
 
 env:
-  RUN_ID: ${{ inputs.run_id || '38501026143' }}
   GH_TOKEN: ${{ github.token }}
   GH_REPO: ${{ github.repository }}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  resolve:
+    name: Find a run with live artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_id: ${{ steps.pick.outputs.run_id }}
+    steps:
+      - id: pick
+        env:
+          INPUT_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [ -n "$INPUT_RUN_ID" ]; then
+            echo "run_id=$INPUT_RUN_ID" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          ids() {
+            gh api --paginate "repos/$GH_REPO/actions/artifacts?name=$1&per_page=100" \
+              --jq '.artifacts[] | select(.expired == false) | .workflow_run.id' | sort -u
+          }
+          id=$(comm -12 <(ids electron-windows) <(ids electron-linux) | sort -rn | head -1)
+          if [ -z "$id" ]; then echo "no run with unexpired electron-windows and electron-linux artifacts" >&2; exit 1; fi
+          echo "using run $id"
+          echo "run_id=$id" >> "$GITHUB_OUTPUT"
+
   windows:
     name: Windows x64 install, launch, uninstall
+    needs: resolve
     runs-on: windows-latest
+    env:
+      RUN_ID: ${{ needs.resolve.outputs.run_id }}
     timeout-minutes: 20
     defaults:
       run:
@@ -116,7 +147,10 @@ jobs:
 
   linux:
     name: Linux x64 deb and AppImage
+    needs: resolve
     runs-on: ubuntu-latest
+    env:
+      RUN_ID: ${{ needs.resolve.outputs.run_id }}
     timeout-minutes: 25
     steps:
       - name: Download electron-linux

@@ -226,7 +226,8 @@ public final class DaemonSupervisor: @unchecked Sendable {
                           restarted: (@MainActor @Sendable () async -> Void)? = nil,
                           start: (@Sendable () -> String?)? = nil,
                           daemonPid: (@Sendable () -> Int32?)? = nil,
-                          accepted: (@Sendable () async -> UInt32?)? = nil) -> Task<Void, Never> {
+                          accepted: (@Sendable () async -> UInt32?)? = nil,
+                          watching: (@Sendable (Int32) -> Void)? = nil) -> Task<Void, Never> {
         let wake = SupervisorWake()
         let watcher = ProcessExitWatcher { wake.fire() }
         let pidNow: @Sendable () -> Int32? = daemonPid ?? { [self] in
@@ -236,9 +237,25 @@ public final class DaemonSupervisor: @unchecked Sendable {
             defer { watcher.stop() }
             var failures = 0
             var reported = false
+            // A daemon of this app's was watched or just started, so its pid
+            // should be there to watch.
+            var expectPid = false
             while !Task.isCancelled {
-                // A daemon that already exited fires at once.
-                if failures == 0, let pid = pidNow() { watcher.watch(pid) }
+                if failures == 0 {
+                    if let pid = pidNow() {
+                        // A daemon that already exited fires at once.
+                        watcher.watch(pid)
+                        expectPid = true
+                        watching?(pid)
+                    } else if expectPid {
+                        // That daemon is gone before its pid was read
+                        // again: there is nothing to watch, so probe now
+                        // instead of after a whole interval (once: a daemon
+                        // this app cannot watch is probed every interval).
+                        expectPid = false
+                        wake.fire()
+                    }
+                }
                 await wake.wait(for: failures == 0 ? interval : Self.backoff(failures))
                 if Task.isCancelled { return }
                 if await isUp() {
@@ -253,6 +270,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
                     error = "the running cua daemon (pid \(running)) is another app's, which this app uses, and it does not answer"
                 }
                 if error == nil {
+                    expectPid = true
                     // Running now (started again, or it ran and only this
                     // app's connection to it stopped answering): connect
                     // again, which supervises the new connection.

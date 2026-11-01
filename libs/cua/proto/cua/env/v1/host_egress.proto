@@ -1,0 +1,31 @@
+// Egress policies of the Spaces a host provides (cua.env.v1): the policy
+// `CreateHostSpaceRequest.egress` and `HostSpacesService.SetHostSpaceEgress`
+// take. The host enforces it outside the guest.
+syntax = "proto3";
+
+package cua.env.v1;
+
+// Which destinations a Space may open connections to: every `deny` entry
+// blocks that destination, every `allow` entry is an exception that wins
+// over `deny`. Entries are IPv4/IPv6 addresses or CIDRs; "all" is 0.0.0.0/0
+// and ::/0; a hostname is refused.
+message HostEgressPolicy {
+  // Destinations that stay reachable where `deny` blocks them.
+  repeated string allow = 1;
+  // Destinations that are blocked.
+  repeated string deny = 2;
+}
+
+// Request for `HostSpacesService.SetHostSpaceEgress`.
+message SetHostSpaceEgressRequest {
+  // The relay machine of the Space (or its `local:<name>` on the host).
+  string space = 1;
+  // The whole policy; empty removes it.
+  HostEgressPolicy egress = 2;
+}
+
+// Response for `HostSpacesService.SetHostSpaceEgress`.
+message SetHostSpaceEgressResponse {
+  // Where the policy is enforced: "host"; empty after a removal.
+  string enforced = 1;
+}

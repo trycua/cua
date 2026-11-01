@@ -1,0 +1,10 @@
+{
+  "settings.this_machine.sharing_label": "Compartilhamento",
+  "settings.cloud.clouds_label": "Nuvens",
+  "settings.cloud.sign_in_found": "Login encontrado",
+  "settings.cloud.touches_label": "O que o Cua vai alterar",
+  "settings.cloud.checks_label": "Verificações",
+  "settings.accessibility.enable_window_drag": "Ative o arrastar janelas em Configurações do Sistema → Privacidade → Acessibilidade",
+  "settings.language.label": "Idioma",
+  "settings.language.system_default": "Padrão do sistema"
+}

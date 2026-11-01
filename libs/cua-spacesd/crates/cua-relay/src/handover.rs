@@ -17,9 +17,9 @@
 //!    accept connections yet, so the kernel queues them (the listen
 //!    backlog) instead of anyone seeing an error, and its health port
 //!    answers, so Kubernetes routes to it and stops the old relay.
-//! 2. The old relay gets SIGTERM, closes every machine tunnel so they
-//!    reconnect at once, lets open requests finish
-//!    (`CUA_RELAY_SHUTDOWN_GRACE_SECS`) and exits.
+//! 2. The old relay gets SIGTERM, closes every machine tunnel and mesh
+//!    connection so they reconnect at once, lets open requests finish
+//!    (`CUA_RELAY_SHUTDOWN_GRACE_SECS`), saves usage and exits.
 //! 3. The lock is free: the new relay loads the state the old one left and
 //!    starts accepting, queued requests and reconnecting machines first.
 //!    For a short while after start, a request for a known machine that

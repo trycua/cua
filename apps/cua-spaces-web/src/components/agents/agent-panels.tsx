@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 
 /**
- * A persistent agent's Memory, Routines and Access to this computer, as the
+ * A persistent agent's Memory, Routines and Access to this machine, as the
  * SwiftUI app's Agents page draws them (`AgentsViews.swift`). Every word in
  * the lists and buttons is the app core's (`AgentDetailView`).
  */

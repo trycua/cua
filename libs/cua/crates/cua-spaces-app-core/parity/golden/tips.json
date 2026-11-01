@@ -1,0 +1,301 @@
+{
+  "flow": "tips",
+  "frames": [
+    {
+      "settings": null,
+      "sidebar": null,
+      "state": "off=false done=",
+      "step": "a new Space, Claude Code connected",
+      "tip": {
+        "action": "copy [Copy] = Open the Cua Space \"cua-builder\" and tell me what's on its screen. then Copied",
+        "agent": "claude-code",
+        "buttons": [
+          "Next tip",
+          "Don't show tips",
+          "Close"
+        ],
+        "code": "Open the Cua Space \"cua-builder\" and tell me what's on its screen.",
+        "openIn": null,
+        "tip": "try-agent (spaces): Try cua-builder in Claude Code"
+      }
+    },
+    {
+      "settings": null,
+      "sidebar": null,
+      "state": "off=false done=",
+      "step": "Hermes connected too",
+      "tip": {
+        "action": "copy [Copy] = Open the Cua Space \"cua-builder\" and tell me what's on its screen. then Copied",
+        "agent": "hermes",
+        "buttons": [
+          "Next tip",
+          "Don't show tips",
+          "Close"
+        ],
+        "code": "Open the Cua Space \"cua-builder\" and tell me what's on its screen.",
+        "openIn": null,
+        "tip": "try-agent (spaces): Try cua-builder in Hermes"
+      }
+    },
+    {
+      "settings": null,
+      "sidebar": null,
+      "state": "off=false done=",
+      "step": "no agent connected: the first installed",
+      "tip": {
+        "action": "copy [Copy] = Open the Cua Space \"cua-builder\" and tell me what's on its screen. then Copied",
+        "agent": "claude-code",
+        "buttons": [
+          "Next tip",
+          "Don't show tips",
+          "Close"
+        ],
+        "code": "Open the Cua Space \"cua-builder\" and tell me what's on its screen.",
+        "openIn": null,
+        "tip": "try-agent (spaces): Try cua-builder in Claude Code"
+      }
+    },
+    {
+      "settings": null,
+      "sidebar": null,
+      "state": "off=false done=",
+      "step": "no agent at all",
+      "tip": {
+        "action": "copy [Copy] = Open the Cua Space \"cua-builder\" and tell me what's on its screen. then Copied",
+        "agent": null,
+        "buttons": [
+          "Next tip",
+          "Don't show tips",
+          "Close"
+        ],
+        "code": "Open the Cua Space \"cua-builder\" and tell me what's on its screen.",
+        "openIn": null,
+        "tip": "try-agent (spaces): Try cua-builder in your agent"
+      }
+    },
+    {
+      "settings": null,
+      "sidebar": null,
+      "state": "off=false done=",
+      "step": "Cursor connected: Open in Cursor",
+      "tip": {
+        "action": "copy [Copy] = Open the Cua Space \"cua-builder\" and tell me what's on its screen. then Copied",
+        "agent": "cursor",
+        "buttons": [
+          "Next tip",
+          "Don't show tips",
+          "Close"
+        ],
+        "code": "Open the Cua Space \"cua-builder\" and tell me what's on its screen.",
+        "openIn": "Open in Cursor <cursor://anysphere.cursor-deeplink/prompt?text=Open%20the%20Cua%20Space%20%22cua-builder%22%20and%20tell%20me%20what%27s%20on%20its%20screen.>",
+        "tip": "try-agent (spaces): Try cua-builder in Cursor"
+      }
+    },
+    {
+      "settings": null,
+      "sidebar": null,
+      "state": "off=false done=try-agent",
+      "step": "Next tip",
+      "tip": {
+        "action": "none",
+        "agent": null,
+        "buttons": [
+          "Next tip",
+          "Don't show tips",
+          "Close"
+        ],
+        "code": null,
+        "openIn": null,
+        "tip": "power (spaces): Point at a Space to turn it on or off without opening it."
+      }
+    },
+    {
+      "settings": null,
+      "sidebar": {
+        "action": "copyCommand [Copy] = cua create --on auto then Copied",
+        "agent": null,
+        "buttons": [
+          null,
+          null,
+          "Close"
+        ],
+        "code": "cua create --on auto",
+        "openIn": null,
+        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
+      },
+      "state": "off=false done=try-agent,power",
+      "step": "powered from a tile",
+      "tip": null
+    },
+    {
+      "settings": null,
+      "sidebar": null,
+      "state": "off=false done=try-agent,power",
+      "step": "several stopped and a full disk",
+      "tip": {
+        "action": "selectStopped [Select stopped]",
+        "agent": null,
+        "buttons": [
+          "Next tip",
+          "Don't show tips",
+          "Close"
+        ],
+        "code": null,
+        "openIn": null,
+        "tip": "bulk-select (spaces): Select several Spaces to delete them together."
+      }
+    },
+    {
+      "settings": null,
+      "sidebar": {
+        "action": "copyCommand [Copy] = cua create --on auto then Copied",
+        "agent": null,
+        "buttons": [
+          null,
+          null,
+          "Close"
+        ],
+        "code": "cua create --on auto",
+        "openIn": null,
+        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
+      },
+      "state": "off=false done=try-agent,power,bulk-select",
+      "step": "a bulk delete",
+      "tip": null
+    },
+    {
+      "settings": null,
+      "sidebar": null,
+      "state": "off=false done=try-agent,power,bulk-select",
+      "step": "a running Space's page",
+      "tip": {
+        "action": "share [Share…]",
+        "agent": null,
+        "buttons": [
+          "Next tip",
+          "Don't show tips",
+          "Close"
+        ],
+        "code": null,
+        "openIn": null,
+        "tip": "share (space): Share cua-builder with a teammate."
+      }
+    },
+    {
+      "settings": null,
+      "sidebar": {
+        "action": "copyCommand [Copy] = cua create --on auto then Copied",
+        "agent": null,
+        "buttons": [
+          null,
+          null,
+          "Close"
+        ],
+        "code": "cua create --on auto",
+        "openIn": null,
+        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
+      },
+      "state": "off=false done=try-agent,power,bulk-select,share",
+      "step": "share closed for now",
+      "tip": null
+    },
+    {
+      "settings": [
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
+      ],
+      "sidebar": null,
+      "state": "off=false done=",
+      "step": "settings: reset tips",
+      "tip": {
+        "action": "copy [Copy] = Open the Cua Space \"cua-builder\" and tell me what's on its screen. then Copied",
+        "agent": "codex",
+        "buttons": [
+          "Next tip",
+          "Don't show tips",
+          "Close"
+        ],
+        "code": "Open the Cua Space \"cua-builder\" and tell me what's on its screen.",
+        "openIn": null,
+        "tip": "try-agent (space): Try cua-builder in Codex"
+      }
+    },
+    {
+      "settings": null,
+      "sidebar": null,
+      "state": "off=true done=",
+      "step": "Don't show tips",
+      "tip": null
+    },
+    {
+      "settings": [
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
+      ],
+      "sidebar": null,
+      "state": "off=false done=",
+      "step": "settings: show tips again",
+      "tip": {
+        "action": "copy [Copy] = Open the Cua Space \"cua-builder\" and tell me what's on its screen. then Copied",
+        "agent": "codex",
+        "buttons": [
+          "Next tip",
+          "Don't show tips",
+          "Close"
+        ],
+        "code": "Open the Cua Space \"cua-builder\" and tell me what's on its screen.",
+        "openIn": null,
+        "tip": "try-agent (spaces): Try cua-builder in Codex"
+      }
+    },
+    {
+      "settings": [
+        "- tips toggle: Show tips {On|*Off}",
+        "- reset-tips text: Reset tips [Reset]"
+      ],
+      "sidebar": null,
+      "state": "off=true done=",
+      "step": "settings: show tips off",
+      "tip": null
+    },
+    {
+      "settings": [
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
+      ],
+      "sidebar": {
+        "action": "copyCommand [Copy] = cua create --on auto then Copied",
+        "agent": null,
+        "buttons": [
+          null,
+          null,
+          "Close"
+        ],
+        "code": "cua create --on auto",
+        "openIn": null,
+        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
+      },
+      "state": "off=false done=",
+      "step": "back on, on a page with no tip",
+      "tip": {
+        "action": "copyCommand [Copy] = cua create --on auto then Copied",
+        "agent": null,
+        "buttons": [
+          null,
+          null,
+          "Close"
+        ],
+        "code": "cua create --on auto",
+        "openIn": null,
+        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
+      }
+    },
+    {
+      "settings": null,
+      "sidebar": null,
+      "state": "off=false done=on-auto",
+      "step": "the sidebar's tip closed",
+      "tip": null
+    }
+  ]
+}

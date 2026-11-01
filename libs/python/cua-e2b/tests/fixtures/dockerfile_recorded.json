@@ -1,0 +1,1460 @@
+{
+ "_note": "Recorded from e2b 2.58.0: the builder calls (and errors) parse_dockerfile produces.",
+ "cases": [
+  {
+   "dockerfile": "FROM python:3\nRUN echo hi",
+   "expect": {
+    "base": "python:3",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "echo hi",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM ubuntu:22.04 AS build\nRUN apt-get update && \\\n    apt-get install -y curl\nWORKDIR /app\nUSER bob\nCMD [\"python\", \"-m\", \"app\"]",
+   "expect": {
+    "base": "ubuntu:22.04",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "apt-get update &&     apt-get install -y curl",
+      null
+     ],
+     [
+      "set_workdir",
+      "/app"
+     ],
+     [
+      "set_user",
+      "bob"
+     ],
+     [
+      "set_start_cmd",
+      "python -m app",
+      "sleep 20"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM node:22\nENV A=1 B=\"two words\" C='x y'\nENV LEGACY some value here\nCMD npm start",
+   "expect": {
+    "base": "node:22",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_envs",
+      {
+       "A": "1",
+       "B": "two words",
+       "C": "x y"
+      }
+     ],
+     [
+      "set_envs",
+      {
+       "LEGACY": "some value here"
+      }
+     ],
+     [
+      "set_start_cmd",
+      "npm start",
+      "sleep 20"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM alpine\nARG VERSION=3.1\nENV V=$VERSION\nRUN echo $V",
+   "expect": {
+    "base": "alpine",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_envs",
+      {
+       "VERSION": "3.1"
+      }
+     ],
+     [
+      "set_envs",
+      {
+       "V": "$VERSION"
+      }
+     ],
+     [
+      "run_cmd",
+      "echo $V",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "ARG BASE=debian\nFROM ${BASE}\nRUN echo",
+   "expect": {
+    "base": "${BASE}",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_envs",
+      {
+       "BASE": "debian"
+      }
+     ],
+     [
+      "run_cmd",
+      "echo",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY --chown=bob:bob --chmod=755 src/ /app/\nADD x.txt y.txt /dst/",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "copy",
+      "src/",
+      "/app/",
+      "bob:bob",
+      493
+     ],
+     [
+      "copy",
+      "x.txt",
+      "/dst/",
+      null,
+      null
+     ],
+     [
+      "copy",
+      "y.txt",
+      "/dst/",
+      null,
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY [\"a b.txt\", \"/dst/\"]",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "copy",
+      "a b.txt",
+      "/dst/",
+      null,
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nENTRYPOINT [\"/bin/app\", \"--x\"]\nCMD [\"--y\"]",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_start_cmd",
+      "/bin/app --x --y",
+      "sleep 20"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nENTRYPOINT /bin/app\nCMD --y",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 3: unknown flag: y",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nENTRYPOINT [\"/bin/app\"]\nCMD echo hi",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_start_cmd",
+      "/bin/app /bin/sh -c 'echo hi'",
+      "sleep 20"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN <<EOF\nset -e\necho one\nEOF",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "set -e\necho one\n",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN <<EOF\n#!/bin/bash\necho one\nEOF",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "cat <<'E2B_HEREDOC_EOF' >/tmp/EOF\n#!/bin/bash\necho one\nE2B_HEREDOC_EOF\nchmod +x /tmp/EOF && /tmp/EOF\nE2B_EXIT=$?; rm -f /tmp/EOF; exit $E2B_EXIT",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN cat <<EOF > /x\nhello $HOME\nEOF",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "cat <<EOF > /x\nhello $HOME\nEOF",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY <<EOF /etc/conf\nkey=$X\nEOF",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "E2B_HEREDOC_DEST=/etc/conf\nif [ -d \"$E2B_HEREDOC_DEST\" ]; then E2B_HEREDOC_DEST=\"$E2B_HEREDOC_DEST\"/EOF; fi\nmkdir -p \"$(dirname \"$E2B_HEREDOC_DEST\")\" && cat <<E2B_HEREDOC_EOF >\"$E2B_HEREDOC_DEST\"\nkey=$X\nE2B_HEREDOC_EOF",
+      "root"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY <<'EOF' /etc/conf/\nkey=$X\nEOF",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "E2B_HEREDOC_DEST=/etc/conf/EOF\nmkdir -p \"$(dirname \"$E2B_HEREDOC_DEST\")\" && cat <<'E2B_HEREDOC_EOF' >\"$E2B_HEREDOC_DEST\"\nkey=$X\nE2B_HEREDOC_EOF",
+      "root"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY <<-EOF /f\n\tx\n\ty\nEOF",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "E2B_HEREDOC_DEST=/f\nif [ -d \"$E2B_HEREDOC_DEST\" ]; then E2B_HEREDOC_DEST=\"$E2B_HEREDOC_DEST\"/EOF; fi\nmkdir -p \"$(dirname \"$E2B_HEREDOC_DEST\")\" && cat <<E2B_HEREDOC_EOF >\"$E2B_HEREDOC_DEST\"\nx\ny\nE2B_HEREDOC_EOF",
+      "root"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN --mount=type=cache,target=/c echo hi",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "echo hi",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": "Ignoring unsupported RUN flag --mount (line 2)\n"
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY --from=builder /a /b",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: COPY --from is not supported (multi-stage builds are not supported)",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nFROM b",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error: Multi-stage Dockerfiles are not supported",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "RUN echo",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error: Dockerfile must contain a FROM instruction",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nADD https://example.com/x /y",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: ADD from a remote URL is not supported: https://example.com/x",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nEXPOSE 80\nLABEL a=b\nVOLUME /data\nMAINTAINER me\nHEALTHCHECK CMD true\nSTOPSIGNAL SIGTERM",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": "Unsupported instruction: HEALTHCHECK\nUnsupported instruction: STOPSIGNAL\n"
+   }
+  },
+  {
+   "dockerfile": "# escape=`\nFROM a\nRUN echo a `\n  && echo b\nWORKDIR C:\\x",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "echo a   && echo b",
+      null
+     ],
+     [
+      "set_workdir",
+      "C:\\x"
+     ],
+     [
+      "set_user",
+      "user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\n# comment\nRUN echo a \\\n# inner comment\n  && echo b",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "echo a   && echo b",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nWORKDIR \"/my dir\"\nUSER 'x'",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_workdir",
+      "/my dir"
+     ],
+     [
+      "set_user",
+      "x"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY --chmod=$MODE x /y",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: invalid chmod value \"$MODE\" (resolves to \"\"), expected an octal mode such as 0755",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nENV MODE=0755\nCOPY --chmod=$MODE x /y",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_envs",
+      {
+       "MODE": "0755"
+      }
+     ],
+     [
+      "copy",
+      "x",
+      "/y",
+      null,
+      493
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY --chmod=9 x /y",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: invalid chmod value \"9\", expected an octal mode such as 0755",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nBOGUS x",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: unknown instruction: BOGUS",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nWORKDIR a b",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_workdir",
+      "a b"
+     ],
+     [
+      "set_user",
+      "user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nENV",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: ENV requires at least one argument",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: RUN requires at least one argument",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a --platform=linux/amd64\nRUN true",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 1: FROM requires either one or three arguments",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM --platform=linux/amd64 a\nRUN true",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "true",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": "Ignoring unsupported FROM flag --platform (line 1)\n"
+   }
+  },
+  {
+   "dockerfile": "FROM a\nENV A=1\nENV B=${A}x C=\"$A y\"\nCOPY --chown=$B f /g",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_envs",
+      {
+       "A": "1"
+      }
+     ],
+     [
+      "set_envs",
+      {
+       "B": "${A}x",
+       "C": "$A y"
+      }
+     ],
+     [
+      "copy",
+      "f",
+      "/g",
+      "$B",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN [\"echo\", \"it's\"]",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "echo 'it'\"'\"'s'",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCMD",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCMD []",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nARG X\nARG Y=1 Z=2\nENV W=${Y:-d} V=${NOPE:-dflt}",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_envs",
+      {
+       "X": ""
+      }
+     ],
+     [
+      "set_envs",
+      {
+       "Y": "1",
+       "Z": "2"
+      }
+     ],
+     [
+      "set_envs",
+      {
+       "V": "${NOPE:-dflt}",
+       "W": "${Y:-d}"
+      }
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nONBUILD RUN x",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": "Unsupported instruction: ONBUILD\n"
+   }
+  },
+  {
+   "dockerfile": "FROM a\nSHELL [\"/bin/bash\", \"-c\"]\nRUN x",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "x",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": "Unsupported instruction: SHELL\n"
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY a",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: COPY requires at least two arguments",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nENV A",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: ENV must have two arguments",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nENV =x",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: ENV names can not be blank",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN echo \"unterminated",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "echo \"unterminated",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY \"unterminated /x",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: COPY requires at least two arguments",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN <<EOF\nnever ends",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: unterminated heredoc",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nUSER root\nWORKDIR /w\nRUN true",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/w"
+     ],
+     [
+      "run_cmd",
+      "true",
+      null
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY --link --parents x /y",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "copy",
+      "x",
+      "/y",
+      null,
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": "Ignoring unsupported COPY flag --link (line 2)\nIgnoring unsupported COPY flag --parents (line 2)\n"
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY --nope x /y",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: unknown flag: nope",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY --chown=x --chown=y a /b",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: duplicate flag specified: chown",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY --link=maybe a /b",
+   "expect": {
+    "error": "DockerfileSyntaxError",
+    "msg": "Dockerfile parse error on line 2: expecting boolean value for flag link, not: maybe",
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "\ufeffFROM a\nRUN x",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "x",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\r\nRUN x\r\nENV A=b\r\n",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "x",
+      null
+     ],
+     [
+      "set_envs",
+      {
+       "A": "b"
+      }
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN echo '\\''x",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "echo '\\''x",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nENV A=\"b\\\"c\" D=e\\ f",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_envs",
+      {
+       "A": "b\"c",
+       "D": "e f"
+      }
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nWORKDIR $HOME/x",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "set_workdir",
+      "$HOME/x"
+     ],
+     [
+      "set_user",
+      "user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN <<EOF1 cat > /a\nA\nEOF1",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "<<EOF1 cat > /a\nA\nEOF1",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nRUN python <<A <<B\nx\nA\ny\nB",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "python <<A <<B\nx\nA\ny\nB",
+      null
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  },
+  {
+   "dockerfile": "FROM a\nCOPY <<A <<B /d/\nx\nA\ny\nB",
+   "expect": {
+    "base": "a",
+    "calls": [
+     [
+      "set_user",
+      "root"
+     ],
+     [
+      "set_workdir",
+      "/"
+     ],
+     [
+      "run_cmd",
+      "E2B_HEREDOC_DEST=/d/A\nmkdir -p \"$(dirname \"$E2B_HEREDOC_DEST\")\" && cat <<E2B_HEREDOC_A >\"$E2B_HEREDOC_DEST\"\nx\nE2B_HEREDOC_A",
+      "root"
+     ],
+     [
+      "run_cmd",
+      "E2B_HEREDOC_DEST=/d/B\nmkdir -p \"$(dirname \"$E2B_HEREDOC_DEST\")\" && cat <<E2B_HEREDOC_B >\"$E2B_HEREDOC_DEST\"\ny\nE2B_HEREDOC_B",
+      "root"
+     ],
+     [
+      "set_user",
+      "user"
+     ],
+     [
+      "set_workdir",
+      "/home/user"
+     ]
+    ],
+    "stdout": ""
+   }
+  }
+ ]
+}

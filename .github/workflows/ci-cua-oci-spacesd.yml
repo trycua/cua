@@ -1,0 +1,117 @@
+name: "CI: OCI images as Spaces"
+
+# Any OCI image is a full Space on the container and microVM kinds: the
+# runtime injects a static cua-spacesd (a musl build of libs/cua-spacesd) and
+# runs the image's own command beside it under `cua-spacesd supervise`.
+#   static       the static headless build (x86_64) is fully static and its
+#                supervisor runs a command with that command's status;
+#   containers   alpine:3.20 and python:3.12-slim become Spaces on the
+#                runner's Docker engine (runc): a command, a file up and
+#                back, and a port forward (tests/e2e/local-runtimes/tests/
+#                oci_any.rs). The microVM kinds run in ci-cua-microvm.yml and
+#                on Apple silicon (see CUA_E2E_OCI_ANY_KINDS).
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-spacesd/**"
+      - "libs/cua/crates/cua-vmm/src/inject.rs"
+      - "libs/cua/crates/cua-vmm/src/container/**"
+      - "libs/cua/crates/cua-vmm/src/microvm/**"
+      - "libs/cua/crates/cua-daemon/src/local.rs"
+      - "tests/e2e/local-runtimes/tests/oci_any.rs"
+      - ".github/workflows/ci-cua-oci-spacesd.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-spacesd/**"
+      - "libs/cua/crates/cua-vmm/src/inject.rs"
+      - "libs/cua/crates/cua-vmm/src/container/**"
+      - "libs/cua/crates/cua-daemon/src/local.rs"
+      - ".github/workflows/ci-cua-oci-spacesd.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-oci-spacesd-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  static:
+    name: static cua-spacesd (musl)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: musl toolchain
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: "libs/cua-spacesd -> target"
+          shared-key: libs-cua-spacesd-static
+      - name: Build
+        working-directory: libs/cua-spacesd
+        run: cargo build --locked --profile static --target x86_64-unknown-linux-musl -p cua-spacesd --bin cua-spacesd
+      - name: Static, starts, supervises
+        working-directory: libs/cua-spacesd
+        run: bash packaging/release/check-static-binary.sh target/x86_64-unknown-linux-musl/static/cua-spacesd
+      - name: Supervisor tests
+        working-directory: libs/cua-spacesd
+        run: cargo test --locked -p cua-spacesd-supervise
+      - name: Keep the binary for the container lane
+        run: |
+          mkdir -p "$RUNNER_TEMP/static"
+          cp libs/cua-spacesd/target/x86_64-unknown-linux-musl/static/cua-spacesd "$RUNNER_TEMP/static/cua-spacesd-linux-x86_64"
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: cua-spacesd-linux-x86_64
+          path: ${{ runner.temp }}/static/cua-spacesd-linux-x86_64
+          if-no-files-found: error
+          retention-days: 3
+
+  containers:
+    name: containers (docker, runc)
+    needs: static
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: "tests/e2e/local-runtimes -> target"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cua-spacesd-linux-x86_64
+          path: ${{ runner.temp }}/static
+      - name: Any OCI image is a full Space
+        working-directory: tests/e2e/local-runtimes
+        env:
+          CUA_E2E_OCI_ANY: "1"
+          CUA_E2E_OCI_ANY_KINDS: container
+          CUA_E2E_OCI_ANY_RUNTIME: runc
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/static/cua-spacesd-linux-x86_64"
+          export CUA_SPACESD_STATIC="$RUNNER_TEMP/static/cua-spacesd-linux-x86_64"
+          export CUA_HOME="$RUNNER_TEMP/cua-home"
+          mkdir -p "$CUA_HOME"
+          cargo test --locked --test oci_any -- --nocapture

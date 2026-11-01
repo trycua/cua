@@ -43,6 +43,12 @@ export interface Tile {
   progress?: number;
   progressLabel?: string;
   signedIn: boolean;
+  /** One of your other machines' desktops, not a Space it provides. */
+  desktop?: boolean;
+  /** Pinned to the notch. */
+  pinned?: boolean;
+  /** Why a pinned desktop cannot be opened now ("Offline", "Not shared"). */
+  note?: string;
 }
 
 export interface Activity {

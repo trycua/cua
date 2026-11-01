@@ -365,6 +365,50 @@ packaging and lifecycle validation require separate evidence. Physical Omarchy
 parity requires separate acceptance; it is not a gate for publishing a validated
 image.
 
+### niri
+
+niri 25.08 or later is recognised when `NIRI_SOCKET` and `WAYLAND_DISPLAY`
+belong to the same niri process; window ids are niri's own. niri has no
+RemoteDesktop or libei, so input is foreground only and the libei/portal
+recovery refuses. Refusals carry `foreground_unavailable` and a `suggestion`
+that names the remedy.
+
+- Floating windows get window capture, cropped from the output, and
+  window-coordinate pointer input from niri's floating geometry. A point under
+  another floating window refuses, because niri reports no stacking order.
+- Tiled windows, niri's default layout, refuse window capture and
+  window-coordinate pointer input: niri does not report where they are.
+  `get_window_state` still returns their accessibility tree, and element
+  actions work. For pixels, call `get_desktop_state` and act at desktop scope
+  (no `pid` or `window_id`), or float the window.
+- Desktop-scope pointer input takes pixels of the single output, as
+  `get_desktop_state` shows it, and refuses points past the output edge.
+  niri does not report where tiled windows are or every scroll of its view,
+  so the driver does not prove a screenshot is still current: take a new one
+  after anything that may have moved the layout.
+- Window-coordinate pointer input and window capture first wait, at most
+  five reads 30 ms apart, for two consecutive reads that agree on the
+  window's place, and refuse a window that keeps moving. They then check it
+  again before every press, wheel tick or motion, along with exact keyboard
+  focus for pointer input. A move away and back between two reads, or an
+  animation still drawing the window elsewhere, is not detected.
+- The driver does not check whether the session is locked. At a lock screen
+  niri reports no focused window, so keyboard and window-coordinate pointer
+  input refuse; desktop-scope pointer input and capture are not refused.
+- `coordinate_frame:"desktop"` with a window target refuses.
+- Foreground actions activate the target, act, and give focus back to the
+  window that had it. `right_click` and `hotkey` leave the target focused, as
+  on Sway: giving focus back would close the menu they opened. Text and keys
+  use niri's own keymap, and focus is checked before every key.
+- `list_windows` gives tiled windows 0x0 bounds, and a tiled window reads
+  `is_on_screen:true` only while it is the active window of a shown workspace.
+  With a floating window active, visible tiled windows read `false`, so do not
+  filter niri windows on `is_on_screen`.
+- With more than one output, window capture, `get_desktop_state`,
+  window-coordinate pointer input, and desktop-scope input refuse.
+- A floating window that moves between the coordinate translation and the
+  input refuses the input; take a new screenshot and retry.
+
 ## Quick triage
 
 If a tool call surprises you on Linux:
@@ -384,6 +428,20 @@ If a tool call surprises you on Linux:
    (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`);
    (c) GTK4 / Qt6 / Chromium populate lazily: re-snapshot after an
    interaction or an AX-enable settle.
+4. **`input_busy` saying a previous call's input is still finishing**: an
+   earlier call timed out or was cancelled, and its worker still holds the
+   desktop. Once a call is over, its worker sends no further XTest or
+   virtual-device input; what can still run is cleanup (releasing a held
+   button or key, giving focus back) and a `wtype` child already started,
+   which keeps typing until it exits. The 12 s bound counts from when that
+   call ended, not from when the next action arrives: a desktop action that
+   finds the worker stale for 12 s or more refuses at once, before sending
+   anything, and one that arrives sooner waits only for the rest of it.
+   Retry once the worker has stopped. A worker that never stops, such as
+   one blocked on a compositor or X server that stopped answering, keeps
+   every later desktop action refusing until the driver restarts. An
+   `input_busy` that names a pid is different: text input to that process is
+   already running.
 
 ## Forbidden vectors
 

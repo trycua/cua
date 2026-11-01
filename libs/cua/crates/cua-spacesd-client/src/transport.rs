@@ -235,6 +235,13 @@ pub(crate) fn build_channel(cfg: &ChannelConfig, transport: Transport) -> Result
     }))
 }
 
+/// HTTP/2 receive window per stream (native gRPC).
+pub const STREAM_WINDOW: u32 = 4 * 1024 * 1024;
+/// HTTP/2 receive window per connection (native gRPC).
+pub const CONNECTION_WINDOW: u32 = 16 * 1024 * 1024;
+/// Largest HTTP/2 frame this client accepts (native gRPC).
+pub const MAX_FRAME: u32 = 1024 * 1024;
+
 fn native_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
     use tonic::transport::{Channel, ClientTlsConfig};
     let mut ep = Channel::from_shared(cfg.endpoint.origin())
@@ -245,7 +252,13 @@ fn native_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
         .keep_alive_while_idle(true)
         .tcp_keepalive(Some(cfg.keepalive.interval))
         .tcp_nodelay(true)
-        .http2_adaptive_window(true);
+        // Bulk transfers (files, streamed output) at the link's speed: the
+        // driver advertises 4 MiB stream and 16 MiB connection windows and
+        // 1 MiB frames; receive the same way instead of starting at 64 KiB
+        // and 16 KiB frames.
+        .initial_stream_window_size(STREAM_WINDOW)
+        .initial_connection_window_size(CONNECTION_WINDOW)
+        .max_frame_size(MAX_FRAME);
     if cfg.endpoint.is_tls() {
         ep = ep
             .tls_config(
@@ -496,6 +509,9 @@ impl HeaderInjector {
         for (name, value) in &self.extra {
             headers.insert(name.clone(), value.clone());
         }
+        for (name, value) in &self.extra {
+            headers.insert(name.clone(), value.clone());
+        }
         Ok(())
     }
 }
@@ -537,8 +553,190 @@ impl Service<Request<Body>> for Prefixed {
         let headers = Arc::clone(&self.headers);
         Box::pin(async move {
             headers.apply(&mut req).await.map_err(ChannelError)?;
-            inner.oneshot(req).await.map_err(ChannelError)
+            let res = inner.oneshot(req).await.map_err(ChannelError)?;
+            Ok(non_grpc_as_status(res).await)
         })
+    }
+}
+
+/// A response that is not gRPC (a proxy's or load balancer's HTTP error
+/// page, an HTML 500) as the gRPC error it stands for.
+///
+/// Without this, tonic reads the page's first byte as a gRPC frame header
+/// and fails with "protocol error: received message with invalid
+/// compression flag: 73 (valid flags are 0 and 1) while receiving response
+/// with status: 500", which hides what the server said. A gRPC server
+/// always answers HTTP 200 with a `application/grpc*` content type, or
+/// carries `grpc-status` in its headers (trailers-only); anything else is
+/// turned into a trailers-only response whose status names the HTTP status
+/// and the start of the body, with the code the gRPC HTTP mapping gives.
+pub(crate) async fn non_grpc_as_status(res: Response<Body>) -> Response<Body> {
+    if !is_non_grpc(&res) {
+        return res;
+    }
+    let (parts, body) = res.into_parts();
+    let text = http_body_util::Limited::new(body, NON_GRPC_BODY_MAX);
+    let text = tokio::time::timeout(
+        Duration::from_secs(5),
+        http_body_util::BodyExt::collect(text),
+    )
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .map(|c| body_summary(&c.to_bytes()))
+    .unwrap_or_default();
+    let status = parts.status;
+    let reason = status.canonical_reason().unwrap_or("");
+    let mut message = format!("HTTP {} {reason}", status.as_u16())
+        .trim_end()
+        .to_string();
+    if status == http::StatusCode::OK {
+        let ct = parts
+            .headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("none");
+        message.push_str(&format!(" with content type {ct}, not gRPC"));
+    }
+    if !text.is_empty() {
+        message.push_str(": ");
+        message.push_str(&text);
+    }
+    tonic::Status::new(http_status_code(status), message).into_http::<Body>()
+}
+
+/// How much of a non-gRPC body is read for its message.
+const NON_GRPC_BODY_MAX: usize = 16 * 1024;
+
+fn is_non_grpc<B>(res: &Response<B>) -> bool {
+    if res.headers().contains_key("grpc-status") {
+        return false;
+    }
+    let grpc_type = res
+        .headers()
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("application/grpc"));
+    res.status() != http::StatusCode::OK || !grpc_type
+}
+
+/// The gRPC code for an HTTP status without one
+/// (<https://github.com/grpc/grpc/blob/master/doc/http-grpc-status-mapping.md>).
+fn http_status_code(status: http::StatusCode) -> tonic::Code {
+    match status.as_u16() {
+        400 => tonic::Code::Internal,
+        401 => tonic::Code::Unauthenticated,
+        403 => tonic::Code::PermissionDenied,
+        404 => tonic::Code::Unimplemented,
+        429 | 502 | 503 | 504 => tonic::Code::Unavailable,
+        _ => tonic::Code::Unknown,
+    }
+}
+
+/// The readable start of an error body: the text of an HTML page (tags
+/// dropped), whitespace collapsed, at most 300 characters.
+fn body_summary(bytes: &[u8]) -> String {
+    let raw = String::from_utf8_lossy(bytes);
+    let mut text = String::with_capacity(raw.len().min(4096));
+    let mut in_tag = false;
+    for c in raw.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => {
+                in_tag = false;
+                text.push(' ');
+            }
+            _ if in_tag => {}
+            c if c.is_control() => text.push(' '),
+            c => text.push(c),
+        }
+    }
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut out = words.join(" ");
+    if out.chars().count() > 300 {
+        out = out.chars().take(300).collect::<String>() + "...";
+    }
+    out
+}
+
+#[cfg(test)]
+mod non_grpc_tests {
+    use super::*;
+
+    fn response(status: u16, ct: Option<&str>, body: &'static str) -> Response<Body> {
+        let mut b = Response::builder().status(status);
+        if let Some(ct) = ct {
+            b = b.header(http::header::CONTENT_TYPE, ct);
+        }
+        b.body(Body::new(http_body_util::Full::new(
+            bytes::Bytes::from_static(body.as_bytes()),
+        )))
+        .unwrap()
+    }
+
+    fn status_of(res: &Response<Body>) -> tonic::Status {
+        tonic::Status::from_header_map(res.headers()).expect("a grpc-status header")
+    }
+
+    /// An HTML 500 from a proxy becomes a readable gRPC error, never a
+    /// frame-parsing "invalid compression flag".
+    #[tokio::test]
+    async fn an_html_500_is_a_readable_error() {
+        let res = non_grpc_as_status(response(
+            500,
+            Some("text/html"),
+            "<html><body><h1>Internal Server Error</h1>\n<p>upstream failed</p></body></html>",
+        ))
+        .await;
+        let s = status_of(&res);
+        assert_eq!(s.code(), tonic::Code::Unknown);
+        assert_eq!(
+            s.message(),
+            "HTTP 500 Internal Server Error: Internal Server Error upstream failed"
+        );
+    }
+
+    /// A gateway's 502 keeps its status words (callers retry on them) and
+    /// maps to `Unavailable`.
+    #[tokio::test]
+    async fn a_502_is_unavailable() {
+        let res =
+            non_grpc_as_status(response(502, Some("text/plain"), "failed to reach host")).await;
+        let s = status_of(&res);
+        assert_eq!(s.code(), tonic::Code::Unavailable);
+        assert_eq!(s.message(), "HTTP 502 Bad Gateway: failed to reach host");
+    }
+
+    /// A 200 that is not gRPC (a captive portal, a web page) is an error too.
+    #[tokio::test]
+    async fn a_200_web_page_is_an_error() {
+        let res = non_grpc_as_status(response(200, Some("text/html"), "<p>hello</p>")).await;
+        let s = status_of(&res);
+        assert_eq!(
+            s.message(),
+            "HTTP 200 OK with content type text/html, not gRPC: hello"
+        );
+    }
+
+    /// gRPC answers pass through untouched: a normal one and a
+    /// trailers-only error (whatever its HTTP status).
+    #[tokio::test]
+    async fn grpc_responses_pass_through() {
+        let ok = non_grpc_as_status(response(200, Some("application/grpc"), "\0\0\0\0\0")).await;
+        assert!(!ok.headers().contains_key("grpc-status"));
+        let web = non_grpc_as_status(response(200, Some("application/grpc-web+proto"), "")).await;
+        assert!(!web.headers().contains_key("grpc-status"));
+        let mut err = tonic::Status::not_found("no such space").into_http::<Body>();
+        *err.status_mut() = http::StatusCode::OK;
+        let err = non_grpc_as_status(err).await;
+        assert_eq!(status_of(&err).message(), "no such space");
+    }
+
+    /// Long bodies are cut to a readable length.
+    #[test]
+    fn long_bodies_are_cut() {
+        let long = "x".repeat(1000);
+        assert_eq!(body_summary(long.as_bytes()).chars().count(), 303);
     }
 }
 

@@ -425,6 +425,9 @@ EOF
     run_test bring-to-front env -u CUA_E2E_RECORDINGS_ROOT \
       cargo test -p cua-driver-e2e --test bring_to_front_macos_test -- \
       --ignored --nocapture --test-threads=1
+    run_test frontmost-app env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test frontmost_app_macos_test -- \
+      --ignored --nocapture --test-threads=1
     # Tk derives click locations from the hardware pointer. The rows skip with
     # an explicit reason when python3 lacks tkinter (hosted images may not ship
     # it); set CUA_TEST_REQUIRE_TK=1 where Tk is provisioned.

@@ -1,0 +1,132 @@
+---
+title: Memory and identity
+description: 'A named agent keeps its memory in a home in the Cua Volume that outlives its runs and its Space, and gets its own notifications, pause and resume, and access to your machines by name.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+An agent you add with a name has three things: a harness, a Space to work in,
+and a home in the [Cua Volume](/spaces/guides/cua-volume) at `agents/<name>/`.
+The harness keeps its memory in that home, so the agent remembers across runs,
+across its Space being deleted and created again, and across machines.
+
+```bash test="cli-shape" id="memory-add"
+cua agent add ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
+cua agent send ada "What did you learn yesterday?"
+```
+
+The name is the agent's identity everywhere: in the Cua Volume (`agent:ada`),
+in notifications, in machine-access grants and in the audit log. Named agents
+are kept by the Cua daemon of the machine you add them on.
+
+## How it works
+
+| Step | What happens |
+|------|--------------|
+| Start | The daemon takes the home's lease (one writer), restores `agents/<name>/` into `~/cua-volume/agents/<name>` in the Space, and starts the harness with its memory there. |
+| Each turn | When the turn ends the daemon saves the files that changed back to the Cua Volume and posts a notification with the agent's answer. |
+| Follow-ups | `cua agent send` sends to the idle run, or starts a new run with the home restored. A turn in progress is never interrupted. |
+| Stop, pause | The home is saved and the lease released. |
+
+`cua agent save ada` (MCP `persistent_agent_save`) saves the home now instead of
+at the end of the turn.
+
+## Memory
+
+Only memory moves into the home; each harness's credentials stay where they
+were.
+
+| Harness | Memory in the home | Setting |
+|---------|--------------------|---------|
+| Claude Code | `claude-memory/` | `autoMemoryDirectory` in a per-run `CLAUDE_CONFIG_DIR` |
+| Codex | `codex/memories/` | `CODEX_HOME=<home>/codex`, `[features] memories = true` |
+| Hermes | `hermes/memories/` (`MEMORY.md`, `USER.md`) | `HERMES_HOME=<home>/hermes` |
+| OpenClaw | `workspace/` (`MEMORY.md`, `memory/`) | `OPENCLAW_WORKSPACE_DIR=<home>/workspace` |
+
+Other harnesses work in `<home>/work`. Never saved: `.env`, `auth.json`,
+`credentials/`, `vault/`, `sessions/`, logs and caches. A file that looks like
+it holds a secret (an API key, a token, a private key) is kept out of the Cua
+Volume and you get a notification; secrets belong in the
+[Keyvault](/spaces/guides/keyvault).
+
+Removing an agent (`cua agent rm ada`, MCP `agent_remove`) stops its run,
+removes its schedules and forgets it. Its home stays in the Cua Volume; delete
+it there when you no longer want it.
+
+## Notifications
+
+A turn's end, a `notify_user` call from the agent, an access request and a
+failure each post a notification. The Cua app shows them as system
+notifications; the feed persists while no app is open.
+
+```bash test="cli-shape" id="memory-notifications"
+cua agent notifications --unread
+```
+
+## Pause and resume
+
+```bash test="cli-shape" id="memory-pause"
+cua agent pause ada
+cua agent resume ada
+```
+
+Pausing stops the run, saves the home, and keeps the agent's schedules from
+firing.
+
+| Space | Pause | Resume |
+|-------|-------|--------|
+| Local | Suspends the Space. | Resumes it. |
+| In your own cloud | Releases the Space after the home is saved. | Creates it again from the same image and restores the home. |
+| Your own machine or an added address | Only the agent pauses. | Only the agent resumes. |
+
+## What the agent gets
+
+Inside its Space a named agent has the MCP server `cua`, answered by your daemon
+over the Space's own connection (no token enters the Space).
+
+| Tool | What |
+|------|------|
+| `notify_user` | A notification in the Cua app. |
+| `volume_ls`, `volume_read`, `volume_write` | The Cua Volume, as `agent:<name>`: its home, `public/` (read) and its Space's folder. |
+| `volume_request_access` | Asks you for more; you approve in the app. |
+| `computer_list`, `computer_list_tools`, `computer_call` | Your machines you allowed this agent to use. |
+| `request_site_login` | [Sign in to a site](/spaces/guides/keyvault#let-an-agent-sign-in-to-a-site) with a password from your Keyvault, after you approve. The agent never sees it. |
+
+It also has the Space's own Cua Driver tools, like every agent run; see
+[Computer use](/spaces/guides/agents-in-a-space#computer-use).
+
+## Access to your machines
+
+`cua host setup` makes a machine a Space for your whole account. A named agent
+reaches it only if you allow that agent by name. Allowing asks for Touch ID or
+your passphrase; revoking takes effect on the agent's next call; every grant,
+use and refusal is audited.
+
+```bash test="cli-shape" id="memory-computer"
+cua agent allow-computer ada relay:0123456789abcdef
+cua agent computer-access --audit 20
+cua agent revoke-computer ada
+```
+
+<Callout type="warn">
+  Agents that share one Space share its user account. Give an agent its own
+  Space when it must not see another agent's files.
+</Callout>
+
+## In the Cua app
+
+| Page | What it shows |
+|------|---------------|
+| Agents | Each named agent on one line with Pause or Resume; the selected agent's Memory (its home, each file's text and history, Restore), Routines (add, on or off, remove) and Access to this machine (allow, revoke, recent uses and refusals). |
+| Drive | The Cua Volume by folder, access requests from agents (Approve asks for Touch ID, Deny) and grants (Revoke). |
+| Notifications | The daemon's feed, newest first, with Mark all read. New entries are posted as system notifications once each, while the app runs. |
+
+## From an agent or the SDK
+
+`agent_add`, `agent_send`, `agent_remove`, `persistent_agent_list`,
+`persistent_agent_save`, `agent_pause`, `agent_resume`, `notifications_*` and
+`computer_access_*` cover the same ground over MCP, and `agent_start` with
+`home` runs a task as a named agent (created on first use). See
+[Persistent agents](/spaces/reference/agents#persistent-agents) in the Spaces
+reference and the SDK's [`Spaces`](/cua-sdk/reference/spaces/persistent-agents)
+methods.

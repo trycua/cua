@@ -24,9 +24,9 @@ describe("the Space ready note", () => {
     expect(spaceReadyNote({ id: "a", name: "a", os: "unknown" }, "darwin").body).toBe("A fresh computer inside this Mac. Your agent can use it now.");
   });
 
-  it("says this computer where the app does not run on a Mac", () => {
+  it("says this machine where the app does not run on a Mac", () => {
     for (const platform of ["win32", "linux"] as const) {
-      expect(spaceReadyNote({ id: "a", name: "a", os: "linux" }, platform).body).toBe("A fresh Linux computer inside this computer. Your agent can use it now.");
+      expect(spaceReadyNote({ id: "a", name: "a", os: "linux" }, platform).body).toBe("A fresh Linux computer inside this machine. Your agent can use it now.");
     }
   });
 

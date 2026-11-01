@@ -106,11 +106,11 @@
         },
         {
           "path": "apps/rillwatch-cases/package.json",
-          "sha256": "0cf18fc4dd112b413a0bda274ff80eed78c19610e9123b38b8a7f6b172397151"
+          "sha256": "843fd7f4172f2dad9fbea818ba8ef247ada5d6e981d9675b13b05fb1a4b2d3fc"
         },
         {
           "path": "apps/rillwatch-cases/package-lock.json",
-          "sha256": "71168934a6a7b4f277fe3e9ce34ddc81c74e35a44eb94343e4efd2450e6180db"
+          "sha256": "e0f4828cc0b932d4df4e05eeefaee0edae9224f117558c736b26104d83222464"
         },
         {
           "path": "apps/rillwatch-cases/renderer/index.html",
@@ -142,11 +142,11 @@
         },
         {
           "path": "apps/margin-lantern-manual/package.json",
-          "sha256": "aa638b1dea8563a1de8c8c15547510fce4aaf4b0de8db689e8834ce8bde79e18"
+          "sha256": "b7062109c3b267f801da44bd8bf606907ee83fd36b19ad08f1d53e3431ddc1e5"
         },
         {
           "path": "apps/margin-lantern-manual/package-lock.json",
-          "sha256": "b2e78f8517631d0de6188f7de5c66a49f28694b332f9f6e53d0d937409fc7ce0"
+          "sha256": "cfb9e0d519c95d25e5dcd4394e2012788e7c91c7dd9ba671468ff3546b622a18"
         },
         {
           "path": "apps/margin-lantern-manual/renderer/index.html",

@@ -9,7 +9,8 @@ archive without a LottieFiles account or a browser editor.
 The runtime applies two bounded effects after decoding the compiled theme:
 
 * the approved blue tint key is replaced with the stable session color;
-* the shared four-second float transform is applied to the composed theme.
+* the opt-in four-second float transform (``cursor.float``) is applied to the
+  composed theme.
 
 Those effects are runtime concerns because they must stay synchronized across
 all action layers. Delivery and target context is rendered by the host badge.
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
@@ -198,17 +200,46 @@ def shape_layer(
     }
 
 
+# The arrow is drawn upright, like the system pointer: its left edge is
+# vertical and its tip points straight up-left. The source outline below is a
+# 45-degree dart (left edge at 70 degrees from horizontal); it is turned
+# clockwise about the hotspot by UPRIGHT_DEGREES so the left edge stands
+# vertical. Before this the runtime painted the dart as drawn, so the agent
+# cursor always leaned 20 degrees off the system arrow.
+HOTSPOT: Point = (55, 30)
+UPRIGHT_DEGREES = 20.0
+DART_OUTLINE: list[PathPoint] = [
+    ((55, 30), (0, 0), (-7, -2)),
+    ((43, 41), (-1, -8), (0, 0)),
+    ((64, 98), (0, 0), (3, 8)),
+    ((77, 99), (-4, 7), (0, 0)),
+    ((86, 79), (0, 0), (2, -4)),
+    ((95, 70), (-4, 2), (0, 0)),
+    ((108, 63), (0, 0), (7, -4)),
+    ((107, 50), (7, 3), (0, 0)),
+]
+
+
+def rotated(path: Sequence[PathPoint], degrees: float, pivot: Point) -> list[PathPoint]:
+    """Rotate vertices about ``pivot`` and tangents about the origin, clockwise
+    on screen for positive ``degrees``, rounded to 1/100 for stable output."""
+
+    angle = math.radians(degrees)
+    cos, sin = math.cos(angle), math.sin(angle)
+
+    def turn(x: float, y: float) -> Point:
+        return (round(x * cos - y * sin, 2), round(x * sin + y * cos, 2))
+
+    out: list[PathPoint] = []
+    for (vx, vy), tangent_in, tangent_out in path:
+        dx, dy = turn(vx - pivot[0], vy - pivot[1])
+        vertex = (round(pivot[0] + dx, 2), round(pivot[1] + dy, 2))
+        out.append((vertex, turn(*tangent_in), turn(*tangent_out)))
+    return out
+
+
 CURSOR_PATH = path_shape(
-    [
-        ((55, 30), (0, 0), (-7, -2)),
-        ((43, 41), (-1, -8), (0, 0)),
-        ((64, 98), (0, 0), (3, 8)),
-        ((77, 99), (-4, 7), (0, 0)),
-        ((86, 79), (0, 0), (2, -4)),
-        ((95, 70), (-4, 2), (0, 0)),
-        ((108, 63), (0, 0), (7, -4)),
-        ((107, 50), (7, 3), (0, 0)),
-    ],
+    rotated(DART_OUTLINE, UPRIGHT_DEGREES, HOTSPOT),
     closed=True,
     name="Cursor",
 )
@@ -629,7 +660,7 @@ def semantic_manifest() -> dict[str, Any]:
         "license": "MIT",
         "compatibility": {"profile": "cua-driver-actions-v2", "semantics": 2},
         "canvas": {"width": CANVAS, "height": CANVAS, "fps": FPS},
-        "hotspot": {"x": 55, "y": 30},
+        "hotspot": {"x": HOTSPOT[0], "y": HOTSPOT[1]},
         "actions": actions,
     }
 

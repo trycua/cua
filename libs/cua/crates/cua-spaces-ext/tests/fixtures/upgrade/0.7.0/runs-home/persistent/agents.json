@@ -1,0 +1,36 @@
+[
+  {
+    "name": "kit",
+    "harness": "claude-code",
+    "space": "direct:127.0.0.1:50279",
+    "env_from_host": [],
+    "created_ms": 1792859758475,
+    "paused": false,
+    "space_state": "running",
+    "run_id": "run-0000kit1",
+    "cursor": 0,
+    "saved_turn": 0,
+    "notify": true,
+    "saved_ms": 0,
+    "last_error": "agent: guest command failed (None): "
+  },
+  {
+    "name": "lee",
+    "harness": "openai-codex",
+    "space": "direct:127.0.0.1:50279",
+    "model": "gpt-5",
+    "env_from_host": [
+      "OPENAI_API_KEY"
+    ],
+    "created_ms": 1792859758537,
+    "paused": false,
+    "space_state": "running",
+    "run_id": "run-0000lee1",
+    "cursor": 0,
+    "saved_turn": 0,
+    "notify": true,
+    "saved_ms": 0,
+    "last_error": "agent: guest command failed (None): ",
+    "notified_error": "run-0000lee1#1"
+  }
+]

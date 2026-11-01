@@ -1,0 +1,46 @@
+{
+  "bash": {
+    "error": false,
+    "stdout": [
+      "hi\n"
+    ]
+  },
+  "callback": [
+    "a\nb\n"
+  ],
+  "context": {
+    "after_restart": "NameError",
+    "cwd": "/tmp",
+    "default_isolated": "NameError",
+    "language": "python",
+    "listed": true,
+    "listed_after_remove": false,
+    "pwd": "/tmp",
+    "same": "7"
+  },
+  "envs": "v",
+  "error": {
+    "has_traceback": true,
+    "name": "ZeroDivisionError",
+    "value": "division by zero"
+  },
+  "files": "ok",
+  "print": {
+    "error": false,
+    "stderr": [
+      "oops\n"
+    ],
+    "stdout": [
+      "hello\n"
+    ]
+  },
+  "state": {
+    "main": [
+      true
+    ],
+    "results": [
+      "42"
+    ],
+    "text": "42"
+  }
+}

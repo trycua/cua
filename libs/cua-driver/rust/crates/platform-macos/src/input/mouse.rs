@@ -739,50 +739,6 @@ pub fn click_at_xy_chromium(
     Ok(())
 }
 
-/// Press-drag-release gesture from `(from_x, from_y)` to `(to_x, to_y)` in
-/// screen coordinates, addressed to `pid` and the optional exact window.
-///
-/// `duration_ms` is the wall-clock budget for the drag path; `steps` is the
-/// number of intermediate `leftMouseDragged` events linearly interpolated
-/// along the path. `modifiers` are held across the entire gesture.
-///
-/// Like the Swift reference `MouseInput.drag`, uses the SkyLight path for
-/// backgrounded-target delivery.
-// The drag primitive deliberately exposes its complete native event contract.
-#[allow(clippy::too_many_arguments)]
-pub fn drag_at_xy(
-    pid: i32,
-    from_x: f64,
-    from_y: f64,
-    to_x: f64,
-    to_y: f64,
-    from_local: Option<(f64, f64)>,
-    to_local: Option<(f64, f64)>,
-    wid: Option<u32>,
-    duration_ms: u64,
-    steps: usize,
-    modifiers: &[&str],
-    button: DragButton,
-    foreground_hid: bool,
-) -> anyhow::Result<()> {
-    drag_at_xy_observed(
-        pid,
-        from_x,
-        from_y,
-        to_x,
-        to_y,
-        from_local,
-        to_local,
-        wid,
-        duration_ms,
-        steps,
-        modifiers,
-        button,
-        foreground_hid,
-        |_, _| {},
-    )
-}
-
 /// Window drag with an observer called for every native pointer position.
 ///
 /// Background delivery keeps the established PID-routed sequence. When
@@ -1222,37 +1178,6 @@ where
 
     std::thread::sleep(std::time::Duration::from_millis(100));
     Ok(())
-}
-
-/// Foreground drag through the global HID event tap.
-///
-/// A frontmost Chromium/WebKit surface expects a real HID-origin gesture for
-/// pointer capture and drag tracking. PID-routed `post_to_pid` events are
-/// suitable for background delivery, but they can be silently filtered by the
-/// renderer even when the target is frontmost.
-// The drag primitive deliberately exposes its complete native event contract.
-#[allow(clippy::too_many_arguments)]
-pub fn drag_at_xy_foreground(
-    from_x: f64,
-    from_y: f64,
-    to_x: f64,
-    to_y: f64,
-    duration_ms: u64,
-    steps: usize,
-    modifiers: &[&str],
-    button: DragButton,
-) -> anyhow::Result<()> {
-    drag_at_xy_foreground_observed(
-        from_x,
-        from_y,
-        to_x,
-        to_y,
-        duration_ms,
-        steps,
-        modifiers,
-        button,
-        |_, _| {},
-    )
 }
 
 /// Foreground drag with an observer called for every native pointer position.

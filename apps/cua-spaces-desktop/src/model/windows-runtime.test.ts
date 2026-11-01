@@ -31,7 +31,7 @@ describe("windowsRuntimeAdvice", () => {
   it("says virtualization is off and offers nothing to install", () => {
     const a = windowsRuntimeAdvice({ ...CLEAN, virtualization: "off" }, IDLE, 0);
     expect(a.reason).toMatch(/virtualization is turned off/);
-    expect(a.reason).toMatch(/another computer/);
+    expect(a.reason).toMatch(/another machine/);
     expect(a.fix).toBeNull();
   });
 

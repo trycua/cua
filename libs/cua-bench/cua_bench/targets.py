@@ -65,7 +65,7 @@ CONTRIB_ON = (
 #: cua SDK's ``byoc`` providers; ``modal`` is in both lists (the ``byoc``
 #: build runs it joined to the cua.ai relay). Mirrors
 #: ``cua_sandbox_core::CLOUD_LOCATIONS``.
-YOUR_CLOUD_ON = ("aws", "gcp")
+YOUR_CLOUD_ON = ("aws", "gcp", "hetzner")
 #: Every ``--on`` location: this machine, a contrib provider or your own
 #: cloud. ``cloud`` (Cua Cloud) is still a word so that it fails with
 #: :class:`CloudEnded` and not with "invalid choice".

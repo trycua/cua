@@ -1,0 +1,49 @@
+Add a schedule (give one of --every, --daily, --weekly)
+
+Usage: cua agent schedule add [OPTIONS] --title <TITLE> --prompt <PROMPT> <AGENT>
+
+Arguments:
+  <AGENT>
+          
+
+Options:
+      --title <TITLE>
+          
+
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --prompt <PROMPT>
+          
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+      --every <MINUTES>
+          Every N minutes
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --daily <HH:MM>
+          Every day at HH:MM
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --weekly <DAY HH:MM>
+          Every week, `mon 09:00`
+
+      --json
+          Print JSON
+
+  -h, --help
+          Print help
+
+Examples:
+  cua agent schedule add ada --title "Inbox sweep" --prompt "Triage new issues" --every 60
+  cua agent schedule add ada --title "Morning" --prompt "Plan the day" --daily 08:00

@@ -52,7 +52,10 @@ pub(crate) struct RuntimeOptions {
     pub host_owns_permission_ux: bool,
     pub host_bundle_id: Option<String>,
     pub compatibility_mode: bool,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(
+        not(all(target_os = "linux", not(target_env = "musl"))),
+        allow(dead_code)
+    )]
     pub prepare_desktop_environment: bool,
     pub register_host_tools: Option<fn(&mut ToolRegistry)>,
     pub authorization_ceiling: Option<SessionModeCeiling>,
@@ -577,7 +580,7 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
         )
     };
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     let mut registry = {
         configure_linux_runtime(options.prepare_desktop_environment);
         platform_linux::register_tools_with_cursor_and_provider(
@@ -587,7 +590,11 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
         )
     };
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "windows",
+        all(target_os = "linux", not(target_env = "musl"))
+    )))]
     let mut registry = {
         let _ = options;
         ToolRegistry::new()
@@ -670,7 +677,7 @@ fn configure_windows_runtime() {
     ));
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 fn configure_linux_runtime(prepare_desktop_environment: bool) {
     if prepare_desktop_environment {
         platform_linux::xauth::ensure_xauthority_discovered();

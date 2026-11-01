@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: FSL-1.1-MIT
 # Copyright (c) 2026 Cua AI, Inc.
 """Cloud conformance suite: Spaces and sandboxes in your own cloud account
-(`--on aws|gcp|modal`), end to end, against the real cloud and relay.cua.ai.
+(`--on aws|gcp|hetzner|modal`), end to end, against the real cloud and relay.cua.ai.
 
-    cloud_suite.py --cua PATH --on aws,gcp,modal [--runs 3]
-        [--scenarios space,bench] [--home ~/projects/.cua-work/cloud-providers/home]
-        [--inventory ~/projects/.cua-work/cloud-providers/inventory.sh]
-        [--work ~/projects/.cua-work/cloud-conformance] [--image linux]
+    cloud_suite.py --cua PATH --on aws,gcp,hetzner,modal [--runs 3]
+        [--scenarios space,bench] [--home ~/.cache/cua-reliability/cloud-providers/home]
+        [--inventory ~/.cache/cua-reliability/cloud-providers/inventory.sh]
+        [--work ~/.cache/cua-reliability/cloud-conformance] [--image linux]
 
 Why a sibling of suite.py (whose helpers it imports) and not more scenarios
 in it: suite.py builds a throwaway CUA_HOME per run and cleans up local VMs
@@ -62,10 +62,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from suite import REAL_CUA_HOME, Run, StepFailed, need, sh, wait_until  # noqa: E402
 
 HOME = pathlib.Path.home()
-DEFAULT_HOME = HOME / "projects/.cua-work/cloud-providers/home"
-DEFAULT_INVENTORY = HOME / "projects/.cua-work/cloud-providers/inventory.sh"
-PROVIDERS = ("aws", "gcp", "modal")
-CAN_STOP = {"aws": True, "gcp": True, "modal": False}
+DEFAULT_HOME = HOME / ".cache/cua-reliability/cloud-providers/home"
+DEFAULT_INVENTORY = HOME / ".cache/cua-reliability/cloud-providers/inventory.sh"
+PROVIDERS = ("aws", "gcp", "hetzner", "modal")
+CAN_STOP = {"aws": True, "gcp": True, "hetzner": True, "modal": False}
+# Hetzner stops (a power-off), but a stopped server is still billed in full;
+# the suite deletes it at the end of the run either way.
 # CUA_* variables passed through to the cua under test.
 # Doctor checks a provider cannot pass with the published images, by id
 # prefix, and why (see the "Use your own cloud" guide).
@@ -528,13 +530,13 @@ class Suite:
 def main():
     a = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     a.add_argument("--cua", required=True, help="the cua to test (MIT `cua` or the Cua Spaces build)")
-    a.add_argument("--on", required=True, help="aws, gcp, modal (comma list)")
+    a.add_argument("--on", required=True, help="aws, gcp, hetzner, modal (comma list)")
     a.add_argument("--runs", type=int, default=3)
     a.add_argument("--scenarios", default="space,bench")
     a.add_argument("--image", default="linux")
     a.add_argument("--home", default=str(DEFAULT_HOME))
     a.add_argument("--inventory", default=str(DEFAULT_INVENTORY))
-    a.add_argument("--work", default=str(HOME / "projects/.cua-work/cloud-conformance"))
+    a.add_argument("--work", default=str(HOME / ".cache/cua-reliability/cloud-conformance"))
     a.add_argument("--bench-task", default="click-button")
     a.add_argument("--bench-dir", default=None, help="libs/cua-bench (default: this repo's)")
     return Suite(a.parse_args()).main()

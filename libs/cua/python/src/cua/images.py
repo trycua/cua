@@ -4,8 +4,9 @@
 overrides it), ``Image.windows()`` ``ghcr.io/trycua/windows:2022`` and
 ``Image.macos()`` ``ghcr.io/trycua/macos:26``: the full tier, with dev
 tooling. ``tier="slim"`` picks the minimal image CI runs (``24.04-slim``)
-and, on macOS, ``tier="xcode"`` adds a pinned Xcode. ``Image.omarchy()`` is
-``ghcr.io/trycua/omarchy:edge`` (an amd64 VM). Tiers and images CI has not
+and, on macOS, ``tier="xcode"`` adds a pinned Xcode. On Linux,
+``tier="docker"`` is a VM with dockerd up at boot (``24.04-docker-disk``).
+``Image.omarchy()`` is ``ghcr.io/trycua/omarchy:edge`` (an amd64 VM). Tiers and images CI has not
 published yet raise ``CuaError.ImageNotPublished``; pass the reference to
 ``Image.from_registry`` to use one anyway. ``Image.resolve(ref,
 backend)`` returns the digest-pinned variant a backend runs (rootfs for
@@ -34,7 +35,7 @@ class Image:
 
     @staticmethod
     def linux(version: Optional[str] = None, tier: Optional[str] = None) -> str:
-        """``slim`` or ``full`` (the default)."""
+        """``slim``, ``full`` (the default) or ``docker`` (a VM with dockerd)."""
         return canonical_image_tier("linux", version, tier)
 
     @staticmethod

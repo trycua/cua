@@ -76,12 +76,9 @@ impl MotionStyle {
     pub const fn default_effects(self) -> ResolvedEffects {
         let none = ResolvedEffects::NONE;
         match self {
-            Self::SignatureArc => ResolvedEffects {
-                glow: true,
-                ripple: true,
-                squish: true,
-                ..none
-            },
+            // The default style is plain: speed glow, click ripple and click
+            // squish are opt-in (`cursor.motion.effects.<name> = on`).
+            Self::SignatureArc => none,
             Self::SpringSettle => ResolvedEffects {
                 glow: true,
                 squish: true,

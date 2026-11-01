@@ -12,19 +12,24 @@
 
 #![cfg(target_os = "windows")]
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cua_driver_testkit::e2e::{
-    execute_case, native_background_case, recording_evidence, DriverRoute, Observation, Targeting,
+    execute_case, native_background_case, recording_evidence, CaseSpec, Delivery, DriverRoute,
+    Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{
-    harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse,
+    ax, harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse,
+};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::WindowsAndMessaging::{
+    IsIconic, ShowWindow, SW_MINIMIZE, SW_SHOWNOACTIVATE,
 };
 
 // ── workspace paths ──────────────────────────────────────────────────────────
@@ -101,19 +106,22 @@ where
         title_substr,
         |_, _, _, _| {},
         |pid, wid, driver, _| f(pid, wid, driver),
+        |(), passed| Observation::delivered_with_fixture_state(passed),
     );
 }
 
-fn run_web_case_with_preparation<P, F>(
+fn run_web_case_with_preparation<P, F, R, O>(
     case: cua_driver_testkit::e2e::CaseSpec,
     toolkit: &str,
     host_exe: PathBuf,
     title_substr: &str,
     prepare: P,
     f: F,
+    observe: O,
 ) where
     P: FnOnce(i64, u64, &mut McpDriver, &FixtureJournal),
-    F: FnOnce(i64, u64, &mut McpDriver, &FixtureJournal),
+    F: FnOnce(i64, u64, &mut McpDriver, &FixtureJournal) -> R,
+    O: FnOnce(R, Vec<OracleKind>) -> Observation,
 {
     let cell_id = case.cell_id.clone();
     execute_case(case, |evidence| {
@@ -201,7 +209,7 @@ fn run_web_case_with_preparation<P, F>(
             std::thread::sleep(Duration::from_millis(50));
         }
         prepare(pid, wid, &mut driver, &journal);
-        let (_, passed) = run_with_background_oracles(
+        let (result, passed) = run_with_background_oracles(
             &mut driver,
             TargetWindow {
                 pid: pid as u32,
@@ -210,7 +218,7 @@ fn run_web_case_with_preparation<P, F>(
             |driver| f(pid, wid, driver, &journal),
         )
         .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
-        Observation::delivered_with_fixture_state(passed)
+        observe(result, passed)
     });
 }
 
@@ -384,6 +392,7 @@ fn harness_webview_left_click_px_background() {
                 click.text(),
             );
         },
+        |(), passed| Observation::delivered_with_fixture_state(passed),
     );
 }
 
@@ -527,6 +536,103 @@ fn harness_electron_click_element() {
                 "counter=1",
             );
             println!("✅ harness_electron_click_element: probe parsed, click fired, counter=1");
+        },
+    );
+}
+
+// ── Electron minimized snapshot ──────────────────────────────────────────────
+
+fn wait_for_iconic(hwnd: HWND, iconic: bool) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while unsafe { IsIconic(hwnd) }.as_bool() != iconic {
+        assert!(
+            Instant::now() < deadline,
+            "Electron window did not reach iconic={iconic}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+#[ignore]
+fn harness_electron_minimized_snapshot_click_refuses_without_side_effects() {
+    let case = CaseSpec::delivered(
+        "windows-electron-minimized-snapshot-click-refusal",
+        "electron",
+        "electron",
+        "left_click",
+        Targeting::Ax,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::PostMessage,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+            OracleKind::Protocol,
+        ],
+    )
+    .expecting_refusal(vec![RefusalCode::ElementNotVisible]);
+    let token = RefCell::new(None);
+    run_web_case_with_preparation(
+        case,
+        "electron",
+        electron_exe(),
+        "CuaTestHarness Electron",
+        |pid, wid, driver, journal| {
+            wait_for_journal_text(journal, "lbl-counter", "counter=0");
+            // A visible read first, so the minimized read below sees the
+            // renderer's accessibility tree.
+            let _ = snapshot(driver, pid, wid);
+            let hwnd = HWND(wid as *mut _);
+            let _ = unsafe { ShowWindow(hwnd, SW_MINIMIZE) };
+            wait_for_iconic(hwnd, true);
+            let minimized = snapshot(driver, pid, wid);
+            let idx = ax::element_index_by_id(minimized.tree_text(), "btn-increment")
+                .expect("btn-increment not in the minimized snapshot");
+            token.replace(Some(minimized.element_token(idx).to_owned()));
+            let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+            wait_for_iconic(hwnd, false);
+        },
+        |pid, wid, driver, journal| {
+            let token = token
+                .take()
+                .expect("minimized snapshot did not set a token");
+            let response = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "element_token": token,
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                response.is_error(),
+                "click with a minimized-snapshot token reported success: {}",
+                response.text()
+            );
+            assert_eq!(response.structured()["status"], "refused");
+            assert_eq!(
+                response.structured()["refusal"]["code"],
+                "element_not_visible"
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            wait_for_journal_text(journal, "lbl-counter", "counter=0");
+            response.text().to_owned()
+        },
+        |message, mut passed| {
+            passed.extend([OracleKind::FixtureState, OracleKind::Protocol]);
+            passed.sort();
+            passed.dedup();
+            Observation::refused(
+                RefusalCode::ElementNotVisible,
+                passed,
+                message,
+                Evidence::default(),
+            )
         },
     );
 }

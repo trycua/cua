@@ -9,7 +9,9 @@
 // by a test (the Rust suites use a fake CLI in a confined PATH instead).
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
+import { randomBytes } from "node:crypto"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs"
+import { createConnection, createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { after, before, test } from "node:test"
@@ -43,7 +45,7 @@ function findFile(dir, name, budget = { n: 0 }) {
 
 test("every contract tool maps to a generated method", () => {
   const rows = spacesApi.spacesToolMethods()
-  assert.equal(rows.length, 86)
+  assert.equal(rows.length, 114)
   const classes = { Spaces: spacesApi.Spaces, Space: spacesApi.Space }
   for (const row of rows) {
     const [cls, method] = row.method.split(".")
@@ -53,6 +55,50 @@ test("every contract tool maps to a generated method", () => {
     assert.equal(typeof fn, "function", `${row.tool} -> ${row.method}`)
   }
 })
+
+// Which way calls go, and a TCP forward over the Space's own connection
+// (cua-spacesd's tunnel), embedded and through the daemon's passthrough.
+async function exerciseChannel(space) {
+  const route = await space.route()
+  // A Space added by its address: reached directly, by that address.
+  assert.ok(route.startsWith("direct http://127.0.0.1:"), route)
+  assert.equal(await space.spacesd().route(), route)
+
+  const echo = createServer((sock) => {
+    sock.on("error", () => {}) // the test closes its side
+    sock.pipe(sock)
+  })
+  await new Promise((resolve) => echo.listen(0, "127.0.0.1", resolve))
+  const guestPort = echo.address().port
+  const fwd = await space.forward(guestPort)
+  try {
+    assert.equal(fwd.guestPort(), guestPort)
+    const [host, port] = fwd.localAddr().split(":")
+    assert.equal(host, "127.0.0.1")
+    assert.notEqual(Number(port), guestPort)
+    assert.equal(fwd.url(), `http://${fwd.localAddr()}`)
+    const payload = randomBytes(256 * 1024)
+    const got = await new Promise((resolve, reject) => {
+      const chunks = []
+      let n = 0
+      const c = createConnection({ host, port: Number(port) }, () => c.write(payload))
+      c.on("data", (d) => {
+        chunks.push(d)
+        n += d.length
+        if (n >= payload.length) {
+          c.destroy()
+          resolve(Buffer.concat(chunks))
+        }
+      })
+      c.on("error", reject)
+    })
+    assert.ok(got.equals(payload), `echoed ${got.length} of ${payload.length} bytes`)
+  } finally {
+    await fwd.close()
+    echo.close()
+  }
+  await assert.rejects(space.forward(0))
+}
 
 async function exercise(c, tmp, teleport = false) {
   const spaces = c.spaces()
@@ -86,6 +132,15 @@ async function exercise(c, tmp, teleport = false) {
   const down = await space.download(guest, back)
   assert.ok(down.verified)
   assert.equal(readFileSync(join(back, "note.txt"), "utf8"), "from node")
+  // A file big enough for the same-machine bulk lane (over 2 MiB) arrives
+  // byte for byte, whichever way the Space's connection moves it.
+  const big = randomBytes(5 * 1024 * 1024 + 17)
+  const bigGuest = join(fx.spaces_guest_home, "ts", "big.bin")
+  const bigBuf = big.buffer.slice(big.byteOffset, big.byteOffset + big.length)
+  assert.equal(Number((await space.write(bigGuest, bigBuf)).bytes), big.length)
+  const downBig = await space.download(bigGuest, back)
+  assert.ok(downBig.verified)
+  assert.ok(readFileSync(join(back, "big.bin")).equals(big))
 
   const tools = await space.listTools(undefined)
   assert.ok(tools.some((t) => t.name === "get_screen_size"))
@@ -99,6 +154,8 @@ async function exercise(c, tmp, teleport = false) {
     return s.code === "capability_missing" && /desktop_stream/.test(s.message)
   })
 
+  await exerciseChannel(space)
+
   const ok = spacesApi.approve(() => ({ include: undefined, acknowledgeSensitive: true }))
   if (teleport) {
     // The Cua Spaces daemon: the manifest, and a session only through the
@@ -109,6 +166,22 @@ async function exercise(c, tmp, teleport = false) {
       cua.CuaError.TeleportRefused.instanceOf(e),
     )
     await assert.rejects(space.teleport("firefox", undefined, ok), (e) => cua.CuaError.TeleportRefused.instanceOf(e))
+    // Named volumes of Cua Volume: make, list, refuse a duplicate, and
+    // refuse a Space that mounts one that does not exist.
+    assert.deepEqual(await spaces.volumes(), [])
+    assert.equal((await spaces.createVolume("shared")).name, "shared")
+    await assert.rejects(spaces.createVolume("shared"), (e) => /already exists/.test(String(e.message ?? e)))
+    assert.deepEqual((await spaces.volumes()).map((v) => v.name), ["shared"])
+    await assert.rejects(
+      spaces.create(cua.SpaceCreateOptions.create({ volumes: [cua.VolumeMount.create({ name: "ghost", path: "/mnt/ghost" })] })),
+      (e) => /does not exist/.test(String(e.message ?? e)),
+    )
+    await assert.rejects(
+      spaces.create(cua.SpaceCreateOptions.create({ volumes: [cua.VolumeMount.create({ name: "shared", path: "mnt/x" })] })),
+      (e) => cua.CuaError.InvalidArgument.instanceOf(e) && /absolute/.test(String(e.message ?? e)),
+    )
+    assert.equal(await spaces.deleteVolume("shared", false), 0n)
+    assert.deepEqual(await spaces.volumes(), [])
   } else {
     // Without Cua Spaces: missing, and it says where it ships.
     await assert.rejects(
@@ -116,6 +189,16 @@ async function exercise(c, tmp, teleport = false) {
       (e) => cua.CuaError.HostCapabilityMissing.instanceOf(e) && /Cua Spaces/.test(String(e.message ?? e)),
     )
     await assert.rejects(space.teleport("firefox", undefined, ok), (e) => cua.CuaError.HostCapabilityMissing.instanceOf(e))
+    // Named volumes are Cua Volume's too.
+    await assert.rejects(
+      spaces.volumes(),
+      (e) => cua.CuaError.HostCapabilityMissing.instanceOf(e) && /Cua Spaces/.test(String(e.message ?? e)),
+    )
+    await assert.rejects(spaces.createVolume("shared"), (e) => cua.CuaError.HostCapabilityMissing.instanceOf(e))
+    await assert.rejects(
+      spaces.create(cua.SpaceCreateOptions.create({ volumes: [cua.VolumeMount.create({ name: "shared", path: "/mnt/s" })] })),
+      (e) => cua.CuaError.HostCapabilityMissing.instanceOf(e),
+    )
   }
 
   const listed = await spaces.callToolJson("list_spaces", undefined)
@@ -176,7 +259,7 @@ async function daemonExercise(cli, teleport) {
       const discovery = JSON.parse(readFileSync(join(home, "daemon.json"), "utf8"))
       const session = new McpSession(new McpHttpTransport({ url: discovery.loopback_url, token: discovery.token }))
       const tools = await session.listTools()
-      assert.equal(tools.length, 86)
+      assert.equal(tools.length, 113)
       const rows = await session.callJson("list_spaces")
       assert.deepEqual(rows.map((r) => r.id), [info.id])
       assert.equal(await session.callText("space_bash", { space: info.id, command: "echo webview" }), "webview\n[exit 0]")

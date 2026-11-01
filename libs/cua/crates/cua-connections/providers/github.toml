@@ -1,0 +1,18 @@
+id = "github"
+name = "GitHub Copilot"
+icon = "github"
+tier = "more"
+rank = 80
+kind = "hosted"
+aliases = ["copilot", "github copilot cli"]
+wire = "openai-chat"
+base_url = "https://api.githubcopilot.com"
+default_model = ""
+key_help = "Create a fine-grained token with the Copilot Requests permission at github.com/settings/tokens."
+placeholder = "github_pat_…"
+apps = ["copilot-cli"]
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "COPILOT_GITHUB_TOKEN"

@@ -60,6 +60,8 @@ pkgs.rustPlatform.buildRustPackage {
     libxext
     pipewire
     libei
+    # platform-linux resolves niri and libei text against the XKB keymap.
+    libxkbcommon
   ];
 
   # Focus unit tests launch private Xvfb servers. The ignored desktop

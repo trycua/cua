@@ -47,7 +47,7 @@ browser = [
 # Advanced PDF handling
 pdf = [
     "PyMuPDF>=1.23.0",
-    "pypdf>=3.15.0",
+    "pypdf>=6.21.4",
     "PyPDF2>=3.0.0",
     "borb>=2.1.0",
 ]

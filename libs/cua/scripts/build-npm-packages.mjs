@@ -9,6 +9,7 @@
 
 import { spawnSync } from "node:child_process"
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -51,6 +52,9 @@ const runtimeFile = "cua_node_runtime.node"
 /** The `cua` CLI binary, shipped next to the SDK library when built. */
 const cliFile = (platform) => (platform.os === "win32" ? "cua.exe" : "cua")
 const runtimeNotice = "node-runtime-NOTICE.md"
+/** The static Linux cua-spacesd injected into OCI images, next to `cua`. */
+const spacesdArch = { x64: "x86_64", arm64: "aarch64" }
+const spacesdFile = (platform) => `cua-spacesd-linux-${spacesdArch[platform.cpu]}`
 
 function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`)
@@ -94,9 +98,25 @@ for (const platform of platforms) {
   const cliSource = join(nativeRoot, platform.triple, cliFile(platform))
   if (existsSync(cliSource)) {
     cpSync(cliSource, join(destination, cliFile(platform)))
+    // Artifact downloads drop the executable bit.
+    chmodSync(join(destination, cliFile(platform)), 0o755)
     files.push(cliFile(platform))
   } else if (!allowPartial) {
     throw new Error(`missing cua CLI binary ${cliSource}`)
+  }
+  // On Linux, `cua` injects a static cua-spacesd into images that lack one
+  // and finds it next to itself (or next to the SDK library in-process).
+  if (platform.os === "linux") {
+    const spacesdSource = join(nativeRoot, platform.triple, spacesdFile(platform))
+    if (!existsSync(spacesdSource)) {
+      throw new Error(
+        `missing static cua-spacesd ${spacesdSource}; the native job bundles it ` +
+          "with .github/scripts/fetch_static_spacesd.sh",
+      )
+    }
+    cpSync(spacesdSource, join(destination, spacesdFile(platform)))
+    chmodSync(join(destination, spacesdFile(platform)), 0o755)
+    files.push(spacesdFile(platform))
   }
   const manifest = {
     name,

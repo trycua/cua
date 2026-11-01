@@ -250,8 +250,9 @@ impl TokenFileWatcher {
     async fn run(self, ctx: ServerContext) {
         let shutdown = ctx.shutdown_token();
         let (wake_tx, mut wake_rx) = tokio::sync::mpsc::channel::<()>(1);
+        let renamed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         // Keep the notify watcher alive for the loop's lifetime.
-        let _watcher = watch_parent(&self.path, wake_tx);
+        let _watcher = watch_parent_renames(&self.path, wake_tx, Some(renamed.clone()));
         let mut tick = tokio::time::interval(self.interval);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut last = read_token_file(&self.path, self.allow_world_readable);
@@ -261,11 +262,21 @@ impl TokenFileWatcher {
                 _ = tick.tick() => {}
                 Some(()) = wake_rx.recv() => {}
             }
+            // Taken before the read: a rename that lands after it wakes
+            // the loop again.
+            let whole = renamed.swap(false, std::sync::atomic::Ordering::SeqCst);
             let quick = read_token_file(&self.path, self.allow_world_readable);
             if quick == last && ctx.auth().token().as_deref() == last.token() {
                 continue;
             }
-            let state = read_settled(&self.path, self.allow_world_readable).await;
+            // A file renamed into place is whole (an atomic writer, such as
+            // a microVM's init or the token sync): no need to wait for it
+            // to settle.
+            let state = if whole {
+                quick
+            } else {
+                read_settled(&self.path, self.allow_world_readable).await
+            };
             log_state(&self.path, &state, Some(&last));
             ctx.apply_file_token(state.token());
             last = state;
@@ -368,6 +379,15 @@ fn wakes_poll(event: &notify::Result<notify::Event>) -> bool {
     }
 }
 
+/// Whether `event` is a rename onto `file`.
+fn renamed_onto(event: &notify::Event, file: &Path) -> bool {
+    use notify::event::{ModifyKind, RenameMode};
+    matches!(
+        event.kind,
+        notify::EventKind::Modify(ModifyKind::Name(RenameMode::To | RenameMode::Both))
+    ) && event.paths.last().is_some_and(|p| p == file)
+}
+
 /// Wakes the poll loop on filesystem events in the file's directory (Secret
 /// volumes swap a `..data` symlink there). Best effort: `None` when the
 /// platform or filesystem does not support it.
@@ -375,9 +395,25 @@ fn watch_parent(
     path: &Path,
     wake: tokio::sync::mpsc::Sender<()>,
 ) -> Option<notify::RecommendedWatcher> {
+    watch_parent_renames(path, wake, None)
+}
+
+/// [`watch_parent`] that also sets `renamed` when a file is renamed onto
+/// `path` (its content is then complete).
+fn watch_parent_renames(
+    path: &Path,
+    wake: tokio::sync::mpsc::Sender<()>,
+    renamed: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Option<notify::RecommendedWatcher> {
     use notify::Watcher as _;
     let dir = path.parent()?.to_path_buf();
+    let file = path.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if let (Some(flag), Ok(e)) = (&renamed, &event) {
+            if renamed_onto(e, &file) {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
         if wakes_poll(&event) {
             let _ = wake.try_send(());
         }
@@ -559,6 +595,63 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("a write wakes the poll loop");
+    }
+
+    #[test]
+    fn only_a_rename_onto_the_file_counts_as_whole() {
+        use notify::event::{CreateKind, DataChange, ModifyKind, RenameMode};
+        use notify::{Event, EventKind};
+        let file = Path::new("/run/cua/env-token");
+        let ev = |kind, paths: &[&str]| {
+            paths
+                .iter()
+                .fold(Event::new(kind), |e, p| e.add_path(PathBuf::from(p)))
+        };
+        let to = EventKind::Modify(ModifyKind::Name(RenameMode::To));
+        assert!(renamed_onto(&ev(to, &["/run/cua/env-token"]), file));
+        let both = EventKind::Modify(ModifyKind::Name(RenameMode::Both));
+        assert!(renamed_onto(
+            &ev(both, &["/run/.cua-init/env-token", "/run/cua/env-token"]),
+            file
+        ));
+        assert!(!renamed_onto(&ev(to, &["/run/cua/other"]), file));
+        let write = EventKind::Modify(ModifyKind::Data(DataChange::Content));
+        assert!(!renamed_onto(&ev(write, &["/run/cua/env-token"]), file));
+        assert!(!renamed_onto(
+            &ev(EventKind::Create(CreateKind::File), &["/run/cua/env-token"]),
+            file
+        ));
+    }
+
+    /// A token renamed into place is installed at once, without the
+    /// settle delay a file written in place gets.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_renamed_token_file_is_flagged_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("env-token");
+        write_token_atomically(&path, None, None).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(1);
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let _watcher = watch_parent_renames(&path, tx, Some(flag.clone())).expect("inotify");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        while rx.try_recv().is_ok() {}
+        flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        std::fs::write(&path, format!("{GOOD}\n")).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("a write wakes the poll loop");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !flag.load(std::sync::atomic::Ordering::SeqCst),
+            "written in place"
+        );
+        write_token_atomically(&path, Some(GOOD), None).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(std::time::Instant::now() < deadline, "rename never flagged");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     #[tokio::test]

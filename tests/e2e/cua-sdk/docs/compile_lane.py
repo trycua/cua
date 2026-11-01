@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""swift and kotlin lanes: every docs block tagged ``test="swift"`` or
-``test="kotlin"`` compiles against the cua SDK in this repository.
+"""swift, kotlin and rust lanes: every docs block tagged ``test="swift"``,
+``test="kotlin"`` or ``test="rust"`` compiles against the cua SDK in this
+repository.
 
 Compile-only by default (nothing runs, no library is linked): each block
 becomes one library target of a generated package, its statements wrapped
@@ -10,6 +11,11 @@ Hidden preludes (``prelude="a,b"``) come from ``preludes/<name>.swift`` or
 
     compile_lane.py --lane swift      # SwiftPM, depends on libs/cua/swift by path
     compile_lane.py --lane kotlin     # Gradle, sources compiled with libs/cua/kotlin
+    compile_lane.py --lane rust       # Cargo, depends on libs/cua/crates/cua-sdk by path
+
+A rust block with its own ``fn main`` is one binary as written; any other
+block is wrapped in an async function returning ``Result`` (so ``?`` works).
+Rust is type-checked (``cargo check``), so nothing is linked or run.
 
 Results go to ``$CUA_E2E_RESULTS/docs-blocks.jsonl``. Stdlib only.
 """
@@ -28,14 +34,18 @@ from pathlib import Path
 
 import extract
 
-LANGS = {"swift": ("swift",), "kotlin": ("kotlin", "kt")}
+LANGS = {"swift": ("swift",), "kotlin": ("kotlin", "kt"), "rust": ("rust", "rs")}
 PRELUDES = Path(__file__).resolve().parent / "preludes"
 SWIFT_PKG = extract.REPO / "libs" / "cua" / "swift"
 KOTLIN_PKG = extract.REPO / "libs" / "cua" / "kotlin"
+RUST_WORKSPACE = extract.REPO / "libs" / "cua"
+RUST_SDK = RUST_WORKSPACE / "crates" / "cua-sdk"
 IMPORT = {
     "swift": re.compile(r"^\s*(@testable\s+)?import\s+\w"),
     "kotlin": re.compile(r"^\s*import\s+[\w.*]+\s*$"),
+    "rust": re.compile(r"^use\s+[\w:{}, *]+;\s*$"),
 }
+RUST_MAIN = re.compile(r"^\s*(async\s+)?fn\s+main\s*\(", re.M)
 
 
 def target_name(block_id: str) -> str:
@@ -65,6 +75,23 @@ def wrap(code: str, lane: str, name: str, prelude: str = "") -> str:
         if line.strip() not in seen:
             seen.append(line.strip())
     indented = "\n".join(("    " + ln) if ln.strip() else "" for ln in body)
+    if lane == "rust":
+        if RUST_MAIN.search(code):
+            return (prelude + "\n" + code) if prelude else code
+        return "\n".join(
+            [
+                "#![allow(unused)]",
+                *seen,
+                "",
+                f"async fn {snake(name)}() -> Result<(), Box<dyn std::error::Error>> {{",
+                indented,
+                "    Ok(())",
+                "}",
+                "",
+                "fn main() {}",
+                "",
+            ]
+        )
     if lane == "swift":
         return "\n".join(
             [*seen, "", f"func {name[:1].lower() + name[1:]}() async throws {{", indented, "}", ""]
@@ -81,6 +108,41 @@ def wrap(code: str, lane: str, name: str, prelude: str = "") -> str:
             "",
         ]
     )
+
+
+def snake(name: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+def rust_package(root: Path, blocks: list[extract.Block]) -> list[str]:
+    """One binary per block in a package outside the workspace, with the
+    workspace's lockfile so dependencies resolve as in CI. The blocks name
+    their crates as a reader's Cargo.toml would (cua-sdk, serde_json, tokio)."""
+    names = [target_name(b.id) for b in blocks]
+    root.mkdir(parents=True, exist_ok=True)
+    bins = "".join(f'\n[[bin]]\nname = "{snake(n)}"\npath = "src/bin/{n}.rs"\n' for n in names)
+    (root / "Cargo.toml").write_text(
+        "[package]\n"
+        'name = "cua-docs-blocks"\n'
+        'version = "0.0.0"\n'
+        'edition = "2021"\n'
+        "publish = false\n"
+        "autobins = false\n\n"
+        "[workspace]\n\n"
+        "[dependencies]\n"
+        f'cua-sdk = {{ path = "{RUST_SDK}" }}\n'
+        'serde_json = "1"\n'
+        'tokio = { version = "1", features = ["full"] }\n' + bins,
+        encoding="utf-8",
+    )
+    shutil.copy(RUST_WORKSPACE / "Cargo.lock", root / "Cargo.lock")
+    src = root / "src" / "bin"
+    src.mkdir(parents=True, exist_ok=True)
+    for b, n in zip(blocks, names):
+        (src / f"{n}.rs").write_text(
+            wrap(b.code, "rust", n, prelude_code(b, "rs")), encoding="utf-8"
+        )
+    return names
 
 
 def swift_package(root: Path, blocks: list[extract.Block]) -> list[str]:
@@ -141,7 +203,17 @@ def kotlin_project(root: Path, blocks: list[extract.Block]) -> list[str]:
 def attribute(output: str, names: list[str], blocks: list[extract.Block]) -> dict[str, str]:
     """Compiler errors by block (errors name the generated source path)."""
     errs: dict[str, list[str]] = {}
+    last_error = ""
     for line in output.splitlines():
+        # rustc: `error[E...]: message`, then ` --> src/bin/<name>.rs:L:C`.
+        if line.startswith("error"):
+            last_error = line.strip()
+        if line.lstrip().startswith("--> ") and last_error:
+            for n, b in zip(names, blocks):
+                if f"/{n}.rs" in line:
+                    errs.setdefault(b.id, []).append(f"{last_error} {line.strip()}")
+            last_error = ""
+            continue
         if "error" not in line and not line.startswith("e: "):  # kotlinc: `e: file:///...`
             continue
         for n, b in zip(names, blocks):
@@ -156,6 +228,9 @@ def build(lane: str, blocks: list[extract.Block], work: Path) -> tuple[int, str,
         cmd = ["swift", "build", "--package-path", str(work)]
         for n in names:
             cmd += ["--target", n]
+    elif lane == "rust":
+        names = rust_package(work, blocks)
+        cmd = ["cargo", "check", "--bins", "--manifest-path", str(work / "Cargo.toml")]
     else:
         names = kotlin_project(work, blocks)
         gradle = shutil.which("gradle")

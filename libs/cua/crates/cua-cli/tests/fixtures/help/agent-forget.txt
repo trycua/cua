@@ -1,0 +1,33 @@
+Deprecated alias of `rm NAME`. Forgets a named agent (its home stays in the Cua Volume)
+
+Usage: cua agent forget [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>
+          
+
+Options:
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --json
+          Print JSON
+
+  -h, --help
+          Print help
+
+Examples:
+  cua agent forget ada

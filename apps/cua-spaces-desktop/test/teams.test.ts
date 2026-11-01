@@ -17,7 +17,7 @@ const tagged = (tag: string) =>
 
 const READ = {
   accountAppUrl: "https://app.cua.ai",
-  state: { tag: "Ready", inner: { teams: [{ id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3, members: [], invites: ["cy@example.com"] }] } },
+  state: { tag: "Ready", inner: { teams: [{ id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3, members: [], invites: ["cy@example.com"], paymentFailed: false, paymentFailedUntil: undefined }] } },
 } as unknown as AppTeamsInput;
 
 function context(o: { signedIn?: boolean; fail?: string; current?: string } = {}) {

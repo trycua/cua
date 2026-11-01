@@ -22,7 +22,14 @@ import os
 import secrets
 from typing import Any, Optional
 
-from cua_sandbox._sdk import ENV_SERVICE, SPACESD_PORT, local_runtime, millis, native
+from cua_sandbox._sdk import (
+    ENV_SERVICE,
+    SPACESD_PORT,
+    daemon_runtime,
+    local_runtime,
+    millis,
+    native,
+)
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.base import Runtime, RuntimeInfo
 
@@ -178,6 +185,9 @@ class NativeRuntime(Runtime):
         # "none" cuts guest egress (QEMU); the backend refuses it where it
         # cannot (containers, Lume). Unset: outbound network.
         network = opts.pop("network", None)
+        # A pool to take a ready sandbox from (`create_pool`; `cua daemon`
+        # keeps it).
+        pool = opts.pop("pool", None)
         n = native()
         ref = await self._image_ref(image, name, **opts)
         # Layers on a container image: a local build before boot (any
@@ -228,10 +238,14 @@ class NativeRuntime(Runtime):
             runtime=engine,
             network=network,
             build=build,
+            pool=pool,
         )
         logger.info("Starting %s sandbox %r from %s", type(self).__name__, name, ref)
         try:
-            handle = await local_runtime().sandboxes().create(options)
+            # Pools live in `cua daemon`: a create from one goes there (same
+            # state directory, so it connects as a local one).
+            cua = daemon_runtime() if pool is not None else local_runtime()
+            handle = await cua.sandboxes().create(options)
         except (n.CuaError.InvalidPlacement, n.CuaError.InvalidArgument) as error:
             from cua_sandbox._placement import translate
 

@@ -1,0 +1,154 @@
+// Batched forks (cua.daemon.v1): many sandboxes from checkpoints at once,
+// on this machine or across your machines.
+//
+// A batch is made of groups: the forks of one checkpoint (a "world") that
+// belong together, for example the 8 rollouts of one task. Each group goes
+// to one machine, so its forks share the checkpoint's memory pages there,
+// and groups of different checkpoints spread over the least-loaded
+// machines. Each fork is reported as soon as it is ready; one that fails is
+// reported with its error and the rest of the batch goes on.
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+import "cua/daemon/v1/sandboxes.proto";
+import "cua/env/v1/snapshots.proto";
+
+// Batched forks, served by the local cua daemon next to `SandboxService`.
+service ForkBatchService {
+  // Forks many sandboxes from checkpoints at once, on this machine or
+  // across your machines. Streams each fork as soon as it is ready (or
+  // failed), then one `done`. A fork that fails does not stop the others,
+  // and the batch runs to completion if the caller goes away.
+  rpc ForkSandboxBatch(ForkSandboxBatchRequest) returns (stream ForkSandboxBatchResponse);
+}
+
+// The forks of one checkpoint that go to one machine together.
+message ForkBatchGroup {
+  // The checkpoint (or local sandbox) to fork.
+  string source = 1;
+  // How many forks.
+  uint32 count = 2;
+  // Names are `<name_prefix>-<n>`. Empty: the batch's prefix, else
+  // `<source>-<random>`.
+  string name_prefix = 3;
+}
+
+// Request for `SandboxService.ForkSandboxBatch`.
+message ForkSandboxBatchRequest {
+  // Shorthand for one checkpoint: fork `source` `count` times, in groups
+  // of `group_size`. Leave empty when `groups` is set.
+  string source = 1;
+  // How many forks of `source`.
+  uint32 count = 2;
+  // Forks of `source` per group (0: all in one group).
+  uint32 group_size = 3;
+  // The groups, each of one checkpoint, when the batch has several
+  // checkpoints.
+  repeated ForkBatchGroup groups = 4;
+  // Where: empty or `local` (this machine), `auto` (your machines that
+  // provide Spaces, this one included, least loaded first), or
+  // `host:<machine>` (one machine).
+  string on = 5;
+  // Forks started at once on one machine (0: 4).
+  uint32 max_parallel_per_host = 6;
+  reserved 7;
+  // vCPUs each fork is counted as when placing (0: 1; forks of one world
+  // are mostly idle and share its pages).
+  uint32 cpus = 8;
+  // Memory (MiB) each fork is counted as when placing (0: the
+  // checkpoint's when this machine holds it, else 2048).
+  uint64 memory_mb = 9;
+  // Name prefix for groups without their own.
+  string name_prefix = 10;
+  // Where machines fetch a checkpoint they do not hold when the machine
+  // that has it cannot be reached.
+  cua.env.v1.SnapshotFallback fallback = 11;
+  // How many times forks that failed because their machine failed are
+  // placed again on another machine (0: once; set `no_retry` for never).
+  uint32 retries = 12;
+  // Never place failed forks again.
+  bool no_retry = 13;
+}
+
+// Where a group goes.
+message ForkBatchPlacement {
+  // The group (index into the batch's groups).
+  uint32 group = 1;
+  // Its checkpoint.
+  string source = 2;
+  // The machine (`local` for this one).
+  string host = 3;
+  // How many of its forks go there (a group too big for one machine is
+  // split, and placed in several parts).
+  uint32 count = 4;
+  // 1 for the first placement; higher when forks are placed again after
+  // their machine failed.
+  uint32 attempt = 5;
+  // The machine does not hold the checkpoint yet: it is copied there
+  // first.
+  bool needs_sync = 6;
+  // Why it went there, for people.
+  string reason = 7;
+}
+
+// The end of a batch.
+message ForkBatchSummary {
+  // Forks that are ready.
+  uint32 ok = 1;
+  // Forks that failed.
+  uint32 failed = 2;
+  // Milliseconds the batch took.
+  uint64 elapsed_ms = 3;
+  // Ready forks per machine.
+  map<string, uint32> per_host = 4;
+  // Most forks that were starting at once on one machine.
+  map<string, uint32> peak_parallel = 5;
+}
+
+// One fork of a batch.
+message ForkBatchItem {
+  // Its index in the batch (groups in order, forks in order).
+  uint32 index = 1;
+  // Its group.
+  uint32 group = 2;
+  // Its checkpoint.
+  string source = 3;
+  // Its name.
+  string name = 4;
+  // The machine it runs on (`local` for this one).
+  string host = 5;
+  // The Space it is, to connect to: `local:<name>`, `direct:<addr>` or
+  // `relay:<machine>`. Empty when it failed.
+  string space = 6;
+  reserved 7;
+  // Why it failed. Empty when it is ready.
+  string error = 8;
+  // A short machine-readable reason with `error`: `host_failed`,
+  // `no_capacity`, `sync_failed`, `fork_failed`, `no_host`.
+  string error_code = 9;
+  // Which placement it came from (1: the first).
+  uint32 attempt = 10;
+  // Milliseconds from the start of the batch until it was ready (or
+  // failed).
+  uint64 elapsed_ms = 11;
+  // Milliseconds its own fork took, on its machine.
+  uint64 fork_ms = 12;
+}
+
+// One event of `ForkBatchService.ForkSandboxBatch`.
+message ForkSandboxBatchResponse {
+  // What happened.
+  oneof event {
+    // A group was placed on a machine.
+    ForkBatchPlacement placement = 1;
+    // A checkpoint is being copied to a machine.
+    cua.env.v1.SnapshotSyncProgress sync = 2;
+    // One fork is ready, or failed.
+    ForkBatchItem item = 3;
+    // The batch is over (the last event).
+    ForkBatchSummary done = 4;
+  }
+  // With a ready `item` on this machine: its sandbox.
+  Sandbox sandbox = 5;
+}

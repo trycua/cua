@@ -9,7 +9,14 @@ name: "CD: cua SDK"
 #     attach-xcframework after the release is out; it never blocks the CLI),
 #   - the `cua` CLI binaries, plus standalone `cua-cli-<version>-<platform>`
 #     archives, checksums.txt and release-artifacts.json for install.sh /
-#     install.ps1 (also mirrored to the rolling `cua-install-latest` release).
+#     install.ps1 (also mirrored to the rolling `cua-install-latest` release),
+#   - `cua-proto-<version>.tar.gz`: the protobuf contract (.proto files,
+#     buf.yaml, buf.gen.yaml, README) for clients in any language,
+#   - the Rust crates on crates.io: `cua-sdk`, `cua-spacesd-client`, `cua-proto`
+#     and the other workspace crates the SDK needs
+#     (libs/cua/scripts/publish-crates.sh; every run packages and verifies
+#     them with `cargo publish --dry-run`, and the upload needs the
+#     CARGO_REGISTRY_TOKEN secret: without it the crates step is skipped).
 # Mirrors cd-rust-cua-driver.yml / cd-py-cua-driver.yml.
 #
 # Signing (required whenever the run publishes; refuses to publish unsigned):
@@ -28,7 +35,8 @@ name: "CD: cua SDK"
 # Canonical vs staging: only trycua/cua publishes to PyPI and npm and fails
 # closed on missing signing secrets. Any other repository (trycua/cua-staging)
 # runs the same pipeline end to end but PyPI gets `twine check` (and TestPyPI
-# when TEST_PYPI_TOKEN is set), npm gets `npm publish --dry-run`, a missing
+# when TEST_PYPI_TOKEN is set), npm gets `npm publish --dry-run`, crates.io
+# gets `cargo publish --dry-run`, a missing
 # Apple/Azure secret gives unsigned binaries, and the GitHub release is a
 # prerelease whose title and notes say so. The CLI's download URLs, the
 # installers' default repository and their Sigstore identity derive from
@@ -49,6 +57,10 @@ on:
         description: "Publish to PyPI/npm and attach to the GitHub release"
         type: boolean
         default: false
+      pypi:
+        description: "Upload the wheels to PyPI (with publish; off publishes npm, crates and the GitHub release only)"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -119,7 +131,7 @@ jobs:
     needs: version
     name: native ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 240
     container: ${{ matrix.container }}
     # Holds the Azure Artifact Signing identity (Windows Authenticode).
     environment: cua-driver-release-signing
@@ -174,6 +186,12 @@ jobs:
         if: matrix.container == ''
         with:
           node-version: "22"
+      # The Windows signing step needs the ArtifactSigning PowerShell module.
+      # Install it (with retries) and prove its cmdlet resolves now, so a
+      # problem fails the job in seconds and not after the build (#5838).
+      - name: Check the Artifact Signing module (Windows)
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
+        uses: ./.github/actions/artifact-signing-module
       - name: Build libcua_sdk, the cua CLI and the N-API runtime
         working-directory: libs/cua
         env:
@@ -189,6 +207,49 @@ jobs:
           mkdir -p "native/${{ matrix.label }}"
           cp "target/${{ matrix.target }}/release/${{ matrix.lib }}" "native/${{ matrix.label }}/"
           cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" "native/${{ matrix.label }}/"
+      # The microVM guest init runs as PID 1 from an initramfs with nothing
+      # else in it: it must be static (a dynamic one panics the guest
+      # kernel). It ships next to `cua`, where the daemon looks for it.
+      - name: Build the static microVM guest init (Linux)
+        if: contains(matrix.target, 'linux')
+        working-directory: libs/cua
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --locked --release -p cua-microvm-init --target ${{ matrix.target }}
+          init="target/${{ matrix.target }}/release/cua-microvm-init"
+          if file "$init" 2>/dev/null | grep -q interpreter; then
+            echo "::error::cua-microvm-init is dynamically linked"; exit 1
+          fi
+          cp "$init" "native/${{ matrix.label }}/"
+      # macOS microVMs (kind microvm on a Mac): cua's own monitor, cua-vz
+      # (Swift, signed below with its virtualization entitlement), and the
+      # aarch64 guest init, built static here with rust-lld. Both ship next
+      # to `cua`, where the daemon looks for them.
+      - name: Build cua-vz and the aarch64 guest init (Apple silicon)
+        if: matrix.label == 'darwin-arm64'
+        working-directory: libs/cua
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: |
+          rustup target add aarch64-unknown-linux-musl
+          cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl
+          init=target/aarch64-unknown-linux-musl/release/cua-microvm-init
+          file "$init" | grep -q "statically linked" || { echo "::error::cua-microvm-init is not static"; exit 1; }
+          cp "$init" "native/${{ matrix.label }}/"
+          # Ad-hoc signed here; the Developer ID step re-signs it with the
+          # same entitlement and the hardened runtime.
+          vz/build.sh "native/${{ matrix.label }}"
+      # An OCI image without cua-spacesd (alpine, node) gets a static one
+      # injected on containers and microVMs: it ships next to `cua`, where
+      # the daemon looks for it. The cua-spacesd release the CLI pins builds
+      # it (cd-cua-spacesd.yml, the musl targets).
+      - name: Bundle the static cua-spacesd
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/fetch_static_spacesd.sh "$CUA_RELEASE_REPOSITORY" "${{ matrix.label }}" "libs/cua/native/${{ matrix.label }}"
       - name: Developer ID sign and notarize (macOS)
         if: runner.os == 'macOS'
         working-directory: libs/cua/native/${{ matrix.label }}
@@ -227,6 +288,12 @@ jobs:
             codesign --force --timestamp --options runtime --sign "$identity" --keychain "$kc" "$f"
             codesign --verify --strict --verbose=2 "$f"
           done
+          if [ -f cua-vz ]; then
+            # Virtualization.framework refuses a monitor without it.
+            codesign --force --timestamp --options runtime --sign "$identity" --keychain "$kc" \
+              --identifier ai.cua.vz --entitlements "$GITHUB_WORKSPACE/libs/cua/vz/cua-vz.entitlements" cua-vz
+            codesign --verify --strict --verbose=2 cua-vz
+          fi
           # Bare Mach-O files cannot be stapled; notarization registers their
           # cdhashes with Apple, which Gatekeeper checks online.
           /usr/bin/ditto -c -k . "$RUNNER_TEMP/notarize.zip"
@@ -245,6 +312,8 @@ jobs:
         if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
+          # Install the module on every run: a cached one skipped the install and was not found (#5838).
+          cache-dependencies: 'false'
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
@@ -319,17 +388,70 @@ jobs:
         working-directory: libs/cua/python
         run: |
           VERSION="${{ needs.version.outputs.version }}"
+          # The `cua-cli` wheel (cli/) takes the same version; build_wheel.py
+          # makes the `cua` wheel require it at that version.
           sed -i.bak "s/^version = .*/version = \"$VERSION\"/" pyproject.toml && rm pyproject.toml.bak
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" cli/pyproject.toml && rm cli/pyproject.toml.bak
           sed -i.bak "s/^__version__ = .*/__version__ = \"$VERSION\"/" src/cua/__init__.py && rm src/cua/__init__.py.bak
           python -m pip install --upgrade pip build hatchling
           DIR="../../../native/native-${{ matrix.native }}"
           EXE=cua; [ "${{ matrix.platform }}" = windows ] && EXE=cua.exe
-          python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+          # Linux wheels carry the static cua-spacesd the native job bundled.
+          SPACESD=()
+          if [ "${{ matrix.platform }}" = linux ]; then
+            A=x86_64; [ "${{ matrix.arch }}" = arm64 ] && A=aarch64
+            SPACESD=(--spacesd "$DIR/cua-spacesd-linux-$A")
+          fi
+          # Two wheels: `cua` (the SDK library, plus the static cua-spacesd
+          # on Linux) and its dependency `cua-cli` (the `cua` binary).
+          python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" "${SPACESD[@]}" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+      # PyPI rejects a file over 100 MB (HTTP 400) only at upload, after the
+      # whole build: fail here, with margin, instead.
+      - name: Check every wheel is under 95 MB
+        run: |
+          limit=$((95 * 1024 * 1024)); n=0
+          for whl in libs/cua/python/dist/*.whl; do
+            n=$((n + 1))
+            size=$(wc -c < "$whl" | tr -d ' ')
+            echo "$(basename "$whl"): $size bytes"
+            if [ "$size" -gt "$limit" ]; then
+              echo "::error::$(basename "$whl") is $size bytes, over the 95 MB guard (PyPI's per-file limit is 100 MB)"
+              exit 1
+            fi
+          done
+          test "$n" = 2
+      - name: Check the cua wheel requires its cua-cli and the source does not
+        working-directory: libs/cua/python
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          python - "$VERSION" dist/cua-[0-9]*.whl <<'PY'
+          import sys, zipfile
+          version, whl = sys.argv[1], sys.argv[2]
+          z = zipfile.ZipFile(whl)
+          meta = z.read(next(n for n in z.namelist() if n.endswith(".dist-info/METADATA"))).decode()
+          pins = [l for l in meta.splitlines() if l.startswith("Requires-Dist: cua-cli")]
+          assert pins == [f"Requires-Dist: cua-cli=={version}"], pins
+          import tomllib
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          deps = project["dependencies"] + sum(project.get("optional-dependencies", {}).values(), [])
+          assert not [d for d in deps if d.startswith("cua-cli")], "the source pyproject must not pin cua-cli"
+          print(pins[0])
+          PY
+      - name: Check the wheel ships the static cua-spacesd in cua/bin/
+        if: matrix.platform == 'linux'
+        run: .github/scripts/check_static_spacesd_packaged.sh libs/cua/python/dist
       - name: Import the wheel
         working-directory: libs/cua/python
         run: |
-          python -m pip install --force-reinstall dist/*.whl
           VERSION="${{ needs.version.outputs.version }}"
+          # The SDK alone (--no-deps): the `cua` command says how to get the CLI.
+          python -m venv "$RUNNER_TEMP/sdk-only"
+          py="$RUNNER_TEMP/sdk-only/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/sdk-only/Scripts/python.exe"
+          "$py" -m pip install --no-deps dist/cua-[0-9]*.whl
+          set +e; hint="$(cd / && "$py" -c "import cua._cli, sys; sys.exit(cua._cli.main())" 2>&1)"; code=$?; set -e
+          echo "$hint"
+          test "$code" = 127 && grep -qF "pip install \"cua-cli==$VERSION\"" <<<"$hint"
+          python -m pip install --force-reinstall dist/*.whl
           cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(); sys.exit(v != sys.argv[1])" "$VERSION"
           test "$(cua --version | tr -d '\r')" = "cua $VERSION"
       - uses: actions/upload-artifact@v4
@@ -342,6 +464,10 @@ jobs:
     needs: [version, native]
     runs-on: ubuntu-latest
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-node@v4
         with:
@@ -377,6 +503,12 @@ jobs:
             --native-dir "$RUNNER_TEMP/native" \
             --output-dir "$RUNNER_TEMP/npm"
           ls -lh "$RUNNER_TEMP/npm"
+      - name: Check the Linux packages ship the static cua-spacesd next to cua
+        run: |
+          set -o pipefail
+          .github/scripts/check_static_spacesd_packaged.sh "$RUNNER_TEMP/npm" | tee "$RUNNER_TEMP/spacesd-check.txt"
+          # Both Linux native packages, not just whichever was packed.
+          test "$(grep -c '^ok    npm trycua-cua-linux-' "$RUNNER_TEMP/spacesd-check.txt")" = 2
       - uses: actions/upload-artifact@v4
         with:
           name: npm
@@ -416,10 +548,46 @@ jobs:
             xcframework.log
           if-no-files-found: error
 
+  # The protobuf contract tarball (a release asset) and a crates.io dry run
+  # of the Rust crates. Runs on every build, publishing or not.
+  protos-and-crates:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Install buf
+        uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+        with:
+          version: "1.73.0"
+          setup_only: true
+      - name: Build cua-proto-${{ needs.version.outputs.version }}.tar.gz
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tarball="$(libs/cua/scripts/package-proto.sh "$VERSION" dist-proto)"
+          # The tarball is a self-contained buf module.
+          mkdir -p "$RUNNER_TEMP/proto-check"
+          tar -xzf "$tarball" -C "$RUNNER_TEMP/proto-check"
+          (cd "$RUNNER_TEMP/proto-check/cua-proto-$VERSION" && buf build -o /dev/null)
+      # No protoc on purpose: the published cua-proto must build without one.
+      - name: Package and verify the crates (cargo publish --dry-run)
+        run: libs/cua/scripts/publish-crates.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proto-tarball
+          path: dist-proto/cua-proto-*.tar.gz
+          if-no-files-found: error
+
   publish:
     # Not xcframework: the Swift build is slow and must never hold back the
     # CLI or the installer feed. attach-xcframework adds it to the release.
-    needs: [version, wheels, npm, native]
+    needs: [version, wheels, npm, native, protos-and-crates]
     if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -442,14 +610,22 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
           TEST_PYPI_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
+          # Tag pushes have no inputs and always upload.
+          PYPI: ${{ github.event_name == 'workflow_dispatch' && inputs.pypi == false && 'false' || 'true' }}
         run: |
           python -m pip install --upgrade twine
           python -m twine check --strict dist/wheel-*/*.whl
-          if [ "$CANONICAL" = true ]; then
-            python -m twine upload --skip-existing dist/wheel-*/*.whl
+          # cua-cli first: `cua` depends on it at the same version, so `cua`
+          # never resolves before its CLI is on the index.
+          wheels=(dist/wheel-*/cua_cli-*.whl dist/wheel-*/cua-[0-9]*.whl)
+          all=(dist/wheel-*/*.whl); test "${#wheels[@]}" = "${#all[@]}"
+          if [ "$CANONICAL" = true ] && [ "$PYPI" = false ]; then
+            echo "::notice::pypi=false: wheels checked, not uploaded to PyPI"
+          elif [ "$CANONICAL" = true ]; then
+            python -m twine upload --skip-existing "${wheels[@]}"
           elif [ -n "$TEST_PYPI_TOKEN" ]; then
             TWINE_PASSWORD="$TEST_PYPI_TOKEN" python -m twine upload --skip-existing \
-              --repository-url https://test.pypi.org/legacy/ dist/wheel-*/*.whl
+              --repository-url https://test.pypi.org/legacy/ "${wheels[@]}"
           else
             echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: wheels checked, not uploaded to PyPI (DRY RUN)"
           fi
@@ -490,7 +666,7 @@ jobs:
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
           mkdir -p release
-          cp dist/wheel-*/*.whl dist/npm/*.tgz release/
+          cp dist/wheel-*/*.whl dist/npm/*.tgz dist/proto-tarball/cua-proto-*.tar.gz release/
           for d in dist/native-*; do
             label="${d##*/native-}"
             tar -czf "release/cua-${{ needs.version.outputs.version }}-$label.tar.gz" -C "$d" .
@@ -502,10 +678,16 @@ jobs:
             label="${pair%%:*}" platform="${pair##*:}"
             d="dist/native-$label"
             if [ -f "$d/cua.exe" ]; then
-              (cd "$d" && zip -q "$OLDPWD/release/cua-cli-$VERSION-$platform.zip" cua.exe)
+              (cd "$d" && zip -q "$OLDPWD/release/cua-cli-$VERSION-$platform.zip" cua.exe cua-spacesd-linux-*)
             else
               chmod +x "$d/cua"
-              tar -czf "release/cua-cli-$VERSION-$platform.tar.gz" -C "$d" cua
+              # A Mac's microVM monitor and guest init, and the static
+              # cua-spacesd injected into OCI images, travel with the CLI.
+              extra=()
+              for f in cua-vz cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
+                [ -f "$d/$f" ] && extra+=("$f")
+              done
+              tar -czf "release/cua-cli-$VERSION-$platform.tar.gz" -C "$d" cua "${extra[@]}"
             fi
           done
           # release-artifacts.json: this CLI + the newest Spaces app from the
@@ -586,6 +768,38 @@ jobs:
           gh release upload cua-install-latest release-artifacts.json \
             stamped/install.sh stamped/install.ps1 stamped/uninstall.sh stamped/uninstall.ps1 \
             --clobber --repo "$GITHUB_REPOSITORY"
+
+  # crates.io after the GitHub release is out, like PyPI and npm: trycua/cua
+  # only, and only when the CARGO_REGISTRY_TOKEN secret (a crates.io API
+  # token with publish-new and publish-update scopes) is set; otherwise the
+  # step says so and the release goes on without it.
+  crates:
+    needs: [version, publish]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Publish cua-sdk and the crates it needs to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          crates="$(cargo metadata --manifest-path libs/cua/Cargo.toml --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "cua-sdk") | .version')"
+          if [ "$CANONICAL" != true ]; then
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: crates.io got the dry run only (protos-and-crates)"
+          elif [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::warning::CARGO_REGISTRY_TOKEN is not set: the cua-sdk $VERSION crates were not published to crates.io"
+          elif [ "$crates" != "$VERSION" ]; then
+            echo "::warning::the crates are $crates, not $VERSION (a hand-pushed tag?): not published to crates.io"
+          else
+            libs/cua/scripts/publish-crates.sh --publish "$VERSION"
+          fi
 
   # The Swift package's CuaSDKFFI.xcframework.zip joins the already-published
   # release when its build finishes; checksums.txt is rewritten to include it.

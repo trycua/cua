@@ -24,6 +24,7 @@ PACKAGES=(
   libx11-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
   libxrandr-dev libxi-dev libxtst-dev libxext-dev libxfixes-dev libxdamage-dev
   libwayland-dev libdbus-1-dev libudev-dev
+  musl-tools
 )
 
 install_packages() {

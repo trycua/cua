@@ -7,8 +7,8 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 One command removes Cua Spaces, the `cua` CLI and what they set up on this
-computer. It lists what it found and asks before it removes anything. Run it
-again any time: a computer that has nothing left, or only part of Cua, is fine.
+machine. It lists what it found and asks before it removes anything. Run it
+again any time: a machine that has nothing left, or only part of Cua, is fine.
 
 <Tabs items={['macOS and Linux', 'Windows']}>
   <Tab value="macOS and Linux">
@@ -24,7 +24,8 @@ again any time: a computer that has nothing left, or only part of Cua, is fine.
 </Tabs>
 
 To see what it would do first, add `--dry-run` (`-DryRun` on Windows). It prints
-every step and changes nothing:
+every step, lists the skills and MCP entries it would take out of each of your AI
+agents, and changes nothing:
 
 ```bash skip="destructive"
 curl -fsSL https://cua.ai/uninstall.sh | sh -s -- --dry-run
@@ -35,12 +36,13 @@ curl -fsSL https://cua.ai/uninstall.sh | sh -s -- --dry-run
 - The Cua Spaces app.
 - The `cua` CLI, and the line the installer added to your shell profile (the user
   PATH on Windows).
-- The host service, after `cua host remove`, so this computer no longer shows up
-  as a computer in your account.
-- The Cua skills and MCP entries in your AI agents, the way `cua agents remove`
-  does. Entries from other tools stay.
+- The host service, after `cua host remove`, so this machine no longer shows up
+  as a machine in your account.
+- The Cua Spaces skills and the `cua` MCP server in your AI agents, the way
+  `cua connect remove` does. Entries from other tools stay, and so do Cua Driver's
+  `cua-driver` skill and MCP server (see [Other Cua tools](#other-cua-tools)).
 - Launch at login.
-- Your sign-in and the device key: macOS Keychain items (including the old
+- Your sign-in and the machine key: macOS Keychain items (including the old
   `run.cua.ai` one), Windows Credential Manager entries.
 - Cua's settings, caches and logs.
 
@@ -51,13 +53,13 @@ Cua Volume files and the Keyvault. Running Spaces are listed and stopped first,
 and their disks stay.
 
 Pass `--keep-data` (`-KeepData`) to also keep `~/.cua` (settings, caches, the
-device key) and the app's settings, for a later reinstall. Programs, services,
+machine key) and the app's settings, for a later reinstall. Programs, services,
 agent entries and your sign-in are still removed.
 
 ## Delete Spaces and their data too
 
 <Callout type="warn">
-`--delete-spaces` deletes the Spaces on this computer, the local Cua Volume files
+`--delete-spaces` deletes the Spaces on this machine, the local Cua Volume files
 and the Keyvault. It cannot be undone.
 </Callout>
 
@@ -74,7 +76,7 @@ It lists the Spaces, stops the running ones, and asks you to type `delete`.
 |-----------------|---------|--------|
 | `--keep-data` | `-KeepData` | Keep `~/.cua` and the app's settings. |
 | `--delete-spaces` | `-DeleteSpaces` | Also delete Spaces and their data (not together with `--keep-data`). |
-| `--all` | `-All` | Also run the Cua Driver uninstaller and, on macOS, the Lume one. Lume keeps your VMs unless `--delete-spaces` is given too. |
+| `--all` | `-All` | Also run the Cua Driver uninstaller (and take its skill and MCP server out of your agents) and, on macOS, the Lume uninstaller. Lume keeps your VMs unless `--delete-spaces` is given too. |
 | `--prefix DIR` | `-Prefix DIR` | Also remove what `install.sh --prefix DIR` installed. |
 | `--no-modify-path` | `-NoModifyPath` | Never edit your shell profile or user PATH. |
 | `--dry-run` | `-DryRun` | Print what would be removed, change nothing. |
@@ -83,7 +85,9 @@ It lists the Spaces, stops the running ones, and asks you to type `delete`.
 ## Other Cua tools
 
 Cua Driver and Lume are separate products. The command above leaves them alone
-and says so. Add `--all` to remove them too, or run their own uninstallers:
+and says so, and that includes the `cua-driver` skill and MCP server in your AI
+agents: Claude Code, Codex, Cursor and the others keep using Cua Driver. Add
+`--all` to remove them too, or run their own uninstallers:
 
 ```bash skip="destructive"
 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)"
@@ -93,6 +97,18 @@ and says so. Add `--all` to remove them too, or run their own uninstallers:
 The Cua Driver uninstaller keeps its macOS permissions (Accessibility and Screen
 Recording), so installing it again needs no new approval. To revoke them as
 well, add `--reset-permissions` to its command.
+
+To remove the same entries without the uninstaller, run
+`cua connect remove --dry-run` to see them, then `cua connect remove`. Add
+`--include-cua-driver` to take Cua Driver's skill and MCP server out as well.
+
+With an older `cua`, one that has no `--dry-run` or `--include-cua-driver` on
+`cua agents remove`, the uninstaller skips that one step, because the older
+command also took out Cua Driver's skill and MCP server. It removes everything
+else as usual, finishes normally, and tells you that the `cua` MCP server and the
+Cua Spaces skills are still in your agents. To take them out, install the latest
+`cua` (`curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes`) and run
+`cua connect remove`.
 
 ## If a step needs your attention
 

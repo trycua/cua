@@ -1,0 +1,55 @@
+name: "Flaky test issues"
+
+# Opens or updates one GitHub issue per flaky test (label `flaky`): a test that
+# failed and then passed on its automatic retry in one of the CI workflows
+# below. Each CI job uploads a `flaky-*` artifact (.github/actions/flaky-upload);
+# this workflow reads them with issues: write, on the default branch's copy of
+# the script, and never checks out or runs the pull request's code.
+
+on:
+  workflow_run:
+    workflows:
+      - "CI: cua-spacesd"
+      - "CI: Cua Spaces"
+      - "CI: Cua Spaces web UI and Electron shell"
+      - "CI: Cua Spaces for macOS (SwiftUI)"
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: flaky-issues
+  cancel-in-progress: false
+
+jobs:
+  file:
+    name: file flaky-test issues
+    if: github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          sparse-checkout: .github/scripts/flaky
+      # Most runs have no flaky tests, so no artifact: nothing to download.
+      - name: Download the run's flaky-test results
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: flaky-*
+          merge-multiple: true
+          path: flaky-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Open or update the issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -d flaky-results ]; then
+            python3 .github/scripts/flaky/flaky.py file-issues --dir flaky-results
+          else
+            echo "no flaky-test results in this run"
+          fi

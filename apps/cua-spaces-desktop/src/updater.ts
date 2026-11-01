@@ -25,7 +25,6 @@ import { app, BrowserWindow, dialog } from "electron";
 import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { electronUpdater } from "./electron-updater";
-import { recordUpdateChannel } from "./mesh-channel";
 import type { UpdaterDriving } from "./model/updates";
 import { readSettings, writeSettings } from "./settings";
 import { autoCheckPref, autoInstallPref, channelPref, type UpdateChannel } from "./update-prefs";
@@ -88,8 +87,6 @@ export class ElectronUpdater implements UpdaterDriving {
 
   /** The updater for this build; null in a development run (no feed). */
   static start(): ElectronUpdater | null {
-    // Where the cua daemon and this machine's host read it (mesh-channel.ts).
-    if (app.isPackaged) recordUpdateChannel(updateChannel());
     if (!hasFeed()) return null;
     const u = new ElectronUpdater();
     u.schedule();
@@ -129,7 +126,6 @@ export class ElectronUpdater implements UpdaterDriving {
     // The model sets the channel it shows at launch: only a change is the user's choice.
     if (channel === updateChannel()) return;
     writeSettings({ updateChannel: channel, updateChannelChosen: true });
-    recordUpdateChannel(channel);
     this.loaded = null;
     this.schedule();
   }

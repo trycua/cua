@@ -13,6 +13,7 @@
  * also what keeps the existing tests hermetic.
  */
 
+import { t } from "../i18n";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 import {
@@ -36,27 +37,27 @@ import type { HostStatus } from "../native/host";
 import type { Location, Space, SpaceKind, SpaceOs } from "../model/types";
 import {
   BUILTIN_DEFAULT_LOCATION,
-  createFallbackFleetBridge,
+  createFallbackSpacesBridge,
   type DefaultLocation,
-  type FleetBridge,
+  type SpacesBridge,
   type SpaceCreateConfig,
   type ViewerWindowRequest,
-} from "../native/fleet";
+} from "../native/spacesBridge";
 import type { PortalAction } from "./portal";
 
-export interface FleetContextValue {
+export interface SpacesContextValue {
   /** True when the native shell's Spaces registry drives the switcher. */
   live: boolean;
-  bridge: FleetBridge;
+  bridge: SpacesBridge;
 }
 
-export const FleetContext = createContext<FleetContextValue>({
+export const SpacesContext = createContext<SpacesContextValue>({
   live: false,
-  bridge: createFallbackFleetBridge(),
+  bridge: createFallbackSpacesBridge(),
 });
 
-export function useFleet(): FleetContextValue {
-  return useContext(FleetContext);
+export function useSpaces(): SpacesContextValue {
+  return useContext(SpacesContext);
 }
 
 /** Window request for a registered Space; null for fixtures and placeholders. */
@@ -71,7 +72,7 @@ export function viewerRequestFor(space: Space): ViewerWindowRequest | null {
   };
 }
 
-export interface FleetSync {
+export interface SpacesSync {
   live: boolean;
   /** Refresh failure; previously loaded rows remain available. */
   rosterError: string | null;
@@ -81,8 +82,6 @@ export interface FleetSync {
   refresh: () => Promise<void>;
   /** Where new Spaces go when a create names no location. */
   defaultLocation: DefaultLocation;
-  /** Store a new default location (Settings). */
-  setDefaultLocation: (on: Location) => Promise<DefaultLocation>;
   /** Reads the default location again (after "Make default" connected a cloud). */
   refreshDefaultLocation: () => Promise<void>;
   /** Create a Space (in the default location unless `config.on` says):
@@ -119,12 +118,12 @@ function uid(): string {
   return globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
 }
 
-export function useFleetSync(
-  fleet: FleetBridge,
+export function useSpacesSync(
+  bridge: SpacesBridge,
   dispatch: (action: PortalAction) => void,
   now: () => number,
-): FleetSync {
-  const live = fleet.isNative;
+): SpacesSync {
+  const live = bridge.isNative;
   const [rosterError, setRosterError] = useState<string | null>(null);
   const rosterLoaded = useRef(false);
   const [identity, setIdentity] = useState<string | undefined>(undefined);
@@ -177,7 +176,7 @@ export function useFleetSync(
 
   const refresh = useCallback(async () => {
     try {
-      rowsRef.current = await fleet.listSpaces();
+      rowsRef.current = await bridge.listSpaces();
       rosterLoaded.current = true;
       setRosterError(null);
       // Finished creates the registry lists, finished deletes it dropped
@@ -189,14 +188,14 @@ export function useFleetSync(
     } catch {
       // Do not display server bodies or credential-bearing URLs.
       const message = rosterLoaded.current
-        ? "Could not refresh Spaces. Previously loaded rows may be out of date."
-        : "Could not load Spaces. Try refreshing again.";
+        ? t("errors:errors.spaces.refresh_failed")
+        : t("errors:errors.spaces.load_failed");
       setRosterError(message);
       throw new Error(message);
     } finally {
       publish();
     }
-  }, [fleet, publish]);
+  }, [bridge, publish]);
 
   /** Show the new Space's row while `create` runs (following its
    * progress), then hand over to the registry's row. */
@@ -251,7 +250,7 @@ export function useFleetSync(
     let unsub: (() => void) | undefined;
     let cancelled = false;
     void Promise.resolve(
-      fleet.onCreateProgress?.((p) =>
+      bridge.onCreateProgress?.((p) =>
         sendCreate({
           type: "progress",
           id: p.pendingId,
@@ -273,7 +272,7 @@ export function useFleetSync(
       cancelled = true;
       unsub?.();
     };
-  }, [fleet, sendCreate, now]);
+  }, [bridge, sendCreate, now]);
 
   // While a create runs, time moves its bar within a phase that reports no
   // fraction (the app core computes it from `now`, as the SwiftUI app does).
@@ -285,7 +284,7 @@ export function useFleetSync(
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.resolve(fleet.hostArch?.())
+    void Promise.resolve(bridge.hostArch?.())
       .then((arch) => {
         if (!arch || cancelled) return;
         hostArchRef.current = arch;
@@ -295,16 +294,16 @@ export function useFleetSync(
     return () => {
       cancelled = true;
     };
-  }, [fleet]);
+  }, [bridge]);
 
   const applyStatus = useCallback(() => {
-    return fleet
+    return bridge
       .status()
       .then((status) => {
         setIdentity(status.identity);
       })
       .catch(() => {});
-  }, [fleet]);
+  }, [bridge]);
 
   useEffect(() => {
     void applyStatus();
@@ -312,7 +311,7 @@ export function useFleetSync(
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.resolve(fleet.defaultLocation?.())
+    void Promise.resolve(bridge.defaultLocation?.())
       .then((d) => {
         if (d && !cancelled) setDefaultLocationState(d);
       })
@@ -320,21 +319,12 @@ export function useFleetSync(
     return () => {
       cancelled = true;
     };
-  }, [fleet]);
+  }, [bridge]);
 
   const refreshDefaultLocation = useCallback(async () => {
-    const d = await Promise.resolve(fleet.defaultLocation?.()).catch(() => undefined);
+    const d = await Promise.resolve(bridge.defaultLocation?.()).catch(() => undefined);
     if (d) setDefaultLocationState(d);
-  }, [fleet]);
-
-  const setDefaultLocation = useCallback(
-    async (on: Location) => {
-      const next = await fleet.setDefaultLocation(on);
-      setDefaultLocationState(next);
-      return next;
-    },
-    [fleet],
-  );
+  }, [bridge]);
 
   // Re-sync when the user signs in or out (device grant).
   useEffect(() => {
@@ -350,25 +340,25 @@ export function useFleetSync(
         .catch(() => {});
     };
     track(
-      fleet.onSignedIn?.((id) => {
+      bridge.onSignedIn?.((id) => {
         if (id) setIdentity(id);
         void applyStatus();
         void refresh().catch(() => {});
       }),
     );
     track(
-      fleet.onSignedOut?.(() => {
+      bridge.onSignedOut?.(() => {
         setIdentity(undefined);
         void applyStatus();
       }),
     );
     // Any window (or the MCP-driven control path) changing the registry.
-    track(fleet.onSpacesChanged?.(() => void refresh().catch(() => {})));
+    track(bridge.onSpacesChanged?.(() => void refresh().catch(() => {})));
     return () => {
       cancelled = true;
       for (const unsub of unsubs) unsub();
     };
-  }, [fleet, applyStatus, refresh]);
+  }, [bridge, applyStatus, refresh]);
 
   // Poll the registry while live.
   useEffect(() => {
@@ -394,24 +384,24 @@ export function useFleetSync(
         config?.name ?? "",
         macos ? "macos" : windows ? "windows" : "linux",
         // A Space in the user's own cloud lists as a relay machine.
-        on === "local" || on === "cloud" ? on : "relay",
-        () => fleet.createSpace(config, id),
+        on === "local" ? "local" : "relay",
+        () => bridge.createSpace(config, id),
         config?.image,
         kind,
         Boolean(config?.gpu),
       );
     },
-    [fleet, withPendingRow, defaultLocation.value],
+    [bridge, withPendingRow, defaultLocation.value],
   );
 
   const dismissCreate = useCallback((pendingId: string) => sendCreate({ type: "dismiss", id: pendingId }), [sendCreate]);
 
   const cancelCreate = useCallback(
     async (pendingId: string) => {
-      if (!fleet.cancelCreate) return;
+      if (!bridge.cancelCreate) return;
       sendCreate({ type: "cancel-start", id: pendingId });
       try {
-        await fleet.cancelCreate(pendingId);
+        await bridge.cancelCreate(pendingId);
       } catch (error) {
         sendCreate({
           type: "cancel-fail",
@@ -422,16 +412,16 @@ export function useFleetSync(
       }
       sendCreate({ type: "cancel-done", id: pendingId });
     },
-    [fleet, sendCreate],
+    [bridge, sendCreate],
   );
 
   const addSpace = useCallback(
     async (url: string, token?: string, name?: string) => {
-      const row = await fleet.addSpace(url, token, name);
+      const row = await bridge.addSpace(url, token, name);
       await refresh().catch(() => {});
       return row.id;
     },
-    [fleet, refresh],
+    [bridge, refresh],
   );
 
   const deleteSpace = useCallback(
@@ -447,8 +437,8 @@ export function useFleetSync(
       if (isDeleting(createsRef.current, space.id)) return;
       sendCreate({ type: "delete-start", id: space.id, now: now() });
       try {
-        if (removeOnly) await fleet.removeSpace(space.id);
-        else await fleet.deleteSpace(space.id);
+        if (removeOnly) await bridge.removeSpace(space.id);
+        else await bridge.deleteSpace(space.id);
       } catch (error) {
         sendCreate({ type: "delete-fail", id: space.id });
         throw error;
@@ -457,15 +447,15 @@ export function useFleetSync(
       sendCreate({ type: "delete-done", id: space.id });
       await refresh().catch(() => {});
     },
-    [fleet, refresh, sendCreate, now],
+    [bridge, refresh, sendCreate, now],
   );
 
   const setPower = useCallback(
     async (space: Space, on: boolean) => {
-      if (!fleet.setSpacePower || isPowering(createsRef.current, space.id)) return;
+      if (!bridge.setSpacePower || isPowering(createsRef.current, space.id)) return;
       sendCreate({ type: "power-start", id: space.id, on, now: now() });
       try {
-        await fleet.setSpacePower(space.id, on);
+        await bridge.setSpacePower(space.id, on);
       } catch (error) {
         sendCreate({
           type: "power-fail",
@@ -478,7 +468,7 @@ export function useFleetSync(
       sendCreate({ type: "power-done", id: space.id });
       await refresh().catch(() => {});
     },
-    [fleet, refresh, sendCreate, now],
+    [bridge, refresh, sendCreate, now],
   );
 
   return {
@@ -488,7 +478,6 @@ export function useFleetSync(
     refresh,
     defaultLocation,
     refreshDefaultLocation,
-    setDefaultLocation,
     createSpace,
     dismissCreate,
     cancelCreate,

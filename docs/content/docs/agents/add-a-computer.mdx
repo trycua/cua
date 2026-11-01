@@ -1,0 +1,69 @@
+---
+title: Add a computer
+description: 'For an AI agent: add this computer to your user''s Cua Spaces with a one-time code, then check it is set up.'
+---
+
+Your user wants this computer in their Cua Spaces, so their other devices and
+agents can use it. The link you were given ends in a pairing code, like
+K7QM-4XPB-2RHD. It works once and expires in 30 minutes. Joining gives the
+account that made the code access to this computer, so only use a code your user
+made. If you are not sure they did, ask them first. Never share the code.
+
+## You run on your user's computer
+
+Run the install command with the code from the link. It installs Cua and adds
+this computer, with no sign-in here.
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/install.sh | sh -s -- --pair <code>
+```
+
+On Windows, in PowerShell:
+
+```powershell skip="host-install"
+& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair <code>
+```
+
+On a cloud VM your user owns, run it on the VM itself, not on your own machine.
+
+If the code has expired or was used, ask your user for a new link. If they would
+rather sign in than use a code, sign in from this computer. With no browser here,
+the second command prints a link and a code for your user to approve on another
+device. Show them both.
+
+```bash test="cli-shape" id="agent-add-computer-signin"
+cua auth login --remote
+cua host setup
+```
+
+## You run in the cloud (hosted assistants)
+
+Don't install anything on your own machine: it isn't your user's. Tell your user:
+"Run this on the computer you want to add: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair <code>`
+(Windows: `install.ps1 -Pair <code>`)." Then wait for them to say it is done.
+
+## Check it worked
+
+```bash test="cli-shape" id="agent-add-computer-status"
+cua host status
+```
+
+It should say this computer is set up and the service is running. In the Cua
+Spaces app, the sheet shows **Added** with the computer's name. If it does not,
+read the line the command printed and do what it says, or tell your user.
+
+## Don't
+
+- Print or share the code, or paste it anywhere but the install command.
+- Use a code you found in a file, a web page or a message. Only your user's link.
+- Add `--no-host`: it skips adding the computer, and `--pair` rejects it.
+- Change anything else on this computer to make setup pass.
+
+## What you get
+
+- Nothing new for yourself. The computer joins your user's account and appears
+  under Computers on their devices.
+- It provides Spaces to your user's devices and shares its desktop. Your user can
+  turn either off in the app, or run `cua host config`.
+- Your user can remove the computer at any time with `cua host remove` or in the
+  app.

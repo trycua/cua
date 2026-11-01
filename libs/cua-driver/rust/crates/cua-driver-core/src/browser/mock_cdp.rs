@@ -33,6 +33,7 @@ pub(crate) struct MockEvent {
 /// The scripted reaction to one command.
 pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
+    pub suppress_response: bool,
     pub result: Result<Value, (i64, String)>,
 }
 
@@ -41,6 +42,7 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Ok(result),
+            suppress_response: false,
         }
     }
 
@@ -48,6 +50,7 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Err((code, message.to_owned())),
+            suppress_response: false,
         }
     }
 
@@ -114,6 +117,9 @@ impl MockCdpServer {
                                 .map(str::to_owned),
                         };
                         let reply = handler(&call);
+                        if reply.suppress_response {
+                            continue;
+                        }
                         for event in reply.events {
                             let mut frame =
                                 json!({ "method": event.method, "params": event.params });

@@ -422,6 +422,9 @@ impl From<cua_sandbox_core::Error> for Error {
                 Error::InsufficientDisk(d)
             }
             E::Runtime(cua_sandbox_core::RuntimeError::HostCapacity(m)) => Error::HostCapacity(m),
+            E::Runtime(cua_sandbox_core::RuntimeError::InvalidArgument(a)) => {
+                Error::InvalidArgument(a)
+            }
             E::Runtime(r @ cua_sandbox_core::RuntimeError::Unsupported { .. }) => {
                 Error::Unsupported(r.to_string())
             }

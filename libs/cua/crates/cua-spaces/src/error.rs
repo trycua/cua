@@ -286,7 +286,10 @@ impl From<cua_sandbox_core::Error> for Error {
             cua_sandbox_core::Error::Mcp(e) => Error::Mcp(e),
             cua_sandbox_core::Error::Cloud(m) => Error::extension("cloud", m),
             // A refusal is the caller's to fix, not a runtime failure.
-            cua_sandbox_core::Error::InvalidArgument(m) => Error::InvalidArgument(m),
+            cua_sandbox_core::Error::InvalidArgument(m)
+            | cua_sandbox_core::Error::Runtime(cua_sandbox_core::RuntimeError::InvalidArgument(
+                m,
+            )) => Error::InvalidArgument(m),
             cua_sandbox_core::Error::Cancelled(m) => Error::Cancelled(m),
             cua_sandbox_core::Error::ProviderNotConfigured(p) => Error::host(
                 cua_spaces_contract::host::LOCAL_RUNTIME,

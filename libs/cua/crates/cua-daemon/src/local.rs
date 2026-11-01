@@ -75,6 +75,7 @@ fn rt_err(e: VmmError) -> RuntimeError {
         VmmError::UnsupportedImage { reason, .. } => RuntimeError::UnsupportedImage(reason),
         VmmError::InsufficientDisk(d) => RuntimeError::InsufficientDisk(d.to_string()),
         VmmError::HostCapacity(m) => RuntimeError::HostCapacity(m),
+        VmmError::Invalid(m) => RuntimeError::InvalidArgument(m),
         VmmError::Unsupported { backend, op } => RuntimeError::Unsupported {
             backend: backend.to_string(),
             op: op.to_string(),
@@ -3294,6 +3295,25 @@ mod tests {
             ],
         );
         assert!(matches!(r, Ok((BackendKind::Lume, ()))));
+    }
+
+    /// A start the backend refuses outright (Lume cannot pull the image)
+    /// reaches the caller as an invalid argument, not a runtime failure.
+    #[test]
+    fn a_refused_start_stays_an_invalid_argument() {
+        use super::{RuntimeError, VmmError, rt_err};
+        let refused = || rt_err(VmmError::Invalid("Lume refused to pull the image".into()));
+        assert!(matches!(refused(), RuntimeError::InvalidArgument(_)));
+        let err = crate::Error::from(cua_sandbox_core::Error::Runtime(refused()));
+        assert!(matches!(err, crate::Error::InvalidArgument(_)), "{err:?}");
+        assert_eq!(err.to_status().code(), tonic::Code::InvalidArgument);
+        #[cfg(feature = "spaces")]
+        {
+            let err = crate::Error::from(cua_spaces::Error::from(
+                cua_sandbox_core::Error::Runtime(refused()),
+            ));
+            assert!(matches!(err, crate::Error::InvalidArgument(_)), "{err:?}");
+        }
     }
 
     #[test]

@@ -135,9 +135,111 @@ fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<b
     (actions_present || value_settable) && enabled != Some(false)
 }
 
+#[derive(Debug, Clone)]
+pub struct AXRegion {
+    pub label: String,
+    pub role: String,
+    pub depth: usize,
+    pub element_index: Option<usize>,
+    pub element: super::snapshot::RetainedElement,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AXSurface {
+    pub kind: String,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubtreeWalkError {
+    StaleRootElement,
+}
+
+const MAX_REGIONS_PER_WALK: usize = 32;
+const MAX_REGION_CAPTURE_DEPTH: usize = 6;
+
+fn is_semantic_region_role(role: &str) -> bool {
+    matches!(
+        role,
+        "AXGroup"
+            | "AXSplitGroup"
+            | "AXToolbar"
+            | "AXTabGroup"
+            | "AXOutline"
+            | "AXTable"
+            | "AXScrollArea"
+            | "AXSheet"
+            | "AXPopover"
+            | "AXDrawer"
+    )
+}
+
+pub(crate) fn classify_overlay_surface(
+    role: &str,
+    subrole: Option<&str>,
+    identifier: Option<&str>,
+) -> Option<&'static str> {
+    if role == "AXSheet" || subrole == Some("AXSheet") {
+        Some("sheet")
+    } else if role == "AXPopover" {
+        Some("popover")
+    } else if role == "AXMenu" {
+        Some("menu")
+    } else if identifier.is_some_and(|id| matches!(id, "open-panel" | "save-panel")) {
+        Some("file_panel")
+    } else if subrole.is_some_and(|sr| matches!(sr, "AXDialog" | "AXSystemDialog")) {
+        Some("dialog")
+    } else {
+        None
+    }
+}
+
+unsafe fn push_region(
+    regions: &mut Vec<AXRegion>,
+    element: AXUIElementRef,
+    label: String,
+    role: String,
+    depth: usize,
+    element_index: Option<usize>,
+) {
+    let trimmed = label.trim();
+    if trimmed.is_empty() || element.is_null() {
+        return;
+    }
+    if let Some(existing) = regions.iter_mut().find(|r| {
+        r.element.as_ptr() != 0
+            && CFEqual(r.element.as_ptr() as CFTypeRef, element as CFTypeRef) != 0
+    }) {
+        if existing.element_index.is_none() && element_index.is_some() {
+            existing.element_index = element_index;
+        }
+        return;
+    }
+    if regions.len() >= MAX_REGIONS_PER_WALK {
+        return;
+    }
+    regions.push(AXRegion {
+        label: trimmed.to_owned(),
+        role,
+        depth,
+        element_index,
+        element: super::snapshot::RetainedElement::retain(element as usize),
+    });
+}
+
 pub struct TreeWalkResult {
     pub tree_markdown: String,
     pub nodes: Vec<AXNode>,
+    pub regions: Vec<AXRegion>,
+    pub surfaces: Vec<AXSurface>,
     /// True when the walk was cut short by its node or time budget.
     pub truncated: bool,
     /// Why and where the walk stopped (see [`cua_driver_core::walk_budget`]).
@@ -230,6 +332,293 @@ pub fn walk_tree_budgeted(
     walk_tree_with_web_content(pid, window_id, query, max_depth, budget, true)
 }
 
+/// Walk ONLY the subtree rooted at a retained element/region handle belonging
+/// to `(pid, window_id)`, plus direct `AXStaticText` status children of the
+/// owning `AXWindow` so window-level banners remain observable without walking
+/// sibling containers.
+pub fn walk_subtree_budgeted(
+    pid: i32,
+    window_id: u32,
+    root_element: &super::snapshot::RetainedElement,
+    query: Option<&str>,
+    max_depth: usize,
+    mut budget: WalkBudget,
+) -> Result<TreeWalkResult, SubtreeWalkError> {
+    let mut nodes: Vec<AXNode> = Vec::new();
+    let mut lines: Vec<(usize, String)> = Vec::new();
+    let mut regions: Vec<AXRegion> = Vec::new();
+    let mut surfaces: Vec<AXSurface> = Vec::new();
+    let mut index_counter = 0usize;
+
+    unsafe {
+        let app_elem = AXUIElementCreateApplication(pid);
+        if app_elem.is_null() {
+            return Ok(TreeWalkResult {
+                tree_markdown: String::new(),
+                nodes,
+                regions,
+                surfaces,
+                truncated: false,
+                walk: budget.outcome(),
+                window_scope: Some(WindowScope::AxUnresolved { ax_window_count: 0 }),
+            });
+        }
+        set_messaging_timeout(app_elem);
+
+        let mut launch_wait = LaunchWait::new(budget.time_limit());
+        let (top_level, decision) = loop {
+            let attempt_started = Instant::now();
+            super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
+            let top_level = copy_top_level(app_elem, pid, Some(window_id));
+            let (decision, top_surfaces) = scope_top_level(&top_level, pid, window_id);
+            if matches!(decision.scope, WindowScope::AxUnresolved { .. }) {
+                match launch_wait.step(attempt_started, Instant::now(), || is_still_launching(pid))
+                {
+                    LaunchStep::Retry(pause) => {
+                        release_all(top_level);
+                        std::thread::sleep(pause);
+                        continue;
+                    }
+                    LaunchStep::TimedOut => budget.stop_for_app_lookup_timeout(),
+                    LaunchStep::Proceed => {}
+                }
+            }
+            surfaces = top_surfaces;
+            break (top_level, decision);
+        };
+
+        let window_scope = Some(decision.scope.clone());
+        if !decision.scope.is_matched() {
+            release_all(top_level);
+            CFRelease(app_elem as CFTypeRef);
+            return Ok(TreeWalkResult {
+                tree_markdown: String::new(),
+                nodes,
+                regions,
+                surfaces,
+                truncated: false,
+                walk: budget.outcome(),
+                window_scope,
+            });
+        }
+
+        let root_ptr = root_element.as_ptr() as AXUIElementRef;
+        if root_ptr.is_null() {
+            release_all(top_level);
+            CFRelease(app_elem as CFTypeRef);
+            return Err(SubtreeWalkError::StaleRootElement);
+        }
+        set_messaging_timeout(root_ptr);
+        let Some(root_role) = copy_string_attr(root_ptr, "AXRole") else {
+            release_all(top_level);
+            CFRelease(app_elem as CFTypeRef);
+            return Err(SubtreeWalkError::StaleRootElement);
+        };
+
+        // Locate the matched AXWindow in top_level so we can preserve window
+        // header context, direct status text, and top-level sibling region handles.
+        let matched_win = decision.walk.iter().copied().find_map(|idx| {
+            let candidate = top_level[idx];
+            let role = copy_string_attr(candidate, "AXRole").unwrap_or_default();
+            (role == "AXWindow" && ax_get_window_id(candidate) == Some(window_id))
+                .then_some(candidate)
+        });
+
+        let root_is_window =
+            matched_win.is_some_and(|w| CFEqual(w as CFTypeRef, root_ptr as CFTypeRef) != 0);
+
+        if root_is_window {
+            with_menubar_included(false, || {
+                walk_element(
+                    root_ptr,
+                    0,
+                    None,
+                    false,
+                    &mut nodes,
+                    &mut lines,
+                    &mut regions,
+                    &mut surfaces,
+                    &mut index_counter,
+                    &mut budget,
+                    max_depth,
+                    true,
+                );
+            });
+        } else {
+            if let Some(win_elem) = matched_win {
+                let win_title = copy_string_attr(win_elem, "AXTitle")
+                    .map(|t| t.trim().to_owned())
+                    .filter(|t| !t.is_empty());
+                let win_node = AXNode {
+                    element_index: None,
+                    role: "AXWindow".into(),
+                    title: win_title,
+                    value: None,
+                    description: None,
+                    identifier: copy_string_attr(win_elem, "AXIdentifier"),
+                    help: None,
+                    actions: vec![],
+                    element_ptr: win_elem as usize,
+                    depth: 0,
+                    parent_element_index: None,
+                    frame: element_screen_rect(win_elem),
+                    value_state: None,
+                    value_description: None,
+                    min_value: None,
+                    max_value: None,
+                    enabled: None,
+                    selected: None,
+                    in_web_content: false,
+                };
+                lines.push((0, format_node_line(&win_node)));
+                nodes.push(win_node);
+
+                // Inspect direct children of AXWindow (non-recursively) to keep
+                // top-level AXStaticText banners and sibling region tokens live.
+                for win_child in copy_children(win_elem) {
+                    set_messaging_timeout(win_child);
+                    let child_role =
+                        copy_string_attr(win_child, "AXRole").unwrap_or_else(|| "AXUnknown".into());
+                    let is_root = CFEqual(win_child as CFTypeRef, root_ptr as CFTypeRef) != 0;
+                    if child_role == "AXStaticText" && !is_root {
+                        let st_title = copy_string_attr(win_child, "AXTitle")
+                            .map(|s| s.trim().to_owned())
+                            .filter(|s| !s.is_empty());
+                        let st_val = copy_stringish_attr(win_child, "AXValue")
+                            .and_then(|v| v.string_value)
+                            .map(|s| s.trim().to_owned())
+                            .filter(|s| !s.is_empty());
+                        let st_desc = copy_string_attr(win_child, "AXDescription")
+                            .map(|s| s.trim().to_owned())
+                            .filter(|s| !s.is_empty());
+                        if st_title.is_some() || st_val.is_some() || st_desc.is_some() {
+                            let st_node = AXNode {
+                                element_index: None,
+                                role: "AXStaticText".into(),
+                                title: st_title,
+                                value: st_val,
+                                description: st_desc,
+                                identifier: copy_string_attr(win_child, "AXIdentifier"),
+                                help: None,
+                                actions: vec![],
+                                element_ptr: win_child as usize,
+                                depth: 1,
+                                parent_element_index: None,
+                                frame: None,
+                                value_state: None,
+                                value_description: None,
+                                min_value: None,
+                                max_value: None,
+                                enabled: None,
+                                selected: None,
+                                in_web_content: false,
+                            };
+                            lines.push((1, format_node_line(&st_node)));
+                            nodes.push(st_node);
+                        }
+                    } else if is_semantic_region_role(&child_role) {
+                        if let Some(lbl) = copy_string_attr(win_child, "AXTitle")
+                            .filter(|s| !s.trim().is_empty())
+                            .or_else(|| {
+                                copy_string_attr(win_child, "AXDescription")
+                                    .filter(|s| !s.trim().is_empty())
+                            })
+                        {
+                            push_region(&mut regions, win_child, lbl, child_role.clone(), 1, None);
+                        } else if child_role == "AXSplitGroup" || child_role == "AXGroup" {
+                            for split_child in copy_children(win_child) {
+                                set_messaging_timeout(split_child);
+                                let split_role = copy_string_attr(split_child, "AXRole")
+                                    .unwrap_or_else(|| "AXUnknown".into());
+                                if is_semantic_region_role(&split_role)
+                                    && regions.len() < MAX_REGIONS_PER_WALK
+                                {
+                                    if let Some(lbl) = copy_string_attr(split_child, "AXTitle")
+                                        .filter(|s| !s.trim().is_empty())
+                                        .or_else(|| {
+                                            copy_string_attr(split_child, "AXDescription")
+                                                .filter(|s| !s.trim().is_empty())
+                                        })
+                                    {
+                                        push_region(
+                                            &mut regions,
+                                            split_child,
+                                            lbl,
+                                            split_role,
+                                            2,
+                                            None,
+                                        );
+                                    }
+                                }
+                                CFRelease(split_child as CFTypeRef);
+                            }
+                        }
+                    }
+                    if let Some(kind) = classify_overlay_surface(
+                        &child_role,
+                        copy_string_attr(win_child, "AXSubrole").as_deref(),
+                        copy_string_attr(win_child, "AXIdentifier").as_deref(),
+                    ) {
+                        surfaces.push(AXSurface {
+                            kind: kind.to_owned(),
+                            role: child_role,
+                            subrole: copy_string_attr(win_child, "AXSubrole"),
+                            title: copy_string_attr(win_child, "AXTitle")
+                                .filter(|s| !s.trim().is_empty()),
+                            element_index: None,
+                            window_id: Some(window_id),
+                        });
+                    }
+                    CFRelease(win_child as CFTypeRef);
+                }
+            }
+
+            with_menubar_included(false, || {
+                walk_element(
+                    root_ptr,
+                    1,
+                    None,
+                    is_web_content_role(&root_role),
+                    &mut nodes,
+                    &mut lines,
+                    &mut regions,
+                    &mut surfaces,
+                    &mut index_counter,
+                    &mut budget,
+                    max_depth.saturating_add(1),
+                    true,
+                );
+            });
+        }
+
+        release_all(top_level);
+        CFRelease(app_elem as CFTypeRef);
+
+        let walk = budget.outcome();
+        prune_echo_text_rows(&mut lines);
+        let raw_markdown = render_lines(&lines);
+        let mut tree_markdown = if let Some(q) = query {
+            filter_tree(&raw_markdown, q)
+        } else {
+            raw_markdown
+        };
+        if let Some(note) = walk.note() {
+            tree_markdown.push('\n');
+            tree_markdown.push_str(&note);
+        }
+
+        Ok(TreeWalkResult {
+            tree_markdown,
+            nodes,
+            regions,
+            surfaces,
+            truncated: walk.truncated(),
+            walk,
+            window_scope,
+        })
+    }
+}
+
 fn walk_tree_with_web_content(
     pid: i32,
     window_id: Option<u32>,
@@ -240,8 +629,11 @@ fn walk_tree_with_web_content(
 ) -> TreeWalkResult {
     let mut nodes: Vec<AXNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
+    let mut regions: Vec<AXRegion> = Vec::new();
+    let mut surfaces: Vec<AXSurface> = Vec::new();
     let mut index_counter = 0usize;
     let mut window_scope: Option<WindowScope> = None;
+    let skip_menubar = SKIP_MENUBAR.with(std::cell::Cell::get);
 
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
@@ -249,6 +641,8 @@ fn walk_tree_with_web_content(
             return TreeWalkResult {
                 tree_markdown: String::new(),
                 nodes,
+                regions,
+                surfaces,
                 truncated: false,
                 walk: budget.outcome(),
                 // No application AX element at all, so a requested window
@@ -262,32 +656,16 @@ fn walk_tree_with_web_content(
         // the caller's budget, for the app to answer AX (see `super::launch`).
         let mut launch_wait = LaunchWait::new(budget.time_limit());
         let (top_level, walk_these) = loop {
-            // Chromium/Electron apps (Arc, VS Code, Electron shells) ship their
-            // web-content AX tree OFF and only build it once an assistive client
-            // asks for it. Without this, the first walk of such an app returns an
-            // empty/title-bar-only tree (#1616). Flip the enablement attribute,
-            // then — only when the flip actually took and only the first time we
-            // see this process lifetime — let the asynchronously-built tree settle
-            // before we read it. Native Cocoa apps reject the attribute, so they
-            // pay no settle cost. This relies on the MAX_ELEMENTS node cap to keep
-            // the now-materialized (potentially large) tree bounded. An app that
-            // has not started answering AX rejects the flip without caching the
-            // refusal, so each launch-wait attempt asks again.
             let attempt_started = Instant::now();
             super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
             let top_level = copy_top_level(app_elem, pid, window_id);
 
-            // Scope: keep non-window children (menu bar) + the target window —
-            // but ONLY once the target window has actually been identified. When
-            // nothing claims the requested id, `decide_window_scope` reports why
-            // and walks nothing; it must never fall back to "everything that isn't
-            // a window", which is how issue #2237 returned menu bars as panels.
             let Some(wid) = window_id else {
                 let walk = top_level.clone();
                 break (top_level, walk);
             };
-            let decision = scope_top_level(&top_level, pid, wid);
+            let (decision, top_surfaces) = scope_top_level(&top_level, pid, wid);
             if matches!(decision.scope, WindowScope::AxUnresolved { .. }) {
                 match launch_wait.step(attempt_started, Instant::now(), || is_still_launching(pid))
                 {
@@ -302,10 +680,20 @@ fn walk_tree_with_web_content(
                     LaunchStep::Proceed => {}
                 }
             }
+            surfaces = top_surfaces;
             let walk = decision
                 .walk
                 .iter()
-                .map(|&index| top_level[index])
+                .filter_map(|&index| {
+                    let elem = top_level[index];
+                    if skip_menubar
+                        && copy_string_attr(elem, "AXRole").as_deref() == Some("AXMenuBar")
+                    {
+                        None
+                    } else {
+                        Some(elem)
+                    }
+                })
                 .collect();
             window_scope = Some(decision.scope);
             break (top_level, walk);
@@ -313,6 +701,58 @@ fn walk_tree_with_web_content(
 
         // Walk each top-level child at depth 0.
         for child in walk_these {
+            // Pre-seed top-level window child regions before DFS so a dense middle
+            // container exhausting `max_elements` never hides downstream sibling
+            // containers (e.g. Inspector / Footer panes).
+            if window_id.is_some()
+                && copy_string_attr(child, "AXRole").as_deref() == Some("AXWindow")
+            {
+                for win_child in copy_children(child) {
+                    set_messaging_timeout(win_child);
+                    let child_role =
+                        copy_string_attr(win_child, "AXRole").unwrap_or_else(|| "AXUnknown".into());
+                    if is_semantic_region_role(&child_role) && regions.len() < MAX_REGIONS_PER_WALK
+                    {
+                        if let Some(lbl) = copy_string_attr(win_child, "AXTitle")
+                            .filter(|s| !s.trim().is_empty())
+                            .or_else(|| {
+                                copy_string_attr(win_child, "AXDescription")
+                                    .filter(|s| !s.trim().is_empty())
+                            })
+                        {
+                            push_region(&mut regions, win_child, lbl, child_role, 1, None);
+                        } else if child_role == "AXSplitGroup" || child_role == "AXGroup" {
+                            for split_child in copy_children(win_child) {
+                                set_messaging_timeout(split_child);
+                                let split_role = copy_string_attr(split_child, "AXRole")
+                                    .unwrap_or_else(|| "AXUnknown".into());
+                                if is_semantic_region_role(&split_role)
+                                    && regions.len() < MAX_REGIONS_PER_WALK
+                                {
+                                    if let Some(lbl) = copy_string_attr(split_child, "AXTitle")
+                                        .filter(|s| !s.trim().is_empty())
+                                        .or_else(|| {
+                                            copy_string_attr(split_child, "AXDescription")
+                                                .filter(|s| !s.trim().is_empty())
+                                        })
+                                    {
+                                        push_region(
+                                            &mut regions,
+                                            split_child,
+                                            lbl,
+                                            split_role,
+                                            2,
+                                            None,
+                                        );
+                                    }
+                                }
+                                CFRelease(split_child as CFTypeRef);
+                            }
+                        }
+                    }
+                    CFRelease(win_child as CFTypeRef);
+                }
+            }
             walk_element(
                 child,
                 0,
@@ -320,6 +760,8 @@ fn walk_tree_with_web_content(
                 false,
                 &mut nodes,
                 &mut lines,
+                &mut regions,
+                &mut surfaces,
                 &mut index_counter,
                 &mut budget,
                 max_depth,
@@ -350,6 +792,8 @@ fn walk_tree_with_web_content(
     TreeWalkResult {
         tree_markdown,
         nodes,
+        regions,
+        surfaces,
         truncated: walk.truncated(),
         walk,
         window_scope,
@@ -393,7 +837,12 @@ unsafe fn copy_top_level(
 }
 
 /// Decide which of `top_level` a walk scoped to `wid` covers.
-unsafe fn scope_top_level(top_level: &[AXUIElementRef], pid: i32, wid: u32) -> ScopeDecision {
+unsafe fn scope_top_level(
+    top_level: &[AXUIElementRef],
+    pid: i32,
+    wid: u32,
+) -> (ScopeDecision, Vec<AXSurface>) {
+    let mut surfaces = Vec::new();
     let candidates: Vec<TopLevelCandidate> = top_level
         .iter()
         .map(|&child| {
@@ -408,6 +857,22 @@ unsafe fn scope_top_level(top_level: &[AXUIElementRef], pid: i32, wid: u32) -> S
             } else {
                 None
             };
+            if ax_window_id.is_none_or(|id| id == wid) {
+                if let Some(kind) =
+                    classify_overlay_surface(&role, subrole.as_deref(), identifier.as_deref())
+                {
+                    surfaces.push(AXSurface {
+                        kind: kind.to_owned(),
+                        role: role.clone(),
+                        subrole: subrole.clone(),
+                        title: copy_string_attr(child, "AXTitle")
+                            .map(|s| s.trim().to_owned())
+                            .filter(|s| !s.is_empty()),
+                        element_index: None,
+                        window_id: ax_window_id,
+                    });
+                }
+            }
             TopLevelCandidate {
                 role,
                 subrole,
@@ -416,9 +881,13 @@ unsafe fn scope_top_level(top_level: &[AXUIElementRef], pid: i32, wid: u32) -> S
             }
         })
         .collect();
-    decide_window_scope(&candidates, wid, || {
+    let decision = decide_window_scope(&candidates, wid, || {
         crate::windows::resolve_window_owner(pid, wid)
-    })
+    });
+    if !decision.scope.is_matched() {
+        surfaces.clear();
+    }
+    (decision, surfaces)
 }
 
 /// Release elements retained by [`copy_top_level`].
@@ -436,6 +905,8 @@ unsafe fn walk_element(
     in_web_content: bool,
     nodes: &mut Vec<AXNode>,
     lines: &mut Vec<(usize, String)>,
+    regions: &mut Vec<AXRegion>,
+    surfaces: &mut Vec<AXSurface>,
     counter: &mut usize,
     budget: &mut WalkBudget,
     max_depth: usize,
@@ -455,6 +926,9 @@ unsafe fn walk_element(
     set_messaging_timeout(element);
 
     let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
+    if role == "AXMenuBar" && SKIP_MENUBAR.with(std::cell::Cell::get) {
+        return;
+    }
 
     let in_web_content = in_web_content || is_web_content_role(&role);
     if in_web_content && !include_web_content {
@@ -463,6 +937,16 @@ unsafe fn walk_element(
 
     // Skip pure layout containers that have no interesting content.
     if role == "AXScrollArea" || role == "AXGroup" {
+        if depth <= MAX_REGION_CAPTURE_DEPTH && regions.len() < MAX_REGIONS_PER_WALK {
+            if let Some(lbl) = copy_string_attr(element, "AXTitle")
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| {
+                    copy_string_attr(element, "AXDescription").filter(|s| !s.trim().is_empty())
+                })
+            {
+                push_region(regions, element, lbl, role.clone(), depth, None);
+            }
+        }
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
@@ -475,6 +959,8 @@ unsafe fn walk_element(
                 in_web_content,
                 nodes,
                 lines,
+                regions,
+                surfaces,
                 counter,
                 budget,
                 max_depth,
@@ -542,6 +1028,8 @@ unsafe fn walk_element(
                 in_web_content,
                 nodes,
                 lines,
+                regions,
+                surfaces,
                 counter,
                 budget,
                 max_depth,
@@ -646,6 +1134,55 @@ unsafe fn walk_element(
         }
     };
 
+    if is_semantic_region_role(&role) && depth <= MAX_REGION_CAPTURE_DEPTH {
+        let region_label = if !visible_title.is_empty() {
+            Some(visible_title.clone())
+        } else if !visible_description.is_empty() {
+            Some(visible_description.clone())
+        } else {
+            None
+        };
+        if let Some(lbl) = region_label {
+            push_region(
+                regions,
+                element,
+                lbl,
+                role.clone(),
+                depth,
+                node.element_index,
+            );
+        }
+    }
+    if matches!(role.as_str(), "AXSheet" | "AXPopover") {
+        let subrole = copy_string_attr(element, "AXSubrole");
+        if let Some(kind) =
+            classify_overlay_surface(&role, subrole.as_deref(), identifier.as_deref())
+        {
+            let already_listed = surfaces.iter().any(|s| {
+                s.kind == kind && s.role == role && s.title.as_deref() == node.title.as_deref()
+            });
+            if !already_listed {
+                surfaces.push(AXSurface {
+                    kind: kind.to_owned(),
+                    role: role.clone(),
+                    subrole,
+                    title: node.title.clone(),
+                    element_index: node.element_index,
+                    window_id: None,
+                });
+            }
+        }
+    } else if role == "AXMenuBarItem" && node.selected == Some(true) {
+        surfaces.push(AXSurface {
+            kind: "menu".into(),
+            role: role.clone(),
+            subrole: None,
+            title: node.title.clone(),
+            element_index: node.element_index,
+            window_id: None,
+        });
+    }
+
     // Track this node as the parent for its descendants only when it was
     // assigned an element_index (mirrors what the markdown shows: only
     // indexed rows are addressable in click(element_index=N)).
@@ -678,6 +1215,8 @@ unsafe fn walk_element(
             in_web_content,
             nodes,
             lines,
+            regions,
+            surfaces,
             counter,
             budget,
             max_depth,
@@ -774,6 +1313,7 @@ fn format_node_line(node: &AXNode) -> String {
 
 thread_local! {
     static MENUS_COLLAPSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SKIP_MENUBAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Shown on the menu bar row of a read whose menus were not walked.
@@ -788,6 +1328,18 @@ pub fn with_menus_collapsed<T>(collapse: bool, walk: impl FnOnce() -> T) -> T {
     let result = walk();
     MENUS_COLLAPSED.with(|flag| flag.set(previous));
     result
+}
+
+/// Run `walk` with `AXMenuBar` included or skipped completely on this thread.
+pub fn with_menubar_included<T>(include_menubar: bool, walk: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            SKIP_MENUBAR.with(|flag| flag.set(self.0));
+        }
+    }
+    let _reset = Reset(SKIP_MENUBAR.with(|flag| flag.replace(!include_menubar)));
+    walk()
 }
 
 /// Actions every web-content element advertises. Listing them on each row

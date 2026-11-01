@@ -335,6 +335,19 @@ impl Tool for GetWindowStateTool {
             Ok(display_only) => display_only,
             Err(refusal) => return refusal,
         };
+        let include_menubar = match cua_driver_core::window_state_view::include_menubar(&args) {
+            Ok(v) => v,
+            Err(refusal) => return refusal,
+        };
+        match cua_driver_core::window_state_view::root_element_token(&args) {
+            Ok(Some(_)) => {
+                return cua_driver_core::window_state_view::root_element_token_unsupported_on_platform(
+                    "linux",
+                )
+            }
+            Ok(None) => {}
+            Err(refusal) => return refusal,
+        }
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") {
             Ok(v) => v,
@@ -1055,6 +1068,8 @@ impl Tool for GetWindowStateTool {
                                 query: query.clone(),
                                 max_elements: max_elements.unwrap_or(LINUX_DEFAULT_MAX_ELEMENTS),
                                 max_depth,
+                                subtree_scope: None,
+                                include_menubar,
                             },
                             focus_probe: None,
                         },

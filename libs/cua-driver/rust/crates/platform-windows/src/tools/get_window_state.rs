@@ -225,6 +225,19 @@ impl Tool for GetWindowStateTool {
             Ok(display_only) => display_only,
             Err(refusal) => return refusal,
         };
+        let include_menubar = match cua_driver_core::window_state_view::include_menubar(&args) {
+            Ok(v) => v,
+            Err(refusal) => return refusal,
+        };
+        match cua_driver_core::window_state_view::root_element_token(&args) {
+            Ok(Some(_)) => {
+                return cua_driver_core::window_state_view::root_element_token_unsupported_on_platform(
+                    "windows",
+                )
+            }
+            Ok(None) => {}
+            Err(refusal) => return refusal,
+        }
         // Swift error wording 1:1.
         let pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(v) => v as u32,
@@ -786,6 +799,8 @@ impl Tool for GetWindowStateTool {
                                     .get("max_depth")
                                     .and_then(|v| v.as_u64())
                                     .map(|v| v as usize),
+                                subtree_scope: None,
+                                include_menubar,
                             },
                             focus_probe: None,
                         },

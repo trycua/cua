@@ -94,6 +94,11 @@ pub fn schema_properties() -> Value {
         "display_only": {
             "type": "boolean",
             "description": DISPLAY_ONLY_DESCRIPTION
+        },
+        "root_element_token": crate::tool_schema::root_element_token_schema(),
+        "include_menubar": {
+            "type": "boolean",
+            "description": "Default true on macOS (closed menu-bar items stay collapsed unless query or full_output is set). Set false to skip walking AXMenuBar completely: saves IPC round-trips and keeps query/full_output strictly inside the window."
         }
     })
 }
@@ -137,6 +142,69 @@ pub fn display_only(args: &Value) -> Result<bool, ToolResult> {
 pub fn mark_display_only(structured: &mut Value) {
     structured["display_only"] = json!(true);
     structured["frame_note"] = json!(DISPLAY_ONLY_FRAME_NOTE);
+}
+
+/// Validate and extract optional `root_element_token`.
+pub fn root_element_token(args: &Value) -> Result<Option<String>, ToolResult> {
+    let token = match args.get("root_element_token") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::String(s)) if s.trim().is_empty() => return Ok(None),
+        Some(Value::String(s)) => s.trim().to_owned(),
+        Some(_) => {
+            return Err(crate::element_token::refusal(
+                "invalid_element_token",
+                "root_element_token must be a string (<snapshot_id>:<row> or <snapshot_id>:r<region>)."
+                    .into(),
+            ));
+        }
+    };
+    if args
+        .get("include_accessibility_tree")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return Err(ToolResult::error(
+            "root_element_token requires include_accessibility_tree:true",
+        ));
+    }
+    if crate::element_token::parse_root_token(&token).is_none() {
+        return Err(crate::element_token::refusal(
+            "invalid_element_token",
+            format!(
+                "root_element_token \"{token}\" has invalid format: use <snapshot_id>:<row> or \
+                 <snapshot_id>:r<region>, e.g. \"s00000001:r0\"."
+            ),
+        ));
+    }
+    Ok(Some(token))
+}
+
+/// Validate and extract optional `include_menubar`.
+pub fn include_menubar(args: &Value) -> Result<Option<bool>, ToolResult> {
+    match args.get("include_menubar") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(v)) => Ok(Some(*v)),
+        Some(_) => Err(ToolResult::error(
+            "include_menubar must be a boolean when provided.",
+        )),
+    }
+}
+
+/// Explicit refusal for platforms that do not implement `root_element_token`
+/// subtree walks yet.
+pub fn root_element_token_unsupported_on_platform(platform: &str) -> ToolResult {
+    let message = format!(
+        "root_element_token is not supported on {platform}; omit root_element_token and narrow \
+         the read with query, max_depth, or max_elements instead."
+    );
+    ToolResult::error(message.clone()).with_structured(json!({
+        "status": "refused",
+        "code": "root_element_token_unsupported",
+        "refusal": {
+            "code": "root_element_token_unsupported",
+            "message": message,
+        }
+    }))
 }
 
 /// Add the shared `tree_format` / `since` / `verbose` / `full_output` / `display_only`
@@ -248,11 +316,13 @@ enum SinceOutcome {
 
 /// Inputs that identify the view a snapshot was read with. A diff is only
 /// meaningful between two reads of the same view.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ViewKey {
     pub query: Option<String>,
     pub max_elements: usize,
     pub max_depth: Option<usize>,
+    pub subtree_scope: Option<String>,
+    pub include_menubar: Option<bool>,
 }
 
 pub struct ViewContext<'a> {
@@ -766,6 +836,8 @@ pub(crate) fn remember_for_test(snapshot_id: &str, pid: i64, window_id: u64, mar
             query: None,
             max_elements: DEFAULT_MAX_ELEMENTS,
             max_depth: None,
+            subtree_scope: None,
+            include_menubar: None,
         },
         focus_probe: None,
     };
@@ -1268,6 +1340,8 @@ mod tests {
                 query: None,
                 max_elements: 250,
                 max_depth: None,
+                subtree_scope: None,
+                include_menubar: None,
             },
             focus_probe: None,
         }

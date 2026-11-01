@@ -283,11 +283,11 @@ fn developer_lifecycle_is_explicit_previewed_and_removable() {
         preview["artifact_source"],
         archive.to_string_lossy().as_ref()
     );
+    // Compare as paths: the preview uses native separators, so a `/`-joined
+    // string never matches on Windows.
     assert_eq!(
-        preview["destination"],
+        Path::new(preview["destination"].as_str().unwrap()),
         home.join("extensions/cua-perception/versions/1.2.3")
-            .to_string_lossy()
-            .as_ref()
     );
     assert!(preview["download_size"].as_u64().unwrap() > 0);
     assert!(preview["installed_size"].as_u64().unwrap() > 0);
@@ -602,11 +602,11 @@ fn review_signed_lifecycle_is_distinct_fail_closed_and_rollback_safe() {
     assert_eq!(preview["signing_key_algorithm"], "ed25519");
     assert_eq!(preview["signing_key_status"], "verified");
     assert_eq!(preview["publisher_signature_verified"], true);
+    // Compare as paths: the preview uses native separators, so a `/`-joined
+    // string never matches on Windows.
     assert_eq!(
-        preview["destination"],
+        Path::new(preview["destination"].as_str().unwrap()),
         home.join("extensions/cua-perception/versions/1.2.3")
-            .to_string_lossy()
-            .as_ref()
     );
     assert!(preview["download_size"].as_u64().unwrap() > 0);
     assert!(preview["installed_size"].as_u64().unwrap() > 0);

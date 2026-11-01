@@ -424,6 +424,7 @@ pub async fn start(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyho
             tokio::select! {
                 accepted = listener.accept() => {
                     let Ok((mut stream, _)) = accepted else { break };
+                    crate::mcp_http::clear_inherit_flag(&stream);
                     let Ok(permit) = permits.clone().try_acquire_owned() else { continue };
                     let service = service.clone();
                     tasks.spawn(async move {

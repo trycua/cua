@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.9.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.8.0...cua-spacesd-v0.9.0) (2026-11-01)
+
+
+### Features
+
+* **connections:** one Connections list driven by a provider registry ([#6134](https://github.com/trycua/cua/issues/6134)) ([74ff486](https://github.com/trycua/cua/commit/74ff486506e5e203b3a6fd371931ed717a405dba))
+* **cua-driver:** add a niri compositor adapter for Linux Wayland ([#6209](https://github.com/trycua/cua/issues/6209)) ([33a57bb](https://github.com/trycua/cua/commit/33a57bb0a82dd31dfab0cbbb43da06d60e242ee7))
+* **cua-home:** CuaChannel, the names that keep Cua Spaces Local apart from stable (CUA-1776) ([#5800](https://github.com/trycua/cua/issues/5800)) ([e896967](https://github.com/trycua/cua/commit/e896967501382d6dc26ef6d96282c0f8af882648))
+* **relay:** keep path mode beside a host domain, send old share links to their origin ([#6061](https://github.com/trycua/cua/issues/6061)) ([8ed5bd3](https://github.com/trycua/cua/commit/8ed5bd3c5d041cb24428e57bceef7f5224b11374))
+* **spaces:** relay counts connection outcomes (CUA-2231) ([#5900](https://github.com/trycua/cua/issues/5900)) ([1ef93e7](https://github.com/trycua/cua/commit/1ef93e74cf6b5b76c1ac0c9a6ef30fabf8997e85))
+
+
+### Bug Fixes
+
+* **cua-driver:** share the keyring history key provider in cua-driver-core ([#5895](https://github.com/trycua/cua/issues/5895)) ([e9c8478](https://github.com/trycua/cua/commit/e9c847820bcafe7559742bd32f68162754efd506))
+* **cua-relay:** Spaces API errors never repeat the request URL (it can carry an account id) (CUA-2339) ([#5997](https://github.com/trycua/cua/issues/5997)) ([243fae0](https://github.com/trycua/cua/commit/243fae03ec542f25b5b2f7e9bbcc4ba0aec26937))
+* **images:** claim the features cua-spacesd 0.8.0 reports on every image ([#5823](https://github.com/trycua/cua/issues/5823)) ([9fd979a](https://github.com/trycua/cua/commit/9fd979a24a6e6103b201eaf3d646d2f5c23d14ad))
+* **mesh:** honour 429 Retry-After, send a client version, retire a taken-over identity; relay holds refused connects (CUA-2362) ([#6016](https://github.com/trycua/cua/issues/6016)) ([87650e1](https://github.com/trycua/cua/commit/87650e144354783f0d9cee17f48e4f91bd2fdd41))
+* **relay:** a temp file pending delete on Windows counts as gone in the sweep ([#5867](https://github.com/trycua/cua/issues/5867)) ([4c9a7bb](https://github.com/trycua/cua/commit/4c9a7bb8c1b76fba5ffbbdeca5326e3e257cd2f4))
+* **relay:** an expired sign-in proof names the clock ([#6248](https://github.com/trycua/cua/issues/6248)) ([189df9d](https://github.com/trycua/cua/commit/189df9d24f963d210812e473f1186d9bfd857329))
+* **relay:** map recomputation and device sessions no longer stall the async runtime (CUA-2323) ([#6004](https://github.com/trycua/cua/issues/6004)) ([95bff39](https://github.com/trycua/cua/commit/95bff3975a7d417b6e06b3d4c30f63c2280bb76d))
+* **relay:** signing keys refresh in the background, never on the request path (CUA-2323) ([#5993](https://github.com/trycua/cua/issues/5993)) ([83601bc](https://github.com/trycua/cua/commit/83601bca086cdf41aad251913b9135d3c65e9ed4))
+* **spacesd:** let a shared Space's editors act as agents (CUA-1750) ([#5291](https://github.com/trycua/cua/issues/5291)) ([403d762](https://github.com/trycua/cua/commit/403d762ac4e712281c0a7101f20d1866a9df9ae9))
+* **spaces:** dogfooding polish (welcome copy first) ([#5893](https://github.com/trycua/cua/issues/5893)) ([928fe85](https://github.com/trycua/cua/commit/928fe850d48b3a9d591ba7b18e93fd4f8db239a1))
+* **spacesd:** teleport lands a Chrome session in one profile and launches the guest's Chromium (CUA-2853) ([#6180](https://github.com/trycua/cua/issues/6180)) ([dbf08f7](https://github.com/trycua/cua/commit/dbf08f753422fad92a6eef0093dfe5a5dd95f1f7))
+* **spaces:** honest numbers in a Space's resources dialog ([#6058](https://github.com/trycua/cua/issues/6058)) ([9c7d8b5](https://github.com/trycua/cua/commit/9c7d8b5c4a4e945f0c2c740166a02787b13ba03f))
+* **spaces:** mesh reconnects back off with jitter instead of looping (CUA-2276) ([#5932](https://github.com/trycua/cua/issues/5932)) ([b126954](https://github.com/trycua/cua/commit/b12695426c82738c227a6f1d7116617c17dcad14))
+* **spaces:** never show an empty Spaces page while computers are still answering ([#5905](https://github.com/trycua/cua/issues/5905)) ([a0f98b1](https://github.com/trycua/cua/commit/a0f98b1a35dcce9aac11653efab82a9972484aad))
+* **spaces:** retry 'too many requests' and say so in plain words (CUA-2275) ([#5929](https://github.com/trycua/cua/issues/5929)) ([c421b1c](https://github.com/trycua/cua/commit/c421b1caa948c3f54f72425d70c0891ac08074d0))
+* **teams:** say a device waits for approval instead of "still starting" (CUA-2835) ([#6168](https://github.com/trycua/cua/issues/6168)) ([8e314e4](https://github.com/trycua/cua/commit/8e314e40971804663868359c89cda7f7cfc80b65))
+
 ## [0.8.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.7.0...cua-spacesd-v0.8.0) (2026-10-24)
 
 

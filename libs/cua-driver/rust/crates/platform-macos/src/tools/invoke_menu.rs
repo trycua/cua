@@ -605,6 +605,22 @@ fn require_menu_window(
     }
 }
 
+/// Whether `window_id` already is the app's focused and main window, the menu
+/// context `invoke_path_in_background` requires.
+///
+/// # Safety
+/// Calls the accessibility API for `pid`.
+unsafe fn menu_window_is_key(pid: i32, window_id: u32) -> bool {
+    let app = AXUIElementCreateApplication(pid);
+    if app.is_null() {
+        return false;
+    }
+    set_messaging_timeout(app);
+    let bound = require_live_menu_window(app, window_id).is_ok();
+    CFRelease(app as CFTypeRef);
+    bound
+}
+
 unsafe fn require_live_menu_window(
     app: AXUIElementRef,
     requested: u32,
@@ -624,7 +640,7 @@ fn unbound_menu_window(
     focused: Option<u32>,
     main: Option<u32>,
 ) -> ToolResult {
-    super::background_refusal_result(
+    let mut result = super::background_refusal_result(
         pid,
         requested,
         &cua_driver_core::background_input::BackgroundRefusal {
@@ -635,13 +651,41 @@ fn unbound_menu_window(
             ),
             advice: Some("foreground"),
         },
-    )
+    );
+    add_key_window(&mut result, focused.filter(|_| focused == main));
+    result
 }
 
-/// Resolve the whole path from the app's live menu bar without opening any
-/// level, then perform the final item's action. Used for a background app:
-/// opening a menu-bar menu would take key focus and draw over the user's
-/// front app.
+/// Name the app's key window in a `window_not_key` refusal. An app-wide
+/// command (View, Window, Help) runs the same from any of the app's windows,
+/// so binding the call to this window works in the background; foreground is
+/// only needed for a command about the requested window's own document.
+fn add_key_window(result: &mut ToolResult, key: Option<u32>) {
+    let Some(key) = key else {
+        return;
+    };
+    if let Some(data) = result.structured_content.as_mut() {
+        data["key_window_id"] = serde_json::json!(key);
+    }
+    result
+        .content
+        .push(cua_driver_core::protocol::Content::text(format!(
+            "The app's key window is {key}. For an app-wide command, retry in the background with \
+         window_id {key}; use delivery_mode:\"foreground\" only for a command about the \
+         requested window's own document."
+        )));
+}
+
+/// Resolve the whole path from the app's live menu bar, then perform the
+/// final item's action. Used for a background app.
+///
+/// A background app keeps most items disabled: AppKit validates them against
+/// its native key window, and only when their menu opens. For a disabled
+/// item, make the window key inside the app (activation record plus the
+/// make-key pair, no fronting), open the menu levels above the item so AppKit
+/// re-validates it, and press it. Either half alone leaves the item disabled.
+/// The opened menu is drawn on screen until the press closes it, so a menu
+/// only opens for an item that would otherwise be refused.
 unsafe fn invoke_path_in_background(
     pid: i32,
     window_id: u32,
@@ -669,36 +713,26 @@ unsafe fn invoke_path_in_background(
     let target = target.map_err(BackgroundPressError::Other)?;
     set_messaging_timeout(target);
     let is_save = item_is_save(target);
+    let mut primed = false;
+    // Menu windows on screen before this call opened any, once it does.
+    let mut menus_before: Option<Vec<u32>> = None;
     let result = (|| {
         // Preserve enablement priming for an already-bound document. The
         // context check above prevents this from switching to a sibling after
         // resolving that sibling's menu; the check below revalidates dispatch.
         if copy_bool_attr(target, "AXEnabled") == Some(false)
-            && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
+            && crate::input::skylight::post_window_key_records(pid, None, window_id)
         {
-            let mut waited = Duration::ZERO;
-            while waited < ENABLE_WAIT && copy_bool_attr(target, "AXEnabled") == Some(false) {
-                std::thread::sleep(ENABLE_POLL);
-                waited += ENABLE_POLL;
-            }
+            primed = true;
+            wait_until_enabled(target);
         }
-        if copy_bool_attr(target, "AXEnabled") == Some(false) {
-            return Err(BackgroundPressError::Disabled {
-                message: format!(
-                    "invoke_menu: path segment {} is disabled while the app is in the background",
-                    path.len().saturating_sub(1)
-                ),
-                is_save,
-            });
+        let enabled = copy_bool_attr(target, "AXEnabled") != Some(false);
+        if !enabled && !primed {
+            return Err(disabled_in_background(path, is_save));
         }
-        let actions = copy_action_names(target);
-        let action = choose_action(&actions, true).ok_or_else(|| {
-            BackgroundPressError::Other(
-                "invoke_menu: the final menu item has no usable native menu action".to_owned(),
-            )
-        })?;
-        // Revalidate after path resolution, immediately before the only
-        // dispatch. Never fix a mismatch by silently switching documents.
+        // Revalidate after path resolution, immediately before the menu opens
+        // or the item is pressed. Never fix a mismatch by silently switching
+        // documents.
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
             return Err(BackgroundPressError::Other(
@@ -709,6 +743,20 @@ unsafe fn invoke_path_in_background(
         let bound = require_live_menu_window(app, window_id);
         CFRelease(app as CFTypeRef);
         bound?;
+        if !enabled {
+            menus_before = Some(crate::windows::menu_window_ids(pid).unwrap_or_default());
+            return match press_in_opened_menus(pid, path) {
+                Ok(true) => Ok(PressedItem { is_save }),
+                Ok(false) => Err(disabled_in_background(path, is_save)),
+                Err(error) => Err(BackgroundPressError::Other(error)),
+            };
+        }
+        let actions = copy_action_names(target);
+        let action = choose_action(&actions, true).ok_or_else(|| {
+            BackgroundPressError::Other(
+                "invoke_menu: the final menu item has no usable native menu action".to_owned(),
+            )
+        })?;
         let error = perform_action(target, action);
         if error != kAXErrorSuccess {
             return Err(BackgroundPressError::Other(format!(
@@ -718,6 +766,101 @@ unsafe fn invoke_path_in_background(
         Ok(PressedItem { is_save })
     })();
     CFRelease(target as CFTypeRef);
+    if let Some(before) = menus_before {
+        // The press closes the menu; a disabled item or a failure leaves it
+        // open on the user's screen.
+        let app = AXUIElementCreateApplication(pid);
+        if !app.is_null() {
+            set_messaging_timeout(app);
+            close_opened_menu(app, pid, &path[0], &before);
+            CFRelease(app as CFTypeRef);
+        }
+    }
+    if primed {
+        // The app still believes it is active; tell it otherwise so it does
+        // not draw or route input as the front app behind the user's window.
+        std::thread::sleep(ENABLE_POLL);
+        crate::input::skylight::post_app_defocus_record(pid, window_id);
+    }
+    result
+}
+
+fn disabled_in_background(path: &[String], is_save: bool) -> BackgroundPressError {
+    BackgroundPressError::Disabled {
+        message: format!(
+            "invoke_menu: path segment {} is disabled while the app is in the background",
+            path.len().saturating_sub(1)
+        ),
+        is_save,
+    }
+}
+
+unsafe fn wait_until_enabled(item: AXUIElementRef) {
+    let mut waited = Duration::ZERO;
+    while waited < ENABLE_WAIT && copy_bool_attr(item, "AXEnabled") == Some(false) {
+        std::thread::sleep(ENABLE_POLL);
+        waited += ENABLE_POLL;
+    }
+}
+
+/// Open each menu level above the final item of `path`, wait for the item to
+/// enable, and press it. `Ok(false)` when it stays disabled; the caller closes
+/// whatever menu is left open.
+unsafe fn press_in_opened_menus(pid: i32, path: &[String]) -> Result<bool, String> {
+    let app = AXUIElementCreateApplication(pid);
+    if app.is_null() {
+        return Err("invoke_menu: target application is unavailable".into());
+    }
+    set_messaging_timeout(app);
+    // Resolve from the live app root for every hop: opening a menu can
+    // replace its AX objects.
+    let resolve = |prefix: &[String]| -> Result<AXUIElementRef, String> {
+        let menu_bar = copy_element_attr(app, "AXMenuBar")
+            .ok_or_else(|| "invoke_menu: target exposes no AXMenuBar".to_owned())?;
+        set_messaging_timeout(menu_bar);
+        let item = resolve_exact_prefix(menu_bar, prefix);
+        CFRelease(menu_bar as CFTypeRef);
+        let item = item?;
+        set_messaging_timeout(item);
+        Ok(item)
+    };
+    let result = (|| {
+        for depth in 0..path.len().saturating_sub(1) {
+            let level = resolve(&path[..=depth])?;
+            let actions = copy_action_names(level);
+            let opened = choose_action(&actions, false)
+                .is_some_and(|action| perform_action(level, action) == kAXErrorSuccess);
+            CFRelease(level as CFTypeRef);
+            if !opened {
+                return Err(format!(
+                    "invoke_menu: path segment {depth} could not be opened in the background"
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(80));
+        }
+        let item = resolve(path)?;
+        wait_until_enabled(item);
+        let pressed = if copy_bool_attr(item, "AXEnabled") == Some(false) {
+            Ok(false)
+        } else {
+            let actions = copy_action_names(item);
+            match choose_action(&actions, true) {
+                None => Err(
+                    "invoke_menu: the final menu item has no usable native menu action".to_owned(),
+                ),
+                Some(action) => match perform_action(item, action) {
+                    error if error == kAXErrorSuccess => Ok(true),
+                    error => Err(format!(
+                        "invoke_menu: native action for the final menu item failed with AX error \
+                         {error}"
+                    )),
+                },
+            }
+        };
+        CFRelease(item as CFTypeRef);
+        pressed
+    })();
+    CFRelease(app as CFTypeRef);
     result
 }
 
@@ -970,6 +1113,35 @@ impl Tool for InvokeMenuTool {
         .await
         .unwrap_or(false);
         if !target_in_front {
+            // Menu commands act on the app's key window. Make the requested
+            // window key inside the app first (no activation, no raise),
+            // confirmed, as `hotkey` does (CUA-1767). Skip that when it already
+            // is the app's focused and main window, and leave it key
+            // afterwards, as a click on it would: handing key back cost
+            // another round of records for no change the user can see.
+            let already_key =
+                tokio::task::spawn_blocking(move || unsafe { menu_window_is_key(pid, window_id) })
+                    .await
+                    .unwrap_or(false);
+            if !already_key {
+                match super::acquire_key_scope(pid, Some(window_id), false).await {
+                    Ok(scope) => {
+                        if let Some(scope) = scope {
+                            scope.keep();
+                        }
+                    }
+                    Err(mut refusal) => {
+                        let key = tokio::task::spawn_blocking(move || {
+                            crate::ax::bindings::focused_window_id_of_pid(pid)
+                        })
+                        .await
+                        .ok()
+                        .flatten();
+                        add_key_window(&mut refusal, key);
+                        return refusal;
+                    }
+                }
+            }
             return run_in_background(pid, window_id, path, MenuRequest::Path).await;
         }
 
@@ -1061,6 +1233,23 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("no menu action was dispatched"));
+        // Focused and main disagree: no single key window to name.
+        assert!(data.get("key_window_id").is_none());
+    }
+
+    #[test]
+    fn unbound_menu_names_the_key_window_for_a_background_retry() {
+        let result = unbound_menu_window(42, 7, Some(8), Some(8));
+        let data = result.structured_content.as_ref().unwrap();
+        assert_eq!(data["code"], "window_not_key");
+        assert_eq!(data["key_window_id"], 8);
+        let text: String = result
+            .content
+            .iter()
+            .filter_map(|content| serde_json::to_value(content).ok())
+            .filter_map(|value| value["text"].as_str().map(str::to_owned))
+            .collect();
+        assert!(text.contains("retry in the background with window_id 8"));
     }
 
     #[test]

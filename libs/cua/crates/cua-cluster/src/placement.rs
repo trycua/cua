@@ -16,6 +16,11 @@ pub enum Policy {
     /// The most loaded host that still fits first: packs work, so other
     /// hosts stay idle (and can sleep or be removed).
     Pack,
+    /// A durable drive: the most reliable machine first (always on, then a
+    /// laptop on power, then one on battery; never the laptop the user is
+    /// closing), spread by free capacity among equals. Capacity still gates:
+    /// a machine that does not fit is not chosen.
+    Durable,
 }
 
 impl Policy {
@@ -24,6 +29,7 @@ impl Policy {
         match s.trim().to_ascii_lowercase().as_str() {
             "" | "spread" => Some(Self::Spread),
             "pack" | "binpack" => Some(Self::Pack),
+            "durable" => Some(Self::Durable),
             _ => None,
         }
     }
@@ -99,6 +105,10 @@ pub struct Candidate {
     /// load average). Only lowers its score, among hosts that fit; it never
     /// makes work misfit.
     pub busy: f64,
+    /// What the machine says about its own reliability ([`crate::reliability`]),
+    /// when it does; [`Policy::Durable`] scores a machine that does not say as
+    /// [`crate::reliability::UNKNOWN`].
+    pub reliability: Option<crate::reliability::Facts>,
 }
 
 /// How far elastic (not yet running) capacity scores below every host that
@@ -239,6 +249,12 @@ impl Candidate {
             ));
         }
         if !need.kind.is_empty() && !s.kinds.contains(&need.kind) {
+            if need.kind == "microvm" {
+                return Some(format!(
+                    "{} does not create microvm Spaces (they need KVM on Linux or Apple Containerization on macOS 26; a gVisor container works there)",
+                    self.name
+                ));
+            }
             return Some(format!(
                 "{} does not create {} Spaces",
                 self.name, need.kind
@@ -292,6 +308,13 @@ impl Candidate {
         None
     }
 
+    /// How reliable this machine says it is (or [`crate::reliability::UNKNOWN`]).
+    pub fn reliability_score(&self) -> f64 {
+        self.reliability
+            .as_ref()
+            .map_or(crate::reliability::UNKNOWN, crate::reliability::score) as f64
+    }
+
     /// Whether a ready warm-pool member of `need`'s shape waits here.
     pub fn warm_for(&self, need: &Need) -> bool {
         !need.shape.is_empty()
@@ -343,6 +366,11 @@ impl Candidate {
         let mut s = match policy {
             Policy::Spread => free_after,
             Policy::Pack => 1.0 - free_after,
+            // Reliability in whole classes (1000 apart) dominates; free
+            // capacity (0..1) only orders machines of one class.
+            Policy::Durable => {
+                self.reliability_score() / crate::reliability::STEP as f64 + free_after
+            }
         };
         // A host already compressing or swapping goes after the others.
         if self.measured().is_some_and(|m| m.memory_pressure == 1) {
@@ -407,6 +435,13 @@ pub fn rank(cands: &[Candidate], need: &Need, policy: Policy) -> Vec<usize> {
             .then_with(|| cands[a.0].name.cmp(&cands[b.0].name))
     });
     scored.into_iter().map(|(i, _)| i).collect()
+}
+
+/// Why each machine that was not chosen was skipped, in plain words (the
+/// ones that fit are not listed): "Mac mini is arm64, not amd64", "box has
+/// no KVM ...". Used to tell a user where their durable agent did not go.
+pub fn skipped(cands: &[Candidate], need: &Need) -> Vec<String> {
+    cands.iter().filter_map(|c| c.misfit(need)).collect()
 }
 
 /// Why nothing fits, for people: each host's reason.
@@ -944,5 +979,187 @@ mod tests {
         let m = no_room_message(&hosts, &need(2000, 4096), "this machine", local);
         assert!(m.starts_with("no machine has room for a 2-CPU, 4 GiB Space now (this machine: "));
         assert!(m.contains("box: 0 of 16 CPUs free"), "{m}");
+    }
+
+    // ---- durable drives follow reliability ---------------------------------
+
+    use crate::reliability::Facts;
+
+    fn machine(name: &str, cpu_free: u32, f: Option<Facts>) -> Candidate {
+        Candidate {
+            reliability: f,
+            ..host(name, cpu_free, 16384)
+        }
+    }
+
+    fn laptop(on_battery: bool, user_active: bool) -> Facts {
+        Facts {
+            has_battery: true,
+            on_battery,
+            battery_pct: Some(90),
+            user_active,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_durable_drive_goes_to_the_machine_least_likely_to_stop() {
+        let cands = [
+            // The laptop the user is typing on, and the emptiest machine.
+            machine("macbook", 16000, Some(laptop(false, true))),
+            machine("studio", 8000, Some(Facts::default())),
+            machine("old-air", 15000, Some(laptop(true, false))),
+        ];
+        let n = need(2000, 4096);
+        // Spread alone would pick the emptiest (the laptop in use).
+        let spread = rank(&cands, &n, Policy::Spread);
+        assert_eq!(cands[spread[0]].name, "macbook");
+        let durable = rank(&cands, &n, Policy::Durable);
+        let names: Vec<_> = durable.iter().map(|i| cands[*i].name.as_str()).collect();
+        assert_eq!(names, ["studio", "old-air", "macbook"]);
+    }
+
+    #[test]
+    fn capacity_still_gates_a_durable_drive() {
+        let cands = [
+            machine("studio", 500, Some(Facts::default())), // no room
+            machine("macbook", 16000, Some(laptop(false, false))),
+        ];
+        let d = rank(&cands, &need(2000, 4096), Policy::Durable);
+        assert_eq!(d.len(), 1);
+        assert_eq!(cands[d[0]].name, "macbook");
+    }
+
+    #[test]
+    fn the_only_machine_is_used_even_if_it_is_the_laptop_in_use() {
+        let cands = [machine("macbook", 16000, Some(laptop(true, true)))];
+        assert_eq!(rank(&cands, &need(2000, 4096), Policy::Durable), vec![0]);
+    }
+
+    #[test]
+    fn a_machine_that_does_not_say_scores_between_plugged_and_battery() {
+        let cands = [
+            machine("unknown", 16000, None),
+            machine("plugged", 16000, Some(laptop(false, false))),
+            machine("battery", 16000, Some(laptop(true, false))),
+        ];
+        let d = rank(&cands, &need(2000, 4096), Policy::Durable);
+        let names: Vec<_> = d.iter().map(|i| cands[*i].name.as_str()).collect();
+        assert_eq!(names, ["plugged", "unknown", "battery"]);
+        assert_eq!(Policy::parse("durable"), Some(Policy::Durable));
+    }
+
+    // ---- mixed architectures, KVM on and off, BYOC linked or not ---------
+
+    fn node(
+        name: &str,
+        arch: &str,
+        os: &str,
+        kinds: &[&str],
+        elastic: bool,
+        f: Facts,
+    ) -> Candidate {
+        Candidate {
+            name: name.into(),
+            ready: true,
+            os: os.into(),
+            elastic,
+            reliability: Some(f),
+            status: Some(pb::HostNodeStatus {
+                millicpus_total: 8000,
+                millicpus_free: 8000,
+                memory_total_mb: 16384,
+                memory_free_mb: 16384,
+                arch: arch.into(),
+                kinds: kinds.iter().map(|k| k.to_string()).collect(),
+                runtimes: vec!["gvisor".into(), "runc".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_mixed_cluster_places_durable_work_by_arch_kvm_and_kind_and_says_why() {
+        let always_on = Facts::default();
+        let cands = [
+            node(
+                "mac-studio",
+                "aarch64",
+                "macos",
+                &["container", "vm", "microvm"],
+                false,
+                always_on.clone(),
+            ),
+            node(
+                "linux-box",
+                "x86_64",
+                "linux",
+                &["container"],
+                false,
+                always_on.clone(),
+            ),
+            node(
+                "kvm-box",
+                "x86_64",
+                "linux",
+                &["container", "microvm"],
+                false,
+                Facts {
+                    has_battery: false,
+                    ..always_on.clone()
+                },
+            ),
+            node(
+                "cloud-arm",
+                "aarch64",
+                "linux",
+                &["container", "microvm"],
+                true,
+                always_on.clone(),
+            ),
+            node(
+                "macbook",
+                "aarch64",
+                "macos",
+                &["container", "vm", "microvm"],
+                false,
+                laptop(false, true),
+            ),
+        ];
+        // A microVM wants KVM or Containerization: the box without it is
+        // skipped with the reason, and the elastic cloud machine goes last.
+        let mut need = need(2000, 4096);
+        need.kind = "microvm".into();
+        let order = rank(&cands, &need, Policy::Durable);
+        let names: Vec<_> = order.iter().map(|i| cands[*i].name.as_str()).collect();
+        assert_eq!(&names[..2], ["kvm-box", "mac-studio"], "{names:?}");
+        assert!(!names.contains(&"linux-box"));
+        let why = skipped(&cands, &need);
+        assert!(
+            why.iter()
+                .any(|w| w.contains("linux-box") && w.contains("KVM") && w.contains("gVisor")),
+            "{why:?}"
+        );
+        // An amd64-only workload skips the arm machines and says so.
+        let mut amd = need.clone();
+        amd.kind = "container".into();
+        amd.arch = "amd64".into();
+        let order = rank(&cands, &amd, Policy::Durable);
+        let names: Vec<_> = order.iter().map(|i| cands[*i].name.as_str()).collect();
+        assert_eq!(names, ["kvm-box", "linux-box"], "{names:?}");
+        let why = skipped(&cands, &amd);
+        assert!(
+            why.iter()
+                .any(|w| w.contains("mac-studio") && w.contains("amd64")),
+            "{why:?}"
+        );
+        // No arch asked: every machine that fits is a candidate, the most
+        // reliable always-on machines first and the laptop in use last.
+        amd.arch = String::new();
+        let order = rank(&cands, &amd, Policy::Durable);
+        let names: Vec<_> = order.iter().map(|i| cands[*i].name.as_str()).collect();
+        assert_eq!(names.first().copied(), Some("kvm-box"));
+        assert_eq!(names.last().copied(), Some("macbook"));
     }
 }

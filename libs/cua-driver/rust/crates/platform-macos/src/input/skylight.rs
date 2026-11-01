@@ -1268,9 +1268,9 @@ fn foreground_turn() -> ForegroundTurn {
     }
 }
 
-/// Tool-agnostic foreground-assist: briefly front `window_id`, wait for the
-/// activation to actually land, run `body` (which posts the synthetic input),
-/// then restore the prior frontmost process.
+/// Tool-agnostic foreground-assist: request a brief front of `window_id`, wait
+/// for the application's focused window, run `body`, then attempt to restore
+/// the prior frontmost process.
 ///
 /// This is the `delivery_mode:"foreground"` rung of the best-effort-background
 /// ladder, shared by `type_text` and `click`. Reached only when the agent has
@@ -1286,25 +1286,90 @@ fn foreground_turn() -> ForegroundTurn {
 /// for a Catalyst app such as WhatsApp, the message list rather than the
 /// composer, which silently scrolls the transcript instead of typing.
 ///
-/// So this waits for the activation to be observable before running `body`, the
-/// same ordering [`with_foreground_hid_activation`] already relies on. The wait
-/// is a bounded poll rather than a fixed sleep: an app that activates in 10 ms
-/// pays 10 ms, and a slow Catalyst/RDP surface still gets its full budget.
+/// So this waits for the app-local focused-window report before running `body`.
+/// That report alone does not prove global foreground. The wait is a bounded
+/// poll rather than a fixed sleep: an app that activates in 10 ms pays 10 ms,
+/// and a slow Catalyst/RDP surface still gets its full budget.
 ///
-/// Returns `Ok(true)` when the brief activation happened, `Ok(false)` when the
-/// fronting SPIs are unavailable (the body still ran, just without a front).
+/// The legacy boolean reports whether activation was attempted, not observed.
+/// `Ok(false)` means the fronting SPI or target PSN was unavailable; the body
+/// still ran. Keep this meaning for callers whose error/rollback control flow
+/// depends on it. Result producers should use [`with_observed_foreground_assist`].
 pub fn with_foreground_assist(
     target_pid: libc::pid_t,
     target_wid: u32,
     body: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
+    let ForegroundAssistOutcome {
+        action_result,
+        observation,
+    } = foreground_assist_impl(target_pid, target_wid, body, || None);
+    action_result.map(|()| observation.activation_attempted())
+}
+
+/// Activation acknowledgements are not observations of the application's
+/// effect. These facts remain internal and never authorize a retry or refusal.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ForegroundAssistObservation {
+    front_request_accepted: Option<bool>,
+    key_request_accepted: Option<bool>,
+    ax_window_focused: Option<bool>,
+    front_process_matches: Option<bool>,
+}
+
+impl ForegroundAssistObservation {
+    fn activation_attempted(self) -> bool {
+        self.front_request_accepted.is_some()
+    }
+
+    /// A dispatch-time sample, not proof that input landed or focus was held
+    /// throughout the body. An app-local AX focused window alone is not proof
+    /// of global foreground. Missing/negative observations are not background.
+    pub(crate) fn actual_delivery(self) -> cua_driver_core::action_record::ActualDelivery {
+        use cua_driver_core::action_record::ActualDelivery;
+        if self.ax_window_focused == Some(true) && self.front_process_matches == Some(true) {
+            ActualDelivery::Foreground
+        } else {
+            ActualDelivery::Unknown
+        }
+    }
+}
+
+pub(crate) struct ForegroundAssistOutcome {
+    pub(crate) action_result: anyhow::Result<()>,
+    pub(crate) observation: ForegroundAssistObservation,
+}
+
+/// The same activation, body and restoration sequence as the legacy helper,
+/// with one additional read-only WindowServer observation before dispatch.
+/// The action still runs exactly once, including when activation is uncertain.
+pub(crate) fn with_observed_foreground_assist(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    body: impl FnOnce() -> anyhow::Result<()>,
+) -> ForegroundAssistOutcome {
+    foreground_assist_impl(target_pid, target_wid, body, || {
+        front_process_matches(target_pid, target_wid)
+    })
+}
+
+fn foreground_assist_impl(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    body: impl FnOnce() -> anyhow::Result<()>,
+    observe_front: impl FnOnce() -> Option<bool>,
+) -> ForegroundAssistOutcome {
     let _turn = foreground_turn();
     let set_front = match set_front_process_fn() {
         Some(f) => f,
         None => {
             // SPIs unavailable — run body anyway without activation.
-            body()?;
-            return Ok(false);
+            return finish_foreground_assist(
+                ForegroundAssistObservation::default(),
+                observe_front,
+                body,
+                || {},
+            );
         }
     };
 
@@ -1315,27 +1380,63 @@ pub fn with_foreground_assist(
 
     let mut target_psn = [0u8; 8];
     if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
-        body()?;
-        return Ok(false);
+        return finish_foreground_assist(
+            ForegroundAssistObservation::default(),
+            observe_front,
+            body,
+            || {},
+        );
     }
 
-    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
+    let front_request_accepted =
+        unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) } == 0;
     // `set_front` moves WindowServer's front process but does not make the
     // target's NSWindow key, and AppKit installs a first responder only for a
     // key window. Without this the app is "frontmost" to WindowServer while
     // remaining, from AppKit's point of view, unfocused — so the AXFocused
     // write in the body has no responder chain to attach to.
-    make_exact_window_key(target_pid, target_wid);
-    await_window_focused(target_pid, target_wid);
+    let key_request_accepted = make_exact_window_key(target_pid, target_wid);
+    let ax_window_focused = await_window_focused(target_pid, target_wid);
 
-    let result = body();
+    finish_foreground_assist(
+        ForegroundAssistObservation {
+            front_request_accepted: Some(front_request_accepted),
+            key_request_accepted: Some(key_request_accepted),
+            ax_window_focused: Some(ax_window_focused),
+            front_process_matches: None,
+        },
+        observe_front,
+        body,
+        || {
+            if prev_ok {
+                unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+            }
+        },
+    )
+}
 
-    if prev_ok {
-        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+/// Keep observation separate from action success: neither a missing observation
+/// nor a body error skips restoration, replays input, or replaces the error.
+fn finish_foreground_assist(
+    mut observation: ForegroundAssistObservation,
+    observe_front: impl FnOnce() -> Option<bool>,
+    body: impl FnOnce() -> anyhow::Result<()>,
+    restore: impl FnOnce(),
+) -> ForegroundAssistOutcome {
+    observation.front_process_matches = observe_front();
+    tracing::debug!(
+        front_request_accepted = ?observation.front_request_accepted,
+        key_request_accepted = ?observation.key_request_accepted,
+        ax_window_focused = ?observation.ax_window_focused,
+        front_process_matches = ?observation.front_process_matches,
+        "foreground assist before action"
+    );
+    let action_result = body();
+    restore();
+    ForegroundAssistOutcome {
+        action_result,
+        observation,
     }
-
-    result?;
-    Ok(true)
 }
 
 /// Upper bound on how long [`with_foreground_assist`] waits for a requested
@@ -1503,10 +1604,87 @@ fn preserves_exact_existing_focus(
 #[cfg(test)]
 mod tests {
     use super::{
-        focus_failure_hint_from, foreground_turn, make_key_window_record, note_post_status,
-        preserves_exact_existing_focus, reset_windowserver_connection_invalid_for_test,
-        windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
+        finish_foreground_assist, focus_failure_hint_from, foreground_turn, make_key_window_record,
+        note_post_status, preserves_exact_existing_focus,
+        reset_windowserver_connection_invalid_for_test, windowserver_connection_invalid,
+        ForegroundAssistObservation, WINDOWSERVER_INVALID_CONNECTION,
     };
+
+    #[test]
+    fn foreground_assist_requires_observation_not_activation_acknowledgement() {
+        use cua_driver_core::action_record::ActualDelivery;
+
+        let accepted = ForegroundAssistObservation {
+            front_request_accepted: Some(true),
+            key_request_accepted: Some(true),
+            ax_window_focused: Some(true),
+            front_process_matches: Some(true),
+        };
+        for (ax, front, expected) in [
+            (Some(true), Some(true), ActualDelivery::Foreground),
+            (Some(true), Some(false), ActualDelivery::Unknown),
+            (Some(true), None, ActualDelivery::Unknown),
+            (Some(false), Some(true), ActualDelivery::Unknown),
+            (None, Some(true), ActualDelivery::Unknown),
+        ] {
+            let observation = ForegroundAssistObservation {
+                ax_window_focused: ax,
+                front_process_matches: front,
+                ..accepted
+            };
+            assert!(observation.activation_attempted());
+            assert_eq!(observation.actual_delivery(), expected);
+        }
+
+        let unavailable = ForegroundAssistObservation::default();
+        assert!(!unavailable.activation_attempted());
+        assert_eq!(unavailable.actual_delivery(), ActualDelivery::Unknown);
+        let rejected = ForegroundAssistObservation {
+            front_request_accepted: Some(false),
+            key_request_accepted: Some(false),
+            ax_window_focused: Some(true),
+            front_process_matches: Some(false),
+        };
+        // Preserve the legacy branch signal even when activation was rejected.
+        assert!(rejected.activation_attempted());
+        assert_eq!(rejected.actual_delivery(), ActualDelivery::Unknown);
+    }
+
+    #[test]
+    fn foreground_assist_observation_never_replays_body_or_skips_restore() {
+        use std::cell::RefCell;
+
+        for observed_front in [None, Some(false), Some(true)] {
+            for fail_body in [false, true] {
+                let order = RefCell::new(Vec::new());
+                let outcome = finish_foreground_assist(
+                    ForegroundAssistObservation::default(),
+                    || {
+                        order.borrow_mut().push("observe");
+                        observed_front
+                    },
+                    || {
+                        order.borrow_mut().push("body");
+                        if fail_body {
+                            anyhow::bail!("original body error");
+                        }
+                        Ok(())
+                    },
+                    || order.borrow_mut().push("restore"),
+                );
+                assert_eq!(*order.borrow(), ["observe", "body", "restore"]);
+                assert_eq!(outcome.observation.front_process_matches, observed_front);
+                if fail_body {
+                    assert_eq!(
+                        outcome.action_result.unwrap_err().to_string(),
+                        "original body error"
+                    );
+                } else {
+                    outcome.action_result.unwrap();
+                }
+            }
+        }
+    }
 
     #[test]
     fn a_1002_post_status_is_remembered_and_other_failures_are_not() {

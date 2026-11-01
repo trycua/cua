@@ -6190,6 +6190,36 @@ resources:
     }
 
     #[test]
+    fn action_projection_preserves_explicit_unknown_delivery_and_pid_transport() {
+        use crate::action_record::{
+            ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+        };
+
+        let record = ActionExecutionRecord::builder(
+            ActionEffect::Unverifiable,
+            ActionTransport::MacosCgEventPid,
+            RequestedDelivery::Foreground,
+        )
+        .actual_delivery(ActualDelivery::Unknown)
+        .build()
+        .unwrap();
+        let mut result = ToolResult::text("Target foreground was not confirmed; verify state.")
+            .with_structured(serde_json::json!({
+                "path": "cgevent_fg", "delivery_mode": "foreground", "verified": false
+            }))
+            .with_action_record(record);
+
+        publish_action_result(&mut result).unwrap();
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["route"], "synthetic_events");
+        assert_eq!(structured["delivery"]["mode"], "unknown");
+        assert_eq!(structured["effect"], "unverifiable");
+        assert!(structured.get("evidence").is_none());
+        assert!(structured.get("path").is_none());
+        cua_driver_contract::validate_success_output("scroll", structured.clone()).unwrap();
+    }
+
+    #[test]
     fn action_projection_keeps_browser_refusal_diagnostics_and_closes_structured_content() {
         let legacy = serde_json::json!({
             "status": "refused",

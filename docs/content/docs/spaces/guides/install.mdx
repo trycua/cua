@@ -89,6 +89,13 @@ authentication agent, local or over a remote desktop such as xrdp. `sudo apt rem
 turns off what the app set up (see
 [Check, pause or remove](/spaces/guides/add-a-computer#check-pause-or-remove)).
 
+The download page offers the x64 package. On an arm64 machine, take
+`cua-spaces_<version>_arm64.deb` from the
+[GitHub release](https://github.com/trycua/cua/releases) instead: `apt` refuses
+the x64 package there with a list of packages it cannot install. The .deb
+installs the app only. To get the `cua` command as well, run
+`curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only`.
+
 The **AppImage** is a portable build, not a supported one. It cannot use the
 browser sandbox (it starts with `--no-sandbox`), and without the system's
 confirmation prompt you cannot share a Space and the Keyvault is unavailable.

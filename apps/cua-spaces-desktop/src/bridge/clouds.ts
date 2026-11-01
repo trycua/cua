@@ -5,9 +5,10 @@
 // as the SwiftUI host runs them: the SDK's handshake with a Space at an
 // address (`AppModel.addByAddress`), then the row it added; and the
 // daemon's `cloud_status`, `cloud_test` and `cloud_connect` tools for your
-// own clouds (AWS, Google Cloud, Modal). The sheet's rows and words are the
+// own clouds (AWS, Google Cloud, Hetzner, Modal). The sheet's rows and words are the
 // core's; credentials never pass through here (each cloud signs in with
-// its own CLI). A connect reads the clouds again, so New Space offers it.
+// its own CLI), except Hetzner's API token, which rides in the target for
+// one test or connect call and is never stored or logged. A connect reads the clouds again, so New Space offers it.
 import { object, optionalString, string } from "./args";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
@@ -29,6 +30,18 @@ export function cloudsMethods({ model }: BridgeContext): Handlers {
       const row = await model.backend.tool("cloud_connect", target);
       await model.cloud.refresh();
       return row;
+    },
+    "clouds.disconnect": async (args) => {
+      const receipt = await model.backend.tool("cloud_disconnect", { provider: string(args, "provider"), delete: args.deleteResources === true });
+      await model.cloud.refresh();
+      return receipt;
+    },
+    // A person approves or denies what an agent set up: the daemon's
+    // person-only `cloud_approve` (never an MCP tool).
+    "clouds.approve": async (args) => {
+      await model.backend.tool("cloud_approve", { provider: string(args, "provider"), deny: args.approve !== true });
+      await model.cloud.refresh();
+      return null;
     },
   };
 }

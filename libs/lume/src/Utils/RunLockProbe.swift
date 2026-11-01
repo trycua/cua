@@ -11,9 +11,14 @@ protocol RunLockProbe: Sendable {
     /// Process identifiers holding the file at `path` open, in `lsof` order.
     /// Empty means no process has it open. Nil means the probe was inconclusive.
     func lockHolderPIDs(ofFileAt path: String) -> [pid_t]?
+    func recordedOwnerHasFile(pid: pid_t, path: String) -> Bool?
 }
 
 extension RunLockProbe {
+    func recordedOwnerHasFile(pid: pid_t, path: String) -> Bool? {
+        isLiveLockHolder(pid: pid, ofFileAt: path)
+    }
+
     /// The single owning process, matching the "first holder wins" rule that
     /// `stop` and `attach` have always used.
     func lockOwnerPID(ofFileAt path: String) -> pid_t? {
@@ -53,10 +58,18 @@ struct LsofRunLockProbe: RunLockProbe {
         self.timeout = timeout
     }
 
+    func recordedOwnerHasFile(pid: pid_t, path: String) -> Bool? {
+        holders(path: path, selection: ["-a", "-p", String(pid)])?.contains(pid)
+    }
+
     func lockHolderPIDs(ofFileAt path: String) -> [pid_t]? {
+        holders(path: path, selection: [])
+    }
+
+    private func holders(path: String, selection: [String]) -> [pid_t]? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        process.arguments = ["-n", "-P", "-w", "-t", path]
+        process.arguments = ["-n", "-P", "-w"] + selection + ["-t", path]
         let output = Pipe()
         process.standardOutput = output
         // Share one pipe so exit 1 with no bytes means "no holders", while an

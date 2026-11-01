@@ -16,6 +16,7 @@ on:
           - sway
           - sway-xwayland
           - cua-compositor
+          - niri
       lane:
         description: "Diagnostic lane; canonical dispatches use all"
         required: false
@@ -109,8 +110,8 @@ jobs:
             libxext-dev libdrm-dev libgbm-dev libwebkit2gtk-4.1-dev \
             libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
             ffmpeg jq gnome-keyring
-      - name: Install Nix for the custom compositor environment
-        if: inputs.environment == 'cua-compositor'
+      - name: Install Nix for the nested compositor environments
+        if: inputs.environment == 'cua-compositor' || inputs.environment == 'niri'
         uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
@@ -123,6 +124,9 @@ jobs:
           if [[ "${{ inputs.environment }}" == "cua-compositor" ]]; then
             nix develop .#cua-driver-inject-e2e \
               -c scripts/ci/linux/run-rust-e2e-inject.sh
+          elif [[ "${{ inputs.environment }}" == "niri" ]]; then
+            nix develop .#cua-driver-niri-e2e \
+              -c scripts/ci/linux/run-rust-e2e-wayland.sh
           else
             scripts/ci/linux/run-rust-e2e-wayland.sh
           fi

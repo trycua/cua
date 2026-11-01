@@ -109,14 +109,17 @@ export function notchTeleport(handle: () => TeleportLike | null): NotchTeleport 
 /**
  * Feeds the notch the Spaces, the "Spaces tab in the notch" setting, the live
  * Keyvault sign-ins (less the copies dismissed from the notch: the SwiftUI
- * app's `syncNotchKeyvault`) and the activity, now and on every change.
+ * app's `syncNotchKeyvault`), the pinned Spaces and desktops and the
+ * activity, now and on every change.
  * Returns the stop.
  */
-export function feedNotch(notch: Pick<Notch, "setSpaces" | "setShown" | "setActivity" | "setKeyvault">, model: AppModel): () => void {
+export function feedNotch(notch: Pick<Notch, "setSpaces" | "setShown" | "setActivity" | "setKeyvault" | "setPinned">, model: AppModel): () => void {
   const keyvault = () => notch.setKeyvault(model.keyvault.notchLabel, model.keyvault.signedIn(model.spaces, true));
   const spaces = () => {
     notch.setSpaces(model.spaces);
     notch.setShown(!model.settings.menuBar);
+    // Pinned tiles come first; the pins follow the settings file.
+    notch.setPinned(model.settings.notchPinned);
     // The tiles' key follows the Spaces too.
     keyvault();
   };

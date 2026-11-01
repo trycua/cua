@@ -12,7 +12,6 @@
 #   uv.lock            uv lock --check
 #
 # Every lockfile is restored afterwards: the check never leaves changes.
-# libs/fleet is a read-only mirror and is skipped.
 #
 # Usage: scripts/ci/check-lockfiles.sh [--list] [--kind cargo|pnpm|npm|uv]...
 #
@@ -63,12 +62,12 @@ wanted() {
   return 1
 }
 
-# Tracked and new (not ignored) lockfiles, outside the mirror and build dirs.
+# Tracked and new (not ignored) lockfiles, outside build dirs.
 discover() {
   git ls-files --cached --others --exclude-standard -- \
     '*Cargo.lock' '*pnpm-lock.yaml' '*package-lock.json' '*uv.lock' \
     '*bun.lock' '*bun.lockb' '*yarn.lock' |
-    grep -Ev '(^|/)(node_modules|target)/|^libs/fleet/' | sort -u
+    grep -Ev '(^|/)(node_modules|target)/' | sort -u
 }
 
 allowed() {

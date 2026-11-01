@@ -1,0 +1,4570 @@
+{
+ "e2b_version": "2.42.0",
+ "recorded": "2026-10-21",
+ "results": {
+  "argument_rules": {
+   "ok": {
+    "since": "2.56"
+   }
+  },
+  "background": {
+   "ok": {
+    "callback": "done\n",
+    "exit_code_after": 0,
+    "exit_code_before": null,
+    "handle_type": "AsyncCommandHandle",
+    "pid_is_int": true,
+    "result": {
+     "error": null,
+     "exit_code": 0,
+     "stderr": "",
+     "stdout": "done\n",
+     "type": "CommandResult"
+    }
+   }
+  },
+  "background_disconnect_keeps_running": {
+   "ok": "late\n"
+  },
+  "background_kill": {
+   "ok": {
+    "kill": true,
+    "wait_raised": {
+     "error": "signal: killed",
+     "exit_code": -1,
+     "mro": [
+      "CommandExitException",
+      "SandboxException",
+      "CommandResult"
+     ],
+     "stderr": "",
+     "stdout": "",
+     "str": "Command exited with code -1 and error:\n",
+     "type": "CommandExitException"
+    }
+   }
+  },
+  "background_nonzero": {
+   "raised": {
+    "error": "exit status 5",
+    "exit_code": 5,
+    "mro": [
+     "CommandExitException",
+     "SandboxException",
+     "CommandResult"
+    ],
+    "stderr": "",
+    "stdout": "",
+    "str": "Command exited with code 5 and error:\n",
+    "type": "CommandExitException"
+   }
+  },
+  "cmd_background_survives_handle_gc": {
+   "ok": "gc\n"
+  },
+  "cmd_concurrent_20": {
+   "ok": {
+    "errors": [],
+    "outputs_match": true,
+    "ran_in_parallel": true,
+    "succeeded": 20
+   }
+  },
+  "cmd_connect_running": {
+   "ok": {
+    "exit_code": 0,
+    "handle_type": "AsyncCommandHandle",
+    "new_output_only": true,
+    "original_full": true,
+    "reaches_end": true,
+    "reconnect": {
+     "error": null,
+     "exit_code": 0,
+     "stderr": "",
+     "stdout": "end\n",
+     "type": "CommandResult"
+    },
+    "result_stdout_equals_callback": true,
+    "same_pid": true
+   }
+  },
+  "cmd_cwd_and_user_errors": {
+   "ok": {
+    "cwd_is_file": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "error starting process '/bin/bash -l -c pwd': fork/exec /bin/sh: not a directory",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "empty_command": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandResult"
+     }
+    },
+    "missing_cwd": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "cwd '/no/such/dir-conf' does not exist",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "missing_user": {
+     "raised": {
+      "mro": [
+       "AuthenticationException"
+      ],
+      "text": "invalid username: 'nosuchuser'",
+      "type": "AuthenticationException"
+     }
+    },
+    "only_spaces": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandResult"
+     }
+    },
+    "relative_cwd": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "cwd '/home/user/tmp' does not exist",
+      "type": "InvalidArgumentException"
+     }
+    }
+   }
+  },
+  "cmd_envs_precedence": {
+   "ok": {
+    "bad_name": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "ok",
+      "type": "CommandResult"
+     }
+    },
+    "call_overrides": "sandbox|call|c|set:[]",
+    "equals": true,
+    "leading_space": true,
+    "newlines": true,
+    "quotes": true,
+    "sandbox_only": "sandbox|from-sandbox||unset",
+    "unicode": true
+   }
+  },
+  "cmd_exit_codes": {
+   "ok": {
+    "exit_137": {
+     "raised": {
+      "error": "exit status 137",
+      "exit_code": 137,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code 137 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "exit_255": {
+     "raised": {
+      "error": "exit status 255",
+      "exit_code": 255,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code 255 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "exit_256": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandResult"
+     }
+    },
+    "exit_neg": {
+     "raised": {
+      "error": "exit status 255",
+      "exit_code": 255,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code 255 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "not_executable": {
+     "raised": {
+      "error": "exit status 126",
+      "exit_code": 126,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "/bin/bash: line 1: /etc/passwd: Permission denied\n",
+      "stdout": "",
+      "str": "Command exited with code 126 and error:\n/bin/bash: line 1: /etc/passwd: Permission denied\n",
+      "type": "CommandExitException"
+     }
+    },
+    "not_found": {
+     "raised": {
+      "error": "exit status 127",
+      "exit_code": 127,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "/bin/bash: line 1: no-such-command-conf: command not found\n",
+      "stdout": "",
+      "str": "Command exited with code 127 and error:\n/bin/bash: line 1: no-such-command-conf: command not found\n",
+      "type": "CommandExitException"
+     }
+    },
+    "sigkill_self": {
+     "raised": {
+      "error": "signal: killed",
+      "exit_code": -1,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code -1 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "sigsegv_self": {
+     "raised": {
+      "error": "signal: segmentation fault",
+      "exit_code": -1,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code -1 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "sigterm_child": {
+     "raised": {
+      "error": "exit status 143",
+      "exit_code": 143,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code 143 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "sigterm_self": {
+     "raised": {
+      "error": "signal: terminated",
+      "exit_code": -1,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code -1 and error:\n",
+      "type": "CommandExitException"
+     }
+    }
+   }
+  },
+  "cmd_handle_live": {
+   "ok": {
+    "after": {
+     "exit_code": 0,
+     "stderr": "err\n",
+     "stdout": "one\ntwo\n"
+    },
+    "live": {
+     "error": null,
+     "exit_code": null,
+     "stderr": "",
+     "stdout": "one\n"
+    },
+    "result_is_handle_state": true
+   }
+  },
+  "cmd_interleaved_order": {
+   "ok": {
+    "seq": [
+     [
+      "out",
+      "o1\n"
+     ],
+     [
+      "err",
+      "e1\n"
+     ],
+     [
+      "out",
+      "o2\n"
+     ],
+     [
+      "err",
+      "e2\n"
+     ],
+     [
+      "out",
+      "o3\n"
+     ],
+     [
+      "err",
+      "e3\n"
+     ]
+    ],
+    "stderr": "e1\ne2\ne3\n",
+    "stdout": "o1\no2\no3\n"
+   }
+  },
+  "cmd_list_fields": {
+   "ok": {
+    "args": [
+     "-l",
+     "-c",
+     "sleep 31"
+    ],
+    "cmd": "/bin/bash",
+    "cwd": "/tmp",
+    "env_has_call_env": "1",
+    "env_is_dict": true,
+    "fields": [
+     "args",
+     "cmd",
+     "cwd",
+     "envs",
+     "pid",
+     "tag"
+    ],
+    "found": true,
+    "pid_is_int": true,
+    "tag": null,
+    "type": "ProcessInfo"
+   }
+  },
+  "cmd_output_10mb": {
+   "ok": {
+    "callback_equal": true,
+    "exit_code": 0,
+    "len": 10485760,
+    "sha": "e78836de0315ab8cecd304bfe58d081af6189366ed152679ce03cd95079392f2",
+    "stderr": ""
+   }
+  },
+  "cmd_output_1mb": {
+   "ok": {
+    "callback_equal": true,
+    "exit_code": 0,
+    "len": 1048576,
+    "sha": "09fffe39f6c0e00aa43661d1a4c83f1c0edb724fa4deeb7f007f5a9122280c6c",
+    "stderr": ""
+   }
+  },
+  "cmd_output_binary": {
+   "ok": {
+    "chunks": [
+     "a��\u0000b�c"
+    ],
+    "stderr": "",
+    "stdout": "a��\u0000b�c"
+   }
+  },
+  "cmd_output_multibyte_split": {
+   "ok": {
+    "chunks": [
+     "é",
+     "✓"
+    ],
+    "stdout": "é✓"
+   }
+  },
+  "cmd_pty_kill": {
+   "ok": {
+    "kill": true,
+    "wait": {
+     "raised": {
+      "error": "signal: killed",
+      "exit_code": -1,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code -1 and error:\n",
+      "type": "CommandExitException"
+     }
+    }
+   }
+  },
+  "cmd_pty_session": {
+   "ok": {
+    "chunk_type": "bytes",
+    "connect_sees_new": true,
+    "connect_skips_old": true,
+    "cwd": "/tmp",
+    "env": "1",
+    "exit": {
+     "raised": {
+      "error": "exit status 3",
+      "exit_code": 3,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code 3 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "handle_type": "AsyncCommandHandle",
+    "initial_size": "24 80",
+    "kill_exited": {
+     "ok": false
+    },
+    "kill_unknown": {
+     "ok": false
+    },
+    "listed": {
+     "args": [
+      "-i",
+      "-l"
+     ],
+     "cmd": "/bin/bash",
+     "cwd": "/tmp"
+    },
+    "pid_is_int": true,
+    "resize_unknown": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    },
+    "resized": "40 120",
+    "send_unknown": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    },
+    "term": "xterm-256color"
+   }
+  },
+  "cmd_pty_sizes": {
+   "ok": {
+    "tiny": "1 1",
+    "wide": "50 300"
+   }
+  },
+  "cmd_pty_stream_input": {
+   "ok": {
+    "since": "2.58"
+   }
+  },
+  "cmd_run_as_root_and_env": {
+   "ok": [
+    "root",
+    "/root",
+    "/home/user",
+    ""
+   ]
+  },
+  "cmd_stdin_variants": {
+   "ok": {
+    "binary_256": {
+     "ok": true
+    },
+    "bytes_unicode": {
+     "ok": "héllo ✓\n"
+    },
+    "close_twice": [
+     {
+      "ok": null
+     },
+     {
+      "raised": {
+       "mro": [
+        "NotFoundException",
+        "SandboxException"
+       ],
+       "text": "process with pid <n> not found",
+       "type": "NotFoundException"
+      }
+     }
+    ],
+    "no_stdin_flag": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    },
+    "one_mb_chunks": {
+     "ok": true
+    },
+    "one_mb_one_send": {
+     "ok": true
+    },
+    "send_after_close": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    },
+    "str_unicode": {
+     "ok": "héllo ✓\n"
+    }
+   }
+  },
+  "cmd_stream_input": {
+   "ok": {
+    "since": "2.58"
+   }
+  },
+  "cmd_tag": {
+   "ok": {
+    "since": "2.56"
+   }
+  },
+  "cmd_timeouts": {
+   "ok": {
+    "survived_after_timeout": "n",
+    "timeout_0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "ok\n",
+      "type": "CommandResult"
+     }
+    },
+    "timeout_1": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "Request timed out: This error is likely due to exceeding 'timeout' — the total time a long running request (like process or directory watch) can be active — or 'request_timeout'. You can modify these by passing 'timeout' or 'request_timeout' when making the request. Use '0' to disable the timeout.",
+      "type": "TimeoutException"
+     }
+    },
+    "timeout_float": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "Request timed out: This error is likely due to exceeding 'timeout' — the total time a long running request (like process or directory watch) can be active — or 'request_timeout'. You can modify these by passing 'timeout' or 'request_timeout' when making the request. Use '0' to disable the timeout.",
+      "type": "TimeoutException"
+     }
+    }
+   }
+  },
+  "cmd_unknown_and_exited_pids": {
+   "ok": {
+    "close_stdin_unknown": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    },
+    "connect_exited": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandResult"
+     }
+    },
+    "connect_unknown": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    },
+    "kill_exited": {
+     "ok": false
+    },
+    "kill_unknown": {
+     "ok": false
+    },
+    "send_stdin_exited": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    },
+    "send_stdin_unknown": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    }
+   }
+  },
+  "cmd_wait_twice": {
+   "ok": {
+    "equal": true,
+    "error_after": "exit status 2",
+    "exit_code_after": 2,
+    "failing_first": {
+     "raised": {
+      "error": "exit status 2",
+      "exit_code": 2,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "b\n",
+      "str": "Command exited with code 2 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "failing_second": {
+     "raised": {
+      "error": "exit status 2",
+      "exit_code": 2,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "b\n",
+      "str": "Command exited with code 2 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "same_object": true
+   }
+  },
+  "commands_list": {
+   "ok": {
+    "found": true,
+    "type": "ProcessInfo"
+   }
+  },
+  "connect_reboot": {
+   "ok": {
+    "since": "2.56"
+   }
+  },
+  "files": {
+   "ok": {
+    "bytes_type": "bytearray",
+    "exists_after_remove": false,
+    "info": [
+     "EntryInfo",
+     "a.txt",
+     "FileType.FILE",
+     6
+    ],
+    "stream": "héllo",
+    "text": "héllo",
+    "write": [
+     "a.txt",
+     "/tmp/conf/a.txt",
+     "FileType.FILE"
+    ],
+    "write_type": "WriteInfo"
+   }
+  },
+  "files_owner": {
+   "ok": {
+    "default_differs": true,
+    "root": "root"
+   }
+  },
+  "files_write_root_only_dir": {
+   "ok": "ok"
+  },
+  "fork_running": {
+   "ok": {
+    "all_sandboxes": true,
+    "count": 2,
+    "count_21": "SandboxException",
+    "distinct_ids": true,
+    "file": "kept",
+    "parent_running": true,
+    "process_survived": true
+   }
+  },
+  "fs_binary_roundtrip": {
+   "ok": {
+    "bytes_type": "bytearray",
+    "equal": true,
+    "invalid_utf8_bytes": "6f6bfffe656e64",
+    "invalid_utf8_text": {
+     "ok": "ok��end"
+    },
+    "size": 256,
+    "text_of_binary": {
+     "ok": [
+      256,
+      128
+     ]
+    }
+   }
+  },
+  "fs_dir_misuse": {
+   "ok": {
+    "list_empty_path": {
+     "ok": [
+      [
+       "EntryInfo",
+       ".bash_history",
+       "FileType.FILE",
+       "/home/user/.bash_history"
+      ],
+      [
+       "EntryInfo",
+       ".bash_logout",
+       "FileType.FILE",
+       "/home/user/.bash_logout"
+      ],
+      [
+       "EntryInfo",
+       ".bashrc",
+       "FileType.FILE",
+       "/home/user/.bashrc"
+      ],
+      [
+       "EntryInfo",
+       ".profile",
+       "FileType.FILE",
+       "/home/user/.profile"
+      ]
+     ]
+    },
+    "read_dir_bytes": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-dirs' is a directory",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "read_dir_text": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-dirs' is a directory",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "read_empty_path": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path '/home/user' is a directory",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "write_empty_path": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path is a directory: /home/user",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "write_into_file_as_dir": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "500: error ensuring directories: path is a file: /etc/hostname",
+      "type": "SandboxException"
+     }
+    },
+    "write_onto_dir": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path is a directory: /tmp/conf-dirs",
+      "type": "InvalidArgumentException"
+     }
+    }
+   }
+  },
+  "fs_empty_file": {
+   "ok": {
+    "bytes": 0,
+    "rewrite_empty_in_tmp": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "500: error opening file: open /tmp/conf-empty.txt: permission denied",
+      "type": "SandboxException"
+     }
+    },
+    "size": 0,
+    "stream": [],
+    "text": "",
+    "write": [
+     "conf-empty.txt",
+     "/tmp/conf-empty.txt"
+    ]
+   }
+  },
+  "fs_entry_fields": {
+   "ok": {
+    "dir": {
+     "class": "EntryInfo",
+     "fields": [
+      "group",
+      "metadata",
+      "mode",
+      "modified_time",
+      "name",
+      "owner",
+      "path",
+      "permissions",
+      "size",
+      "symlink_target",
+      "type"
+     ],
+     "group_type": "str",
+     "mode": "0o755",
+     "mtime_aware": true,
+     "mtime_recent": true,
+     "name": "a",
+     "owner_type": "str",
+     "path_ok": true,
+     "permissions": "drwxr-xr-x",
+     "size": 60,
+     "symlink_target": null,
+     "type": "FileType.DIR"
+    },
+    "file": {
+     "class": "EntryInfo",
+     "fields": [
+      "group",
+      "metadata",
+      "mode",
+      "modified_time",
+      "name",
+      "owner",
+      "path",
+      "permissions",
+      "size",
+      "symlink_target",
+      "type"
+     ],
+     "group_type": "str",
+     "mode": "0o644",
+     "mtime_aware": true,
+     "mtime_recent": true,
+     "name": "top.txt",
+     "owner_type": "str",
+     "path_ok": true,
+     "permissions": "-rw-r--r--",
+     "size": 2,
+     "symlink_target": null,
+     "type": "FileType.FILE"
+    }
+   }
+  },
+  "fs_error_texts": {
+   "ok": {
+    "bytes_missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-nope-404' does not exist",
+      "type": "FileNotFoundException"
+     }
+    },
+    "get_info_missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "file not found: lstat /tmp/conf-nope-404: no such file or directory",
+      "type": "FileNotFoundException"
+     }
+    },
+    "list_missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path not found: lstat /tmp/conf-nope-404: no such file or directory",
+      "type": "FileNotFoundException"
+     }
+    },
+    "read_missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-nope-404' does not exist",
+      "type": "FileNotFoundException"
+     }
+    },
+    "rename_missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "source file not found: rename /tmp/conf-nope-404 /tmp/conf-x: no such file or directory",
+      "type": "FileNotFoundException"
+     }
+    }
+   }
+  },
+  "fs_get_info_and_exists": {
+   "ok": {
+    "a": {
+     "exists": {
+      "ok": true
+     },
+     "info": {
+      "ok": "FileType.DIR"
+     }
+    },
+    "broken": {
+     "exists": {
+      "ok": true
+     },
+     "info": {
+      "ok": "None"
+     }
+    },
+    "empty": {
+     "exists": {
+      "ok": true
+     },
+     "info": {
+      "ok": "FileType.DIR"
+     }
+    },
+    "exists_denied": {
+     "ok": false
+    },
+    "exists_file_under_file": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "Code.INTERNAL: error getting file info: lstat /tmp/conf-tree/top.txt/x: not a directory",
+      "type": "SandboxException"
+     }
+    },
+    "exists_root_dir": {
+     "ok": true
+    },
+    "link": {
+     "exists": {
+      "ok": true
+     },
+     "info": {
+      "ok": "FileType.FILE"
+     }
+    },
+    "missing": {
+     "exists": {
+      "ok": false
+     },
+     "info": {
+      "raised": {
+       "mro": [
+        "FileNotFoundException",
+        "NotFoundException",
+        "SandboxException"
+       ],
+       "text": "file not found: lstat /tmp/conf-tree/missing: no such file or directory",
+       "type": "FileNotFoundException"
+      }
+     }
+    },
+    "top.txt": {
+     "exists": {
+      "ok": true
+     },
+     "info": {
+      "ok": "FileType.FILE"
+     }
+    }
+   }
+  },
+  "fs_large_directory": {
+   "ok": {
+    "all_files": true,
+    "count": 500,
+    "names_ok": true
+   }
+  },
+  "fs_large_roundtrip": {
+   "ok": {
+    "read": {
+     "ok": [
+      20971520,
+      true
+     ]
+    },
+    "size": 20971520,
+    "write": {
+     "ok": true
+    }
+   }
+  },
+  "fs_list_depth": {
+   "ok": {
+    "default": {
+     "ok": [
+      ".hidden|/.hidden|FileType.FILE",
+      "a|/a|FileType.DIR",
+      "dirlink|/dirlink|FileType.DIR",
+      "empty|/empty|FileType.DIR",
+      "link|/link|FileType.FILE",
+      "top.txt|/top.txt|FileType.FILE"
+     ]
+    },
+    "depth_0": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "depth should be at least 1",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "depth_1": {
+     "ok": [
+      ".hidden|/.hidden|FileType.FILE",
+      "a|/a|FileType.DIR",
+      "dirlink|/dirlink|FileType.DIR",
+      "empty|/empty|FileType.DIR",
+      "link|/link|FileType.FILE",
+      "top.txt|/top.txt|FileType.FILE"
+     ]
+    },
+    "depth_2": {
+     "ok": [
+      ".hidden|/.hidden|FileType.FILE",
+      "a|/a|FileType.DIR",
+      "b|/a/b|FileType.DIR",
+      "dirlink|/dirlink|FileType.DIR",
+      "empty|/empty|FileType.DIR",
+      "link|/link|FileType.FILE",
+      "mid.txt|/a/mid.txt|FileType.FILE",
+      "top.txt|/top.txt|FileType.FILE"
+     ]
+    },
+    "depth_3": {
+     "ok": [
+      ".hidden|/.hidden|FileType.FILE",
+      "a|/a|FileType.DIR",
+      "b|/a/b|FileType.DIR",
+      "c.txt|/a/b/c.txt|FileType.FILE",
+      "dirlink|/dirlink|FileType.DIR",
+      "empty|/empty|FileType.DIR",
+      "link|/link|FileType.FILE",
+      "mid.txt|/a/mid.txt|FileType.FILE",
+      "top.txt|/top.txt|FileType.FILE"
+     ]
+    },
+    "depth_99": {
+     "ok": [
+      ".hidden|/.hidden|FileType.FILE",
+      "a|/a|FileType.DIR",
+      "b|/a/b|FileType.DIR",
+      "c.txt|/a/b/c.txt|FileType.FILE",
+      "dirlink|/dirlink|FileType.DIR",
+      "empty|/empty|FileType.DIR",
+      "link|/link|FileType.FILE",
+      "mid.txt|/a/mid.txt|FileType.FILE",
+      "top.txt|/top.txt|FileType.FILE"
+     ]
+    },
+    "depth_neg": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "depth should be at least 1",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "depth_none": {
+     "ok": [
+      ".hidden",
+      "a",
+      "dirlink",
+      "empty",
+      "link",
+      "top.txt"
+     ]
+    },
+    "empty_dir": {
+     "ok": []
+    },
+    "nonexistent": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path not found: lstat /tmp/conf-no-such-dir: no such file or directory",
+      "type": "FileNotFoundException"
+     }
+    },
+    "on_file": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path is not a directory: /tmp/conf-tree/top.txt",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "through_symlink": {
+     "ok": [
+      "b",
+      "mid.txt"
+     ]
+    },
+    "trailing_slash": {
+     "ok": [
+      ".hidden",
+      "a",
+      "dirlink",
+      "empty",
+      "link",
+      "top.txt"
+     ]
+    }
+   }
+  },
+  "fs_make_dir": {
+   "ok": {
+    "existing": {
+     "ok": false
+    },
+    "existing_parent": {
+     "ok": false
+    },
+    "mode": "0o755",
+    "nested": {
+     "ok": true
+    },
+    "over_file": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path already exists but it is not a directory: /tmp/conf-mkdir/file.txt",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "trailing_slash": {
+     "ok": true
+    },
+    "under_file": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "Code.INTERNAL: error getting file info: stat /tmp/conf-mkdir/file.txt/sub: not a directory",
+      "type": "SandboxException"
+     }
+    },
+    "unicode": {
+     "ok": true
+    }
+   }
+  },
+  "fs_metadata_roundtrip": {
+   "ok": {
+    "after_overwrite_without": {
+     "ok": null
+    },
+    "after_rename": {
+     "kind": "input",
+     "owner": "me",
+     "path-like": "a/b c"
+    },
+    "info": {
+     "kind": "input",
+     "owner": "me",
+     "path-like": "a/b c"
+    },
+    "listed": {
+     "m.txt": {
+      "kind": "input",
+      "owner": "me",
+      "path-like": "a/b c"
+     },
+     "n.txt": {
+      "batch": "1"
+     }
+    },
+    "overwrite_write": {
+     "ok": null
+    },
+    "plain_file": null,
+    "write": {
+     "kind": "input",
+     "owner": "me",
+     "path-like": "a/b c"
+    },
+    "write_files": [
+     {
+      "batch": "1"
+     }
+    ]
+   }
+  },
+  "fs_metadata_validation": {
+   "ok": {
+    "empty_key": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "Invalid metadata key '': keys must be non-empty and use only HTTP token characters (letters, digits and !#$%&'*+-.^_`|~).",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "int_value": {
+     "raised": {
+      "mro": [],
+      "text": "expected string or bytes-like object, got 'int'",
+      "type": "TypeError"
+     }
+    },
+    "long_key": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "invalid metadata: metadata key \"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\" exceeds 246 bytes",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "long_value": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "invalid metadata: total metadata size 5010 exceeds 4096 bytes",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "many_keys": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "431: Request Header Fields Too Large",
+      "type": "SandboxException"
+     }
+    },
+    "none_value": {
+     "raised": {
+      "mro": [],
+      "text": "expected string or bytes-like object, got 'NoneType'",
+      "type": "TypeError"
+     }
+    },
+    "not_a_dict": {
+     "raised": {
+      "mro": [],
+      "text": "'list' object has no attribute 'items'",
+      "type": "AttributeError"
+     }
+    },
+    "spaces_and_symbols": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "Invalid metadata key 'a b': keys must be non-empty and use only HTTP token characters (letters, digits and !#$%&'*+-.^_`|~).",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "unicode": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "Invalid metadata key 'ключ': keys must be non-empty and use only HTTP token characters (letters, digits and !#$%&'*+-.^_`|~).",
+      "type": "InvalidArgumentException"
+     }
+    }
+   }
+  },
+  "fs_mode_owner_default": {
+   "ok": {
+    "dir": {
+     "mode": "0o755",
+     "owner_is_me": true,
+     "permissions": "drwxr-xr-x"
+    },
+    "file": {
+     "group": "user",
+     "group_is_mine": true,
+     "mode": "0o644",
+     "owner": "user",
+     "owner_is_me": true,
+     "permissions": "-rw-r--r--"
+    },
+    "touch_mode": "644",
+    "umask": "0022",
+    "write_type": "WriteInfo"
+   }
+  },
+  "fs_mode_owner_root": {
+   "ok": {
+    "dir": [
+     "0o755",
+     "root"
+    ],
+    "file": [
+     "0o644",
+     "-rw-r--r--",
+     "root",
+     "root"
+    ]
+   }
+  },
+  "fs_names": {
+   "ok": {
+    "-dash.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "-dash.txt",
+       true
+      ]
+     }
+    },
+    "_listed": [
+     "-dash.txt",
+     "a#b.txt",
+     "back\\slash.txt",
+     "d\"quote.txt",
+     "emoji-😀.txt",
+     "héllo wörld.txt",
+     "new\nline.txt",
+     "p%20x.txt",
+     "plus+sign.txt",
+     "q'uote.txt",
+     "q?x.txt",
+     "semi;colon&amp.txt",
+     "sp ace.txt",
+     "tab\there.txt",
+     "日本語.txt"
+    ],
+    "a#b.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "a#b.txt",
+       true
+      ]
+     }
+    },
+    "back\\slash.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "back\\slash.txt",
+       true
+      ]
+     }
+    },
+    "d\"quote.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "d\"quote.txt",
+       true
+      ]
+     }
+    },
+    "emoji-😀.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "emoji-😀.txt",
+       true
+      ]
+     }
+    },
+    "héllo wörld.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "héllo wörld.txt",
+       true
+      ]
+     }
+    },
+    "new\nline.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "new\nline.txt",
+       true
+      ]
+     }
+    },
+    "p%20x.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "p%20x.txt",
+       true
+      ]
+     }
+    },
+    "plus+sign.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "plus+sign.txt",
+       true
+      ]
+     }
+    },
+    "q'uote.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "q'uote.txt",
+       true
+      ]
+     }
+    },
+    "q?x.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "q?x.txt",
+       true
+      ]
+     }
+    },
+    "semi;colon&amp.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "semi;colon&amp.txt",
+       true
+      ]
+     }
+    },
+    "sp ace.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "sp ace.txt",
+       true
+      ]
+     }
+    },
+    "tab\there.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "tab\there.txt",
+       true
+      ]
+     }
+    },
+    "日本語.txt": {
+     "exists": {
+      "ok": true
+     },
+     "read_ok": {
+      "ok": true
+     },
+     "write": {
+      "ok": [
+       "日本語.txt",
+       true
+      ]
+     }
+    }
+   }
+  },
+  "fs_overwrite": {
+   "ok": {
+    "bytes_shorter": "01",
+    "home": {
+     "first": {
+      "ok": "conf-overwrite.txt"
+     },
+     "second": {
+      "ok": "conf-overwrite.txt"
+     },
+     "size": {
+      "ok": 5
+     },
+     "text": {
+      "ok": "short"
+     }
+    },
+    "remove_then_write_in_tmp": "two",
+    "tmp": {
+     "first": {
+      "ok": "conf-overwrite.txt"
+     },
+     "second": {
+      "raised": {
+       "mro": [
+        "SandboxException"
+       ],
+       "text": "500: error opening file: open /tmp/conf-overwrite.txt: permission denied",
+       "type": "SandboxException"
+      }
+     },
+     "size": {
+      "ok": 27
+     },
+     "text": {
+      "ok": "a much longer first content"
+     }
+    }
+   }
+  },
+  "fs_permission_denied": {
+   "ok": {
+    "list_unreadable_dir": {
+     "ok": [
+      [
+       "EntryInfo",
+       "in.txt",
+       "FileType.FILE",
+       "/tmp/conf-perm/locked-dir/in.txt"
+      ]
+     ]
+    },
+    "make_dir_in_etc": {
+     "ok": true
+    },
+    "read_unreadable": {
+     "ok": "secret"
+    },
+    "write_into_locked_dir": {
+     "ok": [
+      "WriteInfo",
+      "new.txt",
+      "FileType.FILE",
+      "/tmp/conf-perm/locked-dir/new.txt"
+     ]
+    },
+    "write_to_etc": {
+     "ok": [
+      "WriteInfo",
+      "conf-nope.txt",
+      "FileType.FILE",
+      "/etc/conf-nope.txt"
+     ]
+    },
+    "write_to_root_dir": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "500: error opening file: open /proc/conf-nope.txt: no such file or directory",
+      "type": "SandboxException"
+     }
+    },
+    "write_unwritable": {
+     "ok": [
+      "WriteInfo",
+      "locked.txt",
+      "FileType.FILE",
+      "/tmp/conf-perm/locked.txt"
+     ]
+    }
+   }
+  },
+  "fs_permission_other_user": {
+   "ok": {
+    "default_reads_root_file": {
+     "ok": "r"
+    },
+    "missing_user": {
+     "raised": {
+      "mro": [
+       "AuthenticationException"
+      ],
+      "text": "error looking up user 'nosuchuser': user: unknown user nosuchuser",
+      "type": "AuthenticationException"
+     }
+    },
+    "other_user_read": {
+     "ok": "mine"
+    },
+    "remove_root_file_as_user": {
+     "ok": null
+    },
+    "root_reads_any": {
+     "ok": "mine"
+    },
+    "write_root_file_as_user": {
+     "ok": [
+      "WriteInfo",
+      "rootfile.txt",
+      "FileType.FILE",
+      "/tmp/conf-perm-user/rootfile.txt"
+     ]
+    }
+   }
+  },
+  "fs_relative_paths": {
+   "ok": {
+    "dotdot": {
+     "ok": true
+    },
+    "relative_exists": {
+     "ok": true
+    },
+    "relative_in_home": "rel",
+    "relative_listed": {
+     "ok": true
+    },
+    "relative_make_dir": {
+     "ok": true
+    },
+    "relative_read": {
+     "ok": "rel"
+    },
+    "relative_write": {
+     "ok": [
+      "conf-rel.txt",
+      true
+     ]
+    },
+    "tilde_in_home": "tilde",
+    "tilde_read": {
+     "ok": "tilde"
+    },
+    "tilde_write": {
+     "ok": [
+      "conf-tilde.txt",
+      true
+     ]
+    }
+   }
+  },
+  "fs_remove": {
+   "ok": {
+    "dir_gone": true,
+    "dir_with_contents": {
+     "ok": null
+    },
+    "file": {
+     "ok": null
+    },
+    "file_gone": true,
+    "missing": {
+     "ok": null
+    },
+    "missing_parent": {
+     "ok": null
+    },
+    "root_dir": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "Code.INTERNAL: error removing file or directory: openfdat /proc/1/task/1/fd/0: operation not permitted",
+      "type": "SandboxException"
+     }
+    }
+   }
+  },
+  "fs_remove_other_user": {
+   "ok": {
+    "as_default_user": {
+     "ok": null
+    },
+    "as_root": {
+     "ok": null
+    },
+    "still_there": false
+   }
+  },
+  "fs_rename": {
+   "ok": {
+    "dir_contents": {
+     "ok": "in"
+    },
+    "dir_over_file": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "Code.INTERNAL: error renaming: rename /tmp/conf-mv/dir2 /tmp/conf-mv/plain1.txt: not a directory",
+      "type": "SandboxException"
+     },
+     "source_exists_after": true
+    },
+    "dir_rename": {
+     "ok": [
+      "EntryInfo",
+      "dir2",
+      "/dir2",
+      "FileType.DIR"
+     ]
+    },
+    "file_over_dir": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "Code.INTERNAL: error renaming: rename /tmp/conf-mv/plain2.txt /tmp/conf-mv/dir3: file exists",
+      "type": "SandboxException"
+     },
+     "source_exists_after": true
+    },
+    "into_missing_dir": {
+     "ok": [
+      "EntryInfo",
+      "b.txt",
+      "/new/deep/b.txt",
+      "FileType.FILE"
+     ]
+    },
+    "missing_source": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "source file not found: rename /tmp/conf-mv/nope /tmp/conf-mv/x: no such file or directory",
+      "type": "FileNotFoundException"
+     }
+    },
+    "over_existing": {
+     "ok": [
+      "EntryInfo",
+      "b.txt",
+      "/b.txt",
+      "FileType.FILE"
+     ]
+    },
+    "over_existing_content": "a",
+    "same_path": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "Code.INTERNAL: error renaming: rename /tmp/conf-mv/dir2 /tmp/conf-mv/dir2: file exists",
+      "type": "SandboxException"
+     }
+    },
+    "source_gone": true
+   }
+  },
+  "fs_stream_read": {
+   "ok": {
+    "aclose": {
+     "ok": null
+    },
+    "aclose_twice": {
+     "ok": null
+    },
+    "async_with_total": true,
+    "bad_format": {
+     "ok": null
+    },
+    "chunk_type": "bytes",
+    "chunked": true,
+    "early_first_chunk": true,
+    "read_after_early_close_works": true,
+    "reassembled": true,
+    "stream_dir": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp' is a directory",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "stream_missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-nope-stream' does not exist",
+      "type": "FileNotFoundException"
+     }
+    },
+    "type_has_aiter": true
+   }
+  },
+  "fs_symlinks": {
+   "ok": {
+    "a": {
+     "ok": {
+      "name": "a",
+      "size_is_int": true,
+      "symlink_target": null,
+      "type": "FileType.DIR"
+     }
+    },
+    "a_exists": {
+     "ok": true
+    },
+    "broken": {
+     "ok": {
+      "name": "broken",
+      "size_is_int": true,
+      "symlink_target": "/tmp/conf-tree/broken",
+      "type": "None"
+     }
+    },
+    "broken_exists": {
+     "ok": true
+    },
+    "dirlink": {
+     "ok": {
+      "name": "dirlink",
+      "size_is_int": true,
+      "symlink_target": "/tmp/conf-tree/a",
+      "type": "FileType.DIR"
+     }
+    },
+    "dirlink_exists": {
+     "ok": true
+    },
+    "link": {
+     "ok": {
+      "name": "link",
+      "size_is_int": true,
+      "symlink_target": "/tmp/conf-tree/top.txt",
+      "type": "FileType.FILE"
+     }
+    },
+    "link_exists": {
+     "ok": true
+    },
+    "list_types": [
+     ".hidden:FileType.FILE:None",
+     "a:FileType.DIR:None",
+     "dirlink:FileType.DIR:/tmp/conf-tree/a",
+     "empty:FileType.DIR:None",
+     "link:FileType.FILE:/tmp/conf-tree/top.txt",
+     "top.txt:FileType.FILE:None"
+    ],
+    "read_broken": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-tree/broken' does not exist",
+      "type": "FileNotFoundException"
+     }
+    },
+    "read_through_link": {
+     "ok": "t\n"
+    },
+    "target_after_write": "via-link",
+    "top.txt": {
+     "ok": {
+      "name": "top.txt",
+      "size_is_int": true,
+      "symlink_target": null,
+      "type": "FileType.FILE"
+     }
+    },
+    "top.txt_exists": {
+     "ok": true
+    },
+    "write_through_link": {
+     "ok": [
+      "WriteInfo",
+      "link",
+      "FileType.FILE",
+      "/tmp/conf-tree/link"
+     ]
+    }
+   }
+  },
+  "fs_write_files": {
+   "ok": {
+    "duplicate_content": {
+     "ok": "first"
+    },
+    "duplicates": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "you cannot upload multiple files to the same path '/tmp/conf-wf/dup.txt' in one upload request, only the first specified file was uploaded",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "empty_list": {
+     "ok": []
+    },
+    "entry_missing_data": {
+     "raised": {
+      "mro": [],
+      "text": "'data'",
+      "type": "KeyError"
+     }
+    },
+    "read_back": {
+     "a": {
+      "ok": "alpha"
+     },
+     "b": {
+      "ok": "0001"
+     },
+     "c": {
+      "ok": "gamma"
+     }
+    },
+    "several": {
+     "ok": [
+      [
+       "a.txt",
+       "/tmp/conf-wf/a.txt",
+       "WriteInfo"
+      ],
+      [
+       "b.bin",
+       "/tmp/conf-wf/sub/b.bin",
+       "WriteInfo"
+      ],
+      [
+       "c.txt",
+       "/tmp/conf-wf/c.txt",
+       "WriteInfo"
+      ]
+     ]
+    }
+   }
+  },
+  "fs_write_types": {
+   "ok": {
+    "bytearray": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "Unsupported data type: <class 'bytearray'>",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "bytearray_content": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-wt/bytearray' does not exist",
+      "type": "FileNotFoundException"
+     }
+    },
+    "bytes": {
+     "ok": [
+      "WriteInfo",
+      "bytes",
+      true
+     ]
+    },
+    "bytes_content": {
+     "ok": "bytes!"
+    },
+    "bytesio": {
+     "ok": [
+      "WriteInfo",
+      "bytesio",
+      true
+     ]
+    },
+    "bytesio_content": {
+     "ok": "bytesio!"
+    },
+    "int": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "Unsupported data type: <class 'int'>",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "int_content": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-wt/int' does not exist",
+      "type": "FileNotFoundException"
+     }
+    },
+    "none": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "Unsupported data type: <class 'NoneType'>",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "none_content": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-wt/none' does not exist",
+      "type": "FileNotFoundException"
+     }
+    },
+    "real_binary_file": {
+     "ok": [
+      "WriteInfo",
+      "real_binary_file",
+      true
+     ]
+    },
+    "real_binary_file_content": {
+     "ok": "file-rb-\u0000�"
+    },
+    "real_text_file": {
+     "ok": [
+      "WriteInfo",
+      "real_text_file",
+      true
+     ]
+    },
+    "real_text_file_content": {
+     "ok": "file-rb-\u0000�"
+    },
+    "str": {
+     "ok": [
+      "WriteInfo",
+      "str",
+      true
+     ]
+    },
+    "str_content": {
+     "ok": "héllo"
+    },
+    "stringio": {
+     "ok": [
+      "WriteInfo",
+      "stringio",
+      true
+     ]
+    },
+    "stringio_content": {
+     "ok": "stringio!"
+    }
+   }
+  },
+  "get_host": {
+   "ok": {
+    "fetch_status": 200,
+    "format": "<n>-i<n>m<n><id><n>ep<n>.e<n>b.app",
+    "has_scheme": false
+   }
+  },
+  "get_info": {
+   "ok": {
+    "cpu_count_positive": true,
+    "envd_version": "0.10.0",
+    "id_matches": true,
+    "memory_mb_positive": true,
+    "metadata": {
+     "suite": "e2b"
+    },
+    "state": "running",
+    "type": "SandboxInfo"
+   }
+  },
+  "get_info_missing": {
+   "raised": {
+    "mro": [
+     "FileNotFoundException",
+     "NotFoundException",
+     "SandboxException"
+    ],
+    "type": "FileNotFoundException"
+   }
+  },
+  "get_metrics": {
+   "ok": {
+    "fields": [
+     "cpu_count",
+     "cpu_used_pct",
+     "disk_total",
+     "disk_used",
+     "mem_total",
+     "mem_used"
+    ],
+    "mem_total_positive": true,
+    "type": "SandboxMetrics"
+   }
+  },
+  "git": {
+   "ok": {
+    "after_clean": true,
+    "before": [
+     "main",
+     [
+      [
+       "a.txt",
+       "untracked",
+       false
+      ]
+     ],
+     true
+    ],
+    "branches": [
+     [
+      "feature",
+      "main"
+     ],
+     "feature"
+    ],
+    "config": "Conformance"
+   }
+  },
+  "kill_twice": {
+   "ok": {
+    "first": true,
+    "run_after_kill": {
+     "mro": [
+      "TimeoutException",
+      "SandboxException"
+     ],
+     "type": "TimeoutException"
+    },
+    "second": false
+   }
+  },
+  "kill_unknown_pid": {
+   "ok": false
+  },
+  "lifecycle_filesystem_timeout": {
+   "ok": {
+    "since": "2.56"
+   }
+  },
+  "lifecycle_rules": {
+   "ok": {
+    "since": "2.56"
+   }
+  },
+  "lifetime_expires": {
+   "ok": {
+    "mro": [
+     "TimeoutException",
+     "SandboxException"
+    ],
+    "type": "TimeoutException"
+   }
+  },
+  "list_order": {
+   "ok": {
+    "since": "2.56"
+   }
+  },
+  "make_dir": {
+   "ok": {
+    "again": false,
+    "entries": [
+     [
+      "sub",
+      "FileType.DIR"
+     ]
+    ],
+    "exists": true,
+    "first": true
+   }
+  },
+  "metadata": {
+   "ok": {
+    "info": {
+     "kind": "input"
+    },
+    "write": {
+     "kind": "input"
+    }
+   }
+  },
+  "no_internet": {
+   "ok": {
+    "outbound": "connected"
+   }
+  },
+  "pause_connect": {
+   "ok": {
+    "after_connect": "kept",
+    "listed_metadata": {
+     "case": "pause"
+    },
+    "listed_state": "paused",
+    "pause": true
+   }
+  },
+  "pause_modes": {
+   "ok": {
+    "since": "2.56"
+   }
+  },
+  "pty": {
+   "ok": {
+    "chunk_type": "bytes",
+    "kill": true,
+    "saw_output": true
+   }
+  },
+  "read_missing": {
+   "raised": {
+    "mro": [
+     "FileNotFoundException",
+     "NotFoundException",
+     "SandboxException"
+    ],
+    "type": "FileNotFoundException"
+   }
+  },
+  "remove_missing": {
+   "ok": null
+  },
+  "rename": {
+   "ok": {
+    "new": "r",
+    "old_exists": false,
+    "path": "/tmp/conf/r2.txt",
+    "type": "EntryInfo"
+   }
+  },
+  "run_envs_cwd": {
+   "ok": "1:/tmp\n"
+  },
+  "run_fg": {
+   "ok": {
+    "error": null,
+    "exit_code": 0,
+    "stderr": "",
+    "stdout": "hi\n",
+    "type": "CommandResult"
+   }
+  },
+  "run_login_shell": {
+   "ok": "/bin/bash\nlogin\n"
+  },
+  "run_nonzero": {
+   "raised": {
+    "error": "exit status 3",
+    "exit_code": 3,
+    "mro": [
+     "CommandExitException",
+     "SandboxException",
+     "CommandResult"
+    ],
+    "stderr": "err\n",
+    "stdout": "out\n",
+    "str": "Command exited with code 3 and error:\nerr\n",
+    "type": "CommandExitException"
+   }
+  },
+  "run_root": {
+   "ok": "0\n"
+  },
+  "run_timeout": {
+   "raised": {
+    "mro": [
+     "TimeoutException",
+     "SandboxException"
+    ],
+    "type": "TimeoutException"
+   }
+  },
+  "sbx_context_manager": {
+   "ok": {
+    "after_exit_connect": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Paused sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "after_exit_kill": {
+     "ok": false
+    },
+    "after_exit_running": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "enter_returns_self": true,
+    "env": "é ✓",
+    "envd_token_present": true,
+    "expiration_unsecured": {
+     "ok": true
+    },
+    "files": "shared",
+    "info_allow_internet": true,
+    "info_metadata": {
+     "case": "ctx",
+     "suite": "e2b"
+    },
+    "info_name_base": "base",
+    "info_name_default_template": "base",
+    "killed_on_exception": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "outbound": "open",
+    "unsigned_url_shape": [
+     "path",
+     "signature"
+    ]
+   }
+  },
+  "sbx_create_options_validation": {
+   "ok": {
+    "iam_audience_int": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "iam token 'x' must be a dict with string 'audience' and 'token_type' values (snake_case 'token_type', not 'tokenType').",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "iam_brace_name": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "iam token name 'a{b' is not usable: a token name must be a non-empty string and cannot contain '{', '}' or control characters, because it is interpolated into the '${e2b.identity.tokens.<name>}' placeholder the egress proxy resolves.",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "iam_control_name": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "iam token name 'a\\nb' is not usable: a token name must be a non-empty string and cannot contain '{', '}' or control characters, because it is interpolated into the '${e2b.identity.tokens.<name>}' placeholder the egress proxy resolves.",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "iam_empty_name": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "iam token name '' is not usable: a token name must be a non-empty string and cannot contain '{', '}' or control characters, because it is interpolated into the '${e2b.identity.tokens.<name>}' placeholder the egress proxy resolves.",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "iam_missing_audience": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "iam token 'x' must be a dict with string 'audience' and 'token_type' values (snake_case 'token_type', not 'tokenType').",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "iam_not_a_dict": {
+     "raised": {
+      "mro": [],
+      "text": "'str' object has no attribute 'get'",
+      "type": "AttributeError"
+     }
+    },
+    "iam_tokens_not_dict": {
+     "raised": {
+      "mro": [],
+      "text": "'list' object has no attribute 'items'",
+      "type": "AttributeError"
+     }
+    },
+    "lifecycle_action_none": {
+     "created": true
+    },
+    "lifecycle_auto_resume_only": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "auto_resume can only be True when on_timeout action is 'pause'.",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "lifecycle_auto_resume_str": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandbox: Error at \"/autoResume/enabled\": value must be a boolean",
+      "type": "SandboxException"
+     }
+    },
+    "lifecycle_pause_auto_resume_ok": {
+     "created": true
+    },
+    "lifecycle_pause_ok": {
+     "created": true
+    },
+    "lifecycle_str": {
+     "raised": {
+      "mro": [],
+      "text": "'str' object has no attribute 'get'",
+      "type": "AttributeError"
+     }
+    },
+    "mcp_not_a_dict": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandbox: Error at \"/mcp\": value must be an object",
+      "type": "SandboxException"
+     }
+    },
+    "network_allow_bad_cidr": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: When specifying allowed domains in allow out, you must include 'ALL_TRAFFIC' in deny out to block all other traffic.",
+      "type": "SandboxException"
+     }
+    },
+    "network_allow_bad_ip": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: When specifying allowed domains in allow out, you must include 'ALL_TRAFFIC' in deny out to block all other traffic.",
+      "type": "SandboxException"
+     }
+    },
+    "network_allow_empty_item": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: When specifying allowed domains in allow out, you must include 'ALL_TRAFFIC' in deny out to block all other traffic.",
+      "type": "SandboxException"
+     }
+    },
+    "network_allow_str": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: When specifying allowed domains in allow out, you must include 'ALL_TRAFFIC' in deny out to block all other traffic.",
+      "type": "SandboxException"
+     }
+    },
+    "network_deny_int_items": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandbox: Error at \"/network/denyOut/0\": value must be a string",
+      "type": "SandboxException"
+     }
+    },
+    "network_not_a_dict": {
+     "raised": {
+      "mro": [],
+      "text": "'str' object has no attribute 'get'",
+      "type": "AttributeError"
+     }
+    },
+    "network_rules_not_dict": {
+     "raised": {
+      "mro": [],
+      "text": "'list' object has no attribute 'items'",
+      "type": "AttributeError"
+     }
+    },
+    "network_transform_not_mapping": {
+     "raised": {
+      "mro": [],
+      "text": "'int' object has no attribute 'get'",
+      "type": "AttributeError"
+     }
+    },
+    "network_unknown_key": {
+     "created": true
+    }
+   }
+  },
+  "sbx_create_validation": {
+   "ok": {
+    "allow_internet_str": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandbox: Error at \"/allow_internet_access\": value must be a boolean",
+      "type": "SandboxException"
+     }
+    },
+    "bad_template": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "404: template 'no-such-template-conf-x' not found",
+      "type": "SandboxException"
+     }
+    },
+    "bad_template_chars": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: Invalid template reference: invalid template ID: Not A Template!!",
+      "type": "SandboxException"
+     }
+    },
+    "envs_bad_name": {
+     "created": true
+    },
+    "envs_int_value": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandbox: Error at \"/envVars/A\": value must be a string",
+      "type": "SandboxException"
+     }
+    },
+    "metadata_empty_key": {
+     "created": true
+    },
+    "metadata_int_value": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandbox: Error at \"/metadata/k\": value must be a string",
+      "type": "SandboxException"
+     }
+    },
+    "metadata_long_value": {
+     "created": true
+    },
+    "timeout_float": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandbox: Error at \"/timeout\": value must be an integer",
+      "type": "SandboxException"
+     }
+    },
+    "timeout_negative": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandbox: Error at \"/timeout\": number must be at least 0",
+      "type": "SandboxException"
+     }
+    },
+    "timeout_str": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandbox: Error at \"/timeout\": value must be an integer",
+      "type": "SandboxException"
+     }
+    },
+    "timeout_zero": {
+     "created": true
+    }
+   }
+  },
+  "sbx_end_at_moves": {
+   "ok": {
+    "delta_matches": true,
+    "end_in_1500": true,
+    "end_in_300": true,
+    "extends": true,
+    "returns": null,
+    "shrinks": true,
+    "via_class": {
+     "ok": null
+    }
+   }
+  },
+  "sbx_file_urls": {
+   "ok": {
+    "bad_signature": 401,
+    "download_body": "75706c6f6164656420ff206279746573",
+    "download_missing": 404,
+    "download_shape": {
+     "host": {
+      "prefix": "<port>",
+      "suffix": ".e2b.app"
+     },
+     "path": "/files",
+     "path_param": [
+      "/tmp/conf-url dir/file é.txt"
+     ],
+     "query_keys": [
+      "path",
+      "signature"
+     ],
+     "scheme_is_http": true,
+     "signature_masked": true,
+     "username_param": null
+    },
+    "download_status": 200,
+    "unsigned": 401,
+    "upload_response": [
+     {
+      "name": "file é.txt",
+      "path": "str",
+      "type": "file"
+     }
+    ],
+    "upload_shape": {
+     "host": {
+      "prefix": "<port>",
+      "suffix": ".e2b.app"
+     },
+     "path": "/files",
+     "path_param": [
+      "/tmp/conf-url dir/file é.txt"
+     ],
+     "query_keys": [
+      "path",
+      "signature"
+     ],
+     "scheme_is_http": true,
+     "signature_masked": true,
+     "username_param": null
+    },
+    "upload_status": 200,
+    "with_expiration": {
+     "download": [
+      "path",
+      "signature",
+      "signature_expiration"
+     ],
+     "upload": [
+      "path",
+      "signature",
+      "signature_expiration"
+     ]
+    },
+    "with_user": [
+     "root"
+    ],
+    "write_with_read_signature": 401,
+    "written_bytes": "75706c6f6164656420ff206279746573"
+   }
+  },
+  "sbx_fork_validation": {
+   "ok": {
+    "bool": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/SandboxForkRequest: Error at \"/count\": value must be an integer",
+      "type": "SandboxException"
+     }
+    },
+    "float": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/SandboxForkRequest: Error at \"/count\": value must be an integer",
+      "type": "SandboxException"
+     }
+    },
+    "negative": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "count must be at least 1",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "str": {
+     "raised": {
+      "mro": [],
+      "text": "'<' not supported between instances of 'str' and 'int'",
+      "type": "TypeError"
+     }
+    },
+    "twenty_one": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: Count must be lower than the maximum number of concurrent sandboxes (20)",
+      "type": "SandboxException"
+     }
+    },
+    "zero": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "count must be at least 1",
+      "type": "InvalidArgumentException"
+     }
+    }
+   }
+  },
+  "sbx_get_host_ports": {
+   "ok": {
+    "formats": {
+     "'8081'": {
+      "ok": {
+       "prefix": "<port>",
+       "suffix": ".e2b.app"
+      }
+     },
+     "-1": {
+      "ok": {
+       "prefix": "<port>",
+       "suffix": ".e2b.app"
+      }
+     },
+     "0": {
+      "ok": {
+       "prefix": "<port>",
+       "suffix": ".e2b.app"
+      }
+     },
+     "1": {
+      "ok": {
+       "prefix": "<port>",
+       "suffix": ".e2b.app"
+      }
+     },
+     "3000": {
+      "ok": {
+       "prefix": "<port>",
+       "suffix": ".e2b.app"
+      }
+     },
+     "65535": {
+      "ok": {
+       "prefix": "<port>",
+       "suffix": ".e2b.app"
+      }
+     },
+     "70000": {
+      "ok": {
+       "prefix": "<port>",
+       "suffix": ".e2b.app"
+      }
+     },
+     "80": {
+      "ok": {
+       "prefix": "<port>",
+       "suffix": ".e2b.app"
+      }
+     },
+     "8081": {
+      "ok": {
+       "prefix": "<port>",
+       "suffix": ".e2b.app"
+      }
+     },
+     "None": {
+      "ok": {
+       "prefix": "None",
+       "suffix": ".e2b.app"
+      }
+     }
+    },
+    "in_use": {
+     "body": "conf-index\n",
+     "status": 200
+    },
+    "unused": {
+     "body": {
+      "code": "int",
+      "message": "The sandbox is running but port is not open",
+      "port": "int",
+      "sandboxId": "<id>"
+     },
+     "content_type": "application/json; charset=utf-8",
+     "status": 502
+    }
+   }
+  },
+  "sbx_info_fields": {
+   "ok": {
+    "allow_internet_access": true,
+    "cpu_count_type": "int",
+    "end_after_start": true,
+    "end_aware": true,
+    "envd_version_is_str": true,
+    "fields": [
+     "allow_internet_access",
+     "cpu_count",
+     "end_at",
+     "envd_version",
+     "lifecycle",
+     "memory_mb",
+     "metadata",
+     "name",
+     "network",
+     "sandbox_domain",
+     "sandbox_id",
+     "started_at",
+     "state",
+     "template_id",
+     "volume_mounts"
+    ],
+    "id_is_str": true,
+    "memory_mb_type": "int",
+    "metadata": {
+     "suite": "e2b"
+    },
+    "name": "base",
+    "started_aware": true,
+    "started_recently": true,
+    "state": "running",
+    "template_id_is_str": true,
+    "type": "SandboxInfo",
+    "via_class_matches": true,
+    "volume_mounts": []
+   }
+  },
+  "sbx_is_running_shared": {
+   "ok": {
+    "running": true,
+    "type": "bool",
+    "with_timeout": true
+   }
+  },
+  "sbx_kill_class_form_on_shared_id": {
+   "ok": {
+    "files_shared": "shared",
+    "same_id": true,
+    "stdout": "via-connect\n",
+    "type": "AsyncSandbox"
+   }
+  },
+  "sbx_lifecycle_calls": {
+   "ok": {
+    "class_get_info": {
+     "ok": [
+      "SandboxInfo",
+      "running",
+      {
+       "case": "calls",
+       "suite": "e2b"
+      }
+     ]
+    },
+    "class_get_metrics": {
+     "ok": "list"
+    },
+    "class_kill": {
+     "ok": true
+    },
+    "class_kill_again": {
+     "ok": false
+    },
+    "class_set_timeout": {
+     "ok": null
+    },
+    "commands_list_after_kill": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "The sandbox was not found: This error is likely due to sandbox timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.set_timeout' on the sandbox with the desired timeout.",
+      "type": "TimeoutException"
+     }
+    },
+    "connect_after_kill": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Paused sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "connect_runs": "c\n",
+    "connect_with_timeout": {
+     "ok": true
+    },
+    "files_list_after_kill": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "The sandbox was not found: This error is likely due to sandbox timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.set_timeout' on the sandbox with the desired timeout.",
+      "type": "TimeoutException"
+     }
+    },
+    "files_read_after_kill": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "The sandbox was not found: This error is likely due to sandbox timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.set_timeout' on the sandbox with the desired timeout.",
+      "type": "TimeoutException"
+     }
+    },
+    "files_write_after_kill": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "The sandbox was not found: This error is likely due to sandbox timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.set_timeout' on the sandbox with the desired timeout.",
+      "type": "TimeoutException"
+     }
+    },
+    "get_host_after_kill": {
+     "ok": {
+      "prefix": "<port>",
+      "suffix": ".e2b.app"
+     }
+    },
+    "get_info_after_kill": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "get_info_instance_after_kill": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "get_metrics_after_kill": {
+     "ok": "list"
+    },
+    "instance_kill_again": {
+     "ok": false
+    },
+    "is_running": true,
+    "is_running_after": {
+     "ok": false
+    },
+    "list_has_killed": false,
+    "pause_after_kill": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "pty_after_kill": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "The sandbox was not found: This error is likely due to sandbox timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.set_timeout' on the sandbox with the desired timeout.",
+      "type": "TimeoutException"
+     }
+    },
+    "run_after_kill": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "The sandbox was not found: This error is likely due to sandbox timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.set_timeout' on the sandbox with the desired timeout.",
+      "type": "TimeoutException"
+     }
+    },
+    "set_timeout_after_kill": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "upload_url_after_kill": {
+     "ok": true
+    }
+   }
+  },
+  "sbx_list_pagination": {
+   "ok": {
+    "bad_next_token": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: Invalid next token",
+      "type": "SandboxException"
+     }
+    },
+    "by_metadata": {
+     "ids_equal": true,
+     "item_type": "SandboxInfo",
+     "paginator": "AsyncSandboxPaginator"
+    },
+    "default_list_has_mine": true,
+    "exhausted_next_items": {
+     "raised": {
+      "mro": [],
+      "text": "No more items to fetch",
+      "type": "Exception"
+     }
+    },
+    "first_page": {
+     "has_next": true,
+     "len": 1,
+     "next_token_is_str": true
+    },
+    "limit_0": {
+     "ok": 3
+    },
+    "limit_1": {
+     "covers_all": true,
+     "has_next_at_end": false,
+     "next_token_at_end": null,
+     "no_repeats": true,
+     "page_sizes": [
+      1,
+      1,
+      1
+     ]
+    },
+    "limit_huge": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: parameter \"limit\" in query has an error: number must be at most 100",
+      "type": "SandboxException"
+     }
+    },
+    "limit_neg": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: parameter \"limit\" in query has an error: number must be at least 1",
+      "type": "SandboxException"
+     }
+    },
+    "list_item_fields": [
+     "allow_internet_access",
+     "cpu_count",
+     "end_at",
+     "envd_version",
+     "lifecycle",
+     "memory_mb",
+     "metadata",
+     "name",
+     "network",
+     "sandbox_domain",
+     "sandbox_id",
+     "started_at",
+     "state",
+     "template_id",
+     "volume_mounts"
+    ],
+    "list_item_view": {
+     "cpu_count_type": "int",
+     "end_after_start": true,
+     "end_aware": true,
+     "envd_version_is_str": true,
+     "fields": [
+      "allow_internet_access",
+      "cpu_count",
+      "end_at",
+      "envd_version",
+      "lifecycle",
+      "memory_mb",
+      "metadata",
+      "name",
+      "network",
+      "sandbox_domain",
+      "sandbox_id",
+      "started_at",
+      "state",
+      "template_id",
+      "volume_mounts"
+     ],
+     "id_is_str": true,
+     "memory_mb_type": "int",
+     "metadata": {
+      "grp": "<run>",
+      "idx": "2",
+      "note": "x",
+      "suite": "e2b"
+     },
+     "name": "base",
+     "started_aware": true,
+     "state": "running",
+     "template_id_is_str": true,
+     "type": "SandboxInfo"
+    },
+    "metadata_in_get_info": [
+     "a b&c=d é",
+     "plain",
+     "x"
+    ],
+    "metadata_in_list": [
+     [
+      "0",
+      "plain"
+     ],
+     [
+      "1",
+      "a b&c=d é"
+     ],
+     [
+      "2",
+      "x"
+     ]
+    ],
+    "no_match": 0,
+    "order_asc": {
+     "since": "2.56"
+    },
+    "order_bad": {
+     "since": "2.56"
+    },
+    "order_desc": {
+     "since": "2.56"
+    },
+    "resume_from_token": {
+     "ok": [
+      1,
+      true
+     ]
+    },
+    "special_chars_value": 1,
+    "started_after": {
+     "since": "2.56"
+    },
+    "state_filter": {
+     "both": 3,
+     "paused": 0,
+     "running": 3,
+     "state_values": [
+      "running"
+     ]
+    },
+    "two_keys": [
+     "1"
+    ]
+   }
+  },
+  "sbx_metrics_types": {
+   "ok": {
+    "cpu_count_is_int": true,
+    "cpu_count_matches_info": true,
+    "cpu_used_pct_in_range": true,
+    "cpu_used_pct_is_float": true,
+    "disk_total_is_bytes": true,
+    "disk_used_le_total": true,
+    "end_before_start": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: Invalid time range for metrics",
+      "type": "SandboxException"
+     }
+    },
+    "fields": [
+     "cpu_count",
+     "cpu_used_pct",
+     "disk_total",
+     "disk_used",
+     "mem_cache",
+     "mem_total",
+     "mem_used",
+     "timestamp"
+    ],
+    "future_start": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: Invalid time range for metrics",
+      "type": "SandboxException"
+     }
+    },
+    "mem_total_is_bytes": true,
+    "mem_total_near_info": true,
+    "mem_used_le_total": true,
+    "sorted_ascending": true,
+    "timestamp_aware": true,
+    "timestamp_recent": true,
+    "type": "SandboxMetrics",
+    "via_class": {
+     "ok": "list"
+    },
+    "window_ok": {
+     "ok": "list"
+    }
+   }
+  },
+  "sbx_network_update": {
+   "ok": {
+    "after_bad_updates": {
+     "1.0.0.1": "open",
+     "1.1.1.1": "open"
+    },
+    "allow_cidr": {
+     "1.0.0.1": "blocked",
+     "1.1.1.1": "open",
+     "call": {
+      "ok": null
+     }
+    },
+    "allow_hostname": {
+     "call": {
+      "ok": null
+     },
+     "example.com": "200",
+     "other": "blocked"
+    },
+    "allow_ip": {
+     "1.0.0.1": "open",
+     "1.1.1.1": "blocked",
+     "call": {
+      "ok": null
+     }
+    },
+    "clear": {
+     "1.0.0.1": "open",
+     "1.1.1.1": "open",
+     "call": {
+      "ok": null
+     }
+    },
+    "create_allow_one": {
+     "1.0.0.1": "blocked",
+     "1.1.1.1": "open"
+    },
+    "deny_all": {
+     "1.0.0.1": "blocked",
+     "1.1.1.1": "blocked",
+     "call": {
+      "ok": null
+     }
+    },
+    "deny_cidr_only": {
+     "1.0.0.1": "blocked",
+     "1.1.1.1": "open",
+     "call": {
+      "ok": null
+     }
+    },
+    "deny_hostname": {
+     "call": {
+      "raised": {
+       "mro": [
+        "SandboxException"
+       ],
+       "text": "400: invalid denied CIDR example.com",
+       "type": "SandboxException"
+      }
+     }
+    },
+    "info_after_update": {
+     "allow_public_traffic": true,
+     "deny_out": [
+      "1.0.0.0/24"
+     ]
+    },
+    "info_network": {
+     "allow_out": [
+      "1.1.1.1"
+     ],
+     "allow_public_traffic": true,
+     "deny_out": [
+      "0.0.0.0/0"
+     ]
+    },
+    "validation": {
+     "allow_str": {
+      "ok": null
+     },
+     "allow_without_deny_all": {
+      "ok": null
+     },
+     "bad_ip": {
+      "ok": null
+     },
+     "cidr_out_of_range": {
+      "raised": {
+       "mro": [
+        "SandboxException"
+       ],
+       "text": "400: invalid denied CIDR 1.1.1.1/33",
+       "type": "SandboxException"
+      }
+     },
+     "empty_item": {
+      "raised": {
+       "mro": [
+        "SandboxException"
+       ],
+       "text": "400: invalid denied CIDR ",
+       "type": "SandboxException"
+      }
+     },
+     "int_item": {
+      "raised": {
+       "mro": [
+        "SandboxException"
+       ],
+       "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/SandboxNetworkUpdateConfig: Error at \"/denyOut/0\": value must be a string",
+       "type": "SandboxException"
+      }
+     },
+     "none": {
+      "raised": {
+       "mro": [],
+       "text": "'NoneType' object has no attribute 'get'",
+       "type": "AttributeError"
+      }
+     },
+     "octet_out_of_range": {
+      "raised": {
+       "mro": [
+        "SandboxException"
+       ],
+       "text": "400: invalid denied CIDR 999.1.1.1",
+       "type": "SandboxException"
+      }
+     },
+     "unknown_key": {
+      "ok": null
+     }
+    }
+   }
+  },
+  "sbx_paused_ops": {
+   "ok": {
+    "connect_after_kill": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Paused sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "connect_again": {
+     "ok": "kept"
+    },
+    "connect_class": {
+     "ok": "kept"
+    },
+    "connect_with_timeout": {
+     "ok": "kept"
+    },
+    "info_after_kill": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "info_paused": {
+     "ok": "paused"
+    },
+    "instance_info_paused": {
+     "ok": "paused"
+    },
+    "instance_pause_twice": {
+     "ok": false
+    },
+    "is_running_paused": {
+     "ok": false
+    },
+    "kill_while_paused": {
+     "ok": true
+    },
+    "listed_as_paused": 1,
+    "metrics_paused": {
+     "ok": "list"
+    },
+    "pause_after_resume": {
+     "ok": true
+    },
+    "pause_class": {
+     "ok": true
+    },
+    "pause_twice": {
+     "ok": false
+    },
+    "run_while_paused": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "The sandbox was not found: This error is likely due to sandbox timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.set_timeout' on the sandbox with the desired timeout.",
+      "type": "TimeoutException"
+     }
+    },
+    "running_after_connect": true,
+    "set_timeout_paused": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    }
+   }
+  },
+  "sbx_secure_default": {
+   "ok": {
+    "envd_token_present": true,
+    "sandbox_domain_str": true,
+    "sandbox_id_str": true,
+    "traffic_token_attr": true
+   }
+  },
+  "sbx_set_timeout_edges": {
+   "ok": {
+    "bool": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/SandboxTimeoutRequest: Error at \"/timeout\": value must be an integer",
+      "type": "SandboxException"
+     },
+     "running_after": true
+    },
+    "float": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/SandboxTimeoutRequest: Error at \"/timeout\": value must be an integer",
+      "type": "SandboxException"
+     },
+     "running_after": true
+    },
+    "huge": {
+     "end_in_hours_le_48": true,
+     "ok": null,
+     "running_after": true
+    },
+    "info_after_zero": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "negative": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/SandboxTimeoutRequest: Error at \"/timeout\": number must be at least 0",
+      "type": "SandboxException"
+     },
+     "running_after": true
+    },
+    "none": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/SandboxTimeoutRequest: Error at \"/timeout\": Value is not nullable",
+      "type": "SandboxException"
+     },
+     "running_after": true
+    },
+    "running_after_zero": false,
+    "seconds_in_day_plus": {
+     "end_in_hours_le_48": true,
+     "ok": null,
+     "running_after": true
+    },
+    "str": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/SandboxTimeoutRequest: Error at \"/timeout\": value must be an integer",
+      "type": "SandboxException"
+     },
+     "running_after": true
+    },
+    "zero": {
+     "ok": null
+    }
+   }
+  },
+  "sbx_unknown_ids": {
+   "ok": {
+    "connect": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Paused sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "empty_id_kill": {
+     "ok": false
+    },
+    "get_info": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "get_metrics": {
+     "ok": []
+    },
+    "kill": {
+     "ok": false
+    },
+    "malformed_id_connect": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: Invalid sandbox ID",
+      "type": "SandboxException"
+     }
+    },
+    "malformed_id_kill": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "400: Invalid sandbox ID",
+      "type": "SandboxException"
+     }
+    },
+    "pause": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "set_timeout": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    }
+   }
+  },
+  "set_timeout": {
+   "ok": null
+  },
+  "snapshot_pagination": {
+   "ok": {
+    "since": "2.56"
+   }
+  },
+  "snapshot_roundtrip": {
+   "ok": {
+    "since": "2.56"
+   }
+  },
+  "stdin": {
+   "ok": "abc\n"
+  },
+  "sync.commands_misc": {
+   "ok": {
+    "close_stdin_unknown": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    },
+    "connect_end": true,
+    "connect_new_only": true,
+    "connect_type": "CommandHandle",
+    "connect_unknown": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    },
+    "killed": true,
+    "list_type": "list",
+    "listed": [
+     [
+      "/bin/bash",
+      [
+       "-l",
+       "-c",
+       "sleep 31"
+      ],
+      "/tmp"
+     ]
+    ],
+    "send_stdin_unknown": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "process with pid <n> not found",
+      "type": "NotFoundException"
+     }
+    },
+    "stdin_file": "abc\ndef\n",
+    "wait_after_kill": {
+     "raised": {
+      "error": "signal: killed",
+      "exit_code": -1,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code -1 and error:\n",
+      "type": "CommandExitException"
+     }
+    }
+   }
+  },
+  "sync.context_manager": {
+   "ok": {
+    "after_exit_info": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "after_exit_kill": {
+     "ok": false
+    },
+    "enter_returns_self": true,
+    "run_after_exit": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "The sandbox was not found: This error is likely due to sandbox timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.set_timeout' on the sandbox with the desired timeout.",
+      "type": "TimeoutException"
+     }
+    },
+    "runs": "in\n"
+   }
+  },
+  "sync.files_basic": {
+   "ok": {
+    "bytes_equal": true,
+    "exists": [
+     true,
+     false
+    ],
+    "get_info_missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "file not found: lstat /tmp/conf-nope-404: no such file or directory",
+      "type": "FileNotFoundException"
+     }
+    },
+    "info": [
+     6,
+     "FileType.FILE"
+    ],
+    "list": [
+     "a.txt",
+     "all.bin"
+    ],
+    "list_depth_neg": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "depth should be at least 1",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "list_missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path not found: lstat /tmp/conf-nope-404: no such file or directory",
+      "type": "FileNotFoundException"
+     }
+    },
+    "make_dir": [
+     true,
+     false
+    ],
+    "make_dir_over_file": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path already exists but it is not a directory: /tmp/conf-sync/b.txt",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "read_missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-nope-404' does not exist",
+      "type": "FileNotFoundException"
+     }
+    },
+    "remove_missing": null,
+    "rename": "/tmp/conf-sync/b.txt",
+    "text": "héllo",
+    "write": [
+     "WriteInfo",
+     "a.txt",
+     "/tmp/conf-sync/a.txt"
+    ],
+    "write_files": [
+     "w1.txt",
+     "w2.txt"
+    ]
+   }
+  },
+  "sync.files_read_stream": {
+   "ok": {
+    "chunk_type": "bytes",
+    "chunked": true,
+    "close": {
+     "ok": null
+    },
+    "close_twice": {
+     "ok": null
+    },
+    "early_first": true,
+    "has_context_manager": true,
+    "iterator": true,
+    "reassembled": true,
+    "stream_missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path '/tmp/conf-nope-404' does not exist",
+      "type": "FileNotFoundException"
+     }
+    },
+    "with_total": true
+   }
+  },
+  "sync.handle_iteration": {
+   "ok": {
+    "chunks": [
+     [
+      "a\n",
+      null,
+      null
+     ],
+     [
+      null,
+      "b\n",
+      null
+     ],
+     [
+      "c\n",
+      null,
+      null
+     ]
+    ],
+    "handle_type": "CommandHandle",
+    "iterate_again": [],
+    "result": {
+     "error": null,
+     "exit_code": 0,
+     "stderr": "b\n",
+     "stdout": "a\nc\n",
+     "type": "CommandResult"
+    }
+   }
+  },
+  "sync.handle_state": {
+   "ok": {
+    "kill_exited": false,
+    "live_attrs": {
+     "error": false,
+     "exit_code": false,
+     "stderr": false,
+     "stdout": false
+    },
+    "result": {
+     "error": null,
+     "exit_code": 0,
+     "stderr": "",
+     "stdout": "one\ntwo\n",
+     "type": "CommandResult"
+    },
+    "wait_twice_equal": true
+   }
+  },
+  "sync.list_paginator": {
+   "ok": {
+    "default_list": "list",
+    "finds_sync_sandbox": true,
+    "has_next_end": false,
+    "info_metadata": {
+     "suite": "e2b",
+     "sync_grp": "<run>"
+    },
+    "next_after_end": {
+     "raised": {
+      "mro": [],
+      "text": "No more items to fetch",
+      "type": "Exception"
+     }
+    },
+    "next_token_end": null,
+    "pages": [
+     1
+    ],
+    "paginator": "SandboxPaginator",
+    "state_filter_paused": 0,
+    "state_filter_running": 1
+   }
+  },
+  "sync.pty_wait_on_pty": {
+   "ok": {
+    "chunk_type": "bytes",
+    "exit": {
+     "raised": {
+      "error": "exit status 5",
+      "exit_code": 5,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code 5 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "kill": true,
+    "kill_unknown": false,
+    "saw_output": true,
+    "size": "24 80",
+    "wait_after_kill": {
+     "raised": {
+      "error": "signal: killed",
+      "exit_code": -1,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code -1 and error:\n",
+      "type": "CommandExitException"
+     }
+    }
+   }
+  },
+  "sync.run_basic": {
+   "ok": {
+    "cwd_envs": "1:/tmp\n",
+    "fg": {
+     "error": null,
+     "exit_code": 0,
+     "stderr": "",
+     "stdout": "hi\n",
+     "type": "CommandResult"
+    },
+    "kill_unknown": false,
+    "missing_cwd": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "cwd '/no/such/dir-conf' does not exist",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "nonzero": {
+     "raised": {
+      "error": "exit status 3",
+      "exit_code": 3,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "e\n",
+      "stdout": "o\n",
+      "str": "Command exited with code 3 and error:\ne\n",
+      "type": "CommandExitException"
+     }
+    },
+    "signal": {
+     "raised": {
+      "error": "signal: killed",
+      "exit_code": -1,
+      "mro": [
+       "CommandExitException",
+       "SandboxException",
+       "CommandResult"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "str": "Command exited with code -1 and error:\n",
+      "type": "CommandExitException"
+     }
+    },
+    "timeout": {
+     "raised": {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "Request timed out: This error is likely due to exceeding 'timeout' — the total time a long running request (like process or directory watch) can be active — or 'request_timeout'. You can modify these by passing 'timeout' or 'request_timeout' when making the request. Use '0' to disable the timeout.",
+      "type": "TimeoutException"
+     }
+    }
+   }
+  },
+  "sync.sandbox_class_api": {
+   "ok": {
+    "connect_runs": "c\n",
+    "connect_type": "Sandbox",
+    "connect_unknown": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Paused sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "get_host": {
+     "prefix": "<port>",
+     "suffix": ".e2b.app"
+    },
+    "get_info_class": [
+     "SandboxInfo"
+    ],
+    "get_info_unknown": {
+     "raised": {
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "Sandbox <id> not found",
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "is_running": true,
+    "kill_unknown": {
+     "ok": false
+    },
+    "metrics_class": "list",
+    "set_timeout_class": null,
+    "upload_url_keys": [
+     "path",
+     "signature"
+    ]
+   }
+  },
+  "sync.stream_input": {
+   "ok": {
+    "since": "2.58"
+   }
+  },
+  "sync.wait_callbacks": {
+   "ok": {
+    "result": {
+     "error": null,
+     "exit_code": 0,
+     "stderr": "e1\n",
+     "stdout": "o1\no2\n",
+     "type": "CommandResult"
+    },
+    "stderr_cb": "e1\n",
+    "stdout_cb": "o1\no2\n"
+   }
+  },
+  "sync.watch_get_new_events": {
+   "ok": {
+    "after_stop": {
+     "raised": {
+      "mro": [
+       "SandboxException"
+      ],
+      "text": "The watcher is already stopped",
+      "type": "SandboxException"
+     }
+    },
+    "event_class": "FilesystemEvent",
+    "first": [
+     "chmod:a.txt",
+     "create:a.txt",
+     "create:newdir"
+    ],
+    "handle_type": "WatchHandle",
+    "missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path /tmp/conf-nope-404 not found: stat /tmp/conf-nope-404: no such file or directory",
+      "type": "FileNotFoundException"
+     }
+    },
+    "on_file": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path /etc/hostname not a directory: %!w(<nil>)",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "recursive": [
+     "chmod:sub/deep.txt",
+     "create:sub/deep.txt"
+    ],
+    "second_is_empty": true,
+    "stop_twice": {
+     "raised": {
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "watcher with id <id> not found",
+      "type": "NotFoundException"
+     }
+    }
+   }
+  },
+  "watch_burst": {
+   "ok": {
+    "all_names": true,
+    "creates_seen": 200,
+    "event_class": "FilesystemEvent",
+    "fields": [
+     "entry",
+     "name",
+     "type"
+    ]
+   }
+  },
+  "watch_dir": {
+   "ok": {
+    "event_type": "FilesystemEvent",
+    "kinds": [
+     "FilesystemEventType.CREATE",
+     "FilesystemEventType.WRITE"
+    ]
+   }
+  },
+  "watch_errors": {
+   "ok": {
+    "empty_path": {
+     "ok": "watching"
+    },
+    "file": {
+     "raised": {
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "text": "path /tmp/conf-watch-err/file.txt not a directory: %!w(<nil>)",
+      "type": "InvalidArgumentException"
+     }
+    },
+    "missing": {
+     "raised": {
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "text": "path /tmp/conf-watch-err/nope not found: stat /tmp/conf-watch-err/nope: no such file or directory",
+      "type": "FileNotFoundException"
+     }
+    },
+    "relative_ok": {
+     "ok": "watching"
+    }
+   }
+  },
+  "watch_include_entry": {
+   "ok": {
+    "entry_on_create": {
+     "class": "EntryInfo",
+     "name": "e.txt",
+     "path": "/e.txt",
+     "size_is_int": true,
+     "type": "FileType.FILE"
+    },
+    "entry_on_remove": [
+     true
+    ],
+    "entry_without_flag": [
+     true
+    ]
+   }
+  },
+  "watch_lifecycle": {
+   "ok": {
+    "after_raising_callback": [
+     "boom1.txt"
+    ],
+    "async_callback": true,
+    "event_after_stop": false,
+    "handle_type": "AsyncWatchHandle",
+    "on_exit_after_stop": [
+     null
+    ],
+    "on_exit_calls": [
+     {
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "text": "context deadline exceeded: This error is likely due to exceeding 'timeout' — the total time a long running request (like process or directory watch) can be active — or 'request_timeout'. You can modify these by passing 'timeout' or 'request_timeout' when making the request. Use '0' to disable the timeout.",
+      "type": "TimeoutException"
+     }
+    ],
+    "opener_task": "cancelled",
+    "stop": {
+     "ok": null
+    },
+    "stop_after_exit": {
+     "ok": null
+    },
+    "stop_after_raising": {
+     "ok": null
+    },
+    "stop_twice": {
+     "ok": null
+    }
+   }
+  },
+  "watch_ops_flat": {
+   "ok": {
+    "append": [
+     "write:f.txt"
+    ],
+    "chmod": [
+     "chmod:f.txt"
+    ],
+    "create": [
+     "chmod:f.txt",
+     "create:f.txt"
+    ],
+    "deep_create": [],
+    "mkdir": [
+     "create:sub"
+    ],
+    "nested_create": [],
+    "nested_dir": [
+     "create:deep"
+    ],
+    "nested_remove": [],
+    "remove": [
+     "remove:g.txt"
+    ],
+    "rename": [
+     "create:g.txt",
+     "rename:f.txt"
+    ],
+    "rmdir": [
+     "remove:sub"
+    ]
+   }
+  },
+  "watch_ops_recursive": {
+   "ok": {
+    "append": [
+     "write:f.txt"
+    ],
+    "chmod": [
+     "chmod:f.txt"
+    ],
+    "create": [
+     "chmod:f.txt",
+     "create:f.txt"
+    ],
+    "deep_create": [
+     "chmod:deep/a/b/x.txt",
+     "create:deep/a/b/x.txt"
+    ],
+    "mkdir": [
+     "create:sub"
+    ],
+    "nested_create": [
+     "chmod:sub/inner.txt",
+     "create:sub/inner.txt"
+    ],
+    "nested_dir": [
+     "create:deep",
+     "create:deep/a",
+     "create:deep/a/b"
+    ],
+    "nested_remove": [
+     "remove:sub/inner.txt"
+    ],
+    "remove": [
+     "remove:g.txt"
+    ],
+    "rename": [
+     "create:g.txt",
+     "rename:f.txt"
+    ],
+    "rmdir": [
+     "remove:sub"
+    ]
+   }
+  },
+  "watch_watched_dir_removed": {
+   "ok": {
+    "events": [
+     "remove:."
+    ],
+    "on_exit_called": false,
+    "stop": {
+     "ok": null
+    }
+   }
+  }
+ }
+}

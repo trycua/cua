@@ -51,26 +51,28 @@ fn activate_bundle(bundle_id: &str) {
     let _ = osascript(&format!(r#"tell application id "{bundle_id}" to activate"#));
 }
 
-fn wait_for_frontmost(bundle_id: &str, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if frontmost_bundle_id().as_deref() == Some(bundle_id) {
-            return true;
-        }
-        sleep(Duration::from_millis(100));
-    }
-    false
-}
-
+/// Make Finder frontmost and keep it there for a settle window. Hosted macOS
+/// runners can hand the front to another process just after `activate`
+/// succeeded, so one sample is a race: re-activate with a bounded deadline
+/// until Finder has held the front for `FRONT_SETTLE` in a row.
 fn ensure_finder_frontmost() {
-    for _ in 0..3 {
-        activate_bundle(FINDER_BUNDLE);
-        if wait_for_frontmost(FINDER_BUNDLE, Duration::from_secs(2)) {
-            return;
+    const FRONT_SETTLE: Duration = Duration::from_millis(1500);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut stable_since: Option<Instant> = None;
+    while Instant::now() < deadline {
+        if frontmost_bundle_id().as_deref() == Some(FINDER_BUNDLE) {
+            let since = *stable_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= FRONT_SETTLE {
+                return;
+            }
+            sleep(Duration::from_millis(100));
+        } else {
+            stable_since = None;
+            activate_bundle(FINDER_BUNDLE);
+            sleep(Duration::from_millis(300));
         }
-        sleep(Duration::from_millis(500));
     }
-    panic!("could not make Finder frontmost for installed-app launch validation");
+    panic!("could not make Finder stay frontmost for installed-app launch validation");
 }
 
 fn kill_app_process(process_name: &str) {

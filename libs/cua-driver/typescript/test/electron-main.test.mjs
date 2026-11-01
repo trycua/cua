@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url"
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url))
 const electron = path.resolve(testDirectory, "../node_modules/.bin/electron")
+const electronVersion = JSON.parse(
+  readFileSync(path.resolve(testDirectory, "../package.json"), "utf8"),
+).devDependencies.electron
 const packageVersion = JSON.parse(
   readFileSync(path.resolve(testDirectory, "../package.json"), "utf8"),
 ).version
@@ -31,7 +34,7 @@ test(
 
     assert.equal(code, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
     const result = JSON.parse(stdout.trim().split("\n").at(-1))
-    assert.equal(result.versions.electron, "43.7.6")
+    assert.equal(result.versions.electron, electronVersion)
     assert.equal(result.versions.package, packageVersion)
     assert.equal(result.connection.driverVersion, packageVersion)
     assert.equal(result.connection.socketPathIsPrivate, true)

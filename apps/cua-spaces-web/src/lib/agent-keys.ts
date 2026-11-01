@@ -5,6 +5,6 @@
 export const addedText = (label: string, ms: number, locale?: string, timeZone?: string) =>
   `${label} ${new Date(ms).toLocaleDateString(locale ?? "en-US", { month: "short", day: "numeric", year: "numeric", timeZone })}`;
 
-/** Whether an agent's error is a missing provider key, which Settings → Agents fixes. */
+/** Whether an agent's error is a missing provider key, which Settings, Connections fixes. */
 export const needsAgentKey = (error: string | null | undefined): boolean =>
-  Boolean(error && /Settings → Agents|Authentication required|has no credential/i.test(error));
+  Boolean(error && /Settings → Agents|Settings → Connected apps|Settings → Connections|Authentication required|has no credential/i.test(error));

@@ -13,14 +13,21 @@ USER root
 
 # Omarchy's mkinitcpio drop-ins (plymouth, limine, btrfs) target its ISO
 # install; this disk is ext4 behind GRUB, so the initramfs is built from
-# mkinitcpio-cua.conf and pacman's kernel hooks are allowed to fail.
+# mkinitcpio-cua.conf and pacman's kernel hooks are allowed to fail. Limine's
+# "FAT32 boot partition not found" hook error in the build log is therefore
+# expected and harmless (it is in green runs too).
+# mirror.omarchy.org keeps no old package versions and can be mid-sync, so
+# the sync database saved by the rootfs build goes stale within minutes
+# (404, or "Exceeded the maximum allowed file size"). The first attempt uses
+# it; retries refresh it with -Syu, which keeps the transaction consistent.
 COPY omarchy/files/mkinitcpio-cua.conf /etc/cua-image/mkinitcpio-cua.conf
 RUN set -eu; \
     pacman -Q | sort >/tmp/rootfs-packages; \
-    for attempt in 1 2 3; do pacman -S --noconfirm --needed \
-        linux mkinitcpio cloud-init cloud-guest-utils openssh qemu-guest-agent \
-        e2fsprogs dosfstools && break; \
-      [ "$attempt" = 3 ] && exit 1; echo "pacman attempt $attempt failed; retrying" >&2; sleep 5; done; \
+    pkgs="linux mkinitcpio cloud-init cloud-guest-utils openssh qemu-guest-agent e2fsprogs dosfstools"; \
+    for attempt in 1 2 3 4; do \
+      if [ "$attempt" = 1 ]; then pacman -S --noconfirm --needed $pkgs && break; \
+      else pacman -Syu --noconfirm --needed $pkgs && break; fi; \
+      [ "$attempt" = 4 ] && exit 1; echo "pacman attempt $attempt failed; refreshing the database and retrying" >&2; sleep 30; done; \
     kver="$(ls /usr/lib/modules | sort -V | tail -1)"; \
     install -m 0644 "/usr/lib/modules/$kver/vmlinuz" /boot/vmlinuz-linux; \
     mkinitcpio -c /etc/cua-image/mkinitcpio-cua.conf -k "$kver" -g /boot/initramfs-cua.img; \

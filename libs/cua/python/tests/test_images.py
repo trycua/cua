@@ -44,6 +44,7 @@ def _published(ref: str) -> bool:
     [
         (lambda: Image.linux(tier="slim"), "ghcr.io/trycua/linux:24.04-slim"),
         (lambda: Image.macos(tier="xcode"), "ghcr.io/trycua/macos:26-xcode"),
+        (lambda: Image.linux(tier="docker"), "ghcr.io/trycua/linux:24.04-docker-disk"),
         (lambda: Image.omarchy(), "ghcr.io/trycua/omarchy:edge"),
     ],
 )
@@ -62,3 +63,5 @@ def test_tier_defaults_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
         Image.linux(tier="xcode")
     with pytest.raises(cua.CuaError.InvalidArgument):
         Image.macos(tier="tiny")
+    with pytest.raises(cua.CuaError.InvalidArgument):
+        Image.macos(tier="docker")

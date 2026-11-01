@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.38.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.37.0...cua-driver-rs-v0.38.0) (2026-10-20)
+
+
+### Features
+
+* **sdk:** publish cua-sdk and the proto contract so you can build your own harness (CUA-1902) ([#5532](https://github.com/trycua/cua/issues/5532)) ([78175bd](https://github.com/trycua/cua/commit/78175bd5d425c4945df8887aa308bfafd682cd2b))
+
+
+### Bug Fixes
+
+* At the polling deadline, classify the same bound target only when the result would otherwise be zero delivery. Web targets return unverifiable without delivered_chars or retry fields. This applies to background key_events and foreground key_events_fg. Native zero delivery, completion, positive partial counts, and polling deadlines remain unchanged. Positive partial counts in self-clearing web fields are outside this fix. ([3133bbb](https://github.com/trycua/cua/commit/3133bbbff53a1eb07a919ff9973851eb44a3c129))
+* **cua-driver:** accept the GNOME helper only from the session's Shell ([da87d3d](https://github.com/trycua/cua/commit/da87d3d92f41b934103c82a312834c92b856ce4f))
+* **cua-driver:** avoid unsafe zero-delivery retry advice for macOS web typing ([3133bbb](https://github.com/trycua/cua/commit/3133bbbff53a1eb07a919ff9973851eb44a3c129)), closes [#5354](https://github.com/trycua/cua/issues/5354)
+* **cua-driver:** classify DOM click effects with readback ([1bf24b8](https://github.com/trycua/cua/commit/1bf24b83ed9d757adc5cccd6c5b03d4fcb4dd7c1))
+* **cua-driver:** deliver window-only foreground hotkeys through the HID activation guard ([a4b5fec](https://github.com/trycua/cua/commit/a4b5fec16a25d0206d075203c723404100a8043e))
+* **cua-driver:** discover native Wayland windows in desktop snapshots ([a038036](https://github.com/trycua/cua/commit/a038036c705a34e31e2a36f63a9abcecf6b04a6f))
+* **cua-driver:** fix Windows selected-browser launch guidance ([50313e7](https://github.com/trycua/cua/commit/50313e7a7475846a459048b89758e6d0bc14df6d))
+* **cua-driver:** handle Add-Type failure on non-ASCII locales ([cb213ef](https://github.com/trycua/cua/commit/cb213efb082d88f297283bb95663791a2fc466e3))
+* **cua-driver:** keep an ended session's master pointer until its popup menu closes ([a08193a](https://github.com/trycua/cua/commit/a08193ac91528bde303fb27c60047997e9f91ed4)), closes [#4965](https://github.com/trycua/cua/issues/4965)
+* **cua-driver:** keep GNOME element actions inside the requested window ([3bfe6ca](https://github.com/trycua/cua/commit/3bfe6ca4f092790cd07e02059864c84bbdf003a6))
+* **cua-driver:** let launch_app take the .app path that list_apps reports ([8ae3222](https://github.com/trycua/cua/commit/8ae3222b5939e1eb5a30c3178008e67ff1979e60))
+* **cua-driver:** never send a Windows foreground drag to the window covering the target ([36b6750](https://github.com/trycua/cua/commit/36b6750ffb05ecbd1ed4b64d82257948a98ff3a1))
+* **cua-driver:** recover rootless XWayland browser identities ([ef61a98](https://github.com/trycua/cua/commit/ef61a985d58958c6b9bc392f0ea0da785aa36ce9))
+* **cua-driver:** refuse unsafe GNOME 50+ helper startup ([53ffe13](https://github.com/trycua/cua/commit/53ffe137973edee3d4481d5fdba7469fc50c2717)), closes [#5416](https://github.com/trycua/cua/issues/5416)
+* **cua-driver:** report unknown tools accurately ([7d1e178](https://github.com/trycua/cua/commit/7d1e178522cf526512dfe3596612a3753cb46a85))
+* **cua-driver:** report Windows tree completeness ([d0eebf0](https://github.com/trycua/cua/commit/d0eebf0f4b527786282893ed7af0a76fca55b6c3))
+* **cua-driver:** restrict Windows launch candidates to the receipt process family ([0b235ad](https://github.com/trycua/cua/commit/0b235ad57c75ec9b8c7d56721d16c1d81b531855)), closes [#5450](https://github.com/trycua/cua/issues/5450)
+* **cua-driver:** retry unverified macOS window prefetches ([9799140](https://github.com/trycua/cua/commit/97991403b40d227c795ec4fd4e7b3ad7c873f21b))
+* **cua-driver:** scale Windows foreground scroll targets from the screenshot context ([e6de7c1](https://github.com/trycua/cua/commit/e6de7c1708afc1a3e1d3f549752bd40ec8f398d3))
+* **cua-driver:** stop macOS EINVAL flake in daemon client and settle capture/menu tests on conditions ([#5558](https://github.com/trycua/cua/issues/5558)) ([44f4795](https://github.com/trycua/cua/commit/44f47953a422d87593a7ba9a48020799f22e2548)), closes [#4357](https://github.com/trycua/cua/issues/4357)
+* **cua-driver:** suspend the target GUI thread while posting a Windows click ([de1ba41](https://github.com/trycua/cua/commit/de1ba418274ebb5215a28e32b2e2840440aff4f2))
+* **cua-driver:** track cursor placement explicitly ([88e6d9f](https://github.com/trycua/cua/commit/88e6d9facd33e2c258e0f9a0ba4d9b2bac51cd97))
+* **cua-driver:** undo the GTK4 CSD inset before at-point ownership checks ([1bc57bd](https://github.com/trycua/cua/commit/1bc57bd018e2adf8fc89476d7d9ff3f87ce04e9d))
+* **cua-driver:** verify foreground Document text insertion ([0525de1](https://github.com/trycua/cua/commit/0525de1e6439f1e4f0edba68660b3350ac20716d))
+* **cua-driver:** Windows list_windows omits the driver's own overlay windows ([9370532](https://github.com/trycua/cua/commit/9370532e8841d39728d5a9aa8fd03b13a54490f9))
+* extract snapshot selection into a host-testable module and select only the receipt root and transitive descendants, including renamed children. Preserve the public API, exited-root ordering, list_descendants behavior (including PID 0), explicit UWP host resolution, and original receipt PID with empty windows when no eligible fallback exists. Remove the unused version-prefix matcher. ([0b235ad](https://github.com/trycua/cua/commit/0b235ad57c75ec9b8c7d56721d16c1d81b531855))
+* Refuse GNOME 50 and newer before allocating resources, stop advertising GNOME 50 support, and document disabling existing helpers. Preserve GNOME 45–49 and API 10. This contains the risk without claiming to fix the native crash. ([53ffe13](https://github.com/trycua/cua/commit/53ffe137973edee3d4481d5fdba7469fc50c2717))
+* Reuse verified prefetches; otherwise capture and validate once after the walk. Reads without a prefetch still capture exactly once. Keep bounds lookup, resizing, file output, snapshot publication and the capture_id gate unchanged, retaining degradation if recovery fails. Net production change: +22 lines, in one file. ([9799140](https://github.com/trycua/cua/commit/97991403b40d227c795ec4fd4e7b3ad7c873f21b))
+* **security:** distrust the compromised eMudhra intermediates in every Cua client (CUA-1948) ([#5622](https://github.com/trycua/cua/issues/5622)) ([149ea51](https://github.com/trycua/cua/commit/149ea51c613cc840c3760dec822c57b7e65df05a))
+* Track placement explicitly in shared render state and use it across macOS, Windows, X11, and Wayland. Position getters return None for absent/unplaced cursors. Preserve existing seeding clamps and main-screen clipping. ([88e6d9f](https://github.com/trycua/cua/commit/88e6d9facd33e2c258e0f9a0ba4d9b2bac51cd97))
+
 ## [0.37.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.36.0...cua-driver-rs-v0.37.0) (2026-10-20)
 
 

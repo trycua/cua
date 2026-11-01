@@ -1,0 +1,11 @@
+{
+  "autoscale": false,
+  "max_usd_per_hour": 2.5,
+  "monthly_usd": 300.0,
+  "max_new_hosts": 3,
+  "warm": true,
+  "interactive_slo_secs": 120,
+  "routed": true,
+  "budget_set": true,
+  "allow_metal": false
+}

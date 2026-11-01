@@ -36,6 +36,9 @@ fn check_request(word: &str, caps: &ProviderCapabilities, o: &CreateOptions) -> 
             "network=\"none\" (only local QEMU VMs run without outbound network)".into(),
         ));
     }
+    if !o.egress.is_empty() {
+        return Err(unsupported(crate::sandbox::EGRESS_LOCAL_ONLY.into()));
+    }
     if !o.sidecars.is_empty() {
         return Err(unsupported("sidecars".into()));
     }
@@ -264,6 +267,12 @@ impl Sandboxes {
             .clone()
             .or_else(|| o.ephemeral_name.clone())
             .unwrap_or_else(|| format!("cua-eph-{:08x}", rand_u32()));
+        if !o.mounts.is_empty() {
+            return Err(Error::Unsupported {
+                provider: ProviderKind::Contrib,
+                op: "host directories mounted into the guest (local Spaces only)".into(),
+            });
+        }
         // A GPU type the provider offers (refused before any API call).
         let gpu = match o.gpu.as_deref() {
             None => None,

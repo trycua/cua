@@ -449,7 +449,7 @@ impl InstallerCommands {
         } else {
             cli.bundled
                 .clone()
-                .or_else(|| first_on_path(&cli.path_env, cli_file_name()))
+                .or_else(|| first_on_path(&cli.path_env, &cli.installed_name()))
         };
         let agents: Arc<dyn AgentSetupBackend> = Arc::new(SdkAgentSetup::new(
             cua_agent_setup::AgentSetup::from_env(),

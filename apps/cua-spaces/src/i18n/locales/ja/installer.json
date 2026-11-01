@@ -1,0 +1,8 @@
+{
+  "installer.flow.label": "Cua のセットアップ",
+  "installer.flow.steps_label": "セットアップの手順",
+  "installer.prompts.label": "エージェントに聞いてみましょう:",
+  "installer.prompts.copied": "コピーしました",
+  "installer.agents.results_label": "セットアップの結果",
+  "installer.agents.detected_label": "検出されたエージェント"
+}

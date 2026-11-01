@@ -31,6 +31,8 @@ exec docker run --rm --memory=4g --memory-swap=4g --tmpfs /tiny:size=1m \
   -w /repo/libs/cua-spacesd "$image" bash -c '
     set -euo pipefail
     timeout 1800 cargo test --locked -p cua-spacesd-server -p cua-relay -p cua-spacesd-socks -p cua-spacesd-teleport -- --test-threads=4
+    # The hosted relay'"'"'s build of the relay (the `hosted` feature).
+    timeout 1800 cargo test --locked -p cua-spacesd-server -p cua-relay --features cua-relay/hosted,cua-spacesd-server/relay-hosted -- --test-threads=4
     timeout 900 cargo test --locked -p cua-spacesd --bin cua-spacesd -- --test-threads=4
     (cd tests/teleport-e2e && timeout 900 cargo test --locked -- --test-threads=4)
   '

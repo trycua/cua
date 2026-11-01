@@ -1,0 +1,9863 @@
+{
+"_note": "Recorded from e2b 2.58.0 get_all_files_in_path over this tree (symlinks: link.txt -> a.txt, srclink -> src); each file holds its own relative path.",
+"cases": [
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "*"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "*"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"link.txt",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "*"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink"
+],
+"ignore": [
+"*.py"
+],
+"src": "*"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+".git"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "*"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src"
+],
+"src": "*"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "*"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink"
+],
+"ignore": [
+"test_*"
+],
+"src": "*"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [],
+"src": "*"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "**"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "**"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"link.txt",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "**"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink"
+],
+"ignore": [
+"*.py"
+],
+"src": "**"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+".git"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "**"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src"
+],
+"src": "**"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "**"
+},
+{
+"dirs": false,
+"files": [
+".git/config",
+"Dockerfile",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space/f.txt",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink"
+],
+"ignore": [
+"test_*"
+],
+"src": "**"
+},
+{
+"dirs": true,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [],
+"src": "**"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "**/*.py"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "**/*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "**/*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"src/main.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py"
+],
+"ignore": [
+"*.py"
+],
+"src": "**/*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+".git"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "**/*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src"
+],
+"src": "**/*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"src/main.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "**/*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py"
+],
+"ignore": [
+"test_*"
+],
+"src": "**/*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"src/main.py",
+"src/sub/deep.py",
+"src/util.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [],
+"src": "**/*.py"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"*.py"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+".git"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"?.txt"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"dir with space"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src/sub"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"test_*"
+],
+"src": "**/deep.*"
+},
+{
+"dirs": true,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [],
+"src": "**/deep.*"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "*.py"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"*.py"
+],
+"src": "*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+".git"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src"
+],
+"src": "*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "*.py"
+},
+{
+"dirs": false,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py"
+],
+"ignore": [
+"test_*"
+],
+"src": "*.py"
+},
+{
+"dirs": true,
+"files": [
+"b.py",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [],
+"src": "*.py"
+},
+{
+"dirs": false,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "*/main.py"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "*/main.py"
+},
+{
+"dirs": false,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "*/main.py"
+},
+{
+"dirs": false,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"*.py"
+],
+"src": "*/main.py"
+},
+{
+"dirs": false,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+".git"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "*/main.py"
+},
+{
+"dirs": false,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"srclink/main.py"
+],
+"ignore": [
+"src"
+],
+"src": "*/main.py"
+},
+{
+"dirs": false,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "*/main.py"
+},
+{
+"dirs": false,
+"files": [
+"srclink/main.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"srclink/main.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [
+"test_*"
+],
+"src": "*/main.py"
+},
+{
+"dirs": true,
+"files": [
+"src/main.py",
+"srclink/main.py"
+],
+"ignore": [],
+"src": "*/main.py"
+},
+{
+"dirs": false,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "."
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+"."
+],
+"ignore": [
+"**"
+],
+"src": "."
+},
+{
+"dirs": false,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "."
+},
+{
+"dirs": false,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink"
+],
+"ignore": [
+"*.py"
+],
+"src": "."
+},
+{
+"dirs": false,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+".git"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "."
+},
+{
+"dirs": false,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules/keep.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src"
+],
+"src": "."
+},
+{
+"dirs": false,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "."
+},
+{
+"dirs": false,
+"files": [
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink"
+],
+"ignore": [
+"test_*"
+],
+"src": "."
+},
+{
+"dirs": true,
+"files": [
+".",
+".git",
+".git/config",
+"Dockerfile",
+"[br]",
+"[br]/x.txt",
+"a.txt",
+"b.py",
+"dir with space",
+"dir with space/f.txt",
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md",
+"link.txt",
+"node_modules",
+"node_modules/keep.js",
+"node_modules/x",
+"node_modules/x/y.js",
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py",
+"srclink",
+"test_1.py",
+"test_22.py"
+],
+"ignore": [],
+"src": "."
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "./a.txt"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "./a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "./a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*.py"
+],
+"src": "./a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+".git"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"?.txt"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"[ab]*"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"dir with space"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "./a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src"
+],
+"src": "./a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "./a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/sub"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"test_*"
+],
+"src": "./a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [],
+"src": "./a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "[ab].*"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "[ab].*"
+},
+{
+"dirs": false,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "[ab].*"
+},
+{
+"dirs": false,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*.py"
+],
+"src": "[ab].*"
+},
+{
+"dirs": false,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+".git"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"b.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"[ab]*"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "[ab].*"
+},
+{
+"dirs": false,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"src"
+],
+"src": "[ab].*"
+},
+{
+"dirs": false,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "[ab].*"
+},
+{
+"dirs": false,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [
+"test_*"
+],
+"src": "[ab].*"
+},
+{
+"dirs": true,
+"files": [
+"a.txt",
+"b.py"
+],
+"ignore": [],
+"src": "[ab].*"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "a.txt"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*.py"
+],
+"src": "a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+".git"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"?.txt"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"[ab]*"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"dir with space"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src"
+],
+"src": "a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/sub"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"test_*"
+],
+"src": "a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [],
+"src": "a.txt"
+},
+{
+"dirs": false,
+"files": [
+"dir with space/f.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "dir with space"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "dir with space"
+},
+{
+"dirs": false,
+"files": [
+"dir with space/f.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "dir with space"
+},
+{
+"dirs": false,
+"files": [
+"dir with space/f.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"*.py"
+],
+"src": "dir with space"
+},
+{
+"dirs": false,
+"files": [
+"dir with space/f.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+".git"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"?.txt"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"dir with space"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "dir with space"
+},
+{
+"dirs": false,
+"files": [
+"dir with space/f.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"src"
+],
+"src": "dir with space"
+},
+{
+"dirs": false,
+"files": [
+"dir with space/f.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "dir with space"
+},
+{
+"dirs": false,
+"files": [
+"dir with space/f.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"src/sub"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [
+"test_*"
+],
+"src": "dir with space"
+},
+{
+"dirs": true,
+"files": [
+"dir with space",
+"dir with space/f.txt"
+],
+"ignore": [],
+"src": "dir with space"
+},
+{
+"dirs": false,
+"files": [
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "docs"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "docs"
+},
+{
+"dirs": false,
+"files": [
+"docs/a",
+"docs/a/b"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "docs"
+},
+{
+"dirs": false,
+"files": [
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"*.py"
+],
+"src": "docs"
+},
+{
+"dirs": false,
+"files": [
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+".git"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"?.txt"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"dir with space"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/readme.md"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "docs"
+},
+{
+"dirs": false,
+"files": [
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src"
+],
+"src": "docs"
+},
+{
+"dirs": false,
+"files": [
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "docs"
+},
+{
+"dirs": false,
+"files": [
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src/sub"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"test_*"
+],
+"src": "docs"
+},
+{
+"dirs": true,
+"files": [
+"docs",
+"docs/a",
+"docs/a/b",
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [],
+"src": "docs"
+},
+{
+"dirs": false,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**/*.md"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**/*.md"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": false,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"*.py"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": false,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+".git"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"?.txt"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"dir with space"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/readme.md"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": false,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": false,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": false,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"src/sub"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [
+"test_*"
+],
+"src": "docs/**/*.md"
+},
+{
+"dirs": true,
+"files": [
+"docs/a/b/c.md",
+"docs/readme.md"
+],
+"ignore": [],
+"src": "docs/**/*.md"
+},
+{
+"dirs": false,
+"files": [
+"link.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "link.txt"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "link.txt"
+},
+{
+"dirs": false,
+"files": [
+"link.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "link.txt"
+},
+{
+"dirs": false,
+"files": [
+"link.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"*.py"
+],
+"src": "link.txt"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+".git"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"?.txt"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"dir with space"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "link.txt"
+},
+{
+"dirs": false,
+"files": [
+"link.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"src"
+],
+"src": "link.txt"
+},
+{
+"dirs": false,
+"files": [
+"link.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "link.txt"
+},
+{
+"dirs": false,
+"files": [
+"link.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"src/sub"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [
+"test_*"
+],
+"src": "link.txt"
+},
+{
+"dirs": true,
+"files": [
+"link.txt"
+],
+"ignore": [],
+"src": "link.txt"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"!a.txt"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"!a.txt"
+],
+"src": "nothing"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "nothing"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**/*.md"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**/*.md"
+],
+"src": "nothing"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"*.py"
+],
+"src": "nothing"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"*/x.txt"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+".git"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"?.txt"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"[ab]*"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"\\[br\\]"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"dir with space"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"docs/a/"
+],
+"src": "nothing"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src"
+],
+"src": "nothing"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "nothing"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src/sub"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"test_*"
+],
+"src": "nothing"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [],
+"src": "nothing"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.py"
+],
+"src": "src"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+".git"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "src"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src"
+],
+"src": "src"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/util.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"test_*"
+],
+"src": "src"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [],
+"src": "src"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.py"
+],
+"src": "src/"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+".git"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "src/"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src"
+],
+"src": "src/"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/util.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"test_*"
+],
+"src": "src/"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [],
+"src": "src/"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/*"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/*"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/*"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.py"
+],
+"src": "src/*"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+".git"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "src/*"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src"
+],
+"src": "src/*"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/*"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/util.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"test_*"
+],
+"src": "src/*"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [],
+"src": "src/*"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/**"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/**"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/**"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.py"
+],
+"src": "src/**"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+".git"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "src/**"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src"
+],
+"src": "src/**"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/**"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/util.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [
+"test_*"
+],
+"src": "src/**"
+},
+{
+"dirs": true,
+"files": [
+"src",
+"src/.hidden",
+"src/main.py",
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/util.py"
+],
+"ignore": [],
+"src": "src/**"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*.py"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+".git"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"?.txt"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"[ab]*"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"dir with space"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": false,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"src/sub"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [
+"test_*"
+],
+"src": "src/../a.txt"
+},
+{
+"dirs": true,
+"files": [
+"a.txt"
+],
+"ignore": [],
+"src": "src/../a.txt"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"*.py"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+".git"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"?.txt"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"dir with space"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": false,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"src/sub"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [
+"test_*"
+],
+"src": "src/.hidden"
+},
+{
+"dirs": true,
+"files": [
+"src/.hidden"
+],
+"ignore": [],
+"src": "src/.hidden"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "src/sub"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "src/sub"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "src/sub"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.txt"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"*.py"
+],
+"src": "src/sub"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+".git"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"?.txt"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"dir with space"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "src/sub"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src"
+],
+"src": "src/sub"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.txt"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "src/sub"
+},
+{
+"dirs": false,
+"files": [
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"src/sub"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [
+"test_*"
+],
+"src": "src/sub"
+},
+{
+"dirs": true,
+"files": [
+"src/sub",
+"src/sub/deep.py",
+"src/sub/deep.txt"
+],
+"ignore": [],
+"src": "src/sub"
+},
+{
+"dirs": false,
+"files": [
+"srclink"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "srclink"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "srclink"
+},
+{
+"dirs": false,
+"files": [
+"srclink"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "srclink"
+},
+{
+"dirs": false,
+"files": [
+"srclink"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"*.py"
+],
+"src": "srclink"
+},
+{
+"dirs": false,
+"files": [
+"srclink"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+".git"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"?.txt"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"dir with space"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "srclink"
+},
+{
+"dirs": false,
+"files": [
+"srclink"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"src"
+],
+"src": "srclink"
+},
+{
+"dirs": false,
+"files": [
+"srclink"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "srclink"
+},
+{
+"dirs": false,
+"files": [
+"srclink"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"src/sub"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [
+"test_*"
+],
+"src": "srclink"
+},
+{
+"dirs": true,
+"files": [
+"srclink"
+],
+"ignore": [],
+"src": "srclink"
+},
+{
+"dirs": false,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "test_?.py"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "test_?.py"
+},
+{
+"dirs": false,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "test_?.py"
+},
+{
+"dirs": false,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"*.py"
+],
+"src": "test_?.py"
+},
+{
+"dirs": false,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+".git"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "test_?.py"
+},
+{
+"dirs": false,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"src"
+],
+"src": "test_?.py"
+},
+{
+"dirs": false,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "test_?.py"
+},
+{
+"dirs": false,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"test_*"
+],
+"src": "test_?.py"
+},
+{
+"dirs": true,
+"files": [
+"test_1.py"
+],
+"ignore": [],
+"src": "test_?.py"
+},
+{
+"dirs": false,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"!a.txt"
+],
+"src": "test_??.py"
+},
+{
+"dirs": false,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"**"
+],
+"src": "test_??.py"
+},
+{
+"dirs": false,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"**/*.md"
+],
+"src": "test_??.py"
+},
+{
+"dirs": false,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"**/deep.*",
+"!**/deep.txt"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"*.py"
+],
+"src": "test_??.py"
+},
+{
+"dirs": false,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"*.txt",
+"!a.txt"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"*/x.txt"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+".git"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"?.txt"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"[ab]*"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"\\[br\\]"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"dir with space"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"docs/a/"
+],
+"src": "test_??.py"
+},
+{
+"dirs": false,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"node_modules",
+"!node_modules/keep.js"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"src"
+],
+"src": "test_??.py"
+},
+{
+"dirs": false,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"src/**/deep.py"
+],
+"src": "test_??.py"
+},
+{
+"dirs": false,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"src/*.py",
+"!src/util.py"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [
+"src/sub"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [],
+"ignore": [
+"test_*"
+],
+"src": "test_??.py"
+},
+{
+"dirs": true,
+"files": [
+"test_22.py"
+],
+"ignore": [],
+"src": "test_??.py"
+}
+],
+"symlinks": {
+"link.txt": "a.txt",
+"srclink": "src"
+},
+"tree": [
+"a.txt",
+"b.py",
+"src/main.py",
+"src/util.py",
+"src/sub/deep.py",
+"src/sub/deep.txt",
+"src/.hidden",
+"node_modules/x/y.js",
+"node_modules/keep.js",
+".git/config",
+"docs/readme.md",
+"docs/a/b/c.md",
+"Dockerfile",
+"test_1.py",
+"test_22.py",
+"dir with space/f.txt",
+"[br]/x.txt"
+]
+}

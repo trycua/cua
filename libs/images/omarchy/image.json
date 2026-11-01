@@ -166,7 +166,8 @@
       "clipboard.text",
       "presence",
       "presence.cursor_shape",
-      "volume.mount"
+      "volume.mount",
+      "process.exec_ledger"
     ],
     "features_optional": [
       "background_input",
@@ -179,7 +180,13 @@
       "audio.per_app",
       "clipboard.files",
       "clipboard.image",
-      "teleport.*"
+      "teleport.*",
+      "process.exec_ledger",
+      "files.multipart",
+      "fs.run_as",
+      "fs.xattr",
+      "process.run_as",
+      "volume.binds"
     ],
     "feature_attributes": {
       "volume.mount": {

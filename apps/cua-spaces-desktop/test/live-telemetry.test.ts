@@ -136,6 +136,8 @@ describe("leaving Welcome", () => {
     expect(leftWelcome({ type: "onboarding-page", page: "welcome", action: "shown", choice: "none" })).toBe(false);
     expect(leftWelcome({ type: "step", step: "onboarding_shown", ok: true })).toBe(false);
     expect(leftWelcome({ type: "feature", feature: "space_open" })).toBe(false);
+    expect(leftWelcome({ type: "onboarding-page", page: "welcome", action: "step_viewed", choice: "none" })).toBe(false);
+    expect(leftWelcome({ type: "onboarding-page", page: "welcome", action: "step_completed", choice: "none" })).toBe(true);
     expect(leftWelcome({ type: "onboarding-page", page: "welcome", action: "completed", choice: "none" })).toBe(true);
     expect(leftWelcome({ type: "onboarding-page", page: "signin", action: "shown", choice: "none" })).toBe(true);
     expect(leftWelcome({ type: "step", step: "onboarding_skipped", ok: true })).toBe(true);

@@ -111,6 +111,50 @@ e.e2eTest("local-qemu", "qemu", "reference disk via vm:<disk>: probe, forward, s
   }
 }, { timeout: 1_200_000 })
 
+e.e2eTest("local-qemu-fork", "qemu", "forkable disk: checkpoint(pin) -> 2 independent forks -> pinned kept -> prune", async () => {
+  const { existsSync } = await import("node:fs")
+  const disk = process.env.CUA_E2E_DISK_LINUX ?? process.env.CUA_E2E_DISK_CUA_DESKTOP_LINUX ??
+    `${process.env.HOME}/.cache/cua-images-e2e/linux/${e.HOST_ARCH}/disk.img`
+  if (!existsSync(disk)) e.skip(`missing ${disk}`)
+  const c = e.embeddedLocal(e.tmpState())
+  const sbx = c.sandboxes()
+  const token = randomBytes(16).toString("hex")
+  const bake = await sbx.create(cua.SandboxCreateOptions.create({
+    on: "local", image: `vm:${disk}`, name: e.name("bake"), token, forkable: true,
+    env: new Map([["CUA_ENV_TOKEN", token]]), cpus: 2, memoryMb: 3072n, ports: [3211],
+    waitFor: [cua.ReadinessProbe.create({ port: 3211, httpPath: "/viewer/" })],
+    readyTimeoutMs: 600_000 }))
+  const ck = e.name("ck")
+  let forks = []
+  try {
+    const env = await e.waitEnv(bake)
+    await e.shOk(env, "cloud-init status --wait >/dev/null 2>&1; true", 300_000)
+    const world = (await e.shOk(env,
+      "head -c 64M /dev/urandom >/dev/shm/world && sha256sum /dev/shm/world | cut -d' ' -f1")).trim()
+    const summary = await sbx.checkpoint(bake.name(), ck, true)
+    assert.ok(summary.pinned && summary.sharedMemory, JSON.stringify(summary))
+    for (const i of [0, 1]) forks.push(await sbx.fork(ck, e.name(`fork${i}`)))
+    for (const f of forks) {
+      const fenv = await e.waitEnv(f)
+      assert.equal((await e.shOk(fenv, "sha256sum /dev/shm/world | cut -d' ' -f1")).trim(), world)
+      await e.shOk(fenv, `echo ${f.name()} >/dev/shm/me`)
+    }
+    for (const f of forks) {
+      assert.equal((await e.shOk(await e.waitEnv(f), "cat /dev/shm/me")).trim(), f.name())
+    }
+    await assert.rejects(sbx.deleteCheckpoint(ck), /pinned/)
+    assert.equal((await sbx.pinCheckpoint(ck, false)).pinned, false)
+    for (const f of forks) await f.delete_()
+    forks = []
+    assert.ok((await sbx.pruneCheckpoints()).includes(ck))
+  } finally {
+    for (const f of forks) await f.delete_().catch(() => {})
+    await sbx.pinCheckpoint(ck, false).catch(() => {})
+    await sbx.deleteCheckpoint(ck).catch(() => {})
+    await bake.delete_()
+  }
+}, { timeout: 1_800_000 })
+
 // ------------------------------------------------------------ images / image-build-push-run
 
 const imageSpec = (nm, marker) => JSON.stringify({
@@ -155,3 +199,56 @@ e.e2eTest("images", "container", "SDK build_image layers apply; the pushed rootf
     }
   })
 }, { timeout: 1_200_000 })
+
+// ------------------------------------------------------------ fork-batch (qemu)
+
+e.e2eTest("fork-batch", "qemu", "memory checkpoint -> forkMany(3, parallel 2) streamed -> each fork's env", async () => {
+  const { existsSync } = await import("node:fs")
+  const disk = process.env.CUA_E2E_DISK_LINUX ??
+    `${process.env.HOME}/.cache/cua-images-e2e/linux/${e.HOST_ARCH}/disk.img`
+  if (!existsSync(disk)) e.skip(`missing ${disk}`)
+  const c = e.embeddedLocal(e.tmpState())
+  const sbx = c.sandboxes()
+  const src = e.name("fb-src")
+  const ck = `${src}-ck`
+  const token = randomBytes(16).toString("hex")
+  const forks = []
+  try {
+    const sb = await sbx.create(cua.SandboxCreateOptions.create({
+      on: "local", image: `vm:${disk}`, name: src, token,
+      env: new Map([["CUA_ENV_TOKEN", token]]), cpus: 2, memoryMb: 1536n, ports: [3211],
+      waitFor: [cua.ReadinessProbe.create({ port: 3211, httpPath: "/viewer/" })],
+      readyTimeoutMs: 600_000 }))
+    await e.waitEnv(sb, 300)
+    await sbx.checkpoint(src, ck)
+    const batch = await sbx.forkMany(ck, 3, cua.ForkManyOptions.create({
+      on: "local", maxParallelPerHost: 2, namePrefix: `${src}-f` }))
+    const items = []
+    let summary
+    for (;;) {
+      const ev = await batch.next()
+      if (ev === undefined) break
+      if (ev.tag === cua.ForkBatchEvent_Tags.Item) {
+        assert.equal(summary, undefined, "items stream before the summary")
+        forks.push(ev.inner.item.name)
+        assert.equal(ev.inner.item.error, "")
+        items.push(ev.inner.item)
+      } else if (ev.tag === cua.ForkBatchEvent_Tags.Done) {
+        summary = ev.inner.summary
+      }
+    }
+    assert.equal(summary.ok, 3)
+    assert.equal(summary.failed, 0)
+    assert.ok((summary.peakParallel.get("local") ?? 0) <= 2)
+    for (const item of items) {
+      assert.equal(item.space, `local:${item.name}`)
+      const fork = await sbx.connect(item.name)
+      const env = await e.waitEnv(fork, 120)
+      await e.shOk(env, "true")
+    }
+  } finally {
+    for (const f of forks) await sbx.delete_(f).catch(() => {})
+    await sbx.deleteCheckpoint(ck).catch(() => {})
+    await sbx.delete_(src).catch(() => {})
+  }
+}, { timeout: 2_400_000 })

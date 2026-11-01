@@ -286,7 +286,7 @@ mod tests {
             sync: Some(sync),
             ..Default::default()
         });
-        assert_eq!(items[0].label, "No Spaces \u{b7} Syncing 3\u{2026}");
+        assert_eq!(items[0].label, "No Spaces running \u{b7} Syncing 3\u{2026}");
         assert_eq!(items[1].id, MenuItemId::VolumeConflicts);
         assert_eq!(items[1].label, "2 conflicts");
         assert!(items[1].enabled);

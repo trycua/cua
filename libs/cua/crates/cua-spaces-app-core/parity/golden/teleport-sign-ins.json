@@ -128,9 +128,9 @@
         ],
         "selectedId": "com.google.Chrome",
         "sensitive": [
-          "sign_ins:Keep me signed in:Sends the session cookies.:off",
-          "passwords:Saved passwords:Sends the passwords saved in the app.:off",
-          "history:Browsing history:Sends the history of pages visited, and the bookmarks where the browser keeps them together.:off"
+          "sign_ins:teleport.sensitive.sign_ins.label:teleport.sensitive.sign_ins.detail:off",
+          "passwords:teleport.sensitive.passwords.label:teleport.sensitive.passwords.detail:off",
+          "history:teleport.sensitive.history.label:teleport.sensitive.history.detail:off"
         ],
         "step": "options"
       },
@@ -153,9 +153,9 @@
         ],
         "selectedId": "com.google.Chrome",
         "sensitive": [
-          "sign_ins:Keep me signed in:Sends the session cookies.:on",
-          "passwords:Saved passwords:Sends the passwords saved in the app.:off",
-          "history:Browsing history:Sends the history of pages visited, and the bookmarks where the browser keeps them together.:off"
+          "sign_ins:teleport.sensitive.sign_ins.label:teleport.sensitive.sign_ins.detail:on",
+          "passwords:teleport.sensitive.passwords.label:teleport.sensitive.passwords.detail:off",
+          "history:teleport.sensitive.history.label:teleport.sensitive.history.detail:off"
         ],
         "step": "options"
       },
@@ -179,9 +179,9 @@
         ],
         "selectedId": "com.google.Chrome",
         "sensitive": [
-          "sign_ins:Keep me signed in:Sends the session cookies.:on",
-          "passwords:Saved passwords:Sends the passwords saved in the app.:off",
-          "history:Browsing history:Sends the history of pages visited, and the bookmarks where the browser keeps them together.:on"
+          "sign_ins:teleport.sensitive.sign_ins.label:teleport.sensitive.sign_ins.detail:on",
+          "passwords:teleport.sensitive.passwords.label:teleport.sensitive.passwords.detail:off",
+          "history:teleport.sensitive.history.label:teleport.sensitive.history.detail:on"
         ],
         "step": "options"
       },
@@ -204,9 +204,9 @@
         ],
         "selectedId": "com.google.Chrome",
         "sensitive": [
-          "sign_ins:Keep me signed in:Sends the session cookies.:on",
-          "passwords:Saved passwords:Sends the passwords saved in the app.:off",
-          "history:Browsing history:Sends the history of pages visited, and the bookmarks where the browser keeps them together.:off"
+          "sign_ins:teleport.sensitive.sign_ins.label:teleport.sensitive.sign_ins.detail:on",
+          "passwords:teleport.sensitive.passwords.label:teleport.sensitive.passwords.detail:off",
+          "history:teleport.sensitive.history.label:teleport.sensitive.history.detail:off"
         ],
         "step": "options"
       },

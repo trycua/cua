@@ -201,6 +201,12 @@ final class SyntheticMedia: SpaceStreamSession, @unchecked Sendable {
         lock.lock(); jumpToKeyframe = true; lock.unlock()
     }
 
+    /// The transport ends under the session (the Space stopped, the machine
+    /// went away): the socket's close, as the media client reports it.
+    func dropTransport() {
+        sink.onEvent(event: MediaEvent(kind: "closed", json: #"{"code":1006,"reason":"reset"}"#))
+    }
+
     override func sendText(json: String) throws {
         lock.lock()
         inputBatches += 1
@@ -236,14 +242,56 @@ extension FixtureSpacesBackend {
     /// sample Spaces plus `n` running Linux Spaces on this Mac, for the video
     /// harness's grid of tiles.
     static func rows(environment: [String: String]) -> [AppSpaceRow] {
+        var base = sample
+        // `CUA_SPACES_FIXTURE_PEER_CUA=<version>`: one of your Linux machines (relay machine
+        // `m1`) shares its desktop and runs that Cua (see `peerHealth`).
+        if environment["CUA_SPACES_FIXTURE_PEER_CUA"] != nil {
+            base.append(AppSpaceRow(
+                id: "relay:m1", name: "ellieln", displayName: nil, provider: "relay", spacesdVersion: "0.7.0",
+                features: ["desktop_stream", "window_stream", "host_spaces"], addedAt: nil,
+                os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
+                kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
+                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
+            // A Space it provides, for comparison with its desktop row.
+            base.append(AppSpaceRow(
+                id: "relay:m1/xm1", name: "0123456789ab", displayName: nil, provider: "relay", spacesdVersion: "0.7.0",
+                features: ["desktop_stream"], addedAt: nil,
+                os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
+                kind: nil, arch: nil, reachable: true, error: nil, host: "m1", hostName: "ellieln",
+                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
+        }
+        // `CUA_SPACES_FIXTURE_STOPPED=<n>`: `n` suspended or stopped Spaces that
+        // one of your machines provides, with no recorded add date (so they read
+        // as seen just now), the notch's ordering regression.
+        if let k = environment["CUA_SPACES_FIXTURE_STOPPED"].flatMap(Int.init), k > 0 {
+            let names = ["cua-builder", "onb-new", "onb-old", "windows-aws", "dev-box", "ci-runner", "scratch", "qa-mac"]
+            for i in 0..<min(k, names.count) {
+                let state = i % 2 == 0 ? "suspended" : "stopped"
+                base.append(AppSpaceRow(
+                    id: "relay:ip-172-31-46-222/\(names[i])", name: names[i], displayName: nil, provider: "relay",
+                    spacesdVersion: "0.7.0", features: ["desktop_stream"], addedAt: nil,
+                    os: .unknown, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
+                    kind: nil, arch: nil, reachable: false, error: nil, host: "ip-172-31-46-222",
+                    hostName: "ip-172-31-46-222", power: i % 2 == 0 ? "suspend" : "stop", powerState: state,
+                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
+            }
+        }
         guard let n = environment["CUA_SPACES_FIXTURE_SPACES"].flatMap(Int.init), n > 0,
-              let template = sample.first else { return sample }
+              let template = base.first else { return base }
         let extra = (1...min(n, 32)).map { i -> AppSpaceRow in
             var row = template
             row.id = "local:bench-\(i)"
             row.name = "bench-\(i)"
             return row
         }
-        return extra + sample
+        return extra + base
+    }
+
+    /// What `machineHealth` answers under `CUA_SPACES_FIXTURE_PEER_CUA=<version>`: This Mac runs
+    /// Cua 0.6.0 and the peer runs `<version>`.
+    static func peerHealth(environment: [String: String]) -> [String: AppMachinesViewHealth] {
+        guard let peer = environment["CUA_SPACES_FIXTURE_PEER_CUA"] else { return [:] }
+        return ["": AppMachinesViewHealth(id: "", checks: [], cuaVersion: "0.6.0", error: nil),
+                "m1": AppMachinesViewHealth(id: "m1", checks: [], cuaVersion: peer, error: nil)]
     }
 }

@@ -20,9 +20,24 @@ if ! cua_await_token_file; then
     # the driver waiting on a copy nobody writes. Keep watching; mirroring
     # while the driver uses a local token is harmless (it reads its own file).
     echo "[$(date -Iseconds)] token sync not needed yet (no claim secrets mount or a local token is set); watching $CUA_CLAIM_SECRETS_DIR"
+    # Poll cheaply: in a container nothing ever mounts it, so this loop runs
+    # for the Space's lifetime, and under gVisor a fork+exec every 2 s cost
+    # ~1% of a core per idle Space. The pause is a timed read on a pipe from
+    # a named `sleep infinity` that never writes; that process also keeps the
+    # program visible to callers that cannot query supervisord (the doctor
+    # running as the desktop user). A VM's cloud-init mounts within its first
+    # minutes, so after two of them the check backs off to every 10 s.
+    exec {pause_fd}< <(exec -a "cua-env-token-sync (idle)" sleep infinity)
+    pause_pid=$!
+    polls=0
     until cua_is_mountpoint "$CUA_CLAIM_SECRETS_DIR"; do
-        (exec -a "cua-env-token-sync (idle)" sleep 2)
+        pause=2
+        [ "$polls" -lt 60 ] || pause=10
+        read -r -t "$pause" -u "$pause_fd" _ || true
+        polls=$((polls + 1))
     done
+    exec {pause_fd}<&-
+    kill "$pause_pid" 2>/dev/null || true
     echo "[$(date -Iseconds)] claim secrets mounted at $CUA_CLAIM_SECRETS_DIR"
 fi
 install -d -m 0755 -o root -g root "$CUA_SYNCED_TOKEN_DIR"

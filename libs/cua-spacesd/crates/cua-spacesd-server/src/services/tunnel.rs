@@ -252,6 +252,29 @@ impl TunnelService for TunnelServiceImpl {
         } else {
             body.host
         };
+        // On a machine that does not share its desktop, a relayed caller
+        // reaches only the routed Spaces it may use, by their loopback port.
+        if caller.host_only {
+            let account = caller.account.as_ref();
+            let ok = (host.eq_ignore_ascii_case("localhost")
+                || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback()))
+                && crate::host_spaces::routed_port_allowed(
+                    body.port as u16,
+                    account.map(|a| a.account.as_str()).unwrap_or_default(),
+                    account.is_some_and(|a| a.role == "owner"),
+                );
+            if !ok {
+                return Err(status(
+                    Code::PermissionDenied,
+                    ErrorReason::PermissionDenied,
+                    format!(
+                        "this machine does not share its desktop: only the port of a routed Space \
+                         you may use can be forwarded, not {}",
+                        body.port
+                    ),
+                ));
+            }
+        }
         if !allowed_forward_host(&host) {
             return Err(status(
                 Code::PermissionDenied,

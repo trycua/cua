@@ -96,6 +96,28 @@ message GetCapabilitiesResponse {
   // deliver such secrets over a relay: path unless the user explicitly
   // opts in per delivery. 32 bytes when present.
   bytes machine_seal_public_key = 16;
+  // The bulk lane, when the guest has one: a second disk the host shares
+  // with it, through which same-machine file transfers skip the network.
+  // Unset when the guest has no such disk.
+  BulkLane bulk = 17;
+}
+
+// A disk shared between a guest and the machine hosting it, carrying file
+// content for `ReadFileRequest.bulk_slot` and `UploadChunkRequest.bulk_slot`.
+// The host-side client finds the disk's file, reads the identity from its
+// first bytes (the guest writes them) and uses the lane only when it equals
+// `id`: a client that cannot open that file, or finds another identity,
+// transfers over the network as before.
+message BulkLane {
+  // Identity the guest wrote at the start of the disk. 16 bytes.
+  bytes id = 1;
+  // Number of slots.
+  uint32 slots = 2;
+  // Size of each slot in bytes.
+  uint64 slot_bytes = 3;
+  // Offset of slot 0 in the disk. Slot `i` starts at
+  // `data_offset + i * slot_bytes`.
+  uint64 data_offset = 4;
 }
 
 // Guest operating system description.
@@ -264,6 +286,26 @@ message InitRequest {
   AudioUplinkAccess audio_uplink = 8;
   // Presence settings of this Space. Unset leaves the current settings.
   PresenceSettings presence = 9;
+  // This guest just became a new machine: a Space claimed from a warm pool,
+  // or restored or forked from a memory snapshot that other Spaces share.
+  // The driver regenerates its per-machine secrets (the machine-seal
+  // keypair, the media QUIC certificate, the ticket key used without a
+  // token), resets the sealed-delivery replay guard, rewrites
+  // `/etc/machine-id` (and a separate dbus copy) where it may, mixes
+  // `entropy` into the guest's random pool (crediting it and forcing a
+  // reseed where it has the privilege), steps the clock to `now`, and
+  // revokes forwards, the hotspot, the volume mount and media sessions
+  // opened before, so no two Spaces share keys or random state. Senders
+  // that pinned the old machine-seal key for this Space must re-pin: send
+  // it only when the guest is a different Space than the one the snapshot
+  // was taken of (never to resume a Space from its own checkpoint).
+  // Drivers before protocol revision 10 ignore it (`InitResponse.new_machine`
+  // stays false).
+  bool new_machine = 10;
+  // Random bytes from the caller's CSPRNG, mixed into the guest's entropy
+  // pool and into every secret `new_machine` regenerates (a restored
+  // guest's pool is its snapshot's). At least 32 bytes; at most 4096.
+  bytes entropy = 11;
 }
 
 // Per-Space presence settings.
@@ -304,6 +346,9 @@ message InitResponse {
   bool token_changed = 1;
   // True if the guest clock was stepped.
   bool clock_adjusted = 2;
+  // True if `InitRequest.new_machine` was applied: this guest's
+  // per-machine secrets were regenerated (see `InitRequest.new_machine`).
+  bool new_machine = 3;
 }
 
 // Request for `SystemService.Health`.
@@ -363,7 +408,9 @@ message MetricsResponse {
   uint64 memory_total_bytes = 5;
   // Used guest memory in bytes (excluding reclaimable cache).
   uint64 memory_used_bytes = 6;
-  // Total bytes of the filesystem named by `disk_path`.
+  // Total bytes of the filesystem named by `disk_path`; 0 when it has no
+  // size of its own (gVisor's root overlay reports "unlimited"), never a
+  // sentinel such as 2^63.
   uint64 disk_total_bytes = 7;
   // Used bytes of that filesystem.
   uint64 disk_used_bytes = 8;

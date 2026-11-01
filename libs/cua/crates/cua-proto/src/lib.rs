@@ -3,9 +3,10 @@
 //! clients and servers.
 //!
 //! The `.proto` files in `libs/cua/proto` are the source of truth; this
-//! crate only generates code from them. Applications should not use the
-//! generated client directly: the ergonomic client lives in `cua-spacesd-client` and is
-//! exposed to other languages only through the cua SDK.
+//! crate only generates code from them (the published crate carries a copy
+//! under `proto/`). Most programs want the typed client in
+//! [`cua-spacesd-client`](https://docs.rs/cua-spacesd-client); the raw
+//! generated clients here are for everything it does not wrap.
 //!
 //! Features:
 //! - `client` (default): `*_service_client` modules.
@@ -44,6 +45,8 @@ pub mod daemon {
 pub const FILE_DESCRIPTOR_SET: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/cua_descriptor.bin"));
 
+pub mod bulk;
+
 /// Default TCP port of cua-spacesd (gRPC, gRPC-Web and HTTP routes).
 pub const SPACESD_DEFAULT_PORT: u16 = 3211;
 
@@ -66,8 +69,29 @@ pub const ENV_PROTOCOL_VERSION: u32 = 1;
 /// and `MetricsResponse.memory_limited` / `disk_limited`; 7 =
 /// `SystemService.AttachRelay` / `DetachRelay` (a running driver joins a
 /// relay so its Space can be shared); 8 = `HostSpacesService` (a host
-/// provides Spaces through the relay).
-pub const ENV_PROTOCOL_REVISION: u32 = 8;
+/// provides Spaces through the relay); 9 = the exec ledger and fencing epoch
+/// (`StartProcessRequest.request_id` / `epoch`, `ProcessStart.deduplicated`,
+/// `ProcessEnd.lost`, `ProcessService.GetExecRecord` / `AdvanceEpoch`); 10 =
+/// `InitRequest.new_machine` / `entropy` and `InitResponse.new_machine` (a
+/// claimed, restored or forked guest regenerates its per-machine secrets);
+/// 11 = file calls and signed URLs that act as another guest user (`run_as`),
+/// file `metadata` stored as extended attributes (`xattr_namespace`,
+/// `EntryInfo.metadata`, `FsEvent.metadata`), `POST multipart/form-data` on
+/// `PUT` signed URLs and `CreateSignedUrlRequest.create_parents` (features
+/// `fs.run_as`, `fs.xattr`, `files.multipart`); 12 = the raw terminating
+/// signal of a process (`ProcessEnd.signal_number` / `signal_name`).
+/// 13 = the bulk lane (`GetCapabilitiesResponse.bulk`,
+/// `ReadFileRequest.bulk_slot`, `UploadChunkRequest.bulk_slot`).
+pub const ENV_PROTOCOL_REVISION: u32 = 13;
+
+/// The first [`ENV_PROTOCOL_REVISION`] of Cua 0.8, the release that added the
+/// host RPCs a Cua 0.7 machine (revision 8) does not serve:
+/// `HostSnapshotsService` (checkpoints of Spaces on a host, and copying them),
+/// `HostSpacesService.SetHostWarm` / `SetHostSpaceEgress` and
+/// `HostJobsService`. A client checks the host's reported revision against
+/// this before calling one of them, instead of sending an RPC the host's
+/// access layer would reject as "unauthenticated".
+pub const HOST_SERVICES_MIN_REVISION: u32 = 9;
 
 /// `DiagnoseReport.schema_version` of this revision of the contract.
 pub const DIAGNOSE_REPORT_SCHEMA_VERSION: u32 = 1;
@@ -113,6 +137,11 @@ pub mod metadata {
     pub const FILES_PATH: &str = "/files";
     /// Streamable-HTTP MCP endpoint for the cua-driver tool registry.
     pub const MCP_PATH: &str = "/mcp";
+    /// A host's checkpoint files, by SHA-256 (`<path>/<sha256>`), for
+    /// copying them to the owner's other machines; authenticated by a
+    /// snapshot read grant (`HostSnapshotsService.ExportHostSnapshot`),
+    /// with HTTP range requests. Served by hosts that provide Spaces.
+    pub const SNAPSHOT_BLOBS_PATH: &str = "/v1/snapshots/blobs/{sha}";
     /// The web viewer (static page, unauthenticated; it reads its viewer
     /// ticket from the URL fragment). Served with and without the trailing
     /// slash; assets live under `/viewer/`.

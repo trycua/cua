@@ -1,0 +1,8 @@
+{
+  "installer.flow.label": "Cua 설정",
+  "installer.flow.steps_label": "설정 단계",
+  "installer.prompts.label": "에이전트에게 이렇게 물어보세요:",
+  "installer.prompts.copied": "복사됨",
+  "installer.agents.results_label": "설정 결과",
+  "installer.agents.detected_label": "감지된 에이전트"
+}

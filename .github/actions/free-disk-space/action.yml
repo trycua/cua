@@ -1,0 +1,19 @@
+name: "Free disk space"
+description: >-
+  Remove preinstalled toolchains this repo never uses (Android SDK, .NET, GHC,
+  CodeQL, hosted tool cache extras, unused Docker images) from a Linux hosted
+  runner, so large Rust builds do not run out of disk. No-op elsewhere.
+
+runs:
+  using: composite
+  steps:
+    - name: Free disk space
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        df -h / | tail -1
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+          /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+          /usr/share/swift /opt/az /usr/local/share/powershell 2>/dev/null || true
+        sudo docker image prune --all --force >/dev/null 2>&1 || true
+        df -h / | tail -1

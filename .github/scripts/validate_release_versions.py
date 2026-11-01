@@ -258,7 +258,33 @@ def sdk_versions(root: Path) -> tuple[str, dict[str, str]]:
         "typescript/package.json": str(package["version"]),
         "typescript/package-lock.json": str(lock["version"]),
         "typescript/package-lock.json:root": str(lock["packages"][""]["version"]),
+        **sdk_crate_versions(base),
     }
+
+
+def sdk_crate_versions(base: Path) -> dict[str, str]:
+    """The libs/cua Cargo workspace releases at the SDK version: its package
+    version, the versions its crates require of each other, and their
+    entries in libs/cua/Cargo.lock (cua-sdk and the crates it needs are
+    published to crates.io at it)."""
+    workspace = tomllib.loads((base / "Cargo.toml").read_text())["workspace"]
+    values = {"Cargo.toml:workspace.package.version": str(workspace["package"]["version"])}
+    for name, dep in workspace["dependencies"].items():
+        if isinstance(dep, dict) and str(dep.get("path", "")).startswith("crates/") and "version" in dep:
+            values[f"Cargo.toml:workspace.dependencies.{name}"] = str(dep["version"])
+    sdk = tomllib.loads((base / "crates/cua-sdk/Cargo.toml").read_text())
+    for name, dep in sdk.get("dependencies", {}).items():
+        if isinstance(dep, dict) and "path" in dep and "version" in dep:
+            values[f"crates/cua-sdk/Cargo.toml:dependencies.{name}"] = str(dep["version"])
+    members = {
+        tomllib.loads(manifest.read_text())["package"]["name"]
+        for manifest in base.glob("crates/*/Cargo.toml")
+    }
+    lock = tomllib.loads((base / "Cargo.lock").read_text())
+    for entry in lock["package"]:
+        if entry["name"] in members and "source" not in entry:
+            values[f"Cargo.lock:{entry['name']}"] = str(entry["version"])
+    return values
 
 
 def spaces_app_versions(root: Path) -> tuple[str, dict[str, str]]:

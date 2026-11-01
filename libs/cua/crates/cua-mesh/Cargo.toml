@@ -7,7 +7,6 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [features]
 default = []
@@ -42,6 +41,11 @@ url = { workspace = true }
 if-addrs = "0.13"
 socket2 = { version = "0.6", features = ["all"] }
 bytes = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+# gang.rs: whether a port's registering process is alive; the control
+# socket's user.
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }

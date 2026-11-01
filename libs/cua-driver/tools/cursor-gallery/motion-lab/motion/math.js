@@ -172,7 +172,7 @@ export function quad(p0, p1, p2) {
   };
 }
 
-// The Cua Driver bezier formula (bezier.rs `build_motion_bezier`): handles
+// The Cua Driver bezier formula (cua-cursor-motion `cua_path` in path.rs): handles
 // along the chord plus a perpendicular deflection split by `arcFlow`.
 export function cuaBezier(
   a,

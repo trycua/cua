@@ -100,6 +100,12 @@ interface Section {
   objects: string[];
   /** Hide constructors (objects users get from a sandbox, not build). */
   hideInit?: boolean;
+  /**
+   * The module users reach these objects through (`pools` for
+   * `pools.list_pools`): their headings and anchors carry it, so a name
+   * another section of the page also documents stays distinct.
+   */
+  prefix?: string;
 }
 
 interface PageSpec {
@@ -155,6 +161,25 @@ export const SANDBOX_PAGES: PageSpec[] = [
         objects: [
           `${SB}.containers.Container`,
           `${SB}.containers.RegistrySecret`,
+        ],
+      },
+    ],
+  },
+  {
+    file: 'pool',
+    title: 'Pools on this machine',
+    description: 'Pools of ready sandboxes the cua daemon keeps on this machine.',
+    intro:
+      '`create_pool` keeps sandboxes of one shape ready on this machine (the cua daemon holds them); `Sandbox.create(pool=...)` takes one in about 0.1 s.',
+    sections: [
+      {
+        title: 'Pools',
+        objects: [
+          `${SB}.sandbox_pool.create_pool`,
+          `${SB}.sandbox_pool.SandboxPool`,
+          `${SB}.sandbox_pool.get_pool`,
+          `${SB}.sandbox_pool.list_pools`,
+          `${SB}.sandbox_pool.delete_pool`,
         ],
       },
     ],
@@ -417,6 +442,11 @@ function publicName(doc: PyDoc): string {
   return doc.name;
 }
 
+/** An object's heading (and anchor) name: `prefix.name`, except the module itself. */
+export function headingName(name: string, kind?: string, prefix?: string): string {
+  return prefix && kind !== 'module' && name !== prefix ? `${prefix}.${name}` : name;
+}
+
 function displaySignature(doc: PyDoc, owner?: string): string {
   let sig = doc.signature ?? '';
   if (doc.name === '__init__' && owner) {
@@ -484,9 +514,12 @@ function examplesFor(target: string, set?: ExampleSet): string[] {
   return ['**Example**', '', renderExamples(list), ''];
 }
 
-export function renderObject(doc: PyDoc, opts: { hideInit?: boolean; examples?: ExampleSet } = {}): string[] {
+export function renderObject(
+  doc: PyDoc,
+  opts: { hideInit?: boolean; examples?: ExampleSet; prefix?: string } = {}
+): string[] {
   const name = publicName(doc);
-  const lines: string[] = [`### ${name}`, ''];
+  const lines: string[] = [`### ${headingName(name, doc.kind, opts.prefix)}`, ''];
   if (doc.kind === 'external') {
     lines.push(`Re-exported from ${codeCell(doc.target ?? '')}.`, '');
     return lines;
@@ -542,7 +575,12 @@ export function renderObject(doc: PyDoc, opts: { hideInit?: boolean; examples?: 
  * `Pool` and the managed pools belonged to Cua Cloud, which has ended; every
  * call raises, so they have no entry (the module goes in cua-sandbox 0.10.0).
  */
-export const PY_MERGED: Record<string, string> = { image: 'sandbox', services: 'sandbox', configuration: 'runtimes' };
+export const PY_MERGED: Record<string, string> = {
+  image: 'sandbox',
+  pool: 'sandbox',
+  services: 'sandbox',
+  configuration: 'runtimes',
+};
 
 /** Modules of the ended Cua Cloud pools, left out of the reference. */
 export const ENDED_MODULES = [`${SB}.pool`, `${SB}.pools`, `${SB}.spec`];
@@ -566,7 +604,7 @@ export function sandboxAnchors(pages: PageSpec[] = SANDBOX_PAGES): Map<string, s
   for (const page of pages) {
     for (const section of page.sections) {
       for (const obj of section.objects) {
-        const name = obj.split('.').at(-1)!;
+        const name = headingName(obj.split('.').at(-1)!, undefined, section.prefix);
         anchors.set(name, `${SANDBOX_ROUTE}/${pageFileOf(page.file)}#${slug(name)}`);
       }
     }
@@ -584,7 +622,7 @@ function sandboxSectionBody(page: PageSpec, docs: Map<string, PyDoc>, version: s
     for (const obj of section.objects) {
       const doc = docs.get(obj);
       if (!doc) throw new Error(`griffe returned no documentation for ${obj}`);
-      body.push(...renderObject(doc, { hideInit: section.hideInit, examples }));
+      body.push(...renderObject(doc, { hideInit: section.hideInit, examples, prefix: section.prefix }));
     }
   }
   return body;

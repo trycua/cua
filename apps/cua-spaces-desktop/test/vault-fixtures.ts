@@ -13,6 +13,7 @@ import type {
   KeyvaultOverview,
   KvCommand,
   KvInventory,
+  KvReadiness,
   KvOutcome,
   SpaceAppIcon,
   SpaceAppIconRequest,
@@ -32,13 +33,13 @@ const parity = JSON.parse(readFileSync(path.resolve(__dirname, "../../../libs/cu
 /** The methods and page operations vault-native.test.ts covers (the other bridge tests leave them to it). */
 export const VAULT_METHODS = [
   "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows", "teleport.icon", "teleport.thumbnail",
-  "teleport.plan", "teleport.run", "teleport.sites", "teleport.remembered", "teleport.streamWindow",
+  "teleport.plan", "teleport.run", "teleport.sites", "teleport.readiness", "teleport.remembered", "teleport.streamWindow",
   "keyvault.get", "keyvault.lock", "keyvault.unlock", "keyvault.unlockVault", "keyvault.setup", "keyvault.setDisabled",
   "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant", "keyvault.showItems", "keyvault.delete", "keyvault.run", "keyvault.dismiss",
 ];
 export const VAULT_OPS = [
   "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows", "teleport.icon", "teleport.thumbnail",
-  "teleport.plan", "teleport.run", "teleport.sites", "teleport.remembered", "teleport.streamWindow",
+  "teleport.plan", "teleport.run", "teleport.sites", "teleport.readiness", "teleport.remembered", "teleport.streamWindow",
   "keyvault.overview", "keyvault.unlock", "keyvault.setUnattended", "keyvault.setDisabled", "keyvault.approve", "keyvault.deny",
   "keyvault.revokeGrant", "keyvault.setup", "keyvault.showItems", "keyvault.delete", "keyvault.run", "keyvault.dismiss",
 ] as const;
@@ -83,6 +84,22 @@ export class FakeKeyvault implements KeyvaultClientLike {
     notes: [],
   };
   inventoryAsks: { app: string; profile: string | undefined }[] = [];
+  readinessResult: KvReadiness = {
+    providerId: "chrome",
+    appDisplay: "Google Chrome",
+    keyvaultInitialized: true,
+    keyvaultUnlocked: true,
+    profile: "Profile 1",
+    defaultProfile: "Default",
+    profiles: [
+      { dir: "Default", name: "Personal", account: undefined, lastUsed: false },
+      { dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true },
+    ],
+    files: { state: "denied", say: "macOS is not letting Cua read this browser's files." },
+    tabs: { state: "unknown", say: "" },
+    profileEmpty: false,
+  };
+  readinessAsks: { app: string; profile: string | undefined }[] = [];
   /** Makes the next command fail with this message. */
   failWith: string | null = null;
 
@@ -102,6 +119,11 @@ export class FakeKeyvault implements KeyvaultClientLike {
   async inventory(app: string, profile: string | undefined): Promise<KvInventory> {
     this.inventoryAsks.push({ app, profile });
     return this.inventoryResult;
+  }
+
+  async readiness(app: string, profile: string | undefined): Promise<KvReadiness> {
+    this.readinessAsks.push({ app, profile });
+    return this.readinessResult;
   }
 
   async lock(): Promise<void> {}

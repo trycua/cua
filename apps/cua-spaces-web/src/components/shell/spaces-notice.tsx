@@ -16,12 +16,12 @@ export function SpacesNotice() {
   return (
     <>
       {hostNotice ? (
-        <p role="status" data-host-notice="" className="shrink-0 border-b px-4 py-2.5 text-xs text-muted-foreground">
+        <p role="status" data-host-notice="" className="shrink-0 bg-muted/60 px-4 py-2.5 text-xs text-muted-foreground">
           {hostNotice}
         </p>
       ) : null}
       {listNotice ? (
-        <p role="status" data-spaces-discovery-error="" className="shrink-0 border-b px-4 py-2.5 text-xs text-destructive">
+        <p role="status" data-spaces-discovery-error="" className="shrink-0 bg-destructive/10 px-4 py-2.5 text-xs text-destructive">
           {listNotice}
         </p>
       ) : null}

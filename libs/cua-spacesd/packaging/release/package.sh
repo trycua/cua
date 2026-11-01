@@ -11,6 +11,8 @@
 #   cua-spacesd-<os>-<arch>.tar.gz  cua-host (`cua host setup`),
 #                                    libs/images/linux
 #   cua-spacesd-<triple>[.exe]    bare binary: packaging/install.sh / install.ps1
+#   cua-spacesd-linux-static-<arch>.tar.gz  the static (musl) headless build
+#                                    the `cua` CLI injects into OCI images
 #
 # Every archive holds the binary (cua-spacesd or cua-spacesd.exe),
 # LICENSE and THIRD_PARTY_NOTICES.md at its root, with no wrapper directory,
@@ -37,6 +39,7 @@ arch="${target%%-*}"
 case "$arch" in x86_64|aarch64) ;; *) echo "unsupported arch in $target" >&2; exit 2 ;; esac
 case "$target" in
   *-unknown-linux-gnu) os=linux exe=cua-spacesd ;;
+  *-unknown-linux-musl) os=linux-static exe=cua-spacesd ;;
   *-apple-darwin) os=macos exe=cua-spacesd ;;
   *-pc-windows-msvc) os=windows exe=cua-spacesd.exe ;;
   *) echo "unsupported target $target" >&2; exit 2 ;;

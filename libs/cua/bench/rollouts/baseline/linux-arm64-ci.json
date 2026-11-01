@@ -1,0 +1,12 @@
+{
+  "_host": "GitHub Actions ubuntu-24.04-arm (4 vCPU), Docker + gVisor, PR #67 label run 39381467121, 2026-10-20",
+  "desktop_create_p50_ms": 4705.8,
+  "headless_create_p50_ms": 291.2,
+  "headless_b16_wall_ms": 4194.2,
+  "create_failures": 0,
+  "idle_spacesd_cpu_pct": 0,
+  "rollout_steps_per_sec": 55.78909593660897,
+  "rollout_errors": 0,
+  "pool_claim_batch_p50_ms": 303.8,
+  "rollout_sandboxes": 32
+}

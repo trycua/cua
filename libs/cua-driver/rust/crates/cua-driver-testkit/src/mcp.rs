@@ -301,6 +301,14 @@ impl McpDriver {
         )
     }
 
+    pub fn daemon_socket(&self) -> &str {
+        &self.socket
+    }
+
+    pub fn daemon_pid(&self) -> Option<u32> {
+        self._daemon.as_ref().map(|daemon| daemon.pid)
+    }
+
     /// Isolated per-user state root (`HOME`, XDG/AppData directories) given to
     /// the test-owned daemon, or `None` for external-daemon proxies and spawns
     /// that passed [`crate::SHARE_HOST_STATE`].
@@ -342,6 +350,7 @@ impl McpDriver {
             "label": label,
             "rust_test_thread": thread_name,
             "process_id": std::process::id(),
+            "daemon_pid": self.daemon_pid(),
             "sequence": sequence,
             "behavior_video": {
                 "status": "pending",
@@ -407,7 +416,7 @@ impl McpDriver {
     }
 
     fn stop_e2e_recording(&mut self) {
-        let Some(output_dir) = self.recording_dir.take() else {
+        let Some(output_dir) = self.recording_dir.clone() else {
             return;
         };
         if !self.recording_started {
@@ -488,17 +497,51 @@ impl McpDriver {
         self.next_id += 1;
         let timeout = call_timeout(self.recording_started, tool, cfg!(target_os = "macos"));
         let args = crate::driver::with_full_window_state(tool, args);
-        self.send(serde_json::json!({
+        let request = serde_json::json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
             "params": { "name": tool, "arguments": args }
-        }));
-        match self.rx.recv_timeout(timeout) {
+        });
+        self.send(request.clone());
+        let response = match self.rx.recv_timeout(timeout) {
             Ok(line) => serde_json::from_str(&line)
                 .unwrap_or_else(|_| serde_json::json!({ "error": format!("bad json: {line}") })),
             Err(_) => serde_json::json!({
                 "error": timeout_error_message(tool, timeout)
             }),
+        };
+        if let Some(dir) = &self.recording_dir {
+            let mut row = serde_json::json!({"request": request, "response": response});
+            elide_images(&mut row);
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("tool-calls.jsonl"))
+                .expect("open tool transcript");
+            writeln!(file, "{row}").expect("append tool transcript");
         }
+        response
+    }
+}
+
+fn elide_images(value: &mut Value) {
+    use std::hash::{Hash, Hasher};
+    match value {
+        Value::Object(object) => {
+            let image = object.get("type").and_then(Value::as_str) == Some("image");
+            for (key, value) in object {
+                if (image && key == "data") || key.contains("base64") {
+                    if let Some(data) = value.as_str() {
+                        let mut hash = std::collections::hash_map::DefaultHasher::new();
+                        data.hash(&mut hash);
+                        *value = serde_json::json!({"bytes": data.len(), "hash": format!("{:016x}", hash.finish())});
+                        continue;
+                    }
+                }
+                elide_images(value);
+            }
+        }
+        Value::Array(array) => array.iter_mut().for_each(elide_images),
+        _ => {}
     }
 }
 
@@ -620,6 +663,70 @@ mod tests {
     };
     use crate::CALL_TIMEOUT;
     use std::time::Duration;
+
+    #[cfg(unix)]
+    #[test]
+    fn transcript_retains_timeout_request_and_elides_images() {
+        use super::*;
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "read line; sleep 1"])
+            .stdin(Stdio::piped());
+        let mut child = spawn_in_job(&mut command).unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let mut reaper = ChildReaper::new();
+        reaper.push(child);
+        let (tx, rx) = channel();
+        let mut driver = McpDriver {
+            reaper,
+            _daemon: None,
+            socket: String::new(),
+            stdin,
+            rx,
+            next_id: 2,
+            recording_dir: Some(dir.path().to_owned()),
+            recording_started: false,
+            recording_started_at: None,
+        };
+        tx.send(
+            serde_json::json!({"result": {"content": [
+            {"type": "image", "data": "c2VjcmV0", "mimeType": "image/png"},
+            {"type": "text", "text": "unchanged"}],
+            "structuredContent": {"screenshot_base64": "c2VjcmV0", "count": 7}}})
+            .to_string(),
+        )
+        .unwrap();
+        driver.call_raw("get_window_state", serde_json::json!({"pid": 42}));
+        drop(tx);
+        let response = driver.call_raw("click", serde_json::json!({"element_token": "fresh"}));
+        let text = std::fs::read_to_string(dir.path().join("tool-calls.jsonl")).unwrap();
+        let rows: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            rows[1]["request"]["params"]["arguments"]["element_token"],
+            "fresh"
+        );
+        assert_eq!(rows[1]["response"], response);
+        assert!(response["error"].as_str().unwrap().contains("TIMEOUT"));
+        assert!(!text.contains("c2VjcmV0"));
+        assert_eq!(
+            rows[0]["response"]["result"]["content"][0]["data"]["bytes"],
+            8
+        );
+        assert!(rows[0]["response"]["result"]["content"][0]["data"]["hash"].is_string());
+        assert_eq!(
+            rows[0]["response"]["result"]["content"][1]["text"],
+            "unchanged"
+        );
+        assert_eq!(
+            rows[0]["response"]["result"]["structuredContent"]["count"],
+            7
+        );
+        driver.recording_dir = None;
+    }
 
     #[test]
     fn recording_label_is_artifact_safe() {

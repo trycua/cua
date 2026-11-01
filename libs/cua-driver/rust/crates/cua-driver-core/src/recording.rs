@@ -488,7 +488,7 @@ struct RecordingInner {
     /// NOT stop B's recording. The proxy-exit `session_end` hook passes its
     /// own session id to `stop_owner()`, which no-ops when the live owner has
     /// moved on. `None` means the recording was started anonymously (CLI
-    /// one-shot / legacy `configure()` shim) and is owned by nobody — only an
+    /// one-shot) and is owned by nobody — only an
     /// unconditional `stop_owner(None)` can tear it down. Supersedes the
     /// #1775 generation token: a session id is a stable owner identity rather
     /// than a monotonic counter, and it doubles as the config-override key.
@@ -535,7 +535,7 @@ pub struct RecordingState {
     pub last_video_path: Option<String>,
     /// Session id that owns the current (or most recent) recording, stamped on
     /// `start()` from the daemon-injected `_session_id`. `None` for an
-    /// anonymously-started recording (CLI one-shot / legacy shim). Surfaced so
+    /// anonymously-started recording (CLI one-shot). Surfaced so
     /// callers can see who owns the live recording; the proxy-exit teardown
     /// drives ownership via `session_end` (it already knows its own id) rather
     /// than reading this back.
@@ -583,15 +583,13 @@ impl RecordingSession {
     /// for the lifetime of the session. NOTE: the MCP `start_recording` tool
     /// now defaults `record_video` to *false* (opt-in) — see
     /// `recording_tools.rs` — so video only records when explicitly requested.
-    /// The legacy CLI `recording start` path via `configure()` still forces
-    /// video on. If ffmpeg isn't on PATH the start still succeeds —
+    /// If ffmpeg isn't on PATH the start still succeeds —
     /// the per-turn capture (action.json + pre/post evidence) is independent
     /// of video — but the structured state carries the ffmpeg error so
     /// the caller can surface it.
     ///
     /// `owner` stamps the session that owns this recording (the daemon-injected
-    /// `_session_id`). `None` marks an anonymous start (CLI one-shot / legacy
-    /// `configure()` shim) owned by nobody. See `stop_owner()` for how this
+    /// `_session_id`). `None` marks an anonymous start (CLI one-shot) owned by nobody. See `stop_owner()` for how this
     /// gates teardown.
     pub fn start(
         &self,
@@ -626,8 +624,7 @@ impl RecordingSession {
         // teardown sites call `fire_session_end` (which marks ENDED_SESSIONS)
         // BEFORE `stop_owner`, so either the mark is already set and we bail
         // here, or we win the lock first and the reaper's later stop_owner(owner)
-        // reaps what we started. Anonymous starts (owner = None: CLI one-shot /
-        // legacy shim) are never gated.
+        // reaps what we started. Anonymous starts (owner = None: CLI one-shot) are never gated.
         if let Some(o) = owner {
             if crate::session::is_session_ended(o) {
                 anyhow::bail!(
@@ -648,7 +645,7 @@ impl RecordingSession {
         std::fs::create_dir_all(&dir)?;
 
         // Single monotonic anchor shared by video, cursor sampler, and
-        // per-turn `t_ms_from_session_start` math in `record()` — so all
+        // per-turn `t_ms_from_session_start` math in `finish_turn()` — so all
         // three timelines line up at the millisecond.
         let monotonic_start = Instant::now();
 
@@ -725,9 +722,8 @@ impl RecordingSession {
     ///
     /// `requester` is the ownership guard for session-driven teardown
     /// (`session_end` / proxy-exit). Semantics:
-    ///   - `None` — unconditional stop. Manual `stop_recording`, the legacy
-    ///     `configure()` shim, the CLI one-shot path, and the idle-TTL backstop
-    ///     all pass `None` to preserve today's manual-stop behavior.
+    ///   - `None` — unconditional stop. Manual `stop_recording`, the CLI
+    ///     one-shot path, and the idle-TTL backstop all pass `None` to preserve today's manual-stop behavior.
     ///   - `Some(sid)` where `sid` owns the live recording — stop + clear owner.
     ///   - `Some(sid)` where `sid` does NOT own it (a disconnecting session
     ///     whose recording was already clobbered by a newer `start()`, or which
@@ -798,21 +794,6 @@ impl RecordingSession {
             anyhow::bail!("video finalization failed: {error}");
         }
         Ok(())
-    }
-
-    /// Legacy toggle API kept as a thin shim over `start()`/`stop()` so
-    /// existing callers (CLI subcommand, tests) keep compiling during the
-    /// rename window. Forces `record_video` on for this legacy CLI path — the
-    /// MCP `start_recording` tool now defaults video OFF (see
-    /// `recording_tools.rs`), but the CLI `recording start` keeps video on.
-    pub fn configure(&self, enabled: bool, output_dir: Option<&str>) -> anyhow::Result<()> {
-        if !enabled {
-            return self.stop_owner(None);
-        }
-        let dir = output_dir
-            .ok_or_else(|| anyhow::anyhow!("output_dir is required when enabling recording"))?;
-        // Legacy CLI path: anonymous owner (no MCP session id available here).
-        self.start(dir, true, None)
     }
 
     /// Return a snapshot of the current state (non-blocking).
@@ -1048,23 +1029,6 @@ impl RecordingSession {
         {
             inner.last_error = Some(error.to_string());
         }
-    }
-
-    /// Compatibility helper for callers that only report completed calls.
-    /// New dispatch paths should use `begin_turn` and `finish_turn` so the
-    /// before phase is captured before the action changes application state.
-    pub fn record(
-        &self,
-        tool_name: &str,
-        args: &Value,
-        result_text: &str,
-        start_ms: u64,
-        caller: RecordingCaller<'_>,
-    ) {
-        let Some(pending) = self.begin_turn(tool_name, args, start_ms, caller) else {
-            return;
-        };
-        self.finish_turn(pending, result_text);
     }
 }
 

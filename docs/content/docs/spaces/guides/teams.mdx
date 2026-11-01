@@ -1,13 +1,13 @@
 ---
 title: Plans and Teams
-description: 'Cua Spaces Free, Pro and Teams: what each plan includes and how to see your usage. How to buy Teams, invite people, pair team computers, approve devices and manage seats.'
+description: 'Cua Spaces Free, Pro and Teams: what each plan includes and how to see your usage. How to buy Teams, invite people, pair team machines, approve machines and manage seats.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Spaces is bring-your-own compute: you connect your own computers, and Cua
+Cua Spaces is bring-your-own compute: you connect your own machines, and Cua
 does not rent them out. The plans cover the app, sharing and the hosted relay
-that lets your devices reach your computers. Current prices are on
+that lets your machines reach your machines. Current prices are on
 [cua.ai/pricing](https://cua.ai/pricing), which is the source of truth.
 
 ## Plans
@@ -18,18 +18,18 @@ that lets your devices reach your computers. Current prices are on
 | Pro | $18 a month or $180 a year, one person | 5 | 200 a month |
 | Teams | $30 per seat a month or $300 per seat a year, 1 to 100 seats | 5 per seat | 200 per seat a month, pooled across the team |
 
-Every plan includes Spaces on every computer you connect and Teleport. Pro adds
+Every plan includes Spaces on every machine you connect and Teleport. Pro adds
 more live sessions and remote hours. Teams adds sharing a Space with your team,
-team-owned computers, roles and device approval. Sharing is for teams: Free and
+team-owned machines, roles and machine approval. Sharing is for teams: Free and
 Pro accounts without a team cannot share a Space. SSO and audit export are not
 included yet.
 
 ## What counts toward the limits
 
-**Remote hours** are the time you spend using your computers from somewhere
-else. Using a computer from itself is free.
+**Remote hours** are the time you spend using your machines from somewhere
+else. Using a machine from itself is free.
 
-A **live session** is one person or agent holding a stream open to a computer
+A **live session** is one person or agent holding a stream open to a machine
 through the relay, such as a desktop view, a terminal or an agent's process
 stream. Each hour with at least one live session counts as one remote hour, per
 calendar month (UTC).
@@ -60,26 +60,27 @@ refunds.
 
 ## Buy Teams
 
-Teams turns the computers your team already has into shared desktops for people
-and their agents. Computers belong to the team instead of one person's account,
-an owner and admins decide who can do what, and a new device must be approved
-before it can reach a team computer.
+Teams turns the machines your team already has into shared desktops for people
+and their agents. Machines belong to the team instead of one person's account,
+an owner and admins decide who can do what, and a new machine must be approved
+before it can reach a team machine.
 
 <VideoDemo
   src="https://trycua.github.io/assets/videos/cua-spaces/teams.mp4"
   poster="https://trycua.github.io/assets/videos/cua-spaces/teams-poster.jpg"
   title="Cua Spaces Teams"
 >
-  Create a team, invite a teammate and add a computer for the team (29 seconds, no sound).
+  Create a team, invite a teammate and add a machine for the team (29 seconds, no sound).
 </VideoDemo>
 
-Teams starts at 1 seat, so you can begin with just yourself and add seats as
-people join. Two seats give 10 live sessions and 400 remote hours a month for the
+Teams starts with 1 seat, for you. Start with just yourself, then add a seat for
+each teammate when you invite them. Two seats give 10 live sessions and 400 remote hours a month for the
 whole team.
 
 1. Open [app.cua.ai/buy/teams](https://app.cua.ai/buy/teams) and sign in or
    create a Cua account.
-2. Name your team and choose the number of seats and monthly or yearly billing.
+2. Name your team and choose monthly or yearly billing. Checkout is for 1 seat;
+   you add seats later, as you invite people.
 3. Pay with Stripe Checkout. Teams is for business use: Stripe asks for your
    company name and address, and you can add your company's VAT or GST ID.
 
@@ -95,9 +96,10 @@ Teams are invitation only. Enter an email address and choose a role. The person
 gets an email, signs in with that address and joins. Invitees do not pay and do
 not see checkout.
 
-- Members plus pending invitations cannot exceed the seats you pay for, and you
-  take one seat yourself. On a 1-seat team, the Team page shows **Add seats**
-  before your first invite. It opens Stripe, where you raise the quantity (see
+- Each member and each pending invitation takes a seat, and you take one
+  yourself. When every seat is taken, as on a new 1-seat team, inviting someone
+  adds a seat: the Team page shows the price, for example "This adds 1 seat,
+  $30/month, prorated today", and charges only after you confirm (see
   [Seats and billing](#seats-and-billing)).
 - Until the first payment completes, a new team can invite up to 5 people.
 - Revoke a pending invitation from the same page.
@@ -113,105 +115,105 @@ A team has one owner, and any number of admins and members.
 
 | | Owner | Admin | Member |
 |---|---|---|---|
-| Open team computers (from an approved device) | yes | yes | yes |
-| Request approval for a new device | not needed | yes | yes |
+| Open team machines (from an approved machine) | yes | yes | yes |
+| Request approval for a new machine | not needed | yes | yes |
 | Leave the team | no | yes | yes |
 | Invite people | yes | yes | no |
 | Remove members | yes, admins too | members only | no |
-| Add and remove team computers | yes | yes | no |
-| Approve or deny devices | yes | yes | no |
+| Add and remove team machines | yes | yes | no |
+| Approve or deny machines | yes | yes | no |
 | Make a member an admin, or an admin a member | yes | no | no |
 | Cancel the subscription, delete the team | yes | no | no |
 
 The owner's role cannot change and the owner cannot leave: to close a team,
-cancel the subscription first, then delete the team. The owner's own devices need
+cancel the subscription first, then delete the team. The owner's own machines need
 no approval. Admins cannot remove other admins or the owner.
 
 Owners and admins remove a member in the Members list on the Team page. Removal
-takes effect at once, and the person's device approvals for the team are deleted.
+takes effect at once, and the person's machine approvals for the team are deleted.
 A member leaves with **Leave team** on the same page.
 
-## Team computers
+## Team machines
 
-A **team computer** belongs to the team. Every member, and their agents, sees it
-in the Cua Spaces app and can open it, from a device an admin has approved. A
-**personal computer** stays on your own account, as described in
-[Add a computer](/spaces/guides/add-a-computer), and only you and the accounts
+A **team machine** belongs to the team. Every member, and their agents, sees it
+in the Cua Spaces app and can open it, from a machine an admin has approved. A
+**personal machine** stays on your own account, as described in
+[Add a machine](/spaces/guides/add-a-computer), and only you and the accounts
 you [share it with](/spaces/guides/share-a-space) can reach it.
 
-| | Personal computer | Team computer |
+| | Personal machine | Team machine |
 |---|---|---|
 | Belongs to | One account | The team |
 | Who sees it | You, and accounts you share it with | Every member |
-| Who can open it | You, and people you share it with | Every member, as an editor, from an approved device |
+| Who can open it | You, and people you share it with | Every member, as an editor, from an approved machine |
 | Who adds or removes it | You | Owners and admins |
 
-Team members have full use of a team computer: there are no view-only team
+Team members have full use of a team machine: there are no view-only team
 members. To let someone only watch, share a Space with them as a viewer instead.
 
-### Pair a computer to the team
+### Pair a machine to the team
 
 Pairing needs Cua Spaces 0.8.0 or later. An owner or admin does this.
 
-1. In the Cua Spaces app, open **Computers**, press **Add a computer** and choose
-   your team next to **Add it for**. The app shows a link, a QR code and a
-   one-time pairing code that looks like `K7QM-4XPB-2RHD`. For the personal
-   version of these steps, see [Add a computer](/spaces/guides/add-a-computer).
-2. On the computer you are adding, open the link, or run the install command the
+1. In the Cua Spaces app, open **Machines**, press **Add a machine** and choose
+   your team next to **For** at the bottom of the sheet. Then pick **Open a
+   link**, **Scan a QR code**, **Run a command** or **Enter a code**. Each one
+   carries a one-time pairing code that looks like `K7QM-4XPB-2RHD`. For the
+   personal version of these steps, see [Add a machine](/spaces/guides/add-a-computer).
+2. On the machine you are adding, open the link, or run the install command the
    app shows. With the `cua` CLI installed, the code alone is enough:
 
 ```bash test="cli-shape" id="cua-host-setup-pair-team"
 cua host setup --pair K7QM-4XPB-2RHD
 ```
 
-If the computer already has the Cua Spaces app, you don't need the command.
-Opening the link in a browser offers to open the app, and the app shows **Join
-with a code** with the code filled in. You can also open **Computers** in the app,
-choose **Join with a code**, and paste the code or the link. The app asks before
-it joins.
+If the machine already has the Cua Spaces app, you don't need the command:
+open **Add a machine** in the app there, choose **Have a code? Enter it**, and
+paste the code or the link. The app asks before it joins.
 
-The computer joins the team that made the code, with no sign-in on that computer.
-A code works once and expires after 30 minutes. Revoke an unused one from the
-same dialog.
+The machine joins the team that made the code, with no sign-in on that machine.
+A code works once and expires after 30 minutes; while the sheet is open, it
+renews by itself. Revoke an unused one from the sheet's **⋯** menu.
 
-The computer then appears under **Computers** at
+The machine then appears under **Machines** at
 [app.cua.ai/machines](https://app.cua.ai/machines), where an owner or admin can
-remove it from the team. Removing a computer does not delete anything on it.
+remove it from the team. Removing a machine does not delete anything on it.
 
-Mac, Windows and Linux computers can all be team computers, and all join with
+Mac, Windows and Linux machines can all be team machines, and all join with
 `cua host setup`. See [Install](/spaces/guides/install) to get the `cua` CLI.
-Members open team computers from the Cua Spaces app (macOS 26 or later) or the
+Members open team machines from the Cua Spaces app (macOS 26 or later) or the
 Windows and Linux apps on the [download page](https://cua.ai/download).
 
-### Approve a device
+### Approve a machine
 
-A member's device can open team computers only once an owner or admin approves
+A member's machine can open team machines only once an owner or admin approves
 it.
 
-1. The member signs in on a new device and asks for approval.
-2. The request shows under **Device approvals** at
-   [app.cua.ai/machines](https://app.cua.ai/machines) while it waits. The member
+1. The member opens a team machine from a new machine. That asks for approval
+   on its own (or run `cua team request <team>` to ask first).
+2. The machine shows as waiting for approval in the list at
+   [app.cua.ai/machines](https://app.cua.ai/machines). The member
    sees that it is waiting for an admin.
-3. An owner or admin chooses **Approve** or **Deny**. A denied device cannot open
-   team computers.
+3. An owner or admin chooses **Approve** or **Deny**. A denied machine cannot open
+   team machines.
 
-Members see their own devices. Owners and admins see everyone's. Removing a
+Members see their own machines. Owners and admins see everyone's. Removing a
 member deletes their approvals.
 
-### Who can open a team computer
+### Who can open a team machine
 
-A person can open a team computer when all of these hold. The relay checks them
+A person can open a team machine when all of these hold. The relay checks them
 with the Cua account service and caches the answer for up to a minute.
 
 - They are a member of the team. Their role is read from the team itself, so a
   removed member loses access at once.
-- The computer is on the team's list.
-- Their device is approved (the owner's devices always are).
+- The machine is on the team's list.
+- Their machine is approved (the owner's machines always are).
 
 ### Share a Space with the team
 
-To make a Space you already have a team computer, share it with the team. Every
-member of the team, and their agents, then sees it and can open it from a device
+To make a Space you already have a team machine, share it with the team. Every
+member of the team, and their agents, then sees it and can open it from a machine
 an admin has approved, either as **Can edit** (full control) or **Can view**
 (watch only).
 
@@ -221,7 +223,7 @@ an admin has approved, either as **Can edit** (full control) or **Can view**
 - **In a terminal:** run `cua spaces share <space> team:<team id>`, or
   `cua team add-machine <team> <space>`. `cua team ls` shows the team ID.
 - Only an owner or admin of the team can do this, and only for a Space they
-  own. A team can hold as many shared computers as its seats allow.
+  own. A team can hold as many shared machines as its seats allow.
 - Choose **Can view** or **Can edit** for the whole team. Share again with the
   other role to change it.
 - To stop, remove the team in the Share window, or run
@@ -237,6 +239,8 @@ Seats, the monthly or yearly period, the card and invoices are managed in the
 Stripe billing portal: [app.cua.ai/billing](https://app.cua.ai/billing), then
 **Manage billing**. Only the owner buys and changes the plan.
 
+- **Invite into a full team:** the Team page adds a seat for you after you
+  confirm the price. The owner and admins can do this.
 - **Add seats:** you pay a prorated amount for the rest of the current period,
   added to your next invoice. The maximum is 100 seats.
 - **Remove seats:** you get a prorated credit on future invoices. Credits are not
@@ -250,7 +254,7 @@ See the [Plan Terms](https://cua.ai/spaces-terms) for the details.
 
 Cancel Pro or Teams in the billing portal at any time. The plan stays active
 until the end of the period you paid for, then you move to Free (a team moves to
-Free as a whole). Your Spaces and everything in them stay on your computers.
+Free as a whole). Your Spaces and everything in them stay on your machines.
 
 Monthly plans have no refund for partial months. On a yearly plan, cancelling
 within 14 days of the first yearly charge refunds it in full, and after that

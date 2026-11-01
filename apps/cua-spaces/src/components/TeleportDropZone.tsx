@@ -30,6 +30,7 @@ import { detailCopy } from "../model/window";
 import { Sym } from "./desktop/Sym";
 import type { FileSendBridge, SentFile } from "../native/fileSend";
 import { screenToClient, type WindowDragBridge } from "../native/windowDrag";
+import { useT } from "../i18n";
 
 export interface TeleportDropZoneProps {
   spaceId: string;
@@ -79,6 +80,7 @@ export default function TeleportDropZone({
   windowDrag,
   appDrop,
 }: TeleportDropZoneProps) {
+  const t = useT("teleport");
   const copy = detailCopy();
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [over, setOver] = useState(false);
@@ -206,7 +208,7 @@ export default function TeleportDropZone({
 
   const line = statusLine(status);
   return (
-    <section className="swl-section sl-teleport" aria-label={`Teleport to ${spaceName}`}>
+    <section className="swl-section sl-teleport" aria-label={t("teleport.drop_zone.label", { name: spaceName })}>
       {/* No label here: the page's section title names it (one label per thing). */}
       <div
         ref={zoneRef}

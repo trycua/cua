@@ -3,8 +3,11 @@
 
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
+import { flagOn } from "@/bridge";
+
 export const Route = createFileRoute("/")({
   beforeLoad: () => {
-    throw redirect({ to: "/spaces" });
+    // The "Ask first" Home experiment opens on Home; otherwise Spaces, as before.
+    throw redirect({ to: flagOn("spaces_ask_first_home") ? "/home" : "/spaces" });
   },
 });

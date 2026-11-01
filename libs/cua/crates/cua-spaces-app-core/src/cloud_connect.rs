@@ -2,14 +2,21 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! "Connect a cloud": the sheet that connects the user's own AWS, Google
-//! Cloud or Modal account for Spaces (`cloud_test`, `cloud_connect`).
+//! Cloud, Hetzner or Modal account for Spaces (`cloud_test`, `cloud_connect`).
 //!
 //! Plain data in (the providers `cloud_status` lists) and plain data out
 //! (one line per provider with a found mark when this machine has its CLI
 //! sign-in, the region, project or environment field, what that provider
 //! touches, the checks a Test ran, and the request to run). Test creates
 //! nothing; Connect runs the same checks first. Credentials are never
-//! typed here: each cloud uses its own CLI sign-in.
+//! typed here: each cloud uses its own CLI sign-in. The one exception is
+//! Hetzner, which has no CLI sign-in and takes a project API token. That
+//! token never enters this module: the shell keeps it in its own secure
+//! field, tells the sheet only whether one is entered
+//! ([`CloudConnectAction::SetTokenEntered`]), and attaches it to the
+//! `cloud_test` / `cloud_connect` call when the request says
+//! [`CloudTargetArgs::uses_token`]. So no state, view, request, Debug
+//! output, saved session or golden can ever hold it.
 //!
 //! "No cloud" is always offered alongside the real providers. Picking it
 //! never issues a `cloud_connect` or `cloud_disconnect` call: it just ends
@@ -26,9 +33,9 @@ pub const NONE_PROVIDER: &str = "none";
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudProviderInput {
-    /// `aws`, `gcp`, `modal`.
+    /// `aws`, `gcp`, `hetzner`, `modal`.
     pub name: String,
-    /// `AWS`, `Google Cloud`, `Modal`.
+    /// `AWS`, `Google Cloud`, `Hetzner`, `Modal`.
     pub title: String,
     /// Connected already.
     #[serde(default)]
@@ -121,6 +128,10 @@ pub struct CloudConnectState {
     pub profile: String,
     /// Also make it the default location.
     pub make_default: bool,
+    /// The shell's token field (Hetzner) is not empty. Only this flag
+    /// lives here; the token itself stays in the shell's secure field.
+    #[serde(default)]
+    pub token_entered: bool,
     /// Where it is.
     pub phase: CloudConnectPhase,
 }
@@ -131,7 +142,7 @@ pub struct CloudConnectState {
 pub enum CloudConnectAction {
     /// A provider row.
     Select {
-        /// `aws`, `gcp`, `modal`.
+        /// `aws`, `gcp`, `hetzner`, `modal`.
         name: String,
     },
     /// The region, project or environment field.
@@ -148,6 +159,12 @@ pub enum CloudConnectAction {
     SetMakeDefault {
         /// On.
         on: bool,
+    },
+    /// The token field changed between empty and not empty (the text
+    /// itself is never sent here).
+    SetTokenEntered {
+        /// Not empty.
+        entered: bool,
     },
     /// Test pressed (the shell runs the view's request).
     Test,
@@ -180,7 +197,7 @@ pub enum CloudConnectAction {
 /// arguments; only names, never a credential).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CloudTargetArgs {
-    /// `aws`, `gcp`, `modal`.
+    /// `aws`, `gcp`, `hetzner`, `modal`.
     pub provider: String,
     /// AWS or Modal profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,6 +211,10 @@ pub struct CloudTargetArgs {
     /// Modal environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<String>,
+    /// Hetzner: the shell attaches the API token it holds as the call's
+    /// secret `token`. The token itself is never in this value.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uses_token: bool,
 }
 
 /// The call the shell runs now.
@@ -264,6 +285,9 @@ pub struct CloudConnectView {
     pub field: Option<CloudField>,
     /// The profile field (AWS, Modal).
     pub profile_field: Option<CloudField>,
+    /// The API token field (Hetzner only): a masked field whose value the
+    /// shell keeps (`value` is always empty here).
+    pub token_field: Option<CloudField>,
     /// The checks the last test ran.
     pub checks: Vec<CloudCheckRow>,
     /// One line under the checks ("Ready. Nothing was created.").
@@ -273,6 +297,10 @@ pub struct CloudConnectView {
     /// auto-stop work, and the command to remove everything. Empty when
     /// no real provider is chosen (including "No cloud").
     pub touches: Vec<String>,
+    /// The line to give an agent that connects the cloud (Copy): one line,
+    /// one link, naming the chosen cloud and its region.
+    #[serde(default)]
+    pub agent_prompt: String,
     /// "Make default".
     pub make_default_label: String,
     /// Its value.
@@ -366,6 +394,9 @@ pub fn connect_input_from_status(status: &serde_json::Value) -> CloudConnectInpu
         providers: status_of(status)
             .providers
             .into_iter()
+            // Azure links through Cua's issuer only (`cua cloud connect
+            // azure`), which this sign-in sheet does not run.
+            .filter(|p| p.name != "azure")
             .map(|p| CloudProviderInput {
                 name: p.name,
                 title: p.title,
@@ -418,7 +449,7 @@ pub fn connected_clouds_from_status(
 
 /// Whether `on` (a `default.on` value) names one of the user's clouds.
 pub fn is_cloud_word(on: &str) -> bool {
-    matches!(on, "aws" | "gcp" | "modal")
+    matches!(on, "aws" | "azure" | "gcp" | "hetzner" | "modal")
 }
 
 /// The sheet's first state.
@@ -451,7 +482,7 @@ fn selected<'a>(
 }
 
 /// "What Cua will touch" for `name`, from what `cua-byoc` actually
-/// creates (see `libs/cua/crates/cua-byoc/src/{aws,gcp,modal}.rs`).
+/// creates (see `libs/cua/crates/cua-byoc/src/{aws,gcp,hetzner,modal}.rs`).
 /// Empty for a name this build does not know.
 fn touches_of(name: &str) -> Vec<String> {
     let common = "Only resources Cua creates are touched; they are tagged and recorded, \
@@ -477,6 +508,17 @@ fn touches_of(name: &str) -> Vec<String> {
                 .into(),
             "Remove everything Cua created with `cua cloud sweep gcp --all --delete`.".into(),
         ],
+        "hetzner" => vec![
+            "Creates one server per Space, labelled cua-managed, plus a dedicated firewall \
+             with no rules (nothing reaches the server from outside). No SSH keys."
+                .into(),
+            "Only resources Cua creates are touched; nothing else in your project is changed."
+                .into(),
+            "Containers only (Hetzner Cloud has no nested virtualization). A stopped server \
+             is still billed by Hetzner."
+                .into(),
+            "Remove everything Cua created with `cua cloud sweep hetzner --all --delete`.".into(),
+        ],
         "modal" => vec![
             "Runs sandboxes in the `cua-sandboxes` app, in the environment you choose.".into(),
             common.into(),
@@ -494,12 +536,31 @@ fn field_of(p: &CloudProviderInput) -> (&'static str, &'static str, &str) {
     match p.name.as_str() {
         "gcp" => ("project", "Project", &p.project),
         "modal" => ("environment", "Environment", &p.environment),
+        "hetzner" => (
+            "region",
+            "Location",
+            if p.region.is_empty() {
+                "fsn1"
+            } else {
+                &p.region
+            },
+        ),
         _ => ("region", "Region", &p.region),
     }
 }
 
 fn has_profile(p: &CloudProviderInput) -> bool {
     matches!(p.name.as_str(), "aws" | "modal")
+}
+
+fn has_token(p: &CloudProviderInput) -> bool {
+    p.name == "hetzner"
+}
+
+/// Hetzner needs a token from the field or one this machine already has
+/// (`HCLOUD_TOKEN`, a saved token); every other cloud signs in elsewhere.
+fn credential_ready(p: &CloudProviderInput, state: &CloudConnectState) -> bool {
+    !has_token(p) || p.found || state.token_entered
 }
 
 fn target(p: &CloudProviderInput, state: &CloudConnectState) -> CloudTargetArgs {
@@ -513,6 +574,7 @@ fn target(p: &CloudProviderInput, state: &CloudConnectState) -> CloudTargetArgs 
         region: value.clone().filter(|_| id == "region"),
         project: value.clone().filter(|_| id == "project"),
         environment: value.filter(|_| id == "environment"),
+        uses_token: has_token(p) && state.token_entered,
     }
 }
 
@@ -538,6 +600,7 @@ pub fn cloud_connect_reduce(
                 s.selected = Some(name.clone());
                 s.value.clear();
                 s.profile.clear();
+                s.token_entered = false;
                 s.phase = CloudConnectPhase::Idle;
             }
         }
@@ -550,7 +613,13 @@ pub fn cloud_connect_reduce(
             s.phase = CloudConnectPhase::Idle;
         }
         CloudConnectAction::SetMakeDefault { on } => s.make_default = *on,
-        CloudConnectAction::Test if has_provider && !busy(&s) => {
+        CloudConnectAction::SetTokenEntered { entered } if !busy(&s) => {
+            s.token_entered = *entered;
+            s.phase = CloudConnectPhase::Idle;
+        }
+        CloudConnectAction::Test
+            if selected(input, &s).is_some_and(|p| credential_ready(p, &s)) && !busy(&s) =>
+        {
             s.phase = CloudConnectPhase::Testing
         }
         CloudConnectAction::Tested {
@@ -572,15 +641,25 @@ pub fn cloud_connect_reduce(
                 label: "No cloud".into(),
             }
         }
-        CloudConnectAction::Connect if has_choice && !busy(&s) => {
+        CloudConnectAction::Connect
+            if has_choice
+                && !busy(&s)
+                && (is_none_selected(&s)
+                    || selected(input, &s).is_some_and(|p| credential_ready(p, &s))) =>
+        {
             s.phase = CloudConnectPhase::Connecting
         }
+        // The shell clears its token field once Connect has finished.
         CloudConnectAction::Connected { label } if s.phase == CloudConnectPhase::Connecting => {
+            s.token_entered = false;
             s.phase = CloudConnectPhase::Connected {
                 label: label.clone(),
             }
         }
         CloudConnectAction::Failed { error } if busy(&s) => {
+            if s.phase == CloudConnectPhase::Connecting {
+                s.token_entered = false;
+            }
             s.phase = CloudConnectPhase::Failed {
                 error: error.clone(),
             }
@@ -609,6 +688,8 @@ pub fn cloud_connect_view(
                 p.source.clone()
             } else if p.found {
                 "Sign-in found".into()
+            } else if has_token(p) {
+                "Needs an API token".into()
             } else {
                 "No sign-in found".into()
             },
@@ -645,6 +726,16 @@ pub fn cloud_connect_view(
             p.profile.clone()
         },
         value: state.profile.clone(),
+    });
+    let token_field = chosen.filter(|p| has_token(p)).map(|p| CloudField {
+        id: "token".into(),
+        label: "API token".into(),
+        placeholder: if p.found {
+            "Using the token found on this Mac".into()
+        } else {
+            "Project token (Read & Write)".into()
+        },
+        value: String::new(),
     });
     let (checks, result) = match &state.phase {
         CloudConnectPhase::Tested {
@@ -691,9 +782,17 @@ pub fn cloud_connect_view(
         rows,
         field,
         profile_field,
+        token_field,
         checks,
         result,
         touches: chosen.map(|p| touches_of(&p.name)).unwrap_or_default(),
+        agent_prompt: crate::agent_prompts::connect_cloud_prompt(
+            chosen.map(|p| p.title.as_str()),
+            chosen
+                .filter(|p| field_of(p).0 == "region")
+                .map(|_| state.value.as_str()),
+            None,
+        ),
         make_default_label: "Make default".into(),
         make_default: state.make_default,
         test_label: if state.phase == CloudConnectPhase::Testing {
@@ -702,8 +801,13 @@ pub fn cloud_connect_view(
             "Test"
         }
         .into(),
-        can_test: chosen.is_some() && !working,
-        test_help: "Checks the account without creating anything.".into(),
+        can_test: chosen.is_some_and(|p| credential_ready(p, state)) && !working,
+        test_help: if chosen.is_some_and(|p| !credential_ready(p, state)) {
+            "Paste a project API token first."
+        } else {
+            "Checks the account without creating anything."
+        }
+        .into(),
         connect_label: if state.phase == CloudConnectPhase::Connecting {
             "Connecting\u{2026}"
         } else if none_selected {
@@ -712,7 +816,8 @@ pub fn cloud_connect_view(
             "Connect"
         }
         .into(),
-        can_connect: (chosen.is_some() || none_selected) && !working,
+        can_connect: (chosen.is_some_and(|p| credential_ready(p, state)) || none_selected)
+            && !working,
         cancel_label: "Cancel".into(),
         error: match &state.phase {
             CloudConnectPhase::Failed { error } => Some(error.clone()),
@@ -856,6 +961,18 @@ mod tests {
         assert_eq!(clouds[0].offers[0].machine_type, "t4g.medium");
         assert!(connected_clouds_from_status(&serde_json::json!("nope")).is_empty());
         assert!(is_cloud_word("modal") && !is_cloud_word("cloud"));
+        assert!(is_cloud_word("azure"));
+        // Azure is linked through Cua's issuer, not this sign-in sheet.
+        let with_azure = serde_json::json!({"providers": [
+            {"name": "aws", "title": "AWS", "credentials": {"found": true}},
+            {"name": "azure", "title": "Azure", "credentials": {"found": true}}
+        ]});
+        let names: Vec<String> = connect_input_from_status(&with_azure)
+            .providers
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, vec!["aws".to_string()]);
     }
 
     #[test]
@@ -936,6 +1053,32 @@ mod tests {
     }
 
     #[test]
+    fn the_agent_prompt_names_the_cloud_and_its_region_in_one_line() {
+        let i = input();
+        let v = cloud_connect_view(&i, &cloud_connect_initial());
+        assert!(
+            v.agent_prompt.starts_with("Connect ") && !v.agent_prompt.contains('\n'),
+            "{}",
+            v.agent_prompt
+        );
+        assert!(
+            v.agent_prompt
+                .ends_with("https://cua.ai/docs/agents/connect-a-cloud")
+        );
+        let s = cloud_connect_reduce(
+            &i,
+            &cloud_connect_initial(),
+            &CloudConnectAction::Select {
+                name: NONE_PROVIDER.into(),
+            },
+        );
+        assert_eq!(
+            cloud_connect_view(&i, &s).agent_prompt,
+            "Connect a cloud to my Cua Spaces: https://cua.ai/docs/agents/connect-a-cloud"
+        );
+    }
+
+    #[test]
     fn what_each_provider_touches_names_its_resources_and_cleanup() {
         let i = input();
         let v = cloud_connect_view(&i, &cloud_connect_initial());
@@ -969,5 +1112,157 @@ mod tests {
                 .any(|l| l.contains("cua cloud sweep modal --all --delete"))
         );
         assert!(touches_of("unknown-provider").is_empty());
+    }
+
+    fn with_hetzner() -> CloudConnectInput {
+        let mut i = input();
+        i.providers.insert(
+            1,
+            CloudProviderInput {
+                name: "hetzner".into(),
+                title: "Hetzner".into(),
+                ..Default::default()
+            },
+        );
+        i
+    }
+
+    fn hetzner(actions: &[CloudConnectAction]) -> (CloudConnectInput, CloudConnectState) {
+        let i = with_hetzner();
+        let s = actions.iter().fold(
+            cloud_connect_reduce(
+                &i,
+                &cloud_connect_initial(),
+                &CloudConnectAction::Select {
+                    name: "hetzner".into(),
+                },
+            ),
+            |s, a| cloud_connect_reduce(&i, &s, a),
+        );
+        (i, s)
+    }
+
+    #[test]
+    fn hetzner_asks_for_one_masked_token_and_a_location() {
+        let (i, s) = hetzner(&[]);
+        let v = cloud_connect_view(&i, &s);
+        assert_eq!(v.rows[1].detail, "Needs an API token");
+        let t = v.token_field.as_ref().expect("token field");
+        assert_eq!((t.id.as_str(), t.label.as_str()), ("token", "API token"));
+        assert!(t.value.is_empty());
+        let f = v.field.as_ref().unwrap();
+        assert_eq!((f.id.as_str(), f.placeholder.as_str()), ("region", "fsn1"));
+        assert!(v.profile_field.is_none());
+        assert!(!v.can_test && !v.can_connect, "no token, nothing found");
+        assert_eq!(v.test_help, "Paste a project API token first.");
+        // Only Hetzner shows the token field.
+        let aws = cloud_connect_view(&i, &cloud_connect_initial());
+        assert!(aws.token_field.is_none());
+    }
+
+    #[test]
+    fn hetzner_test_request_carries_the_token_flag_for_hetzner_only() {
+        let (i, s) = hetzner(&[
+            CloudConnectAction::SetValue {
+                text: "nbg1".into(),
+            },
+            CloudConnectAction::SetTokenEntered { entered: true },
+            CloudConnectAction::Test,
+        ]);
+        let v = cloud_connect_view(&i, &s);
+        assert_eq!(
+            v.request,
+            Some(CloudConnectRequest::Test {
+                target: CloudTargetArgs {
+                    provider: "hetzner".into(),
+                    region: Some("nbg1".into()),
+                    uses_token: true,
+                    ..Default::default()
+                }
+            })
+        );
+        // AWS never asks for a token, even if the flag were set.
+        let s = cloud_connect_reduce(&i, &s, &CloudConnectAction::Failed { error: "x".into() });
+        let s = cloud_connect_reduce(&i, &s, &CloudConnectAction::Select { name: "aws".into() });
+        assert!(!s.token_entered, "switching provider drops the flag");
+        let s = cloud_connect_reduce(&i, &s, &CloudConnectAction::Test);
+        match cloud_connect_view(&i, &s).request {
+            Some(CloudConnectRequest::Test { target }) => assert!(!target.uses_token),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_token_found_on_this_machine_is_enough_and_is_not_sent() {
+        let mut i = with_hetzner();
+        i.providers[1].found = true;
+        i.providers[1].source = "HCLOUD_TOKEN".into();
+        let s = cloud_connect_reduce(
+            &i,
+            &cloud_connect_initial(),
+            &CloudConnectAction::Select {
+                name: "hetzner".into(),
+            },
+        );
+        let v = cloud_connect_view(&i, &s);
+        assert_eq!(v.rows[1].detail, "HCLOUD_TOKEN");
+        assert!(v.rows[1].found && v.can_test && v.can_connect);
+        let s = cloud_connect_reduce(&i, &s, &CloudConnectAction::Connect);
+        match cloud_connect_view(&i, &s).request {
+            Some(CloudConnectRequest::Connect { target, .. }) => assert!(!target.uses_token),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_token_flag_clears_after_connect_and_the_secret_is_never_in_state() {
+        let (i, s) = hetzner(&[
+            CloudConnectAction::SetTokenEntered { entered: true },
+            CloudConnectAction::Connect,
+        ]);
+        let json = serde_json::to_string(&s).unwrap();
+        let view = serde_json::to_string(&cloud_connect_view(&i, &s)).unwrap();
+        // The core never receives a secret, so none can be in its output.
+        for out in [json, view, format!("{s:?}")] {
+            assert!(!out.to_lowercase().contains("hcloud_secret_value"), "{out}");
+        }
+        let failed = cloud_connect_reduce(
+            &i,
+            &s,
+            &CloudConnectAction::Failed {
+                error: "nope".into(),
+            },
+        );
+        assert!(!failed.token_entered, "a finished Connect clears the flag");
+        let tested = hetzner(&[
+            CloudConnectAction::SetTokenEntered { entered: true },
+            CloudConnectAction::Test,
+            CloudConnectAction::Tested {
+                ok: true,
+                account: "p".into(),
+                checks: vec![],
+            },
+        ])
+        .1;
+        assert!(
+            tested.token_entered,
+            "a passed Test keeps it so Connect works"
+        );
+    }
+
+    #[test]
+    fn hetzner_touches_name_its_resources_limits_and_cleanup() {
+        let t = touches_of("hetzner");
+        assert!(
+            t.iter()
+                .any(|l| l.contains("cua-managed") && l.contains("firewall"))
+        );
+        assert!(t.iter().any(|l| l.contains("Containers only")));
+        assert!(t.iter().any(|l| l.contains("still billed")));
+        assert!(
+            t.iter()
+                .any(|l| l.contains("cua cloud sweep hetzner --all --delete"))
+        );
+        assert!(is_cloud_word("hetzner"));
     }
 }

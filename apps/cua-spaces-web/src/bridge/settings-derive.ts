@@ -21,6 +21,7 @@ import type {
   EnrollAction,
   EnrollState,
   EnrollView,
+  MachinesAccountView,
 } from "./contracts/devices";
 import type { SettingsInput, SettingsPage, SettingsRow, SettingsSection } from "./contracts/host";
 import type { NotificationInput, NotificationsPlan, NotificationsView } from "./contracts/notifications";
@@ -69,6 +70,12 @@ export const chooseExperiment = (core: CoreClient, experiments: Experiments, row
 export const devicesView = (core: CoreClient, input: DevicesInput, now: number): DevicesView | null => {
   const { readError: _, deviceName: __, ...rest } = input;
   return core.tryCall<DevicesView>("devices.view", { input: rest, now }) ?? null;
+};
+
+/** The account's part of the Machines page: machines waiting to be added, this machine's trust and who reached each machine. */
+export const machinesAccount = (core: CoreClient, input: DevicesInput, now: number): MachinesAccountView | null => {
+  const { readError, deviceName: __, ...rest } = input;
+  return core.tryCall<MachinesAccountView>("machines.account", { input: rest, now, readError: readError ?? null }) ?? null;
 };
 
 export const enrollInitial = (core: CoreClient): EnrollState | null => core.tryCall<EnrollState>("devices.enrollInitial", {}) ?? null;

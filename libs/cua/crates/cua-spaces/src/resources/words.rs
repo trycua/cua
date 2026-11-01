@@ -257,6 +257,7 @@ mod tests {
                 allocated: 87 * GIB,
                 shares_space: true,
             }),
+            base: None,
         }
     }
 

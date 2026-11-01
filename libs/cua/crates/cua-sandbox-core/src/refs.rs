@@ -421,6 +421,7 @@ mod tests {
             "direct:[::1]:3211",
             "direct:h.example:443",
             "relay:0123abcd4567ef89",
+            "hetzner:box",
             "box",
         ] {
             assert_eq!(p(s).to_string(), s);

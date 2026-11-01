@@ -113,6 +113,7 @@ impl LocalRuntime for FakeRuntime {
                 os: "linux".into(),
                 emulated: false,
                 spacesd,
+                injected: false,
             });
         Ok((inst, info))
     }
@@ -243,6 +244,7 @@ fn closed_port() -> u16 {
 fn quick() -> ConnectOptionsOverride {
     ConnectOptionsOverride {
         probe_timeout: Some(Duration::from_secs(3)),
+        ..Default::default()
     }
 }
 
@@ -321,17 +323,23 @@ async fn local_lifecycle_state_and_readiness() {
     // No spacesd: a clean, typed error.
     let err = sb.spacesd_with(quick()).await.unwrap_err();
     assert!(matches!(err, Error::SpacesdNotAvailable { .. }), "{err:?}");
-    // keep_alive is for providers that expire sandboxes.
-    assert!(matches!(
-        sb.keep_alive(Duration::from_secs(60)).await.unwrap_err(),
-        Error::Unsupported { .. }
-    ));
+    // keep_alive gives a local sandbox a lifetime (the daemon deletes it
+    // once that has passed).
+    sb.keep_alive(Duration::from_secs(60)).await.unwrap();
 
     // Lifecycle by name.
     sbx.suspend("dev-box").await.unwrap();
     assert_eq!(sbx.get("dev-box").await.unwrap().status, Status::Suspended);
     sbx.resume("dev-box").await.unwrap();
+    // A runtime that publishes on new host ports when it boots again (a
+    // microVM does): the state follows, so connections reach the new ones.
+    let moved = web.wrapping_add(1);
+    rt.map(80, moved);
     sbx.restart("dev-box").await.unwrap();
+    match sbx.state().load("dev-box").unwrap() {
+        SandboxState::Local(l) => assert_eq!(l.exposed_ports.unwrap()["80"], moved),
+        other => panic!("{other:?}"),
+    }
     assert_eq!(sb.status().await.unwrap(), Status::Running);
     let listed = sbx.list().await.unwrap();
     assert_eq!(listed.len(), 1);

@@ -1,0 +1,457 @@
+{
+  "flow": "connectors",
+  "frames": [
+    {
+      "apps": [
+        "claude-code | not-connected | - | Connect | -",
+        "codex | not-connected | Needs a sign-in to OpenAI. | Connect | -",
+        "gemini-cli | not-connected | Needs an API key for Google AI Studio. | Connect | -",
+        "antigravity | not-connected | Needs an API key for Google AI Studio. | Connect | -",
+        "opencode | not-connected | Needs a connected provider. | Connect | -",
+        "goose | not-connected | Needs a connected provider. | Connect | -",
+        "pi | not-connected | Needs a connected provider. | Connect | -",
+        "hermes | not-connected | Needs a connected provider. | Connect | -",
+        "openclaw | not-connected | Needs a connected provider. | Connect | -",
+        "vscode | connected | - | - | Connected"
+      ],
+      "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
+      "more": "More providers | 20 | -",
+      "moreProviders": [],
+      "providers": [
+        "anthropic | top | not-connected | Not connected | - | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code | Connect",
+        "openai | top | not-connected | Not connected | - | OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code | Connect",
+        "openrouter | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "google | top | not-connected | Not connected | - | Gemini CLI, Google Antigravity, OpenCode, Goose, Pi, Hermes | Connect",
+        "xai | top | not-connected | Not connected | - | OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "deepseek | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "kimi | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "custom | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect"
+      ],
+      "step": "nothing connected",
+      "title": "Providers"
+    },
+    {
+      "apps": [
+        "claude-code | connected | Signed in as ada@example.com (Claude Max) | - | Connected",
+        "codex | connecting | Enter the code in your browser… | Connect | -",
+        "gemini-cli | not-connected | Needs an API key for Google AI Studio. | Connect | -",
+        "antigravity | not-connected | Needs an API key for Google AI Studio. | Connect | -",
+        "opencode | connected | Runs in your Spaces | - | Connected",
+        "goose | connected | Runs in your Spaces | - | Connected",
+        "pi | connected | Runs in your Spaces | - | Connected",
+        "hermes | connected | Runs in your Spaces | - | Connected",
+        "openclaw | connected | Runs in your Spaces | - | Connected"
+      ],
+      "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
+      "more": "More providers | 20 | -",
+      "moreProviders": [],
+      "providers": [
+        "anthropic | top | connected | Connected | Signed in as ada@example.com (Claude Max) | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code | Disconnect",
+        "openai | top | connected | Connected | API key •••• 3f9a | OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code | Disconnect",
+        "openrouter | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "google | top | not-connected | Not connected | - | Gemini CLI, Google Antigravity, OpenCode, Goose, Pi, Hermes | Connect",
+        "xai | top | not-connected | Not connected | - | OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "deepseek | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "kimi | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "custom | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect"
+      ],
+      "step": "Claude Code signed in, an OpenAI key pasted, Codex connecting",
+      "title": "Providers"
+    },
+    {
+      "apps": [
+        "claude-code | not-connected | Needs reconnect | Reconnect | -",
+        "codex | not-connected | Needs a sign-in to OpenAI. | Connect | -",
+        "gemini-cli | not-connected | Needs an API key for Google AI Studio. | Connect | -",
+        "antigravity | not-connected | Needs an API key for Google AI Studio. | Connect | -",
+        "opencode | not-connected | Needs a connected provider. | Connect | -",
+        "goose | not-connected | Needs a connected provider. | Connect | -",
+        "pi | not-connected | Needs a connected provider. | Connect | -",
+        "hermes | not-connected | Needs a connected provider. | Connect | -",
+        "openclaw | not-connected | Needs a connected provider. | Connect | -"
+      ],
+      "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
+      "more": "More providers | 20 | -",
+      "moreProviders": [],
+      "providers": [
+        "anthropic | top | not-connected | Needs reconnect | - | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code | Reconnect",
+        "openai | top | not-connected | Not connected | - | OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code | Connect",
+        "openrouter | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "google | top | not-connected | Not connected | - | Gemini CLI, Google Antigravity, OpenCode, Goose, Pi, Hermes | Connect",
+        "xai | top | not-connected | Not connected | - | OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "deepseek | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "kimi | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "custom | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect"
+      ],
+      "step": "Claude Code sign-in ran out (needs reconnect)",
+      "title": "Providers"
+    },
+    {
+      "apps": [
+        "claude-code | connecting | Reading your Claude Code sign-in… | Connect | -",
+        "codex | not-connected | Needs a sign-in to OpenAI. | Connect | -",
+        "gemini-cli | not-connected | Needs an API key for Google AI Studio. | Connect | -",
+        "antigravity | not-connected | Needs an API key for Google AI Studio. | Connect | -",
+        "opencode | not-connected | Needs a connected provider. | Connect | -",
+        "goose | not-connected | Needs a connected provider. | Connect | -",
+        "pi | not-connected | Needs a connected provider. | Connect | -",
+        "hermes | not-connected | Needs a connected provider. | Connect | -",
+        "openclaw | not-connected | Needs a connected provider. | Connect | -"
+      ],
+      "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
+      "more": "More providers | 20 | -",
+      "moreProviders": [],
+      "providers": [
+        "anthropic | top | not-connected | Not connected | - | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code | Connect",
+        "openai | top | not-connected | Not connected | - | OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code | Connect",
+        "openrouter | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "google | top | not-connected | Not connected | - | Gemini CLI, Google Antigravity, OpenCode, Goose, Pi, Hermes | Connect",
+        "xai | top | not-connected | Not connected | - | OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "deepseek | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "kimi | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "custom | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect"
+      ],
+      "step": "Claude Code is reading its sign-in",
+      "title": "Providers"
+    },
+    {
+      "apps": [
+        "claude-code | not-connected | Needs a sign-in to Anthropic. | Connect | -",
+        "codex | not-connected | Needs a sign-in to OpenAI. | Connect | -",
+        "gemini-cli | not-connected | Needs an API key for Google AI Studio. | Connect | -",
+        "antigravity | not-connected | Needs an API key for Google AI Studio. | Connect | -",
+        "opencode | connected | - | - | Connected",
+        "goose | connected | Runs in your Spaces | - | Connected",
+        "pi | connected | Runs in your Spaces | - | Connected",
+        "hermes | connected | Runs in your Spaces | - | Connected",
+        "openclaw | connected | Runs in your Spaces | - | Connected"
+      ],
+      "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
+      "more": "More providers | 18 | -",
+      "moreProviders": [
+        "fireworks | more | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect"
+      ],
+      "providers": [
+        "anthropic | top | not-connected | Not connected | - | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code | Connect",
+        "openai | top | not-connected | Not connected | - | OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code | Connect",
+        "openrouter | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "google | top | not-connected | Not connected | - | Gemini CLI, Google Antigravity, OpenCode, Goose, Pi, Hermes | Connect",
+        "xai | top | not-connected | Not connected | - | OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "deepseek | top | connected | Connected | API key •••• 9c2e | OpenCode, Goose, Pi, Hermes, OpenClaw | Disconnect",
+        "kimi | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect",
+        "custom | top | connected | Connected | http://127.0.0.1:1234/v1 | OpenCode, Goose, Pi, Hermes, OpenClaw | Disconnect",
+        "huggingface | more | not-connected | Needs reconnect | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Reconnect",
+        "zai | more | connected | Connected | API key •••• 7d1f, Global, Coding Plan | OpenCode, Goose, Pi, Hermes, OpenClaw | Disconnect"
+      ],
+      "step": "DeepSeek key and a custom endpoint, More providers searched",
+      "title": "Providers"
+    },
+    {
+      "lede": "Works with Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw and T3 Code.",
+      "note": null,
+      "sheet": "anthropic",
+      "switch": "Other providers",
+      "title": "Connect Anthropic",
+      "ways": [
+        {
+          "fields": [],
+          "way": "app-token | import_login | Use your Claude Code sign-in | Sign in | none"
+        },
+        {
+          "fields": [],
+          "way": "token | import_login | Paste a Claude token | Paste token | required"
+        },
+        {
+          "fields": [],
+          "way": "key | api_key | Paste an API key | Paste key | required"
+        },
+        {
+          "fields": [],
+          "way": "shell | api_key | Use ANTHROPIC_API_KEY from your shell | Use it | none"
+        }
+      ]
+    },
+    {
+      "lede": "Works with OpenAI Codex, OpenCode, Goose, Pi, Hermes, OpenClaw and T3 Code.",
+      "note": null,
+      "sheet": "openai",
+      "switch": "Other providers",
+      "title": "Connect OpenAI",
+      "ways": [
+        {
+          "fields": [],
+          "way": "app-device | subscription_login | Sign in with ChatGPT | Sign in | none"
+        },
+        {
+          "fields": [],
+          "way": "key | api_key | Paste an API key | Paste key | required"
+        }
+      ]
+    },
+    {
+      "lede": "Works with OpenCode, Goose, Pi, Hermes and OpenClaw.",
+      "note": null,
+      "sheet": "openrouter",
+      "switch": "Other providers",
+      "title": "Connect OpenRouter",
+      "ways": [
+        {
+          "fields": [],
+          "way": "key | api_key | Paste an API key | Paste key | required"
+        }
+      ]
+    },
+    {
+      "lede": "Works with OpenCode, Goose, Pi, Hermes and OpenClaw.",
+      "note": null,
+      "sheet": "zai",
+      "switch": "Other providers",
+      "title": "Connect Z.AI (GLM)",
+      "ways": [
+        {
+          "fields": [
+            "region | Plan | choice | true | global"
+          ],
+          "way": "key | api_key | Paste an API key | Paste key | required"
+        }
+      ]
+    },
+    {
+      "lede": "Works with OpenCode, Goose, Pi, Hermes and OpenClaw.",
+      "note": "A server on this Mac is only reachable from a Space that is allowed to reach that port. Cua doesn't open it for you.",
+      "sheet": "custom",
+      "switch": "Other providers",
+      "title": "Connect Custom endpoint",
+      "ways": [
+        {
+          "fields": [
+            "base_url | Base URL | url | true | ",
+            "model | Model | text | true | ",
+            "wire | API style | choice | true | openai-chat"
+          ],
+          "way": "endpoint | custom_endpoint | Connect a server by its base URL | Set up | optional"
+        }
+      ]
+    },
+    {
+      "lede": "Works with Hermes.",
+      "note": null,
+      "sheet": "deepinfra",
+      "switch": "Other providers",
+      "title": "Connect DeepInfra",
+      "ways": [
+        {
+          "fields": [
+            "model | Model | text | true | "
+          ],
+          "way": "key | api_key | Paste an API key | Paste key | required"
+        }
+      ]
+    },
+    {
+      "lede": "Works with GitHub Copilot CLI.",
+      "note": null,
+      "sheet": "github",
+      "switch": "Other providers",
+      "title": "Connect GitHub Copilot",
+      "ways": [
+        {
+          "fields": [],
+          "way": "key | api_key | Paste an API key | Paste key | required"
+        }
+      ]
+    },
+    {
+      "items": [
+        "anthropic | top | not-connected",
+        "openai | top | not-connected",
+        "openrouter | top | not-connected",
+        "google | top | not-connected",
+        "xai | top | not-connected",
+        "deepseek | top | not-connected",
+        "kimi | top | not-connected",
+        "custom | top | not-connected"
+      ],
+      "lede": "Providers Hermes can use.",
+      "more": "More providers | 19 | -",
+      "picker": {
+        "expanded": false,
+        "forApp": "hermes",
+        "query": ""
+      },
+      "title": "Connect a provider"
+    },
+    {
+      "items": [
+        "anthropic | top | not-connected"
+      ],
+      "lede": "Providers Claude Code can use.",
+      "more": "- | 0 | -",
+      "picker": {
+        "expanded": false,
+        "forApp": "claude-code",
+        "query": ""
+      },
+      "title": "Connect a provider"
+    },
+    {
+      "items": [
+        "kimi | top | not-connected"
+      ],
+      "lede": "",
+      "more": "- | 0 | -",
+      "picker": {
+        "expanded": false,
+        "forApp": null,
+        "query": "kimi"
+      },
+      "title": "Connect a provider"
+    },
+    {
+      "connect": "Connect a provider | Connect a provider to pick a model.",
+      "default": "- | -",
+      "groups": [],
+      "models": "nothing connected"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "anthropic | claude-haiku-4-5",
+      "groups": [
+        "anthropic | Anthropic | connected | - :: claude-haiku-4-5 | Claude Haiku 4.5 | true | false / claude-sonnet-5 | Claude Sonnet 5 | false | true / claude-opus-5-5 | Claude Opus 5.5 | false | false",
+        "openai | OpenAI | connected | - :: gpt-5.5 | GPT-5.5 | false | true",
+        "deepseek | DeepSeek | connected | - :: deepseek-flash | DeepSeek Flash | true | true"
+      ],
+      "models": "an Anthropic key, an OpenAI key and a DeepSeek key"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "anthropic | claude-haiku-4-5",
+      "groups": [
+        "anthropic | Anthropic | connected | claude-code :: claude-haiku-4-5 | Claude Haiku 4.5 | true | false / claude-sonnet-5 | Claude Sonnet 5 | false | true / claude-opus-5-5 | Claude Opus 5.5 | false | false",
+        "openai | OpenAI | connected | openai-codex :: gpt-5.5 | GPT-5.5 | false | true"
+      ],
+      "models": "only a Claude sign-in and a ChatGPT sign-in (each is its own app's)"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "openai | gpt-5.5",
+      "groups": [
+        "openai | OpenAI | connected | - :: gpt-5.5 | GPT-5.5 | false | true",
+        "anthropic | Anthropic | needs-reconnect | - :: claude-haiku-4-5 | Claude Haiku 4.5 | true | false / claude-sonnet-5 | Claude Sonnet 5 | false | true / claude-opus-5-5 | Claude Opus 5.5 | false | false"
+      ],
+      "models": "a Claude sign-in that ran out and an OpenAI key"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "zai | glm-5.3",
+      "groups": [
+        "zai | Z.AI (GLM) | connected | - :: glm-5.3 | glm-5.3 | false | true"
+      ],
+      "models": "a provider with no list falls back to its default"
+    },
+    {
+      "buttons": "Use my sign-in | Cancel | Reading your Claude Code sign-in…",
+      "importSheet": "macos",
+      "notFound": "No Claude Code sign-in found | Claude Code isn't signed in on this Mac, or its sign-in couldn't be read. Pick one:",
+      "options": [
+        "login | Sign in with Claude Code | claude auth login | Try again",
+        "token | Paste a token | - | Paste token",
+        "key | Use an Anthropic API key | - | Paste key"
+      ],
+      "points": [
+        "Cua reads your Claude Code sign-in from the Keychain item “Claude Code-credentials” (macOS asks you to allow it), or the file ~/.claude/.credentials.json.",
+        "It keeps the access token in Cua's own item in the Keychain, never your refresh token, and doesn't change Claude Code's sign-in. You stay signed in to Claude Code.",
+        "Your Spaces get that access token so Claude Code can run there. Only Claude Code uses it.",
+        "When it runs out, Cua reads the newer one from Claude Code. Sign out here to remove the copy."
+      ],
+      "title": "Use your Claude Code sign-in"
+    },
+    {
+      "buttons": "Use my sign-in | Cancel | Reading your Claude Code sign-in…",
+      "importSheet": "linux",
+      "notFound": "No Claude Code sign-in found | Claude Code isn't signed in on this machine, or its sign-in couldn't be read. Pick one:",
+      "options": [
+        "login | Sign in with Claude Code | claude auth login | Try again",
+        "token | Paste a token | - | Paste token",
+        "key | Use an Anthropic API key | - | Paste key"
+      ],
+      "points": [
+        "Cua reads your Claude Code sign-in from the file ~/.claude/.credentials.json.",
+        "It keeps the access token in Cua's own place for credentials, never your refresh token, and doesn't change Claude Code's sign-in. You stay signed in to Claude Code.",
+        "Your Spaces get that access token so Claude Code can run there. Only Claude Code uses it.",
+        "When it runs out, Cua reads the newer one from Claude Code. Sign out here to remove the copy."
+      ],
+      "title": "Use your Claude Code sign-in"
+    },
+    {
+      "does": "true | true | false | - | anthropic",
+      "plan": "claude-code"
+    },
+    {
+      "does": "false | false | true | - | openai",
+      "plan": "codex"
+    },
+    {
+      "does": "false | false | false | anthropic | -",
+      "plan": "hermes"
+    },
+    {
+      "does": "false | false | false | - | -",
+      "plan": "vscode"
+    },
+    {
+      "does": "false | false | false | github | -",
+      "plan": "copilot-cli"
+    },
+    {
+      "detail": "claude-code",
+      "note": null,
+      "signIn": "Signs in with Anthropic | Not connected | Sign in",
+      "status": "Needs a sign-in to Anthropic.",
+      "toggles": []
+    },
+    {
+      "detail": "vscode",
+      "note": null,
+      "signIn": "- | - | -",
+      "status": null,
+      "toggles": []
+    },
+    {
+      "candidates": [
+        "hermes | Hermes | true | In this Space",
+        "claude | Claude Code | false | Not connected",
+        "codex | Codex | false | Starts in this Space",
+        "openclaw | OpenClaw | false | Starts in this Space"
+      ]
+    },
+    {
+      "send": "@claude fix the build",
+      "steps": [
+        "claude | blocked | Claude Code isn't connected yet | Connect Claude Code | Only visible to you"
+      ]
+    },
+    {
+      "send": "@codex bump the timeout, @hermes review it",
+      "steps": [
+        "codex | add | - | - | -",
+        "hermes | wake | - | - | -"
+      ]
+    },
+    {
+      "send": "cc @grace and @nobody",
+      "steps": []
+    },
+    {
+      "agents": [
+        "attempt | Claude Code | not-connected | Claude Code isn't connected yet | Connect Claude Code",
+        "agent | Claude Code | you | Waiting for you in ubuntu-build | -",
+        "agent | Hermes | working | Bumping the retry timeout in ubuntu-build | -",
+        "attempt | Codex | creating | Waiting for space-2 to be ready | -",
+        "attempt | Hermes | failed | Didn't start | Try again"
+      ],
+      "seeAll": "See all 5",
+      "summary": "1 working"
+    }
+  ]
+}

@@ -149,10 +149,16 @@ public enum NotchData {
         public var progress: UInt32?
         public var progressLabel: String?
         public var signedIn: Bool
+        /// One of your other machines' desktops (not a Space it provides).
+        public var desktop: Bool
+        /// Pinned to the notch.
+        public var pinned: Bool
+        /// Why a pinned desktop cannot be opened now ("Offline", "Not shared").
+        public var note: String?
 
         public init(id: String, name: String, status: TileStatus, dim: Bool, dropTarget: Bool, targeted: Bool,
                     symbol: String, label: String, location: String, progress: UInt32?, progressLabel: String?,
-                    signedIn: Bool) {
+                    signedIn: Bool, desktop: Bool = false, pinned: Bool = false, note: String? = nil) {
             self.id = id
             self.name = name
             self.status = status
@@ -165,6 +171,29 @@ public enum NotchData {
             self.progress = progress
             self.progressLabel = progressLabel
             self.signedIn = signedIn
+            self.desktop = desktop
+            self.pinned = pinned
+            self.note = note
+        }
+
+        // The Electron app's core sends these only when set.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            name = try c.decode(String.self, forKey: .name)
+            status = try c.decode(TileStatus.self, forKey: .status)
+            dim = try c.decode(Bool.self, forKey: .dim)
+            dropTarget = try c.decode(Bool.self, forKey: .dropTarget)
+            targeted = try c.decode(Bool.self, forKey: .targeted)
+            symbol = try c.decode(String.self, forKey: .symbol)
+            label = try c.decode(String.self, forKey: .label)
+            location = try c.decode(String.self, forKey: .location)
+            progress = try c.decodeIfPresent(UInt32.self, forKey: .progress)
+            progressLabel = try c.decodeIfPresent(String.self, forKey: .progressLabel)
+            signedIn = try c.decode(Bool.self, forKey: .signedIn)
+            desktop = try c.decodeIfPresent(Bool.self, forKey: .desktop) ?? false
+            pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+            note = try c.decodeIfPresent(String.self, forKey: .note)
         }
     }
 

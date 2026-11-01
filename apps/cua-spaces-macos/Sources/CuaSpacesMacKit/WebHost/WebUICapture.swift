@@ -13,7 +13,7 @@ import WebKit
 /// `CUA_SPACES_OFFSCREEN=1` too, nothing shows on screen (`OffscreenRun`).
 extension WebUIWindowController {
     static let captureRoutes = ["onboarding", "spaces", "machines", "agents", "keyvault", "notifications", "settings",
-                                 "settings/about", "settings/devices"]
+                                 "settings/about"]
 
     /// The base page routes resolve under: the window may have opened at
     /// another route (the first run, at `/onboarding`).
@@ -36,6 +36,14 @@ extension WebUIWindowController {
                 for _ in 0..<3 where !(page["bridge"] is String) {
                     webView.load(URLRequest(url: Self.url(route, in: captureBase)))
                     page = await settledPage()
+                }
+                // `CUA_SPACES_WEBUI_CAPTURE_SELECT=<machine id>`: the Machines page with that machine chosen.
+                if route == "machines", let id = DevHooks.environment["CUA_SPACES_WEBUI_CAPTURE_SELECT"] {
+                    try? await Task.sleep(for: .seconds(6))
+                    _ = try? await bridge.handle("machines.checkHealth", [:])
+                    try? await Task.sleep(for: .seconds(4))
+                    _ = try? await webView.evaluateJavaScript("document.querySelector('[data-machine-id=\"\(id)\"]')?.click()")
+                    try? await Task.sleep(for: .milliseconds(800))
                 }
                 let file = dir.appendingPathComponent("\(route.replacingOccurrences(of: "/", with: "-"))-\(theme).png")
                 if let image = try? await webView.takeSnapshot(configuration: nil),

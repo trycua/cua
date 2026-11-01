@@ -100,6 +100,11 @@ pub struct DoctorArgs {
     /// Skip the host checks.
     #[arg(long)]
     pub no_host: bool,
+    /// Check a machine's health instead, as its own cua daemon sees it (the
+    /// checks the Machines page shows): another of your machines by name
+    /// or id, over the relay, the mesh or its direct address, or `this`.
+    #[arg(long, value_name = "MACHINE", conflicts_with_all = ["target", "shim", "image"])]
+    pub machine: Option<String>,
     /// Fail unless the build running in the guest is the expected one:
     /// COMPONENT=WANT with WANT `sha256:<hex>` (the executable), `git:<sha>`
     /// or a version (repeatable). Components: cua-spacesd, cua-driver, or
@@ -326,6 +331,9 @@ pub async fn run(
     json: bool,
     out: &mut dyn std::io::Write,
 ) -> Result<i32, CuaError> {
+    if let Some(machine) = args.machine.clone() {
+        return machine_run(cua, &machine, &args, json, out).await;
+    }
     let started = Instant::now();
     let expectations =
         cua_spacesd_client::expect::parse_all(&args.expect).map_err(CuaError::InvalidArgument)?;
@@ -402,6 +410,12 @@ pub async fn run(
     if !args.no_host {
         extra.extend(host::host_checks(cua, runtime_type.as_deref(), &arch).await);
     }
+    // These checks were written here, so their hints name this build's CLI
+    // (`cua-local` on Local); the guest's own checks are the guest's words.
+    for check in &mut extra {
+        check.message = crate::util::hint(&check.message);
+        check.remediation = crate::util::hint(&check.remediation);
+    }
     let mut checks = extra;
     checks.append(&mut report.checks);
     report.checks = checks;
@@ -426,6 +440,54 @@ pub async fn run(
     };
     let _ = out.write_all(text.as_bytes());
     Ok(report.exit_code())
+}
+
+/// `cua doctor --machine <name|this>`: the machine's own daemon runs its
+/// checks (`HostSpacesService.DiagnoseHost`); this prints the report.
+async fn machine_run(
+    cua: &Arc<Cua>,
+    machine: &str,
+    args: &DoctorArgs,
+    json: bool,
+    out: &mut dyn std::io::Write,
+) -> Result<i32, CuaError> {
+    let target = (!target_is_this(machine)).then(|| machine.trim().to_string());
+    let started = Instant::now();
+    let health = cua.spaces().machine_health(target).await?;
+    let mut report = Report::from_json(&health.report_json)
+        .map_err(|e| CuaError::InvalidArgument(format!("the machine's report: {e}")))?;
+    report.producer = format!(
+        "cua doctor --machine ({} on {}, Cua {})",
+        machine, health.os, health.cua_version
+    );
+    report.finalize(args.strict, started.elapsed());
+    let format = if json { Format::Json } else { args.format };
+    let text = match format {
+        // The report's own first line is about an image; a machine has none.
+        Format::Human => {
+            let human = report.to_human();
+            let body = human.split_once('\n').map_or("", |(_, rest)| rest);
+            let who = if target_is_this(machine) {
+                "this machine"
+            } else {
+                machine
+            };
+            format!("{who} ({}, Cua {})\n{body}", health.os, health.cua_version)
+        }
+        Format::Json => report.to_json() + "\n",
+        Format::Junit => report.to_junit(),
+    };
+    if let Some(path) = &args.out {
+        std::fs::write(path, report.to_json())
+            .map_err(|e| CuaError::InvalidArgument(format!("{}: {e}", path.display())))?;
+    }
+    let _ = out.write_all(text.as_bytes());
+    Ok(report.exit_code())
+}
+
+/// `--machine this` (or `local`, or empty): this machine.
+fn target_is_this(machine: &str) -> bool {
+    matches!(machine.trim(), "" | "this" | "local")
 }
 
 /// `pass` / `fail`.

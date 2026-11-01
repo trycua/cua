@@ -1,0 +1,154 @@
+name: "e2b core features (nightly)"
+
+# The core features the E2B / Daytona / Modal compatibility layers build on
+# (guest-agent run_as / xattr / multipart, the process.run_as capability,
+# watch and signal, SpacesdCommand.scrollback_bytes, and the QEMU pool-member
+# checkpoint and fork fix) need a real Linux guest user database, sudo-less
+# privilege switching or KVM. The ordinary PR lanes skip those cases when the
+# machine cannot run them, so this workflow runs them where they can and
+# fails instead of skipping:
+#
+# - spacesd: the whole cua-spacesd workspace test suite on a hosted runner
+#   with root-capable sudo, setpriv and useradd, with
+#   CUA_REQUIRE_PRIVILEGED_TESTS=1 so process_run_as.rs and fs_run_as.rs fail
+#   rather than return early. That includes the watch and signal tests.
+# - qemu-checkpoint: cua-vmm tests/qemu_checkpoint_fork.rs (claim a warm-pool
+#   member, checkpoint it while running, fork it) against the freshly built
+#   Linux reference disk, under QEMU with KVM. Hosted ubuntu-24.04 runners
+#   expose /dev/kvm; set the repository variable CUA_KVM_RUNNER to a
+#   self-hosted label to use another KVM machine. With no /dev/kvm the job
+#   says so loudly (error annotation and step summary) and fails, because
+#   the regression only shows with a real running VM.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-spacesd/crates/cua-spacesd/**"
+      - "libs/cua-spacesd/crates/cua-spacesd-server/**"
+      - "libs/cua-spacesd/crates/cua-spacesd-session/**"
+      - "libs/cua/crates/cua-vmm/**"
+      - "libs/cua/crates/cua-spacesd-client/**"
+      - "libs/images/linux/**"
+      - ".github/workflows/e2b-core-nightly.yml"
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2b-core-nightly-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  spacesd:
+    name: cua-spacesd workspace tests (privileged, no skips)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: libs/cua-spacesd
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
+          free-more: "true"
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: "libs/cua-spacesd -> target"
+      - name: Install Linux build dependencies and the privileged-test tools
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config perl libx11-dev libxkbcommon-dev \
+            libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev \
+            libxfixes-dev libxdamage-dev libudev-dev util-linux passwd
+      - name: Privileges the run_as tests need are present
+        run: |
+          set -euo pipefail
+          sudo -n true
+          command -v setpriv useradd
+          setpriv --version
+      - name: Workspace tests (run_as, xattr, multipart, watch, signal, scrollback)
+        env:
+          CUA_REQUIRE_PRIVILEGED_TESTS: "1"
+        run: cargo test --workspace --locked
+
+  qemu-checkpoint:
+    name: cua-vmm checkpoint and fork of a claimed pool member (QEMU, KVM)
+    runs-on: ${{ vars.CUA_KVM_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: KVM is available
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::no /dev/kvm on this runner: the pool-member checkpoint regression (QEMU re-opening its images by the pre-claim path) cannot be tested without a running VM. Set the CUA_KVM_RUNNER repository variable to a runner label with KVM."
+            {
+              echo "### qemu-checkpoint did NOT run"
+              echo "No /dev/kvm on \`${{ vars.CUA_KVM_RUNNER || 'ubuntu-24.04' }}\`. Set the repository variable CUA_KVM_RUNNER to a KVM-capable runner label."
+            } >>"$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          sudo chmod 666 /dev/kvm
+          ls -l /dev/kvm; nproc; free -h
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          free-more: "true"
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      # The reference disk below is built inside Docker, where sccache does
+      # not reach; this covers the host's cua-vmm test build.
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-vmm
+      - name: QEMU, firmware and image tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            qemu-utils qemu-system-x86 ovmf genisoimage
+          # Installing QEMU puts /dev/kvm back to root:kvm 0660 (udev).
+          sudo chmod 666 /dev/kvm
+      - name: Build the Linux reference disk (with a freshly built cua-spacesd)
+        working-directory: libs/images
+        run: |
+          set -euo pipefail
+          linux/build-spacesd-linux.sh amd64
+          ./build.sh linux --tag e2e --outputs rootfs,disk --out "$HOME/.cache/cua-images-e2e"
+          ls -lh "$HOME/.cache/cua-images-e2e/linux/amd64/"
+      - name: Checkpoint and fork a claimed pool member
+        working-directory: libs/cua
+        env:
+          CUA_VMM_TEST_QEMU: "1"
+        run: |
+          set -euo pipefail
+          export CUA_VMM_TEST_DISK="$HOME/.cache/cua-images-e2e/linux/amd64/disk.img"
+          test -f "$CUA_VMM_TEST_DISK"
+          cargo test --locked -p cua-vmm --features qemu --test qemu_checkpoint_fork -- --ignored --nocapture
+      - name: Start eight VMs at once, then fork four at once
+        working-directory: libs/cua
+        env:
+          CUA_VMM_TEST_QEMU: "1"
+        run: |
+          set -euo pipefail
+          export CUA_VMM_TEST_DISK="$HOME/.cache/cua-images-e2e/linux/amd64/disk.img"
+          test -f "$CUA_VMM_TEST_DISK"
+          cargo test --locked -p cua-vmm --features qemu --test qemu_concurrent_start -- --ignored --nocapture

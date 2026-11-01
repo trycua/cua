@@ -1,0 +1,1576 @@
+{
+  "source_sha": "2b99a150d00aa35ded968b251901b6dee1ce3504",
+  "environment": {
+    "kwin": "6.6.4",
+    "plasma": "6.6.4",
+    "qt": "6.10.2",
+    "uid": 1000,
+    "fixture_pid": 9470,
+    "kwin_pid": 2892,
+    "wayland": "wayland-0",
+    "vm": "QEMU/KVM 8GiB 4vCPU"
+  },
+  "operations": [
+    {
+      "case": "A",
+      "seq": 1,
+      "ungated": true,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 4,
+        "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+        "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+        "deadline_ns": 842809378326,
+        "op_seq": 1,
+        "key": "a",
+        "drop_ack": false,
+        "precheck_gate": null,
+        "postcheck_gate": null
+      },
+      "observations": [
+        {
+          "received_ns": 783400579174,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "active_pid": 9470,
+          "activation_notifications": 1,
+          "started_ns": 782810980035,
+          "finished_ns": 783441350738,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+          "token": 4,
+          "pid": 9470,
+          "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "fresh_active": true
+        }
+      ],
+      "report": {
+        "caller_ack_ns": 803794791993,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 0,
+          "emission_ns": 0,
+          "may_start": false,
+          "op_seq": 1,
+          "submission_ns": 783793441052,
+          "worker_ack_ns": 0
+        },
+        "result": {
+          "content": [
+            {
+              "text": "prototype rejected before emission: Ok(Err(libei input backend did not become ready within 20s; the desktop portal may be waiting for Remote Desktop consent or its EIS session may be wedged))",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "structuredContent": {
+            "confirmation_ns": 0,
+            "emission_ns": 0,
+            "execution_state": "not_started",
+            "may_start": false,
+            "op_seq": 1,
+            "submission_ns": 783793441052,
+            "worker_ack_ns": 0
+          }
+        },
+        "sdk_submission_ns": 783792209104
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":803794791993,\"no_retry\":true,\"operation\":{\"confirmation_ns\":0,\"emission_ns\":0,\"may_start\":false,\"op_seq\":1,\"submission_ns\":783793441052,\"worker_ack_ns\":0},\"result\":{\"content\":[{\"text\":\"prototype rejected before emission: Ok(Err(libei input backend did not become ready within 20s; the desktop portal may be waiting for Remote Desktop consent or its EIS session may be wedged))\",\"type\":\"text\"}],\"isError\":true,\"structuredContent\":{\"confirmation_ns\":0,\"emission_ns\":0,\"execution_state\":\"not_started\",\"may_start\":false,\"op_seq\":1,\"submission_ns\":783793441052,\"worker_ack_ns\":0}},\"sdk_submission_ns\":783792209104}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 782809111286,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 805804065653,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 805804238886,
+      "no_retry": true
+    },
+    {
+      "case": "A",
+      "seq": 2,
+      "ungated": true,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 4,
+        "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+        "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+        "deadline_ns": 955241664513,
+        "op_seq": 2,
+        "key": "a",
+        "drop_ack": false,
+        "precheck_gate": null,
+        "postcheck_gate": null
+      },
+      "observations": [
+        {
+          "received_ns": 895250668799,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "active_pid": 9470,
+          "activation_notifications": 1,
+          "started_ns": 895243305948,
+          "finished_ns": 895260314136,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+          "token": 4,
+          "pid": 9470,
+          "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "fresh_active": true
+        }
+      ],
+      "report": {
+        "caller_ack_ns": 915689732304,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 0,
+          "emission_ns": 0,
+          "may_start": false,
+          "op_seq": 2,
+          "submission_ns": 895688484534,
+          "worker_ack_ns": 0
+        },
+        "result": {
+          "content": [
+            {
+              "text": "prototype rejected before emission: Ok(Err(libei input backend did not become ready within 20s; the desktop portal may be waiting for Remote Desktop consent or its EIS session may be wedged))",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "structuredContent": {
+            "confirmation_ns": 0,
+            "emission_ns": 0,
+            "execution_state": "not_started",
+            "may_start": false,
+            "op_seq": 2,
+            "submission_ns": 895688484534,
+            "worker_ack_ns": 0
+          }
+        },
+        "sdk_submission_ns": 895687419339
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":915689732304,\"no_retry\":true,\"operation\":{\"confirmation_ns\":0,\"emission_ns\":0,\"may_start\":false,\"op_seq\":2,\"submission_ns\":895688484534,\"worker_ack_ns\":0},\"result\":{\"content\":[{\"text\":\"prototype rejected before emission: Ok(Err(libei input backend did not become ready within 20s; the desktop portal may be waiting for Remote Desktop consent or its EIS session may be wedged))\",\"type\":\"text\"}],\"isError\":true,\"structuredContent\":{\"confirmation_ns\":0,\"emission_ns\":0,\"execution_state\":\"not_started\",\"may_start\":false,\"op_seq\":2,\"submission_ns\":895688484534,\"worker_ack_ns\":0}},\"sdk_submission_ns\":895687419339}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 895241379158,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 917702929453,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 917703130749,
+      "no_retry": true
+    },
+    {
+      "case": "A",
+      "seq": 3,
+      "ungated": true,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 4,
+        "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+        "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+        "deadline_ns": 996261562605,
+        "op_seq": 3,
+        "key": "a",
+        "drop_ack": false,
+        "precheck_gate": null,
+        "postcheck_gate": null
+      },
+      "observations": [
+        {
+          "received_ns": 936270447489,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "active_pid": 9470,
+          "activation_notifications": 0,
+          "started_ns": 936263818711,
+          "finished_ns": 936273158686,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+          "token": 4,
+          "pid": 9470,
+          "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "fresh_active": true
+        }
+      ],
+      "report": {
+        "caller_ack_ns": 956625324405,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 0,
+          "emission_ns": 0,
+          "may_start": false,
+          "op_seq": 3,
+          "submission_ns": 936623973689,
+          "worker_ack_ns": 0
+        },
+        "result": {
+          "content": [
+            {
+              "text": "prototype rejected before emission: Ok(Err(libei input backend did not become ready within 20s; the desktop portal may be waiting for Remote Desktop consent or its EIS session may be wedged))",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "structuredContent": {
+            "confirmation_ns": 0,
+            "emission_ns": 0,
+            "execution_state": "not_started",
+            "may_start": false,
+            "op_seq": 3,
+            "submission_ns": 936623973689,
+            "worker_ack_ns": 0
+          }
+        },
+        "sdk_submission_ns": 936623215679
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":956625324405,\"no_retry\":true,\"operation\":{\"confirmation_ns\":0,\"emission_ns\":0,\"may_start\":false,\"op_seq\":3,\"submission_ns\":936623973689,\"worker_ack_ns\":0},\"result\":{\"content\":[{\"text\":\"prototype rejected before emission: Ok(Err(libei input backend did not become ready within 20s; the desktop portal may be waiting for Remote Desktop consent or its EIS session may be wedged))\",\"type\":\"text\"}],\"isError\":true,\"structuredContent\":{\"confirmation_ns\":0,\"emission_ns\":0,\"execution_state\":\"not_started\",\"may_start\":false,\"op_seq\":3,\"submission_ns\":936623973689,\"worker_ack_ns\":0}},\"sdk_submission_ns\":936623215679}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 936261362441,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 958631545183,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 958631706345,
+      "no_retry": true
+    },
+    {
+      "case": "A",
+      "seq": 4,
+      "ungated": true,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 4,
+        "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+        "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+        "deadline_ns": 1065493161240,
+        "op_seq": 4,
+        "key": "a",
+        "drop_ack": false,
+        "precheck_gate": null,
+        "postcheck_gate": null
+      },
+      "observations": [
+        {
+          "received_ns": 1005498798597,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "active_pid": 9470,
+          "activation_notifications": 0,
+          "started_ns": 1005494881111,
+          "finished_ns": 1005500827006,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+          "token": 4,
+          "pid": 9470,
+          "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "fresh_active": true
+        }
+      ],
+      "report": {
+        "caller_ack_ns": 1025826302453,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 0,
+          "emission_ns": 0,
+          "may_start": false,
+          "op_seq": 4,
+          "submission_ns": 1005825106733,
+          "worker_ack_ns": 0
+        },
+        "result": {
+          "content": [
+            {
+              "text": "prototype rejected before emission: Ok(Err(libei input backend did not become ready within 20s; the desktop portal may be waiting for Remote Desktop consent or its EIS session may be wedged))",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "structuredContent": {
+            "confirmation_ns": 0,
+            "emission_ns": 0,
+            "execution_state": "not_started",
+            "may_start": false,
+            "op_seq": 4,
+            "submission_ns": 1005825106733,
+            "worker_ack_ns": 0
+          }
+        },
+        "sdk_submission_ns": 1005824341950
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":1025826302453,\"no_retry\":true,\"operation\":{\"confirmation_ns\":0,\"emission_ns\":0,\"may_start\":false,\"op_seq\":4,\"submission_ns\":1005825106733,\"worker_ack_ns\":0},\"result\":{\"content\":[{\"text\":\"prototype rejected before emission: Ok(Err(libei input backend did not become ready within 20s; the desktop portal may be waiting for Remote Desktop consent or its EIS session may be wedged))\",\"type\":\"text\"}],\"isError\":true,\"structuredContent\":{\"confirmation_ns\":0,\"emission_ns\":0,\"execution_state\":\"not_started\",\"may_start\":false,\"op_seq\":4,\"submission_ns\":1005825106733,\"worker_ack_ns\":0}},\"sdk_submission_ns\":1005824341950}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 1005492890934,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 1027835150891,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 1027835293699,
+      "no_retry": true
+    },
+    {
+      "case": "A",
+      "seq": 5,
+      "ungated": true,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 4,
+        "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+        "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+        "deadline_ns": 1102433138226,
+        "op_seq": 5,
+        "key": "a",
+        "drop_ack": false,
+        "precheck_gate": null,
+        "postcheck_gate": null
+      },
+      "observations": [
+        {
+          "received_ns": 1042438077866,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "active_pid": 9470,
+          "activation_notifications": 0,
+          "started_ns": 1042434558455,
+          "finished_ns": 1042440321747,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+          "token": 4,
+          "pid": 9470,
+          "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "fresh_active": true
+        }
+      ],
+      "report": {
+        "caller_ack_ns": 1043289153564,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 1043288355739,
+          "emission_ns": 1043288370858,
+          "may_start": true,
+          "op_seq": 5,
+          "submission_ns": 1042778592943,
+          "worker_ack_ns": 1043288423817
+        },
+        "result": {
+          "content": [
+            {
+              "text": "prototype emission flushed; application effect unverifiable",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "delivery": {
+              "mode": "foreground"
+            },
+            "effect": "unverifiable",
+            "route": "global_input",
+            "summary": "prototype emission flushed; application effect unverifiable"
+          }
+        },
+        "sdk_submission_ns": 1042777881561
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":1043289153564,\"no_retry\":true,\"operation\":{\"confirmation_ns\":1043288355739,\"emission_ns\":1043288370858,\"may_start\":true,\"op_seq\":5,\"submission_ns\":1042778592943,\"worker_ack_ns\":1043288423817},\"result\":{\"content\":[{\"text\":\"prototype emission flushed; application effect unverifiable\",\"type\":\"text\"}],\"structuredContent\":{\"delivery\":{\"mode\":\"foreground\"},\"effect\":\"unverifiable\",\"route\":\"global_input\",\"summary\":\"prototype emission flushed; application effect unverifiable\"}},\"sdk_submission_ns\":1042777881561}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 1042432932120,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 1043346587469,
+        "windows": {
+          "A": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 1,
+          "releases": 1,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 1043346807561,
+      "no_retry": true
+    },
+    {
+      "case": "B",
+      "seq": 6,
+      "ungated": true,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 5,
+        "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+        "internal_id": "{b48d398e-c517-45e2-b102-60ac16119caa}",
+        "deadline_ns": 1171347714773,
+        "op_seq": 6,
+        "key": "a",
+        "drop_ack": false,
+        "precheck_gate": null,
+        "postcheck_gate": null
+      },
+      "observations": [
+        {
+          "received_ns": 1111353084078,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{b48d398e-c517-45e2-b102-60ac16119caa}",
+          "active_pid": 9470,
+          "activation_notifications": 1,
+          "started_ns": 1111349326672,
+          "finished_ns": 1111357728584,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+          "token": 5,
+          "pid": 9470,
+          "internal_id": "{b48d398e-c517-45e2-b102-60ac16119caa}",
+          "fresh_active": true
+        }
+      ],
+      "report": {
+        "caller_ack_ns": 1112047073199,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 1112046382607,
+          "emission_ns": 1112046397974,
+          "may_start": true,
+          "op_seq": 6,
+          "submission_ns": 1111702346405,
+          "worker_ack_ns": 1112046457005
+        },
+        "result": {
+          "content": [
+            {
+              "text": "prototype emission flushed; application effect unverifiable",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "delivery": {
+              "mode": "foreground"
+            },
+            "effect": "unverifiable",
+            "route": "global_input",
+            "summary": "prototype emission flushed; application effect unverifiable"
+          }
+        },
+        "sdk_submission_ns": 1111701588285
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":1112047073199,\"no_retry\":true,\"operation\":{\"confirmation_ns\":1112046382607,\"emission_ns\":1112046397974,\"may_start\":true,\"op_seq\":6,\"submission_ns\":1111702346405,\"worker_ack_ns\":1112046457005},\"result\":{\"content\":[{\"text\":\"prototype emission flushed; application effect unverifiable\",\"type\":\"text\"}],\"structuredContent\":{\"delivery\":{\"mode\":\"foreground\"},\"effect\":\"unverifiable\",\"route\":\"global_input\",\"summary\":\"prototype emission flushed; application effect unverifiable\"}},\"sdk_submission_ns\":1111701588285}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 1111347466479,
+        "windows": {
+          "A": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 1112052384585,
+        "windows": {
+          "A": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 1,
+          "releases": 1,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 1112052519347,
+      "no_retry": true
+    },
+    {
+      "case": "precheck_takeover",
+      "seq": 7,
+      "ungated": false,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 4,
+        "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+        "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+        "deadline_ns": 1404889797215,
+        "op_seq": 7,
+        "key": "a",
+        "drop_ack": false,
+        "precheck_gate": "/work/evidence/gate-7",
+        "postcheck_gate": null
+      },
+      "observations": [
+        {
+          "received_ns": 1345454960572,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{b48d398e-c517-45e2-b102-60ac16119caa}",
+          "active_pid": 9470,
+          "activation_notifications": 0,
+          "started_ns": 1345450897403,
+          "finished_ns": 1345457189846,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+          "token": 5,
+          "pid": 9470,
+          "internal_id": "{b48d398e-c517-45e2-b102-60ac16119caa}",
+          "fresh_active": true
+        }
+      ],
+      "report": {
+        "caller_ack_ns": 1345565626405,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 0,
+          "emission_ns": 0,
+          "may_start": false,
+          "op_seq": 7,
+          "submission_ns": 1345218901928,
+          "worker_ack_ns": 0
+        },
+        "result": {
+          "content": [
+            {
+              "text": "prototype rejected before emission: Ok(Err(closed/stale/inactive target))",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "structuredContent": {
+            "confirmation_ns": 0,
+            "emission_ns": 0,
+            "execution_state": "not_started",
+            "may_start": false,
+            "op_seq": 7,
+            "submission_ns": 1345218901928,
+            "worker_ack_ns": 0
+          }
+        },
+        "sdk_submission_ns": 1345218122369
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":1345565626405,\"no_retry\":true,\"operation\":{\"confirmation_ns\":0,\"emission_ns\":0,\"may_start\":false,\"op_seq\":7,\"submission_ns\":1345218901928,\"worker_ack_ns\":0},\"result\":{\"content\":[{\"text\":\"prototype rejected before emission: Ok(Err(closed/stale/inactive target))\",\"type\":\"text\"}],\"isError\":true,\"structuredContent\":{\"confirmation_ns\":0,\"emission_ns\":0,\"execution_state\":\"not_started\",\"may_start\":false,\"op_seq\":7,\"submission_ns\":1345218901928,\"worker_ack_ns\":0}},\"sdk_submission_ns\":1345218122369}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 1344889597781,
+        "windows": {
+          "A": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 1347568846619,
+        "windows": {
+          "A": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 1347568981761,
+      "no_retry": true
+    },
+    {
+      "case": "stale_generation",
+      "seq": 8,
+      "ungated": false,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 4,
+        "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+        "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+        "deadline_ns": 1407776225939,
+        "op_seq": 8,
+        "key": "a",
+        "drop_ack": false,
+        "precheck_gate": "/work/evidence/gate-8",
+        "postcheck_gate": null
+      },
+      "observations": [
+        {
+          "received_ns": 1348371736021,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "active_pid": 9470,
+          "activation_notifications": 1,
+          "started_ns": 1348367821060,
+          "finished_ns": 1348383078320,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+          "token": 4,
+          "pid": 9470,
+          "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "fresh_active": true
+        },
+        {
+          "reload_ns": 1348530668455,
+          "owner": ":1.26",
+          "old_generation": "{157f5646-5448-4238-9eb8-c9d5c18053e0}",
+          "new_generation": "{81801160-da7b-494f-ab7e-c7fb2f0556c5}"
+        }
+      ],
+      "report": {
+        "caller_ack_ns": 1348639886788,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 0,
+          "emission_ns": 0,
+          "may_start": false,
+          "op_seq": 8,
+          "submission_ns": 1348132330951,
+          "worker_ack_ns": 0
+        },
+        "result": {
+          "content": [
+            {
+              "text": "prototype rejected before emission: Ok(Err(owner/generation changed))",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "structuredContent": {
+            "confirmation_ns": 0,
+            "emission_ns": 0,
+            "execution_state": "not_started",
+            "may_start": false,
+            "op_seq": 8,
+            "submission_ns": 1348132330951,
+            "worker_ack_ns": 0
+          }
+        },
+        "sdk_submission_ns": 1348131605032
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":1348639886788,\"no_retry\":true,\"operation\":{\"confirmation_ns\":0,\"emission_ns\":0,\"may_start\":false,\"op_seq\":8,\"submission_ns\":1348132330951,\"worker_ack_ns\":0},\"result\":{\"content\":[{\"text\":\"prototype rejected before emission: Ok(Err(owner/generation changed))\",\"type\":\"text\"}],\"isError\":true,\"structuredContent\":{\"confirmation_ns\":0,\"emission_ns\":0,\"execution_state\":\"not_started\",\"may_start\":false,\"op_seq\":8,\"submission_ns\":1348132330951,\"worker_ack_ns\":0}},\"sdk_submission_ns\":1348131605032}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 1347775938681,
+        "windows": {
+          "A": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 1350654319536,
+        "windows": {
+          "A": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 1350654490877,
+      "no_retry": true
+    },
+    {
+      "case": "drop_ack",
+      "seq": 9,
+      "ungated": false,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 4,
+        "generation": "{81801160-da7b-494f-ab7e-c7fb2f0556c5}",
+        "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+        "deadline_ns": 1410863016865,
+        "op_seq": 9,
+        "key": "a",
+        "drop_ack": true,
+        "precheck_gate": "/work/evidence/gate-9",
+        "postcheck_gate": null
+      },
+      "observations": [
+        {
+          "received_ns": 1351442494156,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "active_pid": 9470,
+          "activation_notifications": 0,
+          "started_ns": 1351436795175,
+          "finished_ns": 1351444389254,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{81801160-da7b-494f-ab7e-c7fb2f0556c5}",
+          "token": 4,
+          "pid": 9470,
+          "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "fresh_active": true
+        }
+      ],
+      "report": {
+        "caller_ack_ns": 1351552372764,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 1351551449496,
+          "emission_ns": 1351551471497,
+          "may_start": true,
+          "op_seq": 9,
+          "submission_ns": 1351198934517,
+          "worker_ack_ns": 1351551848984
+        },
+        "result": {
+          "content": [
+            {
+              "text": "prototype unknown; never retry: Ok(Err(libei worker reply channel closed))",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "structuredContent": {
+            "confirmation_ns": 1351551449496,
+            "emission_ns": 1351551471497,
+            "execution_state": "unknown",
+            "may_start": true,
+            "op_seq": 9,
+            "submission_ns": 1351198934517,
+            "worker_ack_ns": 1351551848984
+          }
+        },
+        "sdk_submission_ns": 1351198260835
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":1351552372764,\"no_retry\":true,\"operation\":{\"confirmation_ns\":1351551449496,\"emission_ns\":1351551471497,\"may_start\":true,\"op_seq\":9,\"submission_ns\":1351198934517,\"worker_ack_ns\":1351551848984},\"result\":{\"content\":[{\"text\":\"prototype unknown; never retry: Ok(Err(libei worker reply channel closed))\",\"type\":\"text\"}],\"isError\":true,\"structuredContent\":{\"confirmation_ns\":1351551449496,\"emission_ns\":1351551471497,\"execution_state\":\"unknown\",\"may_start\":true,\"op_seq\":9,\"submission_ns\":1351198934517,\"worker_ack_ns\":1351551848984}},\"sdk_submission_ns\":1351198260835}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 1350862730919,
+        "windows": {
+          "A": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 1351557225111,
+        "windows": {
+          "A": {
+            "presses": 2,
+            "releases": 2,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 1,
+          "releases": 1,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 1351557376374,
+      "no_retry": true
+    },
+    {
+      "case": "background",
+      "seq": 10,
+      "ungated": false,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 4,
+        "generation": "{81801160-da7b-494f-ab7e-c7fb2f0556c5}",
+        "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+        "deadline_ns": 1412093410827,
+        "op_seq": 10,
+        "key": "a",
+        "drop_ack": false,
+        "precheck_gate": "/work/evidence/gate-10",
+        "postcheck_gate": null
+      },
+      "observations": [],
+      "report": {
+        "caller_ack_ns": 1352444878245,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 0,
+          "emission_ns": 0,
+          "may_start": false,
+          "op_seq": 10,
+          "submission_ns": 0,
+          "worker_ack_ns": 0
+        },
+        "result": {
+          "content": [
+            {
+              "text": "Background delivery is not available: the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget. Retry this action with delivery_mode:\"foreground\"; Cua Driver will activate the target window, confirm it holds the input focus, and deliver real input to it.",
+              "type": "text"
+            },
+            {
+              "text": "Background keyboard delivery on X11 needs a virtual master keyboard fed by a uinput device. Grant this process access to /dev/uinput (modprobe uinput; chmod 0666 /dev/uinput, or add the driver's user to the 'input' group and restart it) and retry. Xvfb/Xtigervnc cannot hot-add input devices, so the route is unavailable there.",
+              "type": "text"
+            }
+          ],
+          "isError": true,
+          "structuredContent": {
+            "code": "background_unavailable",
+            "detail": "the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget",
+            "escalation": {
+              "reason": "background input is unavailable on this surface; retry this action with delivery_mode:\"foreground\".",
+              "recommended": "foreground"
+            },
+            "hint": "Background keyboard delivery on X11 needs a virtual master keyboard fed by a uinput device. Grant this process access to /dev/uinput (modprobe uinput; chmod 0666 /dev/uinput, or add the driver's user to the 'input' group and restart it) and retry. Xvfb/Xtigervnc cannot hot-add input devices, so the route is unavailable there.",
+            "suggestion": "Retry this action with delivery_mode:\"foreground\"."
+          }
+        },
+        "sdk_submission_ns": 1352434284499
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":1352444878245,\"no_retry\":true,\"operation\":{\"confirmation_ns\":0,\"emission_ns\":0,\"may_start\":false,\"op_seq\":10,\"submission_ns\":0,\"worker_ack_ns\":0},\"result\":{\"content\":[{\"text\":\"Background delivery is not available: the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget. Retry this action with delivery_mode:\\\"foreground\\\"; Cua Driver will activate the target window, confirm it holds the input focus, and deliver real input to it.\",\"type\":\"text\"},{\"text\":\"Background keyboard delivery on X11 needs a virtual master keyboard fed by a uinput device. Grant this process access to /dev/uinput (modprobe uinput; chmod 0666 /dev/uinput, or add the driver's user to the 'input' group and restart it) and retry. Xvfb/Xtigervnc cannot hot-add input devices, so the route is unavailable there.\",\"type\":\"text\"}],\"isError\":true,\"structuredContent\":{\"code\":\"background_unavailable\",\"detail\":\"the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget\",\"escalation\":{\"reason\":\"background input is unavailable on this surface; retry this action with delivery_mode:\\\"foreground\\\".\",\"recommended\":\"foreground\"},\"hint\":\"Background keyboard delivery on X11 needs a virtual master keyboard fed by a uinput device. Grant this process access to /dev/uinput (modprobe uinput; chmod 0666 /dev/uinput, or add the driver's user to the 'input' group and restart it) and retry. Xvfb/Xtigervnc cannot hot-add input devices, so the route is unavailable there.\",\"suggestion\":\"Retry this action with delivery_mode:\\\"foreground\\\".\"}},\"sdk_submission_ns\":1352434284499}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 1352093178963,
+        "windows": {
+          "A": {
+            "presses": 2,
+            "releases": 2,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 1354460602192,
+        "windows": {
+          "A": {
+            "presses": 2,
+            "releases": 2,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 1354460779174,
+      "no_retry": true
+    },
+    {
+      "case": "postcheck_takeover",
+      "seq": 11,
+      "ungated": false,
+      "expected": {
+        "owner": ":1.26",
+        "pid": 9470,
+        "token": 4,
+        "generation": "{81801160-da7b-494f-ab7e-c7fb2f0556c5}",
+        "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+        "deadline_ns": 1414669326662,
+        "op_seq": 11,
+        "key": "a",
+        "drop_ack": false,
+        "precheck_gate": "/work/evidence/gate-11",
+        "postcheck_gate": "/work/evidence/postgate-11"
+      },
+      "observations": [
+        {
+          "received_ns": 1355245848388,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "active_pid": 9470,
+          "activation_notifications": 0,
+          "started_ns": 1355242210746,
+          "finished_ns": 1355248045662,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{81801160-da7b-494f-ab7e-c7fb2f0556c5}",
+          "token": 4,
+          "pid": 9470,
+          "internal_id": "{68d9e21e-48ef-4346-8992-c40e7314eba2}",
+          "fresh_active": true
+        },
+        {
+          "received_ns": 1355360426909,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{b48d398e-c517-45e2-b102-60ac16119caa}",
+          "active_pid": 9470,
+          "activation_notifications": 1,
+          "started_ns": 1355358074122,
+          "finished_ns": 1355368190836,
+          "helper_owner": ":1.26",
+          "kwin_pid": 2892,
+          "generation": "{81801160-da7b-494f-ab7e-c7fb2f0556c5}",
+          "token": 5,
+          "pid": 9470,
+          "internal_id": "{b48d398e-c517-45e2-b102-60ac16119caa}",
+          "fresh_active": true
+        }
+      ],
+      "report": {
+        "caller_ack_ns": 1355369597110,
+        "no_retry": true,
+        "operation": {
+          "confirmation_ns": 1355355955786,
+          "emission_ns": 1355368849430,
+          "may_start": true,
+          "op_seq": 11,
+          "submission_ns": 1355008978816,
+          "worker_ack_ns": 1355368900275
+        },
+        "result": {
+          "content": [
+            {
+              "text": "prototype emission flushed; application effect unverifiable",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "delivery": {
+              "mode": "foreground"
+            },
+            "effect": "unverifiable",
+            "route": "global_input",
+            "summary": "prototype emission flushed; application effect unverifiable"
+          }
+        },
+        "sdk_submission_ns": 1355008289736
+      },
+      "exit_code": 0,
+      "stdout": "{\"caller_ack_ns\":1355369597110,\"no_retry\":true,\"operation\":{\"confirmation_ns\":1355355955786,\"emission_ns\":1355368849430,\"may_start\":true,\"op_seq\":11,\"submission_ns\":1355008978816,\"worker_ack_ns\":1355368900275},\"result\":{\"content\":[{\"text\":\"prototype emission flushed; application effect unverifiable\",\"type\":\"text\"}],\"structuredContent\":{\"delivery\":{\"mode\":\"foreground\"},\"effect\":\"unverifiable\",\"route\":\"global_input\",\"summary\":\"prototype emission flushed; application effect unverifiable\"}},\"sdk_submission_ns\":1355008289736}\n",
+      "stderr": "",
+      "before": {
+        "pid": 9470,
+        "time_ns": 1354669124524,
+        "windows": {
+          "A": {
+            "presses": 2,
+            "releases": 2,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 1,
+            "releases": 1,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 9470,
+        "time_ns": 1355377294142,
+        "windows": {
+          "A": {
+            "presses": 2,
+            "releases": 2,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a a ",
+            "held_keys": [],
+            "generation": 396279568209,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 2,
+            "releases": 2,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "a a ",
+            "held_keys": [],
+            "generation": 396390759766,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 1,
+          "releases": 1,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "completed_ns": 1355377446037,
+      "no_retry": true
+    }
+  ],
+  "replay_refusal": "Traceback (most recent call last):\n  File \"/work/cua/rfcs/3506/run_input_case.py\", line 39, in <module>\n    log = ledger.open(\"x\", buffering=1)\n  File \"/usr/lib/python3.14/pathlib/__init__.py\", line 772, in open\n    return io.open(self, mode, buffering, encoding, errors, newline)\n           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nFileExistsError: [Errno 17] File exists: '/work/evidence/operation-9.jsonl'\n",
+  "versions_and_hashes": "kwin-dev\t4:6.6.4-0ubuntu1\nkwin-wayland\t4:6.6.4-0ubuntu1\npipewire:amd64\t1.6.2-1ubuntu1.2\nplasma-workspace\t4:6.6.4-0ubuntu2\nqt6-base-dev:amd64\t6.10.2+dfsg-7\nxdg-desktop-portal\t1.21.1+ds-1ubuntu3\nxdg-desktop-portal-kde\t6.6.4-0ubuntu1\na7ba8d55b85dae206e8d57b74b53f1259ae86a921e203960922fd9ee17e88b82  /work/cua/rfcs/3506/helper-identity.patch\n3994b717302a799f1f032c313415f1f037f605be5524985151cf3ae270378b95  /work/cua/rfcs/3506/driver-prototype/driver.patch\n060ccc4edf639560d4bcfe4b36ca1051e0347e01d1b38136e3747994adc41d59  /work/cua/libs/cua-driver/rust/target/debug/examples/rfc3506\nd1a04b96a2597ed7b771ea2abb24b9cfe076376b7d9fc4781773995620fd3540  /work/helper-multiarch/bin/kwin/effects/plugins/cua_kwin_target_helper.so\n",
+  "rust_comparison": {
+    "base_sha": "93f7afc89a09e7f9d39da22990e26036a74adfbd",
+    "prototype": "assertion failed: started.elapsed() >= ARRIVAL_WAIT_CAP; 0 passed, 1 failed, 592 filtered",
+    "clean": "assertion failed: started.elapsed() >= ARRIVAL_WAIT_CAP; 0 passed, 1 failed, 590 filtered",
+    "flags": "--cfg cua3506_prototype --check-cfg=cfg(cua3506_prototype); portal-input; --exact --test-threads=1"
+  },
+  "recording": {
+    "file": "experiment.webm",
+    "duration_s": 500,
+    "frames": 2500,
+    "sha256": "eee4b5ba67f11872832fc73a04ee4c583495b5db6a7a12fbec501046a7bfe41c",
+    "coverage": "operations 1-6 only; counters A=1/1 B=1/1 inspected at 400s and495s; no video of cases7-11"
+  },
+  "unrun": ["pointer/hotkey/drag", "outer SDK acknowledgement loss", "live AX smoke"],
+  "production_enabled": false
+}

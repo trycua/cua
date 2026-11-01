@@ -1,0 +1,44 @@
+--- a/libs/cua-driver/kwin-target-helper/kwin_target_helper.cpp
++++ b/libs/cua-driver/kwin-target-helper/kwin_target_helper.cpp
+@@ -74,6 +74,33 @@
+         return QString::fromUtf8(QJsonDocument(windows).toJson(QJsonDocument::Compact));
+     }
+ 
++    // RFC #3506 feasibility only. Additive read-only v1 bridge; no activation/input.
++    Q_SCRIPTABLE QString GetIdentitySnapshot()
++    {
++        const QJsonArray snapshot = QJsonDocument::fromJson(GetWindows().toUtf8()).array();
++        QJsonArray windows;
++        for (const auto &value : snapshot) {
++            auto record = value.toObject();
++            const quint64 token = record["token"].toInteger();
++            QString id;
++            for (auto it = m_tokens.cbegin(); it != m_tokens.cend(); ++it) {
++                if (it.value() == token) {
++                    id = it.key().toString();
++                    break;
++                }
++            }
++            if (id.isEmpty()) {
++                return {}; // Never publish an incomplete identity mapping.
++            }
++            record["internal_id"] = id;
++            windows.push_back(record);
++        }
++        QJsonObject result;
++        result["generation"] = m_generation;
++        result["windows"] = windows;
++        return QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact));
++    }
++
+ private:
+     quint64 tokenFor(const QUuid &id)
+     {
+@@ -85,6 +112,7 @@
+         return token;
+     }
+ 
++    const QString m_generation = QUuid::createUuid().toString();
+     QHash<QUuid, quint64> m_tokens;
+     quint64 m_nextToken = 1;
+ };

@@ -66,6 +66,8 @@ export interface StreamSurfaceProps {
   windowName?: string | null;
   /** Pointer and keys go to the Space (default). False only shows it (Watch). */
   interactive?: boolean;
+  /** The person may only watch this Space (shared as Can view): it says so instead of offering control. */
+  viewOnly?: boolean;
 }
 
 /** How long the desktop may take to send its first picture. After that the
@@ -102,7 +104,7 @@ function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
 const SURFACE_RADIUS = 8;
 const SURFACE_BORDER = 0;
 
-export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className, windowId, windowName, interactive = true }: StreamSurfaceProps) {
+export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className, windowId, windowName, interactive = true, viewOnly = false }: StreamSurfaceProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const settings = useSettings();
   const autoConnect = settings.data?.values.autoConnect ?? true;
@@ -123,7 +125,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
     attempt,
     spaceId,
     tier: "full",
-    interactive,
+    interactive: interactive && !viewOnly,
     radius: SURFACE_RADIUS,
     inset: SURFACE_BORDER,
     os,
@@ -206,7 +208,15 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
           )}
         </div>
       )}
-      {slot?.phase === "live" && slot.focused ? (
+      {slot?.phase === "live" && viewOnly ? (
+        <p
+          data-view-only=""
+          data-video-hole=""
+          className="glass absolute bottom-2 left-1/2 max-w-[calc(100%-1rem)] -translate-x-1/2 truncate rounded-lg px-3 py-1 text-xs text-muted-foreground shadow-float"
+        >
+          View only. You can watch, but not control this Space.
+        </p>
+      ) : slot?.phase === "live" && slot.focused ? (
         // While the desktop has the keyboard: how to give it back, over the
         // video's bottom edge. The host cuts the video out under it
         // (`data-video-hole`), so no strip under the stream is needed.

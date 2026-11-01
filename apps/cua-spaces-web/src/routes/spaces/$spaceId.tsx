@@ -13,6 +13,7 @@ import { AgentsSection } from "@/components/space-detail/agents-section";
 import { DropWell } from "@/components/space-detail/drop-well";
 import { FactList } from "@/components/space-detail/facts";
 import { SpaceResourcesPanel } from "@/components/resources/space-resources-panel";
+import { ownerLabel } from "@/lib/space-access";
 import { systemName } from "@/lib/resources";
 import { StreamSection } from "@/components/space-detail/stream-section";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
@@ -115,8 +116,14 @@ function SpaceDetailPage() {
   // already gone (Back after Remove from list) says so, and never jumps into
   // another Space.
   const [showed, setShowed] = useState<string | null>(null);
+  // Who shared it, when it was shared with you: if the row goes while this page is open,
+  // the owner most likely stopped sharing it, and the page says so.
+  const [sharedBy, setSharedBy] = useState<{ spaceId: string; owner: string | null } | null>(null);
   useEffect(() => {
-    if (space) setShowed(spaceId);
+    if (!space) return;
+    setShowed(spaceId);
+    const a = space.access;
+    setSharedBy(a && a.kind !== "mine" ? { spaceId, owner: ownerLabel(a) } : null);
   }, [space, spaceId]);
   const created = !space && showed === spaceId ? createdId(spaceId) : undefined;
   useEffect(() => {
@@ -124,20 +131,25 @@ function SpaceDetailPage() {
   }, [created, navigate]);
   if (created) return null;
 
+  const removedAccess = !space && !error && sharedBy?.spaceId === spaceId ? sharedBy : null;
   if (error || (!isLoading && !space)) {
     return (
       <Page>
         <BackLink />
         <EmptyState
           icon={<MonitorIcon />}
-          title={error ? "Couldn't load this Space" : "This Space isn't here"}
+          title={error ? "Couldn't load this Space" : removedAccess ? "You no longer have access" : "This Space isn't here"}
           action={
             <Button variant="outline" render={<Link to="/spaces" />}>
               Back to Spaces
             </Button>
           }
         >
-          {error ? error.message : "It may have been deleted, or it runs on a machine this app can't see."}
+          {error
+            ? error.message
+            : removedAccess
+              ? `${removedAccess.owner ?? "The owner"} stopped sharing this Space with you.`
+              : "It may have been deleted, or it runs on a machine this app can't see."}
         </EmptyState>
       </Page>
     );
@@ -160,7 +172,11 @@ function SpaceDetailPage() {
   // device may connect.
   const action = (id: string) => detail.actions.find((a) => a.id === id);
   const teleportAction = action("teleport");
-  const shareAction = action("share");
+  // A teammate who may only watch is not offered Share or control (the host refuses both anyway).
+  const viewOnly = space.access?.role === "viewer";
+  const sharedOwner = space.access && space.access.kind === "withMe" ? { name: ownerLabel(space.access) ?? "", email: space.access.ownerEmail } : null;
+  const mayShare = space.access?.canShare !== false && !viewOnly;
+  const shareAction = mayShare ? action("share") : undefined;
   // Signed in, not enrolled: the access line's action opens Settings,
   // Devices with the enroll sheet.
   const enroll = () => {
@@ -304,9 +320,10 @@ function SpaceDetailPage() {
       <OsIcon os={space.os} className="size-4.5 text-muted-foreground" />
     </div>
   );
-  const surface = (className: string, windowId?: string | null, windowName?: string | null, interactive = true) => (
+  const surface = (className: string, windowId?: string | null, windowName?: string | null, interactive = !viewOnly) => (
     <StreamSurface
       interactive={interactive}
+      viewOnly={viewOnly}
       spaceId={space.id}
       windowId={windowId}
       windowName={windowName}
@@ -500,6 +517,7 @@ function SpaceDetailPage() {
           view={shownView}
           onStream={(row) => void onPip(row)}
           onShare={shareAction?.enabled ? share : undefined}
+          owner={sharedOwner}
         />
         {dialogs}
       </>

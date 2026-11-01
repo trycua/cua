@@ -403,7 +403,7 @@ async fn sharing_needs_the_users_confirmation() {
     assert_eq!(e.tag(), "permission_denied", "{e}");
     assert_eq!(
         no.asked.lock().unwrap().as_slice(),
-        [format!("Let bob@example.com use {id} (see and control it)")]
+        ["let bob@example.com use \"studio\" (see and control it)".to_string()]
     );
     assert!(relay.machine(&reg.machine.id).unwrap().allow.is_empty());
     assert!(spaces.share_audit(None, 10).unwrap().is_empty());

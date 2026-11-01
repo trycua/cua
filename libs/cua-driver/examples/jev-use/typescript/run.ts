@@ -18,6 +18,12 @@ import {
   type VisualObservation,
 } from './core.js';
 import { driverEnvironment } from './driver_env.js';
+import {
+  planGuardedCompletion,
+  resolveGuardedCompletion,
+  type GuardedCompletionPlan,
+  type GuardedCompletionTelemetry,
+} from './guarded_completion.js';
 import { chooseLiveForTask, chooseMockForTask } from './jev_adapter.js';
 import { FixtureFormTask, fixtureSources, type Task, type TaskSources } from './tasks.js';
 
@@ -30,6 +36,7 @@ type Arguments = {
   token?: string;
   maxSteps: number;
   dryRun: boolean;
+  guardedCompletion: boolean;
   log?: string;
 };
 
@@ -40,6 +47,7 @@ function parseArgs(argv: string[]): Arguments {
     fixtureUrl: 'http://127.0.0.1:8765/',
     maxSteps: 4,
     dryRun: false,
+    guardedCompletion: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
@@ -48,6 +56,7 @@ function parseArgs(argv: string[]): Arguments {
     else if (value === '--token') result.token = argv[++index];
     else if (value === '--max-steps') result.maxSteps = Number(argv[++index]);
     else if (value === '--dry-run') result.dryRun = true;
+    else if (value === '--guarded-completion') result.guardedCompletion = true;
     else if (value === '--log') result.log = argv[++index];
     else if (value === '--visual-observation') {
       const mode = argv[++index];
@@ -55,8 +64,7 @@ function parseArgs(argv: string[]): Arguments {
         throw new Error('--visual-observation must be auto, always, or off');
       }
       result.visualObservation = mode;
-    }
-    else throw new Error(`unknown argument: ${value}`);
+    } else throw new Error(`unknown argument: ${value}`);
   }
   if (!Number.isInteger(result.maxSteps) || result.maxSteps < 1) {
     throw new Error('--max-steps must be a positive integer');
@@ -104,6 +112,10 @@ export class Driver {
     private readonly client: Client,
     private readonly session: string
   ) {}
+
+  get sessionLabel(): string {
+    return this.session;
+  }
 
   async call(name: string, args: Record<string, unknown>): Promise<Record<string, any>> {
     const result = await this.client.callTool({
@@ -243,7 +255,10 @@ export async function observeVisual(
       return { status: visualStatus('error', error.code) };
     }
     // parseVisualRegions reports other contract violations as plain errors.
-    if (error instanceof Error && /^(visual (result|region)|unsupported visual)/.test(error.message)) {
+    if (
+      error instanceof Error &&
+      /^(visual (result|region)|unsupported visual)/.test(error.message)
+    ) {
       return { status: visualStatus('error', 'invalid_visual_result') };
     }
     return { status: visualStatus('error', 'driver_error') };
@@ -402,6 +417,7 @@ async function run(args: Arguments): Promise<Outcome> {
   // events (timings, probabilities) go only to the JSONL log.
   const history: HistoryEntry[] = [];
   let visualDelivery: VisualDelivery = 'background';
+  let pendingCompletion: GuardedCompletionPlan | undefined;
   if (args.log) await writeFile(args.log, '', 'utf8');
   await task.reset();
 
@@ -432,7 +448,7 @@ async function run(args: Arguments): Promise<Outcome> {
     for (let step = 1; step <= task.maxSteps; step += 1) {
       const current = task.classify(await task.readOracle(), step - 1);
       if (current === 'verified' || current === 'refuted') {
-        await writeEvent(args.log, { event: 'outcome', outcome: current, token });
+        await writeEvent(args.log, { event: 'outcome', outcome: current });
         return current;
       }
 
@@ -470,14 +486,78 @@ async function run(args: Arguments): Promise<Outcome> {
         return 'abstained';
       }
       const visual = sources.visual?.observation;
-      const providerStarted = performance.now();
-      const answer =
-        args.provider === 'mock'
-          ? chooseMockForTask(task, sources, candidates, history)
-          : await chooseLiveForTask(task, sources, candidates, history);
-      const providerDecisionMs = performance.now() - providerStarted;
-      if (!answer.choice) return 'abstained';
-      const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
+      let guardedCandidate: Candidate | undefined;
+      let guardedTelemetry: GuardedCompletionTelemetry | undefined;
+      if (args.guardedCompletion && pendingCompletion) {
+        const resolution = resolveGuardedCompletion(
+          pendingCompletion,
+          task,
+          sources,
+          candidates,
+          driver.sessionLabel
+        );
+        guardedCandidate = resolution.candidate;
+        guardedTelemetry = resolution.telemetry;
+        // A failed proof never keeps authority alive. The ordinary chooser
+        // handles this fresh step instead.
+        pendingCompletion = undefined;
+      }
+      const guardedFields = guardedTelemetry ? { guarded_completion: guardedTelemetry } : {};
+
+      let candidate: Candidate;
+      let confidence: number | null;
+      let probabilities: Record<string, number> | null;
+      let decisionRoute: 'provider' | 'guarded-completion';
+      let providerDecisionMs = 0;
+      if (guardedCandidate) {
+        candidate = guardedCandidate;
+        confidence = null;
+        probabilities = null;
+        decisionRoute = 'guarded-completion';
+      } else {
+        const providerStarted = performance.now();
+        try {
+          const answer =
+            args.provider === 'mock'
+              ? chooseMockForTask(task, sources, candidates, history)
+              : await chooseLiveForTask(task, sources, candidates, history);
+          providerDecisionMs = performance.now() - providerStarted;
+          if (!answer.choice) {
+            if (guardedTelemetry) {
+              await writeEvent(args.log, {
+                event: 'outcome',
+                outcome: 'abstained',
+                decision_route: 'provider',
+                step,
+                visual: visualRecord,
+                ...guardedFields,
+              });
+            }
+            return 'abstained';
+          }
+          candidate = validateChoice(answer.choice, candidates, visual?.captureId);
+          confidence = answer.confidence;
+          probabilities = answer.probabilities;
+          decisionRoute = 'provider';
+        } catch (error: unknown) {
+          if (!guardedTelemetry) throw error;
+          await writeEvent(args.log, {
+            event: 'outcome',
+            outcome: 'unknown',
+            step,
+            phase: 'provider',
+            decision_route: 'provider',
+            error: error instanceof Error ? error.name : 'UnknownError',
+            visual: visualRecord,
+            ...guardedFields,
+          });
+          return 'unknown';
+        }
+      }
+      const nextCompletion =
+        args.guardedCompletion && decisionRoute === 'provider'
+          ? planGuardedCompletion(task, sources, candidate, driver.sessionLabel)
+          : undefined;
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;
       const timing = decisionTimingFields({
         decisionMs,
@@ -492,14 +572,16 @@ async function run(args: Arguments): Promise<Outcome> {
           event: 'step',
           step,
           candidate: candidate.id,
-          confidence: answer.confidence,
-          probabilities: answer.probabilities,
+          confidence,
+          probabilities,
           ...timing,
           action_ms: 0,
           total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
           dry_run: args.dryRun,
           tool: null,
+          decision_route: decisionRoute,
           visual: visualRecord,
+          ...guardedFields,
         };
         history.push(task.historyEntry(step, candidate.id));
         await writeEvent(args.log, event);
@@ -510,10 +592,12 @@ async function run(args: Arguments): Promise<Outcome> {
         await writeEvent(args.log, {
           event: 'outcome',
           outcome: 'abstained',
+          decision_route: decisionRoute,
           step,
-          confidence: answer.confidence,
-          probabilities: answer.probabilities,
+          confidence,
+          probabilities,
           visual: visualRecord,
+          ...guardedFields,
         });
         return 'abstained';
       }
@@ -534,9 +618,10 @@ async function run(args: Arguments): Promise<Outcome> {
               event: 'step',
               step,
               candidate: candidate.id,
-              confidence: answer.confidence,
-              probabilities: answer.probabilities,
+              confidence,
+              probabilities,
               ...timing,
+              decision_route: decisionRoute,
               action_ms: Math.round((performance.now() - actionStarted) * 100) / 100,
               total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
               dry_run: args.dryRun,
@@ -545,6 +630,7 @@ async function run(args: Arguments): Promise<Outcome> {
               action_error: refusal,
               escalation: { from: 'background', to: 'foreground', reason: refusal },
               visual: visualRecord,
+              ...guardedFields,
             };
             history.push(task.historyEntry(step, candidate.id, refusal));
             await writeEvent(args.log, event);
@@ -555,27 +641,32 @@ async function run(args: Arguments): Promise<Outcome> {
             outcome: 'unknown',
             step,
             phase: 'action',
+            decision_route: decisionRoute,
             error: error instanceof Error ? error.name : 'UnknownError',
             tool: candidate.tool,
             visual: visualRecord,
+            ...guardedFields,
           });
           return 'unknown';
         }
         actionMs = Math.round((performance.now() - actionStarted) * 100) / 100;
+        pendingCompletion = nextCompletion;
       }
       const event = {
         event: 'step',
         step,
         candidate: candidate.id,
-        confidence: answer.confidence,
-        probabilities: answer.probabilities,
+        confidence,
+        probabilities,
         ...timing,
         action_ms: actionMs,
         total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
         dry_run: args.dryRun,
         tool: candidate.tool,
         delivery_mode: candidate.arguments.delivery_mode ?? null,
+        decision_route: decisionRoute,
         visual: visualRecord,
+        ...guardedFields,
       };
       history.push(task.historyEntry(step, candidate.id));
       await writeEvent(args.log, event);
@@ -584,7 +675,7 @@ async function run(args: Arguments): Promise<Outcome> {
         for (let attempt = 0; attempt < 20; attempt += 1) {
           const outcome = task.classify(await task.readOracle(), step);
           if (outcome === 'verified' || outcome === 'refuted') {
-            await writeEvent(args.log, { event: 'outcome', outcome, token });
+            await writeEvent(args.log, { event: 'outcome', outcome });
             return outcome;
           }
           await new Promise((resolve) => setTimeout(resolve, 100));
@@ -593,7 +684,7 @@ async function run(args: Arguments): Promise<Outcome> {
     }
 
     const outcome = task.classify(await task.readOracle(), task.maxSteps);
-    await writeEvent(args.log, { event: 'outcome', outcome, token });
+    await writeEvent(args.log, { event: 'outcome', outcome });
     return outcome;
   } finally {
     await client.close();

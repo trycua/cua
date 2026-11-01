@@ -790,6 +790,26 @@ fn update_refreshes_outdated_copies_cua_wrote() {
     );
 }
 
+#[test]
+fn a_skill_the_user_installed_another_way_is_not_outdated() {
+    let t = T::new();
+    let s = t.setup();
+    s.install_skills(&ids(&["cline"]), &ids(&["cua-sandboxes"]), false)
+        .unwrap();
+    let dest = t.home.join(".cline/skills/cua-sandboxes");
+    // Another installer replaced it with different content that cua never
+    // wrote: setup skips it without --force, so it can never match the
+    // bundled copy and must not keep the agent in "not set up".
+    std::fs::write(
+        dest.join("SKILL.md"),
+        "---\nname: cua-sandboxes\ndescription: newer from its own installer\n---\n",
+    )
+    .unwrap();
+    let st = s.detect().into_iter().find(|a| a.id == "cline").unwrap();
+    assert_eq!(st.skills_installed, ["cua-sandboxes"]);
+    assert!(st.skills_outdated.is_empty(), "{st:?}");
+}
+
 #[cfg(unix)]
 #[test]
 fn claude_code_is_configured_through_its_own_cli_when_present() {

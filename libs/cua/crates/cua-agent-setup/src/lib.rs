@@ -764,9 +764,21 @@ impl AgentSetup {
                 .chain(a.also_reads.iter().map(|l| l.resolve(&self.env)))
                 .collect();
             for s in bundled {
-                if let Some(h) = dirs.iter().find_map(|d| fsutil::hash_dir(&d.join(&s.name))) {
+                let found = dirs.iter().find_map(|d| {
+                    let p = d.join(&s.name);
+                    fsutil::hash_dir(&p).map(|h| (p, h))
+                });
+                if let Some((p, h)) = found {
                     skills_installed.push(s.name.clone());
-                    if h != s.hash {
+                    // Outdated only when cua wrote this copy and nobody has
+                    // touched it since: that is the copy `update` refreshes.
+                    // A copy the user installed another way (a newer
+                    // cua-driver skill from its own installer) or edited is
+                    // theirs, and setup skips it without `--force`, so it
+                    // can never become current and must not hold the agent
+                    // in "not set up".
+                    let owned = state.skills.get(&p).is_some_and(|r| r.hash == h);
+                    if h != s.hash && owned {
                         skills_outdated.push(s.name.clone());
                     }
                 }

@@ -1,8 +1,4 @@
 {
   "title": "Guides",
-  "pages": [
-    "benchmarks",
-    "write-a-task",
-    "adapter-benchmarks"
-  ]
+  "pages": ["benchmarks", "write-a-task", "adapter-benchmarks", "record-external-events"]
 }

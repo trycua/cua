@@ -269,7 +269,9 @@ Driver expands bounded ASCII text into complete key operations under the exact
 US keymap. The protocol adds no text or IME stream. Background application
 qualification is unchanged by this foreground extension.
 
-Build against the exact Hyprland 0.56.2 ABI with `CUA_HYPRLAND_INPUT=ON`.
+Build against an exact supported Hyprland ABI (0.56.2 or 0.57.0) with
+`CUA_HYPRLAND_INPUT=ON`. CMake probes the headers for the 0.57
+`CWindow::backend()` API and selects the matching window/layer accessors.
 This option defaults to `OFF` and is mutually exclusive with
 `CUA_HYPRLAND_TEST_INPUT`. The production build does not link an external
 signer or OpenSSL. `CUA_HYPRLAND_INPUT_TRACE=ON` adds test instrumentation for

@@ -738,6 +738,36 @@ async fn the_control_socket_makes_forwards_that_live_with_the_connection() {
     server.abort();
 }
 
+/// The control socket reports how traffic reaches each other machine and
+/// takes a path pin; lifting the pin goes back to automatic.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_control_socket_reports_paths_and_takes_a_pin() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.set_machine_peering(true);
+    let a = node(&coord, NodeKind::Machine, dir.path(), "a", false).await;
+    let _b = node(&coord, NodeKind::Machine, dir.path(), "b", false).await;
+    let sock = dir.path().join("host").join(cua_mesh::gang::CONTROL_SOCKET);
+    let server = cua_mesh::gang::serve_control(a.clone(), &sock).unwrap();
+    let mut ctl = cua_mesh::gang::ControlClient::connect(&sock).await.unwrap();
+
+    let (prefer, _paths) = ctl.status().await.unwrap();
+    assert_eq!(prefer, cua_mesh::Prefer::Auto);
+
+    ctl.set_prefer(cua_mesh::Prefer::Relay).await.unwrap();
+    assert_eq!(a.prefer(), cua_mesh::Prefer::Relay);
+    let (prefer, paths) = ctl.status().await.unwrap();
+    assert_eq!(prefer, cua_mesh::Prefer::Relay);
+    for p in paths {
+        assert_ne!(p.kind, "lan", "a relay pin keeps traffic off direct paths");
+    }
+
+    ctl.set_prefer(cua_mesh::Prefer::Auto).await.unwrap();
+    assert_eq!(a.prefer(), cua_mesh::Prefer::Auto);
+    server.abort();
+}
+
 /// Bulk rank traffic (CUA-1783): 256 MiB one way through a machine's
 /// loopback forward, spliced on the other machine to a local TCP sink.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

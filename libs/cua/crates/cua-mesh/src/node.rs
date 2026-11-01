@@ -234,6 +234,48 @@ pub struct PeerStatus {
     pub rx_relay: u64,
     /// Path switches so far.
     pub path_switches: u64,
+    /// `lan`, `direct` or `relay`.
+    pub path_kind: String,
+    /// Why this path, in plain words ("Fastest path: the local network,
+    /// 2 ms").
+    pub why: String,
+}
+
+/// Why traffic to a peer takes `path`, in plain words, and its kind.
+pub fn path_why(
+    path: &crate::engine::Path,
+    rtt_ms: Option<f64>,
+    prefer: crate::engine::Prefer,
+    relay_only: bool,
+) -> (String, String) {
+    use crate::engine::{Path, Prefer, is_lan};
+    let ms = rtt_ms.map(|m| format!(", {m:.0} ms")).unwrap_or_default();
+    match path {
+        Path::Relay if prefer == Prefer::Relay || relay_only => (
+            "relay".into(),
+            "Pinned to the relay (end-to-end encrypted)".into(),
+        ),
+        Path::Relay => (
+            "relay".into(),
+            "No direct path answered yet; the relay carries it (end-to-end encrypted)".into(),
+        ),
+        Path::Direct(a) if is_lan(a) => (
+            "lan".into(),
+            if prefer == Prefer::Lan {
+                format!("Pinned to the local network{ms}")
+            } else {
+                format!("Fastest path: the local network{ms}")
+            },
+        ),
+        Path::Direct(_) => (
+            "direct".into(),
+            if prefer == Prefer::Lan {
+                format!("No local network path answered; direct across the internet{ms}")
+            } else {
+                format!("Fastest path: direct across the internet{ms}")
+            },
+        ),
+    }
 }
 
 /// The node's status.
@@ -253,6 +295,8 @@ pub struct Status {
     pub peers: Vec<PeerStatus>,
     /// Last coordinator error.
     pub last_error: Option<String>,
+    /// The path pin (`auto` unless set).
+    pub prefer: crate::engine::Prefer,
 }
 
 struct Inner {
@@ -304,6 +348,10 @@ impl Mesh {
         let engine = Engine::new(identity.clone(), cfg.listen_port, cfg.relay_only)
             .await
             .map_err(|e| Error::Io(format!("udp: {e}")))?;
+        let prefer = crate::engine::Prefer::from_env();
+        if prefer != crate::engine::Prefer::Auto {
+            engine.set_prefer(prefer);
+        }
         let control = Control::new();
         let approved = match cfg.kind {
             NodeKind::Machine => Some(Arc::new(Approved::load(cfg.approved_path.clone()))),
@@ -526,6 +574,8 @@ impl Mesh {
     /// Status for displays and measurements.
     pub fn status(&self) -> Status {
         let state = self.inner.control.state.borrow().clone();
+        let prefer = self.inner.engine.prefer();
+        let relay_only = self.inner.engine.relay_only();
         let peers = self
             .inner
             .engine
@@ -534,20 +584,25 @@ impl Mesh {
             .map(|p| {
                 let info = p.info.read().expect("info").clone();
                 use std::sync::atomic::Ordering::Relaxed;
+                let path = p.path();
+                let rtt_ms = p.rtt().map(|d| d.as_secs_f64() * 1000.0);
+                let (path_kind, why) = path_why(&path, rtt_ms, prefer, relay_only);
                 PeerStatus {
                     node_key: info.node_key,
                     name: info.name.clone(),
                     machine_id: info.machine_id.clone(),
                     kind: info.kind,
                     online: info.online,
-                    path: p.path().to_string(),
-                    rtt_ms: p.rtt().map(|d| d.as_secs_f64() * 1000.0),
+                    path: path.to_string(),
+                    rtt_ms,
                     handshake_age_s: p.handshake_age().map(|d| d.as_secs_f64()),
                     tx_direct: p.counters.tx_direct.load(Relaxed),
                     tx_relay: p.counters.tx_relay.load(Relaxed),
                     rx_direct: p.counters.rx_direct.load(Relaxed),
                     rx_relay: p.counters.rx_relay.load(Relaxed),
                     path_switches: p.path_switches(),
+                    path_kind,
+                    why,
                 }
             })
             .collect();
@@ -559,6 +614,7 @@ impl Mesh {
             endpoints: self.inner.control_endpoints(),
             peers,
             last_error: state.last_error,
+            prefer,
         }
     }
 
@@ -861,6 +917,17 @@ impl Mesh {
     /// Never use direct paths from now on (or again).
     pub fn set_relay_only(&self, on: bool) {
         self.inner.engine.set_relay_only(on);
+    }
+
+    /// Pins the path to every peer ([`crate::engine::Prefer`]); `auto`
+    /// lifts the pin.
+    pub fn set_prefer(&self, prefer: crate::engine::Prefer) {
+        self.inner.engine.set_prefer(prefer);
+    }
+
+    /// The path pin.
+    pub fn prefer(&self) -> crate::engine::Prefer {
+        self.inner.engine.prefer()
     }
 
     /// Stops the node.

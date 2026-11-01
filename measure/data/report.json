@@ -1,0 +1,211 @@
+{
+  "rows": [
+    {
+      "metric": "sccache hit rate, libs-cua-driver-rust (%)",
+      "before": 0.2559181062060141,
+      "after": null,
+      "reduction_pct": null,
+      "label_before": "measured",
+      "label_after": "n/a",
+      "note": "family restores as an exact hit yet misses; after needs a main run with a matching profile"
+    },
+    {
+      "metric": "sccache hit rate, libs-cua-spacesd (%)",
+      "before": 97.71330392410427,
+      "after": null,
+      "reduction_pct": null,
+      "label_before": "measured",
+      "label_after": "n/a",
+      "note": "already seeded by main today; no delta in this PR"
+    },
+    {
+      "metric": "gate / Linux E2E / shared Electron + Tauri (min)",
+      "before": 34.55,
+      "after": 20.46550490196078,
+      "reduction_pct": 40.76554297551149,
+      "label_before": "measured",
+      "label_after": "projected",
+      "note": "1559 misses x 1.843s / 3.4 cores = 14.1 min (ceiling if the cache worked; not caused by this PR)"
+    },
+    {
+      "metric": "ci-gate job duration (min)",
+      "before": 2.425,
+      "after": 2.425,
+      "reduction_pct": 0.0,
+      "label_before": "measured",
+      "label_after": "measured",
+      "note": "poll schedule unchanged: the 120 s window is a correctness invariant"
+    },
+    {
+      "metric": "ci-gate timeout cap (min)",
+      "before": 360,
+      "after": 180,
+      "reduction_pct": 50.0,
+      "label_before": "measured",
+      "label_after": "measured",
+      "note": "caps a wedge at 3h not 6h; worst gate observed 94.8 min"
+    },
+    {
+      "metric": "duplicate ci-release-metadata runs per day",
+      "before": 4,
+      "after": 0,
+      "reduction_pct": 100.0,
+      "label_before": "measured",
+      "label_after": "projected",
+      "note": "3.6 job-min across 28 heads; concurrency cancels the superseded run (0 is the design target, not yet observed)"
+    },
+    {
+      "metric": "heavy PR wall-clock, median (min)",
+      "before": 25.1,
+      "after": 25.1,
+      "reduction_pct": 0.0,
+      "label_before": "measured",
+      "label_after": "unchanged",
+      "note": "this PR does not touch the heavy path; listed for scale"
+    },
+    {
+      "metric": "dependabot PR wall-clock, median (min)",
+      "before": 3.65,
+      "after": 3.65,
+      "reduction_pct": 0.0,
+      "label_before": "measured",
+      "label_after": "unchanged",
+      "note": "dominated by ci-gate; this PR leaves the window alone"
+    }
+  ],
+  "evidence": {
+    "driver_rust": [
+      {
+        "log": "124640077183.log",
+        "family": "libs-cua-driver-rust",
+        "restored": "373M",
+        "files": 405,
+        "how": "exact hit",
+        "save": "false",
+        "executed": 1563.0,
+        "hits": 4.0,
+        "hit_rate": 0.2559181062060141,
+        "avg_compiler": 1.843
+      },
+      {
+        "log": "124641529403.log",
+        "family": "libs-cua-driver-rust",
+        "restored": "373M",
+        "files": 405,
+        "how": "exact hit",
+        "save": "false",
+        "executed": 1563.0,
+        "hits": 4.0,
+        "hit_rate": 0.2559181062060141,
+        "avg_compiler": 1.751
+      },
+      {
+        "log": "cirustlinux.log",
+        "family": "libs-cua-driver-rust",
+        "restored": "373M",
+        "files": 405,
+        "how": "exact hit",
+        "save": "false",
+        "executed": 1042.0,
+        "hits": 0.0,
+        "hit_rate": 0.0,
+        "avg_compiler": 1.154
+      }
+    ],
+    "spacesd": [
+      {
+        "log": "spacesd_main_linux.log",
+        "family": "libs-cua-spacesd",
+        "restored": "2.7G",
+        "files": 6981,
+        "how": "prefix hit",
+        "save": "true",
+        "executed": 4129.0,
+        "hits": 4083.0,
+        "hit_rate": 98.88592879631872,
+        "avg_compiler": 6.577
+      },
+      {
+        "log": "spacesd_main_macos.log",
+        "family": "libs-cua-spacesd",
+        "restored": "1.1G",
+        "files": 1584,
+        "how": "prefix hit",
+        "save": "true",
+        "executed": 1561.0,
+        "hits": 1507.0,
+        "hit_rate": 96.54067905188981,
+        "avg_compiler": 8.336
+      }
+    ],
+    "e2e_legs": [
+      {
+        "job_id": 124641529403,
+        "run_id": 41235953704,
+        "head": "459c2180",
+        "minutes": 34.55,
+        "conclusion": "success"
+      }
+    ],
+    "gate_runs": {
+      "n": 40,
+      "median": 2.425,
+      "max": 94.81666666666666
+    },
+    "heavy_prs": [
+      {
+        "head": "f8b62caa",
+        "branch": "fix/cua-driver-macos-stale-frontmost",
+        "minutes": 0.16666666666666666,
+        "workflows": 1
+      },
+      {
+        "head": "a612e9c0",
+        "branch": "refactor/2886-per-tool-modules",
+        "minutes": 25.1,
+        "workflows": 25
+      },
+      {
+        "head": "459c2180",
+        "branch": "salvage-5523-slim",
+        "minutes": 128.31666666666666,
+        "workflows": 13
+      }
+    ],
+    "fast_prs": [
+      {
+        "head": "a59c62fc",
+        "branch": "dependabot/uv/joserfc-1.7.6",
+        "minutes": 2.433333333333333,
+        "workflows": 11
+      },
+      {
+        "head": "ce131efd",
+        "branch": "dependabot/uv/pyasn1-0.6.5",
+        "minutes": 3.65,
+        "workflows": 3
+      },
+      {
+        "head": "d196f969",
+        "branch": "dependabot/uv/joserfc-1.7.6",
+        "minutes": 4.283333333333333,
+        "workflows": 2
+      }
+    ],
+    "release_metadata_duplicates": {
+      "heads": 28,
+      "duplicate_runs": 4,
+      "wasted_job_minutes": 3.5833333333333335
+    },
+    "e2e_projection": {
+      "misses": 1559.0,
+      "avg_compiler": 1.843,
+      "compiler_work_s": 2873.237,
+      "wall_min": 14.084495098039216
+    }
+  },
+  "assumptions": {
+    "cores": 3.4,
+    "cores_source": ".github/scripts/ci_cache_audit.py assumes 3.4 effective cores"
+  }
+}

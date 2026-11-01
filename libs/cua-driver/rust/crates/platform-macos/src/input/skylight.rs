@@ -653,10 +653,9 @@ pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_messag
     true
 }
 
-/// Stamp the event's screen-space `(x, y)` point via
-/// `CGEventSetWindowLocation`. Both the SkyLight and public PID routes receive
-/// this screen-space value; WindowServer derives the receiving window's local
-/// point during routing. Returns `true` when the SPI resolved.
+/// Stamp `(x, y)` as the event's window location via
+/// `CGEventSetWindowLocation`; a real click carries its window-local point
+/// there. Returns `true` when the SPI resolved.
 pub(super) fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
     match set_window_loc_fn() {
         Some(f) => {

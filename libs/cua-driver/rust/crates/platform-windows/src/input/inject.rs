@@ -34,6 +34,9 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use windows::Win32::Foundation::{HANDLE, HWND, POINT, RECT};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
+};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Controls::{
     CreateSyntheticPointerDevice, DestroySyntheticPointerDevice, HSYNTHETICPOINTERDEVICE,
@@ -46,6 +49,7 @@ use windows::Win32::UI::Input::Pointer::{
     InjectSyntheticPointerInput, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE,
     POINTER_FLAG_UP, POINTER_FLAG_UPDATE, POINTER_INFO, POINTER_PEN_INFO, POINTER_TOUCH_INFO,
 };
+use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
     IsWindow, LockSetForegroundWindow, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW,
@@ -166,6 +170,11 @@ pub(crate) unsafe fn force_foreground_assisted(target: HWND) -> (bool, bool) {
 /// while the window still RECEIVES the click/key. It is per-window (no session
 /// side effects) and reversed on drop. Covers the self-activation that the
 /// EnableWindow/UWP bypass cannot (WPF `UIElement.Focus()`→SetForegroundWindow).
+///
+/// Not armed on a window parked on another Task View desktop (Win+Ctrl+D):
+/// toggling the style re-registers its taskbar button, and the shell files it
+/// under the desktop the user is viewing, so it lands there still cloaked
+/// (#5711).
 pub struct NoActivateGuard {
     // Store the handle as an integer so the guard is `Send` and can be held
     // across `.await` in the async tools.
@@ -189,7 +198,7 @@ impl NoActivateGuard {
             let want = WS_EX_NOACTIVATE.0 as isize;
             // Apply WS_EX_NOACTIVATE if not already set (prev can be 0, so don't
             // gate on it — we just need to check the bit and set it if absent).
-            let applied = (prev & want) == 0 && {
+            let applied = (prev & want) == 0 && on_current_task_view_desktop(root) && {
                 SetWindowLongPtrW(root, GWL_EXSTYLE, prev | want);
                 // Confirm it took (cross-process SetWindowLongPtr can be denied
                 // by UIPI on higher-integrity targets).
@@ -216,6 +225,23 @@ impl Drop for NoActivateGuard {
                 SetWindowLongPtrW(root, GWL_EXSTYLE, current & !noactivate);
             }
         }
+    }
+}
+
+/// True when top-level `root` belongs to the Task View desktop the user is
+/// viewing. Fails open (`true`) when the shell can't answer, e.g. no Explorer
+/// in the session, so `NoActivateGuard` keeps its usual behavior there.
+fn on_current_task_view_desktop(root: HWND) -> bool {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let manager: IVirtualDesktopManager =
+            match CoCreateInstance(&VirtualDesktopManager, None, CLSCTX_ALL) {
+                Ok(manager) => manager,
+                Err(_) => return true,
+            };
+        manager
+            .IsWindowOnCurrentVirtualDesktop(root)
+            .map_or(true, |on| on.as_bool())
     }
 }
 
@@ -509,6 +535,175 @@ mod iconic_sentinel_tests {
         assert!(!point_in_rect(3840, 0, -2560, -1080, 6400, 3240));
         assert!(!point_in_rect(0, 0, 0, 0, 0, 1080));
         assert!(!point_in_rect(0, 0, 0, 0, 1920, -1));
+    }
+}
+
+#[cfg(test)]
+mod task_view_desktop_tests {
+    use super::*;
+    use std::time::Instant;
+    use windows::core::{w, GUID};
+    use windows::Win32::Foundation::{ERROR_SUCCESS, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, PeekMessageW,
+        RegisterClassW, ShowWindow, UnregisterClassW, MSG, PM_REMOVE, SW_SHOWNOACTIVATE,
+        WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    };
+
+    /// How long Explorer gets to act on a style change before we look.
+    const SETTLE: Duration = Duration::from_millis(1500);
+    /// Roughly how long a posted click burst keeps the guard armed.
+    const HOLD: Duration = Duration::from_millis(100);
+
+    unsafe extern "system" fn window_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    /// Pump this thread's messages until `done` holds or `timeout` passes.
+    fn pump_until(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            unsafe {
+                let mut msg = MSG::default();
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    DispatchMessageW(&msg);
+                }
+            }
+            if done() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Task View desktop ids as Explorer persists them (16-byte GUIDs).
+    fn task_view_desktop_ids() -> Vec<GUID> {
+        let mut bytes = vec![0u8; 16 * 64];
+        let mut len = bytes.len() as u32;
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                w!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"),
+                w!("VirtualDesktopIDs"),
+                RRF_RT_REG_BINARY,
+                None,
+                Some(bytes.as_mut_ptr().cast()),
+                Some(&mut len),
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return Vec::new();
+        }
+        bytes[..len as usize]
+            .chunks_exact(16)
+            .map(|b| {
+                GUID::from_values(
+                    u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+                    u16::from_le_bytes([b[4], b[5]]),
+                    u16::from_le_bytes([b[6], b[7]]),
+                    [b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]],
+                )
+            })
+            .collect()
+    }
+
+    /// #5711. No public API creates a Task View desktop, so make a second one
+    /// first (Win+Ctrl+D, then Win+Ctrl+Left to return):
+    /// `cargo test -p platform-windows --lib task_view_desktop -- --ignored`
+    #[test]
+    #[ignore = "needs an interactive session with a second Task View desktop; shows a window"]
+    fn guard_leaves_a_window_on_another_task_view_desktop_where_it_is() {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let manager: IVirtualDesktopManager =
+                CoCreateInstance(&VirtualDesktopManager, None, CLSCTX_ALL)
+                    .expect("virtual desktop manager");
+            let desktop_of = |hwnd: HWND| manager.GetWindowDesktopId(hwnd).unwrap_or_default();
+            let instance = GetModuleHandleW(None).expect("module handle");
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(window_proc),
+                hInstance: instance.into(),
+                lpszClassName: w!("CuaNoActivateTaskViewDesktop"),
+                ..Default::default()
+            };
+            assert_ne!(RegisterClassW(&class), 0, "register window class");
+            // A plain unowned top-level window has a taskbar button that
+            // WS_EX_NOACTIVATE takes away. WS_EX_APPWINDOW would pin it and hide
+            // the bug.
+            let hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                class.lpszClassName,
+                w!("cua NoActivateGuard Task View desktop test"),
+                WS_OVERLAPPEDWINDOW,
+                0,
+                0,
+                320,
+                200,
+                None,
+                None,
+                instance,
+                None,
+            )
+            .expect("create window");
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            let registered = pump_until(Duration::from_secs(3), || {
+                desktop_of(hwnd) != GUID::zeroed()
+            });
+            assert!(
+                registered,
+                "the shell assigned the window a Task View desktop"
+            );
+            let current = desktop_of(hwnd);
+            let other = task_view_desktop_ids()
+                .into_iter()
+                .find(|id| *id != current)
+                .expect("a second Task View desktop (Win+Ctrl+D, then Win+Ctrl+Left)");
+
+            manager
+                .MoveWindowToDesktop(hwnd, &other)
+                .expect("move the test's own window to the other desktop");
+            assert!(
+                pump_until(Duration::from_secs(3), || desktop_of(hwnd) == other),
+                "the window reached the other desktop"
+            );
+            // Explorer reports the new desktop before it finishes the move; a
+            // style change in that window doesn't reproduce the bug.
+            pump_until(SETTLE, || false);
+            // Hold the guard across a pumped interval, as an actuation does, so
+            // Explorer observes the style while it is set.
+            let guard = NoActivateGuard::arm(hwnd);
+            pump_until(HOLD, || false);
+            drop(guard);
+            pump_until(SETTLE, || false);
+            let landed = desktop_of(hwnd);
+
+            // Back on the user's desktop, the guard still applies.
+            manager
+                .MoveWindowToDesktop(hwnd, &current)
+                .expect("move the window back to the user's desktop");
+            assert!(
+                pump_until(Duration::from_secs(3), || desktop_of(hwnd) == current),
+                "the window returned to the user's desktop"
+            );
+            let guard = NoActivateGuard::arm(hwnd);
+            let armed = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE.0 as isize;
+            drop(guard);
+
+            DestroyWindow(hwnd).expect("destroy window");
+            UnregisterClassW(class.lpszClassName, instance).expect("unregister class");
+            assert_eq!(landed, other, "the guard took the window off its desktop");
+            assert_ne!(armed, 0, "on the user's desktop the guard still applies");
+        }
     }
 }
 

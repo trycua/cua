@@ -676,9 +676,20 @@ impl LumeClient {
                     message,
                 }) if message.contains("Pull failed") => {
                     guard.done();
+                    let reason = pull_failed_reason(&message);
+                    // Lume refused the request's arguments (an image it
+                    // cannot pull, such as a digest reference): the same
+                    // pull fails the same way, so it is not offered as a
+                    // download to resume.
+                    if reason.contains("ValidationError") {
+                        return Err(VmmError::Invalid(format!(
+                            "Lume refused to pull the image for {name} ({reason}); \
+                             trying again will not help"
+                        )));
+                    }
                     return Err(VmmError::PullStopped {
                         name: name.into(),
-                        reason: pull_failed_reason(&message),
+                        reason,
                     });
                 }
                 // The pull ended without making the VM: cancelled outside
@@ -1073,6 +1084,20 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("disk full"), "{err}");
+        assert!(matches!(err, VmmError::PullStopped { .. }), "{err}");
+        // Lume refused the arguments: not a download to resume.
+        let (client, _) = scripted_lume(vec![(
+            400,
+            r#"{"message":"Pull failed for 'b': The operation couldn’t be completed. (ArgumentParser.ValidationError error 1.)"}"#
+                .to_string(),
+        )])
+        .await;
+        let err = client
+            .wait_pulled("b4d", Duration::from_secs(30))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VmmError::Invalid(_)), "{err}");
+        assert!(!err.to_string().contains("Try again"), "{err}");
     }
 
     #[test]

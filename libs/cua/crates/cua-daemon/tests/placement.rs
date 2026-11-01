@@ -102,6 +102,21 @@ async fn refs_land_on_the_backend_their_variant_needs() {
     let found = p.image.expect("resolved through the registry");
     assert_eq!(found.variant_ref, macos_full);
     assert_eq!(found.digest, mac);
+    // Pinned by digest: the same image (and so the same cached base VM) as
+    // the tag at that digest, with the digest named once.
+    let p = resolve_placement(&format!("{macos_full}@{mac}"), "macos")
+        .await
+        .unwrap();
+    assert_eq!(p.placement.backend, BackendKind::Lume);
+    assert_eq!(
+        p.placement.image,
+        ImageSource::oci(format!("{macos_full}@{mac}"))
+    );
+    // Digest-only: Lume has no tag to pull, so placement refuses it.
+    let e = resolve_placement(&format!("ghcr.io/trycua/macos@{mac}"), "macos")
+        .await
+        .unwrap_err();
+    assert!(matches!(e, cua_daemon::Error::InvalidArgument(_)), "{e}");
     let e = resolve_placement("ghcr.io/me/mac:1", "linux")
         .await
         .unwrap_err();

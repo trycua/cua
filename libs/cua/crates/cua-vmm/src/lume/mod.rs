@@ -216,12 +216,15 @@ fn url_port(url: &str) -> Option<u16> {
 /// names a Lume image so its cached base follows the digest) pulls by tag,
 /// since lume cannot pull by digest; anything else is used as given.
 pub fn lume_pull_ref(reference: &str) -> &str {
-    match reference.rsplit_once('@') {
-        Some((tag_ref, digest)) if digest.starts_with("sha256:") && tag_ref.contains(':') => {
-            tag_ref
-        }
-        _ => reference,
-    }
+    lume_tag_and_digest(reference).map_or(reference, |(tag_ref, _)| tag_ref)
+}
+
+/// `tag-ref@sha256:…` split into the tag reference Lume pulls and the
+/// digest the base is named for; `None` for any other reference.
+fn lume_tag_and_digest(reference: &str) -> Option<(&str, &str)> {
+    reference
+        .rsplit_once('@')
+        .filter(|(tag_ref, digest)| digest.starts_with("sha256:") && tag_ref.contains(':'))
 }
 
 /// Stable base-VM name for an OCI reference: `cua-base-<sha256[:12]>`
@@ -1109,12 +1112,46 @@ impl LumeRuntime {
             }
             return Err(e);
         }
+        if let Some((_, want)) = lume_tag_and_digest(pinned) {
+            self.check_pulled_digest(reference, want, base_name).await?;
+        }
         OwnedVms::default().mark(base_name, OwnedKind::Base, Some(pinned));
         Ok(CheckpointInfo::now(
             base_name,
             BackendKind::Lume,
             Some(reference.clone()),
         ))
+    }
+
+    /// Lume pulled `tag` into `base_name`, which is named for digest `want`.
+    /// When the tag has moved since (or the reference pinned an older
+    /// digest), the pull fetched another image: the base is removed rather
+    /// than kept under `want`'s name for every later clone to inherit. A
+    /// Lume that recorded no digest cannot be checked.
+    async fn check_pulled_digest(&self, tag: &str, want: &str, base_name: &str) -> Result<()> {
+        let Some(got) = lease::pulled_digest(&host::home_dir(), base_name) else {
+            tracing::warn!(
+                base_name,
+                want,
+                "Lume recorded no manifest digest for the pulled base; it is not checked"
+            );
+            return Ok(());
+        };
+        if got == want {
+            return Ok(());
+        }
+        let mut msg = format!(
+            "{tag} names {got} now, not {want}, and Lume pulls by tag, so it cannot fetch \
+             {want}; create from {tag} for the image it names now, or from a tag that still \
+             names {want}"
+        );
+        match self.client.delete(base_name).await {
+            Ok(()) => OwnedVms::default().forget(base_name),
+            Err(e) => msg.push_str(&format!(
+                " (the pulled base {base_name} could not be removed: {e}; `lume delete {base_name}`)"
+            )),
+        }
+        Err(VmmError::Invalid(msg))
     }
 
     /// Installs the start spec's workload environment in a booted macOS

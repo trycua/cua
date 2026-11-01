@@ -37,6 +37,21 @@ use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
 use super::pixel_route::PixelClickRoute;
 use super::ToolState;
 
+fn middle_click_result(pid: i32, idx: usize, foreground_hid: bool) -> ToolResult {
+    let (delivery, path) = if foreground_hid {
+        ("foreground HID", "cgevent_fg")
+    } else {
+        ("background CGEvent", "cgevent")
+    };
+    ToolResult::text(format!(
+        "✅ Posted middle-click to pid {pid} at element [{idx}] center \
+         ({delivery}; not driver-verified — confirm via screenshot)."
+    ))
+    .with_structured(serde_json::json!({
+        "path": path, "verified": false, "effect": "unverifiable"
+    }))
+}
+
 pub struct ClickTool {
     state: Arc<ToolState>,
 }
@@ -691,10 +706,10 @@ impl Tool for ClickTool {
                 self.state.cursor_registry.note_press(&cursor_key, cx, cy);
 
                 let mods_owned = modifiers.clone();
-                let foreground = delivery_mode.is_foreground();
+                let foreground_hid = delivery_mode.is_foreground() && !modifiers.is_empty();
                 let result = tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    if foreground && !m.is_empty() {
+                    if foreground_hid {
                         crate::input::skylight::with_foreground_hid_activation(
                             pid as libc::pid_t,
                             wid,
@@ -710,11 +725,7 @@ impl Tool for ClickTool {
                 })
                 .await;
                 return match result {
-                    Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Posted middle-click to pid {pid} at element [{idx}] center \
-                         (background CGEvent; not driver-verified — confirm via screenshot)."
-                    ))
-                    .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
+                    Ok(Ok(())) => middle_click_result(pid, idx, foreground_hid),
                     Ok(Err(e)) => ToolResult::error(format!("Middle-click failed: {e}")),
                     Err(e)     => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -2151,5 +2162,26 @@ mod tests {
             None,
             "strict-suppression paths retain their existing ownership"
         );
+    }
+
+    #[test]
+    fn middle_click_result_reports_actual_delivery_without_verifying_effect() {
+        for (foreground_hid, path, label) in [
+            (true, "cgevent_fg", "foreground HID"),
+            (false, "cgevent", "background CGEvent"),
+        ] {
+            let result = middle_click_result(42, 7, foreground_hid);
+            let structured = result.structured_content.as_ref().expect("delivery facts");
+            assert_eq!(structured["path"], path);
+            assert_eq!(structured["verified"], false);
+            assert_eq!(structured["effect"], "unverifiable");
+            let serialized = serde_json::to_value(&result).expect("serializable tool result");
+            let text = serialized["content"][0]["text"]
+                .as_str()
+                .expect("text result");
+            assert!(text.contains(label));
+            assert!(text.contains("not driver-verified"));
+            assert_eq!(result.is_error, None);
+        }
     }
 }

@@ -203,7 +203,29 @@ impl FsBackend {
         };
         Self::atomic_write_with(&self.versions_dir(key)?.join(&version), bytes, full)?;
         Self::atomic_write_with(&self.head_path(key)?, &serde_json::to_vec(&meta)?, full)?;
+        if key.starts_with(crate::feed::DEVICES_PREFIX) {
+            self.drop_older_versions(key, &version);
+        }
         Ok(meta)
+    }
+
+    /// A device's presence record (`.cua-devices/<id>.json`) is a heartbeat
+    /// written every 30 seconds with only `last_seen_ms` changed: its
+    /// history is no use to anyone and grew by thousands of files a day, so
+    /// only the newest version is kept. A failed removal is not an error;
+    /// the next write tries again.
+    fn drop_older_versions(&self, key: &str, keep: &str) {
+        let Ok(dir) = self.versions_dir(key) else {
+            return;
+        };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy() != keep {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
     }
 
     /// Many unconditional writes under one lock, on a few threads (each file
@@ -845,6 +867,33 @@ impl Backend for FsBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The heartbeat a device writes every 30 s keeps no history, while any
+    /// other key keeps all of its versions.
+    #[tokio::test]
+    async fn a_presence_record_keeps_only_its_newest_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = FsBackend::new(dir.path().join("data"));
+        let key = format!("{}d1.json", crate::feed::DEVICES_PREFIX);
+        for i in 0..5 {
+            b.put(
+                &key,
+                format!("{{\"last_seen_ms\":{i}}}").into_bytes(),
+                Condition::None,
+            )
+            .await
+            .unwrap();
+        }
+        let versions = b.versions(&key).await.unwrap();
+        assert_eq!(versions.len(), 1, "{versions:?}");
+        let (body, meta) = b.get(&key, None).await.unwrap();
+        assert_eq!(body, b"{\"last_seen_ms\":4}");
+        assert_eq!(meta.version, versions[0].version);
+        for i in 0..3 {
+            b.put("notes.txt", vec![i], Condition::None).await.unwrap();
+        }
+        assert_eq!(b.versions("notes.txt").await.unwrap().len(), 3);
+    }
 
     /// A store whose home was deleted stays deleted: a device heartbeat
     /// (a write every 30 s) must not bring the directory chain back, and a

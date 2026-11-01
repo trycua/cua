@@ -23,6 +23,7 @@ fn provider(helper: Option<PathBuf>, secret: &str) -> Modal {
         token_secret: Some(Secret::new(secret)),
         helper,
         app: "cua-e2e-sandboxes".into(),
+        environment: "cua-e2e".into(),
     })
     .with_image_configs(Arc::new(FixedConfigSource(ImageConfig {
         entrypoint: vec!["/entrypoint.sh".into()],
@@ -81,6 +82,14 @@ async fn modal_sandboxes_through_the_helper_protocol() {
         .unwrap();
     assert_eq!(create["tokens"], true);
     assert_eq!(create["app"], "cua-e2e-sandboxes");
+    // Every call names the configured Modal environment.
+    assert!(
+        requests(&state)
+            .iter()
+            .all(|r| r["environment"] == "cua-e2e"),
+        "{:?}",
+        requests(&state)
+    );
     let image = create["image"].as_str().unwrap();
     assert!(image.starts_with("ghcr.io/trycua/linux@sha256:"), "{image}");
     // The image's ENTRYPOINT + CMD, as the whole command (the helper clears
@@ -158,6 +167,7 @@ async fn a_missing_helper_or_tokens_are_named_before_any_call() {
         token_secret: None,
         helper: Some(FAKE.into()),
         app: "x".into(),
+        environment: String::new(),
     });
     let err = no_tokens.check_configured().unwrap_err();
     assert!(err.to_string().contains("MODAL_TOKEN_SECRET"), "{err}");

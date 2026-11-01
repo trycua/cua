@@ -1,9 +1,8 @@
 {
   "name": "create-resources",
-  "about": "The Resources step: kind, architecture (emulated off this Mac's platform), the disk (a slider where the guest grows it) with the download and the room left where it is written, a Space that does not fit blocking Continue, the cloud tile refusing a pick while it is coming soon (its lines, sliders and price are unit-tested), the local sliders (local is free), and a grown macOS disk in the plan, and a value typed into a slider's number (used within the slider's limits, refused with the slider's words outside them).",
+  "about": "The Resources step: kind, architecture (emulated off this Mac's platform), the disk (a slider where the guest grows it) with the download and the room left where it is written, a Space that does not fit blocking Continue, the local sliders (local is free), and a grown macOS disk in the plan, and a value typed into a slider's number (used within the slider's limits, refused with the slider's words outside them).",
   "env": {
     "defaultLocation": "local",
-    "cloudAvailable": true,
     "localAvailable": true,
     "localReason": null,
     "localBackends": ["docker", "lume", "qemu"],
@@ -31,10 +30,6 @@
       "pulled": [
         "ghcr.io/trycua/linux:24.04-slim"
       ]
-    },
-    "cloudPricing": {
-      "vcpuHourUsd": 0.044625,
-      "memoryGibHourUsd": 0.0223125
     }
   },
   "wizard": [
@@ -128,10 +123,6 @@
     },
     {
       "type": "back"
-    },
-    {
-      "type": "set-placement",
-      "placement": "cloud"
     },
     {
       "type": "next"

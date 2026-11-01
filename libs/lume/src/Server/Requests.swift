@@ -167,6 +167,13 @@ struct CloneRequest: Codable {
     let newName: String
     let sourceLocation: String?
     let destLocation: String?
+    /// Clone the source's saved machine state too (`POST /lume/vms/:name/suspend`).
+    let withSavedState: Bool?
+}
+
+struct RenameVMRequest: Codable {
+    let newName: String
+    let storage: String?
 }
 
 struct SetupVMRequest: Codable {

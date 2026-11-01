@@ -1,0 +1,49 @@
+Deprecated alias of `add`. Creates a named agent whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space
+
+Usage: cua agent create [OPTIONS] --harness <HARNESS> --in <SPACE> <NAME>
+
+Arguments:
+  <NAME>
+          
+
+Options:
+      --harness <HARNESS>
+          Harness id (`cua agent harnesses`)
+
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --in <SPACE>
+          The Space it works in
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+      --model <MODEL>
+          
+
+      --base-url <BASE_URL>
+          
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --env-from-host <ENV_FROM_HOST>
+          Provider key variable to forward at each start. Repeatable
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --json
+          Print JSON
+
+  -h, --help
+          Print help
+
+Examples:
+  cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
+  cua agent create scout --harness claude-code --in local:scout --env-from-host ANTHROPIC_API_KEY

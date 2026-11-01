@@ -4,8 +4,8 @@
   "pages": [
     "index",
     "quickstart",
+    "concepts/how-sandboxes-work",
     "guides",
-    "concepts",
     "reference"
   ]
 }

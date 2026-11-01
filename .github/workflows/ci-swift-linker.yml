@@ -47,6 +47,7 @@ env:
 
 jobs:
   link:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Fresh macOS link without duplicate symbols
     runs-on: macos-latest
     timeout-minutes: 20

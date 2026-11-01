@@ -7,7 +7,7 @@ struct Serve: AsyncParsableCommand {
     )
 
     @Option(help: "Port to listen on (HTTP mode only)")
-    var port: UInt16 = 7777
+    var port: UInt16 = LumeChannel.current.lumePort
 
     @Flag(name: .long, help: "Run as MCP server (stdio transport) for AI agent integration")
     var mcp: Bool = false
@@ -45,7 +45,7 @@ struct Serve: AsyncParsableCommand {
                 // Create a user-friendly error message that includes the suggestion
                 let message = """
                 \(error.localizedDescription)
-                Try using a different port: lume serve --port \(suggestedPort)
+                Try using a different port: \(LumeChannel.current.lumeBinName) serve --port \(suggestedPort)
                 """
 
                 // Log the message (without the "ERROR:" prefix that ArgumentParser will add)

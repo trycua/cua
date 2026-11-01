@@ -465,7 +465,6 @@ public final class TeleportModel {
                 listener: RunEvents { [weak self] event in
                     Task { @MainActor in self?.send(.progress(event: appTeleportRunEvent(event: event))) }
                 })
-            onTeleported?()
             send(.finished(report: AppTeleportRunReport(
                 appId: report.appId, installed: report.installed, sent: report.sent,
                 imported: report.imported, skipped: report.skipped, launched: report.launched)))

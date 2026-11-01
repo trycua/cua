@@ -1,0 +1,48 @@
+[
+  {
+    "name": "ada",
+    "harness": "hermes",
+    "space": "local:dev",
+    "env_from_host": [
+      "OPENAI_API_KEY"
+    ],
+    "created_ms": 1792859152117,
+    "paused": false,
+    "space_state": "running",
+    "cursor": 0,
+    "saved_turn": 0,
+    "notify": true,
+    "saved_ms": 0
+  },
+  {
+    "name": "scout",
+    "harness": "claude-code",
+    "space": "local:scout",
+    "model": "claude-sonnet-4-5",
+    "env_from_host": [
+      "ANTHROPIC_API_KEY"
+    ],
+    "created_ms": 1792859152192,
+    "paused": true,
+    "space_state": "running",
+    "cursor": 0,
+    "saved_turn": 0,
+    "notify": true,
+    "saved_ms": 0,
+    "last_error": "Space local:scout is not registered (add it with add_space) not found"
+  },
+  {
+    "name": "rev",
+    "harness": "openai-codex",
+    "space": "direct:127.0.0.1:9",
+    "base_url": "http://127.0.0.1:9/v1",
+    "env_from_host": [],
+    "created_ms": 1792859152241,
+    "paused": false,
+    "space_state": "running",
+    "cursor": 0,
+    "saved_turn": 0,
+    "notify": true,
+    "saved_ms": 0
+  }
+]

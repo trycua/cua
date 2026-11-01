@@ -313,12 +313,11 @@ return out
 end tell"#;
     match run_osascript_bounded(host, SCRIPT, APPLESCRIPT_BUDGET) {
         Ok(raw) => Ok(reorder_active_tab_first(&raw)),
-        Err(why) => Err(TeleportError::Provider(format!(
-            "Google Chrome is running but its open tabs could not be read: {why}. \
-             If this mentions Apple events or -1743, grant Automation control of \
-             Google Chrome to the process running the teleport (for example `cua`) in System Settings > \
-             Privacy & Security > Automation."
-        ))),
+        Err(why) => Err(TeleportError::Provider(
+            crate::privacy::plain_words(&why).unwrap_or_else(|| {
+                format!("Google Chrome is running but its open tabs could not be read: {why}")
+            }),
+        )),
     }
 }
 

@@ -1,0 +1,22 @@
+id = "nvidia"
+name = "NVIDIA NIM"
+icon = "nvidia"
+tier = "more"
+rank = 130
+kind = "hosted"
+aliases = ["nim", "nemotron", "build.nvidia.com"]
+wire = "openai-chat"
+base_url = "https://integrate.api.nvidia.com/v1"
+base_url_env = "NVIDIA_BASE_URL"
+default_model = "nvidia/nemotron-3-ultra-550b-a55b"
+hermes_id = "nvidia"
+key_help = "Create a key at build.nvidia.com."
+placeholder = "nvapi-…"
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "NVIDIA_API_KEY"
+
+[delivery]
+hermes = ["NVIDIA_API_KEY"]

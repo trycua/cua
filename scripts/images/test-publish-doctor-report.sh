@@ -15,7 +15,9 @@ ok() { pass=$((pass + 1)); echo "  ok   $*"; }
 bad() { fail=$((fail + 1)); echo "  FAIL $*"; }
 
 docker run -d --name "$NAME" --memory=256m -p 127.0.0.1::5000 registry:2 >/dev/null
-PORT="$(docker port "$NAME" 5000/tcp | head -1 | sed 's/.*://')"
+# Read the whole output (no `head`): under pipefail an early-exiting reader
+# can fail the pipeline when the writer gets SIGPIPE.
+PORT="$(docker port "$NAME" 5000/tcp | sed -n '1s/.*://p')"
 REG="127.0.0.1:$PORT"
 for _ in $(seq 1 50); do curl -fs "http://$REG/v2/" >/dev/null && break; sleep 0.2; done
 
@@ -41,10 +43,13 @@ ref="$(sed -n 's/^report_ref=//p' <<<"$out")"
 [ -n "$ref" ] && ok "report pushed: $ref" || bad "no report_ref in: $out"
 
 hex="${digest#sha256:}"
-if crane ls --insecure "$REG/cua-e2e/linux" | grep -qx "sha256-$hex"; then
+# List once, then match: `crane ls | grep -q` fails under pipefail whenever
+# grep exits on the first match before crane writes the next tag (SIGPIPE).
+tags="$(crane ls --insecure "$REG/cua-e2e/linux")"
+if grep -qx "sha256-$hex" <<<"$tags"; then
     ok "referrers tag schema index at sha256-$hex"
 else
-    bad "no sha256-$hex tag: $(crane ls --insecure "$REG/cua-e2e/linux" | tr '\n' ' ')"
+    bad "no sha256-$hex tag: $(tr '\n' ' ' <<<"$tags")"
 fi
 listed="$("$HERE/publish-doctor-report.sh" --plain-http --list --subject "$subject")"
 if python3 - "$listed" <<'PY'

@@ -1,0 +1,41 @@
+Remove a named agent (its home stays in the Cua Volume), or stop a run and delete its record (secrets included)
+
+Usage: cua agent rm [OPTIONS] <NAME|SANDBOX> [RUN_ID]
+
+Arguments:
+  <NAME|SANDBOX>
+          A named agent, a sandbox, or `session:NAME` for a durable session
+
+  [RUN_ID]
+          The run (not for a session)
+
+Options:
+      --local
+          Look NAME up among local sandboxes only (same as `local:NAME`)
+
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --json
+          Print JSON
+
+  -h, --help
+          Print help
+
+Examples:
+  cua agent rm ada
+  cua agent rm local:dev run-1a2b3c4d
+  cua agent rm session:refactor

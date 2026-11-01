@@ -12,6 +12,9 @@ import { describe, expect, it } from "vitest";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { FirstRunInput } from "@/bridge/contracts/first-run";
 import { firstRunTodos, firstRunView } from "@/bridge/first-run";
+import type { HostOs } from "@/bridge/host-os";
+import { firstSpaceOffers } from "@/bridge/new-space";
+import type { WizardEnv } from "@/bridge/contracts/new-space";
 
 const DIR = join(import.meta.dirname, "..", "..", "..", "..", "libs", "cua", "crates", "cua-spaces-app-core", "parity");
 
@@ -21,6 +24,11 @@ describe.skipIf(!wasmBuilt)("first-run parity (wasm core)", () => {
     const flow = readFileSync(join(DIR, "first-run.json"), "utf8");
     const golden = JSON.parse(readFileSync(join(DIR, "golden", "first-run.json"), "utf8")) as unknown;
     const out = core.parity!.run("first-run", flow, (method, args) => {
+      // A machine's one-click offers, as the page reads them.
+      if (method === "wizard.firstSpaceOffers") {
+        const a = args as { env: WizardEnv; hostOs: HostOs };
+        return firstSpaceOffers(core, a.env, a.hostOs);
+      }
       const input = (args as { input: FirstRunInput }).input;
       if (method === "firstRun.view") return firstRunView(core, input);
       if (method === "firstRun.todos") return firstRunTodos(core, input);

@@ -41,30 +41,59 @@ fn embed_git_sha() {
         git(&["rev-parse", "HEAD"]).unwrap_or_default()
     };
     // Rebuild when the checkout moves: HEAD itself (worktrees keep it in
-    // their own git dir), the branch ref it names, and packed refs.
+    // their own git dir), its reflog (appended by every commit, checkout and
+    // reset, so it also follows a branch whose ref is packed), the branch ref
+    // it names, and packed refs. Only paths that exist are watched: Cargo
+    // treats a missing `rerun-if-changed` path as always changed, which
+    // rebuilt this crate and everything above it on every cargo invocation of
+    // a CI checkout (it has no packed-refs file).
     if let Some(git_dir) = git(&["rev-parse", "--absolute-git-dir"]) {
         let git_dir = std::path::PathBuf::from(git_dir);
-        println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
+        rerun_if_exists(&git_dir.join("HEAD"));
+        rerun_if_exists(&git_dir.join("logs").join("HEAD"));
         if let Some(common) = git(&["rev-parse", "--git-common-dir"]) {
+            // git prints a relative path relative to the directory it ran in.
             let common = std::path::PathBuf::from(common);
             let common = if common.is_absolute() {
                 common
             } else {
-                git_dir.join(common)
+                std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
+                    .join(common)
             };
-            println!(
-                "cargo:rerun-if-changed={}",
-                common.join("packed-refs").display()
-            );
+            rerun_if_exists(&common.join("packed-refs"));
             if let Some(reference) = git(&["symbolic-ref", "-q", "HEAD"]) {
-                println!(
-                    "cargo:rerun-if-changed={}",
-                    common.join(reference).display()
-                );
+                rerun_if_ref_changes(&common, &reference);
             }
         }
     }
     println!("cargo:rustc-env=CUA_DRIVER_GIT_SHA={sha}");
+}
+
+fn rerun_if_exists(path: &std::path::Path) {
+    if path.exists() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
+/// Watches the branch ref `reference` (for example `refs/heads/main`). While
+/// it is a loose file, watch that file. When it is packed, git writes a new
+/// loose file at the next commit without touching HEAD, the reflog (it may be
+/// disabled) or packed-refs, so watch the nearest existing directory above it
+/// instead: creating the file changes that directory. Paths that do not exist
+/// are never watched (Cargo would treat them as always changed).
+fn rerun_if_ref_changes(common: &std::path::Path, reference: &str) {
+    let refs = common.join("refs");
+    let mut path = common.join(reference);
+    loop {
+        if path.exists() {
+            println!("cargo:rerun-if-changed={}", path.display());
+            return;
+        }
+        match path.parent() {
+            Some(parent) if parent.starts_with(&refs) => path = parent.to_path_buf(),
+            _ => return,
+        }
+    }
 }
 
 fn git(args: &[&str]) -> Option<String> {

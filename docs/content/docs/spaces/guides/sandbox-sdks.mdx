@@ -1,0 +1,287 @@
+---
+title: Use the E2B, Daytona or Modal SDK with Spaces
+sidebarTitle: E2B, Daytona & Modal SDKs
+description: "The unmodified E2B, Daytona or Modal SDK talks to Cua: its sandboxes, images, volumes and functions become Spaces on your own machines."
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Code written for the E2B, Daytona or Modal SDK runs on Cua Spaces without a
+code change. The SDK talks to a Cua gateway on your machine that speaks the
+provider's API, and every sandbox it creates (and every container a Modal
+Function runs in) is a Space on your machines, your pool or your own cloud
+accounts. Requests never reach the provider, and no provider account is needed.
+
+## How it works
+
+There are two ways to point an SDK at Cua.
+
+**Run the program in a Space.** `cua run --compat <provider>` runs your command
+in a Space with that provider's gateway on its loopback. It sets the variables
+the SDK reads, trusts the gateway's certificate (`SSL_CERT_FILE`,
+`REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`,
+`GRPC_DEFAULT_SSL_ROOTS_FILE_PATH`) and, when a bare `python` or `node` command
+runs in a project that does not list the SDK, adds the version Cua tests.
+
+```bash test="cli-shape" id="sandbox-sdks-run"
+cua run --compat e2b -- python agent.py
+cua run --compat daytona -- python agent.py
+cua run --compat modal -- python agent.py
+```
+
+**Point an SDK on this machine at a gateway.** `cua compat serve` runs the
+gateway until you stop it, and `cua compat env` prints the exports a client
+needs. In another shell, evaluate them and run your program as usual.
+
+```bash test="cli-shape" id="sandbox-sdks-serve"
+cua compat serve --provider e2b
+```
+
+```bash skip="pseudo"
+eval "$(cua compat env --provider e2b)"
+python agent.py
+```
+
+| Provider | Variables set |
+|---|---|
+| E2B | `E2B_API_URL`, `E2B_SANDBOX_URL`, `E2B_API_KEY`, `E2B_DOMAIN`, `SSL_CERT_FILE` |
+| Daytona | `DAYTONA_API_URL`, `DAYTONA_API_KEY`, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` |
+| Modal | `MODAL_SERVER_URL`, `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `SSL_CERT_FILE` |
+
+`cua compat serve` takes `--on`, `--kind`, `--image`, `--cpus` and
+`--memory-mb` as defaults for every sandbox, and before it prints the exports
+it pulls the image and boots one sandbox so the first create of your program
+does not outlast the SDK's request timeout (`--no-warm` skips this).
+
+## Quickstart
+
+<Tabs items={['E2B', 'Daytona', 'Modal']}>
+  <Tab value="E2B">
+
+Supported: `e2b` for Python (sync and async) and TypeScript, 2.42.0, 2.56.0
+and 2.58.0, and `e2b-code-interpreter`.
+
+```python skip="pseudo"
+from e2b import Sandbox
+
+with Sandbox.create(metadata={"cua.kind": "vm"}) as sbx:
+    print(sbx.commands.run("uname -a").stdout)
+```
+
+```bash test="cli-shape" id="sandbox-sdks-e2b"
+cua run --compat e2b -- python agent.py
+```
+
+  </Tab>
+  <Tab value="Daytona">
+
+Supported: `daytona` for Python (sync and async) and `@daytona/sdk` for
+TypeScript, 0.225.0.
+
+```python skip="pseudo"
+from daytona import Daytona, CreateSandboxFromSnapshotParams
+
+daytona = Daytona()
+sandbox = daytona.create(CreateSandboxFromSnapshotParams(labels={"cua.kind": "vm"}))
+print(sandbox.process.exec("uname -a").result)
+```
+
+```bash test="cli-shape" id="sandbox-sdks-daytona"
+cua run --compat daytona -- python agent.py
+```
+
+  </Tab>
+  <Tab value="Modal">
+
+Supported: `modal` for Python, 1.6.2, and the `modal` npm package and Go
+library for Sandboxes, Volumes, Queues and Functions.
+
+```python skip="pseudo"
+import modal
+
+app = modal.App.lookup("demo", create_if_missing=True)
+image = modal.Image.debian_slim(python_version="3.12").pip_install("requests")
+sb = modal.Sandbox.create("sleep", "infinity", app=app, image=image, timeout=600)
+print(sb.exec("python", "-c", "import requests; print(requests.__version__)").stdout.read())
+sb.terminate()
+```
+
+```bash test="cli-shape" id="sandbox-sdks-modal"
+cua run --compat modal -- python agent.py
+```
+
+Functions work the same way: `@app.function`, `.remote()`, `.map()`,
+`.spawn()`, generators, `@app.cls` and `app.deploy` with `Function.from_name`.
+Their containers start from your Image plus the `modal` client (the gateway
+installs 1.6.2), so pin the same `modal` version in your code and keep your
+Python version the same as the Image's, since Modal pickles arguments and
+results.
+
+  </Tab>
+</Tabs>
+
+## What you get on your own machines
+
+With no options, sandboxes run where every Cua create runs by default (this
+machine, or its overflow when a cloud is linked), as a VM where the machine has
+KVM or Hypervisor.framework and as a container where it does not. Each SDK
+carries Cua placement in a field it already has:
+
+| | E2B | Daytona | Modal |
+|---|---|---|---|
+| Field | `metadata` | `labels` | `experimental_options` |
+| Keys | `cua.on`, `cua.kind`, `cua.cpus`, `cua.memory_mb`, `cua.desktop` | `cua.on`, `cua.kind`, `cua.desktop` | `cua.on`, `cua.kind`, `cua.cpus`, `cua.memory_mb`, `cua.disk_gb`, `cua.gpu` |
+
+`cua.on` is `local`, `host:<machine>`, a pool or one of your own cloud
+accounts; `cua.kind` is `vm`, `container` or `microvm`. Daytona sizes come from
+the SDK's own resources. Modal's `region` and `cloud` have no meaning on your
+own machines and are ignored with a warning. Forks, snapshots and pauses are
+copy-on-write, and Daytona's computer use works on Linux, macOS and Windows
+Spaces.
+
+## What is covered
+
+Every public method of each SDK is either implemented or answers with the
+provider's own error and a reason. The full matrices, with the test that
+exercises each row, are generated from the SDK packages:
+[E2B](https://github.com/trycua/cua/blob/main/libs/cua/crates/cua-compat/maps/e2b-coverage.md),
+[Daytona](https://github.com/trycua/cua/blob/main/libs/cua/crates/cua-compat/maps/daytona-coverage.md),
+[Modal](https://github.com/trycua/cua/blob/main/libs/cua/crates/cua-compat/maps/modal-coverage.md).
+
+| Area | E2B | Daytona | Modal |
+|---|---|---|---|
+| Sandboxes | Create (templates, snapshots, metadata, env, timeout, lifecycle, auto-resume, network policy), connect, list with filters and pages, info, metrics, set timeout, pause, resume, kill (idempotent) | Create from a snapshot, an image or a Dockerfile (`Image` builder, local contexts), get, list with labels, states, filters, sorting and pages, start, stop, pause, archive, recover, fork, delete, auto-stop/pause/archive/delete intervals, TTL, public flag, metrics | Create with every SDK option (timeouts, resources, env, secrets, ports, volumes, readiness probes), `from_id`, `from_name`, list, tags, terminate, wait, poll, `wait_until_ready`, logs |
+| Commands | Run, background processes, connect, list, signals, stdin streaming, PTYs, user, working directory, env, exit codes and error shapes | `exec`, `code_run`, sessions (state carries over, async commands, logs with follow, input), PTYs | `exec` with streams and stdin |
+| Files | Read and write (text, bytes, streams, large files), list, metadata, symlinks, permissions, rename, remove, watch, signed upload and download URLs | Single and bulk transfer, streaming both ways, signed URLs, permissions, search and replace; large files verified by checksum | The whole `Sandbox.filesystem`, including `watch`, `copy_from_local` and `copy_to_local` |
+| Snapshots | Snapshots, pause and resume | Snapshots, fork | `snapshot_filesystem`, `snapshot_directory` with `mount_image` and `unmount_image`, memory snapshots, exit snapshots |
+| Images and templates | `Template.build` boots a Cua Linux image, applies the steps and takes a memory checkpoint; tags, aliases, list, delete | Snapshots and images, including Dockerfile builds | Every builder (`from_registry`, `debian_slim`, `pip_install`, `uv_pip_install`, `apt_install`, `run_commands`, `from_dockerfile`, `micromamba`, `run_function`, `add_local_*`, ...), each layer built in a Space and cached |
+| Network | `allow_out` and `deny_out` with addresses and CIDR blocks (allow wins), `update_network`, traffic access tokens, `get_host` URLs | `network_block_all`, `network_allow_list`, `domain_allow_list`, `update_network_settings`, preview links and signed preview URLs | `block_network`, tunnels (TLS names and raw TCP), connect tokens |
+| Code interpreter | `e2b-code-interpreter` with contexts, streaming output, results and errors for Python and bash | Python interpreter with contexts, matplotlib charts | |
+| Developer tools | | Git, LSP servers (Python, TypeScript, JavaScript) | |
+| Computer use | | Mouse, keyboard, screenshots, displays and windows, recordings (MP4, needs `ffmpeg` on the gateway host), accessibility | |
+| Storage and state | Secrets | Volumes, secrets, warm pools | Volumes, CloudBucketMount (AWS Mountpoint for S3), Secrets, Dicts, Queues, Apps, Environments |
+| Functions | | | `.remote`, `.map`, `.starmap`, `.for_each`, `.spawn`, `.spawn_map`, generators, retries, timeouts, batching, input concurrency, `with_options`, autoscaler settings, parametrised classes, `enter` and `exit` hooks |
+| Errors | E2B's own errors | The same exception classes, status codes and codes (`DaytonaFileNotFoundError`, `DaytonaProcessExecutionTimeoutError`, `DaytonaGitAuthFailedError`, ...) | Modal's exception classes (`NotFoundError`, `AlreadyExistsError`, `SandboxFilesystemNotFoundError`, `SandboxTimeoutError`, ...) with the status codes and messages the SDK maps |
+
+An empty cell is a feature that SDK does not have.
+
+## E2B
+
+The first create boots one base sandbox for its shape, and every create after
+it (concurrent ones included) forks that sandbox, so creates take about a
+second. The default size is E2B's default, 2 vCPU and 2 GiB.
+
+| E2B | On Cua |
+|---|---|
+| Rewriting outbound requests (`network.rules`, egress proxy, host masking, HTTPS ports), `mcp=`, `iam=` | Answers with E2B's 400 naming the field: these need hosted services or an inspecting proxy that Cua Spaces do not have. Address and CIDR rules are enforced in the guest routing table. |
+| Domain names in `allow_out` / `deny_out` | Refused with a reason: rules are addresses and CIDR blocks. |
+| Volumes | Answers with E2B's 403 `use of volumes is not enabled`. Use [Cua Volume](/spaces/guides/cua-volume). |
+| Other OCI base images in a template | The build fails with E2B's build error: Cua Spaces boot images that carry cua-spacesd (the default Linux image, or a Cua image reference). |
+| Code interpreter kernels | Python and bash. Other languages answer 400 naming the available ones. |
+| `allow_internet_access=False` | The Space has no network at all. |
+| Hardware | The sandbox is a Cua Space of the size you configure. |
+
+### Use cua-e2b in place of e2b
+
+For Python, you can also swap the dependency instead of running a gateway.
+`cua-e2b` installs a top-level `e2b` module, so code written for e2b 2.42,
+2.56 or 2.58 keeps working, and every sandbox is a Linux VM Space on your
+machines. Install one or the other in an environment, not both.
+
+```bash skip="pseudo"
+uv pip uninstall e2b
+uv pip install "cua-e2b @ git+https://github.com/trycua/cua#subdirectory=libs/python/cua-e2b"
+```
+
+| e2b | cua-e2b |
+|---|---|
+| `create(template=...)` | A Cua checkpoint (the sandbox is forked from it, memory included) or an image. `None` or `"base"` is the canonical Linux image. |
+| Placement | `CUA_E2B_ON` (default `auto`: the least-loaded of your machines), `CUA_E2B_KIND` (default `vm`), `CUA_E2B_CPUS`, `CUA_E2B_MEMORY_MB`. |
+| `timeout`, `set_timeout`, `lifecycle` | A Space lifetime kept by the daemon: the Space is deleted (or suspended for `on_timeout="pause"`) even after your process exits. |
+| `commands`, `pty`, `git`, `files`, `watch_dir` | cua-spacesd's process and file services; commands run as `/bin/bash -l -c`, other users through `sudo -n`. |
+| `get_host(port)` | A loopback `host:port` forwarded to the Space on any of your machines. It is plain TCP, so use `http://`; code that hard-codes `https://` runs through `cua run --compat e2b`, which serves TLS. |
+| `download_url`, `upload_url` | Signed `/files` URLs minted by cua-spacesd (24 hours at most). |
+| `pause`, `connect`, `fork`, snapshots | Suspend and resume, copy-on-write forks of a running VM, pinned checkpoints. |
+| `Template` builder, `Volume` | Recipes run in a VM and saved as a snapshot; volumes are folders of Cua Volume. |
+| `network` with IP and CIDR rules, `update_network` | Rules enforced inside the Space. |
+| `iam=`, `Secret` operations, `network` `rules` and `egress_proxy` | Refused with e2b's own exception and a message that names the way out: pass credentials with `envs=` (`cua run --env KEY`) or keep them in [Keyvault](/spaces/guides/keyvault). |
+| Hostnames in `allow_out` and `deny_out`, bare OCI template bases | Refused: rules are by IP address and CIDR, and Spaces boot Cua images. |
+
+No call is a silent no-op. The complete list, with the test that proves each
+row, is in
+[`libs/python/cua-e2b/COVERAGE.md`](https://github.com/trycua/cua/blob/main/libs/python/cua-e2b/COVERAGE.md).
+
+## Daytona
+
+A sandbox boots with its desktop, because computer use is part of a Daytona
+sandbox. The label `cua.desktop=false` leaves it out for a faster boot and more
+sandboxes per machine; computer use calls then answer Daytona's 503 naming the
+missing desktop.
+
+| Daytona | On Cua |
+|---|---|
+| `resize` | The Space stops and boots again from its own disk with the new vCPUs, memory and a larger disk (Daytona's rules hold: a running sandbox only grows cpu and memory, the disk grows only while stopped). Files are kept, running processes are not, and a stopped sandbox stays stopped. Placements that cannot be resized (containers, clouds) answer Daytona's 400 with the reason. |
+| SSH access tokens | Answers with Daytona's 400. Use a PTY (`process.create_pty_session`), `cua sandbox shell` or `space_bash`. |
+| `archive` | The sandbox shows `archived` and keeps its disk on the host; there is no object-storage tier below stopped. |
+| `stop` | The Space is suspended (memory kept) where its runtime cannot cold-stop, so background processes survive `stop`/`start`. |
+| Secrets | Cua Spaces have no egress proxy to substitute a secret into outbound requests. Add the label `cua.secrets=plaintext` to inject the value into the environment variable; without it, creating with `secrets` is refused with this reason. |
+| Volumes | A volume is a folder of Cua Volume bound at the mount path, so Cua Volume must be mounted in the Space. A Space writes only its own folder, so a folder that several sandboxes share needs a grant you confirm (`cua volume grant space:<id> daytona-volumes/<volume id>/ --rw`); without it the create answers 400 and says which grant it needs. |
+| Warm pools | A Cua pool of the snapshot's image, on this machine. |
+| Egress rules | An nftables policy in the guest (Linux guests). |
+
+## Modal
+
+Every Sandbox, and every container a Function runs in, is a Space.
+
+| Modal | On Cua |
+|---|---|
+| Web endpoints, schedules, `modal.Server`, clustered Functions | `UnimplementedError` naming the feature when the Function is created. These need a hosted public edge or scheduler; expose a Sandbox port with `encrypted_ports` or use a Cua routine. |
+| GPU models (`gpu="A10G"`) | `UnimplementedError` unless `experimental_options={"cua.gpu": "nvidia", "cua.on": "host:<gpu machine>"}` is set; then the Space is created with the runtime's GPU option. |
+| Outbound allowlists, inbound CIDR allowlists, header-replacement policies, proxies | `UnimplementedError`. A Space can block egress entirely (`block_network=True`) or leave it open; a filter that code running as root in the Space could undo would not be a filter. |
+| Sidecar containers, private-registry bases (`from_aws_ecr`, `from_gcp_artifact_registry`), NetworkFileSystem, workspace administration, billing, metrics series | `UnimplementedError` with the reason. |
+| Volumes | Version 1 only: a Sandbox sees a copy of the volume, its changes are committed to the volume (a folder of Cua Volume) every few seconds and when it ends, and `reload_volumes` fetches what others committed. The whole volume is copied in at mount; file modes and ownership are not stored. `version=2` raises `InvalidError`. |
+| Image bases | A base must run cua-spacesd. `from_registry` accepts Cua images, `python:*`, `ubuntu:*`, `debian:*` and images you map in `images.json`; another base raises `ImageBuildError` that says how to map it. |
+| `snapshot_filesystem` | A Cua checkpoint of the machine; a Sandbox made from it has the files, and the snapshotted machine's processes continue in the copy. |
+| Tunnels | `https://<port>-<sandbox id>.modal.localhost:<port>` names served by the gateway; its CA is in `SSL_CERT_FILE`. Unencrypted ports are loopback listeners. Ports declared with `h2_ports` negotiate HTTP/2. |
+| Container privileges | Processes run as root. |
+
+## Keeping capacity warm
+
+A create that has to pull an image and boot a VM can take longer than an SDK
+waits. Both ways of running warm the gateway first: `cua run --compat` boots
+one sandbox before your command starts, and `cua compat serve` does it before
+it prints the exports. To keep more ready, prewarm the image your program uses:
+
+```bash test="cli-shape" id="sandbox-sdks-prewarm"
+cua spaces prewarm linux --count 8 --on local --ttl 2h
+```
+
+The provider's own warm settings work too. A Daytona warm pool
+(`warm_pool.create`) becomes a Cua pool of its snapshot's image, and a Modal
+Function's `min_containers` stay running.
+
+## How it is tested
+
+<Callout>
+  The E2B goldens are recorded from E2B; the Daytona and Modal goldens are
+  derived from the SDK sources, so no Daytona or Modal service is ever called.
+  The gateways and cua-e2b must match the goldens case by case.
+</Callout>
+
+- **Every pull request.** The same cases run through each SDK against the
+  gateway over mock Spaces: the E2B Python SDK (2.42.0, 2.56.0, latest) and
+  TypeScript SDK, the Daytona Python (sync and async) and TypeScript SDKs, and
+  the Modal Python SDK, JavaScript SDK and Go library. The Modal Function
+  suites run Modal's own container entrypoint, so registration, queuing,
+  outputs, retries, timeouts, generators and classes are exercised end to end.
+  Every public symbol of e2b 2.42.0, 2.56.0 and 2.58.0 is compared with
+  cua-e2b.
+- **Nightly.** The same cases run on real Spaces, and their observations are
+  compared with the goldens.
+- **Weekly.** A drift job installs the latest SDK releases and fails on a
+  changed signature, a new method that is not mapped, or (for Modal) a removed
+  or changed RPC or message field that the gateway serves.
+- **Wire and cost.** Wire translation is covered by property tests (proptest
+  and hypothesis), and a guard fails when a gateway's or cua-e2b's own overhead
+  grows by more than 1.5x its recorded baseline.

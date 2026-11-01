@@ -326,7 +326,7 @@ async fn connect_can_make_it_the_default_and_disconnect_forgets_it() {
     let s = clouds.status(Some("aws")).await.unwrap();
     assert_eq!(s.default_on, "aws");
     assert!(s.providers[0].connected && s.providers[0].credentials.found);
-    let d = clouds.disconnect("aws").await.unwrap();
+    let d = clouds.disconnect("aws", false).await.unwrap();
     assert!(d.disconnected);
     let cfg = std::fs::read_to_string(w.dir.path().join("config.toml")).unwrap_or_default();
     assert!(!cfg.contains("aws"), "{cfg}");
@@ -371,5 +371,170 @@ async fn the_sweeper_removes_relay_machines_a_failed_create_left() {
     assert!(w.relay.machine("cloud-00000000000000aa").is_some());
     clouds.sweep(Some("aws"), false, false).await.unwrap();
     assert!(w.relay.machine("cloud-00000000000000aa").is_none());
+    assert!(store.resources().unwrap().is_empty());
+}
+
+/// Boots a machine that dies: the cloud marks it terminated.
+fn machine_dies(w: &World) {
+    let acct = w.fake.account.clone();
+    w.fake.on_boot(Arc::new(move |_, r| {
+        acct.lock().unwrap().resources.get_mut(&r.id).unwrap().state = "terminated".into();
+    }));
+}
+
+#[tokio::test]
+async fn a_failed_boot_keeps_its_filtered_log_before_the_machine_is_deleted() {
+    let w = world(Tier::Vm).await;
+    let clouds = w.sandboxes.clouds().unwrap();
+    clouds.connect(&aws(), false, None).await.unwrap();
+    machine_dies(&w);
+    let mut log = String::new();
+    for i in 0..300 {
+        log.push_str(&format!("[ {i}.0] kernel: line {i}\n"));
+    }
+    log.push_str("cloud-init: relay token cmt_PLANTED123456 written\n");
+    log.push_str("cloud-init: docker pull failed: no space left on device\n");
+    w.fake.account.lock().unwrap().boot_log = Some(log);
+
+    let err = w
+        .sandboxes
+        .create(create("boot"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("terminated"), "{err}");
+    assert!(err.contains("no space left on device"), "{err}");
+    assert!(!err.contains("cmt_PLANTED"), "{err}");
+    let path = w.dir.path().join("cloud/boot-logs/fake-1.log");
+    assert!(err.contains(&path.display().to_string()), "{err}");
+
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("no space left on device"));
+    assert!(!saved.contains("cmt_") && !saved.contains("PLANTED"));
+    assert_eq!(saved.lines().count(), 200, "the last 200 lines");
+    assert!(!saved.contains("line 50\n") && saved.contains("line 299"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    // Read first, then deleted; nothing left behind.
+    let calls = w.fake.calls();
+    let read = calls.iter().position(|c| c == "boot_log fake-1").unwrap();
+    let del = calls.iter().position(|c| c == "delete fake-1").unwrap();
+    assert!(read < del, "{calls:?}");
+    assert!(w.fake.account.lock().unwrap().resources.is_empty());
+    assert!(clouds.status(None).await.unwrap().resources.is_empty());
+}
+
+#[tokio::test]
+async fn an_unreadable_boot_log_never_blocks_the_rollback() {
+    let w = world(Tier::Vm).await;
+    let clouds = w.sandboxes.clouds().unwrap();
+    clouds.connect(&aws(), false, None).await.unwrap();
+    machine_dies(&w);
+    w.fake.account.lock().unwrap().fail_boot_log = true;
+    let err = w
+        .sandboxes
+        .create(create("a"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("terminated") && !err.contains("boot log saved"),
+        "{err}"
+    );
+    assert!(w.fake.calls().iter().any(|c| c == "delete fake-1"));
+    assert!(w.fake.account.lock().unwrap().resources.is_empty());
+    assert!(!w.dir.path().join("cloud/boot-logs").exists());
+
+    // A cloud with nothing on the console keeps nothing either.
+    {
+        let mut a = w.fake.account.lock().unwrap();
+        a.fail_boot_log = false;
+        a.boot_log = None;
+    }
+    let err = w
+        .sandboxes
+        .create(create("b"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("terminated") && !err.contains("boot log saved"),
+        "{err}"
+    );
+    assert!(w.fake.account.lock().unwrap().resources.is_empty());
+}
+
+#[tokio::test]
+async fn a_boot_log_that_never_arrives_is_given_up_on() {
+    let w = world(Tier::Vm).await;
+    let clouds = w.sandboxes.clouds().unwrap();
+    clouds.connect(&aws(), false, None).await.unwrap();
+    machine_dies(&w);
+    w.fake.account.lock().unwrap().hang_boot_log = true;
+    let started = std::time::Instant::now();
+    let err = w
+        .sandboxes
+        .create(create("h"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("terminated"), "{err}");
+    // The wait for the machine took at most ~20 s; the log's allowance is 20 s more.
+    assert!(started.elapsed() < std::time::Duration::from_secs(60));
+    assert!(w.fake.calls().iter().any(|c| c == "delete fake-1"));
+    assert!(w.fake.account.lock().unwrap().resources.is_empty());
+}
+
+#[tokio::test]
+async fn a_connections_own_limits_refuse_a_machine_before_any_cloud_call() {
+    let w = world(Tier::Vm).await;
+    guest_joins(&w);
+    let clouds = w.sandboxes.clouds().unwrap();
+    clouds.connect(&aws(), false, Some(2)).await.unwrap();
+    let store = cua_byoc::Store::new(w.dir.path());
+    let mut conn = store.connection("aws").unwrap().unwrap();
+    let before = w.fake.calls().len();
+
+    // Larger than the connection allows.
+    conn.max_size = Some(cua_byoc::MaxSize {
+        vcpu: 1,
+        mem_gib: 1,
+    });
+    store.connect(conn.clone()).unwrap();
+    let mut big = create("big");
+    big.cpus = 2;
+    big.memory_mb = 4096;
+    let err = w.sandboxes.create(big).await.unwrap_err();
+    assert!(
+        matches!(err, cua_sandbox_core::Error::InvalidArgument(_)),
+        "{err:?}"
+    );
+    assert!(
+        err.to_string()
+            .contains("allows machines up to 1 vCPU and 1 GB"),
+        "{err}"
+    );
+
+    // This month's budget is used up.
+    conn.max_size = None;
+    conn.budget_usd_month = Some(0.0);
+    store.connect(conn).unwrap();
+    let err = w.sandboxes.create(create("over")).await.unwrap_err();
+    assert!(matches!(err, cua_sandbox_core::Error::Cloud(_)), "{err:?}");
+    assert!(
+        err.to_string()
+            .contains("budget of $0.00 this month is reached"),
+        "{err}"
+    );
+
+    // Neither reached the cloud, nor recorded anything.
+    assert_eq!(w.fake.calls().len(), before, "{:?}", w.fake.calls());
     assert!(store.resources().unwrap().is_empty());
 }

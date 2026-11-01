@@ -1,0 +1,159 @@
+name: "E2E: public compat examples"
+
+# Other providers' own quickstarts, examples, SDK test suites and popular
+# open-source integrations (E2B, Daytona, Modal), run UNMODIFIED against Cua
+# through `cua run --compat <provider>`. Nothing third-party is vendored: the
+# manifest (tests/compat/examples/manifest.json) pins a repository, a commit
+# and a path with the SPDX license read from the upstream LICENSE; the runner
+# fetches each pinned tree at test time, checks the git tree id and the license
+# file hash, and ships it to a job Space. The job installs its dependencies
+# (uv for Python, node for TypeScript) INSIDE the Space and runs the example
+# there; the CI runner never installs or runs any of it.
+#
+#   pull request   hermetic: the manifest is valid (licenses, pins, secrets),
+#                  every pinned tree still exists with the recorded tree id and
+#                  license hash, Python sources compile, and every job bundle
+#                  builds. No third-party code runs (the mock gateway simulates
+#                  guest processes, so an example's real output cannot be
+#                  checked against it, and the isolation rule keeps untrusted
+#                  code inside Spaces).
+#   nightly        every entry on real Linux Spaces (the runner that
+#                  e2e-cua-compat.yml uses): result JSON per example and the
+#                  pass rate per provider in the job summary. A failure is a
+#                  bug in the gateway (or a regression): it is filed in
+#                  compat-hardening BUGS.md and marked `known_failure` in the
+#                  manifest until fixed; an example that needs something the
+#                  provider has and Cua truly cannot offer asserts the
+#                  provider-native error instead.
+
+on:
+  pull_request:
+    paths:
+      - "tests/compat/examples/**"
+      - "tests/compat/SDK_VERSIONS.json"
+      - ".github/workflows/e2e-compat-examples.yml"
+  schedule:
+    - cron: "47 5 * * *"
+  workflow_dispatch:
+    inputs:
+      ids:
+        description: "Comma-separated example ids (default: all)"
+        required: false
+      sdk:
+        description: "SDK versions: pinned (the manifest) or latest"
+        required: false
+        default: "pinned"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-compat-examples-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  hermetic:
+    name: manifest, pins and licenses
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: The manifest is valid
+        run: python tests/compat/examples/run.py lint
+      - name: Pinned trees, tree ids and license hashes still match; Python sources compile
+        env:
+          CUA_EXAMPLES_WORK: ${{ runner.temp }}
+        run: python tests/compat/examples/run.py verify --compile
+      - name: Every job bundle builds (no job runs)
+        env:
+          CUA_EXAMPLES_WORK: ${{ runner.temp }}
+        run: python tests/compat/examples/run.py run --dry --no-warm --out "$RUNNER_TEMP/dry"
+
+  nightly:
+    name: examples on real Spaces (QEMU)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          # The TypeScript SDK build (ubrn) compiles a wasm32 target.
+          targets: wasm32-unknown-unknown
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: |
+            libs/cua
+            libs/cua-spacesd
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - name: Build cua (Cua Spaces build) and the reference images
+        run: |
+          tests/e2e/cua-sdk/ci-setup.sh --images --disks
+          (cd libs/cua && cargo build --locked -p cua-spaces-cli)
+          echo "CUA=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_ENV"
+      - name: Start the daemon
+        run: |
+          "$CUA" daemon start --foreground >"$RUNNER_TEMP/daemon.log" 2>&1 &
+          for i in $(seq 100); do "$CUA" daemon status >/dev/null 2>&1 && break; sleep 0.3; done
+      - name: Which gateways can host a job
+        id: gateways
+        run: |
+          list=""
+          for p in e2b daytona modal; do
+            if "$CUA" run --compat "$p" --kind container --on host:local --cpus 1 --memory 1024 -- true >"$RUNNER_TEMP/probe-$p.log" 2>&1; then
+              list="$list $p"
+            else
+              echo "::warning::cua run --compat $p is not available yet: its examples are not run ($(tail -1 "$RUNNER_TEMP/probe-$p.log" | cut -c1-200))"
+            fi
+          done
+          echo "providers=$list" >>"$GITHUB_OUTPUT"
+      - name: Run the examples
+        env:
+          CUA_EXAMPLES_WORK: ${{ runner.temp }}/examples
+          EXAMPLES_BUSY_RETRIES: "3"
+          IDS: ${{ github.event.inputs.ids }}
+          SDK: ${{ github.event.inputs.sdk || 'pinned' }}
+        run: |
+          rc=0
+          for p in ${{ steps.gateways.outputs.providers }}; do
+            python tests/compat/examples/run.py run --provider "$p" --sdk "$SDK" ${IDS:+--ids "$IDS"} \
+              --out "$RUNNER_TEMP/examples-out/$p" || rc=1
+          done
+          exit $rc
+      - name: Pass rate per provider
+        if: always()
+        run: |
+          python - <<'EOF' >>"$GITHUB_STEP_SUMMARY"
+          import json, glob, os
+          print("### Public examples: pass rate per provider\n")
+          print("| provider | entries | pass | native error | known failure | fail | infra | pass rate |")
+          print("|---|---|---|---|---|---|---|---|")
+          for f in sorted(glob.glob(os.environ["RUNNER_TEMP"] + "/examples-out/*/summary.json")):
+              s = json.load(open(f))
+              for prov, p in s["providers"].items():
+                  print(f"| {prov} | {p['total']} | {p['pass']} | {p['native-error']} | {p['known-failure']} | {p['fail']} | {p['infra']} | {p['pass_rate']} |")
+          EOF
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: compat-examples
+          path: |
+            ${{ runner.temp }}/examples-out
+            ${{ runner.temp }}/daemon.log

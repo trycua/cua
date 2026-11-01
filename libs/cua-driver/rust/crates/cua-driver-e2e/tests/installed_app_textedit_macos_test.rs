@@ -183,15 +183,33 @@ fn wait_for_frontmost(bundle_id: &str) -> bool {
     false
 }
 
+/// Make `bundle_id` the frontmost app and keep it there for a settle window.
+///
+/// On hosted macOS runners Finder (and other login-session helpers) can take
+/// the front a moment after an `activate` already reported success, so a single
+/// "is it frontmost right now" sample is a race. Re-activate with a bounded
+/// deadline until the app has held the front for `FRONT_SETTLE` in a row.
 fn ensure_frontmost(bundle_id: &str) {
-    for _ in 0..3 {
-        osascript(&format!(r#"tell application id "{bundle_id}" to activate"#));
-        if wait_for_frontmost(bundle_id) {
-            return;
+    const FRONT_SETTLE: Duration = Duration::from_millis(1500);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut stable_since: Option<Instant> = None;
+    while Instant::now() < deadline {
+        if frontmost_bundle_id() == bundle_id {
+            let since = *stable_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= FRONT_SETTLE {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        } else {
+            stable_since = None;
+            osascript(&format!(r#"tell application id "{bundle_id}" to activate"#));
+            std::thread::sleep(Duration::from_millis(300));
         }
-        std::thread::sleep(Duration::from_millis(500));
     }
-    panic!("could not make {bundle_id} frontmost for the TextEdit foreground check");
+    panic!(
+        "could not make {bundle_id} stay frontmost for the TextEdit foreground check; frontmost is {}",
+        frontmost_bundle_id()
+    );
 }
 
 fn focused_textedit_window_title() -> String {
@@ -224,6 +242,14 @@ fn open_sibling_document(text: &str) {
         );
         std::thread::sleep(Duration::from_millis(200));
     }
+    // Re-settle: the front must still be TextEdit (and the sibling focused)
+    // right before the chord is sent, not just at some earlier sample.
+    ensure_frontmost(TEXTEDIT_BUNDLE);
+    assert_eq!(
+        focused_textedit_window_title(),
+        sibling_title,
+        "the sibling document lost the keyboard focus while the front settled"
+    );
     std::fs::remove_file(path).expect("remove sibling document fixture");
 }
 

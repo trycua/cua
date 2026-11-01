@@ -47,18 +47,23 @@ pub fn cli() -> Value {
         "usage": "cua [OPTIONS] <COMMAND>",
         "global_options": global_options,
         "exit_codes": exit_codes,
-        "commands": subcommands(&root),
+        "commands": subcommands(&root, "cua"),
+        "deprecated_commands": crate::DEPRECATED_COMMANDS
+            .iter()
+            .map(|(name, replaced_by)| json!({"name": name, "deprecated": true, "replaced_by": replaced_by}))
+            .collect::<Vec<_>>(),
     })
 }
 
-fn subcommands(cmd: &ClapCommand) -> Vec<Value> {
+fn subcommands(cmd: &ClapCommand, path: &str) -> Vec<Value> {
     cmd.get_subcommands()
         .filter(|c| c.get_name() != "help")
-        .map(command)
+        .map(|c| command(c, &format!("{path} {}", c.get_name())))
         .collect()
 }
 
-fn command(cmd: &ClapCommand) -> Value {
+/// One command; `path` is its full spelling (`cua agent add`).
+fn command(cmd: &ClapCommand, path: &str) -> Value {
     let args: Vec<&Arg> = cmd
         .get_arguments()
         .filter(|a| !is_builtin(a) && !a.is_global_set())
@@ -87,7 +92,7 @@ fn command(cmd: &ClapCommand) -> Value {
             .collect::<Vec<_>>(),
         "options": options.iter().map(|a| option(a)).collect::<Vec<_>>(),
         "flags": flags.iter().map(|a| flag(a)).collect::<Vec<_>>(),
-        "subcommands": subcommands(cmd),
+        "subcommands": subcommands(cmd, path),
         // A group that also runs without a subcommand (`cua doctor [REF]`).
         "subcommand_optional": cmd.has_subcommands() && !cmd.is_subcommand_required_set(),
     });
@@ -100,6 +105,13 @@ fn command(cmd: &ClapCommand) -> Value {
     };
     if !after.is_empty() {
         v["after_help"] = json!(after);
+    }
+    if let Some((_, replaced_by)) = crate::DEPRECATED_COMMANDS
+        .iter()
+        .find(|(old, _)| *old == path)
+    {
+        v["deprecated"] = json!(true);
+        v["replaced_by"] = json!(replaced_by);
     }
     // The long help repeats the abstract as its first paragraph.
     if let Some(rest) = long.strip_prefix(&about).map(str::trim)
@@ -283,6 +295,120 @@ fn aliases(a: &Arg) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn find_path<'a>(commands: &'a Value, path: &str) -> Option<&'a Value> {
+        let mut node = commands;
+        let mut found = None;
+        for word in path.split(' ').skip(1) {
+            let c = node.as_array()?.iter().find(|c| {
+                c["name"] == word
+                    || c["aliases"]
+                        .as_array()
+                        .is_some_and(|a| a.iter().any(|x| x == word))
+                    || c["hidden_aliases"]
+                        .as_array()
+                        .is_some_and(|a| a.iter().any(|x| x == word))
+            })?;
+            found = Some(c);
+            node = &c["subcommands"];
+        }
+        found
+    }
+
+    /// Every former command name is in the CLI dump, marked deprecated, and
+    /// names a command that exists and is not itself deprecated.
+    #[test]
+    fn deprecated_commands_name_their_replacement() {
+        let v = cli();
+        assert_eq!(
+            v["deprecated_commands"].as_array().unwrap().len(),
+            crate::DEPRECATED_COMMANDS.len()
+        );
+        for (old, new) in crate::DEPRECATED_COMMANDS {
+            let c =
+                find_path(&v["commands"], old).unwrap_or_else(|| panic!("{old} is not a command"));
+            assert_eq!(c["deprecated"], true, "{old}");
+            assert_eq!(c["replaced_by"], *new, "{old}");
+            assert!(
+                c["abstract"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("Deprecated alias of"),
+                "{old}: {}",
+                c["abstract"]
+            );
+            let n =
+                find_path(&v["commands"], new).unwrap_or_else(|| panic!("{new} is not a command"));
+            assert!(n.get("deprecated").is_none(), "{new} is deprecated too");
+        }
+    }
+
+    /// `cua connect` and `cua agents` parse to the same command.
+    #[test]
+    fn connect_is_agents() {
+        use clap::Parser;
+        for sub in [
+            &["detect"][..],
+            &["setup", "--agents", "claude,codex", "--yes"],
+            &["status"],
+            &["remove", "--agents", "codex"],
+            &["update"],
+        ] {
+            let parse = |top: &str| {
+                let mut argv = vec!["cua", top];
+                argv.extend_from_slice(sub);
+                match crate::Cli::try_parse_from(argv).unwrap().command {
+                    crate::Command::Connect(a) | crate::Command::Agents(a) => format!("{a:?}"),
+                    other => panic!("{other:?}"),
+                }
+            };
+            assert_eq!(parse("connect"), parse("agents"), "{sub:?}");
+        }
+    }
+
+    /// The help of the agent commands, checked in under
+    /// `tests/fixtures/help/`. After an intended change, regenerate with
+    /// `CUA_UPDATE_HELP_SNAPSHOTS=1 cargo test -p cua-cli help_snapshots`.
+    #[test]
+    fn help_snapshots() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/help");
+        let update = std::env::var_os("CUA_UPDATE_HELP_SNAPSHOTS").is_some();
+        let mut stale = vec![];
+        for path in [
+            "connect",
+            "agent",
+            "agent add",
+            "agent send",
+            "agent ls",
+            "agent rm",
+            "agent schedule",
+            "agent schedule add",
+            "agent create",
+            "agent tell",
+            "agent forget",
+            "agent persistent",
+            "agent routine",
+        ] {
+            let mut cmd = crate::Cli::command();
+            cmd.build();
+            let mut node = &mut cmd;
+            for word in path.split(' ') {
+                node = node.find_subcommand_mut(word).unwrap();
+            }
+            let help = node.render_long_help().to_string();
+            let file = dir.join(format!("{}.txt", path.replace(' ', "-")));
+            if update {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&file, &help).unwrap();
+            } else if std::fs::read_to_string(&file).ok().as_deref() != Some(help.as_str()) {
+                stale.push(path);
+            }
+        }
+        assert!(
+            stale.is_empty(),
+            "help changed for {stale:?}; review and run CUA_UPDATE_HELP_SNAPSHOTS=1 cargo test -p cua-cli help_snapshots"
+        );
+    }
 
     fn find<'a>(cmds: &'a [Value], name: &str) -> &'a Value {
         cmds.iter()

@@ -261,7 +261,7 @@ impl SshExec {
 }
 
 /// `req.script` with its environment exported first.
-fn remote_script(req: &ExecRequest) -> String {
+pub(crate) fn remote_script(req: &ExecRequest) -> String {
     let mut remote = String::new();
     for (k, v) in &req.env {
         remote.push_str(&format!("export {}={}; ", k, shell_quote(v)));

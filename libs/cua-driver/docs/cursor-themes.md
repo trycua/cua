@@ -1,39 +1,56 @@
 # Agent cursor themes
 
 Cua Driver ships one built-in cursor theme: `cua.default`. It is the default on
-macOS, Windows, and Linux and cannot be removed. The theme uses a colored
-pointer with a white outline over a larger, cursor-shaped glow in the same
-session color. The glow softly fades to transparent around the full pointer
-silhouette, while the white outline preserves a crisp boundary on light, dark,
-and similarly colored backgrounds. Its semantic action marks use
-the same session-colored center and white-outline treatment as the pointer,
-plus a tighter, softer glow so they remain legible without competing with it.
-Every semantic state inherits the same gentle levitation and rotation as the
-idle pointer, with its action-specific motion layered on top. The pointer and
-semantic mark therefore move as one visual unit.
-The macOS, Windows, X11, and Wayland overlays keep rendering frames while a
-visible cursor rests, so the levitation continues until the idle fade hides it.
-A cursor set never to hide (`idle_hide_ms` 0) rests still instead, so the
-overlay stops rendering once activity settles. Reduced-motion mode removes this
-shared movement and lets the overlay stop rendering while the cursor is still. The anonymous/default cursor
-uses Cua blue. Named sessions receive a stable fill
-from the built-in session palette, so concurrent agents remain visually
-distinct.
+macOS, Windows, and Linux and cannot be removed. By default the agent cursor is
+a plain, upright arrow: a colored pointer with a white outline over a soft,
+cursor-shaped glow in the same session color. The arrow stands upright like the
+system pointer, with its left edge vertical, and keeps that pose while it moves.
+The glow softly fades to transparent around the full pointer silhouette, while
+the white outline preserves a crisp boundary on light, dark, and similarly
+colored backgrounds. The anonymous/default cursor uses Cua blue. Named sessions
+receive a stable fill from the built-in session palette, so concurrent agents
+remain visually distinct.
+
+A resting cursor levitates: it rises about 4 pt and settles back on a
+four-second loop, straight up and down, so the arrow stays upright. The cursor
+fades out after its idle-hide delay. Turn the float off with
+`cua-driver config set cursor.float off`; a resting cursor is then still, so
+the macOS, Windows, X11, and Wayland overlays stop rendering once activity
+settles.
+
+### Extras
+
+Apart from the float, everything beyond the plain arrow is off by default. Each
+extra is a saved setting in `~/.cua-driver/config.json` that applies at once to
+every cursor on screen. Turn one on with `cua-driver config set <key> on`, or
+with `set_config`:
+
+| Key | What it adds |
+| --- | --- |
+| `cursor.marks` | Action marks: a small cue next to the arrow while the agent observes, clicks, types, presses keys, scrolls, drags, manages apps, moves files, records, or makes system calls. Moves and clicks show the navigate and click marks. On macOS, a clicked element also gets a brief focus box. |
+| `cursor.float` | On by default. The resting float: a slow vertical bob on a four-second loop while the cursor rests, until the idle fade hides it. The arrow never tilts. |
+| `cursor.rotate` | Rotation: the arrow turns toward the direction it moves and settles upright on arrival. |
+| `cursor.motion.effects.glow` | A soft glow behind the pointer that grows with speed. |
+| `cursor.motion.effects.ripple` | A ring that expands from each click point. |
+| `cursor.motion.effects.squish` | The pointer shrinks briefly on each click and springs back. |
+
+The motion effects can also be set per session with `set_agent_cursor_motion`
+(see below). Every semantic mark inherits the float when both are on, so the
+pointer and mark move as one visual unit. Reduced-motion mode removes the
+float, rotation, and every motion effect, and keeps marks on their still frame.
+With `cursor.marks` off, custom themes also paint only their `idle` animation.
 
 The badge below the pointer follows the `cursor.badges` setting, which applies
 to every cursor at once:
 
-- `minimal` (default): no badge at rest. A foreground-delivery moment or a key
-  combo (such as ⌘C) shows a short chip: it waits about 0.1 seconds, holds for
-  half a second and fades out, about one second in all. The session name shows
-  only while the human pointer hovers over the cursor or while two or more
-  agent cursors are on screen. Nothing shows while the cursor moves. The chip
-  plays once its action has ended and the cursor is at rest, because a real
-  foreground click can hide the overlay while it is delivered.
-  Background delivery and target chips are not shown. The GNOME Shell helper
-  draws one cursor and has no hover, so under `minimal` it shows only the
-  foreground chip.
-- `verbose`: the earlier badge, described below.
+- `minimal` (default): only the session name, and only while the human pointer
+  hovers over the cursor or while two or more agent cursors are on screen.
+  Nothing shows while the cursor moves. The GNOME Shell helper draws one
+  cursor and has no hover, so under `minimal` it shows no badge.
+- `verbose`: the earlier badge, described below, plus a short chip for each key
+  combo (such as ⌘C). The chip waits about 0.1 seconds, holds for half a
+  second and fades out, about one second in all. It plays once its action has
+  ended and the cursor is at rest.
 - `off`: no badge.
 
 In `verbose` mode the native renderer places the sanitized public session name
@@ -105,7 +122,9 @@ default), `spring_settle`, `magnetic`, `comet_swoop`, `adaptive`, or `classic`
 (the previous Dubins glide). `timing` is `native` (the style's own), `fitts`
 (scales with distance and target size), or `fixed` (`glide_duration_ms`, 1430
 ms when 0). `effects` turns `trail`, `glow`, `magnet`, `ripple`, and `squish`
-on, off, or `default` (the style's own setting). Omit an effect to keep its current setting. From a shell, `cua-driver cursor
+on, off, or `default` (the style's own setting). `signature_arc` turns none of
+them on by default; `spring_settle`, `magnetic`, `comet_swoop` and `adaptive`
+keep their own. Omit an effect to keep its current setting. From a shell, `cua-driver cursor
 motion --session <label> --style magnetic` sets the same fields. The removed `set_agent_cursor_style` operation and
 its `cursor_id`, shape, color, label, size, opacity, image-path, gradient, and
 bloom styling fields are not accepted. Input-delivery tools may still use

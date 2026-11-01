@@ -13,14 +13,13 @@ embed-resource = "2"
 
 [dependencies]
 cua-driver-core = { path = "../../../cua-driver/rust/crates/cua-driver-core" }
-cua-spacesd-desktop = { path = "../cua-spacesd-desktop" }
 cua-logging = { path = "../../../cua/crates/cua-logging" }
 cua-media-protocol = { path = "../../../cua/crates/cua-media-protocol" }
 cua-spacesd-provider-api = { path = "../cua-spacesd-provider-api" }
 cua-spacesd-session = { path = "../cua-spacesd-session" }
+cua-spacesd-supervise = { path = "../cua-spacesd-supervise" }
 cua-media-transport = { path = "../../../cua/crates/cua-media-transport" }
 cua-spacesd-server = { path = "../cua-spacesd-server" }
-cua-spacesd-doctor = { path = "../cua-spacesd-doctor" }
 cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client" }
 cua-media-codec = { path = "../../../cua/crates/cua-media-codec", default-features = false }
 cua-proto = { path = "../../../cua/crates/cua-proto" }
@@ -50,15 +49,23 @@ tokio-tungstenite.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 
+# The desktop services and the doctor need the desktop platform crates and C
+# codecs; a musl build is the static headless daemon (see build.rs).
+[target.'cfg(not(target_env = "musl"))'.dependencies]
+cua-spacesd-desktop = { path = "../cua-spacesd-desktop" }
+cua-spacesd-doctor = { path = "../cua-spacesd-doctor" }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # cua-spacesd hands its OS main thread to the cursor overlay's AppKit run loop so
 # remote and agent cursors render on the ORIGIN desktop. See the comment on
 # `main` -- the overlay NSWindow cannot live on a spawned thread.
 platform-macos = { path = "../../../cua-driver/rust/crates/platform-macos" }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]
 # The cua-driver tool registry behind DriverService and /mcp.
 platform-linux = { path = "../../../cua-driver/rust/crates/platform-linux" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 # The guest mount of Cua Volume (`volume-mount`): FUSE over the file
 # operations protocol, served by the client.
 cua-volume = { path = "../../../cua/crates/cua-volume", features = ["fuse"] }

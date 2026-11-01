@@ -1,0 +1,132 @@
+// Checkpoints of local sandboxes (cua.daemon.v1): the records
+// `SandboxService.CheckpointSandbox`, `ListCheckpoints`, `DeleteCheckpoint`,
+// `PinCheckpoint` and `PruneCheckpoints` take and return. A checkpoint is a
+// sandbox's saved state under a name (memory and disk on a microVM or a
+// QEMU VM, a container's filesystem) that `SandboxService.ForkSandbox`
+// starts new sandboxes from.
+//
+// Checkpointing a microVM pauses it for the snapshot; it keeps running. A
+// fork starts from a sandbox (running or stopped) or a checkpoint and is
+// waited for as its source's create was. A microVM or container fork gets
+// its own token (a gVisor fork of a memory checkpoint restores it and is
+// given the token); a QEMU fork keeps its source's.
+//
+// A QEMU memory checkpoint keeps its guest RAM as a file that its forks map
+// copy-on-write (`Checkpoint.shared_memory`): every fork shares the pages it
+// has not written, so many forks of one checkpoint cost little more memory
+// than one. A sandbox created with `CreateSandboxRequest.forkable` (a "bake"
+// sandbox) runs with its guest RAM in such a file already, so its
+// checkpoints take milliseconds.
+//
+// A checkpoint of a Space one of your other machines provides (named by
+// its Space name or id) is taken on that machine
+// (`HostSnapshotsService.CreateHostSnapshot`) and stays there.
+// `ListCheckpoints` lists this machine's checkpoints, then those your
+// machines that provide Spaces hold, each name once (`Checkpoint.host`);
+// `DeleteCheckpoint` deletes one here and on every machine that holds a
+// copy.
+//
+// A pinned checkpoint (`CheckpointSandboxRequest.pin`, `PinCheckpoint`) is a
+// fork source to keep: `DeleteCheckpoint` refuses it until it is unpinned,
+// and `PruneCheckpoints` deletes every checkpoint that is not pinned. Forks
+// keep running either way.
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// A named checkpoint of a local sandbox.
+message Checkpoint {
+  // The checkpoint's name (unique among checkpoints and sandboxes).
+  string name = 1;
+  // The sandbox it was taken from.
+  string source = 2;
+  // The engine that holds it ("firecracker", "gvisor", "qemu", ...).
+  string runtime_type = 3;
+  // Creation time.
+  google.protobuf.Timestamp created_at = 4;
+  // The image of the source sandbox.
+  string image = 5;
+  // Pinned: kept until unpinned (`DeleteCheckpoint` and
+  // `PruneCheckpoints` leave it).
+  bool pinned = 6;
+  // Forks map its RAM copy-on-write and share the pages they do not write
+  // (a QEMU memory checkpoint).
+  bool shared_memory = 7;
+  // Taken to fork a running sandbox many times: deleted with the last of
+  // its forks.
+  bool release_with_forks = 8;
+  // How many of its forks still exist (for `release_with_forks`).
+  uint32 forks = 9;
+  // The machine of yours that holds it (empty: this one).
+  string host = 10;
+}
+
+// Request for `SandboxService.CheckpointSandbox`.
+message CheckpointSandboxRequest {
+  // Sandbox ref ("local:<name>") or a name that is unique across locations.
+  string name = 1;
+  // The checkpoint's name.
+  string checkpoint = 2;
+  // Pin the new checkpoint (see `PinCheckpoint`).
+  bool pin = 3;
+}
+
+// Response for `SandboxService.CheckpointSandbox`.
+message CheckpointSandboxResponse {
+  // The checkpoint.
+  Checkpoint checkpoint = 1;
+}
+
+// Request for `SandboxService.ListCheckpoints`.
+message ListCheckpointsRequest {}
+
+// Response for `SandboxService.ListCheckpoints`.
+message ListCheckpointsResponse {
+  // Checkpoints, oldest first.
+  repeated Checkpoint checkpoints = 1;
+}
+
+// Request for `SandboxService.DeleteCheckpoint`.
+message DeleteCheckpointRequest {
+  // The checkpoint's name.
+  string name = 1;
+}
+
+// Response for `SandboxService.DeleteCheckpoint`.
+message DeleteCheckpointResponse {}
+
+// Request for `SandboxService.PinCheckpoint`.
+message PinCheckpointRequest {
+  // The checkpoint's name.
+  string name = 1;
+  // Pin (true) or unpin (false) it.
+  bool pinned = 2;
+}
+
+// Response for `SandboxService.PinCheckpoint`.
+message PinCheckpointResponse {
+  // The checkpoint, as it is now.
+  Checkpoint checkpoint = 1;
+}
+
+// Request for `SandboxService.PruneCheckpoints`.
+message PruneCheckpointsRequest {}
+
+// Response for `SandboxService.PruneCheckpoints`.
+message PruneCheckpointsResponse {
+  // The checkpoints deleted (every one that was not pinned and could be
+  // deleted).
+  repeated string deleted = 1;
+}
+
+// Request for `SandboxService.ForkSandbox`.
+message ForkSandboxRequest {
+  // A sandbox ref or name, or a checkpoint name (a sandbox wins).
+  string source = 1;
+  // The new sandbox's name.
+  string name = 2;
+  // User labels of the new sandbox.
+  map<string, string> labels = 3;
+}

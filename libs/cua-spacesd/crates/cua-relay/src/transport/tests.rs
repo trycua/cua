@@ -139,6 +139,22 @@ fn relay_destinations() {
 }
 
 async fn fake_proxy(response: Vec<u8>) -> (Uri, tokio::task::JoinHandle<()>) {
+    let (uri, task, _) = fake_proxy_signalled(response).await;
+    (uri, task)
+}
+
+/// Like [`fake_proxy`], plus a receiver that fires once the proxy has read the
+/// CONNECT head and written `response`: the point a cancellation test must
+/// wait for, instead of guessing with a wall-clock timeout how long the
+/// client's dial and write take on a slow runner.
+async fn fake_proxy_signalled(
+    response: Vec<u8>,
+) -> (
+    Uri,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Receiver<()>,
+) {
+    let (responded, responded_rx) = tokio::sync::oneshot::channel();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let uri = format!("http://{}/", listener.local_addr().unwrap())
         .parse()
@@ -154,6 +170,7 @@ async fn fake_proxy(response: Vec<u8>) -> (Uri, tokio::task::JoinHandle<()>) {
             "CONNECT relay.invalid:443 HTTP/1.1\r\nhost: relay.invalid:443\r\n\r\n"
         );
         socket.write_all(&response).await.unwrap();
+        let _ = responded.send(());
         let mut rest = Vec::new();
         let result = tokio::time::timeout(Duration::from_secs(2), socket.read_to_end(&mut rest))
             .await
@@ -162,7 +179,7 @@ async fn fake_proxy(response: Vec<u8>) -> (Uri, tokio::task::JoinHandle<()>) {
             result.is_ok() || result.unwrap_err().kind() == std::io::ErrorKind::ConnectionReset
         );
     });
-    (uri, task)
+    (uri, task, responded_rx)
 }
 
 #[tokio::test]
@@ -217,15 +234,24 @@ async fn refused_connect_and_bounded_headers_close_without_fallback_or_secrets()
     }
 }
 
+/// Drives `proxy_stream` until the proxy has answered, then drops it. The
+/// tunnel never completes (the response is partial or endless), so the
+/// attempt is always cancelled mid-flight with the proxy's bytes in play.
+async fn cancel_once_proxy_responded(proxy: &Uri, responded: tokio::sync::oneshot::Receiver<()>) {
+    let destination: Uri = "https://relay.invalid:443/".parse().unwrap();
+    tokio::select! {
+        biased;
+        _ = responded => {}
+        done = proxy_stream(proxy, &destination) => {
+            panic!("tunnel finished before cancellation: {:?}", done.map(|_| ()));
+        }
+    }
+}
+
 #[tokio::test]
 async fn cancellation_drops_partial_connect_and_driver() {
-    let (proxy, task) = fake_proxy(b"HTTP/1.1 200".to_vec()).await;
-    assert!(tokio::time::timeout(
-        Duration::from_millis(100),
-        proxy_stream(&proxy, &"https://relay.invalid:443/".parse().unwrap())
-    )
-    .await
-    .is_err());
+    let (proxy, task, responded) = fake_proxy_signalled(b"HTTP/1.1 200".to_vec()).await;
+    cancel_once_proxy_responded(&proxy, responded).await;
     task.await.unwrap();
 }
 
@@ -260,12 +286,8 @@ async fn proxy_authentication_required_is_distinct_and_redacted() {
 
 #[tokio::test]
 async fn repeated_informational_responses_remain_cancellable() {
-    let (proxy, task) = fake_proxy(b"HTTP/1.1 100 Continue\r\n\r\n".repeat(1024)).await;
-    assert!(tokio::time::timeout(
-        Duration::from_millis(100),
-        proxy_stream(&proxy, &"https://relay.invalid:443/".parse().unwrap())
-    )
-    .await
-    .is_err());
+    let (proxy, task, responded) =
+        fake_proxy_signalled(b"HTTP/1.1 100 Continue\r\n\r\n".repeat(1024)).await;
+    cancel_once_proxy_responded(&proxy, responded).await;
     task.await.unwrap();
 }

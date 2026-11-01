@@ -56,6 +56,18 @@ import {
   telemetryStorage,
 } from "./telemetry";
 import { hostFormInitial, hostFormReduce, hostFormView, type HostFormView } from "./this-machine";
+import type { AccountMenuInput, ProBannerInput } from "./contracts/spaces-page";
+import {
+  accountMenu,
+  bulkConfirm,
+  bulkDone,
+  bulkProgress,
+  chooseSettings,
+  proBanner,
+  spaceMenu,
+  tipsReduce,
+  tipsView,
+} from "./spaces-page";
 
 type Args = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -194,6 +206,24 @@ function bridgeMethods(core: CoreClient, record: (c: ParityCheckpoint) => void):
 
     // Usage events (telemetry.ts).
     ...telemetryMethods(core, (method, signals) => record({ kind: "telemetry", method, signals })),
+
+    // The new Spaces page's decisions (spaces-page.ts).
+    ...spacesPageMethods(core),
+  };
+}
+
+/** The new Spaces page's wrappers (spaces-page.ts), by core method. */
+function spacesPageMethods(core: CoreClient): Record<string, (a: Args) => unknown> {
+  return {
+    "spaces.menu": (a) => spaceMenu(core, a),
+    "spaces.bulkConfirm": (a) => bulkConfirm(core, a.items),
+    "spaces.bulkProgress": (a) => bulkProgress(core, a.items, a.finished ?? []),
+    "spaces.bulkDone": (a) => bulkDone(core, a.items, a.results),
+    "tips.view": (a) => tipsView(core, a.place, a.facts, a.state),
+    "tips.reduce": (a) => tipsReduce(core, a.state, a.event),
+    "settings.choose": (a) => chooseSettings(core, a.settings, a.row, a.option),
+    "upsell.proBanner": (a) => proBanner(core, a as ProBannerInput),
+    "account.menu": (a) => accountMenu(core, a as AccountMenuInput),
   };
 }
 

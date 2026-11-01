@@ -123,6 +123,10 @@ async fn capabilities_report_contract_and_limitations() {
             "a11y",
             "desktop_stream",
             "audio.uplink",
+            "process.exec_ledger",
+            "fs.run_as",
+            "fs.xattr",
+            "files.multipart",
         ] {
             assert!(names.contains(required), "missing feature {required}");
         }
@@ -508,6 +512,36 @@ async fn signals_stdin_and_sequenced_input() {
         assert!(end.exit_code.is_some() && end.error.is_empty(), "{end:?}");
     } else {
         assert_eq!(end.signal, Signal::Term as i32);
+        assert_eq!(end.signal_number, 15, "the raw number rides along");
+    }
+
+    // A signal the contract has no name for still reports its number.
+    #[cfg(unix)]
+    {
+        let mut stream = c
+            .process()
+            .start_process(StartProcessRequest {
+                config: Some(sh("kill -SEGV $$")),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        let mut end = None;
+        while let Some(m) = tokio::time::timeout(Duration::from_secs(10), stream.message())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            if let Some(Event::End(e)) = m.event.and_then(|e| e.event) {
+                end = Some(e);
+                break;
+            }
+        }
+        let end = end.expect("the process ends");
+        assert_eq!(end.signal, Signal::Unspecified as i32);
+        assert_eq!(end.signal_number, 11, "SIGSEGV: {end:?}");
+        assert_eq!(end.exit_code, None);
     }
 
     // Per-process timeout.
@@ -971,6 +1005,7 @@ async fn large_transfers_via_chunks_and_signed_urls() {
                         upload_id: upload_id.clone(),
                         offset: offset - chunk as u64,
                         data: dup,
+                        ..Default::default()
                     })
                     .await
                     .unwrap()
@@ -984,6 +1019,7 @@ async fn large_transfers_via_chunks_and_signed_urls() {
                     upload_id: upload_id.clone(),
                     offset: offset + 8,
                     data: vec![0; 8],
+                    ..Default::default()
                 })
                 .await
                 .unwrap_err();
@@ -996,6 +1032,7 @@ async fn large_transfers_via_chunks_and_signed_urls() {
                 upload_id: upload_id.clone(),
                 offset,
                 data: buf[..n].to_vec(),
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -1138,6 +1175,7 @@ async fn large_transfers_via_chunks_and_signed_urls() {
             upload_id: b.upload_id.clone(),
             offset: 0,
             data: b"data".to_vec(),
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -1155,6 +1193,7 @@ async fn large_transfers_via_chunks_and_signed_urls() {
         .stat(StatRequest {
             path: path_d,
             no_follow_symlinks: false,
+            ..Default::default()
         })
         .await
         .unwrap_err();
@@ -1167,6 +1206,7 @@ async fn large_transfers_via_chunks_and_signed_urls() {
                 path: p,
                 recursive: false,
                 missing_ok: true,
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -1185,6 +1225,7 @@ async fn directory_operations() {
             path: dir.clone(),
             parents: true,
             mode: 0,
+            ..Default::default()
         })
         .await
         .unwrap()
@@ -1195,7 +1236,8 @@ async fn directory_operations() {
             .make_dir(MakeDirRequest {
                 path: dir.clone(),
                 parents: true,
-                mode: 0
+                mode: 0,
+                ..Default::default()
             })
             .await
             .unwrap()
@@ -1267,6 +1309,7 @@ async fn directory_operations() {
             path: t.path("d"),
             recursive: false,
             missing_ok: false,
+            ..Default::default()
         })
         .await
         .unwrap_err();
@@ -1275,6 +1318,7 @@ async fn directory_operations() {
         path: t.path("d"),
         recursive: true,
         missing_ok: false,
+        ..Default::default()
     })
     .await
     .unwrap();
@@ -1282,6 +1326,7 @@ async fn directory_operations() {
         path: t.path("d"),
         recursive: true,
         missing_ok: true,
+        ..Default::default()
     })
     .await
     .unwrap();
@@ -1289,6 +1334,7 @@ async fn directory_operations() {
         .stat(StatRequest {
             path: t.path("d"),
             no_follow_symlinks: false,
+            ..Default::default()
         })
         .await
         .unwrap_err();
@@ -1306,6 +1352,7 @@ async fn fs_watch_stream_and_polling_api() {
             path: dir.clone(),
             parents: true,
             mode: 0,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -1315,6 +1362,7 @@ async fn fs_watch_stream_and_polling_api() {
             path: dir.clone(),
             recursive: true,
             keepalive_interval: None,
+            ..Default::default()
         })
         .await
         .unwrap()
@@ -1326,6 +1374,7 @@ async fn fs_watch_stream_and_polling_api() {
         .create_watcher(CreateWatcherRequest {
             path: dir.clone(),
             recursive: true,
+            ..Default::default()
         })
         .await
         .unwrap()
@@ -1577,6 +1626,7 @@ async fn tunnel_forward_reaches_a_guest_http_server() {
             path: root.clone(),
             parents: true,
             mode: 0,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -2186,14 +2236,34 @@ async fn phased_relay_kill_reattach() {
 // Users, disk-full, shutdown
 // ---------------------------------------------------------------------------
 
-/// When the driver runs as root, `ProcessConfig.user` switches users and a
-/// non-root driver refuses a different user.
+/// When the driver can switch users (it is root, or it holds
+/// `CAP_SETUID`/`CAP_SETGID`, as the Linux images run it), `ProcessConfig.user`
+/// switches users; a driver that can do neither refuses a different user.
 #[tokio::test]
 async fn process_user_switching() {
     let t = target().await;
     let c = t.client(TransportPreference::Native).await;
     let (_, uid) = run_sh(&c, "id -u").await;
     let root = String::from_utf8_lossy(&uid).trim() == "0";
+    let caps = c
+        .system()
+        .get_capabilities(GetCapabilitiesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    let mode = caps
+        .features
+        .iter()
+        .find(|f| f.name == "process.run_as")
+        .and_then(|f| f.attributes.get("mode").cloned())
+        .unwrap_or_default();
+    if root && !cfg!(windows) {
+        assert_eq!(
+            mode, "root",
+            "a root driver reports process.run_as mode root"
+        );
+    }
+    let can_switch = mode == "root" || mode == "capabilities";
     let started = c
         .process()
         .start_process(StartProcessRequest {
@@ -2213,9 +2283,9 @@ async fn process_user_switching() {
         assert_eq!(error.code(), Code::InvalidArgument);
         return;
     }
-    if !root {
+    if !can_switch {
         let Err(error) = started else {
-            panic!("non-root driver refuses to switch users");
+            panic!("a driver without root or CAP_SETUID/CAP_SETGID refuses to switch users (mode {mode:?})");
         };
         assert_eq!(error.code(), Code::PermissionDenied);
         return;
@@ -2291,6 +2361,7 @@ async fn disk_full_is_507_and_disk_full_reason() {
                 upload_id: begin.upload_id.clone(),
                 offset: i * 1024 * 1024,
                 data: vec![1u8; 1024 * 1024],
+                ..Default::default()
             })
             .await
         {
@@ -2359,4 +2430,148 @@ async fn shutdown_driver_exit_drains_and_stops() {
         }
     }
     assert!(stopped, "driver stopped serving after DRIVER_EXIT");
+}
+
+// ---------------------------------------------------------------------------
+// Exec ledger and fencing epoch
+// ---------------------------------------------------------------------------
+
+/// Drains a StartProcess stream: its start, combined output and end.
+async fn drain_start(
+    mut stream: tonic::Streaming<StartProcessResponse>,
+) -> (ProcessStart, Vec<u8>, ProcessEnd) {
+    let (mut start, mut out, mut end) = (None, Vec::new(), None);
+    while let Some(message) = stream.message().await.unwrap() {
+        match message.event.and_then(|e| e.event) {
+            Some(Event::Start(s)) => start = Some(s),
+            Some(Event::Data(ProcessData {
+                output: Some(Output::Stdout(b) | Output::Stderr(b)),
+                ..
+            })) => out.extend(b),
+            Some(Event::End(e)) => end = Some(e),
+            _ => {}
+        }
+    }
+    (start.unwrap(), out, end.unwrap())
+}
+
+#[tokio::test]
+async fn exec_ledger_runs_a_request_once_and_fences_older_epochs() {
+    let t = target().await;
+    let c = t.client(TransportPreference::GrpcWeb).await;
+    if !c.has_feature("process.exec_ledger").await.unwrap() {
+        eprintln!("skipped: target lacks process.exec_ledger");
+        t.cleanup().await;
+        return;
+    }
+    let key = unique("ledger");
+    let runs = t.path(&format!("{key}.runs"));
+    let request = |epoch: u64| StartProcessRequest {
+        config: Some(sh(&format!("echo run >> '{runs}'; printf out; exit 4"))),
+        request_id: key.clone(),
+        epoch,
+        ..Default::default()
+    };
+    let current = c
+        .process()
+        .get_exec_record(GetExecRecordRequest {
+            request_id: key.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(current.record.is_none(), "an unknown key has no record");
+    let epoch = current.epoch + 1;
+
+    let first = c.process().start_process(request(epoch)).await.unwrap();
+    let (start, out, end) = drain_start(first.into_inner()).await;
+    assert!(!start.deduplicated);
+    assert_eq!(start.request_id, key);
+    assert_eq!((out.as_slice(), end.exit_code), (&b"out"[..], Some(4)));
+
+    // The retry replays the outcome and does not run the command again.
+    let again = c.process().start_process(request(epoch)).await.unwrap();
+    let (start, out, end) = drain_start(again.into_inner()).await;
+    assert!(start.deduplicated);
+    assert_eq!((out.as_slice(), end.exit_code), (&b"out"[..], Some(4)));
+    let (_, count) = run_sh(&c, &format!("wc -l < '{runs}'")).await;
+    assert_eq!(String::from_utf8_lossy(&count).trim(), "1");
+
+    let record = c
+        .process()
+        .get_exec_record(GetExecRecordRequest {
+            request_id: key.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .record
+        .unwrap();
+    assert_eq!(record.state, ExecState::Exited as i32);
+    assert_eq!(record.output_bytes, 3);
+    assert_eq!(
+        record.output_sha256,
+        hex::encode(sha2::Sha256::digest(b"out"))
+    );
+
+    // Advancing the epoch fences requests that carry the older one.
+    let advanced = c
+        .process()
+        .advance_epoch(AdvanceEpochRequest { epoch: epoch + 1 })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(advanced.epoch, epoch + 1);
+    let stale = c
+        .process()
+        .start_process(StartProcessRequest {
+            request_id: unique("stale"),
+            ..request(epoch)
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(stale.code(), Code::FailedPrecondition);
+    assert_eq!(reason(&stale), ErrorReason::StaleEpoch as i32);
+    t.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_slow_reader_receives_every_small_chunk() {
+    // Thousands of tiny writes read one event at a time, slower than they
+    // arrive: the client must take them off the connection as they come
+    // (h2 answers a buffer of many small unread DATA frames with GOAWAY).
+    let t = target().await;
+    for transport in TRANSPORTS {
+        let c = t.client(transport).await;
+        let mut process = c
+            .spawn(
+                cua_spacesd_client::Command::new(SH)
+                    .arg("-c")
+                    .arg("i=0; while [ $i -lt 3000 ]; do echo line-$i; i=$((i+1)); done"),
+            )
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        let mut events = 0;
+        loop {
+            match process.next_event().await.unwrap() {
+                Some(cua_spacesd_client::ProcessEvent::Stdout { data, .. }) => {
+                    out.extend_from_slice(&data);
+                    events += 1;
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                Some(cua_spacesd_client::ProcessEvent::Exit(status)) => {
+                    assert_eq!(status.code, Some(0));
+                    break;
+                }
+                Some(_) => {}
+                None => panic!("stream ended without an exit"),
+            }
+        }
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text.lines().count(), 3000, "{transport:?}");
+        assert!(text.ends_with("line-2999\n"));
+        assert!(events < 3000, "chunks were merged ({events} events)");
+    }
+    t.cleanup().await;
 }

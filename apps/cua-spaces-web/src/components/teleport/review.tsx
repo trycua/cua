@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 
 import type { ReviewView, TeleportSession, TeleportStore } from "@/bridge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { GroupedSection, SectionHeading } from "@/components/ui/grouped";
 import { cn } from "@/lib/utils";
 import { SavedItems } from "./saved-items";
 
@@ -50,9 +51,9 @@ export function TeleportReview({
 
       {!fromVault && r.toggles.length ? (
         <Group title="Also sent">
-          <ul className="divide-y">
+          <>
             {r.toggles.map((t) => (
-              <li key={t.key} data-review-item={t.key} data-kind={t.sensitive ? "secret" : "state"} data-sent={t.selected || undefined}>
+              <div key={t.key} data-review-item={t.key} data-kind={t.sensitive ? "secret" : "state"} data-sent={t.selected || undefined}>
                 <label className="flex cursor-default items-start gap-3 px-4 py-2.5">
                   <Checkbox
                     className="mt-0.5"
@@ -68,9 +69,9 @@ export function TeleportReview({
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">{t.sensitive ? "Secret" : t.bytes > 0 ? teleport.bytes(t.bytes) : null}</span>
                 </label>
-              </li>
+              </div>
             ))}
-          </ul>
+          </>
         </Group>
       ) : null}
 
@@ -102,33 +103,33 @@ export function TeleportReview({
 
       {r.steps.length ? (
         <Group title="What happens">
-          <ul className="divide-y">
+          <>
             {r.steps.map((s, i) => (
-              <li key={i} className="px-4 py-2.5 text-[13px]" data-review-step={s.kind}>
+              <div key={i} className="px-4 py-2.5 text-[13px]" data-review-step={s.kind}>
                 {s.summary}
-              </li>
+              </div>
             ))}
-          </ul>
+          </>
         </Group>
       ) : null}
 
       {installs.length || r.warnings.length ? (
         <Group>
-          <ul className="divide-y">
+          <>
             {installs.map((i) => (
-              <li key={i.key} className="flex items-baseline justify-between gap-4 px-4 py-2.5" data-review-item={i.key} data-kind="install">
+              <div key={i.key} className="flex items-baseline justify-between gap-4 px-4 py-2.5" data-review-item={i.key} data-kind="install">
                 <span className="text-[13px]" data-review-label>
                   {i.label}
                 </span>
                 <span className="text-xs text-muted-foreground">{i.detail}</span>
-              </li>
+              </div>
             ))}
             {r.warnings.map((w) => (
-              <li key={w} className="px-4 py-2.5 text-xs text-muted-foreground" data-review-warning>
+              <div key={w} className="px-4 py-2.5 text-xs text-muted-foreground" data-review-warning>
                 {w}
-              </li>
+              </div>
             ))}
-          </ul>
+          </>
         </Group>
       ) : null}
 
@@ -168,12 +169,12 @@ function Source({ review: r, teleport }: { review: ReviewView; teleport: Telepor
   ] as const;
   return (
     <Group>
-      <RadioGroup value={r.source} onValueChange={(v) => void teleport.sendFrom(v as "live" | "vault")} className="divide-y" aria-label="Send from" data-review-source>
+      <RadioGroup value={r.source} onValueChange={(v) => void teleport.sendFrom(v as "live" | "vault")} aria-label="Send from" data-review-source>
         {options.map((o) => (
           <label key={o.value} className="flex cursor-default items-center gap-3 px-4 py-2.5 text-[13px]" data-source={o.value}>
             <Radio.Root
               value={o.value}
-              className="flex size-4 shrink-0 items-center justify-center rounded-full border border-input bg-card shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-checked:border-brand data-checked:bg-brand dark:bg-input/30"
+              className="flex size-4 shrink-0 items-center justify-center rounded-full border border-input bg-card shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-checked:border-brand data-checked:bg-brand dark:bg-input/30" // design-ok: radio control ring, not a content box
             >
               <Radio.Indicator className="size-1.5 rounded-full bg-white" />
             </Radio.Root>
@@ -182,7 +183,7 @@ function Source({ review: r, teleport }: { review: ReviewView; teleport: Telepor
         ))}
       </RadioGroup>
       {r.sourceNote ? (
-        <p className="border-t px-4 py-2 text-xs text-muted-foreground" data-review-source-note>
+        <p className="px-4 py-2 text-xs text-muted-foreground" data-review-source-note>
           {r.sourceNote}
         </p>
       ) : null}
@@ -200,18 +201,22 @@ function Reading() {
 
 function Group({ title, aside, children }: { title?: string; aside?: ReactNode; children: ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-lg border bg-card">
+    <section>
       {title ? (
-        <header className="flex items-center justify-between border-b px-4 py-2 text-xs">
-          <h3 className="font-medium text-muted-foreground">{title}</h3>
-          {aside ? (
-            <span className="text-muted-foreground tabular-nums" data-review-sites-summary>
-              {aside}
-            </span>
-          ) : null}
-        </header>
+        <SectionHeading
+          className="mt-0"
+          action={
+            aside ? (
+              <span className="text-muted-foreground tabular-nums" data-review-sites-summary>
+                {aside}
+              </span>
+            ) : null
+          }
+        >
+          {title}
+        </SectionHeading>
       ) : null}
-      {children}
+      <GroupedSection>{children}</GroupedSection>
     </section>
   );
 }
@@ -234,8 +239,8 @@ function Gate({ data, checked, onChange, note, children }: { data: string; check
 function Passwords({ review: r, teleport }: { review: ReviewView; teleport: TeleportStore }) {
   const rows = r.passwords ?? [];
   return (
-    <div className="border-t">
-      <div className="flex items-center gap-2 border-b px-4 py-1.5">
+    <>
+      <div className="flex items-center gap-2 px-4 py-1.5">
         <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <input
           aria-label="Search saved passwords"
@@ -252,9 +257,9 @@ function Passwords({ review: r, teleport }: { review: ReviewView; teleport: Tele
         </button>
       </div>
       {rows.length ? (
-        <ul className="max-h-52 divide-y overflow-y-auto">
+        <div className="max-h-52 overflow-y-auto">
           {rows.map((p) => (
-            <li key={p.key} data-review-password={p.key} data-selected={p.selected || undefined}>
+            <div key={p.key} data-review-password={p.key} data-selected={p.selected || undefined}>
               <label className="flex cursor-default items-center gap-2.5 px-4 py-2">
                 <Checkbox
                   aria-label={`Send ${[p.site, p.username].filter(Boolean).join(" ")}`}
@@ -267,13 +272,13 @@ function Passwords({ review: r, teleport }: { review: ReviewView; teleport: Tele
                 <span className="flex-1" />
                 {p.counts ? <span className="shrink-0 text-xs text-muted-foreground">{p.counts}</span> : null}
               </label>
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
       ) : (
         <p className="px-4 py-3 text-[13px] text-muted-foreground">No saved passwords match.</p>
       )}
-    </div>
+    </>
   );
 }
 
@@ -291,7 +296,7 @@ function Sites({ review: r, reading, teleport }: { review: ReviewView; reading: 
   }
   return (
     <>
-      <div className="flex items-center gap-2 border-b px-4 py-1.5">
+      <div className="flex items-center gap-2 px-4 py-1.5">
         <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <input
           aria-label="Search sites"
@@ -307,9 +312,9 @@ function Sites({ review: r, reading, teleport }: { review: ReviewView; reading: 
           None
         </button>
       </div>
-      <ul className="max-h-52 divide-y overflow-y-auto">
+      <div className="max-h-52 overflow-y-auto">
         {r.domains.map((d) => (
-          <li key={d.domain} data-review-site={d.domain} data-selected={d.selected || undefined} className={cn(!d.selectable && "opacity-55")}>
+          <div key={d.domain} data-review-site={d.domain} data-selected={d.selected || undefined} className={cn(!d.selectable && "opacity-55")}>
             <label className="flex cursor-default items-center gap-2.5 px-4 py-2">
               <Checkbox
                 aria-label={`Send ${d.domain}`}
@@ -330,9 +335,9 @@ function Sites({ review: r, reading, teleport }: { review: ReviewView; reading: 
               ) : null}
             </label>
             {d.unavailable > 0 ? <p className="-mt-1 pr-4 pb-2 pl-[66px] text-xs text-muted-foreground/70">{d.unavailableNote}</p> : null}
-          </li>
+          </div>
         ))}
-      </ul>
+      </div>
     </>
   );
 }

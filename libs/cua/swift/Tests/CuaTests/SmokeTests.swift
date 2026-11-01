@@ -108,6 +108,17 @@ struct Fixtures {
         let env = try await sb.spacesd(probeTimeoutMs: 5000)
         let caps = try await env.capabilities()
         #expect(!caps.version.isEmpty)
+        // How the guest agent runs commands and file operations as another
+        // user: itself, with no sudo ("root" or "capabilities"), through sudo
+        // (older images) or not at all ("none").
+        let runAs = try #require(caps.features.first { $0.name == "process.run_as" })
+        #expect(runAs.supported)
+        #expect(runAs.attributes["mode"] == "capabilities")
+        var asAlice = SpacesdCommand("echo", ["as alice"])
+        asAlice.user = "alice"
+        let aliceOut = try await env.run(command: asAlice)
+        #expect(aliceOut.exit.success)
+        #expect(String(decoding: aliceOut.stdout, as: UTF8.self) == "as alice\n")
         let out = try await env.run(command: SpacesdCommand("echo", ["hi"]))
         #expect(out.exit.success)
         #expect(String(decoding: out.stdout, as: UTF8.self) == "hi\n")
@@ -115,6 +126,46 @@ struct Fixtures {
         let blob = Data((0..<100_000).map { UInt8($0 % 251) })
         _ = try await env.upload(path: "/tmp/swift/blob", data: blob, options: nil)
         #expect(try await env.download(path: "/tmp/swift/blob") == blob)
+
+        // Acting as another guest user, and extended-attribute metadata (the
+        // fixture guest knows alice and bob, and refuses `locked`).
+        _ = try await env.upload(
+            path: "/tmp/swift/as.bin", data: Data("as alice".utf8),
+            options: UploadOptions(
+                createNew: false, append: false, permissions: 0, createParents: true,
+                user: "alice", metadata: ["origin": "swift"], xattrNamespace: "user.e2b."))
+        let st = try await env.stat(path: "/tmp/swift/as.bin", user: "alice", xattrNamespace: "user.e2b.")
+        #expect(st.owner == "alice")
+        #expect(st.metadata == ["origin": "swift"])
+        #expect(try await env.stat(path: "/tmp/swift/as.bin").metadata.isEmpty)
+        let rows = try await env.listDir(path: "/tmp/swift", depth: 1, user: "alice", xattrNamespace: "user.e2b.")
+        #expect(rows.first { $0.name == "as.bin" }?.metadata["origin"] == "swift")
+        #expect(try await env.download(path: "/tmp/swift/as.bin", user: "alice") == Data("as alice".utf8))
+        let moved = try await env.movePath(
+            source: "/tmp/swift/as.bin", destination: "/tmp/swift/as2.bin",
+            overwrite: false, createParents: true, user: "alice")
+        #expect(moved.path == "/tmp/swift/as2.bin")
+        try await env.remove(path: "/tmp/swift/as2.bin", recursive: false, user: "alice")
+        #expect(try await env.makeDir(path: "/tmp/swift/dir", user: "bob").owner == "bob")
+        #expect(try await env.callJson(
+            method: "FilesystemService/Stat", requestJson: #"{"path":"/tmp/swift/blob"}"#, user: "bob"
+        ).contains("\"entry\""))
+        do {
+            _ = try await env.stat(path: "/tmp/swift/blob", user: "no-such")
+            Issue.record("expected an Env error naming the user")
+        } catch CuaError.Env(let message) {
+            #expect(message.contains("no-such"))
+        }
+        do {
+            _ = try await env.stat(path: "/tmp/swift/blob", user: "locked")
+            Issue.record("expected PermissionDenied")
+        } catch CuaError.PermissionDenied {
+        }
+        do {
+            _ = try await env.callJson(method: "SystemService/Health", requestJson: "{}", user: "alice")
+            Issue.record("expected InvalidArgument")
+        } catch CuaError.InvalidArgument {
+        }
 
         do {
             _ = try await env.download(path: "/nope")
@@ -141,6 +192,12 @@ struct Fixtures {
         #expect(audio.first?.frameSamples == 960)
         #expect(events.prefix(2).map(\.kind) == ["hello", "session_opened"])
         try await session.close()
+        // A machine cua only connects to has no shape of its own to change.
+        do {
+            try await sb.resize(cpus: 2, memoryMb: 2048, diskGb: nil)
+            Issue.record("expected Unsupported")
+        } catch CuaError.Unsupported {
+        }
         try await sb.delete()
     }
 }

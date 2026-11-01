@@ -118,6 +118,7 @@ The canonical GUI runners execute the complete Rust harness catalog:
 ```text
 Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
 Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Linux niri:        CUA_E2E_WAYLAND_SESSION=niri scripts/ci/linux/run-rust-e2e-wayland.sh
 Linux nested:      scripts/ci/linux/run-rust-e2e-inject.sh
 Linux GNOME/KDE:   scripts/ci/linux/run-rust-e2e-desktop.sh <gnome|kde>
 Linux real Xorg:   scripts/ci/linux/run-rust-e2e-desktop.sh xorg

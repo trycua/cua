@@ -4,7 +4,7 @@
 /**
  * What this Mac can run: Spaces the cua SDK runs locally (containers under
  * gVisor or runc, QEMU or Lume VMs). Backs the New Space wizard's "This Mac"
- * choice. Creating goes through `FleetBridge.createSpace({ on: "local" })`.
+ * choice. Creating goes through `SpacesBridge.createSpace({ on: "local" })`.
  * Off Tauri (browser dev / tests) `available` is simply false.
  */
 

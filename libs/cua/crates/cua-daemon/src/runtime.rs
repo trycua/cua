@@ -47,6 +47,33 @@ impl std::fmt::Debug for RuntimeConfig {
     }
 }
 
+/// A pool ([`Runtime::create_pool`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoolInfo {
+    /// Name.
+    pub name: String,
+    /// Image as given.
+    pub image: String,
+    /// Where its sandboxes run (`local`).
+    pub location: String,
+    /// Kind and runtime as given (empty: auto).
+    pub kind: String,
+    pub runtime: String,
+    /// Each sandbox's CPUs and memory (MiB).
+    pub cpus: u32,
+    pub memory_mb: u64,
+    /// Sandboxes kept ready at all times, and at most.
+    pub min: u32,
+    pub max: u32,
+    /// After this long without a create it keeps none ready.
+    pub idle: Option<Duration>,
+    /// Ready now, and starting.
+    pub ready: u32,
+    pub starting: u32,
+    /// Why it holds what it holds, or why it cannot.
+    pub status: String,
+}
+
 /// A sandbox creation request (union of the providers' options).
 #[derive(Clone, Debug, Default)]
 pub struct CreateRequest {
@@ -69,6 +96,9 @@ pub struct CreateRequest {
     pub url: Option<String>,
     /// spacesd token.
     pub token: Option<String>,
+    /// A local pool (`create_pool`): the sandbox takes its image and shape
+    /// and one of its ready sandboxes.
+    pub pool: Option<String>,
     /// Guest OS.
     pub os: Option<String>,
     /// vCPUs.
@@ -108,6 +138,19 @@ pub struct CreateRequest {
     /// A GPU option of the runtime (`cua_sandbox_core::gpu`); `None`: no
     /// GPU.
     pub gpu: Option<String>,
+    /// No desktop: only cua-spacesd runs in the guest
+    /// (`CreateSandboxRequest.headless`).
+    pub headless: bool,
+    /// Whether an image without cua-spacesd gets a static one injected
+    /// (`CreateSandboxRequest.spacesd`); `None`: yes where the kind can.
+    pub spacesd: Option<bool>,
+    /// A size profile (`cua_sandbox_core::profile`): defaults for what is
+    /// unset. `None`: the default sizes.
+    pub profile: Option<String>,
+    /// A fork source (a "bake" sandbox): a local QEMU VM's guest RAM is a
+    /// shared file, so its checkpoints take milliseconds and forks of them
+    /// share its pages. Other kinds ignore it.
+    pub forkable: bool,
 }
 
 /// What callers see of a sandbox, identical in both topologies.
@@ -286,6 +329,9 @@ struct Inner {
     shares: crate::shares::Shares,
     /// This runtime is the daemon's: it hosts local public URLs itself.
     share_host: std::sync::atomic::AtomicBool,
+    /// `cua share` records and gateway, once the daemon serves.
+    #[cfg(feature = "spaces")]
+    share_hub: std::sync::OnceLock<Arc<crate::share_hub::ShareHub>>,
     #[cfg(feature = "spaces")]
     spaces: cua_spaces::Spaces,
     /// The attached extensions (the Keyvault broker, when the Cua Spaces
@@ -295,6 +341,13 @@ struct Inner {
     /// The names of this runtime's extensions ([`crate::extension`]).
     #[cfg(feature = "spaces")]
     extension_names: Vec<String>,
+    /// The features the extensions add (`DaemonExtension::features`).
+    #[cfg(feature = "spaces")]
+    extension_features: Vec<String>,
+    /// The daemon's host half (provided Spaces and this machine's job
+    /// runner), once `cua daemon` serves.
+    #[cfg(feature = "spaces")]
+    host_spaces: std::sync::OnceLock<Arc<cua_spaces::host_spaces::HostSpacesServer>>,
 }
 
 /// The SDK runtime. Cheap to clone.
@@ -343,7 +396,7 @@ impl Runtime {
         }
         let sandboxes = builder.build();
         #[cfg(feature = "spaces")]
-        let (spaces, attached, extension_names) = {
+        let (spaces, attached, extension_names, extension_features) = {
             let mut b = cua_spaces::Spaces::builder().sandboxes(sandboxes.clone());
             if let Some(h) = &config.spaces_home {
                 b = b.home(h.clone());
@@ -369,7 +422,8 @@ impl Runtime {
                 .filter_map(|e| e.attach(&spaces, &cx))
                 .collect();
             let names = extensions.iter().map(|e| e.name().to_string()).collect();
-            (spaces, attached, names)
+            let features = extensions.iter().flat_map(|e| e.features()).collect();
+            (spaces, attached, names, features)
         };
         Ok(Self {
             inner: Arc::new(Inner {
@@ -379,6 +433,10 @@ impl Runtime {
                 attached,
                 #[cfg(feature = "spaces")]
                 extension_names,
+                #[cfg(feature = "spaces")]
+                extension_features,
+                #[cfg(feature = "spaces")]
+                host_spaces: std::sync::OnceLock::new(),
                 sandboxes,
                 vmm: config.vmm,
                 env_probe_timeout: config.env_probe_timeout.unwrap_or(Duration::from_secs(15)),
@@ -387,8 +445,27 @@ impl Runtime {
                 forwards: Mutex::new(HashMap::new()),
                 shares: Default::default(),
                 share_host: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(feature = "spaces")]
+                share_hub: std::sync::OnceLock::new(),
             }),
         })
+    }
+
+    /// The `cua share` hub, once the daemon started it.
+    #[cfg(feature = "spaces")]
+    pub fn share_hub(&self) -> Option<&Arc<crate::share_hub::ShareHub>> {
+        self.inner.share_hub.get()
+    }
+
+    /// Opens the share records under `home` and starts the share gateway
+    /// (the daemon calls this once).
+    #[cfg(feature = "spaces")]
+    pub async fn start_shares(&self, home: &std::path::Path) -> Result<()> {
+        let hub = crate::share_hub::ShareHub::open(home)?;
+        if self.inner.share_hub.set(hub.clone()).is_err() {
+            return Ok(());
+        }
+        hub.start(self).await
     }
 
     /// Marks this runtime as the daemon's: local public URLs are served by
@@ -417,10 +494,28 @@ impl Runtime {
         &self.inner.spaces
     }
 
+    /// The daemon's host half: this machine's job runner and the Spaces it
+    /// provides (`None` in a runtime no daemon serves).
+    #[cfg(feature = "spaces")]
+    pub fn host_spaces(&self) -> Option<Arc<cua_spaces::host_spaces::HostSpacesServer>> {
+        self.inner.host_spaces.get().cloned()
+    }
+
+    #[cfg(all(feature = "spaces", feature = "server"))]
+    pub(crate) fn set_host_spaces(&self, h: Arc<cua_spaces::host_spaces::HostSpacesServer>) {
+        let _ = self.inner.host_spaces.set(h);
+    }
+
     /// The names of this runtime's extensions ([`crate::extension`]).
     #[cfg(feature = "spaces")]
     pub fn extension_names(&self) -> &[String] {
         &self.inner.extension_names
+    }
+
+    /// The features the extensions add to `GetInfoResponse.features`.
+    #[cfg(feature = "spaces")]
+    pub fn extension_features(&self) -> &[String] {
+        &self.inner.extension_features
     }
 
     /// The attached extensions ([`crate::extension`]).
@@ -480,6 +575,17 @@ impl Runtime {
             Some(l) => Some(On::parse(l)?),
             None => legacy,
         };
+        // A local pool by name: the create runs its shape, kind and runtime
+        // included (so it resolves exactly like the pool's sandboxes and
+        // claims one of them).
+        if on.as_ref().is_none_or(|o| *o == On::Local)
+            && let Some(name) = req.pool.clone().filter(|p| !p.is_empty())
+            && let Ok(vmm) = self.vmm()
+            && let Some(pool) = vmm.pool()
+            && let Some(np) = pool.named(&name)
+        {
+            req = crate::pool::named::merge_into(req, &np)?;
+        }
         let kind = non_empty(&req.kind).map(|k| Kind::parse(&k)).transpose()?;
         let runtime = non_empty(&req.runtime)
             .map(|r| Runtime::parse(&r))
@@ -530,6 +636,12 @@ impl Runtime {
                 }
                 ProviderKind::Contrib
             }
+            On::Auto => {
+                return Err(Error::Unsupported(
+                    "auto places a Space on the least-loaded of your machines; create it with                      create_space (on=\"auto\") or `cua spaces create --on auto`"
+                        .into(),
+                ));
+            }
         };
         if provider == ProviderKind::Direct {
             cua_sandbox_core::placement::validate(&resolved.on, resolved.kind, &resolved.runtime)?;
@@ -547,49 +659,20 @@ impl Runtime {
         if req.image.is_empty() {
             return Err(Error::InvalidArgument("image is required".into()));
         }
-        let mut o = CreateOptions::new(provider, req.image.clone());
-        o.name = req.name.clone().filter(|n| !n.is_empty());
-        if let Some(os) = req.os.filter(|s| !s.is_empty()) {
-            o.os = os;
-        }
-        if let Some(c) = req.cpus.filter(|c| *c > 0) {
-            o.cpus = c;
-        }
-        if let Some(m) = req.memory_mb.filter(|m| *m > 0) {
-            o.memory_mb = m;
-        }
-        o.ports = req.ports;
-        o.services = req.services;
-        o.wait_for = req.wait_for;
-        if let Some(t) = req.ready_timeout {
-            o.ready_timeout = t;
-            o.ready_timeout_given = true;
-        }
-        o.env = req.env;
-        o.command = req.command.filter(|c| !c.is_empty());
-        o.env_token = req.token;
-        o.sidecars = req.sidecars;
-        o.registry_credentials = req.registry_credentials;
-        o.build = req.build.filter(|b| !b.is_empty());
-        o.container_runtime = req.container_runtime.filter(|r| !r.is_empty());
-        if let Some(n) = req.network.as_deref() {
-            o.network = cua_sandbox_core::NetworkMode::parse(n)?;
-        }
-        o.owner_pid = req.owner_pid.filter(|p| *p > 0);
-        o.keep_on_failure = req.keep_on_failure;
-        o.gpu = req.gpu.filter(|g| !g.trim().is_empty());
-        o.kind = resolved.kind;
-        o.runtime = resolved.runtime;
+        let image_given = req.image.clone();
+        let labels = req.labels.clone();
+        let location = req.location.clone();
+        let mut o = options_from(req, provider, resolved.kind, resolved.runtime.clone())?;
         if provider == ProviderKind::Contrib {
-            o.contrib = req.location.filter(|c| !c.is_empty());
+            o.contrib = location.filter(|c| !c.is_empty());
         }
         // Cancellable by name ([`Runtime::cancel_create`]), and cleaned up
         // when the caller goes away mid-create.
         let sandbox = Box::pin(self.inner.sandboxes.create_tracked(o)).await?;
         let key = sandbox.id();
-        let image = (!req.image.is_empty()).then_some(req.image);
+        let image = (!image_given.is_empty()).then_some(image_given);
         let incarnation = self.incarnation(&key);
-        self.insert(key.clone(), sandbox, image, req.labels, incarnation);
+        self.insert(key.clone(), sandbox, image, labels, incarnation);
         // A same-name sandbox created again is not the one an earlier
         // connection was made for.
         self.inner.envs.lock().await.remove(&key);
@@ -694,6 +777,10 @@ impl Runtime {
     async fn evict(&self, key: &str) {
         self.forget(key).await;
         self.inner.shares.revoke_sandbox(key);
+        #[cfg(feature = "spaces")]
+        if let Some(hub) = self.inner.share_hub.get() {
+            hub.stop_space(self, key);
+        }
     }
 
     /// Resolves any accepted spelling of a sandbox (a qualified ref, a
@@ -747,7 +834,7 @@ impl Runtime {
     /// A held sandbox that was deleted, or deleted and created again under
     /// the same name, is dropped on the way ([`Self::evict_if_stale`]), so
     /// no operation goes through a stale handle or env connection.
-    async fn key(&self, input: &str) -> Result<String> {
+    pub(crate) async fn key(&self, input: &str) -> Result<String> {
         let held = self.inner.handles.lock().unwrap().contains_key(input);
         if held && !self.evict_if_stale(input).await {
             return Ok(input.to_string());
@@ -976,6 +1063,27 @@ impl Runtime {
     /// machine).
     pub async fn delete(&self, name: &str) -> Result<()> {
         let key = self.key(name).await?;
+        let ended = self.delete_sandbox(&key).await;
+        if ended.is_ok() {
+            self.forget_space(&key).await;
+        }
+        ended
+    }
+
+    /// Drops the Space record of a local sandbox that is gone, so
+    /// `list_spaces` does not keep a stale `local:<name>` (a fork batch's
+    /// forks, deleted through the sandboxes API, left theirs behind).
+    async fn forget_space(&self, key: &str) {
+        #[cfg(feature = "spaces")]
+        if key.starts_with("local:") {
+            let _ = self.inner.spaces.remove(key).await;
+        }
+        #[cfg(not(feature = "spaces"))]
+        let _ = key;
+    }
+
+    async fn delete_sandbox(&self, key: &str) -> Result<()> {
+        let key = key.to_string();
         let sandbox = match self.handle(&key).await {
             Ok(s) => s,
             // A local record whose VM or container is gone, or a local
@@ -1008,6 +1116,321 @@ impl Runtime {
         Ok(())
     }
 
+    /// Saves a local sandbox's state as checkpoint `checkpoint`.
+    pub async fn checkpoint(
+        &self,
+        name: &str,
+        checkpoint: &str,
+    ) -> Result<cua_sandbox_core::CheckpointRecord> {
+        self.checkpoint_with(name, checkpoint, false).await
+    }
+
+    /// [`Runtime::checkpoint`], pinning the new checkpoint when `pin`.
+    pub async fn checkpoint_with(
+        &self,
+        name: &str,
+        checkpoint: &str,
+        pin: bool,
+    ) -> Result<cua_sandbox_core::CheckpointRecord> {
+        let key = self.key(name).await?;
+        if !key.starts_with("local:") {
+            return Err(Error::Unsupported(format!(
+                "checkpoints are for local sandboxes ({key} is not one)"
+            )));
+        }
+        Ok(self
+            .inner
+            .sandboxes
+            .checkpoint_with(&Self::state_name(&key), checkpoint, pin)
+            .await?)
+    }
+
+    /// Creates and starts `new_name` from a local sandbox or a checkpoint.
+    pub async fn fork(
+        &self,
+        source: &str,
+        new_name: &str,
+        labels: BTreeMap<String, String>,
+    ) -> Result<SandboxRecord> {
+        // A sandbox ref or name wins; anything else names a checkpoint.
+        let from = match self.key(source).await {
+            Ok(key) if key.starts_with("local:") => Self::state_name(&key),
+            Ok(key) => {
+                return Err(Error::Unsupported(format!(
+                    "forks are of local sandboxes ({key} is not one)"
+                )));
+            }
+            Err(_) => source.to_string(),
+        };
+        let sandbox = self.inner.sandboxes.fork(&from, new_name).await?;
+        let key = sandbox.id();
+        let incarnation = self.incarnation(&key);
+        self.insert(key.clone(), sandbox, None, labels, incarnation);
+        // A same-name sandbox forked again is not the one an earlier
+        // connection was made for.
+        self.inner.envs.lock().await.remove(&key);
+        self.record(&key).await
+    }
+
+    /// Every checkpoint.
+    pub fn checkpoints(&self) -> Vec<cua_sandbox_core::CheckpointRecord> {
+        self.inner.sandboxes.checkpoints()
+    }
+
+    /// Saves `name`'s state as checkpoint `checkpoint` where it runs: a
+    /// local sandbox here ([`Runtime::checkpoint_with`]); a Space a machine
+    /// of yours provides (by its name or id) on that machine, which keeps
+    /// the checkpoint (`Checkpoint.host` names it).
+    pub async fn checkpoint_anywhere(
+        &self,
+        name: &str,
+        checkpoint: &str,
+        pin: bool,
+    ) -> Result<cua_proto::daemon::v1::Checkpoint> {
+        #[cfg(feature = "spaces")]
+        if self.is_space_elsewhere(name).await {
+            use cua_spaces::pool_checkpoints::SpaceCheckpoint;
+            return Ok(
+                match self
+                    .spaces()
+                    .checkpoint_space(name, checkpoint, pin)
+                    .await?
+                {
+                    SpaceCheckpoint::Local(rec) => crate::convert::checkpoint_to_pb(&rec),
+                    SpaceCheckpoint::Remote { host, snapshot } => {
+                        crate::convert::host_snapshot_to_pb(&snapshot, &host)
+                    }
+                },
+            );
+        }
+        Ok(crate::convert::checkpoint_to_pb(
+            &self.checkpoint_with(name, checkpoint, pin).await?,
+        ))
+    }
+
+    /// Whether `name` is not a local sandbox but a Space the registry knows
+    /// that runs elsewhere (a machine of yours, your cloud).
+    #[cfg(feature = "spaces")]
+    async fn is_space_elsewhere(&self, name: &str) -> bool {
+        if self.key(name).await.is_ok_and(|k| k.starts_with("local:")) {
+            return false;
+        }
+        matches!(
+            self.spaces().resolve(name),
+            Ok(id) if !matches!(id, cua_spaces::SpaceId::Local { .. })
+        )
+    }
+
+    /// Every checkpoint: this machine's (oldest first), then those your
+    /// machines that provide Spaces hold, each name once
+    /// (`Checkpoint.host`).
+    pub async fn checkpoints_everywhere(&self) -> Vec<cua_proto::daemon::v1::Checkpoint> {
+        #[allow(unused_mut)]
+        let mut out: Vec<_> = self
+            .checkpoints()
+            .iter()
+            .map(crate::convert::checkpoint_to_pb)
+            .collect();
+        #[cfg(feature = "spaces")]
+        match self.spaces().pool_checkpoints().await {
+            Ok(all) => out.extend(all.into_iter().filter_map(|c| {
+                c.host
+                    .map(|h| crate::convert::host_snapshot_to_pb(&c.snapshot, &h))
+            })),
+            Err(e) => tracing::debug!("checkpoints of your other machines not listed: {e}"),
+        }
+        out
+    }
+
+    /// Deletes checkpoint `name` here and on every machine of yours that
+    /// holds a copy (forks made from it keep running). A pinned one is
+    /// refused until it is unpinned.
+    pub async fn delete_checkpoint_everywhere(&self, name: &str) -> Result<()> {
+        #[cfg(feature = "spaces")]
+        {
+            self.spaces().delete_checkpoint_everywhere(name).await?;
+            Ok(())
+        }
+        #[cfg(not(feature = "spaces"))]
+        {
+            self.delete_checkpoint(name).await
+        }
+    }
+
+    /// Forks many sandboxes from checkpoints at once, on this machine or
+    /// across your machines ([`cua_spaces::fork_batch`]). Returns the
+    /// batch's events as they happen; the last is `done`. The batch runs
+    /// to completion even if the receiver is dropped.
+    #[cfg(feature = "spaces")]
+    pub async fn fork_batch(
+        &self,
+        req: cua_proto::daemon::v1::ForkSandboxBatchRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<Result<cua_proto::daemon::v1::ForkSandboxBatchResponse>>>
+    {
+        use cua_proto::daemon::v1::fork_sandbox_batch_response::Event;
+        let spec = cua_spaces::fork_batch::BatchSpec::from_request(req)?;
+        let spaces = self.spaces().clone();
+        let (events, mut from_batch) = tokio::sync::mpsc::channel(256);
+        let (tx, rx) = tokio::sync::mpsc::channel(256);
+        let failed = tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = spaces.fork_batch(spec, events).await {
+                let _ = failed.send(Err(e.into())).await;
+            }
+        });
+        let rt = self.clone();
+        tokio::spawn(async move {
+            while let Some(mut ev) = from_batch.recv().await {
+                // A fork on this machine is a sandbox of this runtime's.
+                let local = match ev.event.as_ref() {
+                    Some(Event::Item(i))
+                        if i.host == cua_spaces::fork_batch::THIS_MACHINE && i.error.is_empty() =>
+                    {
+                        Some(i.space.clone())
+                    }
+                    _ => None,
+                };
+                if let Some(space) = local
+                    && let Ok(rec) = rt.record(&space).await
+                {
+                    ev.sandbox = Some(crate::convert::info_to_pb(&rec));
+                }
+                let _ = tx.send(Ok(ev)).await;
+            }
+        });
+        Ok(rx)
+    }
+
+    /// Uploads checkpoint `name` to `fallback` (S3, or a folder every host
+    /// mounts), so your other machines can copy it when this one is
+    /// unreachable. Returns the bytes uploaded.
+    #[cfg(feature = "spaces")]
+    pub async fn publish_checkpoint(
+        &self,
+        name: &str,
+        fallback: &cua_proto::env::v1::SnapshotFallback,
+    ) -> Result<u64> {
+        Ok(self.spaces().publish_snapshot(name, fallback, None).await?)
+    }
+
+    /// Deletes a checkpoint (a pinned one is refused until it is unpinned).
+    pub async fn delete_checkpoint(&self, name: &str) -> Result<()> {
+        Ok(self.inner.sandboxes.delete_checkpoint(name).await?)
+    }
+
+    /// Pins or unpins a checkpoint; returns it as it is now.
+    pub async fn pin_checkpoint(
+        &self,
+        name: &str,
+        pinned: bool,
+    ) -> Result<cua_sandbox_core::CheckpointRecord> {
+        Ok(self.inner.sandboxes.pin_checkpoint(name, pinned).await?)
+    }
+
+    /// Deletes every checkpoint that is not pinned; returns their names.
+    pub async fn prune_checkpoints(&self) -> Result<Vec<String>> {
+        Ok(self.inner.sandboxes.prune_checkpoints().await?)
+    }
+
+    /// The warm pool of this runtime (a daemon's; an embedded runtime has
+    /// none).
+    fn warm_pool(&self) -> Result<(&Arc<crate::local::VmmLocal>, &crate::pool::WarmPool)> {
+        let vmm = self.vmm()?;
+        let pool = vmm.pool().ok_or_else(|| {
+            Error::Unsupported("local pools are kept by `cua daemon`; start it first".into())
+        })?;
+        Ok((vmm, pool))
+    }
+
+    /// Creates pool `name` (or updates the pool of that name; `None`: a
+    /// new name): sandboxes like `spec` kept ready on this machine, `min`
+    /// at all times (one starts again as soon as one is created from the
+    /// pool), up to `max` (not counting those created from it) while creates
+    /// come faster than sandboxes start, and none after `idle` without a
+    /// create (until the next one). Applied at once; its sandboxes start in
+    /// the background. Pools run on this machine only (`on="local"`).
+    pub async fn create_pool(
+        &self,
+        name: Option<&str>,
+        spec: CreateRequest,
+        min: u32,
+        max: u32,
+        idle: Option<Duration>,
+    ) -> Result<PoolInfo> {
+        if let Some(on) = spec
+            .location
+            .as_deref()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && *l != "local")
+        {
+            return Err(Error::Unsupported(format!(
+                "pools run on this machine only today: create it with on=\"local\", not {on:?}"
+            )));
+        }
+        let (vmm, pool) = self.warm_pool()?;
+        let name = name
+            .filter(|n| !n.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("pool-{:06x}", rand::random::<u32>() & 0xff_ffff));
+        let np = crate::pool::named::NamedPool::new(&name, spec, min, max, idle)?;
+        pool.save_named(np)
+            .map_err(|e| Error::Internal(format!("storing pool {name}: {e}")))?;
+        vmm.apply_pools().await;
+        self.get_pool(&name)
+    }
+
+    /// Pool `name`, with what it holds now.
+    pub fn get_pool(&self, name: &str) -> Result<PoolInfo> {
+        self.list_pools()?
+            .into_iter()
+            .find(|p| p.name == name)
+            .ok_or_else(|| Error::NotFound(format!("no pool named {name:?}")))
+    }
+
+    /// Every pool, with what each holds now.
+    pub fn list_pools(&self) -> Result<Vec<PoolInfo>> {
+        let (vmm, pool) = self.warm_pool()?;
+        let mut out = Vec::new();
+        for np in pool.named_pools() {
+            let r = np.request()?;
+            let (key, err) = vmm.named_pool_state(&np.name);
+            let (ready, starting, reason) = key
+                .as_deref()
+                .and_then(|k| pool.shape_status(k))
+                .unwrap_or((0, 0, String::new()));
+            out.push(PoolInfo {
+                name: np.name.clone(),
+                image: r.image,
+                location: "local".into(),
+                kind: r.kind.unwrap_or_default(),
+                runtime: r.runtime.unwrap_or_default(),
+                cpus: r
+                    .cpus
+                    .filter(|c| *c > 0)
+                    .unwrap_or(crate::pool::DEFAULT_SIZE.0),
+                memory_mb: r
+                    .memory_mb
+                    .filter(|m| *m > 0)
+                    .unwrap_or(crate::pool::DEFAULT_SIZE.1),
+                min: np.min,
+                max: np.max,
+                idle: np.idle(),
+                ready,
+                starting,
+                status: if err.is_empty() { reason } else { err },
+            });
+        }
+        Ok(out)
+    }
+
+    /// Deletes pool `name` (its ready sandboxes go; those created from it
+    /// stay). `false`: no such pool.
+    pub fn delete_pool(&self, name: &str) -> Result<bool> {
+        let (_, pool) = self.warm_pool()?;
+        pool.remove_named(name)
+            .map_err(|e| Error::Internal(format!("deleting pool {name}: {e}")))
+    }
+
     /// Suspends.
     pub async fn suspend(&self, name: &str) -> Result<()> {
         let key = self.key(name).await?;
@@ -1034,13 +1457,45 @@ impl Runtime {
     pub async fn resume(&self, name: &str) -> Result<()> {
         let key = self.key(name).await?;
         match self.handle(&key).await {
-            Ok(sandbox) => Ok(sandbox.resume().await?),
+            // A local VM that was stopped boots with a new address (Lume,
+            // a Mac microVM) or new host ports (a Linux microVM):
+            // `refresh_handle` below points the cached handle at them.
+            Ok(sandbox) => sandbox.resume().await?,
             // A stopped local VM or container is not connected to (connect
             // wants it running): the manager resumes it by its record.
             Err(e) => match self.stopped_local(&key).await {
-                Some(state_name) => Ok(self.inner.sandboxes.resume(&state_name).await?),
-                None => Err(e),
+                Some(state_name) => self.inner.sandboxes.resume(&state_name).await?,
+                None => return Err(e),
             },
+        }
+        self.refresh_handle(&key).await;
+        Ok(())
+    }
+
+    /// A sandbox that booted again may listen on new host ports (a microVM
+    /// picks them on every boot): point its cached handle and env connection
+    /// at the endpoints its record now holds.
+    async fn refresh_handle(&self, key: &str) {
+        self.inner.envs.lock().await.remove(key);
+        // The Space of this sandbox caches its own connection (what the
+        // Space env passthrough, and so an SDK's `Space.spacesd()`, goes
+        // through): one made before the reboot dials the old run, and would
+        // fail with transport errors until the daemon restarts. A Space's
+        // own `start`/`stop` drop it; a resize or a sandbox-level restart or
+        // resume must too. Not a Space: nothing is cached.
+        #[cfg(feature = "spaces")]
+        let _ = self.spaces().forget_connection(key).await;
+        let Ok(r) = SandboxRef::parse(key) else {
+            return;
+        };
+        let Ok(r) = self.inner.sandboxes.resolve_ref_among(&r, vec![]).await else {
+            return;
+        };
+        let Ok(fresh) = self.inner.sandboxes.connect_ref(&r).await else {
+            return;
+        };
+        if let Some(h) = self.inner.handles.lock().unwrap().get_mut(key) {
+            h.sandbox = fresh;
         }
     }
 
@@ -1060,6 +1515,30 @@ impl Runtime {
         .then_some(state_name)
     }
 
+    /// Drops the handle and the cached connection of `name` (a bare name
+    /// or a qualified ref), so a new sandbox of that name is not reached
+    /// through the old one's connection.
+    pub async fn detach(&self, name: &str) {
+        let name = {
+            let handles = self.inner.handles.lock().unwrap();
+            if handles.contains_key(name) {
+                name.to_string()
+            } else {
+                let canon = cua_sandbox_core::refs::canonical(name).unwrap_or_else(|_| name.into());
+                let named: Vec<&String> = handles
+                    .iter()
+                    .filter(|(k, h)| **k == canon || h.sandbox.name() == name)
+                    .map(|(k, _)| k)
+                    .collect();
+                match named.as_slice() {
+                    [one] => (*one).clone(),
+                    _ => canon,
+                }
+            }
+        };
+        self.forget(&name).await;
+    }
+
     async fn forget(&self, name: &str) {
         self.inner.envs.lock().await.remove(name);
         self.inner.handles.lock().unwrap().remove(name);
@@ -1070,17 +1549,87 @@ impl Runtime {
         let key = self.key(name).await?;
         self.inner.envs.lock().await.remove(&key);
         match self.handle(&key).await {
-            Ok(sandbox) => Ok(sandbox.restart().await?),
+            Ok(sandbox) => sandbox.restart().await?,
             Err(e) => match self.stopped_local(&key).await {
-                Some(state_name) => Ok(self.inner.sandboxes.restart(&state_name).await?),
-                None => Err(e),
+                Some(state_name) => self.inner.sandboxes.restart(&state_name).await?,
+                None => return Err(e),
             },
         }
+        self.refresh_handle(&key).await;
+        Ok(())
     }
 
-    /// Extends a sandbox lease (a no-op where the sandbox has none).
+    /// Gives a local sandbox another shape: it stops and boots again from
+    /// its own disk (see [`cua_sandbox_core::Sandboxes::resize`]).
+    pub async fn resize(&self, name: &str, shape: &cua_vmm::Resize) -> Result<()> {
+        let key = self.key(name).await?;
+        self.inner.envs.lock().await.remove(&key);
+        match self.handle(&key).await {
+            Ok(sandbox) => sandbox.resize(shape).await?,
+            Err(e) => match self.stopped_local(&key).await {
+                Some(state_name) => self.inner.sandboxes.resize(&state_name, shape).await?,
+                None => return Err(e),
+            },
+        }
+        self.refresh_handle(&key).await;
+        Ok(())
+    }
+
+    /// Extends a sandbox lease (a no-op where the sandbox has none); gives
+    /// a local sandbox a lifetime of `duration` from now (see
+    /// [`Runtime::reap_expired`]).
     pub async fn keep_alive(&self, name: &str, duration: Duration) -> Result<()> {
         Ok(self.handle(name).await?.keep_alive(duration).await?)
+    }
+
+    /// [`Runtime::keep_alive`] for a local sandbox, choosing what happens
+    /// when the lifetime ends (`delete` or `suspend`).
+    pub async fn set_lifetime(
+        &self,
+        name: &str,
+        duration: Duration,
+        on_expire: cua_sandbox_core::LocalExpiry,
+    ) -> Result<()> {
+        let key = self.key(name).await?;
+        Ok(self.inner.sandboxes.set_local_expiry(
+            &Self::state_name(&key),
+            duration,
+            Some(on_expire),
+        )?)
+    }
+
+    /// Ends the local sandboxes whose lifetime passed: deletes each (its
+    /// Space too), or suspends it when its lifetime said so. The daemon
+    /// runs this every few seconds, so a lifetime holds after the client
+    /// that set it has gone. Returns the sandboxes it ended.
+    pub async fn reap_expired(&self) -> Vec<String> {
+        let mut ended = Vec::new();
+        for (name, action) in self.inner.sandboxes.expired_local(SystemTime::now()) {
+            let key = format!("local:{name}");
+            let r = match action {
+                cua_sandbox_core::LocalExpiry::Suspend => self.suspend(&key).await,
+                cua_sandbox_core::LocalExpiry::Delete => self.delete_with_space(&key).await,
+            };
+            match r {
+                Ok(()) => {
+                    tracing::info!(sandbox = %name, action = action.as_str(), "sandbox lifetime ended");
+                    ended.push(name);
+                }
+                Err(e) => {
+                    tracing::warn!(sandbox = %name, error = %e, "could not end an expired sandbox")
+                }
+            }
+        }
+        ended
+    }
+
+    /// Deletes a sandbox and forgets its Space, when it has one.
+    async fn delete_with_space(&self, key: &str) -> Result<()> {
+        #[cfg(feature = "spaces")]
+        if self.inner.spaces.delete(key).await.is_ok() {
+            return Ok(());
+        }
+        self.delete(key).await
     }
 
     /// Waits for probes.
@@ -1129,6 +1678,13 @@ impl Runtime {
         let sandbox = self.handle(&name).await?;
         let svc = sandbox.service(service)?;
         Ok(svc.url().trim_end_matches('/').to_string())
+    }
+
+    /// The qualified ref of a Space by any spelling (`cua share
+    /// space:<ref>:<port>` ends with the Space).
+    #[cfg(feature = "spaces")]
+    pub(crate) async fn resolve_key(&self, input: &str) -> Result<String> {
+        self.key(input).await
     }
 
     /// A shareable URL for `service` that stops working after `ttl` (60 s to
@@ -1259,6 +1815,7 @@ impl Runtime {
         let client = sandbox
             .spacesd_with(cua_sandbox_core::ConnectOptionsOverride {
                 probe_timeout: Some(probe_timeout.unwrap_or(self.inner.env_probe_timeout)),
+                ..Default::default()
             })
             .await?;
         let a = SpacesdAttachment {
@@ -1299,6 +1856,79 @@ fn placement_words_of(runtime_type: &str) -> (String, String) {
             r.to_string()
         },
     )
+}
+
+/// The sandbox-layer options of `req` on `provider`, with `kind` and
+/// `runtime` resolved (explicit, else the user defaults).
+pub(crate) fn options_from(
+    req: CreateRequest,
+    provider: ProviderKind,
+    kind: cua_sandbox_core::placement::Kind,
+    runtime: cua_sandbox_core::placement::Runtime,
+) -> Result<CreateOptions> {
+    let profile = cua_sandbox_core::profile::Profile::parse(req.profile.as_deref().unwrap_or(""))
+        .map_err(Error::InvalidArgument)?;
+    let mut o = CreateOptions::new(provider, req.image.clone());
+    o.name = req.name.clone().filter(|n| !n.is_empty());
+    if let Some(os) = req.os.filter(|s| !s.is_empty()) {
+        o.os = os;
+    }
+    let (mut cpus_given, mut memory_given) = (false, false);
+    if let Some(c) = req.cpus.filter(|c| *c > 0) {
+        o.cpus = c;
+        cpus_given = true;
+    }
+    if let Some(m) = req.memory_mb.filter(|m| *m > 0) {
+        o.memory_mb = m;
+        memory_given = true;
+    }
+    o.ports = req.ports;
+    o.services = req.services;
+    o.wait_for = req.wait_for;
+    if let Some(t) = req.ready_timeout {
+        o.ready_timeout = t;
+        o.ready_timeout_given = true;
+    }
+    o.env = req.env;
+    o.command = req.command.filter(|c| !c.is_empty());
+    o.env_token = req.token;
+    o.sidecars = req.sidecars;
+    o.registry_credentials = req.registry_credentials;
+    o.build = req.build.filter(|b| !b.is_empty());
+    o.container_runtime = req.container_runtime.filter(|r| !r.is_empty());
+    if let Some(n) = req.network.as_deref() {
+        o.network = cua_sandbox_core::NetworkMode::parse(n)?;
+    }
+    o.owner_pid = req.owner_pid.filter(|p| *p > 0);
+    o.keep_on_failure = req.keep_on_failure;
+    o.gpu = req.gpu.filter(|g| !g.trim().is_empty());
+    o.headless = req.headless;
+    o.spacesd = req.spacesd;
+    o.forkable = req.forkable;
+    o.kind = kind;
+    o.runtime = runtime;
+    o.apply_profile(profile, cpus_given, memory_given);
+    Ok(o)
+}
+
+/// The options a local create of `req` runs with: its kind and runtime,
+/// else the user defaults (what [`Runtime::create`] does for a local one).
+pub(crate) fn local_options(req: CreateRequest) -> Result<CreateOptions> {
+    use cua_sandbox_core::placement::{Kind, On, Runtime};
+    let word = |s: &Option<String>| {
+        s.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let kind = word(&req.kind).map(|k| Kind::parse(&k)).transpose()?;
+    let runtime = word(&req.runtime).map(|r| Runtime::parse(&r)).transpose()?;
+    let resolved = cua_sandbox_core::settings::Settings::load()
+        .and_then(|s| s.resolve(Some(On::Local), kind, runtime))
+        .map_err(|e| Error::InvalidArgument(e.to_string()))?;
+    let mut o = options_from(req, ProviderKind::Local, resolved.kind, resolved.runtime)?;
+    o.apply_placement()?;
+    Ok(o)
 }
 
 fn record_of(key: &str, h: &Handle, status: Status) -> SandboxRecord {

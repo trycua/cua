@@ -410,6 +410,12 @@ pub async fn run(
     if !args.no_host {
         extra.extend(host::host_checks(cua, runtime_type.as_deref(), &arch).await);
     }
+    // These checks were written here, so their hints name this build's CLI
+    // (`cua-local` on Local); the guest's own checks are the guest's words.
+    for check in &mut extra {
+        check.message = crate::util::hint(&check.message);
+        check.remediation = crate::util::hint(&check.remediation);
+    }
     let mut checks = extra;
     checks.append(&mut report.checks);
     report.checks = checks;

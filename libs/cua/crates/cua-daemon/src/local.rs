@@ -2775,12 +2775,15 @@ async fn setup_with(
     } else {
         components.to_vec()
     };
-    let mut steps = Vec::new();
+    // Every name is checked before any installer runs, so a typo cannot
+    // leave a half-finished setup behind an error.
+    let mut kinds = Vec::new();
     for c in wanted {
         let kind = match c.as_str() {
             "qemu" => Some(BackendKind::Qemu),
             "lume" => Some(BackendKind::Lume),
             "container" | "runsc" | "gvisor" => Some(BackendKind::Container),
+            "managed" => Some(BackendKind::Managed),
             "firecracker" => Some(BackendKind::Firecracker),
             "microvm" | "vz" if cfg!(target_os = "macos") => Some(BackendKind::Vz),
             "microvm" => Some(BackendKind::Firecracker),
@@ -2790,6 +2793,10 @@ async fn setup_with(
         let Some(kind) = kind else {
             return Err(Error::InvalidArgument(format!("unknown component {c:?}")));
         };
+        kinds.push((c, kind));
+    }
+    let mut steps = Vec::new();
+    for (c, kind) in kinds {
         let b = report.backend(kind).cloned();
         let plan = b
             .as_ref()
@@ -2808,6 +2815,16 @@ async fn setup_with(
                 name: c,
                 status: CheckStatus::Installable as i32,
                 detail: format!("would: {plan}"),
+            });
+            continue;
+        }
+        if kind == BackendKind::Managed {
+            // The built-in Linux runtime downloads and boots with the first
+            // Linux Space, so there is nothing to run ahead of it.
+            steps.push(SetupStep {
+                name: c,
+                status: CheckStatus::Ok as i32,
+                detail: format!("set up when the first Linux Space is created ({plan})"),
             });
             continue;
         }
@@ -3815,6 +3832,37 @@ mod tests {
             setup_steps(qemu_report(false), &["qemu"], true, true).await,
             steps(&[("qemu", Installable), ("kvm", Ok)])
         );
+    }
+
+    #[tokio::test]
+    async fn the_default_set_names_only_components_setup_knows() {
+        use cua_proto::daemon::v1::CheckStatus::{Installable, Ok};
+        let mut report = qemu_report(true);
+        report.backends.push(cua_vmm::auto::BackendStatus {
+            backend: super::BackendKind::Managed,
+            ready: false,
+            provisionable: true,
+            detail: String::new(),
+            missing: vec![],
+            provisioning: vec!["download the built-in Linux runtime".into()],
+        });
+        // `cua runtime setup` with no components, as doctor lists them.
+        assert_eq!(
+            setup_steps(report.clone(), &[], true, true).await,
+            steps(&[("managed", Installable)])
+        );
+        assert_eq!(
+            setup_steps(report.clone(), &[], false, true).await,
+            steps(&[("managed", Ok)])
+        );
+        // A bad name stops before any installer runs.
+        let components = vec!["qemu".to_string(), "nope".to_string()];
+        let install = async || -> cua_vmm::Result<()> { panic!("installer ran") };
+        let kvm = async |_| kvm_step();
+        let err = super::setup_with(report, &components, false, &install, &install, kvm)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown component"), "{err}");
     }
 
     #[tokio::test]

@@ -109,7 +109,7 @@ title looks close.
 `get_browser_state` is strictly read-only. It never launches a browser,
 changes a profile, enables remote debugging, or accepts a consent prompt. If
 it returns `browser_requires_setup` or `browser_consent_required`, choose one
-explicit preparation flow. For the user's running Chrome, Edge or Brave the
+explicit preparation flow. For the user's running Chrome, Edge, Brave or Dia the
 refusal's `detail.next_call` is the exact `browser_prepare` call to make next
 (`pid`, `window_id`, `session`, `strategy:{"kind":"existing_profile"}`). It is
 the driver's own setup step, not a question for the user: make the call, and it
@@ -208,6 +208,10 @@ window, toggle its uniquely labelled per-instance checkbox, prove that the
 loopback endpoint belongs to the approved process, and close the temporary
 tab. The result reports all visible `side_effects`. Missing, localized, or
 ambiguous controls are refused; never click a similar-looking prompt yourself.
+On macOS, Dia is also supported: setup drives its tab through AppleScript and
+clicks its checkbox with the window briefly in front, so pass
+`delivery_mode:"foreground"` while Dia's remote debugging is off. Arc is refused:
+Chromium rejects every connection to it.
 On current macOS Chrome, the internal page may omit its web AX subtree. The
 driver's bounded fallback is limited to a temporary tab it created and
 navigated. It requires the committed fixed URL, expected selected-tab title,

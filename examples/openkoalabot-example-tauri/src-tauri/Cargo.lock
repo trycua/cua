@@ -2337,9 +2337,7 @@ dependencies = [
 name = "cua-teleport"
 version = "0.9.0"
 dependencies = [
- "aes 0.8.4",
  "block2",
- "cbc 0.1.2",
  "core-foundation 0.10.1",
  "core-graphics",
  "cua-agents",
@@ -2354,14 +2352,12 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-local-authentication",
- "pbkdf2",
  "plist",
  "png 0.18.1",
  "rand 0.9.5",
  "rusqlite",
  "serde",
  "serde_json",
- "sha1 0.10.7",
  "sha2 0.10.9",
  "snap",
  "tempfile",

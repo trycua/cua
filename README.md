@@ -305,8 +305,8 @@ Apple, macOS, Ubuntu, Canonical, and Microsoft are trademarks of their respectiv
 
 Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua).
 
-|                                                         [CodeRabbit](https://github.com/coderabbitai)                                                         |                                                         [Zephyr Cloud IO](https://github.com/ZephyrCloudIO)                                                         |
-| :-----------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| <a href="https://github.com/coderabbitai"><img src="https://avatars.githubusercontent.com/u/132028505?s=128&v=4" alt="CodeRabbit" width="64" height="64"></a> | <a href="https://github.com/ZephyrCloudIO"><img src="https://avatars.githubusercontent.com/u/144168943?s=128&v=4" alt="Zephyr Cloud IO" width="64" height="64"></a> |
+|                                                         [CodeRabbit](https://github.com/coderabbitai)                                                         |
+| :-----------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| <a href="https://github.com/coderabbitai"><img src="https://avatars.githubusercontent.com/u/132028505?s=128&v=4" alt="CodeRabbit" width="64" height="64"></a> |
 
 </div>

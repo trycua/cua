@@ -205,6 +205,30 @@ transactional mode keeps the workspace image in its log); the ACP driver's journ
 holds the agent's conversation and tool ledger, not the Space's files, so
 the agent is told which calls completed but must recreate the files itself.
 
+## Files on all your machines
+
+With one machine signed in, the Volume lives on that machine only. Once you are
+signed in on a second machine and no bucket is set as the Volume's storage, the
+Cua Spaces daemon keeps a copy of the Volume on each of your machines, with no
+cloud involved. One machine owns writes at a time and the others receive them.
+A write counts as durable when two machines hold it, and it never waits for a
+machine that is away. When the owner goes away, the most reliable machine with
+a copy takes over, and if the old owner wakes up later it is fenced: it loses
+nothing and writes nothing over the new owner.
+
+Durable Spaces are placed on the most reliable machine that has room: an
+always-on desktop before a laptop on power, a laptop on power before a laptop
+on battery, and never the laptop you are using unless it is the only one that
+fits. Closing a laptop's lid still puts it to sleep unless it is plugged in
+with a display attached, and Cua says so plainly instead of promising otherwise.
+
+Replication starts by itself and needs no setting. To turn it off, start the
+daemon with `CUA_REPLICA=0`. Turning it on never costs data: the Volume's
+current heads are backed up first, a Volume prepared by a newer Cua Spaces is
+refused with a message instead of being rewritten, and a build that does not
+know replication can still read the same folder. History from before a second
+machine joined stays on the machine that wrote it, and two copies are kept.
+
 ## What is and is not guaranteed
 
 For every permission request the harness makes, the driver writes an **intent**

@@ -373,6 +373,31 @@ impl AttachedExtension for Attached {
                     tracing::warn!(error = %e, "drive: services did not start");
                 }
             }));
+            // The Volume on all of this account's machines: looks every few
+            // seconds and starts only when signed in with another machine
+            // and no bucket is set (`CUA_REPLICA=0` turns it off).
+            if std::env::var("CUA_REPLICA").as_deref() != Ok("0")
+                && let Some(ext) = runtime.spaces().extension::<crate::DriveExtension>()
+            {
+                let spaces = runtime.spaces().clone();
+                let home = spaces.home_dir().to_path_buf();
+                let me = {
+                    let spaces = spaces.clone();
+                    Arc::new(move || spaces.this_relay_machine_id())
+                };
+                let rr = crate::replica_runtime::ReplicaRuntime::new(
+                    &home,
+                    me,
+                    &cua_mesh::node::hostname(),
+                    crate::replica_runtime::ControlMesh::new(&home),
+                    ext.drive().clone(),
+                    cua_volume::replica::Config::standard(),
+                    Arc::new(|| crate::replica_runtime::ReplicaRuntime::measured_facts(None)),
+                );
+                if ext.runtime.replica.set(rr.clone()).is_ok() {
+                    tasks.push(tokio::spawn(crate::replica_runtime::run(rr)));
+                }
+            }
         }
         tasks
     }

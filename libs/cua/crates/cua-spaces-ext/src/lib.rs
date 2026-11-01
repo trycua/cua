@@ -35,6 +35,7 @@ pub mod named_volumes;
 pub mod persistent;
 mod persistent_tools;
 pub mod presence_datagrams;
+pub mod replica_runtime;
 pub mod session_journal;
 pub mod stream;
 pub mod teleport;

@@ -96,6 +96,9 @@ pub(crate) struct DriveRuntime {
     /// restarts (see [`spawn_attach`]).
     watchers: std::sync::Mutex<BTreeMap<String, tokio::task::JoinHandle<()>>>,
     pub(crate) volume_auto: bool,
+    /// The Volume across this account's machines, once the daemon started
+    /// it (it runs only with another machine signed in).
+    pub(crate) replica: tokio::sync::OnceCell<Arc<crate::replica_runtime::ReplicaRuntime>>,
 }
 
 impl Default for DriveRuntime {
@@ -107,6 +110,7 @@ impl Default for DriveRuntime {
             unavailable: std::sync::Mutex::new(BTreeMap::new()),
             watchers: std::sync::Mutex::new(BTreeMap::new()),
             volume_auto: true,
+            replica: tokio::sync::OnceCell::new(),
         }
     }
 }
@@ -254,6 +258,9 @@ impl SpacesDrive for Spaces {
             return;
         };
         ext.runtime.stop_watchers();
+        if let Some(r) = ext.runtime.replica.get() {
+            Box::pin(r.shutdown()).await;
+        }
         // This machine's mount first: it is quick, and a daemon that is
         // ended before the Spaces' volumes are done (a stop that waits
         // 30 s, then signals) must not leave it behind with no server, the

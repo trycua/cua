@@ -21,6 +21,9 @@ mount = ["cua-volume/nfs", "cua-volume/fuse"]
 [dependencies]
 cua-spaces = { path = "../cua-spaces" }
 cua-spaces-contract = { path = "../cua-spaces-contract" }
+# The account's machines and the way to reach them (the replicated Volume).
+cua-mesh.workspace = true
+cua-cluster.workspace = true
 cua-spacesd-client.workspace = true
 cua-volume = { workspace = true, features = ["nfs"] }
 cua-keyvault.workspace = true

@@ -1,0 +1,317 @@
+---
+title: Agents in a Space
+description: 'Add a coding or computer-use agent to a Space, message it, and check back on it later, from the CLI, from your own agent over MCP, or from code.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+An agent in a Space works on a machine of its own instead of on This Mac. You
+add it once, give it work, and come back later to read what it did. The Space
+is the boundary: the agent approves its own tool calls inside it, and nothing
+it does reaches your machine unless you allow it.
+
+There are three ways to run one:
+
+| You want | Use |
+|---|---|
+| An agent with a name that remembers across runs and can work on a schedule | `cua agent add NAME` |
+| One task, then stop | `cua agent add NAME --once` |
+| A task that must survive a crash of the process or the machine driving it | `cua agent add NAME --durable` |
+
+A named agent keeps its memory in the [Cua Volume](/spaces/guides/cua-volume)
+(see [Memory and identity](/spaces/guides/agent-memory-and-identity)) and can
+run on a [schedule](/spaces/guides/agent-schedules). A durable agent is
+re-driven after a crash (see
+[Keep an agent running through crashes](/spaces/guides/keep-an-agent-running)).
+
+## Add an agent
+
+<Tabs items={['CLI', 'MCP', 'SDK']}>
+  <Tab value="CLI">
+    ```bash test="cli-shape" id="agents-add"
+    cua agent add ada --harness claude-code --in local:dev
+    cua agent send ada "Clone github.com/org/app and get the test suite passing"
+    ```
+
+    `--in` names the Space the agent works in. `--harness` is any id from
+    `cua agent harnesses`. Pass a prompt after the name to give the first task
+    in the same command.
+  </Tab>
+  <Tab value="MCP">
+    Ask the agent you already use ("add an agent called ada in my dev Space
+    and have it fix the tests"). With the `cua` MCP server it calls:
+
+    ```text output
+    agent_add  {name: "ada", agent: "claude-code", space: "local:dev"}
+    agent_send {name: "ada", text: "Clone github.com/org/app and get the test suite passing"}
+    ```
+
+    Connect your agent first: [Connect your agent](/spaces/guides/connect-your-agent).
+  </Tab>
+  <Tab value="SDK">
+    ```python skip="cua-spaces"
+    import cua
+
+    spaces = cua.connect().spaces()   # the Cua Spaces daemon
+    await spaces.persistent_agent_create("ada", "claude-code", "local:dev", None)
+    await spaces.persistent_agent_send("ada", "Clone github.com/org/app and get the test suite passing")
+    ```
+
+    The same methods exist in TypeScript, Swift, Kotlin and Rust; see
+    [Persistent agents](/cua-sdk/reference/spaces/persistent-agents) in the SDK reference.
+  </Tab>
+</Tabs>
+
+Named agents are kept by the Cua daemon on This Mac (or on the machine whose
+daemon you use), and their Space can be any Space you can reach: a local one,
+one on a [machine you added](/spaces/guides/add-a-computer), or one in your own
+cloud.
+
+## Message it
+
+`cua agent send ada "..."` (MCP `agent_send`) gives the agent a turn. If its
+last run is idle, the message is a follow-up in the same session; if it has
+none, a new run starts with its memory restored. A message sent while a turn is
+running is refused, never interrupts it, and the reply says why.
+
+## Talk to agents in the thread
+
+In a Space's thread in Cua Spaces you do not have to type an @ every time. An
+@name still works anywhere in a message, and it is always what the agent is
+woken by, so the message you post always names who it is for.
+
+To answer an agent, hover or focus its message and press the Reply button, or
+press R while you are on the message. Cua Spaces puts `@name` at the start of
+the box once and puts the cursor in it, and your message is posted as a reply
+to that message. Selecting its text and clicking its links work as before.
+`Command+Shift+A` (`Ctrl+Shift+A` elsewhere) replies to the latest agent
+message. On a narrow window the Reply button is always visible.
+
+After you talk to an agent, a small chip with its name and an X sits in the
+box, and the next message goes to it until you @ someone else or press the X.
+Cua Spaces adds the `@name` when you send, and says so quietly the first time.
+Which agent is kept for each Space on your machine, so it is still there after
+a reload.
+
+When you have not said who, the message goes to the one agent in the Space, or
+to the last agent you talked to when there are several. A message with no
+agent to go to is a plain message to the people in the Space, as before.
+`@everyone` gives the task to every agent in the Space you are allowed to task;
+if your role cannot give tasks it is shown disabled, with the reason. A reply to
+an agent's message with no @ counts as talking to that agent.
+
+If the agent is not connected or has failed, its chip says so in words such as
+"Claude Code needs to be connected". The message is still sent, and the Connect
+card appears under it as usual.
+
+Agents do not chat among themselves without being asked. An agent wakes another
+agent only by naming it with an @, a chain of those stops after three agent to
+agent messages from your last message, and a Space allows twenty such wakes a
+minute. When a limit is reached the message is still posted, but wakes no one,
+and the thread says "Paused agent to agent messages for a moment". Any message
+from you starts a new chain.
+
+## Check back
+
+| To see | CLI | MCP |
+|---|---|---|
+| Your agents, their Space and state | `cua agent ls` | `persistent_agent_list` |
+| What a run did, event by event | `cua agent logs local:dev RUN_ID -f` | `agent_events`, `agent_status` |
+| Turns that ended, questions and failures | `cua agent notifications --unread` | `notifications_list` |
+
+When a turn ends the daemon posts a notification with the agent's answer, and
+the Cua app shows it as a system notification. Open the Space in Cua Spaces to
+watch the agent's desktop while it works, or take over.
+
+```bash test="cli-shape" id="agents-check-back"
+cua agent ls
+cua agent ls local:dev
+cua agent notifications --unread
+```
+
+`cua agent ls` with no Space lists your named agents; with a Space it lists the
+runs in it, including one-off tasks.
+
+## From another machine or person
+
+A Space's thread and its agents live on the machine that provides the Space.
+When that machine is shared with you, directly or through a
+[team](/spaces/guides/teams), you read and post in the thread of each Space it
+provides from your own machine, and @mention its agents there, with the same
+tools as on that machine. When only a Space is shared with you, you reach that
+Space's thread the same way, and nothing else of the machine that provides it.
+Your role is the one the Space was shared with, and stopping the share ends it. Cua sends each call to that machine's daemon
+through the relay, signed in as you: what you post shows your name, and the
+owner's roles and each agent's rights decide what you can do. Shared with you
+to view, you can read the thread and see the agents, but you cannot post,
+give tasks, stop an agent or answer its questions.
+
+```text output
+thread_post {space: "relay:space-7f2c41d0", text: "@ada run the e2e suite and post the failures here"}
+thread_read {space: "relay:space-7f2c41d0", after: 41, follow_ms: 20000}
+```
+
+`follow_ms` waits up to 25 seconds for new entries, so a client can follow the
+thread. The thread can be reached while that machine is online. If it runs an
+older Cua, the answer says to update Cua on it.
+
+## Coding agents
+
+Every agent runs a harness inside the Space over the Agent Client Protocol. The
+Spaces daemon installs the harness on first use (pinned and checksum-verified)
+and gives it the Space's tools. Nine harnesses are supported: Claude Code
+(`claude-code`), OpenAI Codex (`openai-codex`), Gemini CLI (`gemini-cli`),
+Google Antigravity (`google-antigravity`), OpenCode (`opencode`), Goose
+(`goose`), Pi (`pi`), Hermes (`hermes`) and OpenClaw (`openclaw`).
+
+```bash test="cli-shape" id="agents-harnesses"
+cua agent harnesses
+```
+
+`cua agent harnesses` (MCP `agent_capabilities`) reports each one's readiness,
+the key variables it reads and what is known not to work. A harness whose key
+is saved reports `auth: ok`.
+
+A harness needs a provider key. Save it once in **Cua Spaces, Settings,
+Agents** (or `cua agent keys set`), and each run gets the keys its harness
+reads, written 0600 inside the run and redacted from its log; see
+[Agent keys](/spaces/guides/connect-your-agent#agent-keys). Credential files on
+your machine are never copied into a Space. The one exception is Claude Code's
+own sign-in, which you choose to import: Cua reads it once you agree and gives
+Claude Code runs the access token only, never the refresh token (see
+[Claude Code and your Claude plan](/spaces/guides/connect-your-agent#claude-code-and-your-claude-plan)).
+Codex's ChatGPT sign-in is never copied: Codex signs in with its own code. A harness can use a sign-in that is
+already inside the Space, for example one you moved there with
+[Teleport an app](/spaces/guides/teleport-an-app), which asks you first.
+
+## Computer use
+
+Every run gets the Space's own Cua Driver tools as an MCP server: screenshots,
+clicks, typing, launching apps and the accessibility tree of the Space's
+desktop. So any harness above is also a computer-use agent: ask it to use an
+app in the Space and it drives the desktop the way it would edit a file. Turn
+this off with `--no-sandbox-mcp` on `cua agent run` (MCP `sandbox_mcp: false`).
+
+Give it more MCP servers with `--mcp NAME=URL` (MCP `mcp_servers`), and open a
+terminal on the Space's desktop that follows the run with `show: true` on
+`agent_start`.
+
+## Run a one-off task
+
+A one-off task has no name and no memory: it runs in the Space, answers, and
+stops.
+
+```bash test="cli-shape" id="agents-once"
+cua agent add fix-tests --harness claude-code --in local:dev --once "Fix the failing test in /work"
+cua agent run local:dev claude-code "Fix the failing test in /work" --follow
+```
+
+`--once` is `cua agent run` with the name as the run's label and
+`--exit-when-idle`. Over MCP, call `agent_start {space, agent, prompt}`, then
+`agent_message` for each follow-up, `agent_events` to read it and `agent_stop`
+to end it. A run is a detached process in the Space; everything about it is a
+file under `~/.cua/agents/<run_id>/` there, so it survives your client going
+away and the server restarting, and a fresh client can list and continue it.
+It does not survive the Space being deleted.
+
+```bash test="cli-shape" id="agents-runs"
+cua agent ls local:dev
+cua agent send local:dev run-1a2b3c4d "now add a regression test" -f
+cua agent interrupt local:dev run-1a2b3c4d
+cua agent stop local:dev run-1a2b3c4d
+```
+
+`agent_start` with `home` set runs the task as a named agent instead (created on
+first use), with its memory restored.
+
+## From code
+
+A run is a thread in the TypeScript SDK:
+
+```ts skip="third-party-cli"
+import { embedded } from "@trycua/cua"
+import { startThread } from "@trycua/cua/spaces"
+
+const bot = await startThread(embedded().spaces(), {
+  agent: "claude-code",
+  prompt: "Open the repo in the Space and run the tests",
+  placement: { type: "dedicated", on: "local", deleteOnClose: true },
+})
+await bot.send("Now fix the failing test")
+console.log(await bot.status())
+await bot.close()                 // stops the run and deletes the Space
+```
+
+`placement` `shared` (`{ type: "shared", space, acknowledgeNoIsolation: true }`)
+reuses a Space you name. `adoptThread(spaces, spaceId, runId)` reattaches.
+
+The lower-level calls are one run per thread and one message per turn. A message
+sent mid-turn is refused (or queued) unless forced, so show the reason. The
+TypeScript and Rust tabs are from the
+[examples in other languages](/spaces/guides/create-a-space-with-the-sdk#examples-in-other-languages),
+and the Swift tab is from the [CuaBots](/spaces/examples/cua-bots) sample.
+
+<Tabs items={['TypeScript', 'Rust', 'Swift']}>
+  <Tab value="TypeScript">
+    ```ts test="excerpt" id="ts-agent-start" source="examples/openkoalabot-example-ts/src/core/app.ts#ts-agent-start"
+    const report = await space.agentStart(bot.agent, prompt, false, options)
+    const t = new BotThread(bot, report.runId, space)
+    ```
+
+    ```ts test="excerpt" id="ts-agent-message" source="examples/openkoalabot-example-ts/src/core/app.ts#ts-agent-message"
+    const r = await this.space.agentMessage(this.runId, message, false)
+    if (!r.ok) {
+      this.fold.note(this.turns.length, `Refused: ${r.reason}`)
+      return { accepted: false, reason: r.reason }
+    }
+    ```
+  </Tab>
+  <Tab value="Rust">
+    ```rust test="excerpt" id="rs-agent" source="examples/openkoalabot-example-tauri/src-tauri/core/src/thread.rs#rs-agent"
+    let r = self
+        .agents
+        .start(&self.agent, text, self.options.clone())
+        .await
+        .map_err(agents_err)?;
+    ```
+
+    ```rust test="excerpt" id="rs-agent-message" source="examples/openkoalabot-example-tauri/src-tauri/core/src/thread.rs#rs-agent-message"
+    let r = self
+        .agents
+        .send(run, text, vec![])
+        .await
+        .map_err(agents_err)?;
+    if !r.accepts_message {
+        self.system(format!("queued while {}: {}", r.phase, r.reason));
+    }
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```swift test="excerpt" id="sw-agent-start" source="examples/cua-bots-macos/Sources/CuaBotsCua/CuaEngine.swift#sw-agent-start"
+    let options = SpaceAgentOptions(
+        envFromHost: endpoint?.keyVariables ?? Self.defaultKeyVariables(bot.harness),
+        repo: nil, branch: nil, cwd: home, model: endpoint?.model, baseUrl: endpoint?.baseURL,
+        exitWhenIdle: false)
+    let report = try await space.agentStart(agent: bot.harness.rawValue, prompt: prompt, show: false,
+                                            options: options)
+    ```
+
+    ```swift test="excerpt" id="sw-agent-message" source="examples/cua-bots-macos/Sources/CuaBotsCua/CuaEngine.swift#sw-agent-message"
+    let report = try await space(bot).agentMessage(runId: run, text: text, force: false)
+    if !report.ok { throw EngineError.refused(report.reason) }
+    ```
+  </Tab>
+</Tabs>
+
+In a sandbox from the Cua SDK, `sandbox.agents()` installs a harness, streams
+its events and collects the result: see
+[Run a coding agent in a sandbox](/cua-sdk/guides/run-a-coding-agent).
+[Run agent frameworks in a sandbox](/cua-sdk/guides/agent-frameworks) covers
+OpenAI Agents, Codex, Cursor and OpenClaw. To build an agent whose own loop is
+durable, see [Build a durable agent in code](/cua-sdk/guides/build-a-durable-agent).
+
+## Reference
+
+Every tool and its parameters: [Agents](/spaces/reference/agents#agents) and
+[Persistent agents](/spaces/reference/agents#persistent-agents) in the Spaces
+reference. Every command: the [CLI reference](/cua-cli/reference).

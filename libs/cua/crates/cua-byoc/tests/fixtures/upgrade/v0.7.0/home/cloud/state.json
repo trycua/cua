@@ -1,0 +1,17 @@
+{
+  "owner_id": "d57d901d96b3c8c7",
+  "connections": [
+    {
+      "provider": "aws",
+      "profile": "upgrade-fake",
+      "region": "us-west-2",
+      "zone": "",
+      "project": "",
+      "environment": "",
+      "account": "111122223333",
+      "ttl_hours": 4,
+      "connected_at": "2026-10-24T16:58:34Z"
+    }
+  ],
+  "resources": []
+}

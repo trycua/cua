@@ -65,7 +65,6 @@ describe.skipIf(!built)("the Machines page on the app core", () => {
       telemetry: new FixtureTelemetry(),
       servicesIn: () => true,
       cpus: 8,
-      checklistPath: null,
       about: () => ({ computerName: "Ada's MacBook Pro", appVersion: "0.9.1", osVersion: "macOS 26.5.2" }),
     });
     model.devices.signedIn = true;

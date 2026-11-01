@@ -40,7 +40,13 @@ from cua_sandbox import Image, Sandbox
 # Open a terminal titled "harness" and focus it, so typed keys land there.
 OPEN_TERMINAL = (
     "export DISPLAY=:1; setsid -f xfce4-terminal -T harness >/dev/null 2>&1; "
-    "xdotool search --sync --onlyvisible --name harness windowactivate --sync"
+    "end=$(($(date +%s) + 20)); "
+    "while [ $(date +%s) -lt $end ]; do "
+    "w=$(xdotool search --onlyvisible --limit 1 --name ^harness$) && "
+    "xprop -id $w WM_STATE | grep -q window.state && "
+    "timeout 5 xdotool windowactivate --sync $w && exit 0; "
+    "sleep 0.2; done; "
+    "echo harness terminal never got keyboard focus >&2; exit 1"
 )
 
 
@@ -58,7 +64,8 @@ async def main():
         # Click, then type into a terminal.
         width, height = await sb.get_dimensions()
         await sb.mouse.click(width // 2, height // 2)
-        await sb.shell.run(OPEN_TERMINAL)
+        opened = await sb.shell.run(OPEN_TERMINAL, timeout=40)
+        assert opened.success, f"terminal focus failed ({opened.returncode}): {opened.stderr}"
         await sb.keyboard.type("echo typed by my harness")
         await sb.keyboard.keypress("enter")
         await asyncio.sleep(1)  # let the terminal draw
@@ -95,7 +102,13 @@ import { embedded, SandboxCreateOptions } from '@trycua/cua';
 // Open a terminal titled "harness" and focus it, so typed keys land there.
 const OPEN_TERMINAL =
   'export DISPLAY=:1; setsid -f xfce4-terminal -T harness >/dev/null 2>&1; ' +
-  'xdotool search --sync --onlyvisible --name harness windowactivate --sync';
+  'end=$(($(date +%s) + 20)); ' +
+  'while [ $(date +%s) -lt $end ]; do ' +
+  'w=$(xdotool search --onlyvisible --limit 1 --name ^harness$) && ' +
+  'xprop -id $w WM_STATE | grep -q window.state && ' +
+  'timeout 5 xdotool windowactivate --sync $w && exit 0; ' +
+  'sleep 0.2; done; ' +
+  'echo harness terminal never got keyboard focus >&2; exit 1';
 const text = (bytes: ArrayBuffer) => new TextDecoder().decode(bytes);
 
 // A Linux desktop on this machine.
@@ -115,7 +128,12 @@ try {
   // Click, then type into a terminal.
   const { width, height } = await env.screenshot(undefined);
   await env.click(Math.floor(width / 2), Math.floor(height / 2));
-  await env.sh(OPEN_TERMINAL, undefined);
+  const opened = await env.sh(OPEN_TERMINAL, 40_000);
+  if (!opened.exit.success) {
+    throw new Error(
+      `terminal focus failed (${JSON.stringify(opened.exit)}): ${text(opened.stderr)}`
+    );
+  }
   await env.typeText('echo typed by my harness');
   await env.press('enter');
   await new Promise((resolve) => setTimeout(resolve, 1000)); // let the terminal draw
@@ -148,7 +166,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cua-sdk = { git = "https://github.com/trycua/cua", tag = "cua-sdk-v0.7.0" }
+cua-sdk = { git = "https://github.com/trycua/cua", tag = "cua-sdk-v0.9.0" }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -159,7 +177,13 @@ use serde_json::{json, Value};
 
 // Open a terminal titled "harness" and focus it, so typed keys land there.
 const OPEN_TERMINAL: &str = "export DISPLAY=:1; setsid -f xfce4-terminal -T harness >/dev/null 2>&1; \
-     xdotool search --sync --onlyvisible --name harness windowactivate --sync";
+     end=$(($(date +%s) + 20)); \
+     while [ $(date +%s) -lt $end ]; do \
+     w=$(xdotool search --onlyvisible --limit 1 --name ^harness$) && \
+     xprop -id $w WM_STATE | grep -q window.state && \
+     timeout 5 xdotool windowactivate --sync $w && exit 0; \
+     sleep 0.2; done; \
+     echo harness terminal never got keyboard focus >&2; exit 1";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -188,14 +212,22 @@ async fn drive(sb: &cua_sdk::Sandbox) -> Result<(), Box<dyn std::error::Error>> 
     // Write a file and read it back.
     env.upload("/tmp/note.txt".into(), b"hello from my harness\n".to_vec(), None)
         .await?;
-    let note = env.download("/tmp/note.txt".into()).await?;
+    let note = env.download("/tmp/note.txt".into(), None).await?;
     println!("file: {}", String::from_utf8_lossy(&note).trim());
 
     // Click, then type into a terminal.
     let shot = env.screenshot(None).await?;
     let (width, height) = (shot.width, shot.height);
     env.click(f64::from(width / 2), f64::from(height / 2)).await?;
-    env.sh(OPEN_TERMINAL.into(), None).await?;
+    let opened = env.sh(OPEN_TERMINAL.into(), Some(40_000)).await?;
+    if !opened.exit.success {
+        return Err(format!(
+            "terminal focus failed ({:?}): {}",
+            opened.exit,
+            String::from_utf8_lossy(&opened.stderr)
+        )
+        .into());
+    }
     env.type_text("echo typed by my harness".into()).await?;
     env.press("enter".into()).await?;
     tokio::time::sleep(std::time::Duration::from_secs(1)).await; // let the terminal draw
@@ -207,7 +239,7 @@ async fn drive(sb: &cua_sdk::Sandbox) -> Result<(), Box<dyn std::error::Error>> 
     // Any cua.env.v1 RPC without a typed method: proto3 JSON in and out.
     let request = json!({ "filter": { "titleContains": "harness" } });
     let reply = env
-        .call_json("WindowsService/ListWindows".into(), request.to_string())
+        .call_json("WindowsService/ListWindows".into(), request.to_string(), None)
         .await?;
     let reply: Value = serde_json::from_str(&reply)?;
     for w in reply["windows"].as_array().into_iter().flatten() {

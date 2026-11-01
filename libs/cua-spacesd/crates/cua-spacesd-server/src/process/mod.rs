@@ -6,6 +6,7 @@
 
 #[cfg(windows)]
 mod conpty;
+pub mod ledger;
 pub mod ring;
 pub mod spawn;
 
@@ -24,12 +25,13 @@ use cua_proto::env::v1::process_selector::Selector;
 use cua_proto::env::v1::process_service_server::{ProcessService, ProcessServiceServer};
 use cua_proto::env::v1::stream_input_request::Message as StreamInputMessage;
 use cua_proto::env::v1::{
-    CloseStdinRequest, CloseStdinResponse, ConnectProcessRequest, ConnectProcessResponse,
-    ErrorReason, KeepAlive, ListProcessesRequest, ListProcessesResponse, ProcessConfig,
-    ProcessData, ProcessEnd, ProcessEvent, ProcessInfo, ProcessSelector, ProcessStart,
-    ProcessState, ResizePtyRequest, ResizePtyResponse, SendInputRequest, SendInputResponse, Signal,
-    SignalProcessRequest, SignalProcessResponse, StartProcessRequest, StartProcessResponse,
-    StreamInputRequest, StreamInputResponse,
+    AdvanceEpochRequest, AdvanceEpochResponse, CloseStdinRequest, CloseStdinResponse,
+    ConnectProcessRequest, ConnectProcessResponse, ErrorReason, ExecRecord, ExecState,
+    GetExecRecordRequest, GetExecRecordResponse, KeepAlive, ListProcessesRequest,
+    ListProcessesResponse, ProcessConfig, ProcessData, ProcessEnd, ProcessEvent, ProcessInfo,
+    ProcessSelector, ProcessStart, ProcessState, ResizePtyRequest, ResizePtyResponse,
+    SendInputRequest, SendInputResponse, Signal, SignalProcessRequest, SignalProcessResponse,
+    StartProcessRequest, StartProcessResponse, StreamInputRequest, StreamInputResponse,
 };
 use futures_util::Stream;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -42,9 +44,12 @@ use crate::context::ServerContext;
 use crate::error::{status, StatusBuilder};
 use crate::util::{duration, timestamp};
 
+use ledger::Ledger;
 use ring::{OutKind, Output};
 use spawn::{PtyMaster, SpawnSpec, Spawned};
 
+/// Capability feature for the exec ledger and fencing epoch.
+pub const EXEC_LEDGER_FEATURE: &str = "process.exec_ledger";
 /// Default keepalive interval on process streams.
 pub const DEFAULT_KEEPALIVE: Duration = Duration::from_secs(30);
 /// Metadata fallback for the keepalive interval, in milliseconds.
@@ -60,6 +65,14 @@ pub const KILL_GRACE: Duration = Duration::from_secs(5);
 const DRAIN_AFTER_EXIT: Duration = Duration::from_secs(2);
 /// Largest single `ProcessData` payload sent to a client.
 const MAX_DATA_MESSAGE: usize = 1024 * 1024;
+/// After a small output message, more output waits up to this long to be
+/// sent together. A command writing many tiny chunks otherwise becomes one
+/// tiny HTTP/2 DATA frame per chunk, and a client that has a few hundred of
+/// those unread answers with GOAWAY `ENHANCE_YOUR_CALM` (h2's flood
+/// protection), failing every stream on its connection.
+const COALESCE: Duration = Duration::from_millis(5);
+/// Messages smaller than this make the next one wait ([`COALESCE`]).
+const COALESCE_BELOW: usize = 16 * 1024;
 
 struct InputState {
     writer: Option<Box<dyn AsyncWrite + Send + Unpin>>,
@@ -71,6 +84,10 @@ pub struct ProcessEntry {
     id: u64,
     pid: u32,
     tag: String,
+    /// `StartProcessRequest.request_id` (empty: no ledger entry).
+    request_id: String,
+    /// `StartProcessRequest.epoch` (0: unfenced).
+    epoch: u64,
     config: ProcessConfig,
     pty: Option<PtyMaster>,
     started_at: SystemTime,
@@ -104,7 +121,7 @@ impl ProcessEntry {
             .map(|(_, at)| *at)
     }
 
-    fn start_event(&self) -> ProcessStart {
+    fn start_event(&self, deduplicated: bool) -> ProcessStart {
         let (start, end) = self.output.bounds();
         ProcessStart {
             pid: self.pid,
@@ -112,6 +129,45 @@ impl ProcessEntry {
             started_at: Some(timestamp(self.started_at)),
             scrollback_start_offset: start,
             output_end_offset: end,
+            deduplicated,
+            request_id: self.request_id.clone(),
+        }
+    }
+
+    /// The exec ledger view of this process (`request_id` processes).
+    fn exec_record(&self) -> ExecRecord {
+        let (_, end_offset) = self.output.bounds();
+        let end = self.end_event();
+        let exited = end.is_some();
+        let tail = if exited {
+            let from = self.output.cursor_for_last(ledger::TAIL_BYTES);
+            self.output
+                .read_from(from, ledger::TAIL_BYTES as usize)
+                .chunks
+                .into_iter()
+                .map(|c| data_event_payload(c.offset, c.kind, c.data))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        ExecRecord {
+            request_id: self.request_id.clone(),
+            state: if exited {
+                ExecState::Exited as i32
+            } else {
+                ExecState::Running as i32
+            },
+            epoch: self.epoch,
+            pid: self.pid,
+            started_at: Some(timestamp(self.started_at)),
+            output_bytes: if exited { end_offset } else { 0 },
+            output_sha256: if exited {
+                self.output.sha256().unwrap_or_default()
+            } else {
+                String::new()
+            },
+            end,
+            tail,
         }
     }
 
@@ -207,6 +263,32 @@ pub struct ProcessManager {
     ctx: ServerContext,
     entries: Mutex<Vec<Arc<ProcessEntry>>>,
     next_id: AtomicU64,
+    /// The exec ledger and fencing epoch, opened on first use so servers
+    /// that never see a `request_id` or epoch never touch the data dir.
+    ledger: Mutex<Option<Ledger>>,
+}
+
+/// What `ProcessManager::start` did.
+pub enum Started {
+    /// Spawned a new process.
+    New(Arc<ProcessEntry>),
+    /// Could not spawn; the end says why.
+    Failed(ProcessEnd),
+    /// The `request_id` belongs to a process still in the registry.
+    Attached(Arc<ProcessEntry>),
+    /// The `request_id` is only in the ledger: replay its outcome.
+    Replay(ExecRecord),
+}
+
+fn stale_epoch(requested: u64, current: u64) -> Status {
+    StatusBuilder::new(
+        Code::FailedPrecondition,
+        ErrorReason::StaleEpoch,
+        format!("epoch {requested} is older than the Space's current epoch {current}"),
+    )
+    .meta("current_epoch", current)
+    .meta("epoch", requested)
+    .build()
 }
 
 impl ProcessManager {
@@ -216,6 +298,7 @@ impl ProcessManager {
             ctx,
             entries: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(1),
+            ledger: Mutex::new(None),
         });
         let weak = Arc::downgrade(&manager);
         let shutdown = manager.ctx.shutdown_token();
@@ -252,6 +335,85 @@ impl ProcessManager {
             index += 1;
             keep
         });
+    }
+
+    /// Runs `f` on the ledger, opening it on first use.
+    fn with_ledger<T>(&self, f: impl FnOnce(&mut Ledger) -> T) -> Result<T, Status> {
+        let mut slot = self.ledger.lock().expect("ledger lock");
+        if slot.is_none() {
+            let dir = self.ctx.config().data_dir.clone();
+            let opened = Ledger::open(&dir).map_err(|e| {
+                crate::error::internal(format!("exec ledger in {}: {e}", dir.display()))
+            })?;
+            *slot = Some(opened);
+        }
+        Ok(f(slot.as_mut().expect("ledger opened")))
+    }
+
+    /// Applies a request's fencing epoch: 0 passes, lower than current is
+    /// refused, higher advances the epoch and kills every running process
+    /// started with a lower non-zero epoch. Returns how many were killed.
+    pub fn fence(&self, epoch: u64) -> Result<u32, Status> {
+        if epoch == 0 {
+            return Ok(0);
+        }
+        let advanced = self.with_ledger(|ledger| {
+            let current = ledger.epoch();
+            if epoch < current {
+                return Err(stale_epoch(epoch, current));
+            }
+            let raised = epoch > current;
+            ledger
+                .advance(epoch)
+                .map_err(|e| crate::error::internal(format!("write epoch: {e}")))?;
+            Ok(raised)
+        })??;
+        if !advanced {
+            return Ok(0);
+        }
+        let stale: Vec<Arc<ProcessEntry>> = self
+            .entries
+            .lock()
+            .expect("registry lock")
+            .iter()
+            .filter(|e| e.epoch != 0 && e.epoch < epoch && e.running())
+            .cloned()
+            .collect();
+        let mut killed = 0;
+        for entry in stale {
+            if entry.send_signal(Signal::Kill, true).is_ok() {
+                killed += 1;
+            }
+        }
+        if killed > 0 {
+            tracing::info!(epoch, killed, "epoch advanced: killed stale processes");
+        }
+        Ok(killed)
+    }
+
+    /// The current epoch (opening the ledger).
+    pub fn epoch(&self) -> Result<u64, Status> {
+        self.with_ledger(|ledger| ledger.epoch())
+    }
+
+    /// What is known about `request_id`.
+    pub fn exec_record(&self, request_id: &str) -> Result<Option<ExecRecord>, Status> {
+        let entry = self
+            .entries
+            .lock()
+            .expect("registry lock")
+            .iter()
+            .rev()
+            .find(|e| e.request_id == request_id)
+            .cloned();
+        let stored = self.with_ledger(|ledger| ledger.get(request_id).cloned())?;
+        Ok(match (entry, stored) {
+            // A final ledger record is authoritative.
+            (_, Some(record)) if record.state != "started" => Some(record.to_proto()),
+            (Some(entry), _) => Some(entry.exec_record()),
+            (None, Some(record)) => Some(record.to_proto()),
+            (None, None) => None,
+        })
     }
 
     fn refresh_count(&self) {
@@ -326,11 +488,16 @@ impl ProcessManager {
                 {
                     // SAFETY: geteuid has no preconditions.
                     let euid = unsafe { libc::geteuid() };
-                    if euid != 0 && euid != user.uid {
+                    if euid != user.uid
+                        && crate::privilege::switch_mode() == crate::privilege::SwitchMode::None
+                    {
                         return Err(status(
                             Code::PermissionDenied,
                             ErrorReason::PermissionDenied,
-                            format!("the driver runs as {current:?} and cannot switch to {name:?}"),
+                            format!(
+                                "the driver runs as {current:?} and cannot switch to {name:?} \
+                                 (it is not root and holds no CAP_SETUID/CAP_SETGID)"
+                            ),
                         ));
                     }
                 }
@@ -399,18 +566,40 @@ impl ProcessManager {
 
     /// Starts a process. Returns the entry, or a `ProcessEnd` describing why
     /// it could not start.
-    pub fn start(
-        self: &Arc<Self>,
-        request: &StartProcessRequest,
-    ) -> Result<Result<Arc<ProcessEntry>, ProcessEnd>, Status> {
+    pub fn start(self: &Arc<Self>, request: &StartProcessRequest) -> Result<Started, Status> {
+        if request.request_id.len() > ledger::MAX_REQUEST_ID {
+            return Err(crate::error::invalid(format!(
+                "request_id exceeds {} bytes",
+                ledger::MAX_REQUEST_ID
+            )));
+        }
         let spec = self.resolve_spec(request)?;
         let config = request.config.clone().unwrap_or_default();
         let scrollback = match request.scrollback_bytes {
             0 => self.ctx.config().default_scrollback_bytes,
             n => n.min(MAX_SCROLLBACK_BYTES),
         };
+        self.fence(request.epoch)?;
+        let request_id = request.request_id.as_str();
 
         let mut entries = self.entries.lock().expect("registry lock");
+        if !request_id.is_empty() {
+            if let Some(existing) = entries.iter().rev().find(|e| e.request_id == request_id) {
+                return Ok(Started::Attached(existing.clone()));
+            }
+            // Under the registry lock, so a concurrent start of the same key
+            // cannot slip between the lookup and the `started` record.
+            let known = self.with_ledger(|ledger| {
+                let current = ledger.epoch();
+                if request.epoch != 0 && request.epoch < current {
+                    return Err(stale_epoch(request.epoch, current));
+                }
+                Ok(ledger.get(request_id).cloned())
+            })??;
+            if let Some(record) = known {
+                return Ok(Started::Replay(record.to_proto()));
+            }
+        }
         if !request.tag.is_empty() {
             if let Some(existing) = entries.iter().find(|e| e.tag == request.tag) {
                 if existing.running() {
@@ -430,12 +619,37 @@ impl ProcessManager {
             // An exited process's tag may be reused: evict the old entry.
             entries.retain(|e| e.tag != request.tag);
         }
+        let started_at = SystemTime::now();
+        if !request_id.is_empty() {
+            let record = ledger::Record {
+                id: request_id.to_owned(),
+                state: "started".into(),
+                epoch: request.epoch,
+                pid: 0,
+                started_at_ms: ledger::ms(started_at),
+                end: None,
+                output_bytes: 0,
+                output_sha256: String::new(),
+                tail: Vec::new(),
+            };
+            self.with_ledger(|ledger| ledger.put(record))?
+                .map_err(|e| crate::error::internal(format!("exec ledger: {e}")))?;
+        }
+        let failed = |manager: &Self, end: ProcessEnd| -> Result<Started, Status> {
+            if !request_id.is_empty() {
+                manager.record_exit(request_id, request.epoch, 0, started_at, &end, None)?;
+            }
+            Ok(Started::Failed(end))
+        };
         if !spec.cwd.is_dir() {
-            return Ok(Err(ProcessEnd {
-                error: format!("working directory {} does not exist", spec.cwd.display()),
-                ended_at: Some(crate::util::now_ts()),
-                ..Default::default()
-            }));
+            return failed(
+                self,
+                ProcessEnd {
+                    error: format!("working directory {} does not exist", spec.cwd.display()),
+                    ended_at: Some(crate::util::now_ts()),
+                    ..Default::default()
+                },
+            );
         }
         let spawned = if spec.pty.is_some() {
             spawn::spawn_pty(&spec)
@@ -450,11 +664,14 @@ impl ProcessManager {
                 } else {
                     format!("failed to start {}: {error}", spec.command)
                 };
-                return Ok(Err(ProcessEnd {
-                    error: message,
-                    ended_at: Some(crate::util::now_ts()),
-                    ..Default::default()
-                }));
+                return failed(
+                    self,
+                    ProcessEnd {
+                        error: message,
+                        ended_at: Some(crate::util::now_ts()),
+                        ..Default::default()
+                    },
+                );
             }
         };
         let Spawned {
@@ -475,10 +692,16 @@ impl ProcessManager {
             id: self.next_id.fetch_add(1, Ordering::SeqCst),
             pid,
             tag: request.tag.clone(),
+            request_id: request.request_id.clone(),
+            epoch: request.epoch,
             config,
             pty: pty.clone(),
-            started_at: SystemTime::now(),
-            output: Arc::new(Output::new(scrollback)),
+            started_at,
+            output: Arc::new(if request_id.is_empty() {
+                Output::new(scrollback)
+            } else {
+                Output::with_digest(scrollback)
+            }),
             input: tokio::sync::Mutex::new(InputState {
                 writer,
                 sequences: HashMap::new(),
@@ -572,19 +795,77 @@ impl ProcessManager {
                         use std::os::unix::process::ExitStatusExt as _;
                         if let Some(signal) = status.signal() {
                             end.signal = spawn::contract_signal(signal) as i32;
+                            end.signal_number = signal;
+                            end.signal_name = spawn::signal_name(signal).unwrap_or_default().into();
                         }
                     }
                 }
                 Err(error) => end.error = format!("wait failed: {error}"),
             }
-            *waited.end.lock().expect("end lock") = Some((end, Instant::now()));
+            *waited.end.lock().expect("end lock") = Some((end.clone(), Instant::now()));
             waited.input.lock().await.writer = None;
+            if !waited.request_id.is_empty() {
+                // Recorded before the output closes, so a client that saw
+                // `ProcessEnd` finds the outcome in the ledger.
+                if let Err(error) = manager.record_exit(
+                    &waited.request_id,
+                    waited.epoch,
+                    waited.pid,
+                    waited.started_at,
+                    &end,
+                    Some(&waited.output),
+                ) {
+                    tracing::warn!(request_id = %waited.request_id, %error, "exec ledger");
+                }
+            }
             waited.output.close();
             manager.refresh_count();
             manager.sweep();
         });
         self.refresh_count();
-        Ok(Ok(entry))
+        Ok(Started::New(entry))
+    }
+
+    /// Appends the `exited` record of `request_id`.
+    fn record_exit(
+        &self,
+        request_id: &str,
+        epoch: u64,
+        pid: u32,
+        started_at: SystemTime,
+        end: &ProcessEnd,
+        output: Option<&Output>,
+    ) -> Result<(), Status> {
+        let (bytes, sha256, tail) = match output {
+            Some(output) => {
+                let from = output.cursor_for_last(ledger::TAIL_BYTES);
+                let tail = output
+                    .read_from(from, ledger::TAIL_BYTES as usize)
+                    .chunks
+                    .iter()
+                    .map(|c| ledger::tail_chunk(c.offset, c.kind, &c.data))
+                    .collect();
+                (output.bounds().1, output.sha256().unwrap_or_default(), tail)
+            }
+            None => (0, String::new(), Vec::new()),
+        };
+        let record = ledger::Record {
+            id: request_id.to_owned(),
+            state: "exited".into(),
+            epoch,
+            pid,
+            started_at_ms: ledger::ms(started_at),
+            end: Some(ledger::end_from_proto(end)),
+            output_bytes: bytes,
+            output_sha256: if sha256.is_empty() {
+                ledger::EMPTY_SHA256.into()
+            } else {
+                sha256
+            },
+            tail,
+        };
+        self.with_ledger(|ledger| ledger.put(record))?
+            .map_err(|e| crate::error::internal(format!("exec ledger: {e}")))
     }
 
     /// Lists processes, newest first.
@@ -610,6 +891,8 @@ impl ProcessManager {
             id: self.next_id.fetch_add(1, Ordering::SeqCst),
             pid,
             tag: tag.into(),
+            request_id: String::new(),
+            epoch: 0,
             config: ProcessConfig::default(),
             pty: None,
             started_at: SystemTime::now(),
@@ -670,18 +953,54 @@ async fn terminate(entry: Arc<ProcessEntry>) {
     }
 }
 
-fn data_event(offset: u64, kind: OutKind, data: Bytes) -> ProcessEvent {
+fn data_event_payload(offset: u64, kind: OutKind, data: Bytes) -> ProcessData {
     let output = match kind {
         OutKind::Stdout => DataOutput::Stdout(data.to_vec()),
         OutKind::Stderr => DataOutput::Stderr(data.to_vec()),
         OutKind::Pty => DataOutput::Pty(data.to_vec()),
     };
-    ProcessEvent {
-        event: Some(Event::Data(ProcessData {
-            offset,
-            output: Some(output),
-        })),
+    ProcessData {
+        offset,
+        output: Some(output),
     }
+}
+
+fn data_event(offset: u64, kind: OutKind, data: Bytes) -> ProcessEvent {
+    ProcessEvent {
+        event: Some(Event::Data(data_event_payload(offset, kind, data))),
+    }
+}
+
+/// The events that replay a ledger record: `ProcessStart` (deduplicated),
+/// the stored output tail, then `ProcessEnd`.
+fn replay_events(record: ExecRecord) -> Vec<ProcessEvent> {
+    let start = ProcessStart {
+        pid: record.pid,
+        tag: String::new(),
+        started_at: record.started_at,
+        scrollback_start_offset: record
+            .tail
+            .first()
+            .map(|d| d.offset)
+            .unwrap_or(record.output_bytes),
+        output_end_offset: record.output_bytes,
+        deduplicated: true,
+        request_id: record.request_id.clone(),
+    };
+    let mut events = vec![ProcessEvent {
+        event: Some(Event::Start(start)),
+    }];
+    events.extend(record.tail.into_iter().map(|data| ProcessEvent {
+        event: Some(Event::Data(data)),
+    }));
+    events.push(ProcessEvent {
+        event: Some(Event::End(record.end.unwrap_or_else(|| ProcessEnd {
+            error: "the exec ledger has no outcome for this request".into(),
+            lost: true,
+            ..Default::default()
+        }))),
+    });
+    events
 }
 
 /// Spawns the per-subscriber task that turns the ring into a gRPC stream.
@@ -690,6 +1009,7 @@ fn subscribe<T: Send + 'static>(
     cursor: u64,
     keepalive: Duration,
     kill_on_disconnect: bool,
+    deduplicated: bool,
     wrap: fn(ProcessEvent) -> T,
 ) -> ReceiverStream<Result<T, Status>> {
     let (tx, rx) = mpsc::channel::<Result<T, Status>>(16);
@@ -699,15 +1019,18 @@ fn subscribe<T: Send + 'static>(
         let mut progress = entry.output.subscribe();
         let mut disconnected = tx
             .send(Ok(wrap(ProcessEvent {
-                event: Some(Event::Start(entry.start_event())),
+                event: Some(Event::Start(entry.start_event(deduplicated))),
             })))
             .await
             .is_err();
         let mut last_sent = tokio::time::Instant::now();
+        // When the last output message was small: more output waits until then.
+        let mut hold_until: Option<tokio::time::Instant> = None;
         while !disconnected {
             let snapshot = *progress.borrow_and_update();
             let batch = entry.output.read_from(cursor, MAX_DATA_MESSAGE * 4);
             if !batch.chunks.is_empty() {
+                let bytes: usize = batch.chunks.iter().map(|c| c.data.len()).sum();
                 // Merge contiguous same-kind chunks into messages of at most
                 // MAX_DATA_MESSAGE bytes.
                 let mut pending: Option<(u64, OutKind, BytesMut)> = None;
@@ -733,6 +1056,8 @@ fn subscribe<T: Send + 'static>(
                 if let Some((offset, kind, buf)) = pending {
                     messages.push(data_event(offset, kind, buf.freeze()));
                 }
+                hold_until =
+                    (bytes < COALESCE_BELOW).then(|| tokio::time::Instant::now() + COALESCE);
                 for message in messages {
                     if tx.send(Ok(wrap(message))).await.is_err() {
                         disconnected = true;
@@ -757,6 +1082,15 @@ fn subscribe<T: Send + 'static>(
                 changed = progress.changed() => {
                     if changed.is_err() {
                         break;
+                    }
+                    // Let small writes gather (not past the end of output).
+                    if let Some(until) = hold_until.take() {
+                        if !progress.borrow().closed {
+                            tokio::select! {
+                                _ = tokio::time::sleep_until(until) => {}
+                                _ = tx.closed() => disconnected = true,
+                            }
+                        }
                     }
                 }
                 _ = tokio::time::sleep_until(last_sent + keepalive) => {
@@ -913,19 +1247,34 @@ impl ProcessService for ProcessServiceImpl {
         let body = request.into_inner();
         let wrap = |event| StartProcessResponse { event: Some(event) };
         match self.manager.start(&body)? {
-            Ok(entry) => Ok(Response::new(Box::pin(subscribe(
+            Started::New(entry) => Ok(Response::new(Box::pin(subscribe(
                 entry,
                 0,
                 keepalive,
                 body.kill_on_disconnect,
+                false,
                 wrap,
             )))),
-            Err(end) => {
+            // A retry of a known request: replay everything retained from
+            // the start, never run it again. A retry never kills the
+            // original on disconnect.
+            Started::Attached(entry) => Ok(Response::new(Box::pin(subscribe(
+                entry, 0, keepalive, false, true, wrap,
+            )))),
+            Started::Replay(record) => {
+                let events: Vec<_> = replay_events(record)
+                    .into_iter()
+                    .map(|e| Ok(wrap(e)))
+                    .collect();
+                Ok(Response::new(Box::pin(tokio_stream::iter(events))))
+            }
+            Started::Failed(end) => {
                 let events = vec![
                     Ok(wrap(ProcessEvent {
                         event: Some(Event::Start(ProcessStart {
                             tag: body.tag.clone(),
                             started_at: end.ended_at,
+                            request_id: body.request_id.clone(),
                             ..Default::default()
                         })),
                     })),
@@ -953,6 +1302,7 @@ impl ProcessService for ProcessServiceImpl {
             entry,
             cursor,
             keepalive,
+            false,
             false,
             |event| ConnectProcessResponse { event: Some(event) },
         ))))
@@ -1082,6 +1432,33 @@ impl ProcessService for ProcessServiceImpl {
             .map_err(|e| crate::error::internal(format!("resize: {e}")))?;
         Ok(Response::new(ResizePtyResponse {}))
     }
+
+    async fn get_exec_record(
+        &self,
+        request: Request<GetExecRecordRequest>,
+    ) -> Result<Response<GetExecRecordResponse>, Status> {
+        let body = request.into_inner();
+        if body.request_id.is_empty() {
+            return Err(crate::error::invalid("request_id is required"));
+        }
+        let record = self.manager.exec_record(&body.request_id)?;
+        Ok(Response::new(GetExecRecordResponse {
+            record,
+            epoch: self.manager.epoch()?,
+        }))
+    }
+
+    async fn advance_epoch(
+        &self,
+        request: Request<AdvanceEpochRequest>,
+    ) -> Result<Response<AdvanceEpochResponse>, Status> {
+        let body = request.into_inner();
+        let killed = self.manager.fence(body.epoch)?;
+        Ok(Response::new(AdvanceEpochResponse {
+            epoch: self.manager.epoch()?,
+            killed,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -1198,5 +1575,185 @@ mod tests {
         let mut got = [0u8; 3];
         server.read_exact(&mut got).await.unwrap();
         assert_eq!(&got, b"abx");
+    }
+
+    #[cfg(unix)]
+    fn manager_in(dir: &std::path::Path) -> Arc<ProcessManager> {
+        let config = ServerConfig {
+            data_dir: dir.join("data"),
+            ..ServerConfig::default()
+        };
+        ProcessManager::new(ServerContext::new(config, None))
+    }
+
+    #[cfg(unix)]
+    fn sh(dir: &std::path::Path, line: &str, request_id: &str, epoch: u64) -> StartProcessRequest {
+        StartProcessRequest {
+            config: Some(ProcessConfig {
+                command: "/bin/sh".into(),
+                args: vec!["-c".into(), line.into()],
+                cwd: dir.display().to_string(),
+                ..Default::default()
+            }),
+            request_id: request_id.into(),
+            epoch,
+            ..Default::default()
+        }
+    }
+
+    #[cfg(unix)]
+    async fn exited(entry: &Arc<ProcessEntry>) -> ProcessEnd {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            // The ledger record is written before the output closes.
+            if entry.output.progress().closed {
+                return entry.end_event().expect("closed after the end");
+            }
+            assert!(Instant::now() < deadline, "process did not exit");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    fn new_entry(started: Started) -> Arc<ProcessEntry> {
+        match started {
+            Started::New(entry) => entry,
+            _ => panic!("expected a new process"),
+        }
+    }
+
+    #[cfg(unix)]
+    fn replayed(started: Started) -> ExecRecord {
+        match started {
+            Started::Replay(record) => record,
+            _ => panic!("expected a ledger replay"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn request_id_runs_once_across_retries_and_restarts() {
+        let dir = tempfile::tempdir().unwrap();
+        let line = "echo run >> runs.txt; printf hello; printf oops >&2; exit 3";
+        let manager = manager_in(dir.path());
+        let entry = new_entry(manager.start(&sh(dir.path(), line, "call-1", 0)).unwrap());
+        assert_eq!(exited(&entry).await.exit_code, Some(3));
+
+        // A retry while the entry is retained attaches to it.
+        match manager.start(&sh(dir.path(), line, "call-1", 0)).unwrap() {
+            Started::Attached(again) => assert!(Arc::ptr_eq(&again, &entry)),
+            _ => panic!("expected the retained process"),
+        }
+        let record = manager.exec_record("call-1").unwrap().unwrap();
+        assert_eq!(record.state, ExecState::Exited as i32);
+        assert_eq!(record.output_bytes, 9);
+        assert_eq!(
+            record.output_sha256,
+            hex::encode(<sha2::Sha256 as sha2::Digest>::digest(b"hellooops"))
+        );
+
+        // A new server process (restart) replays the recorded outcome.
+        drop(manager);
+        let manager = manager_in(dir.path());
+        let record = replayed(manager.start(&sh(dir.path(), line, "call-1", 0)).unwrap());
+        let events = replay_events(record);
+        let Some(Event::Start(start)) = &events[0].event else {
+            panic!("start first")
+        };
+        assert!(start.deduplicated);
+        assert_eq!(start.request_id, "call-1");
+        let text: Vec<u8> = events
+            .iter()
+            .filter_map(|e| match &e.event {
+                Some(Event::Data(ProcessData {
+                    output: Some(DataOutput::Stdout(b) | DataOutput::Stderr(b)),
+                    ..
+                })) => Some(b.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(text, b"hellooops");
+        let Some(Event::End(end)) = &events.last().unwrap().event else {
+            panic!("end last")
+        };
+        assert_eq!((end.exit_code, end.lost), (Some(3), false));
+        let runs = std::fs::read_to_string(dir.path().join("runs.txt")).unwrap();
+        assert_eq!(runs.lines().count(), 1, "the command ran exactly once");
+
+        // An unknown key is absent, and a spawn failure is recorded too.
+        assert!(manager.exec_record("never").unwrap().is_none());
+        let mut missing = sh(dir.path(), "", "call-2", 0);
+        missing.config.as_mut().unwrap().command = "/nonexistent/program".into();
+        assert!(matches!(
+            manager.start(&missing).unwrap(),
+            Started::Failed(_)
+        ));
+        let record = manager.exec_record("call-2").unwrap().unwrap();
+        assert_eq!(record.state, ExecState::Exited as i32);
+        assert!(record.end.unwrap().error.contains("not found"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_request_running_when_the_server_stopped_is_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = manager_in(dir.path());
+        let entry = new_entry(
+            first
+                .start(&sh(dir.path(), "sleep 30", "call-1", 0))
+                .unwrap(),
+        );
+        assert_eq!(
+            first.exec_record("call-1").unwrap().unwrap().state,
+            ExecState::Running as i32
+        );
+        // A second server process over the same data dir stands in for a
+        // restart: it never saw the process finish.
+        let second = manager_in(dir.path());
+        let record = second.exec_record("call-1").unwrap().unwrap();
+        assert_eq!(record.state, ExecState::Lost as i32);
+        assert!(record.end.as_ref().unwrap().lost);
+        let replay = replayed(
+            second
+                .start(&sh(dir.path(), "sleep 30", "call-1", 0))
+                .unwrap(),
+        );
+        assert!(replay.end.unwrap().lost);
+        entry.send_signal(Signal::Kill, true).unwrap();
+        exited(&entry).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn advancing_the_epoch_fences_older_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = manager_in(dir.path());
+        let old = new_entry(manager.start(&sh(dir.path(), "sleep 30", "a", 1)).unwrap());
+        let unfenced = new_entry(manager.start(&sh(dir.path(), "sleep 30", "", 0)).unwrap());
+        assert_eq!(manager.fence(2).unwrap(), 1);
+        let end = exited(&old).await;
+        assert_eq!(end.signal, Signal::Kill as i32);
+        assert!(unfenced.running(), "unfenced processes are not touched");
+
+        let stale = manager
+            .start(&sh(dir.path(), "true", "b", 1))
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(stale.code(), Code::FailedPrecondition);
+        let info = crate::error::error_info(&stale).unwrap();
+        assert_eq!(info.reason, ErrorReason::StaleEpoch as i32);
+        assert_eq!(info.metadata["current_epoch"], "2");
+        assert_eq!(
+            manager.fence(1).unwrap_err().code(),
+            Code::FailedPrecondition
+        );
+        // A higher epoch on a start advances it; the epoch survives restarts.
+        let next = new_entry(manager.start(&sh(dir.path(), "true", "c", 5)).unwrap());
+        exited(&next).await;
+        drop(manager);
+        assert_eq!(manager_in(dir.path()).epoch().unwrap(), 5);
+        unfenced.send_signal(Signal::Kill, true).unwrap();
+        exited(&unfenced).await;
     }
 }

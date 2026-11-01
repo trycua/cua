@@ -64,6 +64,21 @@ Describe 'functions' {
         { Assert-DownloadUrl 'file:///tmp/a.zip' 'file:///tmp/r.json' } | Should -Not -Throw
     }
 
+    It 'orders cua versions as semver, a dev build older than its release' {
+        Test-CuaVersionNewer '0.7.99' '0.7.0' | Should -BeTrue
+        Test-CuaVersionNewer '0.10.0' '0.9.9' | Should -BeTrue
+        Test-CuaVersionNewer '0.7.0' '0.7.0' | Should -BeFalse
+        Test-CuaVersionNewer '0.6.0' '0.7.0' | Should -BeFalse
+        Test-CuaVersionNewer '0.7.0' '0.7.0-rc.1' | Should -BeTrue
+        Test-CuaVersionNewer '0.7.0-rc.1' '0.7.0' | Should -BeFalse
+        Test-CuaVersionNewer '0.7.0-rc.10' '0.7.0-rc.9' | Should -BeTrue
+        Test-CuaVersionNewer '0.7.0-dev' '0.7.0' | Should -BeFalse
+        Test-CuaVersionNewer '0.7.0' '0.7.0-dev' | Should -BeTrue
+        Test-CuaVersionNewer '0.8.0-dev' '0.7.0' | Should -BeTrue
+        Test-CuaVersionNewer '0.0.0' '0.6.0' | Should -BeFalse
+        Test-CuaVersionNewer 'junk' '0.7.0' | Should -BeFalse
+    }
+
     It 'maps architectures' {
         Get-CuaPlatform -Arch 'AMD64' | Should -Be 'windows-x64'
         Get-CuaPlatform -Arch 'ARM64' | Should -Be 'windows-arm64'
@@ -225,7 +240,7 @@ Describe 'install.ps1' {
         Join-Path $prefix 'bin/cua.exe' | Should -Exist
         $out | Should -Match 'Installed the command-line tools \(downloads checked\)\.'
         $out | Should -Match 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents\.'
-        $out | Should -Match 'To let your other devices use this computer, run "cua host setup"\.'
+        $out | Should -Match 'To add this computer to your account, run "cua host setup" after signing in\.'
         $out | Should -Match 'is not on your PATH'
     }
 
@@ -352,6 +367,47 @@ Describe 'install.ps1' {
             Should -Throw '*no verifiable signature*'
     }
 
+    # UL2: a newer cua already installed is never replaced. A POSIX shell
+    # script stands in for cua.exe, so these run where `& file.exe` can exec one.
+    Context 'never downgrades the installed cua' -Skip:($IsWindows) {
+        BeforeAll {
+            function script:New-FakeCua([string]$Prefix, [string]$Ver) {
+                $bin = Join-Path $Prefix 'bin'
+                New-Item -ItemType Directory -Force -Path $bin | Out-Null
+                $exe = Join-Path $bin 'cua.exe'
+                Set-Content -LiteralPath $exe -Value "#!/bin/sh`necho 'cua $Ver'" -NoNewline
+                chmod +x $exe
+                return $exe
+            }
+        }
+        It 'keeps a newer installed cua' {
+            $p = Join-Path $env:CUA_TEST_ROOT 'nd1'; $exe = New-FakeCua $p '9.9.9'
+            $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $p }
+            $out | Should -Match 'kept .*cua 9.9.9 is newer than the release.s 1.2.3'
+            (Get-Content -LiteralPath $exe -Raw) | Should -Match '9.9.9'
+        }
+        It 'upgrades an older installed cua' {
+            $p = Join-Path $env:CUA_TEST_ROOT 'nd2'; $exe = New-FakeCua $p '0.1.0'
+            Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $p } | Out-Null
+            (Get-Content -LiteralPath $exe -Raw) | Should -Match 'fake cua'
+        }
+        It 'installs when none is there' {
+            $p = Join-Path $env:CUA_TEST_ROOT 'nd3'
+            Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $p } | Out-Null
+            Join-Path $p 'bin/cua.exe' | Should -Exist
+        }
+        It 'treats a dev build installed as older, and a release as newer than a dev build' {
+            $p = Join-Path $env:CUA_TEST_ROOT 'nd4'; $exe = New-FakeCua $p '1.2.3-dev'
+            Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $p } | Out-Null
+            (Get-Content -LiteralPath $exe -Raw) | Should -Match 'fake cua'
+        }
+        It '-Version rolls back a newer cua on purpose' {
+            $p = Join-Path $env:CUA_TEST_ROOT 'nd5'; $exe = New-FakeCua $p '9.9.9'
+            Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $p; Version = '1.2.3' } | Out-Null
+            (Get-Content -LiteralPath $exe -Raw) | Should -Match 'fake cua'
+        }
+    }
+
     It 'reads the versioned manifest for -Version' {
         $base = ConvertTo-FileUrl $env:CUA_TEST_ROOT
         { Invoke-Installer @{ DryRun = $true; Yes = $true; CliOnly = $true; Version = 'v9.9.9' } @{ CUA_INSTALL_MANIFEST_URL = $null; CUA_INSTALL_BASE_URL = $base } } |
@@ -411,6 +467,17 @@ Describe 'install.ps1' {
         $out | Should -Not -Match 'msiexec'
     }
 
+    It 'dry run: -Select host -NoProvideSpaces adds this computer without providing Spaces' {
+        $out = Invoke-Installer @{ DryRun = $true; Select = 'host'; NoProvideSpaces = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-nps') } @{ CUA_INSTALL_NONINTERACTIVE = '1' }
+        $out | Should -Match '\[dry-run\] .*cua.exe host setup --no-provide-spaces'
+    }
+
+    It '-NoHost refuses what adds this computer' {
+        { Invoke-Installer @{ DryRun = $true; NoHost = $true; Pair = 'K7QM-4XPB-2RHD'; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-nh1') } @{ CUA_INSTALL_NONINTERACTIVE = '1' } } | Should -Throw '*-NoHost and -Pair contradict*'
+        { Invoke-Installer @{ DryRun = $true; NoHost = $true; Select = 'host'; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-nh2') } @{ CUA_INSTALL_NONINTERACTIVE = '1' } } | Should -Throw '*-NoHost and -Select host contradict*'
+        { Invoke-Installer @{ DryRun = $true; NoHost = $true; NoProvideSpaces = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-nh3') } @{ CUA_INSTALL_NONINTERACTIVE = '1' } } | Should -Throw '*-NoProvideSpaces goes with adding this computer*'
+    }
+
     It 'rejects unknown items and conflicting selections' {
         { Invoke-Installer @{ DryRun = $true; Select = 'bogus' } } | Should -Throw '*unknown item*'
         { Invoke-Installer @{ DryRun = $true; Select = 'host'; Only = 'host' } } | Should -Throw '*mutually exclusive*'
@@ -420,6 +487,48 @@ Describe 'install.ps1' {
     It 'dry run: -Mode writes the install-mode file when the app is installed' {
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Mode = 'host' }
         $out | Should -Match 'spaces-install-mode'
+    }
+}
+
+# Partial releases (CUA-2068): cua-install-latest can hold one version per
+# platform. Built with the real release_manifest.py, as cd-cua-spaces.yml does:
+# 1.2.3 ships every platform, 1.2.4 only macOS, then 1.2.5 only Windows.
+Describe 'mixed versions' {
+    BeforeAll {
+        $mix = Join-Path $env:CUA_TEST_ROOT 'mixed'
+        function Build-Release([string]$Version, [string[]]$Names, [string]$Merge) {
+            $dir = Join-Path $mix "v$Version"
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            foreach ($n in $Names) { Set-Content -LiteralPath (Join-Path $dir ($n -creplace 'VER', $Version)) -Value $n }
+            $out = Join-Path $mix "manifest-$Version.json"
+            $toolArgs = @('--component', 'app', '--version', $Version, '--dir', $dir,
+                '--base-url', "https://example.invalid/cua-spaces-v$Version", '--out', $out)
+            if ($Merge) { $toolArgs += @('--merge', $Merge, '--carry-forward-platforms') }
+            & $Python.Source $Tool @toolArgs
+            return $out
+        }
+        $m123 = Build-Release '1.2.3' @('cua-spaces-VER-darwin-universal.dmg', 'cua-spaces-VER-windows-x64-setup.exe', 'cua-spaces-VER-windows-arm64-setup.exe', 'cua-spaces-VER-linux-x64.AppImage', 'cua-spaces-VER-linux-arm64.AppImage') ''
+        $m124 = Build-Release '1.2.4' @('cua-spaces-VER-darwin-universal.dmg') $m123
+        $m125 = Build-Release '1.2.5' @('cua-spaces-VER-windows-x64-setup.exe', 'cua-spaces-VER-windows-arm64-setup.exe') $m124
+        $url124 = ConvertTo-FileUrl $m124
+        $url125 = ConvertTo-FileUrl $m125
+    }
+
+    It 'a macOS-only release leaves Windows on its own build' {
+        foreach ($arch in 'AMD64', 'ARM64') {
+            $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true } @{ CUA_INSTALL_MANIFEST_URL = $url124; CUA_INSTALL_ARCH = $arch }
+            $out | Should -Match 'cua-spaces-v1\.2\.3/cua-spaces-1\.2\.3-windows-'
+            $out | Should -Not -Match '1\.2\.4'
+        }
+    }
+
+    It 'a later Windows-only release installs the newest Windows build' {
+        $arch = @{ AMD64 = 'x64'; ARM64 = 'arm64' }
+        foreach ($a in 'AMD64', 'ARM64') {
+            $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true } @{ CUA_INSTALL_MANIFEST_URL = $url125; CUA_INSTALL_ARCH = $a }
+            $out | Should -Match "cua-spaces-v1\.2\.5/cua-spaces-1\.2\.5-windows-$($arch[$a])-setup\.exe"
+            $out | Should -Not -Match '1\.2\.3'
+        }
     }
 }
 

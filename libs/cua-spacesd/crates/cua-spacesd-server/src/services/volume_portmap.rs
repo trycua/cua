@@ -94,9 +94,21 @@ impl Portmap {
     /// Serves on `127.0.0.1:port` (TCP and UDP) and points MOUNT and NFS at
     /// `nfs`. `port` 0 picks one (tests).
     pub async fn start(port: u16, nfs: Ports) -> std::io::Result<Portmap> {
-        let tcp = TcpListener::bind(("127.0.0.1", port)).await?;
-        let addr = tcp.local_addr()?;
-        let udp = UdpSocket::bind(("127.0.0.1", addr.port())).await?;
+        // A fixed port binds once. Port 0 needs one number free for TCP and
+        // for UDP, and TCP and UDP have separate port spaces (Windows keeps
+        // separate excluded ranges, which refuse the bind with "permission
+        // denied"): when the UDP bind refuses the TCP pick, pick again.
+        let mut picks_left = if port == 0 { 32 } else { 1 };
+        let (tcp, udp, addr) = loop {
+            let tcp = TcpListener::bind(("127.0.0.1", port)).await?;
+            let addr = tcp.local_addr()?;
+            picks_left -= 1;
+            match UdpSocket::bind(("127.0.0.1", addr.port())).await {
+                Ok(udp) => break (tcp, udp, addr),
+                Err(e) if picks_left == 0 => return Err(e),
+                Err(_) => {}
+            }
+        };
         let log = CallLog::default();
         let l = log.clone();
         let tcp_task = tokio::spawn(async move {

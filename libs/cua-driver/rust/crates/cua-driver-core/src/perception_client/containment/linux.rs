@@ -44,6 +44,11 @@ const SYS_LANDLOCK_ADD_RULE: libc::c_long = 445;
 const SYS_LANDLOCK_RESTRICT_SELF: libc::c_long = 446;
 const SYS_CLOSE_RANGE: libc::c_long = 436;
 const CLOSE_RANGE_CLOEXEC: u32 = 1 << 2;
+// musl's libc crate lacks the number.
+#[cfg(target_arch = "x86_64")]
+const SYS_KEXEC_FILE_LOAD: libc::c_long = 320;
+#[cfg(target_arch = "aarch64")]
+const SYS_KEXEC_FILE_LOAD: libc::c_long = 294;
 
 const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1 << 0;
 const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
@@ -492,7 +497,7 @@ fn denied_syscalls() -> Vec<libc::c_long> {
         libc::SYS_finit_module,
         libc::SYS_delete_module,
         libc::SYS_kexec_load,
-        libc::SYS_kexec_file_load,
+        SYS_KEXEC_FILE_LOAD,
         libc::SYS_reboot,
         libc::SYS_syslog,
         libc::SYS_acct,

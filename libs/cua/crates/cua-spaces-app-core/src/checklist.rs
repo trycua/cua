@@ -64,13 +64,13 @@ impl ChecklistStep {
     fn copy(self) -> (&'static str, &'static str, &'static str) {
         match self {
             ChecklistStep::AddMachine => (
-                "Add a computer",
-                "Connect a Mac, Linux or Windows computer you own.",
-                "Add computer",
+                "Add a machine",
+                "Connect a Mac, Linux or Windows machine you own.",
+                "Add machine",
             ),
             ChecklistStep::CreateSpace => (
                 "Create a Space",
-                "A computer for one task, on one of your computers.",
+                "A computer for one task, on one of your machines.",
                 "Create",
             ),
             ChecklistStep::Teleport => (
@@ -105,6 +105,11 @@ pub struct ChecklistState {
     /// It was on screen once (`checklist_shown` was recorded).
     #[serde(default)]
     pub shown: bool,
+    /// Steps skipped ("Skip"), each once, in checklist order: they count as
+    /// done for the progress and for `complete`, and a skipped step done
+    /// later shows as done.
+    #[serde(default)]
+    pub skipped: Vec<ChecklistStep>,
 }
 
 /// Something that happened to the checklist.
@@ -122,7 +127,12 @@ pub enum ChecklistAction {
     },
     /// The checklist is on screen.
     Shown,
-    /// Closed with ×.
+    /// "Skip" on a step: not for this person; it counts as done.
+    Skip {
+        /// The step.
+        step: ChecklistStep,
+    },
+    /// Closed with × ("Hide", or "Done" once complete).
     Dismiss,
     /// Getting Started (the palette, the Help menu): open it again.
     Reopen,
@@ -211,6 +221,8 @@ pub struct ChecklistRow {
     pub action: String,
     /// Done (ticked, struck through).
     pub done: bool,
+    /// Skipped (struck through, not ticked); never with `done`.
+    pub skipped: bool,
 }
 
 /// The checklist as drawn.
@@ -229,6 +241,10 @@ pub struct ChecklistView {
     pub progress: String,
     /// The close button's accessibility label.
     pub close_label: String,
+    /// "Skip", on each step not done or skipped.
+    pub skip_label: String,
+    /// "Hide", or "Done" once complete: closes the checklist.
+    pub hide_label: String,
     /// The steps in order.
     pub rows: Vec<ChecklistRow>,
 }
@@ -237,9 +253,18 @@ fn is_done(state: &ChecklistState, step: ChecklistStep) -> bool {
     state.done.contains(&step)
 }
 
-/// Every step done.
+fn is_skipped(state: &ChecklistState, step: ChecklistStep) -> bool {
+    state.skipped.contains(&step)
+}
+
+/// Done or skipped: what the progress counts.
+fn is_settled(state: &ChecklistState, step: ChecklistStep) -> bool {
+    is_done(state, step) || is_skipped(state, step)
+}
+
+/// Every step done or skipped.
 pub fn complete(state: &ChecklistState) -> bool {
-    STEPS.iter().all(|s| is_done(state, *s))
+    STEPS.iter().all(|s| is_settled(state, *s))
 }
 
 fn signals(events: &[&str]) -> Vec<TelemetrySignal> {
@@ -311,9 +336,36 @@ pub fn reduce(state: &ChecklistState, action: &ChecklistAction) -> ChecklistTran
                     .collect(),
                 dismissed: state.dismissed || other.dismissed,
                 shown: state.shown || other.shown,
+                skipped: STEPS
+                    .iter()
+                    .copied()
+                    .filter(|s| is_skipped(state, *s) || is_skipped(other, *s))
+                    .collect(),
             },
             signals: vec![],
         },
+        ChecklistAction::Skip { step } => {
+            if is_settled(state, *step) {
+                return same();
+            }
+            let mut next = state.clone();
+            next.skipped = STEPS
+                .iter()
+                .copied()
+                .filter(|s| is_skipped(state, *s) || s == step)
+                .collect();
+            // A skip records no step of its own; the last one to settle
+            // still completes the checklist.
+            let signals = if complete(&next) {
+                signals(&["completed"])
+            } else {
+                vec![]
+            };
+            ChecklistTransition {
+                state: next,
+                signals,
+            }
+        }
         ChecklistAction::Shown if !state.shown => ChecklistTransition {
             state: ChecklistState {
                 shown: true,
@@ -341,7 +393,7 @@ pub fn reduce(state: &ChecklistState, action: &ChecklistAction) -> ChecklistTran
 /// The checklist as drawn.
 pub fn view(state: &ChecklistState) -> ChecklistView {
     let complete = complete(state);
-    let count = STEPS.iter().filter(|s| is_done(state, **s)).count();
+    let count = STEPS.iter().filter(|s| is_settled(state, **s)).count();
     ChecklistView {
         visible: !state.dismissed,
         complete,
@@ -359,6 +411,8 @@ pub fn view(state: &ChecklistState) -> ChecklistView {
         .into(),
         progress: format!("{count} of {}", STEPS.len()),
         close_label: "Close getting started".into(),
+        skip_label: "Skip".into(),
+        hide_label: if complete { "Done" } else { "Hide" }.into(),
         rows: STEPS
             .iter()
             .map(|&step| {
@@ -369,6 +423,7 @@ pub fn view(state: &ChecklistState) -> ChecklistView {
                     detail: detail.into(),
                     action: action.into(),
                     done: is_done(state, step),
+                    skipped: is_skipped(state, step) && !is_done(state, step),
                 }
             })
             .collect(),
@@ -501,7 +556,7 @@ mod tests {
         assert_eq!(
             rows,
             [
-                ("Add a computer", "Add computer", false),
+                ("Add a machine", "Add machine", false),
                 ("Create a Space", "Create", false),
                 ("Teleport an app", "Teleport", true),
                 ("Share a Space", "Share", false),
@@ -638,7 +693,8 @@ mod tests {
             ChecklistState {
                 done: vec![ChecklistStep::Share, ChecklistStep::AddMachine],
                 dismissed: true,
-                shown: false
+                shown: false,
+                skipped: vec![],
             }
         );
         let a: ChecklistAction = serde_json::from_str(
@@ -652,6 +708,95 @@ mod tests {
                 has_space: true,
                 agent_ran: false
             }
+        );
+    }
+
+    #[test]
+    fn a_skipped_step_counts_as_done_and_is_kept() {
+        let skip = |s: &ChecklistState, step| reduce(s, &ChecklistAction::Skip { step });
+        let mut state = ChecklistState {
+            done: vec![ChecklistStep::AddMachine, ChecklistStep::CreateSpace],
+            ..Default::default()
+        };
+        let t = skip(&state, ChecklistStep::Teleport);
+        assert!(t.signals.is_empty(), "a skip records no step");
+        state = t.state;
+        assert_eq!(state.skipped, [ChecklistStep::Teleport]);
+        let v = view(&state);
+        assert_eq!(v.progress, "3 of 5");
+        let teleport = v
+            .rows
+            .iter()
+            .find(|r| r.step == ChecklistStep::Teleport)
+            .unwrap();
+        assert!(teleport.skipped && !teleport.done);
+        assert_eq!(
+            (v.skip_label.as_str(), v.hide_label.as_str()),
+            ("Skip", "Hide")
+        );
+        // Skipping again, or skipping a done step, changes nothing.
+        assert_eq!(skip(&state, ChecklistStep::Teleport).state, state);
+        assert_eq!(skip(&state, ChecklistStep::AddMachine).state, state);
+        // Kept as the hosts store it, and read back.
+        let json = serde_json::to_value(&state).unwrap();
+        assert_eq!(json["skipped"], serde_json::json!(["teleport"]));
+        assert_eq!(
+            serde_json::from_value::<ChecklistState>(json).unwrap(),
+            state
+        );
+        // The last one settled completes it, whether done or skipped.
+        state = skip(&state, ChecklistStep::Share).state;
+        let t = reduce(
+            &state,
+            &ChecklistAction::Done {
+                step: ChecklistStep::RunAgent,
+            },
+        );
+        assert_eq!(events(&t), ["checklist_run_agent", "checklist_completed"]);
+        let v = view(&t.state);
+        assert!(v.complete);
+        assert_eq!(
+            (v.progress.as_str(), v.hide_label.as_str()),
+            ("5 of 5", "Done")
+        );
+        // A skipped step done later shows as done.
+        let t = reduce(
+            &t.state,
+            &ChecklistAction::Done {
+                step: ChecklistStep::Teleport,
+            },
+        );
+        let row = view(&t.state)
+            .rows
+            .into_iter()
+            .find(|r| r.step == ChecklistStep::Teleport)
+            .unwrap();
+        assert!(row.done && !row.skipped);
+    }
+
+    #[test]
+    fn merging_keeps_both_copies_skips() {
+        let here = ChecklistState {
+            skipped: vec![ChecklistStep::Share],
+            ..Default::default()
+        };
+        let there = ChecklistState {
+            skipped: vec![ChecklistStep::Teleport],
+            ..Default::default()
+        };
+        let t = reduce(&here, &ChecklistAction::Merge { state: there });
+        assert_eq!(
+            t.state.skipped,
+            [ChecklistStep::Teleport, ChecklistStep::Share]
+        );
+        // An older copy without skips keeps this one's.
+        let old: ChecklistState = serde_json::from_str(r#"{"done":["share"]}"#).unwrap();
+        assert!(old.skipped.is_empty());
+        assert_eq!(
+            reduce(&here, &ChecklistAction::Merge { state: old })
+                .state
+                .skipped,
+            [ChecklistStep::Share]
         );
     }
 }

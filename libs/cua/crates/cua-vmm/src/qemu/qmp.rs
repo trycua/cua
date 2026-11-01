@@ -14,6 +14,8 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use crate::error::{Result, VmmError};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
+/// `max-bandwidth` for migrations to a local file: 1 TiB/s, no limit.
+const UNTHROTTLED: u64 = 1 << 40;
 
 /// One negotiated QMP session.
 pub struct QmpClient {
@@ -176,6 +178,95 @@ impl QmpClient {
     pub async fn delvm(&mut self, name: &str) -> Result<()> {
         hmp_ok(self.hmp(&format!("delvm {name}")).await?)
     }
+
+    /// Migration capabilities this QEMU knows (`query-migrate-capabilities`).
+    pub async fn migrate_capabilities(&mut self) -> Result<Vec<String>> {
+        let v = self.execute("query-migrate-capabilities", None).await?;
+        Ok(v.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|c| c.get("capability").and_then(Value::as_str))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Sets migration capabilities (`migrate-set-capabilities`).
+    pub async fn set_migrate_capabilities(&mut self, caps: &[(&str, bool)]) -> Result<()> {
+        let caps: Vec<Value> = caps
+            .iter()
+            .map(|(c, on)| json!({"capability": c, "state": on}))
+            .collect();
+        self.execute(
+            "migrate-set-capabilities",
+            Some(json!({ "capabilities": caps })),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Writes the VM's state to `path` (`migrate` to a `file:` URI) and
+    /// waits for it. The VM is left paused (`postmigrate`). Unthrottled:
+    /// QEMU caps migration at 128 MiB/s by default, sized for networks.
+    pub async fn migrate_to_file(&mut self, path: &Path, timeout: Duration) -> Result<()> {
+        self.execute(
+            "migrate-set-parameters",
+            Some(json!({ "max-bandwidth": UNTHROTTLED })),
+        )
+        .await?;
+        self.execute(
+            "migrate",
+            Some(json!({ "uri": format!("file:{}", path.display()) })),
+        )
+        .await?;
+        self.wait_migration(timeout).await
+    }
+
+    /// Loads state written by [`Self::migrate_to_file`] into a QEMU started
+    /// with `-incoming defer`, and waits for it. The VM is left paused.
+    pub async fn migrate_from_file(&mut self, path: &Path, timeout: Duration) -> Result<()> {
+        self.execute(
+            "migrate-incoming",
+            Some(json!({ "uri": format!("file:{}", path.display()) })),
+        )
+        .await?;
+        self.wait_migration(timeout).await
+    }
+
+    async fn wait_migration(&mut self, timeout: Duration) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let v = self.execute("query-migrate", None).await?;
+            match migration_outcome(&v) {
+                Some(Ok(())) => return Ok(()),
+                Some(Err(e)) => return Err(VmmError::Qmp(e)),
+                None => {}
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(VmmError::Qmp(format!(
+                    "migration did not finish in {}s: {v}",
+                    timeout.as_secs()
+                )));
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+}
+
+/// `query-migrate`'s outcome: `None` while it runs (or before an incoming
+/// one starts), `Some(Err)` when it failed.
+pub fn migration_outcome(v: &Value) -> Option<std::result::Result<(), String>> {
+    match v.get("status").and_then(Value::as_str) {
+        Some("completed") => Some(Ok(())),
+        Some(s @ ("failed" | "cancelled")) => Some(Err(format!(
+            "migration {s}: {}",
+            v.get("error-desc")
+                .and_then(Value::as_str)
+                .unwrap_or("no detail")
+        ))),
+        _ => None,
+    }
 }
 
 fn hmp_ok(out: String) -> Result<()> {
@@ -220,6 +311,20 @@ mod tests {
         let e = encode("screendump", Some(json!({"filename": "/x.png"})));
         let v: Value = serde_json::from_str(&e).unwrap();
         assert_eq!(v["arguments"]["filename"], "/x.png");
+    }
+
+    #[test]
+    fn migration_outcomes() {
+        assert_eq!(migration_outcome(&json!({})), None);
+        assert_eq!(migration_outcome(&json!({"status": "active"})), None);
+        assert_eq!(
+            migration_outcome(&json!({"status": "completed"})),
+            Some(Ok(()))
+        );
+        let e = migration_outcome(&json!({"status": "failed", "error-desc": "no space"}))
+            .unwrap()
+            .unwrap_err();
+        assert!(e.contains("no space"), "{e}");
     }
 
     #[test]

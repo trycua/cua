@@ -2,7 +2,10 @@ syntax = "proto3";
 
 package cua.daemon.v1;
 
+import "cua/daemon/v1/builds.proto";
+import "cua/daemon/v1/egress.proto";
 import "cua/daemon/v1/resources.proto";
+import "cua/env/v1/volume.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -25,6 +28,12 @@ service SpaceService {
   rpc ListSpaces(ListSpacesRequest) returns (ListSpacesResponse);
   // Forgets a Space. Does not delete the underlying sandbox.
   rpc RemoveSpace(RemoveSpaceRequest) returns (RemoveSpaceResponse);
+  // Lists the named volumes of Cua Volume (needs Cua Spaces).
+  rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
+  // Creates a named volume.
+  rpc CreateVolume(CreateVolumeRequest) returns (CreateVolumeResponse);
+  // Deletes a named volume and its files (history stays).
+  rpc DeleteVolume(DeleteVolumeRequest) returns (DeleteVolumeResponse);
   // Resolves any accepted spelling (id, legacy id, URL, name) to a Space.
   rpc ResolveSpace(ResolveSpaceRequest) returns (ResolveSpaceResponse);
   // Deprecated: use `CreateSpace` with location "local".
@@ -61,6 +70,38 @@ service SpaceService {
   // Deletes a Space's sandbox and forgets it. A Space added by address
   // (`direct:`, `relay:`) is only forgotten: cua did not create it.
   rpc DeleteSpace(DeleteSpaceRequest) returns (DeleteSpaceResponse);
+  // Deletes several Spaces (at most 3 at a time), turning running ones off
+  // first. One result per Space, in order; one failure never stops the
+  // rest.
+  rpc DeleteSpaces(DeleteSpacesRequest) returns (DeleteSpacesResponse);
+  // Takes this account off Spaces shared with it (through the relay): a
+  // direct share ends, a team's Space leaves this account's list. One
+  // result per Space, in order.
+  rpc LeaveSpaces(LeaveSpacesRequest) returns (LeaveSpacesResponse);
+  // Gives a Space a new name; its id stays the same. Only its owner can:
+  // a Space shared with you is refused. A Space that is a machine on the
+  // relay (shared, or one of your computers provides it) is renamed there
+  // too, so your other devices and the people it is shared with see the
+  // new name.
+  rpc RenameSpace(RenameSpaceRequest) returns (RenameSpaceResponse);
+  // Starts Space `name`, a fork of local sandbox or checkpoint `source`
+  // (with its memory when it is running; a QEMU checkpoint's forks share
+  // its RAM copy-on-write), once its cua-spacesd answers. The one fork path:
+  // `Space.fork`, `Spaces.fork` and batched forks all end here.
+  rpc ForkSpace(ForkSpaceRequest) returns (ForkSpaceResponse);
+  // Builds a Dockerfile or steps into pinned checkpoints, streaming progress
+  // then one `result`. Fork it with `ForkSpace`.
+  rpc BuildSpace(BuildSpaceRequest) returns (stream BuildSpaceResponse);
+  // The builds.
+  rpc ListBuilds(ListBuildsRequest) returns (ListBuildsResponse);
+  // Deletes a build.
+  rpc DeleteBuild(DeleteBuildRequest) returns (DeleteBuildResponse);
+  // Gives a Space a lifetime of `duration` from now (replacing an earlier
+  // one). When it passes, this daemon deletes the Space (or turns it off,
+  // `on_expire` "suspend"), whether or not the client is still running.
+  rpc SetSpaceLifetime(SetSpaceLifetimeRequest) returns (SetSpaceLifetimeResponse);
+  // Replaces a Space's egress policy (empty removes it).
+  rpc SetSpaceEgress(SetSpaceEgressRequest) returns (SetSpaceEgressResponse);
   // Connects to a registered Space and returns a loopback env passthrough
   // (`<loopback>/v1/spaces/<key>/env`) that carries the Space's credentials,
   // so a client runs every `cua.env.v1` call and media WebSocket through the
@@ -84,6 +125,18 @@ service SpaceService {
   // `captured_at`, when the capture fails). Asking keeps the daemon
   // refreshing running Spaces' thumbnails in the background for a while.
   rpc GetSpaceThumbnail(GetSpaceThumbnailRequest) returns (GetSpaceThumbnailResponse);
+  // Batch runs on your machines (`cua sb run`): one request to this
+  // machine's own coordinator (`target` `local`: work that never leaves
+  // this machine) or to whichever of the account's machines coordinates
+  // them (`pool`). `method`, the JSON params and the JSON answer are the
+  // Cua Spaces pool requests (`submit`, `run`, `runs`, `jobs`, `job`,
+  // `cancel_run`, `cancel_job`, `status`); a daemon without them answers
+  // UNIMPLEMENTED.
+  rpc PoolRequest(PoolRequestRequest) returns (PoolRequestResponse);
+  // Which way the daemon's connection to a Space goes now (see
+  // `GetSpaceRouteResponse`). Connects first when the daemon has no
+  // connection to it yet.
+  rpc GetSpaceRoute(GetSpaceRouteRequest) returns (GetSpaceRouteResponse);
   // What this computer, its extra Spaces and your other computers use now:
   // processor, memory and disk, as one snapshot. The daemon's single
   // sampler measures it; a snapshot a few seconds old is returned as it is.
@@ -99,6 +152,24 @@ service SpaceService {
   // Cancel the stream to stop; call again with the other `visible` to
   // switch.
   rpc WatchResources(WatchResourcesRequest) returns (stream WatchResourcesResponse);
+  // Says when the Space list changed, so a client reads it again
+  // (`ListSpaces`) when something happened instead of on a timer: one
+  // message at once (the generation now), then one per change. This
+  // computer's Spaces are announced within a second; your other computers
+  // on the mesh within about a second of connecting or going away (the mesh
+  // coordinator pushes it); computers not on the mesh within 10 seconds.
+  // Cancel the stream to stop.
+  rpc WatchSpaces(WatchSpacesRequest) returns (stream WatchSpacesResponse);
+}
+
+// `SpaceService.WatchSpaces` takes no arguments.
+message WatchSpacesRequest {}
+
+// One event of `SpaceService.WatchSpaces`.
+message WatchSpacesResponse {
+  // Moves on every change of the list (only increases while the daemon
+  // runs; a new daemon starts again from 0).
+  uint64 generation = 1;
 }
 
 // A registered Space.
@@ -157,7 +228,7 @@ message Space {
   // "running", "suspended" or "stopped" as cua last recorded it; empty when
   // unknown. Filled in when listed, not stored.
   string power_state = 17;
-  // A Space in the owner's own cloud: the provider ("aws", "gcp",
+  // A Space in the owner's own cloud: the provider ("aws", "gcp", "hetzner",
   // "modal"); empty otherwise.
   string cloud = 18;
   // Where it runs, for people ("AWS · us-west-2"); empty otherwise.
@@ -172,6 +243,71 @@ message Space {
   // otherwise, and once it is started again. Filled in when listed, not
   // stored.
   string stop_reason = 21;
+  // A durable Space (`CreateSpaceRequest.durable`): its name. It is
+  // created again on another of your machines when its machine goes away,
+  // and keeps this name. Empty for other Spaces.
+  // 21 is stop_reason (public); durable moved to 27 in the sync.
+  string durable = 27;
+  // Labels set at create (`CreateSpaceRequest.labels`), kept by the device
+  // that created it.
+  map<string, string> labels = 22;
+  // When the Space ends (Unix seconds); 0 without a lifetime.
+  int64 expires_at_unix = 23;
+  // What happens then: "delete" or "suspend"; empty without a lifetime.
+  string on_expire = 24;
+  // When it was created (Unix seconds; when added, for a Space added by
+  // address); 0 when unknown.
+  int64 created_at_unix = 25;
+  // The egress policy last set on the Space; unset when it has none.
+  EgressPolicy egress = 26;
+  // Where `egress` is enforced: "host"; empty without one.
+  string egress_enforced = 31;
+  // Named volumes mounted in the Space (`CreateSpaceRequest.volumes`).
+  repeated cua.env.v1.VolumeMount volumes = 30;
+  // JSON image configuration of a Space made from a build.
+  string image_config = 28;
+  // A Space that is a machine on the relay: who owns it and who else has
+  // it, as this account sees it. Unset for other Spaces. Filled in when
+  // listed, not stored.
+  SpaceSharing sharing = 32;
+  // The name it was given with `RenameSpace`; empty when it keeps the one
+  // it was created with (`name`). Apps show this one when it is set. A
+  // Space that is a machine on the relay is renamed there, so its `name`
+  // changes instead.
+  string display_name = 33;
+}
+
+// Who a Space belongs to and who else has it (`Space.sharing`).
+message SpaceSharing {
+  // The owner's account id.
+  string owner_id = 1;
+  // The owner's email, when known.
+  string owner_email = 2;
+  // The owner's display name, when known.
+  string owner_name = 3;
+  // What this account may do: "owner", "editor" or "viewer".
+  string role = 4;
+  // The team this account reaches it through (its key), when it is a
+  // team's and not shared with this account directly.
+  string team = 5;
+  // That team's display name (its key when the name is not known).
+  string team_name = 6;
+  // Owner view: accounts (emails or ids) that may use it.
+  repeated string editors = 7;
+  // Owner view: accounts that may only watch.
+  repeated string viewers = 8;
+  // Owner view: the teams it is a machine of.
+  repeated SpaceTeamShare teams = 9;
+}
+
+// A team a Space is shared with.
+message SpaceTeamShare {
+  // The team's key (org id).
+  string key = 1;
+  // Its display name.
+  string name = 2;
+  // "editor" or "viewer".
+  string role = 3;
 }
 
 // Request for `SpaceService.AddSpace`.
@@ -194,12 +330,94 @@ message AddSpaceResponse {
 }
 
 // Request for `SpaceService.ListSpaces`.
-message ListSpacesRequest {}
+message ListSpacesRequest {
+  // Answer with what is known now: this machine's Spaces at once, the
+  // account's other computers as far as they answered within a moment
+  // (the response says how far it got). Without it the daemon waits for
+  // the relay and fails when it cannot be read.
+  bool known_now = 1;
+}
 
 // Response for `SpaceService.ListSpaces`.
 message ListSpacesResponse {
   // Spaces.
   repeated Space spaces = 1;
+  // `known_now` only: some of the account's computers have not answered
+  // yet, so the list may grow (an empty one is not "no Spaces").
+  bool incomplete = 2;
+  // `known_now` only: how many computers are still being reached (0 when
+  // unknown).
+  uint32 reaching = 3;
+  // `known_now` only: the other computers' rows are the last known ones,
+  // not yet confirmed by the relay.
+  bool stale = 4;
+  // `known_now` only: why the account's computers could not be read, when
+  // they could not.
+  string notice = 5;
+  // `known_now` only: Spaces your other computers are creating now, from
+  // what each published in its relay machine record (CUA-2349).
+  repeated CreatingSpace creating = 6;
+}
+
+// A Space another of your computers is creating.
+message CreatingSpace {
+  // The computer's relay machine id.
+  string machine_id = 1;
+  // The computer's name.
+  string machine_name = 2;
+  // The Space's name.
+  string name = 3;
+  // `macos`, `linux`, `windows`, or empty when unknown.
+  string os = 4;
+  // The create's phase (`preparing`, `pulling`, `booting`, ...).
+  string phase = 5;
+  // How far along the whole create is, 0 to 100.
+  uint32 percent = 6;
+  // When the computer published it, unix ms.
+  uint64 updated_at_ms = 7;
+}
+
+// A named volume: the folder `volumes/<name>/` of Cua Volume.
+message NamedVolume {
+  // Volume name.
+  string name = 1;
+  // Ids of the Spaces that mount it.
+  repeated string mounted_in = 2;
+}
+
+// Request for `SpaceService.ListVolumes`.
+message ListVolumesRequest {}
+
+// Response for `SpaceService.ListVolumes`.
+message ListVolumesResponse {
+  // The volumes, by name.
+  repeated NamedVolume volumes = 1;
+}
+
+// Request for `SpaceService.CreateVolume`.
+message CreateVolumeRequest {
+  // 1-63 of `a-z`, `0-9`, `.`, `_`, `-`. Fails when it exists.
+  string name = 1;
+}
+
+// Response for `SpaceService.CreateVolume`.
+message CreateVolumeResponse {
+  // The new volume.
+  NamedVolume volume = 1;
+}
+
+// Request for `SpaceService.DeleteVolume`.
+message DeleteVolumeRequest {
+  // Volume name.
+  string name = 1;
+  // Delete although Spaces mount it.
+  bool force = 2;
+}
+
+// Response for `SpaceService.DeleteVolume`.
+message DeleteVolumeResponse {
+  // Files removed.
+  uint64 files = 1;
 }
 
 // Request for `SpaceService.RemoveSpace`.
@@ -284,6 +502,49 @@ message ConnectSpaceResponse {
   // The Space's declared services through the daemon (same bearer as
   // `env_url`). `env_url` is empty when the Space runs no cua-spacesd.
   repeated SpaceServiceEndpoint services = 5;
+  // Which way the daemon's connection to the Space went when connecting,
+  // as `GetSpaceRouteResponse.route` describes it.
+  string route = 6;
+  // Host file of the bulk lane to this Space's guest on the daemon's
+  // machine (a Linux VM's shared disk), or empty. A client on that machine
+  // moves large files through it; the client proves the file is this
+  // guest's before it does (see `cua.env.v1.BulkLane`).
+  string bulk = 7;
+  // What carries the daemon's connection, as
+  // `GetSpaceRouteResponse.transport` says.
+  string transport = 8;
+  // Why it took the relay's HTTPS path although the mesh was wanted, as
+  // `GetSpaceRouteResponse.fallback_reason` says.
+  string fallback_reason = 9;
+}
+
+// Request for `SpaceService.GetSpaceRoute`.
+message GetSpaceRouteRequest {
+  // Space.
+  string space = 1;
+}
+
+// Response for `SpaceService.GetSpaceRoute`.
+message GetSpaceRouteResponse {
+  // One line: `local <host:port>` (a Space on this machine),
+  // `direct <address>`, `relay <relay URL>` (the relay's HTTPS path),
+  // `mesh direct <ip:port> rtt <ms> ms` (end to end over the mesh, straight
+  // to the machine), `mesh relayed` (over the mesh, through the relay as
+  // ciphertext) or `cloud`. Empty when the Space runs no cua-spacesd.
+  string route = 1;
+  // Whether calls go straight to the machine: `local`, `direct` or
+  // `mesh direct`.
+  bool direct = 2;
+  // What carries the connection: `local`, `direct`, `mesh` (end to end),
+  // `relay_https` (the relay's HTTPS path: the relay can read the session
+  // in transit), `cloud`, or empty when the Space runs no cua-spacesd.
+  // For a badge.
+  string transport = 3;
+  // Why the connection took the relay's HTTPS path although the mesh was
+  // wanted (the relay or the computer has no mesh, or the mesh did not
+  // answer). Empty on the mesh, and when the HTTPS path was chosen
+  // (`CUA_MESH=off`).
+  string fallback_reason = 4;
 }
 
 // A declared service of a Space, reachable through the daemon.
@@ -326,6 +587,239 @@ message CallSpaceToolResponse {
   string meta_json = 4;
 }
 
+// Response for `SpaceService.CreateSpace`.
+message CreateSpaceResponse {
+  // The Space (with `wait = false`: only its id).
+  Space space = 1;
+  // "ready", or "starting" with `wait = false`.
+  string phase = 2;
+  // `reuse` returned an existing Space.
+  bool reused = 3;
+  // The network applied: `none` or empty.
+  string network = 4;
+}
+
+// One message of `SpaceService.CreateSpaceStream`.
+message CreateSpaceStreamResponse {
+  // Progress, or the result.
+  oneof event {
+    // What the create is doing now.
+    CreateSpaceProgress progress = 1;
+    // The created Space (the last message).
+    CreateSpaceResponse result = 2;
+  }
+}
+
+// Request for `SpaceService.CancelCreateSpace`.
+message CancelCreateSpaceRequest {
+  // The create's `create_id`, the id the Space will have, or its name.
+  string space = 1;
+}
+
+// Response for `SpaceService.CancelCreateSpace`.
+message CancelCreateSpaceResponse {
+  // The Space id the create had, when known.
+  string id = 1;
+  // "cancelled", "not_creating" (nothing by that key is running) or
+  // "already_created" (it finished; delete it instead).
+  string state = 2;
+  // What was removed and what stays, for people.
+  string message = 3;
+}
+
+// Request for `SpaceService.SetSpaceLifetime`.
+message SetSpaceLifetimeRequest {
+  // Space.
+  string space = 1;
+  // How long from now. Zero ends it on the daemon's next check.
+  google.protobuf.Duration duration = 2;
+  // `delete` (default) or `suspend`. Empty keeps the Space's current choice.
+  string on_expire = 3;
+}
+
+// Response for `SpaceService.SetSpaceLifetime`.
+message SetSpaceLifetimeResponse {
+  // When the lifetime ends.
+  google.protobuf.Timestamp expires_at = 1;
+}
+
+// Request for `SpaceService.DeleteSpace`.
+message DeleteSpaceRequest {
+  // Space.
+  string space = 1;
+}
+
+// Response for `SpaceService.DeleteSpace`.
+message DeleteSpaceResponse {
+  // What happened, for humans.
+  string message = 1;
+}
+
+// Request for `SpaceService.DeleteSpaces`.
+message DeleteSpacesRequest {
+  // Space ids or names.
+  repeated string spaces = 1;
+}
+
+// The outcome for one Space of `DeleteSpaces` or `LeaveSpaces`.
+message SpaceBulkResult {
+  // The Space as asked.
+  string space = 1;
+  // It went through.
+  bool ok = 2;
+  // Why not, in plain words; empty when ok.
+  string error = 3;
+  // What happened, for humans.
+  string message = 4;
+}
+
+// Response for `SpaceService.DeleteSpaces`.
+message DeleteSpacesResponse {
+  // One per Space asked, in order.
+  repeated SpaceBulkResult results = 1;
+}
+
+// Request for `SpaceService.LeaveSpaces`.
+message LeaveSpacesRequest {
+  // Space ids or names.
+  repeated string spaces = 1;
+}
+
+// Response for `SpaceService.LeaveSpaces`.
+message LeaveSpacesResponse {
+  // One per Space asked, in order.
+  repeated SpaceBulkResult results = 1;
+}
+
+// Request for `SpaceService.RenameSpace`.
+message RenameSpaceRequest {
+  // Space id or name.
+  string space = 1;
+  // The new name: lowercase letters, digits and dashes, starting and
+  // ending with a letter or digit, at most 63.
+  string name = 2;
+}
+
+// Response for `SpaceService.RenameSpace`.
+message RenameSpaceResponse {
+  // The Space as it is listed now.
+  Space space = 1;
+}
+
+// Request for `SpaceService.ListHosts`.
+message ListHostsRequest {}
+
+// One limit of a host and how much of it is used.
+message SpacesHostLimit {
+  // `spaces` (every Space it provides) or `macos_vms` (macOS VMs on that
+  // Mac).
+  string resource = 1;
+  // In use now.
+  uint32 used = 2;
+  // The limit (0: none).
+  uint32 limit = 3;
+  // Why the limit exists, for people.
+  string reason = 4;
+}
+
+// One of your machines that provides Spaces.
+message SpacesHost {
+  // What `on="host:<id>"` takes: the relay machine id, or the name a
+  // direct host was added as.
+  string id = 1;
+  // Its name.
+  string name = 2;
+  // `relay` or `direct`.
+  string via = 3;
+  // It answered.
+  bool online = 4;
+  // Its operating system (`macos`, `linux`, `windows`), when it answered.
+  string os = 5;
+  // Its limits, when it answered.
+  repeated SpacesHostLimit limits = 6;
+  // How loaded it is, when it answered and reports it.
+  SpacesHostLoad load = 7;
+}
+
+// What a host offers and how much of it is free (its job runner's view).
+message SpacesHostLoad {
+  // CPU it offers, in thousandths.
+  uint32 millicpus_total = 1;
+  // Of that, free.
+  uint32 millicpus_free = 2;
+  // Memory it offers (MiB).
+  uint64 memory_total_mb = 3;
+  // Of that, free.
+  uint64 memory_free_mb = 4;
+  // Spaces running there (provided Spaces and jobs).
+  uint32 spaces = 5;
+  // Why it takes nothing now (empty: it does).
+  string problem = 6;
+  // Kinds it creates.
+  repeated string kinds = 7;
+}
+
+// Request for `SpaceService.PoolRequest`.
+message PoolRequestRequest {
+  // `local` or `pool`.
+  string target = 1;
+  // The request.
+  string method = 2;
+  // Its params, JSON.
+  string params_json = 3;
+}
+
+// Response for `SpaceService.PoolRequest`.
+message PoolRequestResponse {
+  // HTTP-like status (200 when it worked).
+  uint32 status = 1;
+  // The answer, JSON.
+  string body_json = 2;
+}
+
+// Response for `SpaceService.ListHosts`.
+message ListHostsResponse {
+  // In order: relay hosts, then direct ones.
+  repeated SpacesHost hosts = 1;
+}
+
+// Request for `SpaceService.GetSpaceThumbnail`.
+message GetSpaceThumbnailRequest {
+  // Space.
+  string space = 1;
+  // How old a cached thumbnail may be (unset: any age; zero: always
+  // capture).
+  google.protobuf.Duration max_age = 2;
+}
+
+// Response for `SpaceService.GetSpaceThumbnail`.
+message GetSpaceThumbnailResponse {
+  // Encoded image.
+  bytes image = 1;
+  // "jpeg".
+  string format = 2;
+  // Pixel width.
+  uint32 width = 3;
+  // Pixel height.
+  uint32 height = 4;
+  // When it was captured.
+  google.protobuf.Timestamp captured_at = 5;
+}
+
+// Request for `SpaceService.ForkSpace`.
+message ForkSpaceRequest {
+  // A local sandbox (running or stopped) or a checkpoint.
+  string source = 1;
+  // The new Space's name (empty: `<source>-<random>`).
+  string name = 2;
+}
+
+// Response for `SpaceService.ForkSpace`.
+message ForkSpaceResponse {
+  // The fork, connected.
+  Space space = 1;
+}
+
 // Request for `SpaceService.CreateSpace`.
 message CreateSpaceRequest {
   // Image. Empty uses the canonical Linux image.
@@ -360,7 +854,8 @@ message CreateSpaceRequest {
   // Named services (name -> guest port), for example {"mcp": 8765}.
   map<string, uint32> services = 13;
   // Whether the image runs cua-spacesd. Unset: yes for the canonical
-  // images, no for any other image.
+  // images and, injected, for any image on a local container or microVM.
+  // False runs the image as it is.
   optional bool spacesd = 14;
   // Grow the VM's disk to this many GiB (local VMs only; 0 keeps the
   // image's size). Lume grows the macOS APFS container before the first
@@ -375,16 +870,34 @@ message CreateSpaceRequest {
   // The caller's own key for this create (an app's pending row id), for
   // `CancelCreateSpace` before the Space's id is known.
   string create_id = 17;
-}
-
-// Response for `SpaceService.CreateSpace`.
-message CreateSpaceResponse {
-  // The Space (with `wait = false`: only its id).
-  Space space = 1;
-  // "ready", or "starting" with `wait = false`.
-  string phase = 2;
-  // `reuse` returned an existing Space.
-  bool reused = 3;
+  // Keep the Space running on your machines (`on` "auto"): when its machine
+  // goes away it is created again on another one, with the same name. It
+  // needs the cua daemon of Cua Spaces and an account with machines that
+  // provide Spaces.
+  bool durable = 18;
+  // A fork source (a "bake" Space): a local QEMU VM's guest RAM is a shared
+  // file, so its checkpoints take milliseconds and forks of them share its
+  // pages. Other kinds ignore it.
+  bool forkable = 19;
+  // Guest network: empty or `default` gives outbound network; `none` gives
+  // none (QEMU VMs only; published ports still reach the guest).
+  string network = 20;
+  // Labels kept with the Space (`Space.labels`): up to 64 pairs, keys up to
+  // 63 bytes, values up to 256, none empty. Not with `durable` or `reuse`.
+  map<string, string> labels = 21;
+  // Egress policy, from the first instruction. Not with `durable`,
+  // `reuse` or `wait = false`.
+  EgressPolicy egress = 22;
+  // No desktop: only cua-spacesd runs (exec, files, processes, MCP), with
+  // no display, window manager or audio; a local VM gets no display
+  // hardware. The same switch as `CreateSandboxRequest.headless`.
+  bool headless = 23;
+  // Named volumes of Cua Volume to mount in the Space.
+  repeated cua.env.v1.VolumeMount volumes = 25;
+  // Cloud host machine type (a pin).
+  string instance_type = 26;
+  // Cloud host region (a pin).
+  string region = 27;
 }
 
 // Request for `SpaceService.CreateSpaceStream`.
@@ -412,34 +925,6 @@ message CreateSpaceProgress {
   optional double bytes_per_second = 6;
   // The id the Space will have (`local:<name>`), for `CancelCreateSpace`.
   string space = 7;
-}
-
-// One message of `SpaceService.CreateSpaceStream`.
-message CreateSpaceStreamResponse {
-  // Progress, or the result.
-  oneof event {
-    // What the create is doing now.
-    CreateSpaceProgress progress = 1;
-    // The created Space (the last message).
-    CreateSpaceResponse result = 2;
-  }
-}
-
-// Request for `SpaceService.CancelCreateSpace`.
-message CancelCreateSpaceRequest {
-  // The create's `create_id`, the id the Space will have, or its name.
-  string space = 1;
-}
-
-// Response for `SpaceService.CancelCreateSpace`.
-message CancelCreateSpaceResponse {
-  // The Space id the create had, when known.
-  string id = 1;
-  // "cancelled", "not_creating" (nothing by that key is running) or
-  // "already_created" (it finished; delete it instead).
-  string state = 2;
-  // What was removed and what stays, for people.
-  string message = 3;
 }
 
 // Request for `SpaceService.GetGpuSupport`.
@@ -480,78 +965,4 @@ message GpuSupport {
 message GetGpuSupportResponse {
   // One entry per runtime of the location.
   repeated GpuSupport runtimes = 1;
-}
-
-// Request for `SpaceService.DeleteSpace`.
-message DeleteSpaceRequest {
-  // Space.
-  string space = 1;
-}
-
-// Response for `SpaceService.DeleteSpace`.
-message DeleteSpaceResponse {
-  // What happened, for humans.
-  string message = 1;
-}
-
-// Request for `SpaceService.ListHosts`.
-message ListHostsRequest {}
-
-// One limit of a host and how much of it is used.
-message SpacesHostLimit {
-  // `spaces` (every Space it provides) or `macos_vms` (macOS VMs on that
-  // Mac).
-  string resource = 1;
-  // In use now.
-  uint32 used = 2;
-  // The limit (0: none).
-  uint32 limit = 3;
-  // Why the limit exists, for people.
-  string reason = 4;
-}
-
-// One of your machines that provides Spaces.
-message SpacesHost {
-  // What `on="host:<id>"` takes: the relay machine id, or the name a
-  // direct host was added as.
-  string id = 1;
-  // Its name.
-  string name = 2;
-  // `relay` or `direct`.
-  string via = 3;
-  // It answered.
-  bool online = 4;
-  // Its operating system (`macos`, `linux`, `windows`), when it answered.
-  string os = 5;
-  // Its limits, when it answered.
-  repeated SpacesHostLimit limits = 6;
-}
-
-// Response for `SpaceService.ListHosts`.
-message ListHostsResponse {
-  // In order: relay hosts, then direct ones.
-  repeated SpacesHost hosts = 1;
-}
-
-// Request for `SpaceService.GetSpaceThumbnail`.
-message GetSpaceThumbnailRequest {
-  // Space.
-  string space = 1;
-  // How old a cached thumbnail may be (unset: any age; zero: always
-  // capture).
-  google.protobuf.Duration max_age = 2;
-}
-
-// Response for `SpaceService.GetSpaceThumbnail`.
-message GetSpaceThumbnailResponse {
-  // Encoded image.
-  bytes image = 1;
-  // "jpeg".
-  string format = 2;
-  // Pixel width.
-  uint32 width = 3;
-  // Pixel height.
-  uint32 height = 4;
-  // When it was captured.
-  google.protobuf.Timestamp captured_at = 5;
 }

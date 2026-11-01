@@ -32,4 +32,4 @@ export function hostOs(win: HostWindow | undefined = globalThis.window as HostWi
 }
 
 /** What the app calls the computer it runs on. */
-export const THIS_MACHINE: Record<HostOs, string> = { macos: "This Mac", windows: "This PC", linux: "This computer" };
+export const THIS_MACHINE: Record<HostOs, string> = { macos: "This Mac", windows: "This PC", linux: "This machine" };

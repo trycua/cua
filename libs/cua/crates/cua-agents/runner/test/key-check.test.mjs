@@ -149,7 +149,10 @@ test("a rejected key ends the first turn in seconds with the provider's message,
     // The harness would stall on its retries (STUB_PROMPT=hang): the run
     // must end without ever sending it the prompt.
     const r = await run({ port: p.port });
-    assert.equal(r.code, 0);
+    // The run ends as failed (a rejected credential is not worth a half hour
+    // of idling): the next message starts a fresh run with a new credential.
+    assert.equal(r.code, 1);
+    assert.equal(r.state.status, "failed");
     assert.ok(r.ms < 10_000, `took ${r.ms} ms`);
     assert.equal(r.prompts, 0);
     const types = r.events.map((e) => e.type);

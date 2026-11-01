@@ -6,6 +6,8 @@
 allowBuilds:
   electron: true
   electron-winstaller: false
+  # @sentry/electron's optional ANR add-on; crash reporting does not use it.
+  '@sentry/node-native-stacktrace': false
 # Security fix (CUA-1948): Electron 44.9.1 distrusts the compromised eMudhra
 # intermediates and is newer than the release-age cooldown.
 minimumReleaseAgeExclude:

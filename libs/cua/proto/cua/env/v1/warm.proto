@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+// Prewarms (`HostSpacesService.SetHostWarm`): a host keeps `count` Spaces of
+// one shape ready in its warm pool `name`, and the next creates of that shape
+// claim them in a fraction of a second. `count` 0 removes the pool and its
+// members. Only the host's owner sets one.
+
+// Request for `HostSpacesService.SetHostWarm`.
+message SetHostWarmRequest {
+  // The pool (`prewarm-<id>`).
+  string name = 1;
+  // Image of its members, as `CreateHostSpaceRequest.image` gives it.
+  string image = 2;
+  // Kind of its members (`container`, `vm`, `microvm`; empty: the image's).
+  string kind = 3;
+  // Engine of its members (empty: the host's default).
+  string runtime = 4;
+  // vCPUs of each member (0: the default).
+  uint32 cpus = 5;
+  // Memory of each member, MiB (0: the default).
+  uint64 memory_mb = 6;
+  // Members kept ready; 0 removes the pool.
+  uint32 count = 7;
+  // The pool keeps none after this long without a claim (0: one hour).
+  uint64 ttl_secs = 8;
+}
+
+// Response for `HostSpacesService.SetHostWarm`.
+message SetHostWarmResponse {
+  // Members ready now.
+  uint32 ready = 1;
+  // Members starting now.
+  uint32 starting = 2;
+  // Why it keeps fewer than asked (memory, the image), for people.
+  string reason = 3;
+}

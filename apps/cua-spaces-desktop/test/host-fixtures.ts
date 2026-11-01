@@ -28,6 +28,8 @@ export class FixtureHost {
   script: Error[] = [];
   /** The next `configure` fails with this (once). */
   failConfigure: string | null = null;
+  /** The next resume for another account fails with this (once), after pausing the host as the real one does. */
+  failResume: string | null = null;
   owner = "user-1";
   ownerEmail = "ada@example.com";
 
@@ -46,6 +48,9 @@ export class FixtureHost {
     if (next) throw next;
     const relay = o.mode === "relay";
     const spare = o.profile === "spare";
+    // As cua-host decides when the request leaves it out: a machine set up
+    // before keeps its setting; a new relay setup provides Spaces.
+    const keep = this.current.configured ? this.current.provideSpaces : relay;
     this.current = {
       ...unconfiguredHost(),
       configured: true,
@@ -61,7 +66,7 @@ export class FixtureHost {
       online: true,
       allow: o.allow,
       shareDesktop: o.shareDesktop ?? !spare,
-      provideSpaces: o.provideSpaces ?? spare,
+      provideSpaces: o.provideSpaces ?? (spare || keep),
       owner: relay ? this.owner : undefined,
       ownerEmail: relay ? this.ownerEmail : undefined,
     };
@@ -103,10 +108,20 @@ export class FixtureHost {
 
   async resumeSignedIn(account: string) {
     this.calls.push(`resume:${account}`);
-    if (!this.current.pausedSignedOut) return this.current;
-    if (account !== this.owner && account.toLowerCase() !== this.ownerEmail.toLowerCase()) {
-      throw sdkError("InvalidArgument", "this machine is shared with another Cua account");
+    const isOwner = account === this.owner || account.toLowerCase() === this.ownerEmail.toLowerCase();
+    // Another account: the host registers again for it, paused or not.
+    if (!isOwner && this.failResume) {
+      const why = this.failResume;
+      this.failResume = null;
+      this.current = { ...this.current, pausedSignedOut: true, sharing: false, online: false, serviceRunning: false };
+      throw sdkError("InvalidArgument", why);
     }
+    if (!isOwner) {
+      this.owner = account;
+      this.ownerEmail = "";
+      this.current = { ...this.current, owner: account, ownerEmail: undefined };
+    }
+    if (!this.current.pausedSignedOut && isOwner) return this.current;
     this.current = { ...this.current, pausedSignedOut: false, sharing: true, online: true, serviceInstalled: true, serviceRunning: true };
     return this.current;
   }
@@ -290,6 +305,14 @@ export class FixtureSystem implements SystemServices {
   globalShortcut() {
     return this.shortcut;
   }
+  /** Settings, General, Change: the keys asked for; "Command+K" is held by another app. */
+  readonly shortcutChanges: string[] = [];
+  setGlobalShortcut(accelerator: string) {
+    if (accelerator === "Command+K") throw new Error("Another app is using \u2318K. Pick other keys.");
+    this.shortcutChanges.push(accelerator);
+    this.shortcut = { label: accelerator, registered: true };
+    return this.shortcut;
+  }
   async openExternal(url: string) {
     this.opened.push(url);
   }
@@ -313,7 +336,7 @@ export const HOST_METHODS = [
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
   "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
-  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings", "settings.get", "settings.choose",
+  "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings", "settings.get", "settings.choose", "settings.update",
   "onboarding.get", "onboarding.complete",
 ];
 
@@ -325,5 +348,5 @@ export const HOST_OPS = [
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
   "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
-  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding",
+  "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding",
 ];

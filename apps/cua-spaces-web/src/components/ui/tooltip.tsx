@@ -12,7 +12,7 @@ export function Tooltip({ content, children, side = "bottom" }: { content: React
       <TooltipPrimitive.Trigger render={children} />
       <TooltipPrimitive.Portal>
         <TooltipPrimitive.Positioner side={side} sideOffset={6} className="z-[70]">
-          <TooltipPrimitive.Popup data-video-occluder="" className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground shadow-float transition-opacity duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0">
+          <TooltipPrimitive.Popup data-video-occluder="" className="rounded-lg bg-primary px-2 py-1 text-xs text-primary-foreground shadow-float transition-opacity duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0">
             {content}
           </TooltipPrimitive.Popup>
         </TooltipPrimitive.Positioner>

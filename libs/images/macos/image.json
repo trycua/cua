@@ -68,7 +68,13 @@
       "h264_hw",
       "audio.desktop",
       "audio.opus",
-      "teleport.*"
+      "teleport.*",
+      "files.multipart",
+      "fs.run_as",
+      "fs.xattr",
+      "process.exec_ledger",
+      "process.run_as",
+      "volume.binds"
     ],
     "feature_attributes": {
       "volume.mount": {

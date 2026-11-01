@@ -55,6 +55,78 @@ impl T {
     }
 }
 
+#[test]
+fn windows_gui_finds_claude_in_user_install_dirs_without_path() {
+    use cua_agent_setup::Os;
+    let mut t = T::new();
+    t.env.os = Os::Windows;
+    assert!(t.env.path.is_empty());
+    let exe = t.write(".local/bin/claude.exe", "MZ");
+    for suffix in ["exe", "cmd", "bat"] {
+        let p = t.write(&format!(".local/bin/claude.{suffix}"), "MZ");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert!(p.is_file());
+    }
+    assert_eq!(
+        t.env.well_known_bin_dirs(),
+        vec![
+            t.home.join(".local/bin"),
+            t.home.join("AppData/Roaming/npm"),
+            t.home.join(".bun/bin"),
+            t.home.join(".cargo/bin"),
+        ]
+    );
+    let roaming = t.home.join("roaming");
+    t.env
+        .vars
+        .insert("APPDATA".into(), roaming.to_string_lossy().into_owned());
+    assert_eq!(t.env.well_known_bin_dirs()[1], roaming.join("npm"));
+    t.env.path.extend(t.env.well_known_bin_dirs());
+    let claude = t
+        .setup()
+        .detect()
+        .into_iter()
+        .find(|a| a.id == "claude-code")
+        .unwrap();
+    assert!(claude.evidence.contains(&format!("bin:{}", exe.display())));
+    assert_eq!(t.env.which("claude"), Some(exe.clone()));
+    std::fs::remove_file(exe).unwrap();
+    assert_eq!(
+        t.env.which("claude"),
+        Some(t.home.join(".local/bin/claude.cmd"))
+    );
+    std::fs::remove_file(t.home.join(".local/bin/claude.cmd")).unwrap();
+    assert_eq!(
+        t.env.which("claude"),
+        Some(t.home.join(".local/bin/claude.bat"))
+    );
+    t.env.path.insert(0, t.home.join("inherited"));
+    let inherited = t.write("inherited/claude.exe", "MZ");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&inherited, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert_eq!(t.env.which("claude"), Some(inherited));
+    t.env.os = Os::Linux;
+    assert_eq!(
+        t.env.well_known_bin_dirs(),
+        vec![
+            t.home.join(".local/bin"),
+            t.home.join(".claude/local"),
+            t.home.join(".npm-global/bin"),
+            t.home.join(".bun/bin"),
+            t.home.join(".cargo/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]
+    );
+}
+
 fn server() -> McpServer {
     McpServer::new("/opt/cua/bin/cua")
 }
@@ -76,7 +148,7 @@ fn fixture(agent: &str) -> (&'static str, String) {
             ".claude.json",
             "{\n  \"numStartups\": 12,\n  \"mcpServers\": {\n    \"other\": {\"type\": \"stdio\", \"command\": \"other-mcp\", \"args\": []}\n  },\n  \"projects\": {}\n}\n".into(),
         ),
-        "codex" => (
+        "codex" | "t3code" => (
             ".codex/config.toml",
             "# my codex config\nmodel = \"gpt-5\" # pinned\n\n[mcp_servers.other]\ncommand = \"other-mcp\" # keep\nargs = []\n".into(),
         ),
@@ -205,7 +277,12 @@ fn every_mcp_agent_merges_idempotently_backs_up_and_removes_only_its_entry() {
         let st = s.detect().into_iter().find(|x| x.id == a.id).unwrap();
         assert!(st.cua_configured && st.cua_managed, "{}: {st:?}", a.id);
         assert_eq!(st.mcp_config.as_deref(), Some(file.as_path()));
-        assert!(st.installed, "{}: the config marks it installed", a.id);
+        // T3 Code's config is Codex's: it doesn't mark T3 Code installed.
+        assert!(
+            st.installed || a.id == "t3code",
+            "{}: the config marks it installed",
+            a.id
+        );
 
         // A new command updates the entry (still one backup).
         let o = one(s
@@ -558,17 +635,20 @@ fn skills_install_once_per_shared_dir_and_remove_only_when_unused() {
     let out = s.remove(&ids(&["codex"]), Parts::ALL).unwrap();
     assert!(
         out.iter()
-            .filter(|o| o.target == Target::Skill)
+            .filter(|o| o.target == Target::Skill && o.item != "cua-driver")
             .all(|o| o.change == Change::Skipped && o.detail.starts_with("kept for"))
     );
-    assert!(shared.join("cua-driver").is_dir());
+    assert!(shared.join("cua-volume").is_dir());
 
     // A user edit survives removal.
     std::fs::write(shared.join("cua-spaces/NOTES.md"), "mine").unwrap();
     s.remove(&ids(&["gemini-cli", "pi"]), Parts::ALL).unwrap();
-    assert!(!shared.join("cua-driver").exists());
+    assert!(!shared.join("cua-volume").exists());
     assert!(shared.join("cua-spaces/NOTES.md").is_file());
-    // Claude's copies are untouched by removing other agents.
+    // Cua Driver's skill is not Cua Spaces': removing Spaces' entries leaves
+    // it, here and in Claude's copies (untouched by removing other agents).
+    assert!(shared.join("cua-driver").is_dir());
+    assert!(t.home.join(".claude/skills/cua-volume").is_dir());
     assert!(t.home.join(".claude/skills/cua-driver").is_dir());
 }
 
@@ -608,9 +688,10 @@ fn agents_that_also_read_claude_skills_are_served_from_there() {
 
     // Removing Claude Code keeps the copies Cursor and OpenCode use.
     s.remove(&ids(&["claude-code"]), Parts::ALL).unwrap();
-    assert!(claude.join("cua-driver").is_dir());
+    assert!(claude.join("cua-volume").is_dir());
     s.remove(&ids(&["cursor", "opencode"]), Parts::ALL).unwrap();
-    assert!(!claude.join("cua-driver").exists());
+    assert!(!claude.join("cua-volume").exists());
+    assert!(claude.join("cua-driver").is_dir(), "Cua Driver's stays");
 }
 
 #[test]
@@ -840,7 +921,8 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
         "/opt/drv/bin/cua-driver"
     );
 
-    // Remove undoes both entries and the skill; the unrelated server stays.
+    // Plain remove undoes Cua Spaces' entry only: Cua Driver's server and
+    // skill stay, with a row each that says so.
     let removed = s
         .remove(&ids(&["claude-code", "codex"]), Parts::ALL)
         .unwrap();
@@ -851,11 +933,47 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
         .collect();
     assert_eq!(
         names,
-        [("cua", Change::Removed), ("cua-driver", Change::Removed)]
+        [("cua", Change::Removed), ("cua-driver", Change::Skipped)]
+    );
+    assert!(
+        removed
+            .iter()
+            .filter(|o| o.item == "cua-driver")
+            .all(|o| o.change == Change::Skipped && o.detail == cua_agent_setup::KEPT_CUA_DRIVER),
+        "{removed:#?}"
+    );
+    let left = t.read(&file);
+    assert!(cua_agent_setup_get(m.format, &file, &left, m.key_path, "cua").is_none());
+    assert!(cua_agent_setup_get(m.format, &file, &left, m.key_path, "cua-driver").is_some());
+    assert!(cua_agent_setup_get(m.format, &file, &left, m.key_path, "other").is_some());
+    assert!(t.home.join(".claude/skills/cua-driver/SKILL.md").is_file());
+    let state: Value = serde_json::from_str(&t.read(s.state_path())).unwrap();
+    assert!(state["servers"]["cua-driver"][&key].is_object(), "{state}");
+
+    // Asked for, remove undoes Cua Driver's entries and skill as well.
+    let removed = s
+        .remove_with(
+            &ids(&["claude-code", "codex"]),
+            Parts::ALL,
+            cua_agent_setup::RemoveOptions {
+                include_cua_driver: true,
+                dry_run: false,
+            },
+        )
+        .unwrap();
+    // (Codex's shared skills folder is also Pi's, who is not being removed.)
+    assert!(
+        removed
+            .iter()
+            .filter(|o| o.item == "cua-driver"
+                && (o.target == Target::Mcp || o.agents == ["claude-code"]))
+            .all(|o| o.change == Change::Removed),
+        "{removed:#?}"
     );
     let left = t.read(&file);
     assert!(cua_agent_setup_get(m.format, &file, &left, m.key_path, "cua-driver").is_none());
     assert!(cua_agent_setup_get(m.format, &file, &left, m.key_path, "other").is_some());
+    assert!(!t.home.join(".claude/skills/cua-driver").exists());
     let state: Value = serde_json::from_str(&t.read(s.state_path())).unwrap();
     assert!(state.get("servers").is_none(), "{state}");
 
@@ -1099,10 +1217,11 @@ fn hermes_gets_its_own_skill_copies() {
     let out = s.remove(&ids(&["hermes"]), Parts::ALL).unwrap();
     assert!(
         out.iter()
-            .filter(|o| o.target == Target::Skill)
+            .filter(|o| o.target == Target::Skill && o.item != "cua-driver")
             .all(|o| o.change == Change::Removed)
     );
     assert!(!dir.join("cua-spaces").exists());
+    assert!(dir.join("cua-driver").is_dir(), "Cua Driver's stays");
     assert!(t.home.join(".agents/skills/cua-spaces/SKILL.md").is_file());
 }
 
@@ -1126,4 +1245,77 @@ fn the_docs_and_readme_list_every_agent() {
             a.name
         );
     }
+}
+
+#[test]
+fn only_codex_has_a_sign_in_and_it_is_read_from_its_own_file() {
+    let mut t = T::new();
+    let s = t.setup();
+    let with: Vec<_> = s
+        .detect()
+        .into_iter()
+        .filter(|a| a.sign_in.is_some())
+        .map(|a| (a.id, a.sign_in.unwrap(), a.signed_in))
+        .collect();
+    assert_eq!(with, [("codex".to_string(), "ChatGPT".to_string(), false)]);
+    // An empty file is not a sign-in; a written one is.
+    let auth = t.write(".codex/auth.json", "");
+    let codex = |s: &AgentSetup| s.detect().into_iter().find(|a| a.id == "codex").unwrap();
+    assert!(!codex(&t.setup()).signed_in);
+    std::fs::write(&auth, "{\"tokens\":{}}").unwrap();
+    assert!(codex(&t.setup()).signed_in);
+    // CODEX_HOME moves it.
+    t.env
+        .vars
+        .insert("CODEX_HOME".into(), t.home.join("ch").display().to_string());
+    assert!(!codex(&t.setup()).signed_in);
+    t.write("ch/auth.json", "{}");
+    assert!(codex(&t.setup()).signed_in);
+}
+
+#[test]
+fn sign_in_is_refused_without_a_sign_in_an_install_or_agent_commands() {
+    let mut t = T::new();
+    let err = |s: &AgentSetup, id: &str| s.sign_in(id).unwrap_err().to_string();
+    assert!(err(&t.setup(), "nope").contains("unknown agent"));
+    assert!(err(&t.setup(), "claude-code").contains("no sign-in"));
+    // Isolated environments never run an agent's CLI.
+    assert!(err(&t.setup(), "codex").contains("off in this environment"));
+    t.env.run_agent_clis = true;
+    assert!(err(&t.setup(), "codex").contains("isn't installed"));
+}
+
+#[cfg(unix)]
+#[test]
+fn sign_in_runs_the_agents_own_login_and_detect_sees_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut t = T::new();
+    let bin = t.home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let auth = t.home.join(".codex/auth.json");
+    let log = t.home.join("codex-argv.log");
+    // A fake `codex`: records its argv and signs in inside the temp home.
+    let script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '{{}}' > '{}'\n",
+        log.display(),
+        auth.display()
+    );
+    // Its PATH is only `bin` below: no mkdir there.
+    std::fs::create_dir_all(auth.parent().unwrap()).unwrap();
+    let codex = bin.join("codex");
+    std::fs::write(&codex, script).unwrap();
+    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    t.env.path = vec![bin];
+    t.env.run_agent_clis = true;
+    let s = t.setup();
+    s.sign_in("openai-codex").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    // Done once the file is written (the fake truncates, then writes).
+    let written = || std::fs::metadata(&auth).is_ok_and(|m| m.len() > 0);
+    while !written() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(t.read(&log).trim(), "login");
+    let a = s.detect().into_iter().find(|a| a.id == "codex").unwrap();
+    assert!(a.installed && a.signed_in, "{a:?}");
 }

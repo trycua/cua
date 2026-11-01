@@ -4,6 +4,8 @@ import {
   type CLIDocumentation,
   type CliReference,
   displayType,
+  flagsTable,
+  type FlagDoc,
   renderCliReference,
   splitExamples,
 } from './lib/cli-mdx';
@@ -175,6 +177,33 @@ test('examples split from help text', () => {
     ],
   });
   assert.deepEqual(splitExamples('No examples'), { prose: 'No examples', examples: [] });
+});
+
+test('a boolean flag with a --no- sibling leaves its default to the description', () => {
+  const enabled: FlagDoc = { name: 'provide-spaces', help: 'Enable Spaces', default_value: false };
+  const disabled: FlagDoc = { name: 'no-provide-spaces', help: 'Disable Spaces', default_value: false };
+  const force: FlagDoc = { name: 'force', help: 'Overwrite', default_value: false };
+
+  const table = flagsTable([enabled, disabled, force]).join('\n');
+  assert.ok(table.includes('| `--provide-spaces` | boolean |  | Enable Spaces. |'));
+  assert.ok(table.includes('| `--no-provide-spaces` | boolean | `false` | Disable Spaces. |'));
+  assert.ok(table.includes('| `--force` | boolean | `false` | Overwrite. |'));
+
+  const ordinary = '| `--provide-spaces` | boolean | `false` | Enable Spaces. |';
+  assert.ok(flagsTable([enabled]).join('\n').includes(ordinary));
+  assert.ok(flagsTable([enabled, { ...disabled, hidden: true }]).join('\n').includes(ordinary));
+  assert.ok(
+    flagsTable([enabled, { name: 'no-provide-spaces', help: 'Mode', type: 'String', is_optional: true }])
+      .join('\n')
+      .includes(ordinary)
+  );
+
+  const display = flagsTable([
+    { name: 'display', help: 'Resolution', type: 'String', is_optional: true, default_value: '1024x768' },
+    { name: 'no-display', help: 'Headless', default_value: false },
+  ]).join('\n');
+  assert.ok(display.includes('| `--display` | string | `1024x768` | Resolution. |'));
+  assert.ok(display.includes('| `--no-display` | boolean | `false` | Headless. |'));
 });
 
 test('types read as types', () => {

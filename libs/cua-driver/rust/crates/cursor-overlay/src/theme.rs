@@ -179,19 +179,22 @@ impl CursorVisualState {
     }
 }
 
-pub(crate) fn shared_float_motion(visual: &CursorVisualState) -> (f32, f32, f32) {
+/// Peak lift of the resting float, in theme canvas units (about 4 pt).
+const FLOAT_LIFT: f32 = 12.0;
+
+/// Vertical offset (theme canvas units, negative is up) of the resting
+/// float: the arrow rises and settles back on a 4 s loop. It never moves
+/// sideways or tilts, so the arrow stays upright, and it starts and ends
+/// each loop on the hotspot, so a cursor that just arrived does not jump.
+pub(crate) fn shared_float_motion(visual: &CursorVisualState) -> f32 {
     if visual.reduced_motion == ReducedMotion::On {
-        return (0.0, 0.0, 0.0);
+        return 0.0;
     }
 
     let progress =
         (visual.elapsed_secs as f32).rem_euclid(FLOAT_DURATION_SECS) / FLOAT_DURATION_SECS;
     let angle = progress * std::f32::consts::TAU;
-    (
-        angle.sin() * 5.0,
-        6.0 * angle.cos() - 5.0,
-        2.5_f32.to_radians() * angle.cos(),
-    )
+    -0.5 * FLOAT_LIFT * (1.0 - angle.cos())
 }
 
 /// Paint one frame of the embedded actions-v2 theme.
@@ -394,7 +397,7 @@ mod tests {
             ..CursorVisualState::default()
         };
         let expected = shared_float_motion(&idle);
-        assert_ne!(expected, (0.0, 0.0, 0.0));
+        assert!(expected < 0.0, "the float lifts the arrow");
 
         for action in CursorAction::ALL {
             let mut visual = CursorVisualState::default();
@@ -410,13 +413,30 @@ mod tests {
     }
 
     #[test]
+    fn the_float_is_a_vertical_lift_that_returns_to_the_hotspot() {
+        let at = |elapsed_secs| {
+            shared_float_motion(&CursorVisualState {
+                elapsed_secs,
+                ..CursorVisualState::default()
+            })
+        };
+        assert_eq!(at(0.0), 0.0);
+        assert!((at(f64::from(FLOAT_DURATION_SECS) / 2.0) + FLOAT_LIFT).abs() < 1e-4);
+        assert!(at(f64::from(FLOAT_DURATION_SECS)).abs() < 1e-4);
+        for step in 0..40 {
+            let dy = at(f64::from(step) * 0.1);
+            assert!((-FLOAT_LIFT - 1e-4..=1e-4).contains(&dy), "{dy}");
+        }
+    }
+
+    #[test]
     fn reduced_motion_disables_shared_floating_motion() {
         let visual = CursorVisualState {
             elapsed_secs: 0.75,
             reduced_motion: ReducedMotion::On,
             ..CursorVisualState::default()
         };
-        assert_eq!(shared_float_motion(&visual), (0.0, 0.0, 0.0));
+        assert_eq!(shared_float_motion(&visual), 0.0);
     }
 
     #[test]

@@ -85,11 +85,14 @@ GitHub issue form. Longer proposals and diagrams remain in this repository under
 
 ### Contributor License Agreement
 
-Before a pull request can be merged, its author must accept the
-[Contributor License Agreement](../legal/CLA.md) once. The **CI: CLA** check comments on
-your first pull request with instructions; reply with the sentence it gives you
-to sign. The agreement applies to your later contributions, and you keep
-ownership of your work. Maintainers and automation accounts are exempt.
+Contributors accept the [Contributor License Agreement](../legal/CLA.md) once. The
+**CI: CLA** check comments on your first pull request with instructions; reply with
+the sentence it gives you to sign. The agreement applies to your later contributions,
+and you keep ownership of your work. Maintainers and automation accounts are exempt.
+
+The required `contributor-attribution` check enforces the CLA. It fails when a pull
+request touching the Cua Spaces apps or `libs/cua-spacesd` has an unsigned or
+unverifiable contributor, and it only warns elsewhere.
 
 ### Agent-Assisted Contributions
 
@@ -136,6 +139,27 @@ longer manage this package. Sandbox Apps and the other Python and npm packages
 also release through Release Please now; see
 [`.github/releases/README.md`](releases/README.md).
 
+## Run the Fast CI Checks Before You Push
+
+Most wasted CI rounds are drift, header, lockfile, formatting and clippy
+failures that take seconds to find locally. Run this before every push:
+
+```bash
+scripts/ci/prepush.sh              # checks only what differs from origin/main
+scripts/ci/prepush.sh --fast       # seconds: skip clippy and the Windows cfg check
+scripts/ci/prepush.sh --bindings   # also regenerate and compare the UniFFI bindings
+```
+
+It runs the SPDX header check, the lockfile check, `actionlint` for workflow
+changes, the image-reference checks, generated-docs drift, `cargo fmt` and
+`cargo clippy -D warnings` for the crates you changed, and a Windows `cargo
+xwin check` when `cargo-xwin` is installed. A check whose tool is missing is
+printed as SKIPPED, never as passed. On a memory-tight machine wrap the cargo
+commands: `CUA_BUILD_WRAPPER=/path/to/your-build-wrapper.sh scripts/ci/prepush.sh`.
+Which workflow a change triggers is listed in
+[`.github/workflows/README.md`](.github/workflows/README.md); known flaky
+checks are in [`.github/workflows/FLAKY.md`](.github/workflows/FLAKY.md).
+
 ## Preserve Contributor Authorship
 
 Keep the original author when external code or design ships in Cua. Merge the
@@ -151,12 +175,15 @@ Prefer a commit email linked to the contributor's GitHub account, especially a
 GitHub no-reply address. This also applies to the pull request author's own
 commits: GitHub may turn an unlinked commit author into a `Co-authored-by`
 trailer during squash merge. If preserved authorship uses an email GitHub cannot
-resolve, add the verified email-to-login entry to
-`.github/release-attribution-config.json` in the same pull request. The
-contributor-attribution check provides the exact `identityOverrides` JSON when
-one explicitly referenced source pull request proves a unique mapping; it never
-guesses from a name or email. Attribution preservation and resolvability must
-land together. Preserve human coauthor trailers during rebases and squash
+resolve, you can add the verified email-to-login entry to
+`.github/release-attribution-config.json`. This is optional: attribution is
+best effort and never blocks a pull request or a release. The
+contributor-attribution check is informational: it always passes and reports
+what it could not resolve as a warning (with the exact `identityOverrides` JSON
+when one explicitly referenced source pull request proves a unique mapping). It
+never guesses from a name or email. Identities that stay unresolved are credited
+by display name, without an @-mention, in the release notes and listed in one
+rolling maintainer issue. Preserve human coauthor trailers during rebases and squash
 merges. Honor public credit opt-out requests and keep security-report
 attribution private until the report can be disclosed.
 

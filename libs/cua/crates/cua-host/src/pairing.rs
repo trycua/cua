@@ -249,7 +249,8 @@ impl RelayClient {
             .is_some_and(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_alphanumeric()));
         if !valid {
             return Err(Error::InvalidArgument(format!(
-                "{id:?} is not a pairing code id (pc_…; see `cua host pair --list`)"
+                "{id:?} is not a pairing code id (pc_…; see `{} host pair --list`)",
+                crate::cli()
             )));
         }
         let _: serde_json::Value = self

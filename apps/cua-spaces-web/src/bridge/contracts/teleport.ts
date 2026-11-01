@@ -104,6 +104,8 @@ export interface TeleportConsent {
   /** Reading the app: the sites whose saved passwords to send (the review's
    * own choice of passwords). */
   passwordDomains?: string[] | null;
+  /** The browser profile to read (`Profile 1`), chosen in the setup sheet; absent reads `Default`. */
+  profile?: string | null;
 }
 
 export type PickerStep = "loading" | "pick" | "options" | "planning" | "consent" | "running" | "done" | "error";
@@ -150,6 +152,42 @@ export interface KvInventory {
   app_display: string;
   domains: KvDomainCount[];
   notes?: string[];
+}
+
+/** One thing a teleport needs from the OS (`keyvault::wire::KvReadinessCheck`). */
+export interface KvReadinessCheck {
+  /** `granted`, `denied`, or `unknown` (macOS only decides on first use). */
+  state: "granted" | "denied" | "unknown";
+  /** What it means and what to do, in plain words; empty when nothing. */
+  say: string;
+}
+
+/** A browser profile to choose from (`KvBrowserProfile`). */
+export interface KvBrowserProfile {
+  dir: string;
+  name: string;
+  account?: string | null;
+  last_used: boolean;
+}
+
+/** Whether a teleport of an app can work now (`KvReadiness`): the Keyvault, what the
+ * OS lets the daemon read, and the profiles. Reads no value, asks for no Touch ID. */
+export interface KvReadiness {
+  provider_id: string;
+  app_display: string;
+  keyvault_initialized: boolean;
+  keyvault_unlocked: boolean;
+  /** The profile checked: the one asked for, else the last used. */
+  profile?: string | null;
+  /** The profile a teleport reads when none is named. */
+  default_profile?: string | null;
+  profiles: KvBrowserProfile[];
+  /** Reading the app's files (Full Disk Access). */
+  files: KvReadinessCheck;
+  /** Reading the app's open tabs (Automation). */
+  tabs: KvReadinessCheck;
+  /** The checked profile has no sign-in data. */
+  profile_empty: boolean;
 }
 
 /** An input to the picker (`flow::PickerEvent`). */

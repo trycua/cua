@@ -1,0 +1,43 @@
+{
+  "name": "ci-ubuntu-24.04-kvm-lane",
+  "route_prefix": "local",
+  "metrics": {
+    "rpc_health_ms": {
+      "p50": 1.153
+    },
+    "exec_run_ms": {
+      "p50": 2.9
+    },
+    "exec_sh_ms": {
+      "p50": 3.043
+    },
+    "upload_1MiB_ms": {
+      "p50": 14.222,
+      "MiBps_p50": 70.312
+    },
+    "download_1MiB_ms": {
+      "p50": 15.003,
+      "MiBps_p50": 66.651
+    },
+    "upload_100MiB_ms": {
+      "p50": 1184.357,
+      "MiBps_p50": 84.434
+    },
+    "download_100MiB_ms": {
+      "p50": 197.848,
+      "MiBps_p50": 505.438
+    },
+    "stream_stdout": {
+      "MiBps": 86.006
+    }
+  },
+  "setup": "GitHub-hosted ubuntu-24.04 runner (4 vCPU, shared), QEMU/KVM Linux VM Space (2 vCPU, 2 GiB), same host, through the cua daemon, with this tree's cua-spacesd and the image's udev rule overlaid so the bulk lane carries files of 2 MiB and more. Each value is the median of nine runs of this workflow from 2026-10-20 to 2026-10-23 on the same code path: the hosted pool mixes faster and slower hosts, and one run's exec p50 ranged from 1.6 to 4.2 ms with rpc_health moving with it, so a baseline from a single fast host failed slower hosts at 2x. Upload is bound by the guest's disk writes here, not by the transport. p50 only: hosted runners are too noisy for p95, and the workflow allows 2x; the absolute targets still hold exec to 5 ms.",
+  "targets": {
+    "download_100MiB_ms.MiBps_p50": {
+      "min": 250.0
+    },
+    "exec_run_ms.p50": {
+      "max": 5.0
+    }
+  }
+}

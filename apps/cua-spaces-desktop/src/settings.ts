@@ -45,6 +45,8 @@ export interface Settings {
   pipBounds?: { x: number; y: number; width: number; height: number };
   /** Where the last Space viewer was left, and its content's width (viewer.ts). */
   viewerBounds?: { x: number; y: number; width: number };
+  /** The keys that bring the app forward from any app, as an Electron accelerator (Settings, General; unset: ⌘⇧Space). */
+  globalShortcut?: string;
   /** Present once the Swift app's state was taken over (macOS). */
   swiftMigration?: SwiftMigration;
 }

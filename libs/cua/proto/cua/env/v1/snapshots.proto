@@ -1,0 +1,245 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+// Snapshots a host holds, and copying them between your machines.
+//
+// A snapshot here is a local checkpoint (`cua.daemon.v1.Checkpoint`): a
+// sandbox's saved memory and disk that forks start from. Checkpoints are
+// kept on the machine that took them. To fork one on another machine of
+// the pool, that machine first gets a copy:
+//
+// - The machine that has it describes it as a manifest: every file (the
+//   memory stream, the RAM file, the disk layers and their backing chain,
+//   UEFI variables, the guest token) by SHA-256 and size. The manifest's
+//   own SHA-256 is the snapshot's digest. It grants read access to those
+//   files for a short time (`ExportHostSnapshot`).
+// - The machine that needs it fetches each file it does not have yet,
+//   straight from that machine over the LAN (HTTP range requests, so a
+//   transfer that stopped resumes where it stopped), checks every file's
+//   SHA-256, and only then makes it a checkpoint of its own
+//   (`PullHostSnapshot`). Files are kept by content, so files that several
+//   snapshots share (a base disk) are copied once.
+// - When that machine cannot be reached, the files come from a copy
+//   published to your S3 bucket or Cua Volume (`PublishHostSnapshot`).
+//
+// A checkpoint of a Space that a host provides is taken on that host
+// (`CreateHostSnapshot`), where the Space runs, and stays there: forks of
+// it start there, or on another machine after a copy. `DeleteHostSnapshot`
+// deletes one the host holds.
+//
+// A host serves this service to the same callers as `HostSpacesService`
+// (the owner, its editors, and the env token holder of a direct host),
+// through its cua-spacesd, which forwards each call to the host's cua
+// daemon.
+service HostSnapshotsService {
+  // The snapshots this host holds.
+  rpc ListHostSnapshots(ListHostSnapshotsRequest) returns (ListHostSnapshotsResponse);
+  // Describes a snapshot (hashing its files the first time) and grants
+  // read access to its files for a limited time.
+  rpc ExportHostSnapshot(ExportHostSnapshotRequest) returns (ExportHostSnapshotResponse);
+  // Copies a snapshot to this host from another host (or the fallback),
+  // streaming progress, and adds it as a checkpoint once every file is
+  // verified. A snapshot this host already holds with the same digest is
+  // not copied again.
+  rpc PullHostSnapshot(PullHostSnapshotRequest) returns (stream PullHostSnapshotResponse);
+  // Uploads a snapshot this host holds to the fallback store (S3 or Cua
+  // Volume), streaming progress. Files already there are not uploaded
+  // again.
+  rpc PublishHostSnapshot(PublishHostSnapshotRequest) returns (stream PublishHostSnapshotResponse);
+  // Checkpoints a Space this host provides (`CheckpointSandbox` on the
+  // host): it keeps running. The owner checkpoints any; another account
+  // only the Spaces it created. Fails with `NOT_FOUND` when the host does
+  // not provide that Space, and `INVALID_ARGUMENT` when the name is taken.
+  rpc CreateHostSnapshot(CreateHostSnapshotRequest) returns (CreateHostSnapshotResponse);
+  // Deletes a checkpoint this host holds (forks made from it keep
+  // running). The owner deletes any; another account only the ones it
+  // took here. A pinned checkpoint is refused until it is unpinned.
+  // Fails with `NOT_FOUND` when the host does not hold it.
+  rpc DeleteHostSnapshot(DeleteHostSnapshotRequest) returns (DeleteHostSnapshotResponse);
+}
+
+// A snapshot a host holds.
+message HostSnapshot {
+  // The checkpoint's name.
+  string name = 1;
+  // SHA-256 of its manifest (hex), or empty when it was never exported.
+  string digest = 2;
+  // Which machines can restore it: `<engine>/<accelerator>/<arch>`, for
+  // example `qemu/hvf/aarch64`. A snapshot forks only on a host whose
+  // `HostNodeStatus.snapshot_abis` lists its ABI.
+  string abi = 3;
+  // Bytes of all its files, when known.
+  uint64 size_bytes = 4;
+  // The sandbox it was taken from (its name on the machine that took it).
+  string source = 5;
+  // When it was taken (Unix milliseconds; 0 when unknown).
+  int64 created_at_ms = 6;
+  // Pinned: kept until it is unpinned.
+  bool pinned = 7;
+  // Its forks share its RAM copy-on-write (a QEMU memory checkpoint).
+  bool shared_memory = 8;
+  // The engine that holds it (`qemu`, `firecracker`, `gvisor`, ...).
+  string runtime_type = 9;
+  // The image of the sandbox it was taken from.
+  string image = 10;
+}
+
+// Where hosts fetch a snapshot when the machine that has it cannot be
+// reached: a copy in your S3 bucket, or in a folder every host mounts (your
+// Cua Volume, a NAS share).
+message SnapshotFallback {
+  // An S3 bucket (or an S3-compatible endpoint). Credentials are the
+  // host's own (the AWS default chain on that host).
+  SnapshotS3 s3 = 1;
+  // A folder every host mounts, for example your Cua Volume
+  // (`~/Cua Volume/snapshots`); a leading `~` is each host's home. Empty
+  // with `s3` unset: no fallback.
+  string dir = 2;
+}
+
+// An S3 location for snapshot files.
+message SnapshotS3 {
+  // The bucket.
+  string bucket = 1;
+  // Key prefix, for example `cua-snapshots/`.
+  string prefix = 2;
+  // Region (empty: the host's default).
+  string region = 3;
+  // Endpoint of an S3-compatible service (empty: AWS).
+  string endpoint = 4;
+}
+
+// A host to fetch snapshot files from.
+message SnapshotSource {
+  // Base URL of the host's snapshot files, for example
+  // `http://192.168.1.20:3211/v1/snapshots`.
+  string url = 1;
+  // The read grant `ExportHostSnapshot` returned.
+  string grant = 2;
+  // The host's name, for progress reports.
+  string name = 3;
+}
+
+// Request for `HostSnapshotsService.ListHostSnapshots`.
+message ListHostSnapshotsRequest {}
+
+// Response for `HostSnapshotsService.ListHostSnapshots`.
+message ListHostSnapshotsResponse {
+  // The snapshots, by name.
+  repeated HostSnapshot snapshots = 1;
+  // The snapshot ABIs this host can restore.
+  repeated string abis = 2;
+}
+
+// Request for `HostSnapshotsService.ExportHostSnapshot`.
+message ExportHostSnapshotRequest {
+  // The checkpoint's name.
+  string name = 1;
+  // How long the read grant lasts, in seconds (0: 3600; at most 86400).
+  uint32 grant_ttl_secs = 2;
+}
+
+// Response for `HostSnapshotsService.ExportHostSnapshot`.
+message ExportHostSnapshotResponse {
+  // The snapshot.
+  HostSnapshot snapshot = 1;
+  // The manifest (JSON). It holds the checkpoint's record, guest token
+  // included: pass it only to your own machines.
+  bytes manifest = 2;
+  // A grant to read the snapshot's files from this host, until it expires.
+  string grant = 3;
+  // Path of this host's snapshot files under its cua-spacesd address
+  // (`/v1/snapshots`), for `SnapshotSource.url`.
+  string path = 4;
+  // Base URLs this host serves the files on, as it knows its own
+  // addresses (its direct listener; each LAN address when it listens on
+  // all), for `SnapshotSource.url`. Empty: the host serves none (it is not
+  // set up with `--direct`); use the fallback.
+  repeated string urls = 5;
+}
+
+// Request for `HostSnapshotsService.PullHostSnapshot`.
+message PullHostSnapshotRequest {
+  // The manifest from `ExportHostSnapshot`. Empty: read it from the
+  // fallback by `name`.
+  bytes manifest = 1;
+  // Hosts that have the files, tried in order.
+  repeated SnapshotSource sources = 2;
+  // Where to fetch files no source could give.
+  SnapshotFallback fallback = 3;
+  // The snapshot's name, when `manifest` is empty.
+  string name = 4;
+}
+
+// Request for `HostSnapshotsService.PublishHostSnapshot`.
+message PublishHostSnapshotRequest {
+  // The checkpoint's name.
+  string name = 1;
+  // Where to publish it (required).
+  SnapshotFallback fallback = 2;
+}
+
+// Progress of a snapshot copy.
+message SnapshotSyncProgress {
+  // The snapshot's name.
+  string name = 1;
+  // Its digest.
+  string digest = 2;
+  // Where the files come from now: a host's name, `s3` or `volume` (or,
+  // when publishing, where they go).
+  string from = 3;
+  // Bytes copied so far.
+  uint64 bytes_done = 4;
+  // Bytes to copy in all (files already here are not counted).
+  uint64 bytes_total = 5;
+  // Bytes not copied because this host had those files already.
+  uint64 bytes_reused = 6;
+  // The last message: the copy is finished.
+  bool done = 7;
+  // Every file's SHA-256 matched the manifest.
+  bool verified = 8;
+}
+
+// Response for `HostSnapshotsService.PullHostSnapshot`: one progress report.
+message PullHostSnapshotResponse {
+  // The copy's progress.
+  SnapshotSyncProgress progress = 1;
+}
+
+// Response for `HostSnapshotsService.PublishHostSnapshot`: one progress
+// report.
+message PublishHostSnapshotResponse {
+  // The upload's progress.
+  SnapshotSyncProgress progress = 1;
+}
+
+// Request for `HostSnapshotsService.CreateHostSnapshot`.
+message CreateHostSnapshotRequest {
+  // The Space: its relay machine (`relay:<machine>` or the bare id), or its
+  // `local:<name>` on the host (a direct Space).
+  string space = 1;
+  // The checkpoint's name (unique among the host's checkpoints and
+  // sandboxes).
+  string name = 2;
+  // Pin the new checkpoint.
+  bool pin = 3;
+}
+
+// Response for `HostSnapshotsService.CreateHostSnapshot`.
+message CreateHostSnapshotResponse {
+  // The new checkpoint.
+  HostSnapshot snapshot = 1;
+}
+
+// Request for `HostSnapshotsService.DeleteHostSnapshot`.
+message DeleteHostSnapshotRequest {
+  // The checkpoint's name.
+  string name = 1;
+}
+
+// Response for `HostSnapshotsService.DeleteHostSnapshot`.
+message DeleteHostSnapshotResponse {
+  // What happened, for people.
+  string message = 1;
+}

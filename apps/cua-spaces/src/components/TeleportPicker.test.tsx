@@ -53,7 +53,7 @@ function fakeBridge(overrides: Partial<TeleportBridge> = {}): TeleportBridge {
     remoteWindowThumbnail: async () => null,
     streamRemoteWindow: vi.fn(async () => {}),
     openPicker: async () => {},
-    pickerConfig: async () => ({ spaceId: "cloud:aurora", spaceName: "Aurora", app: null }),
+    pickerConfig: async () => ({ spaceId: "direct:aurora", spaceName: "Aurora", app: null }),
     closePicker: async () => {},
     ...overrides,
   };
@@ -121,7 +121,7 @@ describe("TeleportPicker window tabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stream to This Mac" }));
 
     await waitFor(() =>
-      expect(streamRemoteWindow).toHaveBeenCalledWith("cloud:aurora", "Aurora", "w-2", "Terminal", "bash", false),
+      expect(streamRemoteWindow).toHaveBeenCalledWith("direct:aurora", "Aurora", "w-2", "Terminal", "bash", false),
     );
     await waitFor(() => expect(closePicker).toHaveBeenCalled());
   });
@@ -155,7 +155,7 @@ describe("TeleportPicker window tabs", () => {
 
     const card = await openTab(/From Aurora/, /Cua — Docs/);
     expect(card.querySelector("img.hp-card-img")).toBeNull();
-    await waitFor(() => expect(remoteWindowThumbnail).toHaveBeenCalledWith("cloud:aurora", "w-1", 1));
+    await waitFor(() => expect(remoteWindowThumbnail).toHaveBeenCalledWith("direct:aurora", "w-1", 1));
     await waitFor(() => expect(spaceAppIcons).toHaveBeenCalledTimes(1));
     expect(spaceAppIcons.mock.calls[0]![1]).toEqual([
       { appName: "Firefox", appId: "firefox", pid: 0 },
@@ -175,7 +175,7 @@ describe("TeleportPicker window tabs", () => {
     fireEvent.keyDown(pick, { key: "ArrowRight" });
     await waitFor(() => expect(screen.getByRole("option", { name: /bash/ })).toHaveAttribute("aria-selected", "true"));
     fireEvent.keyDown(pick, { key: "Enter" });
-    await waitFor(() => expect(streamRemoteWindow).toHaveBeenCalledWith("cloud:aurora", "Aurora", "w-2", "Terminal", "bash", false));
+    await waitFor(() => expect(streamRemoteWindow).toHaveBeenCalledWith("direct:aurora", "Aurora", "w-2", "Terminal", "bash", false));
   });
 });
 
@@ -184,7 +184,7 @@ function recordingHost(): TeleportHost & { runs: unknown[] } {
   const runs: unknown[] = [];
   const secretPlan = (entry: ReturnType<typeof entryFromCore>): Plan => ({
     app: entry,
-    spaceId: "cloud:aurora",
+    spaceId: "direct:aurora",
     moves: "app_with_state",
     relayUnsealed: false,
     steps: [{ kind: "state", summary: "Import 1 firefox item(s)" }],
@@ -271,7 +271,7 @@ describe("TeleportPicker: Teleport an app", () => {
   it("opens straight on a preselected app from a drop, with its files", async () => {
     const bridge = fakeBridge({
       pickerConfig: async () => ({
-        spaceId: "cloud:aurora",
+        spaceId: "direct:aurora",
         spaceName: "Aurora",
         app: null,
         entry: JSON.parse(FIXTURE_CATALOG[1]!.json),

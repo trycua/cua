@@ -1,0 +1,21 @@
+id = "gmi"
+name = "GMI Cloud"
+icon = "gmi"
+tier = "more"
+rank = 180
+kind = "hosted"
+aliases = ["gmicloud"]
+wire = "openai-chat"
+base_url = "https://api.gmi-serving.com/v1"
+base_url_env = "GMI_BASE_URL"
+default_model = "zai-org/GLM-5.1-FP8"
+hermes_id = "gmi"
+key_help = "Create a key at gmicloud.ai."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "GMI_API_KEY"
+
+[delivery]
+hermes = ["GMI_API_KEY"]

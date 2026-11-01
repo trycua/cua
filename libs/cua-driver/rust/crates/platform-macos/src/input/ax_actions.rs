@@ -296,16 +296,6 @@ pub fn element_has_keyboard_focus(pid: i32, element_ptr: usize) -> bool {
         || unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXFocused") } == Some(true)
 }
 
-/// Set the AXValue of an element (for dropdowns, text fields, etc.).
-pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
-    let err = unsafe { set_string_attr(element_ptr as AXUIElementRef, "AXValue", value) };
-    if err == kAXErrorSuccess {
-        Ok(())
-    } else {
-        anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]

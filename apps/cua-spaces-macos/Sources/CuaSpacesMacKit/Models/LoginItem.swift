@@ -3,6 +3,7 @@
 
 import AppKit
 import CuaSpacesFFI
+import Darwin
 import Foundation
 import ServiceManagement
 
@@ -82,5 +83,280 @@ public enum LoginLaunch {
               event.eventID == AEEventID(kAEOpenApplication) else { return false }
         return event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue
             == OSType(keyAELaunchedAsLogInItem)
+    }
+}
+
+/// The host service's login item: this app's own executable
+/// (`CuaSpacesMac --service-helper run`, so its permissions are the app's) run by
+/// `SMAppService.agent` from Contents/Library/LaunchAgents/<label>.plist
+/// (com.trycua.spaces.helper.plist for the released app). cua-host (the
+/// `app-helper` runner, in this app's SDK and in the `cua` CLI) drives it
+/// through `CuaSpacesMac --service-helper register|unregister|status`,
+/// because only this bundle's code may register it; it writes what the
+/// helper runs (<CuaHome>/helper/service.json, ~/.cua/helper/service.json
+/// for the released app) and starts it with launchctl.
+///
+/// Each channel has its own helper, so Cua Spaces Local runs beside the
+/// released app without sharing its login item, launchd label or spec:
+/// `scripts/build-app.sh` stamps `CuaHelperLabel` and `CuaHome` (and names
+/// the plist after the label) into the bundle, and this reads them. A bundle
+/// without them is the released app and keeps the names it always had.
+public enum HelperService {
+    /// The released app's launchd label, and the default when the bundle
+    /// has no `CuaHelperLabel` (`CuaChannel::helper_label` in cua-home).
+    static let defaultLabel = "com.trycua.spaces.helper"
+    /// The default Cua home, below the user's home, when the bundle has no
+    /// `CuaHome` (`CuaChannel::home_dir` in cua-home).
+    static let defaultHome = ".cua"
+
+    /// The launchd label of this bundle's helper: `CuaHelperLabel`, else the
+    /// released app's.
+    public static func label(info: [String: Any]?) -> String {
+        stamped(info, "CuaHelperLabel") ?? defaultLabel
+    }
+
+    /// The plist in Contents/Library/LaunchAgents: `<label>.plist`.
+    public static func plistName(info: [String: Any]?) -> String {
+        label(info: info) + ".plist"
+    }
+
+    /// Where cua-host writes what the helper runs: `<CuaHome>/helper/
+    /// service.json` (`CuaHome` is `~/...` or absolute), else
+    /// `~/.cua/helper/service.json`. `nil` for a bundle that names another
+    /// channel (`CuaChannel` other than `stable`) without a usable home: it
+    /// must never fall back to the released app's file, so it runs nothing.
+    public static func specPath(info: [String: Any]?, home: String) -> String? {
+        let base: String
+        if let stampedHome = stamped(info, "CuaHome") {
+            if stampedHome == "~" {
+                base = home
+            } else if stampedHome.hasPrefix("~/") {
+                base = home + "/" + String(stampedHome.dropFirst(2))
+            } else if stampedHome.hasPrefix("/") {
+                base = stampedHome
+            } else {
+                return nil
+            }
+        } else if let channel = stamped(info, "CuaChannel"), channel.lowercased() != "stable" {
+            return nil
+        } else {
+            base = home + "/" + defaultHome
+        }
+        return (base as NSString).appendingPathComponent("helper/service.json")
+    }
+
+    /// Where the host service's executable lives, relative to the app's
+    /// `Contents`: `Helpers/cua-spacesd`, never `MacOS/`. AppKit takes the
+    /// main bundle from the executable's path, so a cua-spacesd in
+    /// `Contents/MacOS` checks in with LaunchServices *as the app* (same
+    /// bundle id and name) when its cursor overlay starts AppKit. Opening
+    /// the app then activates that windowless helper instead of launching
+    /// the UI. From `Contents/Helpers` it has no bundle of its own and runs
+    /// as a nameless background UI element (`cua_host::service::
+    /// APP_HELPER_DAEMON`; `scripts/build-app.sh` puts it there).
+    public static let daemonInContents = "Helpers/cua-spacesd"
+
+    /// The cua-spacesd of the app whose executable is `executable`
+    /// (`<App>.app/Contents/MacOS/<exe>`): `Contents/Helpers/cua-spacesd`.
+    public static func daemonPath(executable: URL) -> URL {
+        executable.resolvingSymlinksInPath()
+            .deletingLastPathComponent() // Contents/MacOS
+            .deletingLastPathComponent() // Contents
+            .appendingPathComponent(daemonInContents)
+    }
+
+    /// A file's identity (device and inode). An update (Sparkle, or the
+    /// app dragged over) puts new files at the same paths, so the same path
+    /// with a new identity is a new build.
+    public struct FileIdentity: Equatable, Sendable {
+        public let device: UInt64
+        public let inode: UInt64
+        public init(device: UInt64, inode: UInt64) {
+            self.device = device
+            self.inode = inode
+        }
+    }
+
+    /// `path`'s identity, or `nil` when it is gone.
+    public static func identity(_ path: String) -> FileIdentity? {
+        var st = stat()
+        guard stat(path, &st) == 0 else { return nil }
+        return FileIdentity(device: UInt64(st.st_dev), inode: UInt64(st.st_ino))
+    }
+
+    /// What the running service does after one look at its files.
+    public enum WatchVerdict: Equatable, Sendable {
+        /// Nothing changed.
+        case keep
+        /// The app's files or the spec are gone (a downgrade to a build
+        /// without the service, or the host was removed): stop, exit 0, and
+        /// launchd leaves it stopped.
+        case stop
+        /// The app was updated in place: stop the old cua-spacesd and exit
+        /// non-zero, so launchd starts the new build's (KeepAlive
+        /// SuccessfulExit=false).
+        case restart
+    }
+
+    /// One look at the service's files: `started` are the identities of the
+    /// files it runs from (its own executable and Contents/Helpers/
+    /// cua-spacesd) when it started, `now` the same files now (`nil` for one
+    /// that is gone). Gone twice in a row stops (an update's swap is quick
+    /// and is not mistaken for a removal); all there with any identity
+    /// changed restarts.
+    public static func watch(started: [FileIdentity?], now: [FileIdentity?], specPresent: Bool,
+                             misses: inout Int) -> WatchVerdict {
+        if !specPresent || now.contains(where: { $0 == nil }) {
+            misses += 1
+            return misses >= 2 ? .stop : .keep
+        }
+        misses = 0
+        return started != now ? .restart : .keep
+    }
+
+    /// The exit status of a service that restarts onto an updated app
+    /// (EX_TEMPFAIL): non-zero, so launchd starts it again.
+    public static let restartExitCode: Int32 = 75
+
+    /// A launch of this executable that is not the app's window: the host
+    /// service and its commands (`--service-helper`, `check-permissions`,
+    /// `preflight-permissions`). These must never touch AppKit or start
+    /// anything that does (the Sentry SDK): a windowless process checked in
+    /// with LaunchServices as "Cua Spaces" makes opening the app fail.
+    public static func isServiceCommand(_ args: [String]) -> Bool {
+        ["--service-helper", "check-permissions", "preflight-permissions"].contains(args.first ?? "")
+    }
+
+    /// The service holds the app's LaunchServices entry: it shows as a
+    /// running "Cua Spaces" (0.17.0-beta.3 and beta.4 checked in through the
+    /// Sentry SDK). Opening the app then fails until the service restarts.
+    static func serviceHoldsAppEntry(servicePid: pid_t, bundleId: String) -> Bool {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+            .contains { $0.processIdentifier == servicePid }
+    }
+
+    /// The service started from an older build than the one installed now:
+    /// it started before this app's cua-spacesd was put in place. That is
+    /// the file's status-change time (an update writes new files, and no
+    /// copy keeps it), not its birth time, which an archive keeps from the
+    /// build.
+    public static func isStale(serviceStarted: Date, daemonInstalled: Date) -> Bool {
+        serviceStarted < daemonInstalled
+    }
+
+    /// When `path` was put in place (`st_ctime`), or `nil` when it is gone.
+    public static func placedTime(_ path: String) -> Date? {
+        var st = stat()
+        guard stat(path, &st) == 0 else { return nil }
+        let t = st.st_ctimespec
+        return Date(timeIntervalSince1970: TimeInterval(t.tv_sec) + TimeInterval(t.tv_nsec) / 1e9)
+    }
+
+    /// When process `pid` started, or `nil` when there is none.
+    static func processStart(_ pid: pid_t) -> Date? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec) + TimeInterval(info.pbi_start_tvusec) / 1e6)
+    }
+
+    /// The running service's pid, from `launchctl print` (`nil`: not loaded
+    /// or not running).
+    static func runningPid(target: String) -> pid_t? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        p.arguments = ["print", target]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return parsePid(String(decoding: data, as: UTF8.self))
+    }
+
+    /// The `pid = N` line of `launchctl print`.
+    static func parsePid(_ text: String) -> pid_t? {
+        for line in text.split(separator: "\n") {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("pid = "), let n = Int32(t.dropFirst(6)) { return n }
+        }
+        return nil
+    }
+
+    /// CUA-2457: at launch, the login item still running from before an
+    /// update (Sparkle, or the app dragged over) is restarted onto this
+    /// build (`launchctl kickstart -k`), so the host service runs the
+    /// cua-spacesd that shipped with it. Services from this build watch
+    /// their own files and restart themselves; this catches the ones that
+    /// started before that watch existed. Off the main thread.
+    public static func restartIfStale(executable: URL? = Bundle.main.executableURL) {
+        guard let executable else { return }
+        let target = "gui/\(getuid())/\(label)"
+        DispatchQueue.global(qos: .utility).async {
+            guard let pid = runningPid(target: target) else { return }
+            let stale = processStart(pid).flatMap { started in
+                placedTime(daemonPath(executable: executable).path).map { isStale(serviceStarted: started, daemonInstalled: $0) }
+            } ?? false
+            let holdsEntry = serviceHoldsAppEntry(servicePid: pid, bundleId: Bundle.main.bundleIdentifier ?? "com.trycua.spaces.macos")
+            guard stale || holdsEntry else { return }
+            NSLog("cua-spaces: restarting the host service (pid %d): %@", pid,
+                  stale ? "it is from before this build" : "it holds the app's LaunchServices entry")
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            p.arguments = ["kickstart", "-k", target]
+            try? p.run()
+            p.waitUntilExit()
+        }
+    }
+
+    private static func stamped(_ info: [String: Any]?, _ key: String) -> String? {
+        guard let value = (info?[key] as? String)?.trimmingCharacters(in: .whitespaces),
+              !value.isEmpty else { return nil }
+        return value
+    }
+
+    public static var label: String { label(info: Bundle.main.infoDictionary) }
+    public static var plistName: String { plistName(info: Bundle.main.infoDictionary) }
+
+    static var service: SMAppService { SMAppService.agent(plistName: plistName) }
+
+    public static func status() -> AppLoginItemStatus { MainAppLoginItem.map(service.status) }
+
+    static func name(_ s: AppLoginItemStatus) -> String {
+        switch s {
+        case .enabled: return "enabled"
+        case .notRegistered: return "not-registered"
+        case .requiresApproval: return "requires-approval"
+        case .notFound: return "not-found"
+        }
+    }
+
+    /// The command line: prints one JSON object, returns the exit code.
+    public static func run(_ args: [String]) -> Int32 {
+        var failure: String?
+        switch args.first {
+        case "register":
+            do { try service.register() } catch { failure = error.localizedDescription }
+        case "unregister":
+            // Not registered is already done. So is an item that ends up
+            // not registered or not found (a bundle moved or replaced since
+            // it registered), even when macOS said no on the way.
+            if service.status != .notRegistered {
+                do { try service.unregister() } catch {
+                    if status() != .notRegistered, status() != .notFound { failure = error.localizedDescription }
+                }
+            }
+        case "status": break
+        default:
+            FileHandle.standardError.write(Data("usage: CuaSpacesMac --service-helper register|unregister|status\n".utf8))
+            return 2
+        }
+        var out: [String: String] = ["status": name(status())]
+        if let failure { out["error"] = failure }
+        if let data = try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]) {
+            FileHandle.standardOutput.write(data + Data("\n".utf8))
+        }
+        return failure == nil ? 0 : 1
     }
 }

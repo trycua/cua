@@ -85,6 +85,8 @@ enum APIDocExtractor {
             updateVM,
             runVM,
             stopVM,
+            suspendVM,
+            renameVM,
 
             // Image Management
             getImages,
@@ -160,6 +162,7 @@ enum APIDocExtractor {
                     APIFieldDoc(name: "vncUrl", type: "string", required: false, description: "VNC URL if running", defaultValue: nil),
                     APIFieldDoc(name: "ipAddress", type: "string", required: false, description: "IP address if running", defaultValue: nil),
                     APIFieldDoc(name: "locationName", type: "string", required: true, description: "Storage location name", defaultValue: nil),
+                    APIFieldDoc(name: "savedState", type: "boolean", required: false, description: "The VM has a saved machine state (suspend) that its next run resumes", defaultValue: nil),
                     APIFieldDoc(name: "downloadProgress", type: "number", required: false, description: "While an async pull runs (status \"pulling\"): downloaded percent, 0 to 100", defaultValue: nil),
                     APIFieldDoc(name: "downloadedBytes", type: "integer", required: false, description: "While an async pull runs: bytes downloaded so far", defaultValue: nil),
                     APIFieldDoc(name: "totalBytes", type: "integer", required: false, description: "While an async pull runs: total bytes to download (0 until known)", defaultValue: nil),
@@ -247,7 +250,8 @@ enum APIDocExtractor {
                     APIFieldDoc(name: "name", type: "string", required: true, description: "Name of the source VM", defaultValue: nil),
                     APIFieldDoc(name: "newName", type: "string", required: true, description: "Name for the cloned VM", defaultValue: nil),
                     APIFieldDoc(name: "sourceLocation", type: "string", required: false, description: "Source VM storage location", defaultValue: nil),
-                    APIFieldDoc(name: "destLocation", type: "string", required: false, description: "Destination VM storage location", defaultValue: nil)
+                    APIFieldDoc(name: "destLocation", type: "string", required: false, description: "Destination VM storage location", defaultValue: nil),
+                    APIFieldDoc(name: "withSavedState", type: "boolean", required: false, description: "Clone the source's saved machine state too (see suspend): the clone keeps the source's MAC address and machine identifier, which the state is bound to, and its first run resumes the saved guest", defaultValue: "false")
                 ]
             ),
             responseBody: APIResponseDoc(
@@ -358,6 +362,59 @@ enum APIDocExtractor {
             statusCodes: [
                 APIStatusCodeDoc(code: 200, description: "VM stopped successfully"),
                 APIStatusCodeDoc(code: 400, description: "Stop operation failed")
+            ]
+        )
+    }
+
+    private static var suspendVM: APIEndpointDoc {
+        APIEndpointDoc(
+            method: "POST",
+            path: "/lume/vms/:name/suspend",
+            description: "Suspend a running virtual machine to disk (its next run resumes it)",
+            category: "VM Management",
+            pathParameters: [
+                APIParameterDoc(name: "name", type: "string", required: true, description: "Name of the VM to suspend")
+            ],
+            queryParameters: [],
+            requestBody: nil,
+            responseBody: APIResponseDoc(
+                contentType: "application/json",
+                description: "Success message",
+                fields: nil
+            ),
+            statusCodes: [
+                APIStatusCodeDoc(code: 200, description: "The VM's memory and device state were saved next to its disk (macOS 14 or later) and the VM stopped; a run resumes it, a cold boot discards the state"),
+                APIStatusCodeDoc(code: 400, description: "The VM does not run in this lume serve, or the save failed (the VM keeps running)")
+            ]
+        )
+    }
+
+    private static var renameVM: APIEndpointDoc {
+        APIEndpointDoc(
+            method: "POST",
+            path: "/lume/vms/:name/rename",
+            description: "Rename a virtual machine, running or stopped",
+            category: "VM Management",
+            pathParameters: [
+                APIParameterDoc(name: "name", type: "string", required: true, description: "Name of the VM to rename")
+            ],
+            queryParameters: [],
+            requestBody: APIRequestBodyDoc(
+                contentType: "application/json",
+                description: "Rename parameters",
+                fields: [
+                    APIFieldDoc(name: "newName", type: "string", required: true, description: "The VM's new name", defaultValue: nil),
+                    APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil)
+                ]
+            ),
+            responseBody: APIResponseDoc(
+                contentType: "application/json",
+                description: "Success message with the new name",
+                fields: nil
+            ),
+            statusCodes: [
+                APIStatusCodeDoc(code: 200, description: "VM renamed (a running VM keeps running)"),
+                APIStatusCodeDoc(code: 400, description: "The name is taken or invalid, or the VM runs in another process than this lume serve")
             ]
         )
     }

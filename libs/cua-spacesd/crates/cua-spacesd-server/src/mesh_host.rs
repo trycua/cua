@@ -22,14 +22,28 @@
 //!   remembers them, and filters the relay's map to its own approvals.
 //!   Streams are spliced to spacesd unchanged: the env token still travels
 //!   in each request, now inside WireGuard.
-//! - **QUIC media.** Mesh UDP [`cua_mesh::MEDIA_UDP_PORT`] reaches the
-//!   local QUIC media port, so QUIC streaming works over the mesh.
+//! - **QUIC media.** Mesh UDP [`MeshHostConfig::media_udp_port`]
+//!   ([`cua_mesh::MEDIA_UDP_PORT`], 3212, unless `--mesh-udp-port` says
+//!   otherwise) reaches the local QUIC media port, so QUIC streaming works
+//!   over the mesh. It is a port of the mesh's own network, not of the
+//!   operating system.
 //! - **Metering (account machines).** The relay meters sessions on its
 //!   HTTPS path itself; mesh traffic never passes it in the clear, so this
 //!   node tells it which peers hold streams open (requests in flight,
 //!   WebSockets, media flows), as a small snapshot sent when it changes and
 //!   only to a relay that asks for it. The relay checks each peer against
 //!   this machine's map and meters it as that peer's own account.
+//!
+//! - **Gang rank traffic (CUA-1783).** The account's other hosts are in
+//!   this machine's map too (the relay marks them
+//!   [`cua_mesh::proto::ROLE_MACHINE`]). Such a peer may open
+//!   `port:<n>` streams ([`cua_mesh::proto::port_service`]), spliced to
+//!   `127.0.0.1:<n>`, only while a gang member of a job running here has
+//!   `<n>` registered ([`cua_mesh::gang::PortRegistry`]); anything else is
+//!   refused, and a machine peer never reaches spacesd. The host's job
+//!   runner asks for outbound forwards on the local control socket
+//!   ([`cua_mesh::gang::serve_control`], `<cua home>/host/mesh-control.sock`,
+//!   `0600`).
 //!
 //! A relay without a mesh (an older one) is simply not used: the machine
 //! keeps serving over its relay connection and checks again later.
@@ -169,6 +183,11 @@ pub type EnvToken = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 /// The mesh policy now (re-read while the machine runs).
 pub type PolicySource = Arc<dyn Fn() -> Policy + Send + Sync>;
 
+/// How long a peer's stream to a gang port waits for the port to be
+/// registered and listening (gang members start at about the same time,
+/// not at once).
+pub const GANG_WAIT: Duration = Duration::from_secs(120);
+
 /// How often a machine whose mesh is off checks whether it was turned on
 /// (and a running node whether it was turned off). Local reads only.
 pub const GATE_RECHECK: Duration = Duration::from_secs(30);
@@ -223,6 +242,9 @@ pub struct MeshHostConfig {
     pub local: SocketAddr,
     /// The local QUIC media port, if QUIC runs.
     pub quic: Option<SocketAddr>,
+    /// The mesh UDP port that reaches [`Self::quic`]
+    /// ([`cua_mesh::MEDIA_UDP_PORT`] by default).
+    pub media_udp_port: u16,
     /// Account details learned on the relay handshake.
     pub account: Arc<AccountLink>,
     /// The env token, for static-mode pairing proofs.
@@ -233,6 +255,13 @@ pub struct MeshHostConfig {
     pub policy: PolicySource,
     /// How often [`Self::policy`] is checked again ([`GATE_RECHECK`]).
     pub recheck: Duration,
+    /// Gang rank traffic: the Cua home whose port registry
+    /// (`jobs/gang-ports`) and control socket (`host/mesh-control.sock`)
+    /// this node serves. `None` (a Space's spacesd): neither, and every
+    /// `port:<n>` stream is refused.
+    pub gang_home: Option<PathBuf>,
+    /// How long a gang port stream waits to be served ([`GANG_WAIT`]).
+    pub gang_wait: Duration,
 }
 
 impl std::fmt::Debug for MeshHostConfig {
@@ -309,6 +338,7 @@ pub async fn run(cfg: MeshHostConfig, shutdown: CancellationToken) {
             key: ctx_key.clone(),
             streams,
         });
+        let control = control_socket(&cfg, &mesh);
         let mut gate = tokio::time::interval(cfg.recheck);
         gate.tick().await;
         let stopped = loop {
@@ -330,6 +360,9 @@ pub async fn run(cfg: MeshHostConfig, shutdown: CancellationToken) {
             tokio::spawn(async move { handle(ctx, incoming).await });
         };
         reporter.abort();
+        if let Some(c) = control {
+            c.abort();
+        }
         mesh.shutdown();
         if stopped {
             return;
@@ -384,7 +417,7 @@ async fn report_usage(mesh: Mesh, streams: Arc<PeerStreams>, account: Arc<Accoun
         } else {
             mesh.peers()
                 .into_iter()
-                .filter(|p| active.contains(&p.node_key))
+                .filter(|p| p.kind == NodeKind::Client && active.contains(&p.node_key))
                 .filter_map(|p| p.grant.map(|g| (p.node_key, g.user)))
                 .collect()
         };
@@ -435,7 +468,7 @@ async fn start(cfg: &MeshHostConfig) -> cua_mesh::Result<Mesh> {
     }));
     let mesh = Mesh::start(mc).await?;
     if let Some(quic) = cfg.quic {
-        mesh.serve_udp(cua_mesh::MEDIA_UDP_PORT, quic)?;
+        mesh.serve_udp(cfg.media_udp_port, quic)?;
     }
     Ok(mesh)
 }
@@ -446,8 +479,111 @@ struct Ctx {
     streams: Arc<PeerStreams>,
 }
 
+/// The control socket for the host's job runner, when this node serves
+/// gangs (unix only).
+fn control_socket(cfg: &MeshHostConfig, mesh: &Mesh) -> Option<tokio::task::JoinHandle<()>> {
+    let home = cfg.gang_home.as_deref()?;
+    #[cfg(unix)]
+    {
+        let path = cua_mesh::gang::control_path(home);
+        match cua_mesh::gang::serve_control(mesh.clone(), &path) {
+            Ok(task) => {
+                tracing::info!(path = %path.display(), "mesh control socket for gang jobs");
+                Some(task)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e, path = %path.display(),
+                    "no mesh control socket; gang jobs here use their placed addresses"
+                );
+                None
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (home, mesh);
+        None
+    }
+}
+
+/// Whether `peer` may open a `port:<n>` stream on a machine owned by
+/// `owner`: only another host of the same account, as the relay's map
+/// marks it ([`cua_mesh::proto::ROLE_MACHINE`]). The port must also be
+/// registered by a running gang job ([`serve_port`]).
+pub fn may_reach_port(peer: &cua_mesh::PeerInfo, owner: Option<&str>) -> Result<(), &'static str> {
+    if peer.kind != NodeKind::Machine {
+        return Err("not a machine");
+    }
+    let Some(grant) = &peer.grant else {
+        return Err("a machine the relay did not vouch for");
+    };
+    if grant.role != cua_mesh::proto::ROLE_MACHINE {
+        return Err("not a machine of an account");
+    }
+    match owner {
+        Some(o) if o == grant.account => Ok(()),
+        Some(_) => Err("a machine of another account"),
+        None => Err("this machine has no owning account"),
+    }
+}
+
+/// A `port:<n>` stream: spliced to where a running gang job here
+/// registered `<n>` (`127.0.0.1:<n>`, or the address of the Space the
+/// member runs in) once it listens there (waiting up to
+/// [`MeshHostConfig::gang_wait`]); refused otherwise.
+async fn serve_port(ctx: Arc<Ctx>, incoming: IncomingStream, port: u16) {
+    let peer = incoming.peer.node_key.short();
+    let owner = ctx.cfg.account.owner();
+    if let Err(why) = may_reach_port(&incoming.peer, owner.as_deref()) {
+        tracing::warn!(%peer, port, why, "mesh port stream refused");
+        return;
+    }
+    let Some(home) = ctx.cfg.gang_home.as_deref() else {
+        tracing::warn!(%peer, port, "mesh port stream refused: this machine runs no gangs");
+        return;
+    };
+    let registry = cua_mesh::gang::PortRegistry::new(cua_mesh::gang::ports_dir(home));
+    let wait = ctx.cfg.gang_wait;
+    let deadline = tokio::time::Instant::now() + wait;
+    let Some(job) = registry.wait_registered(port, wait).await else {
+        tracing::warn!(%peer, port, "mesh port stream refused: no running job registered the port");
+        return;
+    };
+    let tcp = loop {
+        let Some(target) = registry.target(port) else {
+            tracing::warn!(%peer, port, "mesh port stream: the job ended before it listened");
+            return;
+        };
+        match tokio::net::TcpStream::connect(target).await {
+            Ok(t) => break t,
+            Err(e) => {
+                if tokio::time::Instant::now() >= deadline || registry.registered(port).is_none() {
+                    tracing::warn!(%peer, port, error = %e, "mesh port stream: the job never listened");
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    };
+    tracing::info!(%peer, port, %job, "mesh port stream");
+    let _ = tcp.set_nodelay(true);
+    let mut tcp = tcp;
+    let mut stream = incoming.stream;
+    let _ = tokio::io::copy_bidirectional(&mut stream, &mut tcp).await;
+}
+
 async fn handle(ctx: Arc<Ctx>, incoming: IncomingStream) {
+    if let Some(port) = cua_mesh::proto::parse_port_service(&incoming.header.service) {
+        return serve_port(ctx, incoming, port).await;
+    }
     if incoming.header.service != SPACESD_SERVICE {
+        return;
+    }
+    // Another machine of the account reaches gang ports only, never
+    // spacesd.
+    if incoming.peer.kind != NodeKind::Client {
+        tracing::warn!(peer = %incoming.peer.node_key.short(), "mesh stream refused: a machine peer");
         return;
     }
     let account_machine = ctx.cfg.account.owner().is_some();
@@ -538,6 +674,9 @@ fn mint(ctx: &Ctx, grant: &Grant) -> String {
         iat: now,
         exp: now + cua_relay::assertion::MAX_ASSERTION_TTL_SECS,
         jti: os_random_hex(16),
+        teams: Vec::new(),
+        space: None,
+        space_role: None,
     })
 }
 
@@ -648,6 +787,66 @@ fn holding(body: Incoming, held: StreamUse) -> BoxBody {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn peer(kind: NodeKind, grant: Option<(&str, &str)>) -> cua_mesh::PeerInfo {
+        cua_mesh::PeerInfo {
+            node_key: cua_mesh::SecretKey::generate().public(),
+            disco_key: cua_mesh::SecretKey::generate().public(),
+            quic_pin: String::new(),
+            kind,
+            machine_id: None,
+            name: "peer".into(),
+            endpoints: vec![],
+            online: true,
+            version: cua_mesh::VERSION,
+            grant: grant.map(|(role, account)| Grant {
+                user: account.into(),
+                account: account.into(),
+                email: None,
+                name: None,
+                role: role.into(),
+                device: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn only_a_machine_of_this_machines_own_account_reaches_gang_ports() {
+        let machine = cua_mesh::proto::ROLE_MACHINE;
+        assert_eq!(
+            may_reach_port(
+                &peer(NodeKind::Machine, Some((machine, "ada"))),
+                Some("ada")
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            may_reach_port(
+                &peer(NodeKind::Machine, Some((machine, "bob"))),
+                Some("ada")
+            ),
+            Err("a machine of another account")
+        );
+        assert_eq!(
+            may_reach_port(&peer(NodeKind::Machine, Some((machine, "ada"))), None),
+            Err("this machine has no owning account")
+        );
+        assert_eq!(
+            may_reach_port(
+                &peer(NodeKind::Machine, Some(("owner", "ada"))),
+                Some("ada")
+            ),
+            Err("not a machine of an account")
+        );
+        assert_eq!(
+            may_reach_port(&peer(NodeKind::Machine, None), Some("ada")),
+            Err("a machine the relay did not vouch for")
+        );
+        assert_eq!(
+            may_reach_port(&peer(NodeKind::Client, Some((machine, "ada"))), Some("ada")),
+            Err("not a machine")
+        );
+    }
 
     #[test]
     fn snapshots_count_open_streams_upgrades_and_media_per_peer() {

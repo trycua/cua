@@ -117,9 +117,9 @@
     {
       "name": "no OS name at all",
       "row": {
-        "id": "cloud:builder",
+        "id": "direct:builder",
         "name": "builder",
-        "provider": "cloud",
+        "provider": "direct",
         "spacesdVersion": "0.4.0",
         "features": [],
         "os": "linux",
@@ -129,11 +129,11 @@
       "usage": null
     },
     {
-      "name": "cloud Space, image from the claim's template (a tag: no digest)",
+      "name": "a Space whose image is a tag: no digest",
       "row": {
-        "id": "cloud:review-bot",
+        "id": "direct:review-bot",
         "name": "review-bot",
-        "provider": "cloud",
+        "provider": "direct",
         "spacesdVersion": "0.4.0",
         "features": [
           "desktop_stream"
@@ -147,11 +147,11 @@
       "usage": null
     },
     {
-      "name": "cloud Space on a managed pool (a pinned image: its digest)",
+      "name": "a Space on a pinned image: its digest",
       "row": {
-        "id": "cloud:ci-7",
+        "id": "direct:ci-7",
         "name": "ci-7",
-        "provider": "cloud",
+        "provider": "direct",
         "spacesdVersion": "0.4.0",
         "features": [
           "desktop_stream"
@@ -165,11 +165,11 @@
       "usage": null
     },
     {
-      "name": "cloud amd64 VM: no emulation warning",
+      "name": "an amd64 VM: its architecture",
       "row": {
-        "id": "cloud:x64",
+        "id": "direct:x64",
         "name": "x64",
-        "provider": "cloud",
+        "provider": "direct",
         "spacesdVersion": "0.4.0",
         "features": [
           "desktop_stream"

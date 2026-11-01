@@ -1,0 +1,86 @@
+---
+title: Repo cache
+description: 'How Cua keeps verified copies of public git repositories on this machine so a repeat git clone in a Space is fast, what it never caches, the setting, how to clear it and what it reports.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The first time a Space clones a public repository, Cua downloads it as usual.
+In the background, the Cua daemon on your machine also keeps a verified copy
+of that repository. The next Space that clones it starts from that copy, so a
+repository that took about 5 seconds to clone takes about a second, and only
+what changed since is downloaded. Your agent runs the same `git clone URL` as
+always. There is nothing to set up per repository and no list to maintain.
+
+## What is and is not cached
+
+- **Public repositories only.** Cua asks the remote for its branches with no
+  credentials at all. If that works, the repository is public and can be
+  cached. A repository that needs a sign-in, a token or a key is never cached,
+  and a clone of it goes the normal way.
+- **`https` addresses on a public host.** Addresses with a user name or token
+  in them, other ports, `ssh` addresses and hosts on a private network are
+  never cached.
+- **Repositories, not dependencies yet.** The row in Settings is called
+  **Repo and dependency cache** because it will hold more later. Today it holds
+  repositories.
+- **This machine's disk only.** Nothing is sent anywhere to fill it, and a
+  copy is never shared with another machine.
+
+## How a clone uses it
+
+The copies live in a folder that Linux container Spaces on this machine see
+read-only. A small helper that Cua puts next to the Space's git, never the
+agent, makes `git clone` ask the remote for its current tip and take the
+objects it already has from the copy:
+
+- The clone always ends at the remote's own tip, never an older one. If the
+  remote has a new commit, the clone downloads just that.
+- Each clone has its own files. It does not depend on the copy afterwards, so
+  clearing the cache or removing a repository never breaks a clone.
+- The Space can only read the copy. Nothing a Space writes reaches another
+  Space or the cache.
+- Spaces keep the network access they already had. The cache does not open any.
+- If the copy is missing, damaged or the folder is not there, `git clone`
+  simply runs the normal way, with no error.
+
+Virtual machine Spaces and macOS Spaces do not see the folder yet, so they
+clone the normal way.
+
+## The setting
+
+In **Settings**, **General**, **Repo and dependency cache** has a switch (on by
+default), a size limit and **Clear cache**. Under the switch it says in plain
+words what it holds, for example `Repos: 3, 1.2 GB of 5 GB`, how many clones
+came from it over the last week and about how much time that saved.
+
+The size limit is automatic unless you set it: the smaller of 5 GB and a tenth
+of the free disk. When the cache is full, the repository used least recently
+goes first. A repository bigger than the limit is not cached.
+
+From a terminal:
+
+```bash test="cli-shape" id="cua-host-cache"
+cua host cache status                              # what it holds and what the last week saved
+cua host config --repo-cache off                   # keep no copies
+cua host config --repo-cache on --repo-cache-size 2  # at most 2 GB
+cua host config --repo-cache-size auto             # the default size
+cua host cache clear                               # delete every copy
+```
+
+The same settings are `cache.repos` and `cache.repos_size_gb` in
+[`cua config`](/cua-cli/reference).
+
+## Privacy
+
+The cache reports counts and fixed words only: whether a clone was served from
+the cache, a miss or a fallback, the bytes and seconds a hit saved, and why a
+clone was not served from the cache, from a fixed list such as `private` or
+`cache_full`. It never sends a URL, a repository name or a path. See
+[Telemetry events](/cua-sdk/concepts/telemetry-events) for the exact event,
+`cua_repo_cache`, and how to turn telemetry off.
+
+<Callout type="info">
+  Turning the cache off stops new copies and stops Spaces from using the
+  existing ones. The copies stay on disk until you press **Clear cache**.
+</Callout>

@@ -109,7 +109,7 @@ function fakeDaemon(drive: { mount?: unknown; sync?: () => unknown; mountResult?
 }
 
 describe('AgentsPage', () => {
-  it('pauses, opens memory, adds a routine and allows this computer', async () => {
+  it('pauses, opens memory, adds a routine and allows this machine', async () => {
     const { calls, bridge } = fakeDaemon();
     render(<AgentsPage bridge={bridge} thisMachine="relay:0123" now={() => NOW} />);
     expect(await screen.findByText('Hermes in local:dev, Running')).toBeTruthy();
@@ -130,9 +130,9 @@ describe('AgentsPage', () => {
     await waitFor(() => expect(screen.getByText('Inbox sweep')).toBeTruthy());
     expect(calls.some((c) => c.startsWith('routine_add') && c.includes('"daily_at":"08:00"'))).toBe(true);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Access to this computer' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Allow on this computer' }));
-    await waitFor(() => expect(screen.getByText('This computer')).toBeTruthy());
+    fireEvent.click(screen.getByRole('tab', { name: 'Access to this machine' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Allow on this machine' }));
+    await waitFor(() => expect(screen.getByText('This machine')).toBeTruthy());
     expect(calls).toContain('computer_access_grant {"agent":"ada","machine":"relay:0123"}');
   });
 });

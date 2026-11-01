@@ -3881,53 +3881,106 @@ fn changed_pixel_count(before: &image::RgbaImage, after: &image::RgbaImage) -> u
         .count() as u64
 }
 
-fn browser_chrome_changed_pixel_center(
-    before: &image::RgbaImage,
-    after: &image::RgbaImage,
-    desktop: &ToolResponse,
+/// Screen-point centers of the top-chrome buttons that a permission request
+/// added or relabelled, read from two `get_window_state` trees of one window.
+///
+/// Edge 155 adds a "Notifications blocked" button right of the omnibox. Edge
+/// 156 turns the left site-information button into an unlabelled chip and
+/// shifts the URL text, so a pixel diff of the toolbar is dominated by the
+/// text shift rather than the indicator.
+fn quiet_permission_indicator_centers(
+    before: &serde_json::Value,
+    after: &serde_json::Value,
     bounds: (f64, f64, f64, f64),
-) -> Option<(f64, f64)> {
-    assert_eq!(before.dimensions(), after.dimensions());
-    let screen_width = desktop.structured()["screen_width"].as_f64()?;
-    let screen_height = desktop.structured()["screen_height"].as_f64()?;
-    let scale_x = f64::from(before.width()) / screen_width;
-    let scale_y = f64::from(before.height()) / screen_height;
-    let left = (bounds.0 * scale_x).round().max(0.0) as u32;
-    let top = (bounds.1 * scale_y).round().max(0.0) as u32;
-    let right = ((bounds.0 + bounds.2) * scale_x)
-        .round()
-        .min(f64::from(before.width())) as u32;
-    // Browser permission indicators live in the top chrome. Limiting the
-    // search excludes any unrelated page repaint below the toolbar.
-    let bottom = ((bounds.1 + bounds.3.min(120.0)) * scale_y)
-        .round()
-        .min(f64::from(before.height())) as u32;
-    let mut changed = 0_u64;
-    let mut x_sum = 0_u64;
-    let mut y_sum = 0_u64;
-    for y in top..bottom {
-        for x in left..right {
-            let before = before.get_pixel(x, y);
-            let after = after.get_pixel(x, y);
-            if before
-                .0
-                .iter()
-                .zip(after.0.iter())
-                .take(3)
-                .any(|(before, after)| before.abs_diff(*after) >= 32)
-            {
-                changed += 1;
-                x_sum += u64::from(x);
-                y_sum += u64::from(y);
-            }
-        }
-    }
-    (changed > 0).then(|| {
-        (
-            (x_sum as f64 / changed as f64) / scale_x,
-            (y_sum as f64 / changed as f64) / scale_y,
-        )
-    })
+) -> Vec<(f64, f64)> {
+    let chrome_buttons = |tree: &serde_json::Value| -> Vec<(Option<String>, [f64; 4])> {
+        tree["elements"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|element| element["role"] == "Button")
+            .filter_map(|element| {
+                let frame = &element["frame"];
+                let rect = [
+                    frame["x"].as_f64()?,
+                    frame["y"].as_f64()?,
+                    frame["w"].as_f64()?,
+                    frame["h"].as_f64()?,
+                ];
+                // Browser permission indicators live in the top chrome.
+                (rect[1] + rect[3] <= bounds.1 + bounds.3.min(120.0))
+                    .then(|| (element["label"].as_str().map(str::to_owned), rect))
+            })
+            .collect()
+    };
+    let unchanged = chrome_buttons(before);
+    chrome_buttons(after)
+        .into_iter()
+        .filter(|button| !unchanged.contains(button))
+        .map(|(_, [x, y, w, h])| (x + w / 2.0, y + h / 2.0))
+        .collect()
+}
+
+/// Toolbar trees from Windows CI recordings before and after
+/// `Notification.requestPermission()`: Edge 155 in run 41280330847 and Edge
+/// 156 in run 41332120340. Window bounds were (47, 40, 886, 633) in both.
+#[test]
+fn quiet_permission_indicator_follows_the_changed_toolbar_button() {
+    let button = |label: Option<&str>, x: f64, y: f64, w: f64, h: f64| {
+        serde_json::json!({
+            "role": "Button",
+            "label": label,
+            "frame": {"x": x, "y": y, "w": w, "h": h},
+        })
+    };
+    let tree = |site_information: serde_json::Value, extra: Option<serde_json::Value>| {
+        let mut elements = vec![
+            button(Some("Back"), 52.0, 84.0, 32.0, 32.0),
+            button(Some("Refresh"), 88.0, 84.0, 32.0, 32.0),
+            site_information,
+            serde_json::json!({
+                "role": "Edit",
+                "label": "Address and search bar",
+                "frame": {"x": 152.0, "y": 88.0, "w": 509.0, "h": 24.0},
+            }),
+            button(Some("Favorites"), 725.0, 84.0, 32.0, 32.0),
+            serde_json::json!({
+                "role": "Document",
+                "label": "cua-driver Web Harness",
+                "frame": {"x": 52.0, "y": 120.0, "w": 876.0, "h": 548.0},
+            }),
+        ];
+        elements.extend(extra);
+        serde_json::json!({ "elements": elements })
+    };
+    let bounds = (47.0, 40.0, 886.0, 633.0);
+    let before = tree(
+        button(Some("View site information"), 128.0, 88.0, 24.0, 24.0),
+        None,
+    );
+
+    let edge_155 = tree(
+        button(Some("View site information"), 128.0, 88.0, 24.0, 24.0),
+        Some(button(
+            Some("Notifications blocked"),
+            637.0,
+            88.0,
+            24.0,
+            24.0,
+        )),
+    );
+    assert_eq!(
+        quiet_permission_indicator_centers(&before, &edge_155, bounds),
+        [(649.0, 100.0)]
+    );
+
+    let edge_156 = tree(button(None, 128.0, 88.0, 24.0, 24.0), None);
+    assert_eq!(
+        quiet_permission_indicator_centers(&before, &edge_156, bounds),
+        [(140.0, 100.0)]
+    );
+
+    assert!(quiet_permission_indicator_centers(&before, &before, bounds).is_empty());
 }
 
 /// Screen-point center of the pixels that changed in the top browser chrome of
@@ -4166,28 +4219,38 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         let minimum_prompt_pixels = (compared_pixels / 1_000).max(1_000);
         let initial_desktop_changed_pixels =
             changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
+        let minimum_desktop_to_window_ratio = 2_u64;
         let mut quiet_prompt_expanded = false;
         let mut quiet_prompt_indicator = None;
 
         // Edge can collapse the notification request to a quiet indicator in
-        // browser chrome. Expand the region that actually changed, then assess
-        // the resulting browser-owned surface with the same pixel oracle.
+        // browser chrome. Expand it, then assess the resulting browser-owned
+        // surface with the same pixel oracle.
+        // On Windows the prompt is collapsed when the desktop shows no
+        // material change or nothing materially beyond the window: Edge 156's
+        // collapsed chip shifts the URL text by ~1650 px in both captures. The
+        // indicator is the toolbar button the request added or relabelled.
         // macOS locates the indicator in the window capture and gates on its
         // change count: a system notification banner can cover the toolbar in
         // the desktop capture.
         let quiet_indicator = if spec.name != "edge" {
             None
         } else if cfg!(target_os = "windows")
-            && initial_desktop_changed_pixels < minimum_prompt_pixels
+            && (initial_desktop_changed_pixels < minimum_prompt_pixels
+                || changed_pixel_count(&window_before, &window_after)
+                    .saturating_mul(minimum_desktop_to_window_ratio)
+                    >= initial_desktop_changed_pixels)
         {
-            let full_desktop_before = load_capture(&desktop_before_path);
-            let full_desktop_after = load_capture(&desktop_after_path);
-            Some(browser_chrome_changed_pixel_center(
-                &full_desktop_before,
-                &full_desktop_after,
-                &desktop,
+            let centers = quiet_permission_indicator_centers(
+                before.structured(),
+                window.structured(),
                 bounds,
-            ))
+            );
+            assert!(
+                centers.len() <= 1,
+                "permission request changed more than one browser chrome button: {centers:?}"
+            );
+            Some(centers.first().copied())
         } else if cfg!(target_os = "macos")
             && changed_pixel_count(&window_before, &window_after) < minimum_prompt_pixels
         {
@@ -4260,7 +4323,6 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
 
         let desktop_changed_pixels = changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
         let window_changed_pixels = changed_pixel_count(&window_before, &window_after);
-        let minimum_desktop_to_window_ratio = 2_u64;
         let desktop_has_materially_more_prompt_pixels = window_changed_pixels
             .saturating_mul(minimum_desktop_to_window_ratio)
             < desktop_changed_pixels;

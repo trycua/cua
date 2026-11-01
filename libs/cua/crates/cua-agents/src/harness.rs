@@ -425,10 +425,10 @@ impl Harness {
 pub fn key_check(
     h: &Harness,
     env: &BTreeMap<String, String>,
-    custom_endpoint: bool,
+    endpoint: Option<&Endpoint>,
 ) -> Option<Value> {
-    if custom_endpoint {
-        return None;
+    if let Some(e) = endpoint {
+        return endpoint_key_check(h, env, e);
     }
     let (provider, url, candidates, skip_env, skip_file): (&str, &str, &[&str], &[&str], &[&str]) =
         match h.id {
@@ -477,6 +477,30 @@ pub fn key_check(
         "headers": headers,
         "skipIfEnv": skip_env,
         "skipIfFile": skip_file,
+    }))
+}
+
+/// The key check for a custom endpoint (`--base-url`): the same one read-only
+/// request, sent to the gateway instead of the provider. Only Claude Code on
+/// the Anthropic wire has a models list we can name; a gateway answers 401 in
+/// its own error shape, so any 401 with a JSON error counts (`anyAuthError`).
+fn endpoint_key_check(h: &Harness, env: &BTreeMap<String, String>, e: &Endpoint) -> Option<Value> {
+    if h.id != "claude-code" || e.wire.is_some_and(|w| w != Wire::Anthropic) {
+        return None;
+    }
+    let key = "ANTHROPIC_API_KEY";
+    if env.get(key).is_none_or(String::is_empty) {
+        return None;
+    }
+    let base = trim_v1(e.base_url.trim_end_matches('/'));
+    Some(json!({
+        "provider": "The model endpoint",
+        "url": format!("{base}/v1/models?limit=1"),
+        "keyEnv": key,
+        "headers": {"x-api-key": format!("${{{key}}}"), "anthropic-version": "2023-06-01"},
+        "skipIfEnv": [],
+        "skipIfFile": [],
+        "anyAuthError": true,
     }))
 }
 
@@ -1244,7 +1268,7 @@ mod tests {
     fn a_key_check_names_the_providers_models_list_and_holds_no_secret() {
         let secret = "sk-ant-test-0123456789abcdef";
         let claude = harness("claude-code").unwrap();
-        let c = key_check(claude, &env(&[("ANTHROPIC_API_KEY", secret)]), false).unwrap();
+        let c = key_check(claude, &env(&[("ANTHROPIC_API_KEY", secret)]), None).unwrap();
         assert_eq!(c["provider"], "Anthropic");
         assert_eq!(c["url"], "https://api.anthropic.com/v1/models?limit=1");
         assert_eq!(c["keyEnv"], "ANTHROPIC_API_KEY");
@@ -1262,7 +1286,7 @@ mod tests {
         let c = key_check(
             codex,
             &env(&[("CODEX_API_KEY", "sk-test-0123456789")]),
-            false,
+            None,
         )
         .unwrap();
         assert_eq!(c["provider"], "OpenAI");
@@ -1278,18 +1302,30 @@ mod tests {
         let claude = harness("claude-code").unwrap();
         let codex = harness("openai-codex").unwrap();
         // No key, or an empty one: the runner has nothing to ask about.
-        assert!(key_check(claude, &env(&[]), false).is_none());
-        assert!(key_check(claude, &env(&[("ANTHROPIC_API_KEY", "")]), false).is_none());
-        // A custom endpoint takes the key, not the provider.
-        assert!(key_check(claude, &env(&[("ANTHROPIC_API_KEY", "k")]), true).is_none());
+        assert!(key_check(claude, &env(&[]), None).is_none());
+        assert!(key_check(claude, &env(&[("ANTHROPIC_API_KEY", "")]), None).is_none());
+        // A custom endpoint takes the key, not the provider: the check goes
+        // to the gateway, and only for Claude Code on the Anthropic wire.
+        let ep = |wire| Endpoint {
+            base_url: "http://gw:4000/v1".into(),
+            wire,
+            model: None,
+        };
+        let k = env(&[("ANTHROPIC_API_KEY", "k")]);
+        let c = key_check(claude, &k, Some(&ep(None))).unwrap();
+        assert_eq!(c["url"], "http://gw:4000/v1/models?limit=1");
+        assert_eq!(c["anyAuthError"], true);
+        assert_eq!(c["skipIfEnv"], json!([]));
+        assert!(key_check(claude, &k, Some(&ep(Some(Wire::Gemini)))).is_none());
+        assert!(key_check(codex, &k, Some(&ep(None))).is_none());
         // Claude Code reads other credentials too; only the API key is checked.
-        assert!(key_check(claude, &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "t")]), false).is_none());
+        assert!(key_check(claude, &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "t")]), None).is_none());
         // Two keys for one harness: cua cannot tell which one it uses.
         assert!(
             key_check(
                 codex,
                 &env(&[("OPENAI_API_KEY", "a"), ("CODEX_API_KEY", "b")]),
-                false
+                None
             )
             .is_none()
         );
@@ -1303,7 +1339,7 @@ mod tests {
                 .iter()
                 .map(|k| (k.to_string(), "k".to_string()))
                 .collect();
-            assert!(key_check(h, &all, false).is_none(), "{}", h.id);
+            assert!(key_check(h, &all, None).is_none(), "{}", h.id);
         }
     }
 

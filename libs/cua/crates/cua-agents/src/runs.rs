@@ -1108,7 +1108,7 @@ impl Agents {
             "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
             "authMethod": h.auth_method,
             "authHint": h.auth_hint(),
-            "keyCheck": harness::key_check(h, &opts.env, endpoint.is_some()),
+            "keyCheck": harness::key_check(h, &opts.env, endpoint.as_ref()),
             "mcpBridge": format!("{}/.cua/bin/mcp-remote", self.home),
             "modeKinds": h.mode_kinds,
             "guardModeKinds": crate::durable::guard_mode_kinds(h),

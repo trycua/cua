@@ -1,6 +1,7 @@
 //! MCP tool implementations for macOS.
 
 mod bring_to_front;
+mod browser_tab_strip;
 mod capture_binding;
 mod click;
 mod clipboard;

@@ -1007,7 +1007,9 @@ impl BrowserEngine {
                  user is working in. Nothing was changed, and browser_prepare is optional: \
                  use get_window_state on the browser window and act through its accessibility \
                  tree (set_value, click by element token), which needs no attachment. If the \
-                 first read shows only browser chrome, read the window again. A browser window \
+                 first read shows only browser chrome, read the window again. That tree shows \
+                 only the selected tab, and selecting another tab changes what the user sees, \
+                 so a background click on a tab-strip tab refuses. A browser window \
                  on another Space than the user's also attaches in the background. Retry with \
                  delivery_mode:\"foreground\" only when nobody is using this screen or the \
                  user agreed to the browser coming forward; the driver then brings the user's \

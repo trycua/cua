@@ -512,6 +512,15 @@ activation script as a browser API. Those paths can visibly disrupt the
 user's browser. Use `browser_navigate` for an exactly bound page or the native
 AX/PX ladder for browser chrome.
 
+The native route sees only the selected tab's page, and selecting another tab
+changes the tab the user is looking at. To read or act on an unselected tab,
+use `get_browser_state` and the typed tools with that tab's `tab_id`; they never
+select it. On macOS a background `click` on an unselected tab in a Chromium
+tab strip refuses with `browser_tab_switch_refused`. Select the tab with
+`delivery_mode:"foreground"` only when the user agreed; the result then reports
+`side_effects.selected_browser_tab: true`. Opening a URL with `launch_app` in a
+running browser also opens it in a new selected tab.
+
 The legacy `page` tool remains a compatibility surface for older clients. Do
 not start new browser workflows with it: its backend and trust semantics are
 less precise than the typed browser tools, and it does not replace exact

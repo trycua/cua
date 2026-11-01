@@ -384,18 +384,24 @@ impl BackgroundMutationLease {
         element_ptr: Option<usize>,
         action: cua_driver_core::background_input::BackgroundAction,
     ) -> Result<(), cua_driver_core::protocol::ToolResult> {
-        decide_background_window_action(self.pid, window_id, element_ptr, action).await
+        decide_background_window_action(self.pid, window_id, element_ptr, action, false)
+            .await
+            .map(|_| ())
     }
 }
 
+/// Decides one background action; `Ok(true)` when it runs under a lock because
+/// the caller passed `locked_input`.
 async fn decide_background_window_action(
     pid: i32,
     window_id: u32,
     element_ptr: Option<usize>,
     action: cua_driver_core::background_input::BackgroundAction,
-) -> Result<(), cua_driver_core::protocol::ToolResult> {
+    locked_input: bool,
+) -> Result<bool, cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::background_input::{
-        decide_background_input, BackgroundInputDecision, ExactWindowTarget,
+        decide_background_input, decide_background_input_under_lock, BackgroundInputDecision,
+        ExactWindowTarget,
     };
     let element_guard =
         element_ptr.map(|ptr| unsafe { crate::ax::snapshot::RetainedElement::retain(ptr) });
@@ -412,8 +418,14 @@ async fn decide_background_window_action(
             )));
         }
     };
-    match decide_background_input(ExactWindowTarget { pid, window_id }, &facts, action) {
-        BackgroundInputDecision::Execute { .. } => Ok(()),
+    let target = ExactWindowTarget { pid, window_id };
+    let decision = if locked_input {
+        decide_background_input_under_lock(target, &facts, action)
+    } else {
+        decide_background_input(target, &facts, action)
+    };
+    match decision {
+        BackgroundInputDecision::Execute { .. } => Ok(locked_input && facts.screen_locked),
         BackgroundInputDecision::Refuse(refusal) => {
             Err(background_refusal_result(pid, window_id, &refusal))
         }
@@ -499,6 +511,33 @@ pub(crate) async fn gate_background_window_action(
     lease.gate_again(window_id, element_ptr, action).await?;
     Ok(lease)
 }
+
+/// [`gate_background_window_action`] for pid-routed keys. With `locked_input`
+/// a locked session lets them through; the returned flag says it was locked,
+/// so the caller skips the key-window records the lock leaves unconfirmable.
+pub(crate) async fn gate_background_keys(
+    pid: i32,
+    window_id: u32,
+    element_ptr: Option<usize>,
+    action: cua_driver_core::background_input::BackgroundAction,
+    locked_input: bool,
+) -> Result<(BackgroundMutationLease, bool), cua_driver_core::protocol::ToolResult> {
+    let lease = acquire_background_mutation(pid).await;
+    let under_lock =
+        decide_background_window_action(pid, window_id, element_ptr, action, locked_input).await?;
+    Ok((lease, under_lock))
+}
+
+/// Schema of the `locked_input` argument of the keyboard tools.
+pub(crate) fn locked_input_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "boolean",
+        "description": "Send the keys even while the screen is locked. The lock hides the window from accessibility, so they go to the app's key window as it was before the lock, unverified. Default false: a locked screen refuses."
+    })
+}
+
+/// Marks a keyboard result sent under a lock: unverified, nothing could be read.
+pub(crate) const UNDER_LOCK_NOTE: &str = " Sent while the screen is locked: the keys went to the app's key window as it was before the lock, and nothing could confirm them; check a window screenshot.";
 
 pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationLease {
     BackgroundMutationLease {

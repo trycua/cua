@@ -236,7 +236,8 @@ fn def() -> &'static ToolDef {
                 "x": { "type": "number", "description": "Screenshot-pixel X: pixel-click to focus, then send the key. With y, no element_token." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with no pid/window_id sends to the frontmost app." },
-                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema_with("Default \"background\": no fronting or focus steal. \"foreground\": briefly front the window, act, restore the prior app; last resort when background did not land.")
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema_with("Default \"background\": no fronting or focus steal. \"foreground\": briefly front the window, act, restore the prior app; last resort when background did not land."),
+                "locked_input": super::locked_input_schema()
             },
             "additionalProperties": false
         }),
@@ -342,31 +343,34 @@ impl Tool for PressKeyTool {
         // destination, proven element ancestry) BEFORE anything is sent —
         // including the px focus click. delivery_mode:"foreground" stays the
         // caller's explicit last resort and is not gated here.
-        let _mutation_lease = if !fg {
+        let locked_input = args.get("locked_input").and_then(Value::as_bool) == Some(true);
+        let (_mutation_lease, under_lock) = if !fg {
             if let Some(wid) = window_id {
-                match super::gate_background_window_action(
+                match super::gate_background_keys(
                     pid,
                     wid,
                     pre_focus_ptr,
                     super::window_keyboard_action(
                         cua_driver_core::background_input::BackgroundAction::GenericKey,
                     ),
+                    locked_input,
                 )
                 .await
                 {
-                    Ok(lease) => Some(lease),
+                    Ok((lease, under_lock)) => (Some(lease), under_lock),
                     Err(refusal_result) => return refusal_result,
                 }
             } else {
-                None
+                (None, false)
             }
         } else {
-            None
+            (None, false)
         };
 
         // The addressed window must be the app's confirmed key window before
         // any key (or focus click) goes out; otherwise refuse (window_not_key).
-        let _key_scope = match super::acquire_key_scope(pid, window_id, fg).await {
+        // Under a lock it cannot be confirmed, and the caller accepted that.
+        let _key_scope = match super::acquire_key_scope(pid, window_id, fg || under_lock).await {
             Ok(scope) => scope,
             Err(refusal) => return refusal,
         };
@@ -512,13 +516,19 @@ impl Tool for PressKeyTool {
                 } else {
                     ""
                 };
-                let structured = serde_json::json!({
+                let mut structured = serde_json::json!({
                     "path": if fg { "key_events_fg" } else { "key_events" },
                     "verified": confirmed,
                     "effect": if confirmed { "confirmed" } else { "unverifiable" },
                 });
+                let note = if under_lock {
+                    structured["locked_input"] = true.into();
+                    super::UNDER_LOCK_NOTE
+                } else {
+                    ""
+                };
                 ToolResult::text(format!(
-                    "✅ Pressed {display_key} on pid {pid}{label}.{}",
+                    "✅ Pressed {display_key} on pid {pid}{label}.{note}{}",
                     changes.result_suffix()
                 ))
                 .with_structured(structured)
@@ -532,6 +542,14 @@ impl Tool for PressKeyTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locked_input_is_an_advertised_boolean() {
+        assert_eq!(
+            def().input_schema["properties"]["locked_input"]["type"],
+            "boolean"
+        );
+    }
 
     #[test]
     fn targeted_key_requires_focus_readback_before_dispatch() {

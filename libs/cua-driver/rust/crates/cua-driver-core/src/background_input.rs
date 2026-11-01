@@ -355,6 +355,30 @@ pub fn decide_background_input(
     }
 }
 
+/// Decide one background action for a caller that opted in to keyboard input
+/// under a lock (`locked_input`). While the session is locked, pid-routed keys
+/// to a window WindowServer attributes to the pid execute: the lock hides the
+/// window from accessibility, so nothing more can be proven, and the keys reach
+/// the app's key window as it was before the lock. Every other action, and any
+/// unlocked state, decides as [`decide_background_input`].
+pub fn decide_background_input_under_lock(
+    target: ExactWindowTarget,
+    facts: &BackgroundTargetFacts,
+    action: BackgroundAction,
+) -> BackgroundInputDecision {
+    if facts.screen_locked
+        && action.is_pid_keyboard()
+        && facts.window_server == WindowServerOwnership::SamePid
+    {
+        return BackgroundInputDecision::Execute {
+            verification: TargetBoundVerification {
+                window_id: target.window_id,
+            },
+        };
+    }
+    decide_background_input(target, facts, action)
+}
+
 /// The exact-window resolution string reported by the read-only capability
 /// section.
 fn exact_window_status(facts: &BackgroundTargetFacts) -> &'static str {
@@ -828,6 +852,61 @@ mod tests {
                 BackgroundAction::AxSemantic
             )),
             refusal_codes::WINDOW_NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn locked_input_lets_only_pid_keys_through_a_lock() {
+        let locked = BackgroundTargetFacts {
+            screen_locked: true,
+            ax_window_present: false,
+            target_minimized: None,
+            app_hidden: None,
+            ..matched_facts()
+        };
+        for action in [
+            BackgroundAction::InsertText,
+            BackgroundAction::GenericKey,
+            BackgroundAction::ExactWindowKeys,
+        ] {
+            assert!(
+                decide_background_input_under_lock(TARGET, &locked, action).is_execute(),
+                "{action:?}"
+            );
+        }
+        for action in [
+            BackgroundAction::AxSemantic,
+            BackgroundAction::WindowPointer,
+        ] {
+            assert_eq!(
+                code_of(decide_background_input_under_lock(TARGET, &locked, action)),
+                refusal_codes::SCREEN_LOCKED,
+                "{action:?}"
+            );
+        }
+        let foreign = BackgroundTargetFacts {
+            window_server: WindowServerOwnership::ForeignPid { owner_pid: 9 },
+            ..locked
+        };
+        assert_eq!(
+            code_of(decide_background_input_under_lock(
+                TARGET,
+                &foreign,
+                BackgroundAction::InsertText
+            )),
+            refusal_codes::OWNER_PID_MISMATCH
+        );
+        let unlocked_two_windows = BackgroundTargetFacts {
+            competing_keyboard_destinations: 1,
+            ..matched_facts()
+        };
+        assert_eq!(
+            code_of(decide_background_input_under_lock(
+                TARGET,
+                &unlocked_two_windows,
+                BackgroundAction::InsertText
+            )),
+            refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY
         );
     }
 }

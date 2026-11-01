@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.7.0...cua-spacesd-v0.8.0) (2026-10-24)
+
+
+### Features
+
+* compat gateways for E2B and Daytona, Hetzner as your own cloud, the elastic pool, cua share and the public relay ([#5778](https://github.com/trycua/cua/issues/5778)) ([d4f3f80](https://github.com/trycua/cua/commit/d4f3f8063d7b30a3b3bda2b4c05c565a9dfcb460))
+
+## [0.7.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.6.0...cua-spacesd-v0.7.0) (2026-10-21)
+
+
+### Features
+
+* **mesh:** the mesh is on by default for every client (CUA-1947) ([#5630](https://github.com/trycua/cua/issues/5630)) ([e5d09e4](https://github.com/trycua/cua/commit/e5d09e40291a080124da6469b3c7023e02e229fd))
+
+### Bug Fixes
+
+* **cua-driver:** the macOS WindowServer health check treats any app-bundle host as bundled, so `cua-spacesd doctor --strict` passes in the macOS Space image ([#5680](https://github.com/trycua/cua/issues/5680)) ([88b4b63](https://github.com/trycua/cua/commit/88b4b63fdf36b611bbc00c287840e821b649c193))
+* **security:** distrust the compromised eMudhra intermediate CAs: rustls-webpki 0.103.16, webpki-roots 1.0.10 and the Dockerfile CA changes (CUA-1948) ([#5622](https://github.com/trycua/cua/issues/5622)) ([149ea51](https://github.com/trycua/cua/commit/149ea51c613cc840c3760dec822c57b7e65df05a))
+
 ## [0.6.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.5.3...cua-spacesd-v0.6.0) (2026-10-20)
 
 

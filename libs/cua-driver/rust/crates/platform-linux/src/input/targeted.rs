@@ -182,6 +182,7 @@ pub(crate) fn connect() -> Result<(RustConnection, Window), TargetedInputError> 
             std::env::var("DISPLAY").ok()
         ))
     })?;
+    crate::input::action::fence(conn.stream()).map_err(failed)?;
     let root = conn.setup().roots[screen].root;
     Ok((conn, root))
 }
@@ -351,12 +352,15 @@ pub(crate) fn activate(
     if let Some(message_type) = atom(conn, "_NET_ACTIVE_WINDOW") {
         let event =
             ClientMessageEvent::new(32, window, message_type, [1, x11rb::CURRENT_TIME, 0, 0, 0]);
-        conn.send_event(
-            false,
-            root,
-            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-            event,
-        )
+        crate::input::action::admit(|| {
+            conn.send_event(
+                false,
+                root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            )
+        })
+        .map_err(failed)?
         .map_err(failed)?;
     }
     let _ = conn.configure_window(
@@ -538,7 +542,8 @@ pub(crate) fn fake_motion(
 ) -> Result<(), TargetedInputError> {
     let x = x.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
     let y = y.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
-    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x, y, 0)
+    crate::input::action::admit(|| conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x, y, 0))
+        .map_err(failed)?
         .map_err(failed)?;
     Ok(())
 }
@@ -554,8 +559,13 @@ pub(crate) fn fake_button(
     } else {
         BUTTON_RELEASE_EVENT
     };
-    conn.xtest_fake_input(kind, button, 0, root, 0, 0, 0)
-        .map_err(failed)?;
+    let send = || conn.xtest_fake_input(kind, button, 0, root, 0, 0, 0);
+    if press {
+        crate::input::action::admit(send).map_err(failed)?
+    } else {
+        send()
+    }
+    .map_err(failed)?;
     Ok(())
 }
 
@@ -570,8 +580,13 @@ pub(crate) fn fake_key(
     } else {
         KEY_RELEASE_EVENT
     };
-    conn.xtest_fake_input(kind, keycode, 0, root, 0, 0, 0)
-        .map_err(failed)?;
+    let send = || conn.xtest_fake_input(kind, keycode, 0, root, 0, 0, 0);
+    if press {
+        crate::input::action::admit(send).map_err(failed)?
+    } else {
+        send()
+    }
+    .map_err(failed)?;
     Ok(())
 }
 

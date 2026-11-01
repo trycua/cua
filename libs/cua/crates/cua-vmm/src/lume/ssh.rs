@@ -21,14 +21,28 @@ use crate::exec::{ExecChunk, ExecOutput, ExecRequest, GuestExec, shell_quote};
 pub struct LumeSshExec {
     /// The `lume` binary.
     pub program: String,
+    /// Arguments before `lume`'s own: `lume`'s environment, when it needs
+    /// one, through `env` ([`super::LumeCmd::wrapped`]).
+    pub prefix: Vec<String>,
     /// VM name.
     pub vm: String,
 }
 
 impl LumeSshExec {
+    /// `lume ssh` run as `lume` runs it: for the channel's own VM directory.
+    pub fn from_lume(lume: &super::LumeCmd, vm: impl Into<String>) -> Self {
+        let (program, prefix) = lume.wrapped();
+        Self {
+            program,
+            prefix,
+            vm: vm.into(),
+        }
+    }
+
     pub fn new(program: impl Into<String>, vm: impl Into<String>) -> Self {
         Self {
             program: program.into(),
+            prefix: Vec::new(),
             vm: vm.into(),
         }
     }
@@ -170,7 +184,12 @@ impl GuestExec for LumeSshExec {
             });
         }
         let nonce = nonce();
-        let argv = self.argv(&req, &nonce);
+        let argv: Vec<String> = self
+            .prefix
+            .iter()
+            .cloned()
+            .chain(self.argv(&req, &nonce))
+            .collect();
         let (raw_tx, mut raw_rx) = mpsc::channel::<ExecChunk>(64);
         let program = self.program.clone();
         let timeout = req.timeout;
@@ -290,24 +309,84 @@ mod tests {
         assert_eq!(out.stderr_str(), "it's set\n");
     }
 
+    /// Opens the FIFO for writing without blocking: with no reader yet the
+    /// open fails at once with ENXIO instead of waiting for one.
+    #[cfg(unix)]
+    fn open_fifo_nonblocking(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+    }
+
+    /// The command cannot finish until the test has seen its first chunk (it
+    /// blocks reading a FIFO that only the test writes to), so this fails
+    /// only if stdout is held back until the command ends. No timing
+    /// assumption: a slow or loaded machine only makes it slower. Nothing
+    /// here can block for good: the FIFO is opened without blocking and
+    /// retried until the command has opened it, and a command that ends
+    /// without ever reading it fails the test at once.
+    #[cfg(unix)]
     #[tokio::test]
     async fn streams_stdout_before_the_command_ends() {
         let dir = tempfile::tempdir().unwrap();
+        let go = dir.path().join("go");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&go)
+            .status()
+            .unwrap();
+        assert!(made.success(), "mkfifo failed");
         let e = LumeSshExec::new(fake_lume(dir.path()), "cua-e2e-vm");
         let (tx, mut rx) = mpsc::channel(16);
-        let run = tokio::spawn(async move {
+        let go_path = go.display().to_string();
+        let mut run = tokio::spawn(async move {
             e.exec_streaming(
-                ExecRequest::sh("echo first; sleep 1; echo second")
-                    .timeout(Duration::from_secs(20)),
+                ExecRequest::sh("echo first; read _ < \"$GO\"; echo second")
+                    .timeout(Duration::from_secs(60))
+                    .env_var("GO", go_path),
                 tx,
             )
             .await
         });
-        let first = tokio::time::timeout(Duration::from_millis(900), rx.recv())
+        let first = tokio::time::timeout(Duration::from_secs(30), rx.recv())
             .await
             .expect("stdout arrives while the command still runs");
         assert_eq!(first, Some(ExecChunk::Stdout(b"first\n".to_vec())));
-        assert_eq!(run.await.unwrap().unwrap(), 0);
+        assert!(
+            !run.is_finished(),
+            "the command ended before it read the FIFO"
+        );
+        // Release the command once it has the FIFO open for reading.
+        let release = async {
+            loop {
+                match open_fifo_nonblocking(&go) {
+                    Ok(mut fifo) => {
+                        use std::io::Write;
+                        break fifo.write_all(b"go\n").unwrap();
+                    }
+                    Err(err) if err.raw_os_error() == Some(libc::ENXIO) => {
+                        assert!(
+                            !run.is_finished(),
+                            "the command ended without reading the FIFO"
+                        );
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    Err(err) => panic!("opening the FIFO: {err}"),
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), release)
+            .await
+            .expect("the command never opened the FIFO");
+        let code = tokio::time::timeout(Duration::from_secs(30), &mut run)
+            .await
+            .expect("the command did not finish after it was released");
+        assert_eq!(code.unwrap().unwrap(), 0);
+        assert_eq!(
+            rx.recv().await,
+            Some(ExecChunk::Stdout(b"second\n".to_vec()))
+        );
     }
 
     #[tokio::test]

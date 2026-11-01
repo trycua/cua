@@ -1,0 +1,417 @@
+{
+  "assignments": [
+    {
+      "group": "world-00",
+      "target": {
+        "on": "host",
+        "name": "studio"
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-01",
+      "target": {
+        "on": "host",
+        "name": "studio"
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-02",
+      "target": {
+        "on": "host",
+        "name": "studio"
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-03",
+      "target": {
+        "on": "host",
+        "name": "studio"
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-04",
+      "target": {
+        "on": "host",
+        "name": "studio"
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-05",
+      "target": {
+        "on": "new",
+        "index": 0
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-06",
+      "target": {
+        "on": "new",
+        "index": 0
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-07",
+      "target": {
+        "on": "new",
+        "index": 0
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-08",
+      "target": {
+        "on": "new",
+        "index": 1
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-09",
+      "target": {
+        "on": "new",
+        "index": 1
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-10",
+      "target": {
+        "on": "new",
+        "index": 1
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-11",
+      "target": {
+        "on": "new",
+        "index": 2
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-12",
+      "target": {
+        "on": "new",
+        "index": 2
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-13",
+      "target": {
+        "on": "new",
+        "index": 2
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-14",
+      "target": {
+        "on": "new",
+        "index": 3
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-15",
+      "target": {
+        "on": "new",
+        "index": 3
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-16",
+      "target": {
+        "on": "new",
+        "index": 3
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-17",
+      "target": {
+        "on": "new",
+        "index": 4
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-18",
+      "target": {
+        "on": "new",
+        "index": 4
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-19",
+      "target": {
+        "on": "new",
+        "index": 4
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-20",
+      "target": {
+        "on": "new",
+        "index": 5
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-21",
+      "target": {
+        "on": "new",
+        "index": 5
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-22",
+      "target": {
+        "on": "new",
+        "index": 5
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-23",
+      "target": {
+        "on": "new",
+        "index": 6
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-24",
+      "target": {
+        "on": "new",
+        "index": 6
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-25",
+      "target": {
+        "on": "new",
+        "index": 6
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-26",
+      "target": {
+        "on": "new",
+        "index": 7
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-27",
+      "target": {
+        "on": "new",
+        "index": 7
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-28",
+      "target": {
+        "on": "new",
+        "index": 7
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-29",
+      "target": {
+        "on": "new",
+        "index": 8
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-30",
+      "target": {
+        "on": "new",
+        "index": 8
+      },
+      "count": 8,
+      "sync": false
+    },
+    {
+      "group": "world-31",
+      "target": {
+        "on": "new",
+        "index": 8
+      },
+      "count": 8,
+      "sync": false
+    }
+  ],
+  "new_hosts": [
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    }
+  ],
+  "unplaced": [],
+  "added_usd_per_hour": 0.6066,
+  "projected_usd": 0.6066,
+  "lower_bound_usd": 0.22611612903225806,
+  "solver": "greedy",
+  "elapsed_us": 0,
+  "relay_after": 9,
+  "ready_in_secs": 50,
+  "explain": [
+    "8 x world-00 -> studio (your device, free)",
+    "8 x world-01 -> studio (your device, free)",
+    "8 x world-02 -> studio (your device, free)",
+    "8 x world-03 -> studio (your device, free)",
+    "8 x world-04 -> studio (your device, free)",
+    "8 x world-05 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-06 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-07 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-08 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-09 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-10 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-11 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-12 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-13 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-14 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-15 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-16 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-17 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-18 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-19 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-20 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-21 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-22 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-23 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-24 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-25 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-26 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-27 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-28 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-29 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-30 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "8 x world-31 -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)"
+  ]
+}

@@ -134,9 +134,9 @@ pub fn reduce(state: &RosterState, action: &RosterAction) -> RosterState {
                 next.mode = WindowMode::Ambient;
             }
         }
-        RosterAction::OpenCreate => next.mode = WindowMode::CreateFleet,
+        RosterAction::OpenCreate => next.mode = WindowMode::CreateSpace,
         RosterAction::CancelCreate => {
-            if state.mode == WindowMode::CreateFleet {
+            if state.mode == WindowMode::CreateSpace {
                 next.mode = WindowMode::Switcher;
             }
         }

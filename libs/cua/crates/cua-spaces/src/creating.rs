@@ -564,6 +564,21 @@ impl Spaces {
                         Ok(false) => {}
                         Err(e) => failed.push(format!("{name}: {e}")),
                     }
+                    // Say exactly what is left: the engine is asked again,
+                    // so a container it finished making after the delete
+                    // is reported instead of "Cancelled" hiding it.
+                    // A removal the engine is still finishing gets a moment.
+                    let mut left = self.inner.sandboxes.local_name_in_use(name).await;
+                    for _ in 0..10 {
+                        if !left {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        left = self.inner.sandboxes.local_name_in_use(name).await;
+                    }
+                    if left && !failed.iter().any(|f| f.starts_with(name.as_str())) {
+                        failed.push(format!("{name}: its VM or container is still there"));
+                    }
                     let _ = self
                         .inner
                         .registry

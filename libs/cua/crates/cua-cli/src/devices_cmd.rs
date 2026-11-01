@@ -6,7 +6,7 @@
 //! device; `cua auth login` does (see [`after_login`]).
 
 use crate::auth;
-use crate::util::{self, line};
+use crate::util::{self, hint_line, line};
 use clap::Subcommand;
 use cua_host::{DeviceAuth, DeviceState, DeviceView};
 use cua_sdk::CuaError;
@@ -61,7 +61,7 @@ pub enum DevicesCmd {
         #[arg(long, hide = true)]
         relay: Option<String>,
     },
-    /// Your devices and their state.
+    /// Your signed-in machines and their state.
     #[command(
         visible_alias = "list",
         after_help = "Examples:
@@ -191,6 +191,8 @@ pub async fn after_login(home: &Path, out: &mut dyn Write) {
         ),
         Ok(Ok(r)) => {
             if let Some(code) = r.code {
+                // The command runs on another, enrolled device, which may have
+                // either CLI: it is not renamed.
                 line(
                     out,
                     format!(
@@ -199,13 +201,13 @@ pub async fn after_login(home: &Path, out: &mut dyn Write) {
                 );
             }
         }
-        Ok(Err(e)) => line(
+        Ok(Err(e)) => hint_line(
             out,
             format!(
                 "Signed in, but this device could not be enrolled yet ({e}); run `cua devices enroll`."
             ),
         ),
-        Err(_) => line(
+        Err(_) => hint_line(
             out,
             "Signed in, but the relay did not answer in time to enroll this device; run `cua devices enroll`.",
         ),
@@ -251,6 +253,19 @@ fn state_label(d: &DeviceView) -> &'static str {
 
 fn view_json(d: &DeviceView) -> serde_json::Value {
     serde_json::to_value(d).unwrap_or_default()
+}
+
+/// Revokes device `id` and stops the agents it connected to Spaces.
+pub(crate) async fn revoke_device(auth: &DeviceAuth, id: &str) -> Result<DeviceView, CuaError> {
+    let this = auth.device_id().ok().flatten();
+    let d = auth.revoke(id).await.map_err(crate::host::host_err)?;
+    // The agents that computer connected to Spaces stop at once.
+    if this.as_deref() == Some(id) {
+        crate::member_cmd::forget_this_computer().await;
+    } else {
+        crate::member_cmd::revoke_device_members(id).await;
+    }
+    Ok(d)
 }
 
 /// Runs `cmd` for the device `auth` (`confirm` answers the consent
@@ -302,14 +317,14 @@ pub async fn run_with(
             }
             match (&id, &this) {
                 (None, _) => {
-                    line(
+                    hint_line(
                         out,
                         "This device is not enrolled (run `cua devices enroll`).",
                     );
                     return Ok(1);
                 }
                 (Some(id), None) => match state {
-                    Ok(None) => line(
+                    Ok(None) => hint_line(
                         out,
                         format!(
                             "This device ({id}) is not registered on {} (run `cua devices enroll`).",
@@ -399,7 +414,7 @@ pub async fn run_with(
                             .unwrap_or_else(|| "in 10 minutes".into())
                     ),
                 );
-                line(
+                hint_line(
                     out,
                     "Or sign in again: `cua auth login` enrolls this device (older relays: only your first device).",
                 );
@@ -506,7 +521,7 @@ pub async fn run_with(
                     "not revoked (pass --yes to revoke without a prompt)".into(),
                 ));
             }
-            let d = auth.revoke(&id).await.map_err(err)?;
+            let d = revoke_device(auth, &id).await?;
             if json {
                 line(out, view_json(&d).to_string());
             } else {

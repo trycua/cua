@@ -141,7 +141,7 @@ async fn an_agent_start_run_posts_one_notification_per_failed_turn() {
     assert_eq!(
         n,
         vec![(
-            "Claude Code stopped: API Error: 401 invalid x-api-key".to_string(),
+            "Claude Code needs you to connect it".to_string(),
             AUTH_401.to_string()
         )]
     );
@@ -179,10 +179,7 @@ async fn an_agent_start_run_posts_one_notification_per_failed_turn() {
     );
     p.tick().await;
     assert_eq!(errors(&p).len(), 2);
-    assert_eq!(
-        errors(&p)[1].0,
-        "Claude Code stopped: Authentication required"
-    );
+    assert_eq!(errors(&p)[1].0, "Claude Code needs you to connect it");
 
     // The runner gives up (state failed, same turn): nothing more, and the
     // run is no longer followed once its process is gone.
@@ -238,8 +235,7 @@ async fn a_key_the_provider_rejects_at_the_start_posts_one_notification() {
     assert_eq!(
         errors(&p),
         vec![(
-            "Claude Code stopped: Failed to authenticate. Anthropic API Error: 401 API key is invalid"
-                .to_string(),
+            "Claude Code needs you to connect it".to_string(),
             KEY_CHECK_401.to_string()
         )]
     );
@@ -326,10 +322,7 @@ async fn a_persistent_agent_failed_turn_is_one_stopped_notification() {
     let all = p.feed().list(false, None).unwrap();
     assert_eq!(all.len(), 1, "{all:?}");
     assert_eq!(all[0].kind, "error");
-    assert_eq!(
-        all[0].title,
-        "ada stopped: API Error: 401 invalid x-api-key"
-    );
+    assert_eq!(all[0].title, "ada needs you to connect it");
     assert_eq!(all[0].agent.as_deref(), Some("ada"));
     // The pass recorded a problem (here: the mock cannot save the home).
     assert!(p.get("ada").unwrap().last_error.is_some());

@@ -4,12 +4,7 @@
 import { core } from "../core";
 import type { Space } from "./types";
 
-/** A Space on the Cua Spaces pool (listed first). */
-export function isSpacesPool(space: Space): boolean {
-  return core("spaces.isSpacesPool", { space });
-}
-
-/** Pool Spaces first, then most recently used, then by name. */
+/** Most recently used, then by name. */
 export function sortByMru(spaces: readonly Space[]): Space[] {
   return core("spaces.sortByMru", { spaces });
 }

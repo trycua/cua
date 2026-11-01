@@ -130,7 +130,7 @@ pub fn ensure_started() -> bool {
                 }
                 // No frame will ever be painted again: unblock every pointer
                 // action still waiting for its glide to arrive.
-                crate::overlay::release_arrivals();
+                crate::overlay::release_all_arrivals();
             })
             .expect("spawn cua-overlay-wl thread");
         tx
@@ -787,7 +787,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         // a pointer action lands after the viewer saw the glide end (the X11
         // renderer's contract).
         for key in arrived {
-            crate::overlay::fire_arrival(&key);
+            crate::overlay::arrival_fire(&key);
         }
         frame_tick_needed = next_frame_tick_needed;
     }
@@ -1724,10 +1724,14 @@ mod tests {
     }
 
     // Before the shared predicate, a settled Wayland cursor slept until its
-    // idle-fade deadline and its resting bob froze mid-swing.
+    // idle-fade deadline and its resting bob froze mid-swing. The bob is
+    // `cursor.float` (on by default); with it off the cursor rests still.
     #[test]
     fn stable_visible_overlay_keeps_frame_cadence_for_resting_motion() {
         let mut core = positioned_core();
+        core.options_override = Some(cursor_overlay::CursorOptions::NONE);
+        assert!(!core.has_resting_motion());
+        core.options_override = Some(cursor_overlay::CursorOptions::default());
         core.idle_secs = 0.25;
         core.pos = (-1.0e9, -1.0e9);
         assert!(needs_frame_tick(&core));

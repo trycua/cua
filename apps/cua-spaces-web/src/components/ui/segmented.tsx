@@ -26,13 +26,13 @@ export function Segmented<V extends string>({ value, options, onValueChange, cla
         const v = next[0];
         if (v) onValueChange(v as V);
       }}
-      className={cn("inline-flex h-7 items-center gap-0.5 rounded-md bg-muted p-0.5 data-disabled:opacity-50", className)}
+      className={cn("inline-flex h-7 items-center gap-0.5 rounded-lg bg-muted p-0.5 data-disabled:opacity-50", className)}
     >
       {options.map((o) => (
         <Toggle
           key={o.value}
           value={o.value}
-          className="inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-[5px] px-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 data-pressed:bg-card data-pressed:text-foreground data-pressed:shadow-xs dark:data-pressed:bg-accent"
+          className="inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 data-pressed:bg-card data-pressed:text-foreground data-pressed:shadow-xs dark:data-pressed:bg-accent"
         >
           {o.label}
         </Toggle>

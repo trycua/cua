@@ -9,7 +9,9 @@
 //! the same cause the same way. Callers pass the result through
 //! `cua_telemetry::events::error_kind`, which keeps only schema words.
 
+pub mod local_network;
 pub mod preflight;
+pub mod retry;
 
 /// Enum cases that say little on their own (compared lowercase, without
 /// underscores): the error text decides instead.
@@ -20,6 +22,11 @@ const GENERIC: &[&str] = &[
 /// The kind for a failed create: a cause word when the text or the enum
 /// case names one, else the caller's enum case (`Runtime`, `Env`), else
 /// `other`. Never empty and never `none`.
+///
+/// Local Network failures come out as their subclass
+/// (`local_network_denied`, `local_network_vpn`; [`local_network`]), which
+/// `cua_telemetry::events::error_kind` reads as the kind `local_network`
+/// and `cua_telemetry::events::error_subclass` as the subclass.
 ///
 /// - `message`: the error's text (read here, never returned).
 /// - `phase`: the create phase it failed in (`preparing`, `pulling`,
@@ -46,6 +53,15 @@ pub fn create_failure_kind<'v>(
     }
     match flat.as_str() {
         "cloudcreditexhausted" | "creditexhausted" | "limitexceeded" => return "quota_exceeded",
+        // The app's own Local Network check (typed: `preflight::IssueKind`).
+        "localnetworkdenied" => return local_network::DENIED,
+        "localnetworkvpn" | "localnetworkblockedbyvpn" => return local_network::VPN,
+        "localnetwork" => {
+            return match preflight::IssueKind::of_text(message) {
+                Some(preflight::IssueKind::LocalNetworkVpn) => local_network::VPN,
+                _ => local_network::DENIED,
+            };
+        }
         // A specific case from the caller stays; a timeout is refined by
         // the text and the phase.
         f if f != "timeout" && !GENERIC.contains(&f) => return variant,
@@ -103,7 +119,7 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
     }
     // A preflight sentence (`preflight::evaluate`) a create carried on.
     if let Some(kind) = preflight::IssueKind::of_text(&l) {
-        return Some(kind.error_kind());
+        return Some(kind.error_subclass().unwrap_or(kind.error_kind()));
     }
     if has(
         &l,
@@ -118,10 +134,11 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
         return Some("insufficient_disk");
     }
     let vmnet = l.contains("192.168.64.");
+    // Older daemons' words for missing Local Network access.
     if l.contains("local network access")
         || (vmnet && has(&l, &["no route to host", "os error 65"]))
     {
-        return Some("local_network");
+        return Some(local_network::DENIED);
     }
     if l.contains("virtualmachinelimitexceeded")
         || (has(&l, &["virtual machine", "vms"])
@@ -378,7 +395,8 @@ fn image_pull(l: &str, phase: &str) -> Option<&'static str> {
 pub const TEXT_KINDS: &[&str] = &[
     "cancelled",
     "insufficient_disk",
-    "local_network",
+    "local_network_denied",
+    "local_network_vpn",
     "vm_limit",
     "quota_exceeded",
     "virtualization_unavailable",
@@ -414,11 +432,76 @@ mod tests {
             .iter()
             .chain(&["quota_exceeded", "cloud_ended", "other"])
         {
+            // A subclass word is sent as its kind plus the subclass.
+            let kind = cua_telemetry::events::error_kind(k);
             assert!(
-                cua_telemetry::schema::ERROR_KINDS.contains(k),
+                kind != "other" || *k == "other",
+                "{k} missing from ERROR_KINDS"
+            );
+            assert!(
+                cua_telemetry::schema::ERROR_KINDS.contains(&kind),
                 "{k} missing from ERROR_KINDS"
             );
         }
+        assert_eq!(
+            cua_telemetry::events::error_kind(local_network::DENIED),
+            "local_network"
+        );
+        assert_eq!(
+            retry::subclass(local_network::VPN, ""),
+            retry::Subclass::LocalNetworkVpn
+        );
+        assert_eq!(
+            retry::subclass(local_network::DENIED, ""),
+            retry::Subclass::LocalNetworkDenied
+        );
+    }
+
+    #[test]
+    fn local_network_failures_come_from_the_typed_check_or_the_text() {
+        // The app's typed check, by its variant, whatever the text.
+        assert_eq!(
+            kind("whatever", "preparing", "LocalNetworkDenied"),
+            "local_network_denied"
+        );
+        assert_eq!(
+            kind("whatever", "", "local_network_vpn"),
+            "local_network_vpn"
+        );
+        // The daemon's fixed sentences.
+        let denied = preflight::local_network_denied("Cua Spaces");
+        assert_eq!(
+            kind(&denied, "waiting_for_services", "Runtime"),
+            "local_network_denied"
+        );
+        assert_eq!(
+            kind(
+                preflight::LOCAL_NETWORK_VPN,
+                "waiting_for_services",
+                "Runtime"
+            ),
+            "local_network_vpn"
+        );
+        let wrapped = format!(
+            "runtime: Local Network access is not available: {} (the VM at 192.168.64.3:3211: No route to host)",
+            preflight::LOCAL_NETWORK_VPN
+        );
+        assert_eq!(
+            kind(&wrapped, "waiting_for_services", "Runtime"),
+            "local_network_vpn"
+        );
+        assert_eq!(kind(&wrapped, "", "LocalNetwork"), "local_network_vpn");
+        // Older daemons' text stays missing access.
+        assert_eq!(
+            kind(
+                "cua-spacesd did not answer within 120s (nothing answered at http://192.168.64.234:3211/ \
+                 (it may still be starting; retry in a few seconds): gRPC: tcp connect error \
+                 (No route to host (os error 65)))",
+                "waiting_for_services",
+                "Timeout"
+            ),
+            "local_network_denied"
+        );
     }
 
     #[test]
@@ -526,7 +609,7 @@ mod tests {
                 "waiting_for_services",
                 "Runtime"
             ),
-            "local_network"
+            "local_network_denied"
         );
         assert_eq!(
             kind(
@@ -534,7 +617,7 @@ mod tests {
                 "waiting_for_services",
                 ""
             ),
-            "local_network"
+            "local_network_denied"
         );
         assert_eq!(
             kind("VZErrorDomain virtualMachineLimitExceeded", "booting", ""),

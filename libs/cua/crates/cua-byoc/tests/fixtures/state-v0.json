@@ -1,0 +1,37 @@
+{
+  "owner_id": "0123456789abcdef",
+  "connections": [
+    {
+      "provider": "aws",
+      "profile": "cua-byoc-sandbox",
+      "region": "us-west-2",
+      "zone": "",
+      "project": "",
+      "environment": "",
+      "account": "123456789012",
+      "ttl_hours": 8,
+      "connected_at": "2026-10-20T10:00:00Z"
+    },
+    {
+      "provider": "hetzner",
+      "region": "nbg1",
+      "account": "my-project"
+    }
+  ],
+  "resources": [
+    {
+      "provider": "aws",
+      "id": "i-0abc",
+      "type": "instance",
+      "name": "cua-aws-0123456789ab",
+      "region": "us-west-2",
+      "sandbox": "aws:research",
+      "machine": "cloud-0123456789abcdef",
+      "created": 1792000000,
+      "expires": 1792028800,
+      "tags": {"cua-managed": "true", "cua-owner": "0123456789abcdef"},
+      "state": "running",
+      "extra": {"machine_type": "t4g.medium", "usd_per_hour": "0.0400"}
+    }
+  ]
+}

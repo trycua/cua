@@ -22,6 +22,26 @@ on:
       - "libs/cua/crates/cua-spacesd-client/**"
       - ".github/actions/cua-sandbox/**"
       - ".github/actions/build-cua-under-test/**"
+      - ".github/actions/linux-rust-prep/**"
+      - ".github/workflows/ci-cua-sandbox-doctor.yml"
+      # Docs and the docs linter run in ci-cua-sandbox-action.yml only.
+      - "!.github/actions/cua-sandbox/lint-docs-yaml.py"
+      - "!**/*.md"
+      - "!**/*.mdx"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-spacesd/**"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/crates/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/platform-linux/**"
+      - "libs/cua/crates/cua-cli/**"
+      - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-spacesd-client/**"
+      - ".github/actions/cua-sandbox/**"
+      - ".github/actions/build-cua-under-test/**"
+      - ".github/actions/linux-rust-prep/**"
       - ".github/workflows/ci-cua-sandbox-doctor.yml"
       # Docs and the docs linter run in ci-cua-sandbox-action.yml only.
       - "!.github/actions/cua-sandbox/lint-docs-yaml.py"
@@ -34,7 +54,7 @@ permissions:
 
 concurrency:
   group: ci-cua-sandbox-doctor-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Cua programs and packages run here never send usage telemetry.
@@ -44,6 +64,7 @@ env:
 
 jobs:
   doctor:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Image doctor (overlaid cua-spacesd and cua-driver)
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -88,6 +109,7 @@ jobs:
             PY
 
   stale:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: The bundled builds are reported stale
     runs-on: ubuntu-latest
     timeout-minutes: 45

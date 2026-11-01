@@ -15,11 +15,12 @@ const demo = (o: Parameters<typeof createDemoAdapter>[0] = {}) => {
 afterEach(() => adapters.splice(0).forEach((a) => a.dispose?.()));
 
 describe("demo adapter", () => {
-  it("has 6 Spaces across macOS, Windows and Linux on 4 machines, one offline", async () => {
+  it("has 9 Spaces across macOS, Windows and Linux on 4 machines, one offline, three of them someone else's", async () => {
     const a = demo();
     const rows = await a.call("spaces.list", {});
     const machines = await a.call("machines.list", {});
-    expect(rows).toHaveLength(6);
+    expect(rows).toHaveLength(9);
+    expect(rows.filter((r) => r.sharing && r.sharing.role !== "owner").map((r) => r.name)).toEqual(["qa-shared", "checkout-flow", "qa-regression"]);
     expect(new Set(rows.map((r) => r.os))).toEqual(new Set(["macos", "windows", "linux"]));
     expect(machines.map((m) => m.name)).toEqual(["This Mac", "Mac mini", "Linux box", "Studio PC"]);
     expect(machines.filter((m) => !m.online).map((m) => m.id)).toEqual(["studio-pc"]);
@@ -50,7 +51,7 @@ describe("demo adapter", () => {
     expect([...new Set(phases)]).toEqual(["preparing", "pulling", "creating", "booting", "waiting_for_services", "connecting"]);
     expect(events.at(-1)).toEqual({ type: "spaces.changed" });
     expect(row).toMatchObject({ id: "local:scratch", os: "linux", powerState: "running" });
-    expect(await a.call("spaces.list", {})).toHaveLength(7);
+    expect(await a.call("spaces.list", {})).toHaveLength(10);
   });
 
   it("creates on another machine with on: host:<id>", async () => {
@@ -63,7 +64,7 @@ describe("demo adapter", () => {
     const create = a.call("spaces.create", { config: {}, pendingId: "pending:c" });
     await a.call("spaces.cancelCreate", { pendingId: "pending:c" });
     await expect(create).rejects.toThrow(/^cancelled/);
-    expect(await a.call("spaces.list", {})).toHaveLength(6);
+    expect(await a.call("spaces.list", {})).toHaveLength(9);
   });
 
   it("turns Spaces off and on", async () => {
@@ -75,7 +76,7 @@ describe("demo adapter", () => {
     row = (await a.call("spaces.list", {})).find((r) => r.id === "local:design-review");
     expect(row).toMatchObject({ powerState: "running", reachable: true });
     await a.call("spaces.delete", { spaceId: "local:design-review" });
-    expect(await a.call("spaces.list", {})).toHaveLength(5);
+    expect(await a.call("spaces.list", {})).toHaveLength(8);
   });
 
   it("refuses unattended for identity providers", async () => {
@@ -90,7 +91,7 @@ describe("demo adapter", () => {
     const a = demo(demoOptionsFromSearch("?demo=fresh,locked"));
     expect((await a.call("keyvault.overview", {})).availability).toBe("locked");
     const s = await a.call("session.get", {});
-    expect(s.fleet.authMode).toBe("none");
+    expect(s.account.authMode).toBe("none");
     expect(s.onboarding.completed).toBe(false);
     await a.call("keyvault.unlock", {});
     expect((await a.call("keyvault.overview", {})).availability).toBe("ready");
@@ -108,6 +109,6 @@ describe("demo adapter", () => {
     expect((await a.call("session.signIn", {})).verificationUri).toMatch(/^https:/);
     await new Promise((r) => setTimeout(r, 30));
     expect(events).toContainEqual({ type: "session.signedIn", identity: "ada@example.com" });
-    expect((await a.call("session.get", {})).fleet.identity).toBe("ada@example.com");
+    expect((await a.call("session.get", {})).account.identity).toBe("ada@example.com");
   });
 });

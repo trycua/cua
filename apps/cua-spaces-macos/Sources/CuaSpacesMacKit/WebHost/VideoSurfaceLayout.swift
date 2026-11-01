@@ -40,6 +40,9 @@ struct VideoSurfaceUpdate: Equatable {
     var clip: CGRect?
     var radius: CGFloat
     var occluded: Bool
+    /// Floating page UI over the slot (a menu, a popover, a tooltip, a
+    /// toast, the viewer's key bar), CSS px like `rect`: no video there.
+    var holes: [CGRect] = []
     var visible: Bool
 
     /// Reads one entry of a `surfaces` message's `update`; nil when it is malformed.
@@ -55,11 +58,12 @@ struct VideoSurfaceUpdate: Equatable {
         clip = Self.rect(json["clip"])
         radius = Self.number(json["radius"])
         occluded = json["occluded"] as? Bool ?? false
+        holes = (json["holes"] as? [Any] ?? []).compactMap(Self.rect)
         visible = json["visible"] as? Bool ?? true
     }
 
     init(surfaceId: String, spaceId: String, tier: VideoTier, interactive: Bool, rect: CGRect,
-         clip: CGRect?, radius: CGFloat = 0, occluded: Bool = false, visible: Bool = true) {
+         clip: CGRect?, radius: CGFloat = 0, occluded: Bool = false, holes: [CGRect] = [], visible: Bool = true) {
         self.surfaceId = surfaceId
         self.spaceId = spaceId
         self.tier = tier
@@ -68,6 +72,7 @@ struct VideoSurfaceUpdate: Equatable {
         self.clip = clip
         self.radius = radius
         self.occluded = occluded
+        self.holes = holes
         self.visible = visible
     }
 
@@ -116,6 +121,10 @@ struct VideoSurfaceLayout: Equatable {
     /// The video, in the container's flipped (top-left) coordinates.
     var video: CGRect
     var radius: CGFloat
+    /// Where floating page UI sits over the video, in the container's
+    /// flipped coordinates: the video is cut out there so the page's menu
+    /// (or tooltip, toast, key bar) shows, and the rest keeps playing.
+    var holes: [CGRect] = []
     /// Nothing to draw: off screen, clipped away, covered by page UI or empty.
     var hidden: Bool
 
@@ -128,12 +137,30 @@ struct VideoSurfaceLayout: Equatable {
         let clip = scaled(clipCSS, z)
         let rect = scaled(u.rect, z)
         let y = flipped ? clip.minY : viewHeight - clip.maxY
+        let bounds = CGRect(origin: .zero, size: clip.size)
+        let holes = u.holes.compactMap { hole -> CGRect? in
+            let h = scaled(hole, z).offsetBy(dx: -clip.minX, dy: -clip.minY).intersection(bounds)
+            return h.isNull || h.width <= 0 || h.height <= 0 ? nil : h
+        }
         return VideoSurfaceLayout(
             container: CGRect(x: clip.minX, y: y, width: clip.width, height: clip.height),
             video: rect.offsetBy(dx: -clip.minX, dy: -clip.minY),
             radius: max(0, u.radius * z),
+            holes: holes,
             hidden: false)
     }
+
+    /// The container's visible shape: all of it but the holes (nil: no holes, no mask).
+    var maskPath: CGPath? {
+        guard !holes.isEmpty else { return nil }
+        let cut = CGMutablePath()
+        for h in holes { cut.addRect(h) }
+        return CGPath(rect: CGRect(origin: .zero, size: container.size), transform: nil)
+            .subtracting(cut, using: .winding)
+    }
+
+    /// Whether a point (container coordinates) is in a hole: the page's UI there takes the click.
+    func inHole(_ p: CGPoint) -> Bool { holes.contains { $0.contains(p) } }
 
     private static func scaled(_ r: CGRect, _ z: CGFloat) -> CGRect {
         CGRect(x: r.minX * z, y: r.minY * z, width: r.width * z, height: r.height * z)

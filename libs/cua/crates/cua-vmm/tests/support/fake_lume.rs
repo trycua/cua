@@ -289,6 +289,7 @@ pub async fn serve(state: Arc<Mutex<FakeLume>>) -> String {
 pub fn runtime(url: String) -> LumeRuntime {
     let home = temp_home();
     LumeRuntime::new(LumeConfig {
+        channel: cua_home::channel::CuaChannel::Stable,
         url,
         spawn_serve: false,
         allow_install: false,

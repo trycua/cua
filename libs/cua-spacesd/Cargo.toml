@@ -10,11 +10,13 @@ members = [
     "crates/cua-spacesd-socks",
     "crates/cua-spacesd-test-apps",
     "crates/cua-spacesd-server",
+    "crates/cua-spacesd-supervise",
     "crates/cua-relay",
+    "crates/cua-oidc",
 ]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.8.0"
 edition = "2021"
 authors = ["TryCua"]
 license = "FSL-1.1-MIT"
@@ -68,3 +70,13 @@ subtle = "2"
 base64 = "0.22"
 rand = "0.8"
 hex = "0.4"
+
+# The static headless build injected into OCI images (musl targets): small,
+# because a copy is built into every microVM rootfs and uploaded into every
+# container.
+[profile.static]
+inherits = "release"
+opt-level = "s"
+lto = "thin"
+codegen-units = 4
+strip = true

@@ -8,7 +8,7 @@ The gRPC, gRPC-Web and HTTP server core of `cua-spacesd`. One TCP port
 | `cua.env.v1.*` over native gRPC (h2c) and gRPC-Web (HTTP/1.1) | root token | `authorization: Bearer <token>` **or** `x-cua-env-authorization: Bearer <token>` (a gateway in front of the daemon can strip `authorization`) |
 | gRPC reflection (`grpc.reflection.v1`, `v1alpha`) | root token | from `cua_proto::FILE_DESCRIPTOR_SET` |
 | `GET /health` | none | 204 while serving, 503 while shutting down |
-| `GET/HEAD/PUT /files?path&method&exp&sig` | HMAC signed URL | from `FilesystemService.CreateSignedUrl`; mandatory expiry; `Range`; 507 on a full disk |
+| `GET/HEAD/PUT/POST /files?path&method&exp&sig` | HMAC signed URL | from `FilesystemService.CreateSignedUrl`; mandatory expiry; `Range`; 507 on a full disk; a URL signed for `PUT` also takes `POST multipart/form-data` (the first file part is written like the `PUT` body, answer `[{"name","path","type"}]`); a URL signed with `run_as` acts as that guest user |
 | `POST /mcp` | root token (either header) | streamable-HTTP MCP over the cua-driver registry (`cua_driver_core::server` dispatch) |
 | `GET /tunnel` (WebSocket) | `tunnel` ticket | from `TunnelService.Forward` |
 | `GET /hotspot` (WebSocket) | `hotspot` ticket | from `TunnelService.StartHotspot` |
@@ -19,6 +19,33 @@ Tunnel. Computer, Windows, Accessibility, Stream and Presence come from an
 extension provider; until one is registered they answer
 `FAILED_PRECONDITION` with `ErrorInfo{reason: FEATURE_UNSUPPORTED}` and
 `GetCapabilities` reports their features unsupported with a limitation.
+
+## Acting as another guest user
+
+Every `FilesystemService` request that touches a path (and `CreateSignedUrl`)
+takes an optional `run_as` guest user. The agent starts one short-lived
+helper per user (`cua-spacesd fs-as --user NAME`, the same binary, directly
+when the agent is root and through `sudo -n` otherwise: the Linux images run
+the agent as `cua` with passwordless sudo). The helper drops to that user's
+uid, gid and supplementary groups and serves `FilesystemService` over the
+socket it was started with; the agent forwards the request and relays the
+answer, so the kernel's checks are that user's and created files are owned
+by them. Uploads and watchers stay in their helper and later calls are routed
+there. Without the privilege the call fails `PERMISSION_DENIED` ("cannot act
+as ...") with the reason; `fs.run_as` in `GetCapabilities` reports the
+privilege (`root`, `sudo`, or `none: <why>`). Viewer tickets may not use
+`run_as`.
+
+## File metadata
+
+`WriteFileHeader.metadata` is stored as extended attributes under
+`xattr_namespace` (default `user.cua.meta.`; must start with `user.` and end
+with `.`), published atomically with the file, and returned in
+`EntryInfo.metadata` (`Stat`, `ListDir`, `ReadFile`, the write responses) and
+`FsEvent.metadata`. Limits: 32 keys, keys of 1 to 128 bytes of
+`A-Za-z0-9._:/@+-`, values up to 1024 bytes, 3072 bytes of keys and values in
+all. A file system without extended attributes refuses a write that carries
+metadata (`FAILED_PRECONDITION`) and reports none.
 
 ## Token and bind rules
 
@@ -133,6 +160,29 @@ Rules the server enforces or relies on:
    `presence`, `windows`, `launch_app`, `audio.desktop`, `audio.per_app`,
    `audio.uplink`, `audio.opus`), with a `limitation` when unsupported. Your
    entries replace the server's "no desktop provider" defaults by name.
+
+## `/share/*` (cua share)
+
+An extension route, not part of the env spec's path list. While the host
+policy (`host.json`) has `"shares": true` and `"shares_gateway":
+"<socket>"` (the cua daemon's share gateway, a Unix socket), `ANY /share/*`
+is reverse-proxied to that socket; otherwise it answers 404 (403 once the
+machine stopped sharing, 502 while the daemon is down). It works on a
+share-only host (`share_desktop: false`, `provide_spaces: false`), which
+exposes nothing else.
+
+- `/share/<id>/…`: needs a verified caller, either the relay's signed
+  assertion or the machine's env token. The gateway receives it as JSON in
+  `x-cua-share-caller` (`account`, `email`, `name`, `role` = `owner` /
+  `shared` / `viewer`, `teams`, `via` = `relay` / `token`). The header is
+  always replaced: a client-supplied value never reaches the gateway.
+- `/share/pub/<token>/…`: no credential; the token is the credential and the
+  gateway checks it. No caller header is sent.
+- Client credentials (`authorization`, the assertion, the env token header,
+  device session) are removed before forwarding. Request and response bodies
+  stream; WebSocket upgrades are spliced through.
+- Each forwarded request is one access-log line with a public token cut to
+  its first six characters.
 
 ## Tests
 

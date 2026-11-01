@@ -52,11 +52,11 @@ pub const BENCH_REPOS: &[&str] = &["ghcr.io/trycua/bench-*"];
 pub const CHANNEL_REPOS: &[&str] = &["ghcr.io/trycua/omarchy"];
 /// The floating tags a canonical repository may move:
 /// `<ver>[-<tier>][-disk]`, the version and an Xcode version being
-/// dot-separated numbers, the tier `slim`, `xcode` or `xcode-<X.Y>`.
+/// dot-separated numbers, the tier `slim`, `docker`, `xcode` or `xcode-<X.Y>`.
 /// Mirrors `CANONICAL_FLOAT_TAG_RE` in scripts/images/check-tag-safety.sh
 /// (a test compares the two).
 pub const CANONICAL_FLOAT_TAG_RE: &str =
-    r"^[0-9]+(\.[0-9]+)*(-slim|-xcode(-[0-9]+(\.[0-9]+)*)?)?(-disk)?$";
+    r"^[0-9]+(\.[0-9]+)*(-slim|-docker|-xcode(-[0-9]+(\.[0-9]+)*)?)?(-disk)?$";
 const CHANNEL_TAGS: &[&str] = &["edge", "rc", "stable"];
 const BENCH_RESERVED: &[&str] = &["latest", "main", "stable", "edge", "nightly"];
 
@@ -84,7 +84,7 @@ fn is_version(v: &str) -> bool {
 }
 
 /// A canonical repository's floating tag ([`CANONICAL_FLOAT_TAG_RE`]):
-/// `<ver>[-slim|-xcode[-<X.Y>]][-disk]` (`24.04`, `24.04-slim-disk`,
+/// `<ver>[-slim|-docker|-xcode[-<X.Y>]][-disk]` (`24.04`, `24.04-slim-disk`,
 /// `26-xcode-26.1`, `2022-disk`).
 pub fn is_canonical_floating_tag(tag: &str) -> bool {
     let t = tag.strip_suffix("-disk").unwrap_or(tag);
@@ -94,7 +94,7 @@ pub fn is_canonical_floating_tag(tag: &str) -> bool {
     };
     is_version(version)
         && match tier {
-            None | Some("slim") | Some("xcode") => true,
+            None | Some("slim") | Some("docker") | Some("xcode") => true,
             Some(rest) => rest.strip_prefix("xcode-").is_some_and(is_version),
         }
 }
@@ -162,7 +162,9 @@ pub fn check_tag(
         return if is_canonical_floating_tag(tag) {
             Ok(())
         } else {
-            refused("canonical repositories float only <os-version>[-slim|-xcode[-X.Y]][-disk]")
+            refused(
+                "canonical repositories float only <os-version>[-slim|-docker|-xcode[-X.Y]][-disk]",
+            )
         };
     }
     let base = tag.strip_suffix("-disk").unwrap_or(tag);
@@ -766,6 +768,8 @@ mod tests {
             "24.04-disk",
             "24.04-slim",
             "24.04-slim-disk",
+            "24.04-docker",
+            "24.04-docker-disk",
             "2022",
             "2022-disk",
             "26",
@@ -784,6 +788,8 @@ mod tests {
             "main",
             "24.04-full",
             "24.04-disk-slim",
+            "24.04-disk-docker",
+            "24.04-docker-slim",
             "26-xcode-",
             "26-xcode-beta",
             "26-xcode-26.1-beta",

@@ -215,6 +215,6 @@ export class DevicesUnavailable extends Error {
 /** Only say "approved" when the relay says the device is enrolled: anything else would leave the other device waiting while this one reads success. */
 export function requireEnrolled(device: RelayDevice): void {
   if (device.state !== "enrolled") {
-    throw new Error(`The relay did not enroll ${device.name} (${device.id}): it is ${device.state}. Ask that device for a new code and try again.`);
+    throw new Error(`The relay did not enroll ${device.name} (${device.id}): it is ${device.state}. Ask that machine for a new code and try again.`);
   }
 }

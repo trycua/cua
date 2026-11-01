@@ -23,7 +23,8 @@ use crate::ipc::{ConnectError, KeyvaultClient, ServerCheck};
 
 /// Where users get Cua.
 pub const INSTALL_URL: &str = "https://cua.ai/download";
-/// Opens the Keyvault page of the installed Cua app.
+/// Opens the Keyvault page of the released Cua app. A Local build links
+/// `cua-local://keyvault` instead (`CuaChannel::keyvault_url`).
 pub const OPEN_URL: &str = "cua://keyvault";
 
 /// Teleport needs the installed Cua app (or CLI daemon).
@@ -43,9 +44,20 @@ pub struct RequiresCuaApp {
 impl RequiresCuaApp {
     /// The error for "not installed" or "installed, not running".
     pub fn new(installed: bool, detail: &str) -> Self {
+        Self::for_channel(cua_home::channel::CuaChannel::current(), installed, detail)
+    }
+
+    /// [`RequiresCuaApp::new`] for `channel`: the open link is that
+    /// channel's (`cua://keyvault`, `cua-local://keyvault`).
+    pub fn for_channel(
+        channel: cua_home::channel::CuaChannel,
+        installed: bool,
+        detail: &str,
+    ) -> Self {
+        let open_url = channel.keyvault_url();
         let message = if installed {
             format!(
-                "Teleport needs the Cua app running: open Cua ({OPEN_URL}) and try again. {detail}"
+                "Teleport needs the Cua app running: open Cua ({open_url}) and try again. {detail}"
             )
         } else {
             format!(
@@ -55,7 +67,7 @@ impl RequiresCuaApp {
         Self {
             installed,
             install_url: INSTALL_URL.into(),
-            open_url: OPEN_URL.into(),
+            open_url,
             message: message.trim().to_string(),
         }
     }
@@ -340,6 +352,19 @@ mod tests {
         assert!(!e.installed && e.message.contains(INSTALL_URL));
         let e = RequiresCuaApp::new(true, "");
         assert!(e.installed && e.message.contains(OPEN_URL));
+    }
+
+    #[test]
+    fn the_open_link_is_the_channels() {
+        use cua_home::channel::CuaChannel;
+        let stable = RequiresCuaApp::for_channel(CuaChannel::Stable, true, "");
+        assert_eq!(stable.open_url, "cua://keyvault");
+        assert!(stable.message.contains("(cua://keyvault)"));
+        // Local opens Cua Spaces Local, never the released app.
+        let local = RequiresCuaApp::for_channel(CuaChannel::Local, true, "");
+        assert_eq!(local.open_url, "cua-local://keyvault");
+        assert!(local.message.contains("(cua-local://keyvault)"));
+        assert!(!local.message.contains("(cua://"));
     }
 
     #[cfg(unix)]

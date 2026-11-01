@@ -1,0 +1,14 @@
+{
+ "unit": "p50 ratio to GET /api/config",
+ "n": 300,
+ "ratios": {
+  "get_sandbox": 1.223,
+  "list_sandboxes": 1.546,
+  "set_labels": 32.242,
+  "toolbox_exec": 38.029,
+  "toolbox_upload_4k": 39.515,
+  "toolbox_download_4k": 37.774,
+  "toolbox_list_files": 38.465,
+  "toolbox_file_info": 37.608
+ }
+}

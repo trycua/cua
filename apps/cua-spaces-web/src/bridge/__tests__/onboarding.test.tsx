@@ -63,11 +63,11 @@ describe.each([
   it("walks the web pages in the core's order, past the native-only ones", async () => {
     const core = await getCore();
     let s = onboardingInitial(core, null);
-    expect(onboardingView(core, s, "linux").dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "This computer", "Done"]);
+    expect(onboardingView(core, s, "linux").dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "This machine", "Done"]);
     s = onboardingReduce(core, s, { type: "start" }, ctx);
     expect(s.step).toBe("signin");
     expect(onboardingView(core, s, "linux").canSkip).toBe(true);
-    expect(onboardingView(core, s, "linux").lede).toBe("Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.");
+    expect(onboardingView(core, s, "linux").lede).toBe("Sign in to reach your machines and Spaces from any of your machines. You can skip this and sign in later.");
     s = onboardingReduce(core, s, { type: "signin-done" }, ctx);
     expect(s.step).toBe("agents");
     s = onboardingReduce(core, s, { type: "agents-done", configured: ["Codex"] }, ctx);
@@ -86,8 +86,8 @@ describe.each([
       ["signin", false, "Sign in"],
       ["agents", true, null],
     ]);
-    expect(v.summary.map((f) => f.label)).toEqual(["This computer"]);
-    expect(onboardingView(core, s, "windows").summary.map((f) => f.label)).toEqual(["This computer"]);
+    expect(v.summary.map((f) => f.label)).toEqual(["This machine"]);
+    expect(onboardingView(core, s, "windows").summary.map((f) => f.label)).toEqual(["This machine"]);
     s = onboardingReduce(core, s, { type: "signed-in", identity: "ada@example.com" }, ctx);
     v = onboardingView(core, s, "linux");
     expect(v.title).toBe("You're all set");
@@ -109,7 +109,7 @@ describe.each([
     const core = await getCore();
     const mac = { menuBar: false, os: "macos" as HostOs };
     let s = onboardingInitial(core, null);
-    expect(onboardingView(core, s, "macos").dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "Menu bar", "This computer", "Done"]);
+    expect(onboardingView(core, s, "macos").dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "Menu bar", "This machine", "Done"]);
     s = onboardingReduce(core, s, { type: "start" }, mac);
     s = onboardingReduce(core, s, { type: "signin-done" }, mac);
     s = onboardingReduce(core, s, { type: "agents-done", configured: [] }, mac);
@@ -130,7 +130,7 @@ describe.each([
     s = onboardingReduce(core, s, { type: "presentation-done" }, { ...mac, menuBar: true });
     s = onboardingReduce(core, s, { type: "mode-chosen", mode: "client" }, { ...mac, menuBar: true });
     v = onboardingView(core, s, "macos");
-    expect(v.summary.map((f) => f.label)).toEqual(["Shows in", "This computer"]);
+    expect(v.summary.map((f) => f.label)).toEqual(["Shows in", "This machine"]);
     expect((v.todos ?? []).some((t) => t.id === "cli")).toBe(false);
     expect(v.summary.find((f) => f.label === "Shows in")?.value).toBe("Menu bar only");
   });

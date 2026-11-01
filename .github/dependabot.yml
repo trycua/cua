@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Relay image base images are pinned by digest (CUA-2029). Dependabot
+  # refreshes the digests; the Rust tag must stay equal to
+  # libs/cua/rust-toolchain.toml, so toolchain bumps are made by hand together
+  # with that file (CI checks they match).
+  - package-ecosystem: docker
+    directory: /libs/cua-spacesd/crates/cua-relay
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: rust
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]

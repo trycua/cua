@@ -14,7 +14,9 @@ use cua_sandbox_core::Error;
 use cua_sandbox_core::byoc::{CloudCredentials, CloudKind};
 
 use crate::api::{CloudApi, Result, Target, Tested};
-use crate::model::{self, Connection, ProvisionSpec, Resource, Tier};
+use crate::model::{
+    self, Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies, Tier,
+};
 
 /// Called with each provision (the spec, the created resource).
 pub type BootHook = Arc<dyn Fn(&ProvisionSpec, &Resource) + Send + Sync>;
@@ -30,6 +32,23 @@ pub struct FakeAccount {
     pub fail_provision: bool,
     /// The specs provisioned.
     pub specs: Vec<ProvisionSpec>,
+    /// What the console of every machine shows (`None`: nothing).
+    pub boot_log: Option<String>,
+    /// Make reading the boot log fail.
+    pub fail_boot_log: bool,
+    /// Make reading the boot log hang (a cloud that never answers).
+    pub hang_boot_log: bool,
+    /// Make every delete fail (the cloud refuses, or is unreachable).
+    pub fail_delete: bool,
+    /// Make listing what Cua owns fail (signed out, helper missing).
+    pub fail_list: bool,
+    /// Refuse a host with more vCPUs than this, as a cloud's core limit
+    /// does (`shared core limit exceeded`).
+    pub core_limit: Option<u32>,
+    /// The machine types it offers instead of the built-in two.
+    pub types: Option<Vec<HostType>>,
+    /// The type and price `kinds` quotes (default `fake.small`, 0.02).
+    pub estimate: Option<(String, f64)>,
 }
 
 /// A scripted provider named `name`.
@@ -86,6 +105,11 @@ impl FakeProvider {
     }
 }
 
+/// Whether `r` lives where `conn` asks (one with no region, anywhere).
+fn in_region(r: &Resource, conn: &Connection) -> bool {
+    r.region.is_empty() || conn.region.is_empty() || r.region == conn.region
+}
+
 #[async_trait]
 impl CloudApi for FakeProvider {
     fn name(&self) -> &'static str {
@@ -121,13 +145,20 @@ impl CloudApi for FakeProvider {
     }
 
     fn kinds(&self, _: &Connection) -> Vec<CloudKind> {
+        let (est_type, est_usd) = self
+            .account
+            .lock()
+            .unwrap()
+            .estimate
+            .clone()
+            .unwrap_or(("fake.small".into(), 0.02));
         vec![
             CloudKind {
                 image: "linux".into(),
                 kind: "container".into(),
                 supported: true,
-                machine_type: "fake.small".into(),
-                usd_per_hour: 0.02,
+                machine_type: est_type,
+                usd_per_hour: est_usd,
                 ..Default::default()
             },
             CloudKind {
@@ -150,7 +181,12 @@ impl CloudApi for FakeProvider {
         t
     }
 
-    async fn provision(&self, _: &Connection, spec: &ProvisionSpec) -> Result<Vec<Resource>> {
+    async fn provision(&self, conn: &Connection, spec: &ProvisionSpec) -> Result<Vec<Resource>> {
+        if spec.is_host() && self.tier == Tier::Sandbox {
+            return Err(Error::InvalidArgument(
+                "fake: runs Spaces itself, no hosts".into(),
+            ));
+        }
         let r = {
             let mut a = self.account.lock().unwrap();
             a.calls.push(format!("provision {}", spec.name));
@@ -158,6 +194,20 @@ impl CloudApi for FakeProvider {
             if a.fail_provision {
                 a.fail_provision = false;
                 return Err(Error::Cloud("fake: quota exceeded".into()));
+            }
+            if spec.is_host()
+                && let Some(limit) = a.core_limit
+                && let Some(t) = a
+                    .types
+                    .clone()
+                    .unwrap_or_else(|| builtin_types(&conn.region))
+                    .iter()
+                    .find(|t| t.name == spec.machine_type)
+                && t.vcpus > limit
+            {
+                return Err(Error::Cloud(
+                    "fake: create the server: shared core limit exceeded".into(),
+                ));
             }
             let mut n = self.next.lock().unwrap();
             let id = format!("fake-{}", *n);
@@ -174,6 +224,7 @@ impl CloudApi for FakeProvider {
                 expires: model::tag_expires(&spec.tags),
                 tags: spec.tags.clone(),
                 state: "running".into(),
+                region: spec.region_or(conn).to_string(),
                 ..Default::default()
             };
             a.resources.insert(id, r.clone());
@@ -188,12 +239,14 @@ impl CloudApi for FakeProvider {
 
     async fn describe(
         &self,
-        _: &Connection,
+        conn: &Connection,
         r: &Resource,
     ) -> Result<Option<(String, BTreeMap<String, String>)>> {
+        // Like a regional cloud API: asked in another region, it is not there.
         let a = self.account.lock().unwrap();
         Ok(a.resources
             .get(&r.id)
+            .filter(|x| in_region(x, conn))
             .map(|x| (x.state.clone(), x.tags.clone())))
     }
 
@@ -221,16 +274,96 @@ impl CloudApi for FakeProvider {
         self.guard(r, owner, "delete")?;
         let mut a = self.account.lock().unwrap();
         a.calls.push(format!("delete {}", r.id));
+        if a.fail_delete {
+            return Err(Error::Cloud(format!("fake: cannot delete {}", r.id)));
+        }
         a.resources.remove(&r.id);
         Ok(())
     }
 
-    async fn list_owned(&self, _: &Connection, owner: &str) -> Result<Vec<Resource>> {
+    async fn boot_log(&self, _: &Connection, r: &Resource) -> Result<Option<String>> {
+        let (hang, out) = {
+            let mut a = self.account.lock().unwrap();
+            a.calls.push(format!("boot_log {}", r.id));
+            if a.fail_boot_log {
+                return Err(Error::Cloud("fake: console unavailable".into()));
+            }
+            (a.hang_boot_log, a.boot_log.clone())
+        };
+        if hang {
+            std::future::pending::<()>().await;
+        }
+        Ok(out)
+    }
+
+    async fn list_owned(&self, conn: &Connection, owner: &str) -> Result<Vec<Resource>> {
         let a = self.account.lock().unwrap();
+        if a.fail_list {
+            return Err(Error::Cloud("fake: not signed in".into()));
+        }
         Ok(a.resources
             .values()
-            .filter(|r| model::is_ours(&r.tags, owner))
+            .filter(|r| model::is_ours(&r.tags, owner) && in_region(r, conn))
             .cloned()
             .collect())
     }
+
+    fn capabilities(&self, conn: &Connection) -> Capabilities {
+        Capabilities {
+            supplies: match self.tier {
+                Tier::Vm => Supplies::Hosts,
+                Tier::Sandbox => Supplies::Spaces,
+            },
+            billing: Billing {
+                granularity_secs: 3600,
+                minimum_secs: 3600,
+                stopped_bills: true,
+            },
+            regions: vec![conn.region.clone(), "fake-2".into()],
+            max_machines: 5,
+            vcpu_quotas: Default::default(),
+            self_deletes: false,
+        }
+    }
+
+    async fn host_types(&self, conn: &Connection) -> Result<Vec<HostType>> {
+        if let Some(t) = self.account.lock().unwrap().types.clone() {
+            return Ok(t);
+        }
+        Ok(builtin_types(&conn.region))
+    }
+}
+
+/// The two machine types a fake cloud offers unless a test sets its own.
+fn builtin_types(region: &str) -> Vec<HostType> {
+    let regions = vec![region.to_string(), "fake-2".to_string()];
+    vec![
+        HostType {
+            name: "fake.small".into(),
+            arch: "amd64".into(),
+            vcpus: 2,
+            memory_mb: 4096,
+            disk_gb: 40,
+            kvm: false,
+            gpu: String::new(),
+            usd_per_hour: 0.02,
+            regions: regions.clone(),
+            boot_secs: 30,
+            quota_pool: "shared".into(),
+        },
+        HostType {
+            name: "fake.large".into(),
+            arch: "arm64".into(),
+            vcpus: 16,
+            memory_mb: 32 * 1024,
+            disk_gb: 320,
+            // Runs VMs (KVM): forks of a Linux checkpoint fit here.
+            kvm: true,
+            gpu: String::new(),
+            usd_per_hour: 0.07,
+            regions,
+            boot_secs: 45,
+            quota_pool: "shared".into(),
+        },
+    ]
 }

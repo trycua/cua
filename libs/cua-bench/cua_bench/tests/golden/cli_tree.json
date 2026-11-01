@@ -944,7 +944,8 @@
             "codesandbox",
             "northflank",
             "aws",
-            "gcp"
+            "gcp",
+            "hetzner"
           ],
           "const": null,
           "default": null,
@@ -1441,7 +1442,8 @@
                 "codesandbox",
                 "northflank",
                 "aws",
-                "gcp"
+                "gcp",
+                "hetzner"
               ],
               "const": null,
               "default": null,
@@ -1987,7 +1989,8 @@
                 "codesandbox",
                 "northflank",
                 "aws",
-                "gcp"
+                "gcp",
+                "hetzner"
               ],
               "const": null,
               "default": null,

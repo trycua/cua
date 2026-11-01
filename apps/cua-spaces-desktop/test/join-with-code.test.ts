@@ -31,8 +31,8 @@ describe("pairing codes", () => {
 
 describe("the command", () => {
   it("passes the canonical code, and the relay when one is named", () => {
-    expect(joinArgs("K7QM4XPB2RHD", null)).toEqual(["host", "setup", "--pair", "K7QM4XPB2RHD"]);
-    expect(joinArgs("K7QM4XPB2RHD", "https://r.example")).toEqual(["host", "setup", "--pair", "K7QM4XPB2RHD", "--relay", "https://r.example"]);
+    expect(joinArgs("K7QM4XPB2RHD", null)).toEqual(["host", "setup", "--pair", "K7QM4XPB2RHD", "--no-desktop", "--provide-spaces"]);
+    expect(joinArgs("K7QM4XPB2RHD", "https://r.example")).toEqual(["host", "setup", "--pair", "K7QM4XPB2RHD", "--relay", "https://r.example", "--no-desktop", "--provide-spaces"]);
   });
   it("shows the last line cua wrote, else the exit status", () => {
     expect(failureText("warning: x\nerror: this pairing code was already used\n\n", "exited with 1")).toBe("error: this pairing code was already used");
@@ -53,7 +53,7 @@ describe.skipIf(process.platform === "win32")("running cua", () => {
     const out = path.join(dir, "args.txt");
     const cua = script("ok", `printf '%s\\n' "$@" > "${out}"`);
     expect((await runCua(cua, joinArgs("K7QM4XPB2RHD", null), {})).ok).toBe(true);
-    expect((await import("node:fs")).readFileSync(out, "utf8").trim().split("\n")).toEqual(["host", "setup", "--pair", "K7QM4XPB2RHD"]);
+    expect((await import("node:fs")).readFileSync(out, "utf8").trim().split("\n")).toEqual(["host", "setup", "--pair", "K7QM4XPB2RHD", "--no-desktop", "--provide-spaces"]);
   });
   it("fails with what cua said on stderr", async () => {
     const cua = script("bad", `echo "host setup failed at register: the pairing code expired" >&2; exit 1`);
@@ -89,7 +89,7 @@ describe("host.joinWithCode", () => {
   it("runs the bundled cua with the canonical code, refreshes the host and answers its status", async () => {
     const t = make(async () => ({ ok: true, stderr: "", status: "exited with 0" }));
     const answer = (await t.handler({ code: "k7qm-4xpb-2rhd" })) as Record<string, unknown>;
-    expect(t.calls).toEqual([{ cua: "/app/cua", args: ["host", "setup", "--pair", "K7QM4XPB2RHD"] }]);
+    expect(t.calls).toEqual([{ cua: "/app/cua", args: ["host", "setup", "--pair", "K7QM4XPB2RHD", "--no-desktop", "--provide-spaces"] }]);
     expect(t.refreshed()).toBe(1);
     expect(answer).toMatchObject({ configured: true, machineId: "m1" });
   });
@@ -97,7 +97,7 @@ describe("host.joinWithCode", () => {
     const t = make(async () => ({ ok: true, stderr: "", status: "" }));
     await t.handler({ code: "K7QM4XPB2RHD", relay: "https://r.example" });
     await t.handler({ code: "https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fs.example" });
-    expect(t.calls.map((c) => c.args.slice(4))).toEqual([["--relay", "https://r.example"], ["--relay", "https://s.example"]]);
+    expect(t.calls.map((c) => c.args.slice(4))).toEqual([["--relay", "https://r.example", "--no-desktop", "--provide-spaces"], ["--relay", "https://s.example", "--no-desktop", "--provide-spaces"]]);
   });
   it("rejects a bad code or relay without running anything", async () => {
     const t = make(async () => ({ ok: true, stderr: "", status: "" }));

@@ -80,6 +80,7 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
                     .stat(pb::StatRequest {
                         path: minted.files_root.clone(),
                         no_follow_symlinks: false,
+                        ..Default::default()
                     })
                     .await
                     .map_err(|e| format!("stat inside the root refused: {e}"))?;
@@ -88,6 +89,7 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
                     .stat(pb::StatRequest {
                         path: "/etc".into(),
                         no_follow_symlinks: false,
+                        ..Default::default()
                     })
                     .await;
                 if !matches!(&outside, Err(e) if e.code() == tonic::Code::PermissionDenied) {

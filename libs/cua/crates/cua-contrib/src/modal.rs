@@ -21,6 +21,8 @@
 //!   gRPC-Web there); tunnels are fixed at create.
 //! - **Auth**: `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` (or `cua auth provider
 //!   set modal`), passed to the helper's environment only.
+//! - **Environment**: `MODAL_ENVIRONMENT` names the Modal environment every
+//!   call acts in; unset, Modal's default for the token.
 //! - **Helper**: `CUA_MODAL_HELPER`, else `cua-modal-helper` next to the
 //!   running executable, else on `PATH`.
 
@@ -63,6 +65,9 @@ pub struct ModalConfig {
     pub helper: Option<PathBuf>,
     /// The Modal App cua's sandboxes belong to.
     pub app: String,
+    /// The Modal environment (`MODAL_ENVIRONMENT`; empty: Modal's default
+    /// for the token).
+    pub environment: String,
 }
 
 impl std::fmt::Debug for ModalConfig {
@@ -72,6 +77,7 @@ impl std::fmt::Debug for ModalConfig {
             .field("token_secret", &self.token_secret.as_ref().map(|_| "<set>"))
             .field("helper", &self.helper)
             .field("app", &self.app)
+            .field("environment", &self.environment)
             .finish()
     }
 }
@@ -93,6 +99,10 @@ impl ModalConfig {
                 .ok()
                 .filter(|a| !a.trim().is_empty())
                 .unwrap_or_else(|| "cua-sandboxes".into()),
+            environment: std::env::var("MODAL_ENVIRONMENT")
+                .ok()
+                .map(|e| e.trim().to_string())
+                .unwrap_or_default(),
         }
     }
 }
@@ -235,7 +245,11 @@ impl Modal {
     async fn call(&self, req: &Request<'_>) -> Result<Reply> {
         let (id, secret) = self.tokens()?;
         let helper = self.helper()?;
-        let body = serde_json::to_vec(req)?;
+        let mut body = serde_json::to_value(req)?;
+        if !self.config.environment.is_empty() {
+            body["environment"] = serde_json::Value::String(self.config.environment.clone());
+        }
+        let body = serde_json::to_vec(&body)?;
         let mut child = tokio::process::Command::new(&helper)
             .env("MODAL_TOKEN_ID", id.expose())
             .env("MODAL_TOKEN_SECRET", secret.expose())

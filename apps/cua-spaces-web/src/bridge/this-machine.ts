@@ -13,7 +13,8 @@ import { useContext, useSyncExternalStore } from "react";
 import { HostError, type DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { HostActionId, HostFormView as HostFormViewBase } from "./contracts/host";
+import { plainThrottleError } from "./friendly-errors";
+import type { HostActionId, HostFormView as HostFormViewBase, HostLimits } from "./contracts/host";
 import type { HostFormAction, HostFormState, HostRunAction, HostSetupRequest } from "./ops/host-setup";
 
 export type { HostFormAction, HostFormState, HostRunAction, HostSetupRequest } from "./ops/host-setup";
@@ -83,7 +84,10 @@ const IDLE: ThisMachineState = { form: null, busy: false, error: null, setupErro
 export function hostFailure(e: unknown): HostFailure {
   const message = e instanceof Error ? e.message : String(e);
   const p = e instanceof HostError ? e.presented : undefined;
-  return p ? { title: p.title, message, details: p.details, actionLabel: p.actionLabel } : { message };
+  if (p) return { title: p.title, message, details: p.details, actionLabel: p.actionLabel };
+  // A host that only says the error: the server's "slow down" in plain words.
+  const throttled = plainThrottleError(message);
+  return throttled ? { title: "Too many attempts right now", message: throttled.replace(/^Too many attempts right now\. Wait (\d+) (seconds?), then try again\./, "Trying again in $1 $2.").replace("Wait a few seconds, then try again.", "Trying again in a few seconds."), details: message } : { message };
 }
 
 export class ThisMachineStore {
@@ -131,7 +135,7 @@ export class ThisMachineStore {
 
   /** Sets this computer up with the form's defaults and its own name, in
    * one step (the first run's "Set up"). Resolves to whether it worked. */
-  async quickSetUp(identity: string | null, profile = "desktop"): Promise<boolean> {
+  async quickSetUp(identity: string | null, profile = "spare"): Promise<boolean> {
     let form = hostFormInitial(this.core);
     form = hostFormReduce(this.core, form, { type: "set-profile", profile });
     this.failedRequest = null;
@@ -202,6 +206,18 @@ export class ThisMachineStore {
     }
   }
 
+  /** Changes the limits on the Spaces other machines create here (0 is no limit); a failure shows as a toast where it was asked. */
+  async setLimits(limits: HostLimits): Promise<void> {
+    if (this.state.busy) return;
+    this.set({ busy: true });
+    try {
+      await this.adapter.call("host.limits", limits);
+    } finally {
+      this.set({ busy: false });
+      await this.changed();
+    }
+  }
+
   /** Retry on a failed button: the same button again. */
   retry(): Promise<void> {
     return this.failedAction ? this.run(this.failedAction) : Promise.resolve();
@@ -227,9 +243,13 @@ export interface ThisMachineHook extends ThisMachineState {
   send(action: HostFormAction): void;
   /** Resolves to whether setup worked. */
   submit(): Promise<boolean>;
+  /** Sets this machine up with the defaults (other machines can create Spaces here; its desktop stays private). */
+  quickSetUp(): Promise<boolean>;
   /** Sends the failed setup's request again. */
   retrySetUp(): Promise<boolean>;
   run(action: HostActionId): Promise<void>;
+  /** Changes the limits on Spaces other machines create here (0 is no limit); rejects with the failure. */
+  setLimits(limits: HostLimits): Promise<void>;
   /** Runs the failed button again. */
   retry(): Promise<void>;
   openSettings(url: string): Promise<void>;
@@ -253,8 +273,10 @@ export function useThisMachine(identity: string | null): ThisMachineHook {
     closeForm: () => tm?.closeForm(),
     send: (a) => tm?.send(a),
     submit: () => tm?.submit(who) ?? Promise.resolve(false),
+    quickSetUp: () => tm?.quickSetUp(who) ?? Promise.resolve(false),
     retrySetUp: () => tm?.retrySetUp() ?? Promise.resolve(false),
     run: (a) => tm?.run(a) ?? Promise.resolve(),
+    setLimits: (l) => tm?.setLimits(l) ?? Promise.resolve(),
     retry: () => tm?.retry() ?? Promise.resolve(),
     openSettings: async (url) => {
       await tm?.openSettings(url);

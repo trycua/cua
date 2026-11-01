@@ -22,7 +22,7 @@ struct CheckUpdate: AsyncParsableCommand {
             if json {
                 try printJSON(LumeVersionCheck.disabledState())
             } else {
-                print("Update checks disabled by LUME_UPDATE_CHECK.")
+                print("\(LumeVersionCheck.updateChecksDisabledReason()).")
             }
             return
         }
@@ -69,7 +69,7 @@ struct Update: AsyncParsableCommand {
             if json {
                 try printJSON(LumeVersionCheck.disabledState())
             } else {
-                print("Update checks disabled by LUME_UPDATE_CHECK.")
+                print("\(LumeVersionCheck.updateChecksDisabledReason()).")
             }
             return
         }

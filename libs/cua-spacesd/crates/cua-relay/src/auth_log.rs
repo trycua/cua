@@ -69,6 +69,11 @@ pub enum Reason {
     /// A request to a static-token machine without any spacesd credential
     /// (`--require-client-credentials`).
     SpacesdCredentialMissing,
+    /// A pairing code that is unknown, used, revoked or expired.
+    InvalidPairingCode,
+    /// A machine-minted ticket that may predate a revoke of the account it
+    /// was minted for (CUA-1416).
+    TicketRevoked,
 }
 
 impl Reason {
@@ -93,6 +98,8 @@ impl Reason {
             Self::DeviceProofBadSignature => "device_proof_bad_signature",
             Self::DeviceProofReplayed => "device_proof_replayed",
             Self::SpacesdCredentialMissing => "spacesd_credential_missing",
+            Self::InvalidPairingCode => "invalid_pairing_code",
+            Self::TicketRevoked => "ticket_revoked",
         }
     }
 }
@@ -274,6 +281,14 @@ pub fn rejected(headers: &HeaderMap, route: Route, reason: Reason, facts: Option
         clock_skew_secs = facts.clock_skew_secs,
         "401 unauthenticated"
     );
+}
+
+/// Logs one `cua share` web event (`web_login_ok`, `web_login_failed`,
+/// `web_session_issued`, `web_session_refused`, `public_rate_limited`, …)
+/// with its coarse `detail`. Like every line here it carries no token,
+/// email, account or machine id and no address.
+pub fn share_event(event: &str, detail: &str) {
+    tracing::info!(target: TARGET, event, detail, "share");
 }
 
 #[cfg(test)]

@@ -5,18 +5,18 @@ import { CheckIcon, CopyIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { SpaceFact } from "@/bridge";
-import { SettingsGroup } from "@/components/settings-group";
+import { GroupedSection } from "@/components/ui/grouped";
 import { Tooltip } from "@/components/ui/tooltip";
 
 /** A Space's facts as the core lists them (`sidebar.detail`): Status,
  * Image, Identifier, System, Kind, Architecture, Memory, Storage. */
 export function FactList({ title, facts }: { title: string; facts: SpaceFact[] }) {
   return (
-    <SettingsGroup title={title}>
+    <GroupedSection title={title}>
       {facts.map((f) => (
         <FactRow key={f.label} fact={f} />
       ))}
-    </SettingsGroup>
+    </GroupedSection>
   );
 }
 

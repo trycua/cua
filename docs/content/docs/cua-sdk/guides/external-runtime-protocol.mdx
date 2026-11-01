@@ -1,0 +1,132 @@
+---
+title: External runtime protocol
+description: The verbs, manifest and start spec an external runtime provider answers, as JSON on stdin and stdout.
+---
+
+What a `cua-runtime-<name>` executable answers. How cua finds and calls it,
+the error object and the timeouts are in
+[Write an external runtime provider](/cua-sdk/guides/external-runtimes).
+
+## Verbs
+
+| Verb | Request | Response |
+| --- | --- | --- |
+| `info` | `{}` | The manifest (below) |
+| `doctor` | `{}` | `{"ready": bool, "detail": "...", "missing": ["..."]}` |
+| `start` | The start spec (below) | An instance |
+| `stop` | `{"name"}` | `{}` (keeps the instance's disk and state) |
+| `resume` | `{"name"}` | An instance (starts a stopped instance or resumes a suspended one) |
+| `delete` | `{"name"}` | `{}` |
+| `status` | `{"name"}` | `{"status": "running"}` |
+| `endpoints` | `{"name"}` | Endpoints |
+| `list` | `{}` | `[{"name", "status"}, ...]`: only the instances it created for cua |
+| `suspend` | `{"name"}` | `{}` (with the `suspend` capability) |
+| `exec` | `{"name", "argv", "env"}` | `{"exit_code", "stdout_b64", "stderr_b64"}` (with `exec`) |
+| `screenshot` | `{"name"}` | `{"png_b64", "width", "height"}` (with `screenshot`) |
+| `checkpoint` | `{"name", "checkpoint"}` | `{}` (with `checkpoint`) |
+| `fork` | `{"source", "new_name"}` | `{}` (with `fork`) |
+
+A status is `running`, `paused`, `stopped` or `provisioning`; any other word
+is shown as it is.
+
+## The manifest
+
+```json skip="pseudo"
+{
+  "protocol": 1,
+  "name": "acme",
+  "display_name": "macOS VMs",
+  "description": "macOS virtual machines on this Mac",
+  "kind": "vm",
+  "os": ["macos"],
+  "arch": ["arm64"],
+  "handles_images": true,
+  "spacesd_port": 3211,
+  "capabilities": {
+    "suspend": false,
+    "fork": false,
+    "checkpoint": false,
+    "exec": true,
+    "screenshot": false,
+    "ports": false,
+    "restrict_network": false,
+    "max_cpus": 8,
+    "max_memory_mb": 32768
+  },
+  "images": [
+    {"reference": "registry.example/acme/macos:15", "title": "macOS 15", "default": true}
+  ]
+}
+```
+
+- `name` must equal the `<name>` of the executable, and `protocol` must be
+  `1`; otherwise cua ignores the provider and says why in
+  `cua runtime doctor`.
+- `kind` is the kind its Spaces present as.
+- `handles_images: true` means the provider resolves and pulls its own
+  images: cua passes the reference through untouched instead of reading it
+  from the registry, so the images may use media types only the provider
+  understands.
+- `spacesd_port` is the guest port cua-spacesd listens on (default `3211`).
+- `capabilities` turn on the optional verbs. Without `ports`, a Space can
+  publish only cua-spacesd's port. cua refuses a request above `max_cpus` or
+  `max_memory_mb` before calling `start`.
+- `images` lists the images it offers. They appear in `cua images ls`, the
+  MCP `images_list` tool and the Spaces app's image picker. List only images
+  that run cua-spacesd.
+
+## `start`
+
+The request is the start spec:
+
+```json skip="pseudo"
+{
+  "name": "mac",
+  "image": "registry.example/acme/macos:15",
+  "os": "macos",
+  "cpus": 4,
+  "memory_mb": 8192,
+  "disk_size_gb": null,
+  "ports": [3211],
+  "env": {"CUA_ENV_TOKEN": "..."},
+  "command": null,
+  "ready_timeout_secs": 600,
+  "kind": "vm",
+  "runtime": "acme",
+  "restrict_network": false,
+  "probes": [],
+  "ephemeral": false,
+  "registry_credentials": {"registry": "registry.example", "username": "...", "password": "..."}
+}
+```
+
+`registry_credentials` is present only when the person gave credentials for a
+private image. cua never logs it; the provider must not either. `env` carries
+the token cua-spacesd checks (`CUA_ENV_TOKEN`); pass it to the guest. The
+spec also carries the built-in runtimes' fields (`ready_timeout` as an
+object, `firmware`, `sidecars`, `container_runtime`, `gpu`), which a provider
+ignores; cua refuses sidecars and GPU options for external runtimes before
+calling `start`.
+
+`start` creates the instance if needed, boots it, and answers once it runs:
+
+```json skip="pseudo"
+{
+  "name": "mac",
+  "status": "running",
+  "endpoints": {"host": "127.0.0.1", "ports": {"3211": 50123}},
+  "image": {"os": "macos", "arch": "arm64", "spacesd": true, "digest": "sha256:..."}
+}
+```
+
+- `endpoints.ports` maps each guest port in the request to a host port
+  reachable from this machine; `endpoints.host` may be another address this
+  machine can reach. `resume` and `endpoints` answer the same `endpoints`
+  shape.
+- `image` is optional. With `"spacesd": true`, cua waits for cua-spacesd to
+  answer before it reports the Space ready, as for a registry image that
+  declares cua-spacesd; `os` is the guest OS cua records.
+
+cua records the provider's name as the Space's runtime, so `cua sb ls`, `rm`
+and the Spaces app route every later call back to the same provider, also
+after a restart.

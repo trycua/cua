@@ -25,7 +25,7 @@ RUN dpkg-query -W -f '${Package}\n' | sort >/tmp/rootfs-packages \
       linux-image-virtual initramfs-tools \
       systemd systemd-sysv systemd-resolved systemd-timesyncd udev dbus kmod \
       netplan.io cloud-init cloud-guest-utils openssh-server qemu-guest-agent \
-      iproute2 iputils-ping e2fsprogs sudo ca-certificates \
+      iproute2 nftables iputils-ping e2fsprogs sudo ca-certificates \
       && break; echo "apt attempt $attempt failed; reconfiguring" >&2; dpkg --configure -a || true; \
       [ "$attempt" = 3 ] && exit 1; done \
  && rm -rf /var/lib/apt/lists/* \

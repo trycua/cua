@@ -46,6 +46,15 @@ service ProcessService {
   rpc CloseStdin(CloseStdinRequest) returns (CloseStdinResponse);
   // Resizes a PTY process's terminal (delivers SIGWINCH on Unix).
   rpc ResizePty(ResizePtyRequest) returns (ResizePtyResponse);
+  // Looks up the exec ledger entry of a `StartProcessRequest.request_id`
+  // without starting anything. A durable harness uses it after a crash to
+  // learn whether a command it may have started ran, still runs, or was lost.
+  rpc GetExecRecord(GetExecRecordRequest) returns (GetExecRecordResponse);
+  // Raises the Space's fencing epoch. Every running process started with a
+  // lower non-zero `StartProcessRequest.epoch` is killed (SIGKILL to its
+  // process group), and later requests carrying a lower epoch fail with
+  // FAILED_PRECONDITION / `ERROR_REASON_STALE_EPOCH`.
+  rpc AdvanceEpoch(AdvanceEpochRequest) returns (AdvanceEpochResponse);
 }
 
 // What to run.
@@ -126,6 +135,20 @@ message StartProcessRequest {
   // Kill the process (SIGTERM, then SIGKILL) when this RPC ends before the
   // process does. Default false: processes are detached.
   bool kill_on_disconnect = 7;
+  // Idempotency key. When set, the start is recorded in the exec ledger (a
+  // file in the server's data directory, written and synced before the
+  // process is spawned) and a later `StartProcess` with the same key does
+  // not run the command again: it reattaches to the running process
+  // (replaying retained output from the start), or replays the recorded
+  // outcome (`ProcessStart.deduplicated` is set, then the retained output
+  // tail, then `ProcessEnd`). A process that was running when the server
+  // stopped is recorded as lost and replays as `ProcessEnd.lost`. Empty
+  // means no ledger entry. At most 256 bytes.
+  string request_id = 8;
+  // Fencing epoch. 0 means unfenced. A value lower than the Space's current
+  // epoch fails with FAILED_PRECONDITION / `ERROR_REASON_STALE_EPOCH`; a
+  // higher value advances the epoch first, as `AdvanceEpoch` does.
+  uint64 epoch = 9;
 }
 
 // One message of the `ProcessService.StartProcess` stream.
@@ -185,6 +208,12 @@ message ProcessStart {
   uint64 scrollback_start_offset = 4;
   // Combined output offset one past the newest byte produced so far.
   uint64 output_end_offset = 5;
+  // True when `StartProcessRequest.request_id` matched an earlier start, so
+  // this stream reattached to it or replays its recorded outcome instead of
+  // running the command again.
+  bool deduplicated = 6;
+  // The request's idempotency key, if any.
+  string request_id = 7;
 }
 
 // A chunk of process output.
@@ -215,6 +244,20 @@ message ProcessEnd {
   string error = 4;
   // When the process ended.
   google.protobuf.Timestamp ended_at = 5;
+  // True when the outcome is unknown: the process was running when the
+  // server stopped (crash, restart or Space restore), so it may have run
+  // partially or to completion. Only reported for `request_id` processes.
+  bool lost = 6;
+  // Raw number of the terminating signal on the guest's OS, set for every
+  // signal death (also those `signal` cannot name, such as SIGSEGV or
+  // SIGABRT, which leave `signal` unspecified). Zero when no signal ended
+  // the process.
+  int32 signal_number = 7;
+  // Conventional name of the terminating signal without the `SIG` prefix and
+  // in upper case ("SEGV", "ABRT", "PIPE"). Unlike the number it does not
+  // depend on the guest's OS. Empty when no signal ended the process, or the
+  // number has no conventional name.
+  string signal_name = 8;
 }
 
 // Request for `ProcessService.ListProcesses`.
@@ -389,3 +432,68 @@ message ResizePtyRequest {
 
 // Response for `ProcessService.ResizePty`.
 message ResizePtyResponse {}
+
+// Request for `ProcessService.GetExecRecord`.
+message GetExecRecordRequest {
+  // The `StartProcessRequest.request_id` to look up.
+  string request_id = 1;
+}
+
+// Response for `ProcessService.GetExecRecord`.
+message GetExecRecordResponse {
+  // The ledger entry. Absent when the key was never started here (or the
+  // entry was evicted: the ledger keeps the most recent 4096 keys).
+  ExecRecord record = 1;
+  // The Space's current fencing epoch.
+  uint64 epoch = 2;
+}
+
+// What the exec ledger knows about one `request_id`.
+message ExecRecord {
+  // The idempotency key.
+  string request_id = 1;
+  // Where the command is.
+  ExecState state = 2;
+  // The `StartProcessRequest.epoch` it was started with.
+  uint64 epoch = 3;
+  // Guest process id (0 when it never started).
+  uint32 pid = 4;
+  // When it was started.
+  google.protobuf.Timestamp started_at = 5;
+  // How it ended, once `EXEC_STATE_EXITED` or `EXEC_STATE_LOST`.
+  ProcessEnd end = 6;
+  // Total bytes of combined output (stdout, stderr, PTY), once exited.
+  uint64 output_bytes = 7;
+  // Lowercase hex SHA-256 of the combined output in offset order, once
+  // exited.
+  string output_sha256 = 8;
+  // The last bytes of output (at most 64 KiB), in offset order, once exited.
+  // The first chunk's offset reveals what was dropped.
+  repeated ProcessData tail = 9;
+}
+
+// Lifecycle of an exec ledger entry.
+enum ExecState {
+  // Not reported.
+  EXEC_STATE_UNSPECIFIED = 0;
+  // Started by this server and still running.
+  EXEC_STATE_RUNNING = 1;
+  // Exited (or could not start); `ExecRecord.end` says how.
+  EXEC_STATE_EXITED = 2;
+  // Was running when the server stopped: the outcome is unknown.
+  EXEC_STATE_LOST = 3;
+}
+
+// Request for `ProcessService.AdvanceEpoch`.
+message AdvanceEpochRequest {
+  // The new epoch. Must not be lower than the current epoch.
+  uint64 epoch = 1;
+}
+
+// Response for `ProcessService.AdvanceEpoch`.
+message AdvanceEpochResponse {
+  // The current epoch after the call.
+  uint64 epoch = 1;
+  // Running processes killed because they carried a lower epoch.
+  uint32 killed = 2;
+}

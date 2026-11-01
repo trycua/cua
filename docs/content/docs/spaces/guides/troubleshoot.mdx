@@ -1,18 +1,34 @@
 ---
 title: Troubleshoot
-description: 'Fix a Space that does not create (disk, container engine, virtualization, the two-VM limit, Local Network), find help for agents and computers that will not connect, and ask for help.'
+description: 'Fix a Space that does not create (disk, container engine, virtualization, the two-VM limit, Local Network), find help for agents and machines that will not connect, and ask for help.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Most problems are a Space that won't create, or an agent or computer that won't
+Most problems are a Space that won't create, or an agent or machine that won't
 connect. This page covers a failed create in detail and points to the fix for the
 rest.
+
+<Callout type="info">
+  If sign-in, connecting a machine or a download fails for everyone, check
+  [System status](https://status.cua.ai) first. We post outages and updates there.
+</Callout>
 
 ## A Space won't create
 
 When a Space can't be created, Cua Spaces shows **Couldn't create this Space**
 with the reason, a **Try again** button and a **Remove from list** button.
+
+Some failures usually pass: the built-in Linux runtime did not start, the
+network dropped during the image download, or the new VM did not answer in
+time. Cua Spaces tries those once more by itself, and the Space says
+**Retrying…** while it does. You only see the failure if the second try
+fails too.
+
+When a Space fails twice in a row for the same reason, on the same machine
+and with the same image, Cua Spaces shows the fix for that reason instead of
+**Try again**: for example **Copy cua cache prune** when the disk is full, or
+**Copy cua runtime doctor** when no container engine is running.
 
 <VideoDemo
   src="https://trycua.github.io/assets/videos/cua-spaces/troubleshoot.mp4"
@@ -45,15 +61,15 @@ for the full list.
 | The image download failed, was refused or stopped partway (`image_pull_network`, `image_pull_not_found`, `image_pull_auth`, `image_pull_rate_limited`, `image_pull`) | Check your network and try again. Finished image layers are kept, so the next attempt resumes. If the registry rate-limited you, wait a few minutes. If you use your own image, check its name and that you can pull it. |
 | Not enough disk space (`insufficient_disk`) | The New Space screen shows how much space is needed and available. A macOS Space needs about 50 GB. Free some space, or delete Spaces you no longer need with `cua spaces delete`. |
 | No container engine is running (`runtime_missing`, `runtime_not_running`, `runtime_permission`) | Start Docker Desktop, or install a container engine such as Docker, Colima or Podman. If the message says permission denied, give your user access to the engine. Run `cua runtime doctor` to check. |
-| This computer can't run virtual machines (`virtualization_unavailable`) | macOS Spaces need an Apple silicon Mac. On Linux and Windows, turn on hardware virtualization in the firmware settings. Or create a Linux container Space instead. |
+| This machine can't run virtual machines (`virtualization_unavailable`) | macOS Spaces need an Apple silicon Mac. On Linux and Windows, turn on hardware virtualization in the firmware settings. Or create a Linux container Space instead. |
 | Two macOS VMs already run (`vm_limit`) | Apple allows two macOS VMs at a time on one Mac. Stop or delete one, then try again. |
 | The VM started but never answered (`vm_boot_timeout`, `services_unreachable`) | The first macOS Space unpacks a large image and can run out of time. Try again: the image is already downloaded, so it is much faster. |
-| macOS blocked the connection to the new VM (`local_network`) | Open **System Settings, Privacy & Security, Local Network**, turn on Cua Spaces, then try again. |
+| macOS blocked the connection to the new VM (`local_network`) | Open **System Settings, Privacy & Security, Local Network**, turn on Cua Spaces, then try again. If nobody sits at the Mac (you use it over SSH or from another machine), macOS can't ask: run the three commands in [Add a machine](/spaces/guides/add-a-computer#over-ssh-or-tailscale) once on it. |
 | "The Cua daemon isn't running. Start Cua, or run `cua daemon start`." | Open Cua Spaces, or run `cua daemon start`. |
 
-### Creating on another computer
+### Creating on another machine
 
-To create a Space on one of your other computers, that computer must be online,
+To create a Space on one of your other machines, that machine must be online,
 provide Spaces, and be set up for your account. If the create fails with a name
 such as `ambiguous_host` or `host_capability_missing`, see the
 [spare Mac errors](/spaces/guides/add-a-computer#spare-mac-errors).
@@ -68,7 +84,7 @@ attempt resumes. See [Cancel a create](/spaces/guides/add-a-space#cancel-a-creat
 
 Versions of Cua Spaces after 0.9.4 add **Send a report...** to a failed Space.
 It builds a report from the error, the phase it failed in, the image and the app
-and system versions. Before anything leaves your computer:
+and system versions. Before anything leaves your machine:
 
 - You review the report and can edit it or leave parts out.
 - Cua removes tokens, email addresses, home folders, hostnames and public IP
@@ -76,6 +92,7 @@ and system versions. Before anything leaves your computer:
 - **Open email** starts a message to Cua support (support@trycua.com) in your
   mail app. Nothing is sent until you press Send there.
 
+Before you email, check [System status](https://status.cua.ai) in case it is a wider outage.
 On any version, you can email support@trycua.com with the reason shown, your
 system, and the Cua Spaces version from **Settings, About**.
 
@@ -89,10 +106,11 @@ system, and the Cua Spaces version from **Settings, About**.
 | What you see | Where to look |
 |---|---|
 | The agent has no `cua` tools, or can't reach a Space | [If it doesn't work](/spaces/guides/connect-your-agent#if-it-doesnt-work) in Connect your agent |
-| A computer never appears, or shows **Offline** | [If it doesn't work](/spaces/guides/add-a-computer#if-it-doesnt-work) in Add a computer |
+| A machine never appears, or shows **Offline** | [If it doesn't work](/spaces/guides/add-a-computer#if-it-doesnt-work) in Add a machine |
 | On Linux, Share fails at once with "user presence was not confirmed" | [Sharing on Linux](/spaces/guides/share-a-space) in Share a Space: install the latest .deb and use a desktop session with a polkit agent |
 | An error name such as `capability_missing` or `permission_denied` | [Errors](/spaces/reference#errors) in the Spaces reference |
 | You want Cua Spaces gone, or a clean reinstall | [Uninstall Cua Spaces](/spaces/guides/uninstall), then [Install](/spaces/guides/install) |
+| Sign-in, connecting a machine, downloads or billing fail for everyone, or the problem started suddenly | [System status](https://status.cua.ai): we post outages and updates there |
 | Something else | Email support@trycua.com as described above |
 
 ## Next

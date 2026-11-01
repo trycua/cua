@@ -10,5 +10,6 @@ pub mod system;
 pub mod teleport;
 pub mod tunnel;
 pub mod volume;
+pub mod volume_bind;
 pub mod volume_portmap;
 pub mod volume_windows;

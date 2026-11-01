@@ -11,8 +11,10 @@
 //!
 //! [`DockerExec`] is the agentless guest-exec path for containers.
 
+pub mod egress;
 pub mod engine;
 pub mod gvisor;
+pub mod snapshot;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -65,6 +67,17 @@ pub const LABEL_KIND: &str = "ai.cua.kind";
 pub const LABEL_CREATED: &str = "ai.cua.created";
 /// `true` on the container of an ephemeral sandbox.
 pub const LABEL_EPHEMERAL: &str = "ai.cua.ephemeral";
+/// On a warm-pool member's container ([`StartSpec::pool_member`]): `true`,
+/// or [`POOL_KEEP`] for a member of a shape the host keeps warm on purpose,
+/// which holds the built-in runtime's VM up. Labels are fixed at create, so
+/// a claimed Space keeps it; only the [`crate::POOL_MEMBER_PREFIX`] name
+/// tells an unclaimed member.
+pub const LABEL_POOL: &str = "ai.cua.pool";
+/// [`LABEL_POOL`] of a member the host keeps warm on purpose.
+pub const POOL_KEEP: &str = "keep";
+
+/// Environment variables a Spaces token may arrive in.
+const TOKEN_ENV: [&str; 2] = ["CUA_ENV_TOKEN", "CUA_SPACESD_TOKEN"];
 /// Which cua home created the object ([`home_tag`]): several homes
 /// (`CUA_HOME`) can share one engine, and each one's garbage collection
 /// only touches its own objects.
@@ -116,6 +129,19 @@ pub struct ContainerConfig {
     pub require_gvisor: bool,
     /// Seconds `stop` waits before SIGKILL.
     pub stop_timeout: i32,
+    /// Warm starts of gVisor Spaces from golden memory checkpoints, where
+    /// the engine supports them ([`snapshot`]). On unless
+    /// `CUA_GVISOR_WARM=0`.
+    pub warm: bool,
+}
+
+/// Set to `1` (shared pool hosts do): a Space never runs on `runc` when
+/// gVisor is missing; creating it fails with the reason instead.
+pub const REQUIRE_GVISOR_ENV: &str = "CUA_REQUIRE_GVISOR";
+
+/// Whether `value` of [`REQUIRE_GVISOR_ENV`] turns the requirement on.
+pub fn require_gvisor_from(value: Option<&str>) -> bool {
+    matches!(value.map(str::trim), Some("1" | "true" | "yes" | "on"))
 }
 
 impl Default for ContainerConfig {
@@ -124,8 +150,9 @@ impl Default for ContainerConfig {
             endpoint: None,
             prefer_gvisor: true,
             allow_install_runsc: false,
-            require_gvisor: false,
+            require_gvisor: require_gvisor_from(std::env::var(REQUIRE_GVISOR_ENV).ok().as_deref()),
             stop_timeout: 10,
+            warm: std::env::var(snapshot::WARM_ENV).map_or(true, |v| v != "0"),
         }
     }
 }
@@ -139,6 +166,56 @@ pub struct ContainerRuntime {
     oci_runtime: Mutex<Option<String>>,
     /// CPUs the engine reports (`docker info` NCPU), read once per process.
     engine_cpus: Mutex<Option<i64>>,
+    /// Memory checkpoints on this engine ([`snapshot`]), probed once.
+    snap: tokio::sync::OnceCell<snapshot::Support>,
+}
+
+/// The OOM score adjustment of a Space's container (higher dies first).
+pub const SPACE_OOM_SCORE_ADJ: i64 = 500;
+
+/// The lock that keeps one pull of `reference` at a time in this process.
+fn pull_gate(reference: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    static GATES: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+    > = std::sync::LazyLock::new(Default::default);
+    GATES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .entry(reference.to_string())
+        .or_default()
+        .clone()
+}
+
+/// Env var that overrides the checkpoint/import request budget (seconds).
+pub const BULK_TIMEOUT_ENV: &str = "CUA_CHECKPOINT_TIMEOUT_SECS";
+const BULK_TIMEOUT_DEFAULT_SECS: u64 = 1800;
+
+/// Request budget for checkpoint commit/import: `CUA_CHECKPOINT_TIMEOUT_SECS`
+/// when set to a positive integer, else 30 minutes (a 4.5 GB rootfs takes
+/// about a minute, so this leaves a wide margin on slow disks).
+fn bulk_timeout() -> Duration {
+    bulk_timeout_from(std::env::var(BULK_TIMEOUT_ENV).ok().as_deref())
+}
+
+fn bulk_timeout_from(v: Option<&str>) -> Duration {
+    let secs = v
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .unwrap_or(BULK_TIMEOUT_DEFAULT_SECS);
+    Duration::from_secs(secs)
+}
+
+/// An engine error from a bulk request; a timeout names the knob.
+fn bulk_err(what: &str, e: bollard::errors::Error) -> VmmError {
+    let msg = e.to_string();
+    if msg.to_ascii_lowercase().contains("timeout") {
+        VmmError::Engine(format!(
+            "{what}: the engine did not finish within {} s ({msg}); raise {BULK_TIMEOUT_ENV} for a larger rootfs",
+            bulk_timeout().as_secs()
+        ))
+    } else {
+        VmmError::Engine(format!("{what}: {msg}"))
+    }
 }
 
 fn engine_err(e: bollard::errors::Error) -> VmmError {
@@ -225,6 +302,7 @@ impl ContainerRuntime {
             cfg,
             oci_runtime: Mutex::new(None),
             engine_cpus: Mutex::new(None),
+            snap: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -422,6 +500,16 @@ impl ContainerRuntime {
             ledger::PullLedger::default().touch(reference);
             return Ok(());
         }
+        // One pull per image at a time in this process: the engine does not
+        // share concurrent pulls of one image, so 200 creates on a fresh
+        // host each downloaded and unpacked it (64 GB written for a 1.2 GB
+        // image, the disk saturated for minutes). The rest wait and find it.
+        let gate = pull_gate(reference);
+        let _one = gate.lock().await;
+        if self.docker.inspect_image(reference).await.is_ok() {
+            ledger::PullLedger::default().touch(reference);
+            return Ok(());
+        }
         // The engine stores images in its own VM or data root; on this host
         // that grows the engine's disk image, so the host volume is checked.
         crate::disk::ensure_space(
@@ -465,86 +553,106 @@ impl ContainerRuntime {
         // layers it never named are there already.
         let mut named = std::collections::HashSet::new();
         let mut existing_settled = seeded.is_empty();
-        let mut stream = self.docker.create_image(Some(opts), None, creds);
-        while let Some(item) = stream.next().await {
-            // The engine's message never carries the credentials.
-            let info = item.map_err(|e| VmmError::Engine(format!("pull {reference}: {e}")))?;
-            if let Some(id) = info.id.as_deref() {
-                named.insert(id.to_string());
-            }
-            let announcing = matches!(
-                info.status.as_deref(),
-                Some("Pulling fs layer" | "Waiting") | None
-            ) || info
-                .status
-                .as_deref()
-                .is_some_and(|s| s.starts_with("Pulling from"));
-            if !existing_settled && !announcing {
-                existing_settled = true;
-                for id in seeded.iter().filter(|id| !named.contains(*id)) {
-                    bytes.complete(id);
-                    extracted.complete(id);
-                }
-            }
-            // Layer byte counts: "Downloading" carries (current, total),
-            // and so does "Extracting" on the classic image store (the
-            // containerd store reports seconds instead, so a layer counts as
-            // extracted at "Pull complete"); "Download complete" finishes a
-            // download, "Pull complete" / "Already exists" a layer.
-            let layer = info.id.as_deref().unwrap_or_default();
-            let size = |d: &bollard::models::ProgressDetail| {
-                (
-                    d.current.unwrap_or(0).max(0) as u64,
-                    d.total.unwrap_or(0).max(0) as u64,
-                )
-            };
-            let changed = match (info.status.as_deref(), info.progress_detail.as_ref()) {
-                (Some("Downloading"), Some(d)) => {
-                    let (c, t) = size(d);
-                    bytes.update(layer, c, t);
-                    // The layer's extraction, still to come, weighs its size.
-                    if extracted.fraction_of(layer).is_none() {
-                        extracted.update(layer, 0, t);
+        let mut attempt = 1u32;
+        'attempts: loop {
+            let mut stream = self
+                .docker
+                .create_image(Some(opts.clone()), None, creds.clone());
+            while let Some(item) = stream.next().await {
+                // The engine's message never carries the credentials. A network
+                // drop mid-pull is tried again (the engine keeps the layers it
+                // finished); anything else fails at once.
+                let info = match item {
+                    Ok(info) => info,
+                    Err(e) => {
+                        let message = e.to_string();
+                        if attempt < PULL_ATTEMPTS && pull_error_is_transient(&message) {
+                            tracing::warn!(image = reference, attempt, error = %message, "image pull broke; trying again");
+                            tokio::time::sleep(pull_retry_delay(attempt)).await;
+                            attempt += 1;
+                            continue 'attempts;
+                        }
+                        return Err(VmmError::Engine(format!("pull {reference}: {message}")));
                     }
-                    true
+                };
+                if let Some(id) = info.id.as_deref() {
+                    named.insert(id.to_string());
                 }
-                (Some("Extracting"), Some(d)) if d.total.unwrap_or(0) > 0 => {
-                    let (c, t) = size(d);
-                    bytes.complete(layer);
-                    extracted.update(layer, c, t);
-                    true
+                let announcing = matches!(
+                    info.status.as_deref(),
+                    Some("Pulling fs layer" | "Waiting") | None
+                ) || info
+                    .status
+                    .as_deref()
+                    .is_some_and(|s| s.starts_with("Pulling from"));
+                if !existing_settled && !announcing {
+                    existing_settled = true;
+                    for id in seeded.iter().filter(|id| !named.contains(*id)) {
+                        bytes.complete(id);
+                        extracted.complete(id);
+                    }
                 }
-                (Some("Download complete"), _) => {
-                    bytes.complete(layer);
-                    true
+                // Layer byte counts: "Downloading" carries (current, total),
+                // and so does "Extracting" on the classic image store (the
+                // containerd store reports seconds instead, so a layer counts as
+                // extracted at "Pull complete"); "Download complete" finishes a
+                // download, "Pull complete" / "Already exists" a layer.
+                let layer = info.id.as_deref().unwrap_or_default();
+                let size = |d: &bollard::models::ProgressDetail| {
+                    (
+                        d.current.unwrap_or(0).max(0) as u64,
+                        d.total.unwrap_or(0).max(0) as u64,
+                    )
+                };
+                let changed = match (info.status.as_deref(), info.progress_detail.as_ref()) {
+                    (Some("Downloading"), Some(d)) => {
+                        let (c, t) = size(d);
+                        bytes.update(layer, c, t);
+                        // The layer's extraction, still to come, weighs its size.
+                        if extracted.fraction_of(layer).is_none() {
+                            extracted.update(layer, 0, t);
+                        }
+                        true
+                    }
+                    (Some("Extracting"), Some(d)) if d.total.unwrap_or(0) > 0 => {
+                        let (c, t) = size(d);
+                        bytes.complete(layer);
+                        extracted.update(layer, c, t);
+                        true
+                    }
+                    (Some("Download complete"), _) => {
+                        bytes.complete(layer);
+                        true
+                    }
+                    (Some("Pull complete" | "Already exists"), _) => {
+                        bytes.complete(layer);
+                        extracted.complete(layer);
+                        true
+                    }
+                    _ => false,
+                };
+                if !changed {
+                    continue;
                 }
-                (Some("Pull complete" | "Already exists"), _) => {
-                    bytes.complete(layer);
-                    extracted.complete(layer);
-                    true
+                let (done, total) = bytes.totals();
+                let fraction = pull_fraction(bytes.fraction(), extracted.fraction());
+                // The download's bytes, a few reports a second (the meter's
+                // throttle); a percent of the fraction always reports too.
+                let transfer = (total > 0).then(|| meter.sample(done, total)).flatten();
+                let moved = fraction.is_some_and(|f| (f - last).abs() >= 0.01);
+                if transfer.is_some() || moved {
+                    let mut p = Progress::phase(Phase::Pulling).detail(reference);
+                    if let Some(f) = fraction {
+                        last = f;
+                        p = p.fraction(f);
+                    }
+                    if total > 0 {
+                        p = p.bytes(transfer.unwrap_or_else(|| meter.peek(done, total)));
+                    }
+                    crate::progress::report(p);
                 }
-                _ => false,
-            };
-            if !changed {
-                continue;
             }
-            let (done, total) = bytes.totals();
-            let fraction = pull_fraction(bytes.fraction(), extracted.fraction());
-            // The download's bytes, a few reports a second (the meter's
-            // throttle); a percent of the fraction always reports too.
-            let transfer = (total > 0).then(|| meter.sample(done, total)).flatten();
-            let moved = fraction.is_some_and(|f| (f - last).abs() >= 0.01);
-            if transfer.is_some() || moved {
-                let mut p = Progress::phase(Phase::Pulling).detail(reference);
-                if let Some(f) = fraction {
-                    last = f;
-                    p = p.fraction(f);
-                }
-                if total > 0 {
-                    p = p.bytes(transfer.unwrap_or_else(|| meter.peek(done, total)));
-                }
-                crate::progress::report(p);
-            }
+            break;
         }
         // Remember that the SDK pulled it (it was not here before), so the
         // cache GC may remove it again once nothing uses it.
@@ -637,7 +745,7 @@ impl ContainerRuntime {
 
     fn isolation_from(i: &bollard::models::ContainerInspectResponse) -> Isolation {
         match i.host_config.as_ref().and_then(|h| h.runtime.as_deref()) {
-            Some("runsc") => Isolation::Gvisor,
+            Some("runsc") | Some(snapshot::WRAPPER_RUNTIME) => Isolation::Gvisor,
             _ => Isolation::Runc,
         }
     }
@@ -680,7 +788,8 @@ impl ContainerRuntime {
         n
     }
 
-    /// Create (not start) a container.
+    /// Create (not start) a container. `restore`: a memory checkpoint
+    /// directory it restores on start instead of booting.
     async fn create(
         &self,
         name: &str,
@@ -688,6 +797,7 @@ impl ContainerRuntime {
         spec: &StartSpec,
         base_labels: HashMap<String, String>,
         platform: Option<String>,
+        restore: Option<&str>,
     ) -> Result<()> {
         let runtime = self.group_runtime(spec).await?;
         let engine_cpus = self.engine_cpus().await;
@@ -702,8 +812,63 @@ impl ContainerRuntime {
                 arch.oci()
             )));
         }
-        let mut body = create_body(name, image, spec, base_labels, runtime);
+        // gVisor Spaces run under the cua-runsc wrapper where the engine
+        // has it, so they can be checkpointed with memory and restored.
+        let engine_runtime = if runtime == "runsc" && self.support().await.ok() {
+            snapshot::WRAPPER_RUNTIME.to_string()
+        } else {
+            runtime
+        };
+        if restore.is_some() && engine_runtime != snapshot::WRAPPER_RUNTIME {
+            return Err(VmmError::other(
+                "this engine cannot restore memory checkpoints",
+            ));
+        }
+        // An image without cua-spacesd gets one: its command runs under the
+        // injected supervisor (as root; the supervisor drops to the image's
+        // user for the command).
+        let wrapped;
+        let spec = match &spec.inject_spacesd {
+            Some(_) => {
+                let info = self.docker.inspect_image(image).await.map_err(engine_err)?;
+                let run = run_config_of(info.config.as_ref());
+                let mut s = spec.clone();
+                s.command = Some(crate::inject::wrapper_command(
+                    &run,
+                    spec.command.as_deref(),
+                ));
+                wrapped = s;
+                &wrapped
+            }
+            None => spec,
+        };
+        let mut body = create_body(name, image, spec, base_labels, engine_runtime);
+        // Its own MAC, so egress rules can be keyed by it before it starts
+        // ([`egress`]); no raw sockets under a policy that blocks anything.
+        if let Some((net, mac)) = self.mac_config(name).await {
+            body.networking_config = Some(net);
+            body.labels
+                .get_or_insert_with(Default::default)
+                .insert(egress::LABEL_MAC.into(), mac);
+        }
+        if (egress::policy_blocks(&spec.egress) || egress::blocks(name))
+            && let Some(hc) = body.host_config.as_mut()
+        {
+            hc.cap_drop = Some(vec!["NET_RAW".into()]);
+        }
+        if self.forwards_ports_by_number()
+            && let Some(hc) = body.host_config.as_mut()
+            && let Some(bindings) = hc.port_bindings.as_mut()
+        {
+            pick_host_ports(bindings)?;
+        }
         if let Some(hc) = body.host_config.as_mut() {
+            if let Some(dir) = restore {
+                hc.annotations = Some(HashMap::from([(
+                    snapshot::ANNOTATION_RESTORE.to_string(),
+                    dir.to_string(),
+                )]));
+            }
             hc.nano_cpus = hc.nano_cpus.map(|n| {
                 let capped = cap_nano_cpus(n, engine_cpus);
                 if capped != n {
@@ -721,11 +886,100 @@ impl ContainerRuntime {
             name: Some(name.to_string()),
             platform: platform.unwrap_or_default(),
         };
-        self.docker
-            .create_container(Some(opts), body)
-            .await
-            .map_err(engine_err)?;
+        // Detached: the engine finishes a create whose request the caller
+        // dropped (a cancelled create), so a container made after the
+        // cancel looked would be left stopped. A dropped create is awaited
+        // in the background and its container removed.
+        let docker = self.docker.clone();
+        let undo_docker = self.docker.clone();
+        let created = name.to_string();
+        crate::cleanup::complete_or_undo(
+            async move { docker.create_container(Some(opts), body).await },
+            move |_| async move {
+                let _ = undo_docker
+                    .remove_container(
+                        &created,
+                        Some(RemoveContainerOptions {
+                            force: true,
+                            v: true,
+                            ..Default::default()
+                        }),
+                    )
+                    .await;
+            },
+        )
+        .await
+        .map_err(engine_err)?;
+        if let Some(binary) = &spec.inject_spacesd
+            && let Err(e) = self.upload_spacesd(name, binary).await
+        {
+            self.remove_force(name).await;
+            return Err(e);
+        }
         Ok(())
+    }
+
+    /// Puts the static cua-spacesd into container `name` (created, not yet
+    /// started) at [`crate::inject::GUEST_PATH`].
+    async fn upload_spacesd(&self, name: &str, binary: &std::path::Path) -> Result<()> {
+        let binary = binary.to_path_buf();
+        let tar = tokio::task::spawn_blocking(move || crate::inject::layer_tar(&binary))
+            .await
+            .map_err(|e| VmmError::other(e.to_string()))??;
+        let opts = bollard::query_parameters::UploadToContainerOptions {
+            path: "/".into(),
+            ..Default::default()
+        };
+        self.docker
+            .upload_to_container(
+                name,
+                Some(opts),
+                bollard::body_full(bytes::Bytes::from(tar)),
+            )
+            .await
+            .map_err(engine_err)
+    }
+
+    /// Removes the image container `image_id` ran on when it is an untagged
+    /// checkpoint or fork-source image this backend wrote (a deleted
+    /// checkpoint a fork kept alive). Best effort: an image another
+    /// container still uses is refused by the engine and stays.
+    async fn drop_orphaned_image(&self, image_id: &str) {
+        let Ok(img) = self.docker.inspect_image(image_id).await else {
+            return;
+        };
+        let tagless = img.repo_tags.as_ref().is_none_or(|t| t.is_empty());
+        let labels = img.config.and_then(|c| c.labels).unwrap_or_default();
+        let ours = labels.get(LABEL_MANAGED).is_some_and(|v| v == "true")
+            && matches!(
+                labels.get(LABEL_KIND).map(String::as_str),
+                Some("checkpoint" | "intermediate")
+            )
+            && labels.get(LABEL_HOME).is_none_or(|h| *h == home_tag());
+        if tagless && ours {
+            let _ = self
+                .docker
+                .remove_image(
+                    image_id,
+                    None::<bollard::query_parameters::RemoveImageOptions>,
+                    None,
+                )
+                .await;
+        }
+    }
+
+    /// Removes container `name` (and its anonymous volumes), ignoring errors.
+    async fn remove_force(&self, name: &str) {
+        let _ = self
+            .docker
+            .remove_container(
+                name,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await;
     }
 
     /// Commit a container to `repo:tag`.
@@ -739,10 +993,10 @@ impl ContainerRuntime {
             ..Default::default()
         };
         let id = self
-            .docker
+            .bulk_docker()
             .commit_container(opts, bollard::models::ContainerConfig::default())
             .await
-            .map_err(engine_err)?;
+            .map_err(|e| bulk_err("commit checkpoint", e))?;
         Ok(id.id)
     }
 
@@ -798,9 +1052,10 @@ impl ContainerRuntime {
             ..Default::default()
         };
         let body = bollard::body_try_stream(stream);
-        let mut progress = self.docker.create_image(Some(opts), Some(body), None);
+        let bulk = self.bulk_docker();
+        let mut progress = bulk.create_image(Some(opts), Some(body), None);
         while let Some(item) = progress.next().await {
-            item.map_err(|e| VmmError::Engine(format!("import checkpoint {tag}: {e}")))?;
+            item.map_err(|e| bulk_err(&format!("import checkpoint {tag}"), e))?;
         }
         let code = self
             .docker
@@ -818,6 +1073,14 @@ impl ContainerRuntime {
         Ok(())
     }
 
+    /// The engine client for requests that move a whole rootfs (checkpoint
+    /// commit/import). bollard's 120 s request timeout covers the entire
+    /// import, which the engine answers only once it has read the archive,
+    /// so a multi-GB rootfs hit it. Budget: [`bulk_timeout`].
+    fn bulk_docker(&self) -> Docker {
+        self.docker.clone().with_timeout(bulk_timeout())
+    }
+
     /// An exec handle for a running container.
     pub fn exec_handle(&self, name: &str) -> DockerExec {
         DockerExec {
@@ -825,6 +1088,25 @@ impl ContainerRuntime {
             container: name.to_string(),
         }
     }
+}
+
+/// Whether a container has never been started (a fork waiting for its
+/// first start).
+fn never_started(i: &bollard::models::ContainerInspectResponse) -> bool {
+    i.state
+        .as_ref()
+        .and_then(|s| s.started_at.as_deref())
+        .is_none_or(|t| t.starts_with("0001-"))
+}
+
+/// The memory checkpoint a container restores when it starts.
+fn restore_dir(i: &bollard::models::ContainerInspectResponse) -> Option<String> {
+    i.host_config
+        .as_ref()?
+        .annotations
+        .as_ref()?
+        .get(snapshot::ANNOTATION_RESTORE)
+        .cloned()
 }
 
 /// Split `repo[:tag]` (digest refs keep the digest in `from_image`).
@@ -923,6 +1205,9 @@ impl Runtime for ContainerRuntime {
     async fn start(&self, spec: &StartSpec) -> Result<Instance> {
         validate_name(&spec.name)?;
         crate::types::reject_restricted_network(BackendKind::Container, spec)?;
+        crate::egress::check(BackendKind::Container, &spec.egress)?;
+        crate::types::check_mounts(BackendKind::Container, &spec.mounts)?;
+        crate::filetable::admit("a container")?;
         crate::types::reject_gpu(BackendKind::Container, spec, &[crate::gpu::NVIDIA])?;
         if spec.gpu.is_some() {
             let runtime = self.group_runtime(spec).await?;
@@ -940,8 +1225,54 @@ impl Runtime for ContainerRuntime {
         // pulled or created.
         self.group_runtime(spec).await?;
         let existing = self.inspect(&spec.name).await?;
+        // The policy: the start spec's for a new container (or one that has
+        // none kept); a kept one wins (`set_egress` changed it since).
+        match (&existing, egress::kept(&spec.name)) {
+            (Some(_), Some(_)) => {}
+            (Some(_), None) if spec.egress.is_empty() => {}
+            _ if spec.egress.is_empty() => egress::forget(&spec.name),
+            _ => egress::keep(
+                &spec.name,
+                &egress::Kept {
+                    policy: spec.egress.clone(),
+                    table: None,
+                },
+            )?,
+        }
+        // A memory restore about to happen: (the token its cua-spacesd
+        // accepts, the Space's own token, the checkpoint directory).
+        let mut restored: Option<(Option<String>, Option<String>, String)> = None;
+        // A golden checkpoint to record once this cold start is ready.
+        let mut record_golden: Option<(snapshot::GoldenPlan, String)> = None;
         let info = match existing {
-            Some(i) => {
+            Some(mut i) => {
+                // A fork that never ran takes this start's environment (its
+                // own token) and ports; a memory fork restores now.
+                let forked = i
+                    .config
+                    .as_ref()
+                    .and_then(|c| c.labels.as_ref())
+                    .is_some_and(|l| l.contains_key("cua.vmm.source"));
+                if forked && never_started(&i) {
+                    let env = i
+                        .config
+                        .as_ref()
+                        .and_then(|c| c.env.clone())
+                        .unwrap_or_default();
+                    let merged = snapshot::merge_env(&env, &spec.env);
+                    if let Some(dir) = restore_dir(&i) {
+                        restored =
+                            Some((snapshot::token_of(&env), snapshot::token_of(&merged), dir));
+                    }
+                    let have = Self::published(&i);
+                    if merged != env || spec.ports.iter().any(|p| !have.contains(p)) {
+                        self.recreate(&spec.name, &i, merged, &spec.ports).await?;
+                        i = self
+                            .inspect(&spec.name)
+                            .await?
+                            .ok_or_else(|| VmmError::NotFound(spec.name.clone()))?;
+                    }
+                }
                 let st = Self::status_from(&i);
                 if st == Status::Paused {
                     self.docker
@@ -950,9 +1281,13 @@ impl Runtime for ContainerRuntime {
                         .map_err(engine_err)?;
                 } else if st != Status::Running {
                     let have = Self::published(&i);
-                    if spec.ports.iter().any(|p| !have.contains(p)) {
-                        // Port bindings are fixed at create time: recreate from a
-                        // commit so filesystem changes survive.
+                    if spec.ports.iter().any(|p| !have.contains(p))
+                        || self.needs_recreate(&spec.name, &i)
+                    {
+                        // Port bindings (and the MAC and capabilities an
+                        // egress policy needs) are fixed at create time:
+                        // recreate from a commit so filesystem changes
+                        // survive.
                         let img = format!("{CKPT_REPO}:{}-rebind", spec.name);
                         self.commit(
                             &spec.name,
@@ -976,12 +1311,10 @@ impl Runtime for ContainerRuntime {
                             .as_ref()
                             .and_then(|c| c.labels.clone())
                             .unwrap_or_default();
-                        self.create(&spec.name, &img, spec, labels, None).await?;
+                        self.create(&spec.name, &img, spec, labels, None, None)
+                            .await?;
                     }
-                    self.docker
-                        .start_container(&spec.name, None)
-                        .await
-                        .map_err(engine_err)?;
+                    self.start_policed(&spec.name).await?;
                 }
                 self.inspect(&spec.name)
                     .await?
@@ -1017,23 +1350,80 @@ impl Runtime for ContainerRuntime {
                 crate::progress::report(crate::progress::Progress::phase(
                     crate::progress::Phase::Creating,
                 ));
-                self.create(&spec.name, reference, spec, HashMap::new(), platform)
+                // A warm-pool member's token (its pool secret) goes into a
+                // file instead of the environment: the environment is fixed
+                // for the container's life, and the Space that claims it
+                // must keep its own token across restarts.
+                let original = spec;
+                let (spec, secret) = pool_member_spec(spec)?;
+                let spec = spec.as_ref();
+                // Warm: restore this configuration's golden checkpoint.
+                let plan = self.golden_plan(original, reference).await;
+                if let Some(rec) = plan.as_ref().and_then(|p| p.record.as_ref()) {
+                    match self
+                        .start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
+                        .await
+                    {
+                        Ok(inst) => return Ok(inst),
+                        Err(e) => {
+                            // A checkpoint this engine cannot restore any more
+                            // (a new runsc, a changed kernel): drop it, boot cold.
+                            tracing::warn!(name = spec.name, error = %e, "golden checkpoint did not restore; booting cold");
+                            let _ = self
+                                .docker
+                                .remove_container(
+                                    &spec.name,
+                                    Some(RemoveContainerOptions {
+                                        force: true,
+                                        ..Default::default()
+                                    }),
+                                )
+                                .await;
+                            self.drop_golden(rec).await;
+                        }
+                    }
+                }
+                record_golden = plan
+                    .filter(|p| p.record.is_none())
+                    .map(|p| (p, reference.clone()));
+                // A host port picked for a published port can be taken
+                // inside the engine's machine by the time the container
+                // starts (the built-in runtime picks numbers on the Mac):
+                // start again with new ones.
+                let mut attempt = 0;
+                loop {
+                    attempt += 1;
+                    self.create(
+                        &spec.name,
+                        reference,
+                        spec,
+                        HashMap::new(),
+                        platform.clone(),
+                        None,
+                    )
                     .await?;
-                crate::progress::report(crate::progress::Progress::phase(
-                    crate::progress::Phase::Booting,
-                ));
-                if let Err(e) = self.docker.start_container(&spec.name, None).await {
-                    let _ = self
-                        .docker
-                        .remove_container(
-                            &spec.name,
-                            Some(RemoveContainerOptions {
-                                force: true,
-                                ..Default::default()
-                            }),
-                        )
-                        .await;
-                    return Err(engine_err(e));
+                    if let Some(secret) = &secret
+                        && let Err(e) = self.write_token_file(&spec.name, secret).await
+                    {
+                        self.remove_force(&spec.name).await;
+                        return Err(e);
+                    }
+                    crate::progress::report(crate::progress::Progress::phase(
+                        crate::progress::Phase::Booting,
+                    ));
+                    match self.start_policed(&spec.name).await {
+                        Ok(()) => break,
+                        Err(e) => {
+                            self.unpolice(&spec.name).await;
+                            self.remove_force(&spec.name).await;
+                            let msg = e.to_string();
+                            if attempt < PORT_CONFLICT_ATTEMPTS && is_port_conflict(&msg) {
+                                tracing::info!(name = spec.name, attempt, error = %msg, "host port taken; starting with new ones");
+                                continue;
+                            }
+                            return Err(e);
+                        }
+                    }
                 }
                 self.inspect(&spec.name)
                     .await?
@@ -1046,6 +1436,32 @@ impl Runtime for ContainerRuntime {
                 "container '{}' exited right after start (status {:?})",
                 spec.name, inst.status
             )));
+        }
+        if let Some((auth, token, dir)) = restored {
+            let spacesd = inst
+                .endpoints
+                .host_port(snapshot::SPACESD_PORT)
+                .map(|p| format!("http://{}:{p}", inst.endpoints.host));
+            if let Err(e) =
+                snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token).await
+            {
+                // A clone must never run on with its source's identity.
+                let _ = self
+                    .docker
+                    .kill_container(
+                        &spec.name,
+                        None::<bollard::query_parameters::KillContainerOptions>,
+                    )
+                    .await;
+                return Err(e);
+            }
+            if dir.contains("/fork-") {
+                // Its private checkpoint is loaded (open files stay readable).
+                let helper = self.helper();
+                tokio::spawn(async move {
+                    let _ = helper.remove(&[&dir]).await;
+                });
+            }
         }
         // Sidecars join the sandbox's network namespace and start before
         // readiness is checked (a probe may target a sidecar's port).
@@ -1065,6 +1481,9 @@ impl Runtime for ContainerRuntime {
             spec.ready_timeout,
         )
         .await?;
+        if let Some((plan, reference)) = record_golden {
+            self.spawn_golden(spec, &reference, plan).await;
+        }
         Ok(inst)
     }
 
@@ -1110,10 +1529,13 @@ impl Runtime for ContainerRuntime {
             .await?
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
         if Self::status_from(&before) == Status::Stopped {
-            self.docker
-                .start_container(name, None)
-                .await
-                .map_err(engine_err)?;
+            if self.needs_recreate(name, &before) {
+                return Err(VmmError::invalid(format!(
+                    "{name} must be recreated for its egress policy before it runs again: \
+                     start it (not resume)"
+                )));
+            }
+            self.start_policed(name).await?;
             for sc in self.sidecar_names(name).await? {
                 let _ = self.docker.start_container(&sc, None).await;
             }
@@ -1140,8 +1562,31 @@ impl Runtime for ContainerRuntime {
         if self.inspect(new_name).await?.is_some() {
             return Err(VmmError::AlreadyExists(new_name.into()));
         }
+        let mut labels = HashMap::new();
+        labels.insert("cua.vmm.source".to_string(), source.to_string());
+        // A fork inherits its source's egress policy (applied at its start).
+        egress::copy(source, new_name)?;
+        // Memory: a running gVisor Space (checkpointed now) or a memory
+        // checkpoint; the fork restores it when it starts.
+        let src = self.inspect(source).await?;
+        if let Some(i) = &src
+            && Self::under_wrapper(i)
+            && Self::status_from(i) == Status::Running
+            && self.support().await.ok()
+        {
+            let rec = self
+                .mem_checkpoint(source, i, &format!("fork-{new_name}"))
+                .await?;
+            return self.create_restoring(new_name, &rec, labels).await;
+        }
+        if src.is_none()
+            && let Some(rec) = snapshot::read_record("checkpoints", source)
+            && rec.engine == self.endpoint.uri
+        {
+            return self.create_restoring(new_name, &rec, labels).await;
+        }
         let mut spec = StartSpec::new(new_name, ImageSource::Existing);
-        let image = if let Some(i) = self.inspect(source).await? {
+        let image = if let Some(i) = src {
             let tag = format!("fork-{new_name}");
             if Self::isolation_from(&i) == Isolation::Gvisor
                 && Self::status_from(&i) == Status::Running
@@ -1180,9 +1625,8 @@ impl Runtime for ContainerRuntime {
         } else {
             return Err(VmmError::NotFound(source.into()));
         };
-        let mut labels = HashMap::new();
-        labels.insert("cua.vmm.source".to_string(), source.to_string());
-        self.create(new_name, &image, &spec, labels, None).await
+        self.create(new_name, &image, &spec, labels, None, None)
+            .await
     }
 
     /// Snapshot the container filesystem to `cua-vmm/checkpoint:<checkpoint>`.
@@ -1197,7 +1641,20 @@ impl Runtime for ContainerRuntime {
             .inspect(name)
             .await?
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
-        if Self::isolation_from(&i) == Isolation::Gvisor && Self::status_from(&i) == Status::Running
+        // Forks of the checkpoint inherit the policy.
+        egress::copy(name, checkpoint)?;
+        if Self::under_wrapper(&i)
+            && Self::status_from(&i) == Status::Running
+            && self.support().await.ok()
+        {
+            // Memory and the root overlay, in well under a second.
+            let mut rec = self
+                .mem_checkpoint(name, &i, &format!("ckpt-{checkpoint}"))
+                .await?;
+            rec.name = checkpoint.to_string();
+            snapshot::write_record("checkpoints", &rec)?;
+        } else if Self::isolation_from(&i) == Isolation::Gvisor
+            && Self::status_from(&i) == Status::Running
         {
             self.export_import(name, &i, checkpoint).await?;
         } else {
@@ -1211,6 +1668,15 @@ impl Runtime for ContainerRuntime {
     }
 
     async fn delete_checkpoint(&self, checkpoint: &str) -> Result<()> {
+        egress::forget(checkpoint);
+        if let Some(rec) = snapshot::read_record("checkpoints", checkpoint) {
+            if rec.engine == self.endpoint.uri {
+                self.helper().ensure().await?;
+                self.helper().remove(&[&rec.dir]).await?;
+            }
+            snapshot::remove_record("checkpoints", checkpoint);
+            return Ok(());
+        }
         let image = format!("{CKPT_REPO}:{checkpoint}");
         match self
             .docker
@@ -1223,6 +1689,27 @@ impl Runtime for ContainerRuntime {
         {
             Ok(_) => Ok(()),
             Err(e) if is_not_found(&e) => Err(VmmError::NotFound(image)),
+            // Forks made from the checkpoint still run on its image ("must
+            // be forced"): forced removal only untags it. The layers stay
+            // for those containers and go with the last of them
+            // ([`Self::drop_orphaned_image`]).
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 409, ..
+            }) => {
+                self.docker
+                    .remove_image(
+                        &image,
+                        Some(bollard::query_parameters::RemoveImageOptions {
+                            force: true,
+                            noprune: true,
+                            ..Default::default()
+                        }),
+                        None,
+                    )
+                    .await
+                    .map_err(engine_err)?;
+                Ok(())
+            }
             Err(e) => Err(engine_err(e)),
         }
     }
@@ -1247,14 +1734,13 @@ impl Runtime for ContainerRuntime {
         Ok(rows
             .into_iter()
             .map(|c| InstanceSummary {
+                // The engine's name first: a warm-pool claim renames the
+                // container, and its labels are fixed at create.
                 name: c
-                    .labels
+                    .names
                     .as_ref()
-                    .and_then(|l| l.get(LABEL_NAME).cloned())
-                    .or_else(|| {
-                        c.names
-                            .and_then(|n| n.first().map(|s| s.trim_start_matches('/').to_string()))
-                    })
+                    .and_then(|n| n.first().map(|s| s.trim_start_matches('/').to_string()))
+                    .or_else(|| c.labels.as_ref().and_then(|l| l.get(LABEL_NAME).cloned()))
                     .unwrap_or_default(),
                 backend: BackendKind::Container,
                 status: match c.state {
@@ -1275,11 +1761,61 @@ impl Runtime for ContainerRuntime {
         Ok(Self::status_from(&i))
     }
 
+    /// On the engine host at once (keyed by the container's MAC, bound to
+    /// its bridge port while it runs); a stopped container that was not
+    /// created for a policy gets it at its next start, recreated first.
+    async fn set_egress(
+        &self,
+        name: &str,
+        policy: &crate::egress::EgressPolicy,
+    ) -> Result<crate::egress::Enforcement> {
+        crate::egress::check(BackendKind::Container, policy)?;
+        let i = self
+            .inspect(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        let running = matches!(Self::status_from(&i), Status::Running | Status::Paused);
+        let previous = egress::kept(name);
+        egress::keep(
+            name,
+            &egress::Kept {
+                policy: policy.clone(),
+                table: previous.as_ref().and_then(|k| k.table.clone()),
+            },
+        )?;
+        if !running && self.needs_recreate(name, &i) {
+            // Applied, recreated, at its next start.
+            return Ok(crate::egress::Enforcement::Host);
+        }
+        if let Err(e) = self.police(name, policy).await {
+            // Keep what was there.
+            match previous {
+                Some(k) => egress::keep(name, &k)?,
+                None => egress::forget(name),
+            }
+            return Err(e);
+        }
+        Ok(crate::egress::Enforcement::Host)
+    }
+
+    async fn egress(&self, name: &str) -> Result<crate::egress::EgressPolicy> {
+        Ok(egress::kept(name).map(|k| k.policy).unwrap_or_default())
+    }
+
     async fn delete(&self, name: &str) -> Result<()> {
         let opts = RemoveContainerOptions {
             force: true,
             v: true,
             ..Default::default()
+        };
+        // A restored container: the engine forgets it, and a fork that never
+        // started still owns its private checkpoint.
+        let (restored, image_id) = match self.inspect(name).await {
+            Ok(Some(i)) => (
+                restore_dir(&i).map(|d| (i.id.clone().unwrap_or_default(), d)),
+                i.image.clone(),
+            ),
+            _ => (None, None),
         };
         // Sidecars first: they hold the sandbox's network namespace.
         for sc in self.sidecar_names(name).await.unwrap_or_default() {
@@ -1287,8 +1823,22 @@ impl Runtime for ContainerRuntime {
         }
         match self.docker.remove_container(name, Some(opts)).await {
             Ok(()) => {}
-            Err(e) if is_not_found(&e) => return Err(VmmError::NotFound(name.into())),
+            Err(e) if is_not_found(&e) => {
+                egress::forget(name);
+                return Err(VmmError::NotFound(name.into()));
+            }
             Err(e) => return Err(engine_err(e)),
+        }
+        self.unpolice(name).await;
+        if let Some((id, dir)) = restored {
+            let helper = self.helper();
+            let _ = helper.forget(&[&id]).await;
+            if dir.contains("/fork-") {
+                let _ = helper.remove(&[&dir]).await;
+            }
+        }
+        if let Some(id) = image_id {
+            self.drop_orphaned_image(&id).await;
         }
         // Intermediate images this backend created for the instance (port
         // rebinds, fork sources). Best effort: still-referenced images stay.
@@ -1335,9 +1885,302 @@ impl Runtime for ContainerRuntime {
         };
         Ok(crate::probe::proc_net_listens(&text, guest_port))
     }
+
+    /// Binds a running warm-pool member to a Space: writes the Space's
+    /// token where the container reads it at every start (so a restart of
+    /// cua-spacesd or of the container keeps it), then renames the
+    /// container `new_name`. The caller rotates the running cua-spacesd's
+    /// token with `Init` (authenticated with the member's pool secret).
+    ///
+    /// A container's hostname is fixed when it is created: every container
+    /// gets the engine's neutral default (its short id), never a Space
+    /// name, so a claimed Space looks like a cold one and `hostname` in
+    /// `identity` is not applied.
+    async fn claim(
+        &self,
+        member: &str,
+        new_name: &str,
+        identity: &ClaimIdentity,
+    ) -> Result<Instance> {
+        validate_name(new_name)?;
+        let i = self
+            .inspect(member)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(member.into()))?;
+        let pooled = i
+            .config
+            .as_ref()
+            .and_then(|c| c.labels.as_ref())
+            .is_some_and(|l| l.contains_key(LABEL_POOL));
+        if !crate::is_pool_member(member) || !pooled {
+            return Err(VmmError::invalid(format!(
+                "{member} is not a warm-pool member"
+            )));
+        }
+        if Self::status_from(&i) != Status::Running {
+            return Err(VmmError::other(format!(
+                "warm-pool member {member} is not running"
+            )));
+        }
+        // By id: the rename runs at the same time.
+        let id = i.id.clone().unwrap_or_else(|| member.to_string());
+        // Two copies: inside the running guest (what a cua-spacesd restart
+        // reads), and in the container's rootfs on the engine's side (what
+        // the next container start reads: gVisor keeps the guest's own
+        // writes in a sandbox overlay that does not outlive the sandbox).
+        let persist = async {
+            match identity.token.as_deref().filter(|t| !t.is_empty()) {
+                Some(token) => {
+                    let (inside, rootfs) = tokio::join!(
+                        self.persist_token(&id, token),
+                        self.write_token_file(&id, token)
+                    );
+                    inside.and(rootfs)
+                }
+                None => Ok(()),
+            }
+        };
+        let rename = async {
+            let opts = bollard::query_parameters::RenameContainerOptions {
+                name: new_name.to_string(),
+            };
+            match self.docker.rename_container(&id, opts).await {
+                Ok(()) => Ok(()),
+                Err(e) if is_not_found(&e) => Err(VmmError::NotFound(member.into())),
+                Err(bollard::errors::Error::DockerResponseServerError {
+                    status_code: 409, ..
+                }) => Err(VmmError::AlreadyExists(new_name.into())),
+                Err(e) => Err(engine_err(e)),
+            }
+        };
+        let (persisted, renamed) = tokio::join!(persist, rename);
+        renamed?;
+        if egress::kept(member).is_some() {
+            egress::copy(member, new_name)?;
+            egress::forget(member);
+        }
+        if let Err(e) = persisted {
+            // Renamed to the Space but without its token on disk: it must
+            // not become the Space. The caller starts it cold.
+            let _ = self
+                .docker
+                .remove_container(
+                    &id,
+                    Some(RemoveContainerOptions {
+                        force: true,
+                        v: true,
+                        ..Default::default()
+                    }),
+                )
+                .await;
+            return Err(e);
+        }
+        Ok(self.instance_from(new_name, &i))
+    }
+}
+
+/// `spec` as a container create needs it: a warm-pool member's Spaces token
+/// (its pool secret) moves out of the environment, returned to be written
+/// to [`TOKEN_FILE`] before the container starts.
+fn pool_member_spec(spec: &StartSpec) -> Result<(std::borrow::Cow<'_, StartSpec>, Option<String>)> {
+    if !spec.pool_member {
+        return Ok((std::borrow::Cow::Borrowed(spec), None));
+    }
+    let mut s = spec.clone();
+    let mut secret = None;
+    for k in TOKEN_ENV {
+        if let Some(v) = s.env.remove(k).filter(|v| !v.is_empty()) {
+            secret.get_or_insert(v);
+        }
+    }
+    let Some(secret) = secret else {
+        return Err(VmmError::invalid(
+            "a warm-pool member needs its pool secret (CUA_ENV_TOKEN)",
+        ));
+    };
+    s.labels
+        .entry(LABEL_POOL.into())
+        .or_insert_with(|| "true".into());
+    Ok((std::borrow::Cow::Owned(s), Some(secret)))
+}
+
+/// Where a container's Spaces token lives when it is not in the
+/// environment (relative to `/`). The Spaces images' `ensure-env-token.sh`
+/// copies it to `/run/cua/env-token` at every container start, where
+/// cua-spacesd reads it.
+const TOKEN_FILE: &str = "etc/cua/env-token";
+
+/// A tar holding `TOKEN_FILE` (root, 0600) with `token`.
+fn token_tar(token: &str) -> Result<Vec<u8>> {
+    let mut b = tar::Builder::new(Vec::new());
+    let mut dir = tar::Header::new_gnu();
+    dir.set_entry_type(tar::EntryType::Directory);
+    dir.set_mode(0o755);
+    dir.set_uid(0);
+    dir.set_gid(0);
+    dir.set_size(0);
+    dir.set_mtime(host::now_secs());
+    b.append_data(&mut dir, "etc/cua/", std::io::empty())?;
+    let body = format!("{token}\n");
+    let mut h = tar::Header::new_gnu();
+    h.set_entry_type(tar::EntryType::Regular);
+    h.set_mode(0o600);
+    h.set_uid(0);
+    h.set_gid(0);
+    h.set_size(body.len() as u64);
+    h.set_mtime(host::now_secs());
+    b.append_data(&mut h, TOKEN_FILE, body.as_bytes())?;
+    Ok(b.into_inner()?)
 }
 
 impl ContainerRuntime {
+    /// Whether the engine runs in a VM whose published ports a forwarder
+    /// opens on this machine under the same number (Colima and the built-in
+    /// runtime, through Lima). The engine picks those numbers from its own
+    /// view, so another engine on this machine (OrbStack, a second VM) may
+    /// already hold one here, and a client would reach the wrong guest:
+    /// such engines get ports this machine has free.
+    fn forwards_ports_by_number(&self) -> bool {
+        matches!(self.endpoint.kind, EngineKind::Colima { .. })
+            || (cfg!(target_os = "macos") && crate::managed::is_endpoint(&self.endpoint.uri))
+    }
+
+    /// Writes a container's Spaces token to [`TOKEN_FILE`] in its rootfs on
+    /// the engine's side: what every later start of the container reads.
+    /// A running gVisor guest does not see it (it keeps its own writes in a
+    /// sandbox overlay over the rootfs as it was at start).
+    async fn write_token_file(&self, name: &str, token: &str) -> Result<()> {
+        let opts = bollard::query_parameters::UploadToContainerOptions {
+            path: "/".into(),
+            ..Default::default()
+        };
+        self.docker
+            .upload_to_container(
+                name,
+                Some(opts),
+                bollard::body_full(bytes::Bytes::from(token_tar(token)?)),
+            )
+            .await
+            .map_err(engine_err)
+    }
+
+    /// Replaces a running container's Spaces token in [`TOKEN_FILE`] and
+    /// in `/run/cua/env-token` (what a cua-spacesd restart reads), keeping
+    /// each file's owner and mode. The token travels on stdin, never argv.
+    async fn persist_token(&self, name: &str, token: &str) -> Result<()> {
+        const SCRIPT: &str = "set -e; t=$(cat); umask 077; mkdir -p /etc/cua; \
+             printf '%s\\n' \"$t\" > /etc/cua/env-token; \
+             if [ -f /run/cua/env-token ]; then printf '%s\\n' \"$t\" > /run/cua/env-token; fi";
+        let req = ExecRequest {
+            user: Some("0".into()),
+            ..ExecRequest::sh(SCRIPT)
+                .stdin(token.as_bytes().to_vec())
+                .timeout(Duration::from_secs(20))
+        };
+        let out = self.exec_handle(name).exec(req).await?;
+        if out.exit_code != 0 {
+            return Err(VmmError::other(format!(
+                "could not store the Space's token in {name} (exit {}): {}",
+                out.exit_code,
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        Ok(())
+    }
+
+    /// This home's warm-pool members ([`LABEL_POOL`] containers still
+    /// named [`crate::POOL_MEMBER_PREFIX`]...), each with whether it runs
+    /// and whether the host keeps its shape warm on purpose
+    /// ([`POOL_KEEP`]).
+    pub async fn pool_members(&self) -> Result<Vec<PoolMemberInfo>> {
+        let mut filters = HashMap::new();
+        filters.insert(
+            "label".to_string(),
+            vec![
+                LABEL_POOL.to_string(),
+                format!("{LABEL_HOME}={}", home_tag()),
+            ],
+        );
+        let opts = ListContainersOptions {
+            all: true,
+            filters: Some(filters),
+            ..Default::default()
+        };
+        let rows = self
+            .docker
+            .list_containers(Some(opts))
+            .await
+            .map_err(engine_err)?;
+        use bollard::models::ContainerSummaryStateEnum as S;
+        Ok(rows
+            .into_iter()
+            .filter_map(|c| {
+                let name = c
+                    .names
+                    .as_ref()?
+                    .first()?
+                    .trim_start_matches('/')
+                    .to_string();
+                crate::is_pool_member(&name).then(|| PoolMemberInfo {
+                    keep: c
+                        .labels
+                        .as_ref()
+                        .and_then(|l| l.get(LABEL_POOL))
+                        .is_some_and(|v| v == POOL_KEEP),
+                    running: matches!(c.state, Some(S::RUNNING) | Some(S::PAUSED)),
+                    name,
+                })
+            })
+            .collect())
+    }
+
+    /// The engine's memory in MiB (the VM's, for an engine in a VM).
+    pub async fn memory_total_mb(&self) -> Option<u64> {
+        let info = self.docker.info().await.ok()?;
+        info.mem_total
+            .and_then(|b| u64::try_from(b).ok())
+            .map(|b| b / (1024 * 1024))
+            .filter(|mb| *mb > 0)
+    }
+
+    /// What container `name` uses now in MiB (its memory less the page
+    /// cache it could drop, as `docker stats` counts it).
+    pub async fn memory_used_mb(&self, name: &str) -> Option<u64> {
+        let opts = bollard::query_parameters::StatsOptions {
+            stream: false,
+            one_shot: true,
+        };
+        let s = self.docker.stats(name, Some(opts)).next().await?.ok()?;
+        let m = s.memory_stats?;
+        let usage = m.usage?;
+        let cache = m
+            .stats
+            .as_ref()
+            .and_then(|st| {
+                st.get("inactive_file")
+                    .or_else(|| st.get("total_inactive_file"))
+            })
+            .copied()
+            .unwrap_or(0);
+        Some(usage.saturating_sub(cache) / (1024 * 1024))
+    }
+
+    /// Every running container of the engine (this home's or not), for
+    /// what the engine's memory holds.
+    pub async fn running_containers(&self) -> Result<Vec<String>> {
+        let rows = self
+            .docker
+            .list_containers(Some(ListContainersOptions {
+                all: false,
+                ..Default::default()
+            }))
+            .await
+            .map_err(engine_err)?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|c| Some(c.names?.first()?.trim_start_matches('/').to_string()))
+            .collect())
+    }
     /// The OCI runtime for `spec`'s containers: the explicit
     /// [`StartSpec::container_runtime`], else the engine's choice (gVisor
     /// when available). Sidecars under gVisor are refused (see
@@ -1428,6 +2271,152 @@ impl ContainerRuntime {
             .collect())
     }
 
+    /// Replaces never-started container `name` (`i`) by one with `env` and
+    /// `ports` added to its published ports; everything else (image,
+    /// command, labels, runtime, restore annotation) is kept.
+    async fn recreate(
+        &self,
+        name: &str,
+        i: &bollard::models::ContainerInspectResponse,
+        env: Vec<String>,
+        ports: &[u16],
+    ) -> Result<()> {
+        let cfg = i.config.clone().unwrap_or_default();
+        let mut hc = i.host_config.clone().unwrap_or_default();
+        let mut bindings = hc.port_bindings.clone().unwrap_or_default();
+        let mut exposed = cfg.exposed_ports.clone().unwrap_or_default();
+        for p in ports {
+            let key = format!("{p}/tcp");
+            if !exposed.contains(&key) {
+                exposed.push(key.clone());
+            }
+            bindings.entry(key).or_insert_with(|| {
+                Some(vec![PortBinding {
+                    host_ip: Some("127.0.0.1".into()),
+                    host_port: Some(String::new()),
+                }])
+            });
+        }
+        hc.port_bindings = Some(bindings);
+        let mut labels = cfg.labels;
+        let networking_config = match self.mac_config(name).await {
+            Some((net, mac)) => {
+                labels
+                    .get_or_insert_with(Default::default)
+                    .insert(egress::LABEL_MAC.into(), mac);
+                Some(net)
+            }
+            None => None,
+        };
+        if egress::blocks(name) {
+            hc.cap_drop = Some(vec!["NET_RAW".into()]);
+        }
+        let body = ContainerCreateBody {
+            image: cfg.image,
+            env: Some(env),
+            entrypoint: cfg.entrypoint,
+            cmd: cfg.cmd,
+            labels,
+            exposed_ports: (!exposed.is_empty()).then_some(exposed),
+            working_dir: cfg.working_dir,
+            user: cfg.user,
+            stop_signal: cfg.stop_signal,
+            // Kept as created (off, see `create_body`).
+            healthcheck: cfg.healthcheck.or_else(|| Some(no_healthcheck())),
+            host_config: Some(hc),
+            networking_config,
+            ..Default::default()
+        };
+        self.docker
+            .remove_container(
+                name,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(engine_err)?;
+        self.docker
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: Some(name.to_string()),
+                    platform: String::new(),
+                }),
+                body,
+            )
+            .await
+            .map_err(engine_err)?;
+        Ok(())
+    }
+
+    /// A fresh start served by golden checkpoint `rec`: the container is
+    /// created with `spec` (its own token), restores the checkpoint,
+    /// rotates the golden token to its own and is ready.
+    async fn start_warm(
+        &self,
+        spec: &StartSpec,
+        reference: &str,
+        platform: Option<String>,
+        rec: &snapshot::SnapRecord,
+        secret: Option<&str>,
+    ) -> Result<Instance> {
+        let started = std::time::Instant::now();
+        self.create(
+            &spec.name,
+            reference,
+            spec,
+            HashMap::new(),
+            platform,
+            Some(&rec.dir),
+        )
+        .await?;
+        // A warm-pool member's pool secret, where a restart reads it.
+        if let Some(secret) = secret {
+            self.write_token_file(&spec.name, secret).await?;
+        }
+        crate::progress::report(crate::progress::Progress::phase(
+            crate::progress::Phase::Booting,
+        ));
+        self.start_policed(&spec.name).await?;
+        let info = self
+            .inspect(&spec.name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(spec.name.clone()))?;
+        let inst = self.instance_from(&spec.name, &info);
+        if inst.status != Status::Running {
+            return Err(VmmError::other(format!(
+                "container '{}' exited right after its restore",
+                spec.name
+            )));
+        }
+        let restored_ms = started.elapsed().as_millis() as u64;
+        let spacesd = inst
+            .endpoints
+            .host_port(snapshot::SPACESD_PORT)
+            .map(|p| format!("http://{}:{p}", inst.endpoints.host));
+        let token = secret.map(str::to_string).or_else(|| {
+            snapshot::TOKEN_KEYS
+                .iter()
+                .find_map(|k| spec.env.get(*k).filter(|v| !v.is_empty()).cloned())
+        });
+        snapshot::give_identity(&self.docker, &spec.name, spacesd, rec.token(), token).await?;
+        self.wait_probes(
+            &spec.name,
+            &inst.endpoints,
+            &spec.probes,
+            spec.ready_timeout,
+        )
+        .await?;
+        tracing::info!(
+            name = spec.name,
+            restored_ms,
+            ms = started.elapsed().as_millis() as u64,
+            "gVisor Space started warm"
+        );
+        Ok(inst)
+    }
+
     /// Readiness probes where a TCP probe asks the container's netns
     /// ([`Runtime::guest_tcp_listening`]) and only falls back to the
     /// host-side check when the image cannot answer.
@@ -1440,6 +2429,7 @@ impl ContainerRuntime {
     ) -> Result<()> {
         let deadline = tokio::time::Instant::now() + timeout;
         for probe in probes {
+            let mut backoff = crate::probe::Backoff::default();
             loop {
                 let ok = match probe {
                     Probe::Tcp { port } => match self.guest_tcp_listening(name, *port).await? {
@@ -1470,7 +2460,7 @@ impl ContainerRuntime {
                         detail: format!("probe {probe:?} never passed"),
                     });
                 }
-                tokio::time::sleep(Duration::from_millis(750)).await;
+                tokio::time::sleep(backoff.step()).await;
             }
         }
         Ok(())
@@ -1689,6 +2679,47 @@ impl GuestExec for DockerExec {
     }
 }
 
+/// Gives every binding of `bindings` without a host port one this machine
+/// has free on loopback now (see
+/// [`ContainerRuntime::forwards_ports_by_number`]).
+/// Starts of one container that may meet a taken host port
+/// ([`is_port_conflict`]).
+const PORT_CONFLICT_ATTEMPTS: u32 = 3;
+
+/// Whether an engine error says a published host port was taken when the
+/// container started.
+fn is_port_conflict(msg: &str) -> bool {
+    msg.contains("failed to bind host port")
+        || msg.contains("port is already allocated")
+        || (msg.contains("programming external connectivity")
+            && msg.contains("address already in use"))
+}
+
+fn pick_host_ports(bindings: &mut HashMap<String, Option<Vec<PortBinding>>>) -> Result<()> {
+    // Held until all are chosen, so one create never picks a port twice.
+    let mut held = Vec::new();
+    for b in bindings.values_mut().flatten().flatten() {
+        if b.host_port.as_deref().is_some_and(|p| !p.is_empty()) {
+            continue;
+        }
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+        b.host_port = Some(l.local_addr()?.port().to_string());
+        held.push(l);
+    }
+    Ok(())
+}
+
+/// One warm-pool member container ([`ContainerRuntime::pool_members`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoolMemberInfo {
+    /// Container name ([`crate::POOL_MEMBER_PREFIX`]...).
+    pub name: String,
+    /// Running (or paused).
+    pub running: bool,
+    /// Its shape is kept warm on purpose ([`POOL_KEEP`]).
+    pub keep: bool,
+}
+
 /// The Docker create body for a sandbox container. The guest environment
 /// (`StartSpec::env`, e.g. the SDK-minted `CUA_ENV_TOKEN`) goes into the
 /// container environment, where cua-spacesd / the image's
@@ -1746,11 +2777,22 @@ fn create_body(
             .map(|_| Vec::new()),
         labels: Some(labels),
         exposed_ports: (!exposed.is_empty()).then_some(exposed),
+        // No image HEALTHCHECK: cua has its own readiness and never reads
+        // Docker's health, and the check is a `docker exec` into every
+        // Space on its interval (the Linux images: every 10 s), which under
+        // gVisor costs a sandbox exec each time (445 idle Spaces: ~44
+        // execs/s; turning it off took 256 gVisor Spaces on an M2 Max
+        // from 184 to 355 rollout steps/s).
+        healthcheck: Some(no_healthcheck()),
+        // An injected cua-spacesd runs as root; it starts the image's
+        // command as the image's user.
+        user: spec.inject_spacesd.as_ref().map(|_| "0".to_string()),
         host_config: Some(HostConfig {
             // Under gVisor, SYS_ADMIN lets cua-spacesd mount Cua Volume
             // (FUSE) in the guest. The capability applies inside gVisor's
             // own kernel, not the host's; runc containers do not get it.
-            cap_add: (runtime == "runsc").then(|| vec!["SYS_ADMIN".to_string()]),
+            cap_add: matches!(runtime.as_str(), "runsc" | snapshot::WRAPPER_RUNTIME)
+                .then(|| vec!["SYS_ADMIN".to_string()]),
             runtime: Some(runtime),
             port_bindings: Some(bindings),
             nano_cpus: Some(i64::from(spec.cpus) * 1_000_000_000),
@@ -1758,8 +2800,52 @@ fn create_body(
             shm_size: Some(shm_size_bytes(spec.memory_mb)),
             extra_hosts: sidecar_hosts(spec),
             device_requests: gpu_requests(spec),
+            binds: mount_binds(spec),
+            // When the machine runs out of memory, a Space goes before the
+            // engine or the host's own agent (which reports and recovers).
+            oom_score_adj: Some(SPACE_OOM_SCORE_ADJ),
             ..Default::default()
         }),
+        ..Default::default()
+    }
+}
+
+/// The run config (`ENTRYPOINT`, `CMD`, `User`, `WorkingDir`) of an image
+/// as the engine reports it.
+fn run_config_of(cfg: Option<&bollard::models::ImageConfig>) -> crate::OciRunConfig {
+    let Some(c) = cfg else {
+        return crate::OciRunConfig::default();
+    };
+    crate::OciRunConfig {
+        entrypoint: c.entrypoint.clone().unwrap_or_default(),
+        cmd: c.cmd.clone().unwrap_or_default(),
+        env: c.env.clone().unwrap_or_default(),
+        working_dir: c.working_dir.clone().filter(|w| !w.is_empty()),
+        user: c.user.clone().filter(|u| !u.is_empty()),
+    }
+}
+
+/// `host:guest[:ro]` binds for [`StartSpec::mounts`] (`None` without any).
+fn mount_binds(spec: &StartSpec) -> Option<Vec<String>> {
+    (!spec.mounts.is_empty()).then(|| {
+        spec.mounts
+            .iter()
+            .map(|m| {
+                format!(
+                    "{}:{}{}",
+                    m.host.display(),
+                    m.guest,
+                    if m.read_only { ":ro" } else { "" }
+                )
+            })
+            .collect()
+    })
+}
+
+/// Docker's way to turn off an image's HEALTHCHECK.
+fn no_healthcheck() -> bollard::models::HealthConfig {
+    bollard::models::HealthConfig {
+        test: Some(vec!["NONE".into()]),
         ..Default::default()
     }
 }
@@ -1907,6 +2993,60 @@ fn sidecar_body(sandbox: &str, sc: &SidecarSpec, runtime: String) -> ContainerCr
     }
 }
 
+/// Tries at one container image pull: a network drop mid-pull is common on
+/// home and mobile networks, and a second try continues from the layers the
+/// engine already has.
+const PULL_ATTEMPTS: u32 = 3;
+
+/// The pause before try `attempt` + 1 (2 s, then 4 s).
+fn pull_retry_delay(attempt: u32) -> std::time::Duration {
+    std::time::Duration::from_secs(2u64 << attempt.saturating_sub(1).min(3))
+}
+
+/// Whether a pull's error is the network dropping (worth another try), not
+/// the image, the credentials or the disk (which a retry cannot fix).
+fn pull_error_is_transient(message: &str) -> bool {
+    let l = message.to_ascii_lowercase();
+    const PERMANENT: &[&str] = &[
+        "not found",
+        "manifest unknown",
+        "unauthorized",
+        "denied",
+        "authentication required",
+        "no space left",
+        "invalid reference",
+        "no matching manifest",
+        "toomanyrequests",
+        "rate limit",
+    ];
+    if PERMANENT.iter().any(|p| l.contains(p)) {
+        return false;
+    }
+    const TRANSIENT: &[&str] = &[
+        "timeout",
+        "timed out",
+        "connection reset",
+        "connection refused",
+        "connection closed",
+        "broken pipe",
+        "unexpected eof",
+        "unexpected end of",
+        "tls handshake",
+        "temporary failure",
+        "no such host",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "502",
+        "503",
+        "504",
+        "i/o error",
+        "network is unreachable",
+        "eof",
+    ];
+    TRANSIENT.iter().any(|t| l.contains(t))
+}
+
 /// Share of a container image pull spent downloading layers (the rest is
 /// extracting them), from a measured cold pull of `linux:24.04-slim` on an
 /// Apple silicon Mac (Docker 29, containerd image store): about 6 s down,
@@ -1929,6 +3069,29 @@ fn pull_fraction(download: Option<f64>, extract: Option<f64>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pool_hosts_can_require_gvisor_by_environment() {
+        assert!(require_gvisor_from(Some("1")));
+        assert!(require_gvisor_from(Some(" true ")));
+        assert!(!require_gvisor_from(Some("0")));
+        assert!(!require_gvisor_from(Some("")));
+        assert!(!require_gvisor_from(None));
+    }
+
+    #[tokio::test]
+    async fn concurrent_pulls_of_one_image_take_turns() {
+        let a = pull_gate("registry.example/img:1");
+        let b = pull_gate("registry.example/img:1");
+        let other = pull_gate("registry.example/img:2");
+        assert!(std::sync::Arc::ptr_eq(&a, &b));
+        assert!(!std::sync::Arc::ptr_eq(&a, &other));
+        let held = a.lock().await;
+        assert!(b.try_lock().is_err(), "a second pull of the image waits");
+        assert!(other.try_lock().is_ok(), "another image does not");
+        drop(held);
+        assert!(b.try_lock().is_ok());
+    }
 
     fn inspected(
         status: bollard::models::ContainerStateStatusEnum,
@@ -1979,6 +3142,45 @@ mod tests {
     }
 
     #[test]
+    fn a_dropped_network_is_retried_but_a_bad_image_or_disk_is_not() {
+        for m in [
+            "error pulling image: net/http: TLS handshake timeout",
+            "read tcp 10.0.0.2:5000: connection reset by peer",
+            "Get \"https://registry-1.docker.io/v2/\": dial tcp: lookup registry-1.docker.io: no such host",
+            "unexpected EOF",
+            "Error response from daemon: received unexpected HTTP status: 503 Service Unavailable",
+        ] {
+            assert!(pull_error_is_transient(m), "{m}");
+        }
+        for m in [
+            "manifest for cua/x:1 not found: manifest unknown",
+            "pull access denied for x, repository does not exist or may require authorization",
+            "unauthorized: authentication required",
+            "write /var/lib/docker/tmp: no space left on device",
+            "toomanyrequests: You have reached your pull rate limit (timeout)",
+            "boom",
+        ] {
+            assert!(!pull_error_is_transient(m), "{m}");
+        }
+    }
+
+    #[test]
+    fn the_pull_pauses_grow_and_stay_short() {
+        assert_eq!(pull_retry_delay(1), std::time::Duration::from_secs(2));
+        assert_eq!(pull_retry_delay(2), std::time::Duration::from_secs(4));
+        assert!(pull_retry_delay(9) <= std::time::Duration::from_secs(16));
+    }
+
+    #[test]
+    fn bulk_timeout_defaults_and_overrides() {
+        assert_eq!(bulk_timeout_from(None), Duration::from_secs(1800));
+        assert_eq!(bulk_timeout_from(Some("7200")), Duration::from_secs(7200));
+        assert_eq!(bulk_timeout_from(Some("0")), Duration::from_secs(1800));
+        assert_eq!(bulk_timeout_from(Some("abc")), Duration::from_secs(1800));
+        assert!(bulk_timeout() > Duration::from_secs(120));
+    }
+
+    #[test]
     fn manifest_layers_give_a_pull_its_total_and_count_what_exists() {
         let a = format!("sha256:{}", "a1".repeat(32));
         let b = format!("sha256:{}", "b2".repeat(32));
@@ -2012,6 +3214,62 @@ mod tests {
         assert_eq!(ext.fraction_of("b"), None);
         ext.complete("a");
         assert_eq!(pull_fraction(down.fraction(), ext.fraction()), Some(1.0));
+    }
+
+    #[test]
+    fn mounts_become_binds_read_only_when_asked() {
+        let mut spec = StartSpec::new(
+            "sb",
+            ImageSource::Oci {
+                reference: "img:1".into(),
+            },
+        );
+        let plain = create_body("sb", "img:1", &spec, HashMap::new(), "runsc".into());
+        assert_eq!(plain.host_config.unwrap().binds, None);
+        spec.mounts = vec![
+            crate::Mount {
+                host: "/srv/cua/jobs/cj-1".into(),
+                guest: "/cua/job".into(),
+                read_only: false,
+            },
+            crate::Mount {
+                host: "/srv/cua/tools".into(),
+                guest: "/cua/tools".into(),
+                read_only: true,
+            },
+        ];
+        let body = create_body("sb", "img:1", &spec, HashMap::new(), "runsc".into());
+        assert_eq!(
+            body.host_config.unwrap().binds.unwrap(),
+            [
+                "/srv/cua/jobs/cj-1:/cua/job",
+                "/srv/cua/tools:/cua/tools:ro"
+            ]
+        );
+        // Checked before anything is created: absolute existing host
+        // directories, absolute guest paths, each guest path once.
+        let e = crate::types::check_mounts(BackendKind::Container, &spec.mounts)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("existing directory"), "{e}");
+        let dir = tempfile::tempdir().unwrap();
+        let ok = vec![crate::Mount {
+            host: dir.path().to_path_buf(),
+            guest: "/cua/job".into(),
+            read_only: false,
+        }];
+        crate::types::check_mounts(BackendKind::Container, &ok).unwrap();
+        let mut twice = ok.clone();
+        twice.push(ok[0].clone());
+        assert!(
+            crate::types::check_mounts(BackendKind::Container, &twice)
+                .unwrap_err()
+                .to_string()
+                .contains("two mounts at /cua/job")
+        );
+        let mut relative = ok.clone();
+        relative[0].guest = "cua/job".into();
+        assert!(crate::types::check_mounts(BackendKind::Container, &relative).is_err());
     }
 
     #[test]
@@ -2145,11 +3403,28 @@ mod tests {
     }
 
     #[test]
+    fn a_taken_host_port_is_told_apart() {
+        assert!(is_port_conflict(
+            "Docker responded with status code 500: failed to set up container networking: driver failed programming external connectivity on endpoint s (x): failed to bind host port 127.0.0.1:60052/tcp: address already in use"
+        ));
+        assert!(is_port_conflict(
+            "Bind for 127.0.0.1:5000 failed: port is already allocated"
+        ));
+        assert!(!is_port_conflict("no such image: x"));
+        assert!(!is_port_conflict("OCI runtime create failed"));
+    }
+
+    #[test]
     fn create_body_carries_the_env_token() {
         let spec = StartSpec::new("sb", ImageSource::Existing)
             .env("CUA_ENV_TOKEN", "tok123")
             .port(3211);
         let body = create_body("sb", "img:1", &spec, HashMap::new(), "runsc".into());
+        assert_eq!(
+            body.healthcheck.as_ref().and_then(|h| h.test.clone()),
+            Some(vec!["NONE".to_string()]),
+            "the image's HEALTHCHECK is off (an exec into every Space every 10 s)"
+        );
         let env = body.env.unwrap();
         assert!(env.contains(&"CUA_ENV_TOKEN=tok123".to_string()), "{env:?}");
         let hc = body.host_config.unwrap();
@@ -2225,6 +3500,51 @@ mod tests {
             home_tag_for(std::path::Path::new("/a/.cua")),
             home_tag_for(std::path::Path::new("/b/.cua"))
         );
+    }
+
+    #[test]
+    fn an_injected_spacesd_starts_as_root() {
+        let mut spec = StartSpec::new("sb", ImageSource::Existing);
+        assert_eq!(
+            create_body("sb", "img:1", &spec, HashMap::new(), "runsc".into()).user,
+            None,
+            "the image's own user"
+        );
+        spec.inject_spacesd = Some("/host/cua-spacesd-linux-aarch64".into());
+        spec.command = Some(crate::inject::wrapper_command(
+            &crate::OciRunConfig {
+                user: Some("node".into()),
+                ..Default::default()
+            },
+            None,
+        ));
+        let body = create_body("sb", "img:1", &spec, HashMap::new(), "runsc".into());
+        assert_eq!(body.user.as_deref(), Some("0"));
+        assert_eq!(
+            body.entrypoint
+                .as_deref()
+                .and_then(|e| e.first())
+                .map(String::as_str),
+            Some(crate::inject::GUEST_PATH)
+        );
+    }
+
+    #[test]
+    fn an_images_config_becomes_a_run_config() {
+        let cfg = bollard::models::ImageConfig {
+            entrypoint: Some(vec!["/entry".into()]),
+            cmd: Some(vec!["serve".into()]),
+            user: Some("app".into()),
+            working_dir: Some("".into()),
+            env: Some(vec!["A=1".into()]),
+            ..Default::default()
+        };
+        let run = run_config_of(Some(&cfg));
+        assert_eq!(run.entrypoint, ["/entry"]);
+        assert_eq!(run.cmd, ["serve"]);
+        assert_eq!(run.user.as_deref(), Some("app"));
+        assert_eq!(run.working_dir, None, "an empty WorkingDir is none");
+        assert_eq!(run_config_of(None), crate::OciRunConfig::default());
     }
 
     #[test]

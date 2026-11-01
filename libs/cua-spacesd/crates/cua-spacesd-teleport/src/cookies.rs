@@ -81,9 +81,9 @@ pub fn ensure_safe_storage_secret(
         return Ok(existing);
     }
     let mut raw = [0u8; 32];
-    // rand 0.8 (this workspace's pinned version): `thread_rng()`, not the
-    // 0.9 `rand::rng()` free function.
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut raw);
+    // The OS RNG, never a userspace PRNG: a guest restored from a memory
+    // snapshot shares that PRNG's state with every other clone.
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut raw);
     let secret = hex::encode(raw).into_bytes();
     // Created with the browser trusted from the start: its team id goes in the
     // item's partition list, so the browser reads its own key without the
@@ -240,7 +240,7 @@ impl DestCipher {
             DestCipher::Cbc(k) => chromium_crypto::encrypt_v10(k, plain),
             DestCipher::Gcm(k) => {
                 let mut nonce = [0u8; 12];
-                rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
+                rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut nonce);
                 chromium_crypto::gcm::encrypt(k, &nonce, plain)
             }
         }
@@ -261,7 +261,7 @@ pub(crate) fn destination_cipher(
     if platform == Platform::Windows {
         let existed = local_state.is_file();
         let mut random = [0u8; 32];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut random);
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut random);
         let (key, created) =
             cua_chromium_storage::dpapi::ensure_local_state_key(local_state, dpapi, random)
                 .map_err(|e| TeleportError::Provider(format!("Windows browser key: {e}")))?;

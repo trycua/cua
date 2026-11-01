@@ -647,6 +647,9 @@ mod space_side {
         /// choice; `None`: those of `cookie_domains`).
         #[uniffi(default = None)]
         pub password_domains: Option<Vec<String>>,
+        /// The browser profile to read (`Profile 1`); `None`: `Default`.
+        #[uniffi(default = None)]
+        pub profile: Option<String>,
     }
 
     /// One progress event of [`Teleport::run`].
@@ -878,6 +881,7 @@ mod space_side {
                     from_vault: consent.from_vault.clone(),
                     include_passwords: consent.include_passwords,
                     password_domains: consent.password_domains.clone(),
+                    profile: consent.profile.clone(),
                 })
                 .map_err(crate::teleport_app::ux_err)?;
             let sessions = sessions(self);

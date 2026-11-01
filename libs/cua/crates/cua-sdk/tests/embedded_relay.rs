@@ -13,7 +13,7 @@
 use cua_host::testing::FakeRelay;
 use cua_sdk::{Cua, CuaConfig};
 
-/// cua.local as the user's Mac saw it: online, sharing, desktop not shared
+/// A spare Mac as the user's Mac saw it: online, sharing, desktop not shared
 /// (spacesd 0.2.2 from an older app), and the user's Mac itself, not sharing.
 const OTHER_MAC: &str = "9e9d969d41649428f693b403f6f8f225";
 const THIS_MAC: &str = "b6953d14ff94b10fcbb38bdd13c47824";

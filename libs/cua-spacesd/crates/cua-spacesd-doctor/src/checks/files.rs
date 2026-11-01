@@ -96,6 +96,7 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
                 destination: moved.clone(),
                 overwrite: true,
                 create_parents: false,
+                ..Default::default()
             })
             .await
         {
@@ -148,6 +149,7 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
                     path: dir.clone(),
                     recursive: false,
                     keepalive_interval: None,
+                    ..Default::default()
                 })
                 .await
             {
@@ -309,6 +311,7 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
                     upload_id: begun.upload_id.clone(),
                     offset: 0,
                     data: over,
+                    ..Default::default()
                 })
                 .await;
             let _ = fs

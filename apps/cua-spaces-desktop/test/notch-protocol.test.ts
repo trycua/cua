@@ -44,7 +44,7 @@ function bindingView() {
         targeted: false,
         symbol: "ubuntu",
         label: "build, starting",
-        location: "Cua Cloud",
+        location: "This Mac",
         progress: 420,
         progressLabel: "Starting",
         signedIn: false,

@@ -17,7 +17,7 @@ use super::bindings::{
     copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
 use super::snapshot::RetainedElement;
-use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
+use crate::windows::{all_windows_without_spaces, resolve_window_owner, WindowOwner};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
@@ -282,8 +282,9 @@ fn count_competing_keyboard_destinations(
 ///
 /// `element_ptr` is an optional retained `AXUIElementRef` (as `usize`) for an
 /// explicitly addressed element; the caller must keep it retained for the
-/// duration of this call. Blocking: performs one CGWindowList enumeration and
-/// bounded AX reads. Call from a blocking context immediately before deciding.
+/// duration of this call. Blocking: performs up to two Space-free CGWindowList
+/// enumerations and bounded AX reads. Call from a blocking context immediately
+/// before deciding.
 pub fn gather_background_facts(
     pid: i32,
     window_id: u32,
@@ -337,13 +338,15 @@ pub fn gather_background_facts(
     let competing_keyboard_destinations = count_competing_keyboard_destinations(
         pid,
         window_id,
-        all_windows().iter().map(|window| WindowServerRow {
-            pid: window.pid,
-            window_id: window.window_id,
-            visible: window.is_on_screen
-                && window.bounds.width >= 2.0
-                && window.bounds.height >= 2.0,
-        }),
+        all_windows_without_spaces()
+            .iter()
+            .map(|window| WindowServerRow {
+                pid: window.pid,
+                window_id: window.window_id,
+                visible: window.is_on_screen
+                    && window.bounds.width >= 2.0
+                    && window.bounds.height >= 2.0,
+            }),
         &records,
         target.is_some() && focused_window_id == Some(window_id),
     );

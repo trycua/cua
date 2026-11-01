@@ -23,6 +23,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -323,6 +324,15 @@ async def env_smoke(env: "cua.SpacesdClient", *, desktop: bool, mock: bool = Fal
     await proc.close_stdin()
     assert (await proc.wait()).stdout == b"xyz"
 
+    # kill_on_disconnect: letting go of the starting stream ends the process.
+    tag = f"kod-py-{RUN}"
+    proc = await env.spawn(
+        cua.SpacesdCommand(program="cat", args=[], stdin=True, tag=tag, kill_on_disconnect=True)
+    )
+    await proc.detach()
+    ended = await (await env.attach(None, tag, cua.ReplayMode.NONE())).wait()
+    assert not ended.exit.success, ended.exit
+
     blob = bytes(i % 251 for i in range(1 << 20))
     path = f"/tmp/cua-e2e-{RUN}/blob.bin"
     up = await env.upload(path, blob, None)
@@ -447,6 +457,121 @@ def cua_daemon() -> Iterator[Daemon]:
         shutil.rmtree(home, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- cua share
+
+
+SHARE_MACHINE = "0123456789abcdef0123456789abcdef"
+
+
+@dataclass
+class ShareDaemon:
+    daemon: Daemon
+    relay_url: str
+
+    def client(self) -> "cua.Cua":
+        return self.daemon.client()
+
+    def get(self, url: str, bearer: Optional[str] = None) -> tuple[int, bytes]:
+        return http_get(url, headers={"authorization": f"Bearer {bearer}"} if bearer else None)
+
+
+@contextlib.contextmanager
+def share_daemon() -> Iterator[ShareDaemon]:
+    """A real ``cua daemon`` that is a signed-in relay host, with the relay
+    and the host's spacesd stood in by fixtures/share_relay.py (the
+    daemon's own side is not mocked). The relay's owner token is ``owner``,
+    another account's ``other``; no token is anonymous."""
+    import tempfile
+
+    import pytest
+
+    binary = cua_cli()
+    if binary is None:
+        pytest.skip("the cua CLI is not built")
+    home = Path(tempfile.mkdtemp(prefix=f"cua-share-{RUN}-", dir="/tmp"))
+    (home / "host").mkdir()
+    (home / "credentials.json").write_text(
+        json.dumps(
+            {
+                "access_token": "owner",
+                "refresh_token": None,
+                "expires_at": "2099-01-01T00:00:00Z",
+                "token_type": "Bearer",
+            }
+        )
+    )
+    relay = subprocess.Popen(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[1] / "fixtures" / "share_relay.py"),
+            "--gateway",
+            str(home / "share" / "gateway.sock"),
+            "--machine-id",
+            SHARE_MACHINE,
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        relay_url = json.loads(relay.stdout.readline())["url"]
+        (home / "host" / "config.json").write_text(
+            json.dumps(
+                {
+                    "mode": "relay",
+                    "relay_url": relay_url,
+                    "name": "share-e2e",
+                    "machine_id": SHARE_MACHINE,
+                    "runner": "process",
+                    "driver_bin": "/bin/true",
+                    "share_desktop": False,
+                }
+            )
+        )
+        (home / "host" / "host.json").write_text(
+            json.dumps({"owner": "acct-owner", "owner_email": "owner@example.com"})
+        )
+        sock = home / "cua.sock"
+        env = dict(
+            os.environ,
+            CUA_HOME=str(home),
+            CUA_CREDENTIAL_STORE="file",
+            CUA_RELAY_URL=relay_url,
+            CUA_TELEMETRY="0",
+        )
+        proc = subprocess.Popen(
+            [str(binary), "daemon", "start", "--foreground", "--socket", str(sock)],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=open(home / "daemon.log", "w"),
+        )
+        try:
+            for _ in range(150):
+                if (home / "share" / "gateway.sock").exists() and sock.exists():
+                    break
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.1)
+            if not (home / "share" / "gateway.sock").exists():
+                raise AssertionError(
+                    f"daemon did not start: {(home / 'daemon.log').read_text()[-2000:]}"
+                )
+            yield ShareDaemon(Daemon(socket=sock, home=home, proc=proc), relay_url)
+        finally:
+            if proc.poll() is None:
+                with contextlib.suppress(Exception):
+                    run_async(cua.connect(str(sock)).shutdown_daemon(), timeout=15)
+                try:
+                    proc.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    proc.terminate()
+                    proc.wait(timeout=15)
+    finally:
+        relay.terminate()
+        relay.wait(timeout=10)
+        shutil.rmtree(home, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- desktop checks (run-omarchy / viewer)
 
 
@@ -478,13 +603,16 @@ async def window_origin(env: "cua.SpacesdClient", title: str) -> tuple[int, int]
         'n=$(xwininfo -id "$wid" | awk "/Absolute upper-left X/{x=\\$4} /Absolute upper-left Y/{y=\\$4} END{print x, y}"); '
         '[ "$n" = "$o" ] && break; o=$n; done; echo "$n"'
     )
-    out = await poll(
-        f"window {title!r}",
-        lambda: env.sh(f"desktop-env bash -c '{script}'", 20_000),
-        attempts=30,
-        delay=1,
-    )
-    x, y = out.stdout.decode().split()
+
+    async def origin():
+        # The result object is always truthy, and the script prints nothing
+        # (or a blank origin) while the window is not mapped yet: only accept
+        # an actual "x y" pair so poll() retries instead of unpacking nothing.
+        out = await env.sh(f"desktop-env bash -c '{script}'", 20_000)
+        parts = out.stdout.decode().split()
+        return parts if len(parts) == 2 else None
+
+    x, y = await poll(f"window {title!r}", origin, attempts=30, delay=1)
     return int(x), int(y)
 
 

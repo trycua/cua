@@ -27,6 +27,7 @@ cua-auth.workspace = true
 cua-home.workspace = true
 flate2 = "1"
 hex.workspace = true
+httpdate = "1"
 rand.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
 # Client device key (P-256, the curve the Secure Enclave uses) and its
@@ -50,3 +51,4 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 [dev-dependencies]
 axum = { workspace = true, features = ["json"] }
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

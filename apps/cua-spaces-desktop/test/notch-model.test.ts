@@ -167,6 +167,24 @@ describe("notch model", () => {
     expect(last().view.tiles[0]?.signedIn).toBe(true);
   });
 
+  it("feeds the pinned Spaces and desktops only when they change, and the pinned tiles come first", () => {
+    const { model, fake, last } = setup();
+    const ids = last().view.tiles.map((t) => t.id);
+    expect(ids.length).toBeGreaterThan(1);
+    model.setPinned([]);
+    expect(fake.events).toEqual([]);
+    const second = ids[1]!;
+    model.setPinned([second]);
+    model.setPinned([second]);
+    expect(fake.events.filter((e) => e.tag === "Pinned")).toHaveLength(1);
+    expect(fake.events.at(-1)?.inner).toEqual({ ids: [second] });
+    const tiles = last().view.tiles;
+    expect(tiles[0]).toMatchObject({ id: second, pinned: true });
+    expect(tiles.slice(1).every((t) => t.pinned !== true)).toBe(true);
+    model.setPinned([]);
+    expect(last().view.tiles.map((t) => t.id)).toEqual(ids);
+  });
+
   it("estimates a ring's progress with the core while it shows, every 200 ms", () => {
     const { model, clock, last, fake } = setup();
     model.setActivity(false, { sent: undefined, total: undefined });

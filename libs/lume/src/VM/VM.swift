@@ -58,6 +58,10 @@ class VM {
     private var scopedSharedDirectoryURLs: [URL] = []
     private var clipboardTransferInProgress = false
     private var sessionCleanedUp = true
+    /// The framework VM is being started or restored: a stop (or suspend)
+    /// that arrives meanwhile waits for it, since stopping a VM mid-restore
+    /// fails and would leave it running untracked once the restore ends.
+    private var starting = false
     /// Policy of the session currently owned by this object. Cleanup needs it
     /// because a VNC-disabled session's marker is not owned by `vncService`.
     private var activeVNCPolicy: VNCPolicy = .enabled
@@ -171,7 +175,8 @@ class VM {
             locationName: vmDirContext.storage ?? "home",
             networkMode: vmDirContext.config.networkMode.description,
             machineIdentifier: vmDirContext.config.machineIdentifier?.base64EncodedString(),
-            macAddress: macAddress
+            macAddress: macAddress,
+            savedState: vmDirContext.dir.hasSavedState()
         )
     }
 
@@ -327,9 +332,20 @@ class VM {
                 "Successfully initialized virtualization service",
                 metadata: ["name": vmDirContext.name])
 
-            guard let service = virtualizationService else {
+            guard var service = virtualizationService else {
                 Logger.error("Virtualization service is nil", metadata: ["name": vmDirContext.name])
                 throw VMError.internalError("Virtualization service not initialized")
+            }
+
+            // A VM with a saved state (`suspend`, or a clone of a suspended
+            // VM) resumes from it; that happens before the VNC server
+            // attaches, since a state that cannot be restored leaves the
+            // framework VM unusable and the VM boots on a fresh one.
+            let resumedFromState = !recoveryMode && vmDirContext.dir.hasSavedState()
+            if resumedFromState {
+                starting = true
+                defer { starting = false }
+                service = try await restoreOrBoot(service: service, config: config)
             }
 
             let presenter = displayPresenterFactory(displayMode, vncService)
@@ -384,10 +400,16 @@ class VM {
                     ])
             }
 
-            // Start the VM
-            Logger.info(
-                "Starting VM via virtualization service", metadata: ["name": vmDirContext.name])
-            try await service.start()
+            // Start the VM (unless it resumed from its saved state above).
+            if !resumedFromState {
+                // A state left from before a cold boot no longer matches the disk.
+                vmDirContext.dir.discardSavedState()
+                Logger.info(
+                    "Starting VM via virtualization service", metadata: ["name": vmDirContext.name])
+                starting = true
+                defer { starting = false }
+                try await service.start()
+            }
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
             if let telemetryTransport {
                 TelemetryClient.shared.recordVMStarted(
@@ -740,6 +762,96 @@ class VM {
         }
     }
 
+    /// Resumes the VM from its saved state, or boots it when the state
+    /// cannot be restored (say the configuration changed since it was saved;
+    /// the disk is then as the VM left it at the save, like after a power
+    /// loss). The state is consumed either way: once the guest runs, its disk
+    /// diverges from the saved memory. Returns the service now running.
+    private func restoreOrBoot(
+        service: VMVirtualizationService, config: VMVirtualizationServiceContext
+    ) async throws -> VMVirtualizationService {
+        let state = vmDirContext.dir.statePath
+        let started = Date()
+        do {
+            try await service.restoreMachineState(from: state.url)
+            try await service.resume()
+            vmDirContext.dir.discardSavedState()
+            Logger.info(
+                "VM resumed from its saved state",
+                metadata: [
+                    "name": vmDirContext.name,
+                    "ms": "\(Int(Date().timeIntervalSince(started) * 1000))",
+                ])
+            return service
+        } catch {
+            Logger.error(
+                "Could not restore the saved state; booting the VM instead",
+                metadata: ["name": vmDirContext.name, "error": "\(error)"])
+            vmDirContext.dir.discardSavedState()
+            if service.state == .running || service.state == .paused {
+                try? await service.stop()
+            }
+            let fresh = try virtualizationServiceFactory(config)
+            virtualizationService = fresh
+            try await fresh.start()
+            return fresh
+        }
+    }
+
+    /// Saves the running VM's state to its directory and stops it; the next
+    /// run resumes from that state ([`restoreOrBoot`]). The state is written
+    /// next to the disk under a temporary name first, so a failed save never
+    /// leaves a partial state a run would try to restore. On failure the VM
+    /// keeps running.
+    @MainActor
+    func suspend() async throws {
+        await waitForStart()
+        guard let service = virtualizationService,
+            service.state == .running || service.state == .paused
+        else {
+            throw VMError.notRunning(vmDirContext.name)
+        }
+        let wasRunning = service.state == .running
+        let state = vmDirContext.dir.statePath
+        let partial = URL(fileURLWithPath: state.path + ".partial")
+        try? FileManager.default.removeItem(at: partial)
+        let started = Date()
+        do {
+            if wasRunning {
+                try await service.pause()
+            }
+            try await service.saveMachineState(to: partial)
+            try? FileManager.default.removeItem(at: state.url)
+            try FileManager.default.moveItem(at: partial, to: state.url)
+        } catch {
+            try? FileManager.default.removeItem(at: partial)
+            if wasRunning, service.state == .paused {
+                try? await service.resume()
+            }
+            Logger.error(
+                "Failed to save the VM state",
+                metadata: ["name": vmDirContext.name, "error": "\(error)"])
+            throw error
+        }
+        Logger.info(
+            "Saved the VM state",
+            metadata: [
+                "name": vmDirContext.name,
+                "ms": "\(Int(Date().timeIntervalSince(started) * 1000))",
+            ])
+        try await service.stop()
+        await cleanupSession()
+    }
+
+    /// Waits (bounded) while this process starts or restores the VM.
+    @MainActor
+    private func waitForStart() async {
+        let deadline = Date().addingTimeInterval(120)
+        while starting && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
+
     private func cleanupSession() async {
         guard !sessionCleanedUp else { return }
         sessionCleanedUp = true
@@ -797,6 +909,7 @@ class VM {
         // If we own the running VM in this process, stop it directly. The
         // framework's stop is an immediate power-off, so it serves both the
         // graceful and forced requests.
+        await waitForStart()
         if let service = virtualizationService {
             do {
                 Logger.info(
@@ -1082,6 +1195,35 @@ class VM {
         try vmDirContext.saveConfig()
     }
 
+    /// Points this VM at its directory's new place after a rename (the
+    /// directory was moved; a running guest keeps its open files).
+    func relocate(to dir: VMDirectory) {
+        var moved = VMDirContext(
+            dir: dir, config: vmDirContext.config, home: vmDirContext.home,
+            storage: vmDirContext.storage)
+        moved.diskPathOverride = vmDirContext.diskPathOverride
+        moved.nvramPathOverride = vmDirContext.nvramPathOverride
+        vmDirContext = moved
+        vncService.relocate(to: dir)
+    }
+
+    /// Gives a stopped VM whose saved state cannot be used a new MAC
+    /// address and (macOS) machine identifier, dropping that state: used
+    /// when another running VM already has the state's MAC address (two
+    /// clones of one saved state), so this one boots as a machine of its
+    /// own instead of colliding on the network. The usual `isRunning` check
+    /// is skipped on purpose: it looks the MAC address up, and that address
+    /// is the other VM's.
+    func dropSavedStateForNewIdentity() throws {
+        vmDirContext.dir.discardSavedState()
+        vmDirContext.config.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
+        if getOSType().caseInsensitiveCompare("macOS") == .orderedSame {
+            vmDirContext.config.setMachineIdentifier(
+                DarwinVirtualizationService.generateMachineIdentifier())
+        }
+        try vmDirContext.saveConfig()
+    }
+
     func setMacAddress(_ newMacAddress: String) throws {
         guard !isRunning else {
             throw VMError.alreadyRunning(vmDirContext.name)
@@ -1099,7 +1241,9 @@ class VM {
     /// Best-effort write of VNC config into the VM via SSH.
     /// Silently gives up if SSH is not available (e.g., SSH disabled on the VM).
     /// The guest can still read config from VirtioFS or use hardcoded defaults.
-    static func writeVNCConfigViaSSH(
+    /// Nonisolated: the SSH session blocks its thread for seconds, and on the
+    /// main actor that stalls every `lume serve` request and VM start meanwhile.
+    nonisolated static func writeVNCConfigViaSSH(
         vmName: String, storage: String?, port: Int, password: String
     ) async {
         let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(password)"

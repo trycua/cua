@@ -318,6 +318,7 @@ pub enum RefusalCode {
     BrowserActionUnavailable,
     ModifiedPointerUnavailable,
     WindowMinimized,
+    ElementNotVisible,
     ForegroundUnavailable,
 }
 
@@ -345,6 +346,7 @@ impl RefusalCode {
             "browser_action_unavailable" => Some(Self::BrowserActionUnavailable),
             "modified_pointer_unavailable" => Some(Self::ModifiedPointerUnavailable),
             "window_minimized" => Some(Self::WindowMinimized),
+            "element_not_visible" => Some(Self::ElementNotVisible),
             "foreground_unavailable" => Some(Self::ForegroundUnavailable),
             _ => None,
         }
@@ -447,6 +449,8 @@ fn compositor_from_env() -> Option<String> {
                 .to_ascii_lowercase();
             if desktop.contains("sway") {
                 Some("sway".to_owned())
+            } else if desktop.contains("niri") {
+                Some("niri".to_owned())
             } else if desktop.contains("gnome") {
                 Some("gnome-mutter".to_owned())
             } else if desktop.contains("kde") || desktop.contains("plasma") {

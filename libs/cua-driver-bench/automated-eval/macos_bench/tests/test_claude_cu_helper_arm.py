@@ -163,6 +163,33 @@ class Fixture:
         return [r for r in rows if r["method"] == method]
 
 
+class LauncherCaptureTest(unittest.TestCase):
+    def test_capture_uses_launcher_without_wrapping_winlist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Fixture(Path(tmp), shot=(800, 600))
+            launcher = Path(tmp) / "launcher"
+            log = Path(tmp) / "launcher.log"
+            launcher.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> ' + str(log) + '\nexec "$@"\n')
+            launcher.chmod(0o755)
+            helper = ad.Helper([str(launcher), str(fixture.helper)])
+            adapter = ad.Adapter(
+                helper,
+                str(fixture.winlist),
+                list(ad.ALL_ACTIONS),
+                screencapture=str(fixture.screencapture),
+                sips=str(fixture.sips),
+                launcher=str(launcher),
+            )
+            try:
+                result = adapter.call("app_screenshot", {"app": "BenchLab", "window_id": 77})
+                self.assertTrue(any(block.get("type") == "image" for block in result))
+                self.assertEqual(
+                    log.read_text().splitlines(), [str(fixture.helper), str(fixture.screencapture)]
+                )
+            finally:
+                helper.close()
+
+
 class ArmRegistrationTest(unittest.TestCase):
     def test_arm_is_a_named_claude_arm_with_the_agreed_label(self) -> None:
         self.assertIn(ARM, arms.CLAUDE_ARMS)
@@ -456,6 +483,59 @@ class AdapterTest(unittest.TestCase):
 
 
 class HelperClientTest(unittest.TestCase):
+    def test_trusted_helper_and_tools_do_not_hide_capture_failure(self) -> None:
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = Fixture(Path(tmp))
+            launcher = Path(tmp) / "launcher"
+            launcher.write_text('#!/bin/sh\nexec "$@"\n')
+            launcher.chmod(0o755)
+            fx.winlist.write_text(
+                "#!/bin/sh\nprintf '%s\\n' '"
+                + json.dumps([{**WINDOWS[0], "app": "Calculator"}])
+                + "'\n"
+            )
+            fx.screencapture.write_text(
+                '#!/bin/sh\necho "could not create image from window" >&2\nexit 1\n'
+            )
+            config = Path(tmp) / "mcp.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "helper": {
+                                "command": sys.executable,
+                                "args": [
+                                    str(ADAPTER),
+                                    "--helper",
+                                    str(fx.helper),
+                                    "--launcher",
+                                    str(launcher),
+                                    "--winlist",
+                                    str(fx.winlist),
+                                    "--screencapture",
+                                    str(fx.screencapture),
+                                    "--sips",
+                                    str(fx.sips),
+                                ],
+                            }
+                        }
+                    }
+                )
+            )
+            ctx = SimpleNamespace(
+                mcp={ARM: (config, "helper")}, arm_names=[ARM], versions={}, run_dir=Path(tmp)
+            )
+            with mock.patch.dict(
+                ca.CU_HELPER_BUILDS, {ARM: SimpleNamespace(helper=fx.helper, launcher=launcher)}
+            ):
+                checks = rb.cu_helper_live_checks(ctx, ARM)
+            self.assertTrue(all(status == "pass" for _, status, _ in checks), checks)
+            name, status, detail = rb.real_capture_check(ctx, ARM)
+            self.assertEqual((name, status), (f"{ARM} real capture", "fail"))
+            self.assertIn("could not create image from window", detail)
+
     def test_helper_errors_and_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fx = Fixture(Path(tmp))

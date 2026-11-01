@@ -12,7 +12,15 @@ export interface SignInAttempt {
   userCode: string | null;
   /** The page the sign-in finishes on (to open it again). */
   url: string | null;
+  /** A browser opened on this machine (false: the page is to be opened by hand, on any device). */
+  opened?: boolean;
   wait(): Promise<string | null>;
+}
+
+/** How a sign-in starts. */
+export interface SignInOptions {
+  /** The code flow: the person enters a code on any device, so it works when the browser cannot reach this app (a blocked loopback, another browser, a phone). */
+  code?: boolean;
 }
 
 /** The signed-in account's claims, for the presence name and id. */
@@ -28,8 +36,9 @@ export interface AccountRunning {
   /** The signed-in identity, read without network access. */
   identity(): string | null;
   profile(): AccountProfile | null;
-  /** Starts a sign-in (opens the browser). */
-  beginSignIn(): Promise<SignInAttempt>;
+  /** Starts a sign-in (opens the browser). `code`: with a code to enter on any
+   * device, for when the browser's own way back to the app does not work. */
+  beginSignIn(opts?: SignInOptions): Promise<SignInAttempt>;
   signOut(): Promise<void>;
   /** The account's token (`force`: refresh it); null when signed out. */
   accessToken(force: boolean): Promise<string | null>;
@@ -67,14 +76,15 @@ export class LiveAccount implements AccountRunning {
    * box with no browser), the device flow instead, as `cua auth login
    * --remote` does: its page opens on any device, with the code the page
    * shows. */
-  async beginSignIn(): Promise<SignInAttempt> {
-    let attempt = await this.auth.beginLogin(undefined);
+  async beginSignIn(opts?: SignInOptions): Promise<SignInAttempt> {
+    let attempt = await this.auth.beginLogin(opts?.code ? "device" : undefined);
     const opened = attempt.url() ? await this.openUrl(attempt.url()) : false;
     if (!opened && attempt.method() === "browser") attempt = await this.auth.beginLogin("device");
     const url = attempt.url();
     return {
       userCode: attempt.userCode() ?? null,
       url: url || null,
+      opened,
       wait: async () => display(await attempt.wait()),
     };
   }

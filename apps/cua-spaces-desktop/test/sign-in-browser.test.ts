@@ -60,14 +60,15 @@ describe("the account's sign-in", () => {
     const a = await new LiveAccount(auth, async (url) => (opened.push(url), true)).beginSignIn();
     expect(flows).toEqual([undefined]);
     expect(opened).toEqual(["https://auth.cua.ai/authorize?x=1"]);
-    expect([a.url, a.userCode]).toEqual(["https://auth.cua.ai/authorize?x=1", null]);
+    expect([a.url, a.userCode, a.opened]).toEqual(["https://auth.cua.ai/authorize?x=1", null, true]);
   });
 
   it("uses the device flow without a browser: a page for any device and its code", async () => {
     const { auth, flows } = fakeAuth();
     const a = await new LiveAccount(auth, async () => false).beginSignIn();
     expect(flows).toEqual([undefined, "device"]);
-    expect([a.url, a.userCode]).toEqual(["https://auth.cua.ai/device", "WDJB-MJHT"]);
+    // The foot says to open the page (no browser to wait on).
+    expect([a.url, a.userCode, a.opened]).toEqual(["https://auth.cua.ai/device", "WDJB-MJHT", false]);
     expect(await a.wait()).toBe("ada@example.com");
   });
 });

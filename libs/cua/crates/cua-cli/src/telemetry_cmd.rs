@@ -1,7 +1,7 @@
 //! `cua telemetry`: see and control anonymous usage telemetry
 //! (cua-telemetry).
 
-use crate::util::{self, line};
+use crate::util::{self, hint_line, line};
 use clap::Subcommand;
 use cua_sdk::CuaError;
 use std::io::Write;
@@ -105,7 +105,7 @@ pub fn run(cmd: TelemetryCmd, json: bool, out: &mut dyn Write) -> Result<i32, Cu
                     out,
                     serde_json::to_string_pretty(&envelope).unwrap_or_default(),
                 );
-                line(
+                hint_line(
                     out,
                     format!(
                         "\n`cua telemetry schema` lists every event. Turn it off: cua telemetry off (or DO_NOT_TRACK=1). Details: {}",

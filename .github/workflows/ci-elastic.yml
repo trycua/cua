@@ -1,0 +1,103 @@
+name: "CI: elastic pool"
+
+# The elastic pool (CUA-1962): the layering guard (surfaces never name a
+# provider; the solver stays pure), the solver (feasibility on random
+# instances, the exact solver against brute force, the greedy's gap, the time
+# budget, simulations of bursts, steady load, scale-in, host loss and budget
+# caps, and golden decisions for the benchmark scenarios), the orchestration
+# in cua-spaces, routed Spaces on hosts and in cua-spacesd, and the SDK's
+# decoding of the core's rows. Hermetic: no cloud credential, nothing leaves
+# the runner. The providers' conformance and the host lifecycle run in
+# ci-cua-byoc.yml.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-cluster/**"
+      - "libs/cua/crates/cua-byoc/**"
+      - "libs/cua/crates/cua-spaces/**"
+      - "libs/cua/crates/cua-sandbox-core/src/byoc.rs"
+      - "libs/cua/crates/cua-sdk/src/native/elastic.rs"
+      - "libs/cua/crates/cua-cli/src/cloud_cmd.rs"
+      - "libs/cua/crates/cua-cli/src/add_aws.rs"
+      - "libs/cua-spacesd/crates/cua-spacesd-server/src/host_spaces.rs"
+      - "libs/cua-spacesd/crates/cua-spacesd-server/src/services/tunnel.rs"
+      - "scripts/check-elastic-layering.sh"
+      - ".github/workflows/ci-elastic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-elastic-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  layering:
+    name: layering guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: bash scripts/check-elastic-layering.sh
+
+  core:
+    name: solver, orchestration, routed Spaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # Two workspaces of test builds outgrow the runner's free disk.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup || true
+          df -h /
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends pkg-config libssl-dev \
+            libx11-dev libxkbcommon-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
+            libxrandr-dev libxi-dev libudev-dev libxext-dev libxtst-dev libdbus-1-dev
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: |
+            libs/cua
+            libs/cua-spacesd
+          shared-key: libs-cua-test
+      - name: Format
+        working-directory: libs/cua
+        run: cargo fmt -p cua-cluster -p cua-spaces -p cua-byoc -- --check
+      - name: Clippy
+        working-directory: libs/cua
+        run: cargo clippy --locked -p cua-cluster -p cua-spaces --all-targets -- -D warnings
+      - name: Solver (unit, property, brute force, simulations, goldens)
+        working-directory: libs/cua
+        run: cargo test --locked -p cua-cluster --lib elastic
+      - name: Orchestration and routed Spaces on hosts
+        working-directory: libs/cua
+        run: |
+          cargo test --locked -p cua-spaces --lib -- elastic auto_says_why routed fork_batch
+          cargo test --locked -p cua-spaces --test host_spaces routes
+      - name: SDK rows (Python, TS, Swift and Kotlin bind these records)
+        working-directory: libs/cua
+        run: cargo test --locked -p cua-sdk --lib elastic
+      - name: Routed forwards on hosts that do not share their desktop
+        working-directory: libs/cua-spacesd
+        run: cargo test --locked -p cua-spacesd-server --lib routed

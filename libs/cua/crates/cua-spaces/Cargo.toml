@@ -21,7 +21,7 @@ default = [
     "mcp-client",
 ]
 # send_file (TeleportService.ReceiveFiles) with gitignore-aware folder walks.
-spaces-files = ["dep:ignore"]
+spaces-files = []
 # Stream targets, media tickets, and `StreamSession` (rcdp wire v2 through
 # the streaming client Cua Spaces registers, delivered to FrameSink /
 # AudioSink callbacks).
@@ -33,7 +33,7 @@ spaces-hotspot = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
 # Cua Volume mounted in a Space's guest, served from this host.
 spaces-volume = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
 # Agent CLIs in a Space as detached, tagged spacesd processes.
-spaces-agents = ["dep:cua-agents", "dep:cua-auth", "dep:reqwest", "dep:tar"]
+spaces-agents = ["dep:cua-agents", "dep:cua-auth", "dep:reqwest"]
 # The Spaces MCP server (stdio). Hosted by `cua daemon mcp`.
 mcp = []
 # The same server over MCP streamable HTTP.
@@ -63,9 +63,14 @@ cua-image.workspace = true
 # Per-Space disk accounting (resources).
 cua-disk.workspace = true
 cua-sandbox-core.workspace = true
-cua-vmm.workspace = true
+cua-vmm = { workspace = true, features = ["containerization"] }
 # The cua-relay machine directory (`space://relay/<id>`) and AccountTokens.
 cua-host.workspace = true
+# Cluster jobs on this host (`HostJobsService`) and `--on cluster` placement.
+cua-cluster.workspace = true
+# Copying checkpoints between your machines (batched forks across them).
+cua-snapshot-sync = { workspace = true, features = ["pull", "fallback"] }
+if-addrs = "0.13"
 # `relay:` Spaces over the WireGuard®-based mesh.
 cua-mesh.workspace = true
 async-trait.workspace = true
@@ -91,10 +96,12 @@ sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 # Routines: daily and weekly slots in local time.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
+# Build contexts: .dockerignore, COPY globs, the tar a COPY ships.
+ignore = "0.4"
+globset = "0.4"
+tar = "0.4"
+
 # Optional modules.
-ignore = { version = "0.4", optional = true }
-# Agent homes move in and out of a Space as one archive.
-tar = { version = "0.4", optional = true }
 cua-hotspot = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 # The host cache of pinned install archives (spaces-agents).

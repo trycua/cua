@@ -940,7 +940,11 @@ pub(super) fn target_pid(
         .get("element_token")
         .is_some_and(|token| !token.is_null())
     {
-        return Err(cua_driver_core::element_token::stale_token_without_pid());
+        // The token is gone, but a recently retired snapshot still says whose
+        // it was, so the refusal can name what is current for that process.
+        return Err(cua_driver_core::element_token::stale_token_without_pid(
+            state.snapshots.token_owner(args),
+        ));
     }
     Err(cua_driver_core::protocol::ToolResult::error(
         "Missing required integer field: pid. Pass pid, or pass an element_token from the \

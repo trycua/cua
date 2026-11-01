@@ -214,6 +214,8 @@ const liveShape = (agents: readonly LiveAgent[]) => agents.map((a) => `${a.agent
 
 const FIRST_PAGE = 100;
 const MEMBERS_POLL_MS = 5_000;
+/** The share list is read every this many member polls (15 s). */
+const SHARES_EVERY = 3;
 const MAX_BACKOFF_MS = 30_000;
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -373,11 +375,18 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
       );
     membersDue.current = read;
     read();
-    const t = setInterval(read, MEMBERS_POLL_MS);
-    void data.call("sharing.list", { spaceId }).then(
-      (s) => alive && setShares(s),
-      () => {},
-    );
+    // Who it is shared with changes while the page is open (a teammate is added or removed): read it with the members.
+    const readShares = () =>
+      void data.call("sharing.list", { spaceId }).then(
+        (s) => alive && setShares((was) => (JSON.stringify(was) === JSON.stringify(s) ? was : s)),
+        () => {},
+      );
+    readShares();
+    let tick = 0;
+    const t = setInterval(() => {
+      read();
+      if (++tick % SHARES_EVERY === 0) readShares();
+    }, MEMBERS_POLL_MS);
     return () => {
       alive = false;
       membersDue.current = () => {};

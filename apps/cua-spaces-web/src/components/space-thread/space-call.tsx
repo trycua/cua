@@ -60,6 +60,7 @@ export function SpaceCall({
   view,
   onStream,
   presence,
+  owner,
   onShare,
   layout = "call",
   onLayout,
@@ -102,6 +103,8 @@ export function SpaceCall({
   /** Opens a row in its own window. */
   onStream: (row: StreamRow) => void;
   presence?: MemberPresence;
+  /** Whose Space this is, when it was shared with you (the owner is in the room too). */
+  owner?: { name: string; email?: string | null } | null;
   /** Opens Share for this Space (Add an agent offers it; absent: sharing isn't offered here). */
   onShare?: () => void;
   /** The Space is still being made: the composer queues, nothing joins yet (`thread` is `creatingThread`). */
@@ -112,8 +115,8 @@ export function SpaceCall({
   const [moreOpen, setMoreOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const roster = useMemo(
-    () => buildRoster({ members: thread.members, shares: thread.shares, entries: thread.entries, me: thread.me, identity, role: thread.role, harnessName: (h) => harnessName(core, h) }),
-    [thread.members, thread.shares, thread.entries, thread.me, thread.role, identity, core],
+    () => buildRoster({ members: thread.members, shares: thread.shares, entries: thread.entries, me: thread.me, identity, role: thread.role, owner, harnessName: (h) => harnessName(core, h) }),
+    [thread.members, thread.shares, thread.entries, thread.me, thread.role, identity, owner, core],
   );
   // Anyone who can post can add an agent; a guest only reads.
   const canAdd = !creating && thread.status === "ready" && thread.role !== "guest";

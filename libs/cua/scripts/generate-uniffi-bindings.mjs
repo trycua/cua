@@ -417,7 +417,7 @@ try {
   }
 
   if (stale.length) {
-    throw new Error(`stale UniFFI generated files:\n  ${stale.join("\n  ")}`)
+    throw new Error(`stale UniFFI generated files:\n  ${stale.join("\n  ")}\nRun scripts/regen-all.sh --only sdk`)
   }
   console.log(check ? "UniFFI bindings are up to date." : "Generated UniFFI bindings.")
 } finally {

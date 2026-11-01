@@ -23,7 +23,7 @@ fn main() {
             .unwrap_or_else(|error| panic!("read {}: {error}", output.display()));
         if existing != generated {
             eprintln!(
-                "{} is stale; run: cargo run -p cua-spaces-contract --bin cua-spaces-contract-gen",
+                "{} is stale; run: scripts/regen-all.sh --only contract",
                 output.display()
             );
             std::process::exit(1);

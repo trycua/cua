@@ -646,8 +646,10 @@ impl RecordingSession {
 
         // Single monotonic anchor shared by video, cursor sampler, and
         // per-turn `t_ms_from_session_start` math in `finish_turn()` — so all
-        // three timelines line up at the millisecond.
+        // three timelines line up at the millisecond. Read the wall clock here
+        // because video backends may wait through a 1.5 s startup probe.
         let monotonic_start = Instant::now();
+        let started_at_ms = now_ms();
 
         let mut video_present = false;
         let mut video_error: Option<String> = None;
@@ -687,7 +689,6 @@ impl RecordingSession {
         // Write initial session.json — final video metadata is rewritten on
         // stop. We mark `present` based on whether ffmpeg actually started,
         // not just whether the caller asked for video.
-        let started_at_ms = now_ms();
         let session_payload = serde_json::json!({
             "schema_version": 1,
             "started_at_monotonic_ms": started_at_ms,

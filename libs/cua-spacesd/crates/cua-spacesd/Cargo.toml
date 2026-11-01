@@ -60,6 +60,10 @@ cua-spacesd-doctor = { path = "../cua-spacesd-doctor" }
 # remote and agent cursors render on the ORIGIN desktop. See the comment on
 # `main` -- the overlay NSWindow cannot live on a spawned thread.
 platform-macos = { path = "../../../cua-driver/rust/crates/platform-macos" }
+# Cua Driver for the coding agents on this Mac, run as cua-spacesd's own
+# child so its permissions are Cua Spaces' (src/embedded_driver.rs).
+cua-driver-sdk = { path = "../../../cua-driver/rust/crates/cua-driver-sdk", default-features = false }
+cua-home = { path = "../../../cua/crates/cua-home" }
 
 [target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]
 # The cua-driver tool registry behind DriverService and /mcp.

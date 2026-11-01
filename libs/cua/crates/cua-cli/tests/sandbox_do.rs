@@ -471,6 +471,96 @@ async fn host_target_needs_consent() {
     h.run(&["--embedded", "do", "key", "tab"]).await.ok();
 }
 
+fn configure_local_host(h: &Home, url: &str, token: &str) {
+    let paths = cua_host::HostPaths::new(&h.cua_home());
+    std::fs::create_dir_all(&paths.dir).unwrap();
+    let config = cua_host::HostConfig {
+        port: url::Url::parse(url).unwrap().port(),
+        ..Default::default()
+    };
+    std::fs::write(paths.config(), serde_json::to_vec(&config).unwrap()).unwrap();
+    std::fs::write(paths.env_token(), token).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_target_uses_its_saved_token_after_consent() {
+    let env = fixtures::start_env(Some("local-host-secret"), None).await;
+    let h = Home::new();
+    configure_local_host(&h, &env.url, "local-host-secret\n");
+
+    let o = h.run(&["--embedded", "do", "switch", "host"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stderr.contains("cua do-host-consent"), "{o:?}");
+    h.run(&["--embedded", "do-host-consent"]).await.ok();
+    // A separate invocation must discover the token even though the
+    // already-selected host has no explicitly saved direct credential.
+    let shot = h.dir.path().join("host.png");
+    let o = h
+        .run(&[
+            "--embedded",
+            "do",
+            "screenshot",
+            "--save",
+            shot.to_str().unwrap(),
+        ])
+        .await;
+    o.ok();
+    assert!(std::fs::read(shot).unwrap().starts_with(b"\x89PNG"));
+    assert!(!o.stdout.contains("local-host-secret"), "{o:?}");
+    assert!(!o.stderr.contains("local-host-secret"), "{o:?}");
+    std::fs::remove_file(h.cua_home().join("host_consented")).unwrap();
+    let o = h.run(&["--embedded", "do", "type", "x"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stderr.contains("unauthenticated: bad token"), "{o:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_target_keeps_explicit_token_precedence() {
+    let env = fixtures::start_env(Some("explicit-host-secret"), None).await;
+    for variable in [None, Some("CUA_ENV_TOKEN"), Some("CUA_HOST_ENV_TOKEN")] {
+        let mut h = Home::new();
+        configure_local_host(&h, &env.url, "different-local-secret\n");
+        std::fs::write(h.cua_home().join("host_consented"), "consented").unwrap();
+        if let Some(variable) = variable {
+            h.set(variable, "explicit-host-secret");
+        }
+        let mut args = vec!["--embedded", "do", "switch", "host"];
+        if variable.is_none() {
+            args.extend(["--token", "explicit-host-secret"]);
+        }
+        h.run(&args).await.ok();
+        h.run(&["--embedded", "do", "type", "x"]).await.ok();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_target_does_not_send_local_token_to_a_custom_endpoint() {
+    let local = fixtures::start_env(Some("local-only-secret"), None).await;
+    let custom = fixtures::start_env(Some("local-only-secret"), None).await;
+    let mut h = Home::new();
+    configure_local_host(&h, &local.url, "local-only-secret\n");
+    h.set("CUA_HOST_ENV_URL", &custom.url);
+    h.run(&["--embedded", "do-host-consent"]).await.ok();
+    let o = h.run(&["--embedded", "do", "type", "x"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stderr.contains("unauthenticated: bad token"), "{o:?}");
+    assert!(!o.stderr.contains("local-only-secret"), "{o:?}");
+    h.run(&[
+        "--embedded",
+        "do",
+        "switch",
+        "url",
+        &local.url,
+        "--as",
+        "other",
+    ])
+    .await
+    .ok();
+    let o = h.run(&["--embedded", "do", "type", "x"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stderr.contains("unauthenticated: bad token"), "{o:?}");
+}
+
 fn closed_port() -> u16 {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();

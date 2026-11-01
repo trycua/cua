@@ -60,6 +60,7 @@ pub mod lease;
 pub mod nfs;
 pub mod path;
 pub mod remote;
+pub mod replica;
 #[cfg(feature = "s3")]
 pub mod s3;
 pub mod scan;

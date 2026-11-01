@@ -607,6 +607,12 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
 
         // Platform configuration
         let platform = VZGenericPlatformConfiguration()
+        // The same identifier on every run, so a saved state can be restored.
+        if let data = config.machineIdentifier,
+            let identifier = VZGenericMachineIdentifier(dataRepresentation: data)
+        {
+            platform.machineIdentifier = identifier
+        }
         if #available(macOS 15, *) {
             platform.isNestedVirtualizationEnabled =
                 VZGenericPlatformConfiguration.isNestedVirtualizationSupported

@@ -116,6 +116,17 @@ Webviews and browsers cannot load the native binding; they use
 daemon's loopback `/mcp`, bearer = its loopback token) or `TauriTransport`
 (`invoke`). Same Spaces contract tools either way.
 
+HTTP request `signal` and `timeoutSeconds` options cover the entire reply,
+including response-body consumption, not only the arrival of headers. An
+already-aborted signal does not send the request. Aborting abandons the local
+wait; it does not prove that the daemon stopped work or that a mutation did not
+apply. Do not replay a potentially applied mutation merely because its reply
+was cancelled.
+
+Cancellation before response headers arrives as a `TransportError`; during
+response-body reading it propagates a raw `AbortError`. Callers handling
+cancellation or timeouts should account for both.
+
 Tests: `node --test test/spaces-unit.test.mjs test/pip.test.mjs test/routines.test.mjs` (no native library needed) and
 `node --test test/spaces.test.mjs` (needs `cua-test-fixtures` and, for the
 daemon case, the `cua` CLI in `../target/debug`).

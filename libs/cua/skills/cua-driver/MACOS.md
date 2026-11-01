@@ -65,8 +65,13 @@ build/Build/Products/Debug/MyApp.app`): resolve the
   activation intent and raises its window to be key. Even when
   delivered to a backgrounded pid via `hotkey`, the downstream app
   pulls focus. For an exactly bound Chromium page, use
-  `browser_navigate`; otherwise use `launch_app({bundle_id, urls})`
-  to create a separately addressable window. Do not emulate navigation
+  `browser_navigate`; otherwise open a window of your own with
+  `launch_app` and `creates_new_application_instance: true`,
+  `additional_arguments: ["--new-window", url]` (plus
+  `--profile-directory=<profile>` for a specific profile), then diff
+  `list_windows` before and after to find its window ID. With Chrome
+  already running, `launch_app({bundle_id, urls})` opens a tab in the
+  user's frontmost window, not a separate one. Do not emulate navigation
   by writing the omnibox and pressing Return in a background window.
 - **Tab-switching shortcuts in browsers (`⌘1..⌘9`, `⌘]`, `⌘[`,
   `⌘⇧[`, `⌘⇧]`) are visibly disruptive even when delivered to a
@@ -74,7 +79,7 @@ build/Build/Products/Debug/MyApp.app`): resolve the
   the window re-renders the new tab's content, and the user sees their
   tabs flipping. The typed browser route can inspect and mutate a returned
   `tab_id` without driving this native shortcut. For unsupported browsers,
-  prefer separately addressable windows over visible tab switching.
+  prefer a window of your own (opened as above) over visible tab switching.
 
 Reading frontmost state is fine (`osascript -e 'tell application
 "System Events" to get name of first application process whose

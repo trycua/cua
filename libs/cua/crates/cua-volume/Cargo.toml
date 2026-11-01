@@ -45,6 +45,7 @@ fuser = { version = "0.18", default-features = false, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [[example]]

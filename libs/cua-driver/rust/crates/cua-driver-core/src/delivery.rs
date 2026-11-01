@@ -74,6 +74,18 @@ pub fn brief_foreground_flag(value: Option<&str>) -> bool {
     )
 }
 
+/// Environment variable an operator sets when starting the daemon to try the
+/// experimental held-pointer route for native macOS drag-and-drop: the
+/// session is driven by window-routed drags while the hardware button is held
+/// at the stationary pointer, so the drop lands without moving the pointer.
+/// Off by default; see `platform-macos` `input::pointer_hold`.
+pub const BACKGROUND_DND_ENV: &str = "CUA_DRIVER_EXPERIMENTAL_BACKGROUND_DND";
+
+/// Whether the operator turned on the held-pointer drag-and-drop route.
+pub fn background_dnd_enabled() -> bool {
+    brief_foreground_flag(std::env::var(BACKGROUND_DND_ENV).ok().as_deref())
+}
+
 /// Whether the call itself asked for background delivery by name, which opts
 /// it out of the brief foreground step.
 pub fn background_requested_explicitly(args: &Value) -> bool {

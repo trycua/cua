@@ -316,17 +316,44 @@ impl AgentSetup {
         skills: bool,
         mcp: bool,
     ) -> Result<Vec<AgentSetupOutcome>> {
-        let server = match command {
-            Some(c) if !c.trim().is_empty() => cua_agent_setup::McpServer::driver(c),
-            _ => cua_agent_setup::McpServer::driver_for(self.inner.env()),
-        };
+        // Without `command`, a missing or broken cua-driver is first
+        // installed from its signed release (`cua.ai/driver/install.sh`, as
+        // the installers' `cua-driver` item does). The server is written
+        // only by absolute path and only after `cua-driver mcp` answers an
+        // MCP `initialize`; otherwise each agent's `cua-driver` row fails
+        // with the reason and how to fix it, and its config is left alone.
+        let command = command.filter(|c| !c.trim().is_empty());
         self.blocking(move |s| {
-            Ok(outcomes(s.setup_cua_driver(
-                &agents,
-                &server,
-                cua_agent_setup::Parts { skills, mcp },
-                false,
-            )?))
+            let server = match command {
+                Some(c) => Ok(cua_agent_setup::McpServer::driver(c)),
+                None if mcp => cua_agent_setup::driver::ensure(s.env(), true)
+                    .map(|p| cua_agent_setup::McpServer::driver(p.display().to_string())),
+                None => Ok(cua_agent_setup::McpServer::driver_for(s.env())),
+            };
+            let parts = cua_agent_setup::Parts { skills, mcp };
+            let mut out = match &server {
+                Ok(server) => s.setup_cua_driver(&agents, server, parts, false)?,
+                Err(_) => {
+                    let skills_only = cua_agent_setup::Parts { skills, mcp: false };
+                    let any = cua_agent_setup::McpServer::driver("cua-driver");
+                    s.setup_cua_driver(&agents, &any, skills_only, false)?
+                }
+            };
+            if let Err(why) = &server {
+                out.extend(s.driver_unavailable(&agents, why)?);
+            }
+            // A failed row says how to fix it.
+            let fix = format!(
+                "Set up again to retry, or install it with: {}",
+                cua_agent_setup::driver::install_command(s.env().os)
+            );
+            for o in out
+                .iter_mut()
+                .filter(|o| o.failed() && o.item == cua_agent_setup::DRIVER_MCP_SERVER_NAME)
+            {
+                o.detail = format!("{}. {fix}", o.detail.trim_end_matches('.'));
+            }
+            Ok(outcomes(out))
         })
         .await
     }
@@ -758,15 +785,30 @@ mod tests {
         assert!(!d.path().join(".agents/skills/cua-spaces").exists());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn sdk_cua_driver_setup_in_a_temp_home() {
         let d = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(d.path().join(".codex")).unwrap();
+        // Set up writes the MCP server only for a driver that answers
+        // `initialize`, so use a stand-in that does.
+        let drv = d.path().join("opt/drv/cua-driver");
+        std::fs::create_dir_all(drv.parent().unwrap()).unwrap();
+        std::fs::write(
+            &drv,
+            "#!/bin/sh\nread line\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"cua-driver\",\"version\":\"9.9.9\"}}}'\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&drv, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let drv_path = drv.display().to_string();
         let s = AgentSetup::with_env(cua_agent_setup::HostEnv::isolated(d.path()));
         let out = s
             .setup_cua_driver(
                 vec!["codex".into()],
-                Some("/opt/drv/cua-driver".into()),
+                Some(drv_path.clone().into()),
                 true,
                 true,
             )
@@ -786,6 +828,6 @@ mod tests {
         let codex = s.status().into_iter().find(|a| a.id == "codex").unwrap();
         assert!(codex.cua_driver_configured && !codex.cua_configured);
         let toml = std::fs::read_to_string(d.path().join(".codex/config.toml")).unwrap();
-        assert!(toml.contains("/opt/drv/cua-driver"), "{toml}");
+        assert!(toml.contains(&drv_path), "{toml}");
     }
 }

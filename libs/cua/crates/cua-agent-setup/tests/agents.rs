@@ -140,6 +140,26 @@ fn one(out: Vec<Outcome>) -> Outcome {
     out.into_iter().next().unwrap()
 }
 
+/// A stand-in cua-driver at `path`: `mcp` answers one MCP `initialize`
+/// (or, when `answers` is false, reads it and never answers).
+#[cfg(unix)]
+fn fake_driver(path: &Path, answers: bool) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let body = if answers {
+        "read line\nprintf '%s\\n' 'not json: a log line'\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"serverInfo\":{\"name\":\"cua-driver\",\"version\":\"9.9.9\"}}}'\n"
+    } else {
+        "read line\nexit 3\n"
+    };
+    std::fs::write(
+        path,
+        format!("#!/bin/sh\n[ \"$1\" = mcp ] || exit 2\n{body}"),
+    )
+    .unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_path_buf()
+}
+
 /// A user config for `agent` holding one unrelated server (and comments
 /// where the format has them), plus the parsed path to the servers object.
 fn fixture(agent: &str) -> (&'static str, String) {
@@ -855,6 +875,7 @@ fn state_file_records_what_cua_wrote() {
     assert!(o.detail.contains("does not support MCP"));
 }
 
+#[cfg(unix)]
 #[test]
 fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     let t = T::new();
@@ -864,7 +885,9 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     let agents = ids(&["claude-code", "codex", "pi"]);
     s.configure_mcp(&ids(&["claude-code"]), &server()).unwrap();
 
-    let driver = McpServer::driver("/opt/drv/bin/cua-driver");
+    let exe = fake_driver(&t.home.join("opt/drv/bin/cua-driver"), true);
+    let exe_s = exe.display().to_string();
+    let driver = McpServer::driver(exe_s.as_str());
     assert_eq!(driver.name, cua_agent_setup::DRIVER_MCP_SERVER_NAME);
     assert_eq!(driver.args, ["mcp"]);
     let out = s
@@ -891,7 +914,7 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     let after = t.read(&file);
     let m = registry::find("claude-code").unwrap().mcp.unwrap();
     let entry = cua_agent_setup_get(m.format, &file, &after, m.key_path, "cua-driver").unwrap();
-    assert_eq!(entry["command"], "/opt/drv/bin/cua-driver");
+    assert_eq!(entry["command"], exe_s.as_str());
     assert!(cua_agent_setup_get(m.format, &file, &after, m.key_path, "cua").is_some());
 
     // Status sees both; idempotent.
@@ -918,7 +941,7 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     assert_eq!(state["mcp"][&key]["name"], "cua");
     assert_eq!(
         state["servers"]["cua-driver"][&key]["value"]["command"],
-        "/opt/drv/bin/cua-driver"
+        exe_s.as_str()
     );
 
     // Plain remove undoes Cua Spaces' entry only: Cua Driver's server and
@@ -1014,6 +1037,138 @@ fn the_driver_command_resolves_from_path_then_local_bin() {
     assert_eq!(
         McpServer::driver_for(&env).command,
         on_path.display().to_string()
+    );
+}
+
+/// The reported bug: no cua-driver on the machine. Set up must not write a
+/// server agents can't start, and must say why.
+#[test]
+fn a_missing_cua_driver_fails_with_a_reason_and_leaves_configs_alone() {
+    let t = T::new();
+    let (rel, text) = fixture("claude-code");
+    let file = t.write(rel, &text);
+    let s = t.setup();
+    let driver = McpServer::driver_for(&t.env);
+    assert_eq!(driver.command, "cua-driver");
+    let out = s
+        .setup_cua_driver(&ids(&["claude-code", "pi"]), &driver, Parts::ALL, false)
+        .unwrap();
+    let mcp: Vec<&Outcome> = out.iter().filter(|o| o.target == Target::Mcp).collect();
+    assert_eq!(mcp.len(), 1, "{mcp:#?}");
+    assert_eq!(mcp[0].change, Change::Failed);
+    assert_eq!(mcp[0].agents, ["claude-code"]);
+    assert!(mcp[0].detail.contains("isn't installed"), "{mcp:#?}");
+    assert_eq!(t.read(&file), text);
+    // The skill still installs.
+    assert!(t.home.join(".claude/skills/cua-driver/SKILL.md").is_file());
+    // An absolute path that doesn't exist fails the same way.
+    let gone = McpServer::driver(t.home.join("nope/cua-driver").display().to_string());
+    let out = s
+        .setup_cua_driver(
+            &ids(&["claude-code"]),
+            &gone,
+            Parts {
+                skills: false,
+                mcp: true,
+            },
+            false,
+        )
+        .unwrap();
+    assert_eq!(one(out).change, Change::Failed);
+    assert_eq!(t.read(&file), text);
+}
+
+/// A cua-driver that never answers MCP is not "done" either.
+#[cfg(unix)]
+#[test]
+fn a_cua_driver_that_does_not_answer_mcp_fails() {
+    let t = T::new();
+    let (rel, text) = fixture("claude-code");
+    let file = t.write(rel, &text);
+    let exe = fake_driver(&t.home.join(".local/bin/cua-driver"), false);
+    let o = one(t
+        .setup()
+        .setup_cua_driver(
+            &ids(&["claude-code"]),
+            &McpServer::driver(exe.display().to_string()),
+            Parts {
+                skills: false,
+                mcp: true,
+            },
+            false,
+        )
+        .unwrap());
+    assert_eq!(o.change, Change::Failed);
+    assert!(o.detail.contains("didn't answer"), "{o:#?}");
+    assert_eq!(t.read(&file), text);
+}
+
+/// Re-running set up repairs an entry an older build wrote with the bare
+/// `cua-driver` name: it now points at the installed binary's absolute path.
+#[cfg(unix)]
+#[test]
+fn set_up_again_repairs_a_bare_cua_driver_entry() {
+    let t = T::new();
+    let (rel, text) = fixture("claude-code");
+    let file = t.write(rel, &text);
+    let s = t.setup();
+    let m = registry::find("claude-code").unwrap().mcp.unwrap();
+    // What 0.9.x wrote with no cua-driver installed.
+    s.configure_mcp(&ids(&["claude-code"]), &McpServer::driver("cua-driver"))
+        .unwrap();
+    let before = t.read(&file);
+    let entry = cua_agent_setup_get(m.format, &file, &before, m.key_path, "cua-driver").unwrap();
+    assert_eq!(entry["command"], "cua-driver");
+
+    let exe = fake_driver(&t.home.join(".local/bin/cua-driver"), true);
+    let mut env = t.env.clone();
+    env.path = vec![t.home.join(".local/bin")];
+    let s = AgentSetup::new(env.clone());
+    // The bare name resolves to the installed binary, checked, then written.
+    for driver in [McpServer::driver("cua-driver"), McpServer::driver_for(&env)] {
+        let o = one(s
+            .setup_cua_driver(
+                &ids(&["claude-code"]),
+                &driver,
+                Parts {
+                    skills: false,
+                    mcp: true,
+                },
+                false,
+            )
+            .unwrap());
+        assert!(
+            matches!(o.change, Change::Updated | Change::Unchanged),
+            "{o:#?}"
+        );
+        let after = t.read(&file);
+        let entry = cua_agent_setup_get(m.format, &file, &after, m.key_path, "cua-driver").unwrap();
+        assert_eq!(entry["command"], exe.display().to_string());
+        assert_eq!(entry["args"], json!(["mcp"]));
+    }
+    assert_eq!(cua_agent_setup::driver::check(&exe).unwrap(), "9.9.9");
+}
+
+/// On macOS the binary inside CuaDriver.app counts when no link exists.
+#[test]
+fn cua_driver_is_found_inside_its_app_on_macos() {
+    let t = T::new();
+    let mut env = t.env.clone();
+    env.os = cua_agent_setup::Os::MacOs;
+    let exe = t
+        .home
+        .join("Applications/CuaDriver.app/Contents/MacOS/cua-driver");
+    std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert_eq!(cua_agent_setup::driver::locate(&env), Some(exe.clone()));
+    assert_eq!(
+        McpServer::driver_for(&env).command,
+        exe.display().to_string()
     );
 }
 

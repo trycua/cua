@@ -56,7 +56,7 @@ export function DriverSummaries({ summaries }: { summaries: AgentSetupSummary[] 
             </span>
           ) : null}
           {s.failed.map((f) => (
-            <span key={f} className="block truncate text-xs text-destructive" data-summary-failed="">
+            <span key={f} className="block text-xs text-pretty break-words text-destructive select-text" data-summary-failed="">
               {f}
             </span>
           ))}

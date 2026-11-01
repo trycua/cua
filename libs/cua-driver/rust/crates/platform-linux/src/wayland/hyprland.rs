@@ -23,6 +23,11 @@ const MAX_LOGICAL_PIXELS: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 struct Workspace {
+    /// Hyprland 0.57.0 omits `id` from an unused `specialWorkspace`
+    /// (`{"address":"","type":"","name":""}`), which used to fail the whole
+    /// `j/monitors` reply. An absent id reads as 0, the value the visible-set
+    /// filter already treats as "not a live workspace".
+    #[serde(default)]
     id: i64,
 }
 
@@ -749,18 +754,22 @@ pub fn single_output_transform() -> Result<u32> {
 }
 
 pub fn list_windows() -> Result<Vec<Window>> {
-    let monitors: Vec<Monitor> = query("j/monitors")?;
-    // Windows on an output in DPMS standby are not visible while another
-    // output is on. With every output in standby the display is only idle,
-    // so its workspaces stay on screen.
+    let active = active_workspaces(query("j/monitors")?);
+    windows_from_clients(query("j/clients")?, &active)
+}
+
+/// Workspaces whose windows are visible. Windows on an output in DPMS standby
+/// are not visible while another output is on. With every output in standby the
+/// display is only idle, so its workspaces stay on screen. An absent workspace
+/// id (see [`Workspace::id`]) reads as 0 and is dropped here.
+fn active_workspaces(monitors: Vec<Monitor>) -> HashSet<i64> {
     let any_powered = monitors.iter().any(|m| m.dpms_status);
-    let active = monitors
+    monitors
         .into_iter()
         .filter(|m| m.dpms_status || !any_powered)
         .flat_map(|m| [m.active_workspace.id, m.special_workspace.id])
         .filter(|id| *id != 0)
-        .collect();
-    windows_from_clients(query("j/clients")?, &active)
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -1760,5 +1769,37 @@ mod tests {
             "width": 1920, "height": 1080, "scale": 1.0, "x": 0, "y": 0,
         });
         assert!(serde_json::from_value::<DisplayMonitor>(value).is_err());
+    }
+
+    // Only the fields `Monitor` reads are kept from the real `j/monitors` reply.
+    // Hyprland 0.57.0 omits `id` from an unused `specialWorkspace`.
+    const MONITORS_WITHOUT_SPECIAL_ID: &str = r#"[
+        {
+            "activeWorkspace": {"id": 1, "name": "1"},
+            "specialWorkspace": {"address": "", "type": "", "name": ""},
+            "dpmsStatus": true
+        }
+    ]"#;
+
+    const MONITORS_WITH_SPECIAL_ID: &str = r#"[
+        {
+            "activeWorkspace": {"id": 1, "name": "1"},
+            "specialWorkspace": {
+                "id": -99, "address": "0x1", "type": "special",
+                "name": "special:scratch"
+            },
+            "dpmsStatus": true
+        }
+    ]"#;
+
+    #[test]
+    fn monitor_reply_accepts_a_special_workspace_without_an_id() {
+        let without_id: Vec<Monitor> = serde_json::from_str(MONITORS_WITHOUT_SPECIAL_ID).unwrap();
+        assert_eq!(active_workspaces(without_id), HashSet::from([1]));
+
+        // A reported id still decides visibility, so the tolerance above does
+        // not hide windows on a special workspace.
+        let with_id: Vec<Monitor> = serde_json::from_str(MONITORS_WITH_SPECIAL_ID).unwrap();
+        assert_eq!(active_workspaces(with_id), HashSet::from([1, -99]));
     }
 }

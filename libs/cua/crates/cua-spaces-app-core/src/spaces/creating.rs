@@ -1577,7 +1577,9 @@ pub fn power_failed_text(on: bool, error: &str) -> String {
             )
         }
         Some(FailureCause::LocalNetworkVpn) => "a VPN or firewall on the Mac running it is \
-             blocking that Mac's own network. Turn off the VPN there and try again."
+             blocking that Mac's own network. Turn off the VPN there and try again. If it can't be \
+             turned off, ask whoever manages it to let 192.168.64.0/24 (that Mac's VM network) \
+             skip the VPN."
             .into(),
         Some(FailureCause::Disk) => "there isn't enough disk space on the Mac running it. Free \
              up space there (or run `cua cache prune` in Terminal), then try again."
@@ -1619,7 +1621,8 @@ fn vpn_text(provider: Option<SpaceProvider>, host_name: Option<&str>) -> String 
     }
     format!(
         "A VPN or firewall on {subject} is blocking that Mac's own network, so it can't connect \
-         to its new macOS Space. Turn off the VPN there and try again."
+         to its new macOS Space. Turn off the VPN there and try again. If it can't be turned off, ask \
+         whoever manages it to let 192.168.64.0/24 (that Mac's VM network) skip the VPN."
     )
 }
 

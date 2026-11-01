@@ -484,6 +484,31 @@ validation/bookkeeping, not another model or Driver call. Logs contain choices
 and timings, not a complete request, token-usage, or billing audit. The fixture
 tests integration rather than general agent capability.
 
+The native runners (`run_native.py` / `run_native.ts`) keep their original
+`observe_ms`, `parse_ms`, `decide_ms`, and `act_ms` fields and also emit the
+browser runners' phase names on every step event, so logs compare by field name.
+The boundaries are not identical because native observation is one
+`get_window_state` call that returns the accessibility tree, the screenshot, and
+the `capture_id` together:
+
+| Common field | Native meaning |
+|---|---|
+| `semantic_observe_ms` | The `get_window_state` calls in the step (the first, plus the one larger-budget reobservation when it happens) and `NativeObservation` validation. It **includes the screenshot capture**, paid on every step even when no visual parse runs. |
+| `visual_observe_ms` | The `parse_visual_regions` call and its validation only (equal to `parse_ms` when it succeeds; a failed attempt is counted here but has no `parse_ms`). `0` when the fallback rule does not parse. The browser value is capture plus parse. Native events carry `visual_observe_scope: "parse_only"` so the two meanings cannot be confused. |
+| `candidate_build_ms` | Building sources from the observation and every `task.plan(...)` call in the step: the preliminary plans that decide reobservation and the visual fallback, and the final plan. Python plans once after every first observation; TypeScript only when the tree is neither truncated nor complete. The definition is identical; the amount of work differs. |
+| `provider_decision_ms` | `decide_ms`, the same value. |
+| `decision_ms` | Step start through the validated, in-scope choice. |
+| `action_ms` | `act_ms`, the same value (`0` for a reobserve decision). |
+| `total_step_ms` | Step start through the end of the action, or through a reobserve decision. The oracle poll that follows is not included. |
+
+`observe_ms` still spans the whole observation function, so it is at least
+`semantic_observe_ms` and also covers that function's source and plan work. The
+native runner builds and schema-validates the provider request (`native_choice_request`,
+`validate_request`) before starting the `decide_ms` timer, whereas the browser
+runners build it inside the provider call; that time is in `decision_ms` but in no
+named phase, so `decision_ms` can exceed the sum of the phases by more than the
+browser's small residual.
+
 ## MCP, CLI, and perception boundaries
 
 The Python and TypeScript programs are the two complete agent loops. They use a

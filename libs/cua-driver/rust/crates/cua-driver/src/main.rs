@@ -570,9 +570,10 @@ fn main() {
             tool,
             json_args,
             screenshot_out_file,
+            text,
             socket,
         } => {
-            cli::run_call(&tool, json_args, screenshot_out_file, socket);
+            cli::run_call(&tool, json_args, screenshot_out_file, text, socket);
         }
         cli::Command::Serve {
             socket,
@@ -993,9 +994,10 @@ fn main() -> anyhow::Result<()> {
             tool,
             json_args,
             screenshot_out_file,
+            text,
             socket,
         } => {
-            cli::run_call(&tool, json_args, screenshot_out_file, socket);
+            cli::run_call(&tool, json_args, screenshot_out_file, text, socket);
             Ok(())
         }
         cli::Command::Serve {

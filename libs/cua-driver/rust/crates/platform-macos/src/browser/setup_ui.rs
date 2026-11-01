@@ -2053,6 +2053,8 @@ mod tests {
         TreeWalkResult {
             tree_markdown: String::new(),
             nodes,
+            regions: Vec::new(),
+            surfaces: Vec::new(),
             truncated: false,
             walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(0).outcome(),
             window_scope: Some(crate::ax::WindowScope::Matched),
@@ -2385,6 +2387,8 @@ mod tests {
         let truncated = TreeWalkResult {
             tree_markdown: String::new(),
             nodes: Vec::new(),
+            regions: Vec::new(),
+            surfaces: Vec::new(),
             truncated: true,
             walk: cua_driver_core::walk_budget::WalkOutcome::timed_out(
                 1000,

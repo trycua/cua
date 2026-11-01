@@ -104,6 +104,20 @@ pub fn element_token_schema() -> Value {
     })
 }
 
+/// `root_element_token` — subtree root handle `<snapshot_id>:<row>` or
+/// `<snapshot_id>:r<region>` from an earlier `get_window_state` snapshot.
+pub fn root_element_token_schema() -> Value {
+    json!({
+        "type": "string",
+        "pattern": "^s[0-9a-f]{8}:r?[0-9]+$",
+        "description": "Optional subtree root handle from an earlier get_window_state of the same \
+            (pid, window_id): pass an element token `<snapshot_id>:<row>` or a region token \
+            `<snapshot_id>:r<N>` from `structuredContent.regions[].region_token` to walk only \
+            that container's subtree plus window-level status text (macOS; returns an explicit \
+            unsupported refusal on Linux/Windows)."
+    })
+}
+
 /// Default and bounds for the per-call accessibility-walk budget
 /// (`timeout_ms`), the same on every platform.
 pub const TIMEOUT_MS_DEFAULT: u64 = 1000;
@@ -183,6 +197,7 @@ fn shared_param_canonical(name: &str) -> Option<Value> {
         "button" => button_schema(),
         "scope" => scope_schema(),
         "element_token" => element_token_schema(),
+        "root_element_token" => root_element_token_schema(),
         "capture_mode" => crate::capture_mode::capture_mode_schema(),
         "timeout_ms" => timeout_ms_schema(),
         _ => return None,

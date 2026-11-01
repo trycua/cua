@@ -193,6 +193,15 @@ impl Tool for GetWindowStateTool {
             Ok(display_only) => display_only,
             Err(refusal) => return refusal,
         };
+        let include_menubar = match cua_driver_core::window_state_view::include_menubar(&args) {
+            Ok(include_menubar) => include_menubar,
+            Err(refusal) => return refusal,
+        };
+        let root_element_token = match cua_driver_core::window_state_view::root_element_token(&args)
+        {
+            Ok(root_element_token) => root_element_token,
+            Err(refusal) => return refusal,
+        };
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") {
             Ok(v) => v,
@@ -285,6 +294,33 @@ impl Tool for GetWindowStateTool {
                  screenshot_out_file to force a capture.",
             );
         }
+        if !want_tree && root_element_token.is_some() {
+            return ToolResult::error(
+                "get_window_state: root_element_token cannot be combined with \
+                 include_accessibility_tree:false.",
+            )
+            .with_structured(serde_json::json!({
+                "code": "invalid_arguments",
+                "tool": "get_window_state",
+                "field": "root_element_token",
+            }));
+        }
+        let resolved_root = match root_element_token.as_deref() {
+            Some(token) => {
+                match self
+                    .state
+                    .snapshots
+                    .resolve_root_token(pid, u64::from(window_id), token)
+                {
+                    Ok((_slot, element)) => Some((token.to_owned(), element)),
+                    Err(refusal) => return refusal,
+                }
+            }
+            None => None,
+        };
+        let subtree_scope_key = resolved_root
+            .as_ref()
+            .map(|(_, elem)| format!("ptr:0x{:x}", elem.as_ptr()));
         // Optional per-call cap on the returned screenshot's long edge, folded
         // with the session/global ceiling below (the tighter wins).
         let max_dimension = args
@@ -352,29 +388,63 @@ impl Tool for GetWindowStateTool {
         });
         let (tree_result, prepared_snapshot) = if want_tree {
             let q = query.clone();
+            let include_mb = include_menubar != Some(false);
             // `timeout_ms` bounds the walk itself: it returns the partial tree
             // when the budget runs out. The outer deadline is only a backstop
             // for an AX call that ignores the per-element messaging timeout
             // (dropping a spawn_blocking JoinHandle cannot cancel it).
             let walk_future = tokio::task::spawn_blocking(move || {
-                let tree = crate::ax::tree::with_menus_collapsed(collapse_menus, || {
-                    crate::ax::tree::walk_tree_budgeted(
+                let tree = if let Some((_tok, root_elem)) = resolved_root {
+                    match crate::ax::tree::walk_subtree_budgeted(
                         pid,
-                        Some(window_id),
+                        window_id,
+                        &root_elem,
                         q.as_deref(),
                         max_depth,
                         cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements),
-                    )
-                });
-                let payload = crate::ax::snapshot::AxSnapshot::from_nodes(&tree.nodes);
-                (tree, payload)
+                    ) {
+                        Ok(tree) => tree,
+                        Err(err) => return Err(err),
+                    }
+                } else {
+                    crate::ax::tree::with_menubar_included(include_mb, || {
+                        crate::ax::tree::with_menus_collapsed(collapse_menus, || {
+                            crate::ax::tree::walk_tree_budgeted(
+                                pid,
+                                Some(window_id),
+                                q.as_deref(),
+                                max_depth,
+                                cua_driver_core::walk_budget::WalkBudget::new(
+                                    timeout_ms,
+                                    max_elements,
+                                ),
+                            )
+                        })
+                    })
+                };
+                let payload = crate::ax::snapshot::AxSnapshot::from_walk(&tree);
+                Ok((tree, payload))
             });
             // A launching app is waited on for up to `timeout_ms` before the
             // walk's own `timeout_ms` starts (see `ax::launch`).
             let backstop =
                 std::time::Duration::from_millis(timeout_ms) * 2 + AX_WALK_BACKSTOP_GRACE;
             match tokio::time::timeout(backstop, walk_future).await {
-                Ok(Ok((tree, payload))) => (Some(tree), Some(payload)),
+                Ok(Ok(Ok((tree, payload)))) => (Some(tree), Some(payload)),
+                Ok(Ok(Err(crate::ax::tree::SubtreeWalkError::StaleRootElement))) => {
+                    let bad_tok = root_element_token.as_deref().unwrap_or_default();
+                    return ToolResult::error(format!(
+                        "root_element_token {bad_tok} refers to a detached or destroyed AX \
+                         element in window_id {window_id}. Re-read the window without \
+                         root_element_token to refresh regions and element tokens."
+                    ))
+                    .with_structured(serde_json::json!({
+                        "code": "stale_element_token",
+                        "pid": pid,
+                        "window_id": window_id,
+                        "root_element_token": bad_tok,
+                    }));
+                }
                 Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
                 Err(_elapsed) => {
                     return ToolResult::error(format!(
@@ -705,6 +775,38 @@ impl Tool for GetWindowStateTool {
             structured["snapshot_id"] =
                 serde_json::json!(cua_driver_core::element_token::format_snapshot_id(sid));
         }
+        if let Some(ref root_tok) = root_element_token {
+            structured["root_element_token"] = serde_json::json!(root_tok);
+        }
+        if let Some(r) = tree_result.as_ref() {
+            if !r.regions.is_empty() {
+                let regions_json: Vec<serde_json::Value> = r
+                    .regions
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, reg)| {
+                        let mut obj = serde_json::json!({
+                            "label": reg.label,
+                            "role": reg.role,
+                            "depth": reg.depth,
+                        });
+                        if let Some(sid) = snapshot_id {
+                            obj["region_token"] = serde_json::json!(
+                                cua_driver_core::element_token::region_token_for(sid, idx)
+                            );
+                        }
+                        if let Some(elem_idx) = reg.element_index {
+                            obj["element_index"] = serde_json::json!(elem_idx);
+                        }
+                        obj
+                    })
+                    .collect();
+                structured["regions"] = serde_json::json!(regions_json);
+            }
+            if !r.surfaces.is_empty() {
+                structured["surfaces"] = serde_json::json!(r.surfaces);
+            }
+        }
         let invalidated: Vec<String> = removed
             .into_iter()
             .chain(replaced.into_iter().flatten())
@@ -913,6 +1015,8 @@ impl Tool for GetWindowStateTool {
                             .get("max_depth")
                             .and_then(|v| v.as_u64())
                             .map(|v| v as usize),
+                        subtree_scope: subtree_scope_key,
+                        include_menubar,
                     },
                     focus_probe: Some(&focus_probe),
                 },
@@ -2029,6 +2133,50 @@ mod tests {
             entries[0].get("element_token").is_none(),
             "observation-only entries must not emit unregistered element_token: {}",
             entries[0]
+        );
+    }
+
+    #[test]
+    fn get_window_state_schema_exposes_root_element_token_and_include_menubar() {
+        let props = def().input_schema["properties"]
+            .as_object()
+            .expect("properties object");
+        assert!(props.contains_key("root_element_token"));
+        assert!(props.contains_key("include_menubar"));
+        assert_eq!(props["include_menubar"]["type"], json!("boolean"));
+        assert_eq!(
+            props["root_element_token"]["pattern"],
+            json!("^s[0-9a-f]{8}:r?[0-9]+$")
+        );
+    }
+
+    #[test]
+    fn classify_overlay_surface_identifies_sheets_popovers_menus_dialogs_and_file_panels() {
+        use crate::ax::tree::classify_overlay_surface;
+        assert_eq!(
+            classify_overlay_surface("AXSheet", None, None),
+            Some("sheet")
+        );
+        assert_eq!(
+            classify_overlay_surface("AXWindow", Some("AXSheet"), None),
+            Some("sheet")
+        );
+        assert_eq!(
+            classify_overlay_surface("AXPopover", None, None),
+            Some("popover")
+        );
+        assert_eq!(classify_overlay_surface("AXMenu", None, None), Some("menu"));
+        assert_eq!(
+            classify_overlay_surface("AXWindow", Some("AXDialog"), Some("open-panel")),
+            Some("file_panel")
+        );
+        assert_eq!(
+            classify_overlay_surface("AXWindow", Some("AXDialog"), None),
+            Some("dialog")
+        );
+        assert_eq!(
+            classify_overlay_surface("AXWindow", Some("AXStandardWindow"), None),
+            None
         );
     }
 }

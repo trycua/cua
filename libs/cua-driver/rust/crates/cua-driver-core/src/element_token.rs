@@ -19,9 +19,38 @@ pub fn token_for(snapshot_id: u32, element_index: usize) -> String {
     format!("{}:{element_index}", format_snapshot_id(snapshot_id))
 }
 
+pub fn region_token_for(snapshot_id: u32, region_index: usize) -> String {
+    format!("{}:r{region_index}", format_snapshot_id(snapshot_id))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootTokenSlot {
+    Element(usize),
+    Region(usize),
+}
+
 pub fn parse_token(token: &str) -> Option<(u32, usize)> {
     let (handle, index) = token.split_once(':')?;
+    if index.is_empty() || !index.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
     Some((parse_snapshot_handle(handle)?, index.parse().ok()?))
+}
+
+pub fn parse_root_token(token: &str) -> Option<(u32, RootTokenSlot)> {
+    let (handle, slot) = token.split_once(':')?;
+    let snapshot_id = parse_snapshot_handle(handle)?;
+    if let Some(region_idx) = slot.strip_prefix('r') {
+        if region_idx.is_empty() || !region_idx.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        Some((snapshot_id, RootTokenSlot::Region(region_idx.parse().ok()?)))
+    } else {
+        if slot.is_empty() || !slot.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        Some((snapshot_id, RootTokenSlot::Element(slot.parse().ok()?)))
+    }
 }
 
 pub fn parse_snapshot_handle(handle: &str) -> Option<u32> {
@@ -257,8 +286,27 @@ mod tests {
             "s1234:42",
             "szzzzzzzz:42",
             "s00001234:abc",
+            "s00001234:+1",
         ] {
             assert!(parse_token(token).is_none(), "{token}");
+        }
+    }
+
+    #[test]
+    fn region_and_element_root_tokens_round_trip() {
+        let reg = region_token_for(0x00ab_cdef, 3);
+        assert_eq!(reg, "s00abcdef:r3");
+        assert!(parse_token(&reg).is_none());
+        assert_eq!(
+            parse_root_token(&reg),
+            Some((0x00ab_cdef, RootTokenSlot::Region(3)))
+        );
+        assert_eq!(
+            parse_root_token("s00abcdef:14"),
+            Some((0x00ab_cdef, RootTokenSlot::Element(14)))
+        );
+        for bad in ["s00abcdef:r", "s00abcdef:r+1", "s00abcdef:rx", "s00abcdef:"] {
+            assert!(parse_root_token(bad).is_none(), "{bad}");
         }
     }
 }

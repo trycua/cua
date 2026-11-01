@@ -1,6 +1,7 @@
 use crate::element_token::{
-    current_snapshots_json, current_snapshots_phrase, format_snapshot_id, parse_token, refusal,
-    token_for, CurrentSnapshot, ResolvedElement, TokenOwner, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
+    current_snapshots_json, current_snapshots_phrase, format_snapshot_id, parse_root_token,
+    parse_token, refusal, region_token_for, token_for, CurrentSnapshot, ResolvedElement,
+    RootTokenSlot, TokenOwner, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
 };
 use crate::protocol::ToolResult;
 use std::any::Any;
@@ -20,6 +21,12 @@ pub trait SnapshotPayload: Send + Sync + 'static {
         self.len() == 0
     }
     fn retain(&self, index: usize) -> Option<Self::Element>;
+    fn region_len(&self) -> usize {
+        0
+    }
+    fn retain_region(&self, _index: usize) -> Option<Self::Element> {
+        None
+    }
 }
 
 struct Snapshot<S> {
@@ -929,6 +936,71 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             element_index,
             element,
         })
+    }
+
+    /// Resolve a `root_element_token` (`<snapshot_id>:<row>` or
+    /// `<snapshot_id>:r<region>`) against `pid`'s live snapshots without
+    /// replacing or evicting any snapshot on failure.
+    pub fn resolve_root_token(
+        &self,
+        pid: i32,
+        window_id: u64,
+        token: &str,
+    ) -> Result<(RootTokenSlot, S::Element), ToolResult> {
+        let inner = self.inner.lock().unwrap();
+        let lane = inner.lane(pid);
+        let Some((snapshot_id, slot)) = parse_root_token(token) else {
+            let example = lane.last().map_or_else(
+                || "s0000002a:r0".to_owned(),
+                |snapshot| region_token_for(snapshot.id, 0),
+            );
+            return Err(refusal(
+                "invalid_element_token",
+                format!(
+                    "root_element_token \"{token}\" has invalid format: use <snapshot_id>:<row> \
+                     or <snapshot_id>:r<region>, e.g. \"{example}\"."
+                ),
+            ));
+        };
+        let Some(snapshot) = lane.iter().find(|snapshot| snapshot.id == snapshot_id) else {
+            return Err(stale_token_refusal(pid, &inner.current_snapshots(pid)));
+        };
+        if snapshot.window_id != window_id {
+            return Err(refusal(
+                "conflicting_element_target",
+                "root_element_token conflicts with window_id".into(),
+            ));
+        }
+        match slot {
+            RootTokenSlot::Element(element_index) => {
+                let element = snapshot
+                    .payload
+                    .retain(element_index)
+                    .ok_or_else(|| out_of_range_refusal(snapshot, element_index))?;
+                Ok((slot, element))
+            }
+            RootTokenSlot::Region(region_index) => {
+                let element = snapshot
+                    .payload
+                    .retain_region(region_index)
+                    .ok_or_else(|| {
+                        let sid = format_snapshot_id(snapshot.id);
+                        let regions = match snapshot.payload.region_len() {
+                            0 => "no regions".to_owned(),
+                            n => format!("regions r0 to r{} only", n - 1),
+                        };
+                        refusal(
+                            "invalid_element_token",
+                            format!(
+                            "root_element_token {sid}:r{region_index} is out of range: snapshot \
+                             {sid} has {regions} ({} region(s)).",
+                            snapshot.payload.region_len()
+                        ),
+                        )
+                    })?;
+                Ok((slot, element))
+            }
+        }
     }
 
     pub fn remove(&self, pid: i32, window_id: u64) -> Option<u32> {
@@ -2170,5 +2242,96 @@ mod tests {
     #[test]
     fn default_impl_matches_new() {
         let _cache: SnapshotStore<Payload> = SnapshotStore::default();
+    }
+
+    struct RegionPayload {
+        elements: Vec<usize>,
+        regions: Vec<usize>,
+    }
+
+    impl SnapshotPayload for RegionPayload {
+        type Element = usize;
+
+        fn len(&self) -> usize {
+            self.elements.len()
+        }
+
+        fn retain(&self, index: usize) -> Option<Self::Element> {
+            self.elements.get(index).copied()
+        }
+
+        fn region_len(&self) -> usize {
+            self.regions.len()
+        }
+
+        fn retain_region(&self, index: usize) -> Option<Self::Element> {
+            self.regions.get(index).copied()
+        }
+    }
+
+    #[test]
+    fn resolve_root_token_handles_elements_regions_and_preserves_snapshot_on_refusal() {
+        let cache: SnapshotStore<RegionPayload> = SnapshotStore::new();
+        let first_id = cache.publish(
+            55,
+            100,
+            RegionPayload {
+                elements: vec![10, 20],
+                regions: vec![900, 901],
+            },
+        );
+        assert_eq!(
+            cache
+                .resolve_root_token(55, 100, &token_for(first_id, 1))
+                .unwrap(),
+            (RootTokenSlot::Element(1), 20)
+        );
+        assert_eq!(
+            cache
+                .resolve_root_token(55, 100, &region_token_for(first_id, 1))
+                .unwrap(),
+            (RootTokenSlot::Region(1), 901)
+        );
+        // Out-of-range region token refuses without evicting the snapshot.
+        let oor = cache
+            .resolve_root_token(55, 100, &region_token_for(first_id, 9))
+            .unwrap_err();
+        assert_eq!(
+            oor.structured_content.unwrap()["refusal"]["code"],
+            "invalid_element_token"
+        );
+        // Wrong window_id refuses without evicting the snapshot.
+        let wrong_win = cache
+            .resolve_root_token(55, 999, &region_token_for(first_id, 0))
+            .unwrap_err();
+        assert_eq!(
+            wrong_win.structured_content.unwrap()["refusal"]["code"],
+            "conflicting_element_target"
+        );
+        // Original snapshot remains live after both refusals.
+        assert_eq!(
+            cache
+                .resolve_root_token(55, 100, &region_token_for(first_id, 0))
+                .unwrap(),
+            (RootTokenSlot::Region(0), 900)
+        );
+        // Replacing the snapshot causes stale_element_token naming current_snapshots.
+        let second_id = cache.publish(
+            55,
+            100,
+            RegionPayload {
+                elements: vec![30],
+                regions: vec![902],
+            },
+        );
+        let stale = cache
+            .resolve_root_token(55, 100, &region_token_for(first_id, 0))
+            .unwrap_err();
+        let structured = stale.structured_content.unwrap();
+        assert_eq!(structured["refusal"]["code"], "stale_element_token");
+        assert_eq!(
+            structured["current_snapshots"][0]["snapshot_id"],
+            format_snapshot_id(second_id)
+        );
     }
 }

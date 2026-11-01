@@ -73,6 +73,10 @@
       "description": "Default true. False skips the AX walk and returns the screenshot plus window metadata. Both this and include_screenshot false is an error.",
       "type": "boolean"
      },
+     "include_menubar": {
+      "description": "Default true on macOS (closed menu-bar items stay collapsed unless query or full_output is set). Set false to skip walking AXMenuBar completely: saves IPC round-trips and keeps query/full_output strictly inside the window.",
+      "type": "boolean"
+     },
      "include_screenshot": {
       "description": "Default true. False returns the tree only (saves image tokens and latency); screenshot_out_file still forces a capture.",
       "type": "boolean"
@@ -103,6 +107,11 @@
      },
      "query": {
       "description": "Case-insensitive substring filter: returns matching rows plus ancestors; element_index values are not renumbered. Try this before a full read.",
+      "type": "string"
+     },
+     "root_element_token": {
+      "description": "Optional subtree root handle from an earlier get_window_state of the same (pid, window_id): pass an element token `<snapshot_id>:<row>` or a region token `<snapshot_id>:r<N>` from `structuredContent.regions[].region_token` to walk only that container's subtree plus window-level status text (macOS; returns an explicit unsupported refusal on Linux/Windows).",
+      "pattern": "^s[0-9a-f]{8}:r?[0-9]+$",
       "type": "string"
      },
      "screenshot_format": {

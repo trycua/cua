@@ -3449,12 +3449,14 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
 /// process*, so the ONLY process that can read `com.trycua.driver`'s real
 /// grants is the daemon running as its own responsible process. When the
 /// daemon is up we query it and report its
-/// `driver-daemon`-attributed answer. When it is NOT up we deliberately
-/// report `unknown` rather than fall back to an in-process check — that
-/// fallback would report the *calling terminal's* grants and could print
-/// `✅ granted` while the driver itself has none. An honest "unknown" beats a
-/// confident lie. To grant + verify, use `cua-driver permissions grant`.
-/// Never raises a prompt.
+/// `driver-daemon`-attributed answer. Otherwise the driver's status is
+/// `unknown`: an in-process check reports the *calling terminal's* grants and
+/// could print `✅ granted` while the driver itself has none. That live check
+/// still runs (preflight APIs only), and is shown separately as `live_probe`,
+/// labelled with the identity macOS attributes it to, never as the driver's
+/// status. A listening daemon that is not its own responsible process
+/// (embedded, or started from a terminal) is reported the same way. To grant +
+/// verify, use `cua-driver permissions grant`. Never raises a prompt.
 fn run_permissions_status(json: bool) {
     let socket = crate::serve::default_socket_path();
     let cli_name = crate::bundle::cli_name();
@@ -3488,27 +3490,40 @@ fn run_permissions_status(json: bool) {
             }
             return;
         }
-        result
-            .and_then(|res| res.get("structuredContent").cloned())
-            // Trust the booleans ONLY when the answering daemon is its own
-            // responsible process (`driver-daemon`). Otherwise those grants
-            // belong to the launching app, so we discard them and fall through
-            // to `unknown`. A missing `source` (non-macOS, no TCC) is trusted
-            // as-is.
-            .filter(|s| {
-                s.get("source")
-                    .and_then(|src| src.get("attribution"))
-                    .and_then(|v| v.as_str())
-                    .map(|a| a == "driver-daemon")
-                    .unwrap_or(true)
-            })
+        result.and_then(|res| res.get("structuredContent").cloned())
     } else {
         None
     };
 
-    let Some(structured) = daemon_status else {
-        // No reliable answer. Emit NO accessibility/screen_recording booleans —
-        // nothing downstream can misread a false `granted: true`.
+    // Trust the booleans ONLY when the answering daemon is its own responsible
+    // process (`driver-daemon`). Otherwise those grants belong to the
+    // launching app, so they never become the driver's status; they are shown
+    // as a labelled live probe instead.
+    let (trusted, untrusted_daemon) = match daemon_status {
+        Some(structured) if permission_answer_is_driver_attributed(&structured) => {
+            (Some(structured), None)
+        }
+        other => (None, other),
+    };
+    // With nothing trustworthy from a daemon, probe this process live with
+    // the non-prompting preflight APIs. Its answer is the driver's own only
+    // when this process is itself the driver's responsible process.
+    let live_probe = match (&trusted, untrusted_daemon) {
+        (Some(_), _) => None,
+        (None, Some(daemon)) => Some(("daemon", daemon)),
+        (None, None) => local_live_permission_probe().map(|probe| ("this_process", probe)),
+    };
+    let (trusted, live_probe) = match live_probe {
+        Some(("this_process", probe)) if permission_answer_is_driver_attributed(&probe) => {
+            (Some(probe), None)
+        }
+        other => (trusted, other),
+    };
+
+    let Some(structured) = trusted else {
+        // No reliable answer for the driver's own identity. Emit NO top-level
+        // accessibility/screen_recording booleans: nothing downstream can
+        // misread another identity's grant as the driver's.
         let message = if is_listening {
             format!(
                 "{app_name} daemon is listening, but its real TCC status is not yet available. \
@@ -3522,21 +3537,24 @@ fn run_permissions_status(json: bool) {
                  then re-run this command."
             )
         };
+        let (payload, lines) = unattributed_permission_status(
+            is_listening,
+            &message,
+            live_probe,
+            cli_name,
+            app_name,
+            bundle_id,
+        );
         if json {
-            let payload = serde_json::json!({
-                "daemon_running": is_listening,
-                "status": "unknown",
-                "reason": message,
-            });
             println!(
                 "{}",
                 serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
             );
-            return;
+        } else {
+            for line in lines {
+                println!("{line}");
+            }
         }
-        println!("Accessibility:    ❓ unknown");
-        println!("Screen Recording: ❓ unknown");
-        println!("{message}");
         return;
     };
 
@@ -3605,6 +3623,112 @@ fn run_permissions_status(json: bool) {
     if !(ax && sr) {
         println!("  → To grant for the driver, run: {cli_name} permissions grant");
     }
+}
+
+/// Whether a `check_permissions` answer speaks for the driver's own TCC
+/// identity. A missing `source` (non-macOS, no TCC) is trusted as-is.
+fn permission_answer_is_driver_attributed(structured: &serde_json::Value) -> bool {
+    structured
+        .get("source")
+        .and_then(|src| src.get("attribution"))
+        .and_then(|v| v.as_str())
+        .map(|a| a == "driver-daemon")
+        .unwrap_or(true)
+}
+
+/// Live, non-prompting TCC probe of this CLI process (macOS only).
+fn local_live_permission_probe() -> Option<serde_json::Value> {
+    #[cfg(target_os = "macos")]
+    {
+        Some(platform_macos::tools::live_permission_probe())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// `permissions status` output when nothing answered for the driver's own
+/// identity. The driver's status stays `unknown` with no top-level booleans,
+/// and a live probe, when one ran, is reported under `live_probe` with the
+/// identity it actually answers for. `probed` is `daemon` for a listening
+/// daemon that is not its own responsible process (embedded or launched from
+/// a terminal), or `this_process` for the CLI's own preflight probe.
+fn unattributed_permission_status(
+    is_listening: bool,
+    message: &str,
+    live_probe: Option<(&str, serde_json::Value)>,
+    cli_name: &str,
+    app_name: &str,
+    bundle_id: &str,
+) -> (serde_json::Value, Vec<String>) {
+    let mut payload = serde_json::json!({
+        "daemon_running": is_listening,
+        "status": "unknown",
+        "reason": message,
+    });
+    let mut lines = vec![
+        "Accessibility:    ❓ unknown".to_owned(),
+        "Screen Recording: ❓ unknown".to_owned(),
+        message.to_owned(),
+    ];
+    let Some((probed, probe)) = live_probe else {
+        return (payload, lines);
+    };
+    let flag = |key: &str| probe.get(key).and_then(serde_json::Value::as_bool);
+    let source = probe
+        .get("source")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let attribution = source
+        .get("attribution")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let responsible = source.get("responsible_process");
+    let responsible_exe = responsible
+        .and_then(|r| r.get("executable"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|exe| !exe.is_empty());
+    let responsible_pid = responsible
+        .and_then(|r| r.get("pid"))
+        .and_then(serde_json::Value::as_i64);
+    let identity = match (responsible_exe, responsible_pid) {
+        (Some(exe), Some(pid)) => format!("{exe} (pid {pid})"),
+        _ => "the app that launched it".to_owned(),
+    };
+    let subject = if probed == "daemon" {
+        "the listening daemon"
+    } else {
+        "this process (no prompt)"
+    };
+    let mark = |granted: Option<bool>| match granted {
+        Some(true) => "✅ granted",
+        Some(false) => "❌ not granted",
+        None => "❓ unknown",
+    };
+    lines.push(String::new());
+    lines.push(format!(
+        "Live check of {subject}, attribution {attribution}; macOS attributes it to {identity}:"
+    ));
+    lines.push(format!(
+        "  Accessibility:    {}",
+        mark(flag("accessibility"))
+    ));
+    lines.push(format!(
+        "  Screen Recording: {}",
+        mark(flag("screen_recording"))
+    ));
+    lines.push(format!(
+        "  These are not {app_name}'s ({bundle_id}) grants. They are what `{cli_name} mcp --direct` \
+         or an embedded daemon started from the same app uses."
+    ));
+    payload["live_probe"] = serde_json::json!({
+        "probed": probed,
+        "accessibility": flag("accessibility"),
+        "screen_recording": flag("screen_recording"),
+        "source": source,
+    });
+    (payload, lines)
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -6002,6 +6126,111 @@ mod tests {
             finite_client_kind_from_args(&args(&["doctor", "--client", "claude"])),
             "not_applicable"
         );
+    }
+
+    #[test]
+    fn unattributed_status_without_probe_keeps_unknown_shape() {
+        let (payload, lines) = unattributed_permission_status(
+            false,
+            "no daemon",
+            None,
+            "cua-driver",
+            "CuaDriver",
+            "com.trycua.driver",
+        );
+        assert_eq!(
+            payload,
+            serde_json::json!({"daemon_running": false, "status": "unknown", "reason": "no daemon"})
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "Accessibility:    ❓ unknown",
+                "Screen Recording: ❓ unknown",
+                "no daemon"
+            ]
+        );
+    }
+
+    #[test]
+    fn unattributed_status_reports_caller_probe_separately() {
+        let probe = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": false,
+            "source": {
+                "attribution": "caller",
+                "pid": 10,
+                "responsible_process": {"pid": 7, "executable": "/Applications/Terminal.app/Contents/MacOS/Terminal"},
+            },
+        });
+        let (payload, lines) = unattributed_permission_status(
+            false,
+            "no daemon",
+            Some(("this_process", probe)),
+            "cua-driver",
+            "CuaDriver",
+            "com.trycua.driver",
+        );
+        // The driver's own status stays unknown: no top-level booleans.
+        assert_eq!(payload["status"], "unknown");
+        assert!(payload.get("accessibility").is_none());
+        assert!(payload.get("screen_recording").is_none());
+        assert_eq!(payload["live_probe"]["probed"], "this_process");
+        assert_eq!(payload["live_probe"]["accessibility"], true);
+        assert_eq!(payload["live_probe"]["screen_recording"], false);
+        assert_eq!(payload["live_probe"]["source"]["attribution"], "caller");
+        assert_eq!(
+            &lines[..2],
+            &[
+                "Accessibility:    ❓ unknown",
+                "Screen Recording: ❓ unknown"
+            ]
+        );
+        let text = lines.join("\n");
+        assert!(text.contains("Live check of this process (no prompt), attribution caller"));
+        assert!(text.contains("/Applications/Terminal.app/Contents/MacOS/Terminal (pid 7)"));
+        assert!(text.contains("  Accessibility:    ✅ granted"));
+        assert!(text.contains("  Screen Recording: ❌ not granted"));
+        assert!(text.contains("not CuaDriver's (com.trycua.driver) grants"));
+    }
+
+    #[test]
+    fn unattributed_status_reports_host_daemon_probe() {
+        let probe = serde_json::json!({
+            "accessibility": true,
+            "source": {"attribution": "host", "pid": 3},
+        });
+        let (payload, lines) = unattributed_permission_status(
+            true,
+            "listening",
+            Some(("daemon", probe)),
+            "cua-driver",
+            "CuaDriver",
+            "com.trycua.driver",
+        );
+        assert_eq!(payload["daemon_running"], true);
+        assert_eq!(payload["live_probe"]["probed"], "daemon");
+        assert_eq!(
+            payload["live_probe"]["screen_recording"],
+            serde_json::Value::Null
+        );
+        let text = lines.join("\n");
+        assert!(text.contains("Live check of the listening daemon, attribution host; macOS attributes it to the app that launched it"));
+        assert!(text.contains("  Screen Recording: ❓ unknown"));
+    }
+
+    #[test]
+    fn only_driver_daemon_or_unattributed_answers_count_as_the_drivers() {
+        let with = |attribution: &str| serde_json::json!({"accessibility": true, "source": {"attribution": attribution}});
+        assert!(permission_answer_is_driver_attributed(&with(
+            "driver-daemon"
+        )));
+        assert!(!permission_answer_is_driver_attributed(&with("caller")));
+        assert!(!permission_answer_is_driver_attributed(&with("host")));
+        // Non-macOS daemons have no TCC and no source.
+        assert!(permission_answer_is_driver_attributed(
+            &serde_json::json!({"accessibility": true})
+        ));
     }
 
     #[test]

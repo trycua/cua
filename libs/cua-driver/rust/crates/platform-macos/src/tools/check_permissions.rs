@@ -304,6 +304,48 @@ fn permission_source(
     })
 }
 
+/// Non-prompting live TCC probe of *this* process, for callers that have no
+/// daemon to ask (the standalone `permissions status` CLI).
+///
+/// Uses only the preflight APIs (`AXIsProcessTrusted`,
+/// `CGPreflightScreenCaptureAccess`), never their prompting variants, and
+/// never runs the ScreenCaptureKit probe. `source` uses the same attribution
+/// rules as `check_permissions`, plus the process macOS holds responsible for
+/// this one, which is the identity the booleans actually belong to.
+pub fn live_permission_probe() -> Value {
+    let mut source = permission_source(false, None);
+    if let Some(responsible) = responsible_process() {
+        source["responsible_process"] = responsible;
+    }
+    serde_json::json!({
+        "accessibility": accessibility_granted(),
+        "screen_recording": screen_recording_granted(),
+        "source": source,
+    })
+}
+
+/// The process TCC attributes this one to (its "responsible process"), as
+/// `{pid, executable}`. Informational only: attribution decisions above never
+/// depend on it.
+fn responsible_process() -> Option<Value> {
+    extern "C" {
+        // libSystem (libquarantine); stable since macOS 10.14.
+        fn responsibility_get_pid_responsible_for_pid(pid: libc::pid_t) -> libc::pid_t;
+    }
+    let pid = unsafe { responsibility_get_pid_responsible_for_pid(libc::getpid()) };
+    if pid <= 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let len = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    let executable = if len > 0 {
+        String::from_utf8_lossy(&buf[..len as usize]).into_owned()
+    } else {
+        String::new()
+    };
+    Some(serde_json::json!({ "pid": pid, "executable": executable }))
+}
+
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 fn def() -> &'static ToolDef {

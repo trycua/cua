@@ -1,0 +1,245 @@
+{
+  "page" : {
+    "sections" : [
+      {
+        "button" : null,
+        "buttonEnabled" : false,
+        "buttonHelp" : null,
+        "id" : "general",
+        "rows" : [
+          {
+            "button" : null,
+            "enabled" : true,
+            "help" : null,
+            "id" : "notch",
+            "kind" : "choice",
+            "label" : "Spaces tab in the notch",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+              {
+                "active" : true,
+                "id" : "show",
+                "label" : "Show"
+              },
+              {
+                "active" : false,
+                "id" : "hide",
+                "label" : "Hide"
+              }
+            ],
+            "placeholder" : null,
+            "value" : null
+          },
+          {
+            "button" : null,
+            "enabled" : true,
+            "help" : "Opening a running Space shows its live desktop",
+            "id" : "auto-connect",
+            "kind" : "toggle",
+            "label" : "Connect to the desktop automatically",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+              {
+                "active" : true,
+                "id" : "on",
+                "label" : "On"
+              },
+              {
+                "active" : false,
+                "id" : "off",
+                "label" : "Off"
+              }
+            ],
+            "placeholder" : null,
+            "value" : null
+          },
+          {
+            "button" : null,
+            "enabled" : true,
+            "help" : "With a linked cloud and a budget, new Spaces go there when this Mac is full",
+            "id" : "placement-overflow",
+            "kind" : "toggle",
+            "label" : "Overflow into your clouds when this Mac is full",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+              {
+                "active" : true,
+                "id" : "on",
+                "label" : "On"
+              },
+              {
+                "active" : false,
+                "id" : "off",
+                "label" : "Off"
+              }
+            ],
+            "placeholder" : null,
+            "value" : null
+          },
+          {
+            "button" : "Show again",
+            "enabled" : true,
+            "help" : null,
+            "id" : "welcome",
+            "kind" : "text",
+            "label" : "Welcome",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+
+            ],
+            "placeholder" : null,
+            "value" : null
+          },
+          {
+            "button" : null,
+            "enabled" : true,
+            "help" : null,
+            "id" : "tips",
+            "kind" : "toggle",
+            "label" : "Show tips",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+              {
+                "active" : true,
+                "id" : "on",
+                "label" : "On"
+              },
+              {
+                "active" : false,
+                "id" : "off",
+                "label" : "Off"
+              }
+            ],
+            "placeholder" : null,
+            "value" : null
+          },
+          {
+            "button" : "Reset",
+            "enabled" : true,
+            "help" : null,
+            "id" : "reset-tips",
+            "kind" : "text",
+            "label" : "Reset tips",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+
+            ],
+            "placeholder" : null,
+            "value" : null
+          }
+        ],
+        "title" : "General"
+      },
+      {
+        "button" : null,
+        "buttonEnabled" : false,
+        "buttonHelp" : null,
+        "id" : "runtimes",
+        "rows" : [
+          {
+            "button" : null,
+            "enabled" : true,
+            "help" : "Checking…",
+            "id" : "runtime:container",
+            "kind" : "choice",
+            "label" : "Containers",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+              {
+                "active" : true,
+                "id" : "auto",
+                "label" : "Automatic"
+              },
+              {
+                "active" : false,
+                "id" : "builtin",
+                "label" : "Cua’s own"
+              },
+              {
+                "active" : false,
+                "id" : "system",
+                "label" : "Already installed"
+              }
+            ],
+            "placeholder" : null,
+            "value" : null
+          },
+          {
+            "button" : null,
+            "enabled" : true,
+            "help" : "Checking…",
+            "id" : "runtime:vm",
+            "kind" : "choice",
+            "label" : "Virtual machines",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+              {
+                "active" : true,
+                "id" : "auto",
+                "label" : "Automatic"
+              },
+              {
+                "active" : false,
+                "id" : "builtin",
+                "label" : "Cua’s own"
+              },
+              {
+                "active" : false,
+                "id" : "system",
+                "label" : "Already installed"
+              }
+            ],
+            "placeholder" : null,
+            "value" : null
+          },
+          {
+            "button" : null,
+            "enabled" : true,
+            "help" : "Checking…",
+            "id" : "runtime:microvm",
+            "kind" : "choice",
+            "label" : "MicroVMs",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+              {
+                "active" : true,
+                "id" : "auto",
+                "label" : "Automatic"
+              },
+              {
+                "active" : false,
+                "id" : "builtin",
+                "label" : "Cua’s own"
+              },
+              {
+                "active" : false,
+                "id" : "system",
+                "label" : "Already installed"
+              }
+            ],
+            "placeholder" : null,
+            "value" : null
+          }
+        ],
+        "title" : "Runtimes"
+      }
+    ],
+    "title" : "Settings"
+  },
+  "runtimes" : {
+    "hostArch" : "arm64",
+    "kinds" : null,
+    "localBackends" : null,
+    "localDetails" : null,
+    "os" : "macos"
+  }
+}

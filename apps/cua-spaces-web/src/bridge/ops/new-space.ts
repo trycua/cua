@@ -5,12 +5,14 @@
  * The host operations New Space and "Connect a cloud" add. Each is an
  * existing Tauri command under a host-neutral name:
  *
- * - `spaces.createOptions`: `local_status`, `gpu_support`, `cloud_pricing`
+ * - `spaces.createOptions`: `local_status`, `gpu_support`
  *   and the stored experiments (the wizard's `WizardEnv` beyond Spaces,
  *   machines, settings and the session).
  * - `spaces.add`: `add_space` ("Connect by address").
- * - `clouds.status`, `clouds.test`, `clouds.connect`: `cloud_tool` with
- *   `cloud_status`, `cloud_test` (creates nothing) and `cloud_connect`.
+ * - `clouds.status`, `clouds.test`, `clouds.connect`, `clouds.disconnect`:
+ *   `cloud_tool` with `cloud_status`, `cloud_test` (creates nothing),
+ *   `cloud_connect` (also with a budget, a largest machine and Cua's own
+ *   AWS sign-in) and `cloud_disconnect`.
  *
  * The SwiftUI host answers `spaces.createOptions` with the env its native
  * sheet opens with (`NewSpaceOptions.env`, from `AppModel.newSpaceEnv`), so
@@ -30,11 +32,11 @@
 
 import type {
   CloudConnectWire,
+  CloudDisconnectedWire,
   CloudStatusWire,
   CloudTarget,
   CloudTestWire,
   GpuChoice,
-  CloudPricing,
   LocalStatus,
   NewSpaceOptions,
 } from "../contracts/new-space";
@@ -48,6 +50,8 @@ export interface NewSpaceOperations {
   "clouds.status": { args: Record<string, never>; result: CloudStatusWire };
   "clouds.test": { args: { target: CloudTarget }; result: CloudTestWire };
   "clouds.connect": { args: { target: CloudTarget; makeDefault: boolean }; result: CloudConnectWire };
+  /** Forgets a cloud; with `deleteResources`, deletes what Cua created there first. */
+  "clouds.disconnect": { args: { provider: string; deleteResources: boolean }; result: CloudDisconnectedWire };
 }
 
 type Name = keyof NewSpaceOperations;
@@ -59,18 +63,20 @@ export const NEW_SPACE_OPERATIONS = [
   "clouds.status",
   "clouds.test",
   "clouds.connect",
+  "clouds.disconnect",
 ] as const satisfies readonly Name[];
 
 /** `coverage.ts` rows. */
 export const NEW_SPACE_COVERAGE = {
   "spaces.createOptions": {
     webkit: { methods: ["spaces.createOptions"] },
-    tauri: ["local_status", "gpu_support", "cloud_pricing"],
+    tauri: ["local_status", "gpu_support"],
   },
   "spaces.add": { webkit: { methods: ["spaces.add"] }, tauri: ["add_space"] },
   "clouds.status": { webkit: { methods: ["clouds.status"] }, tauri: ["cloud_tool"] },
   "clouds.test": { webkit: { methods: ["clouds.test"] }, tauri: ["cloud_tool"] },
   "clouds.connect": { webkit: { methods: ["clouds.connect"] }, tauri: ["cloud_tool"] },
+  "clouds.disconnect": { webkit: { methods: ["clouds.disconnect"] }, tauri: ["cloud_tool"] },
 } as const;
 
 /** Arguments that take each operation down its usual path (coverage tests). */
@@ -80,6 +86,7 @@ export const NEW_SPACE_ARGS: { [K in Name]: NewSpaceOperations[K]["args"] } = {
   "clouds.status": {},
   "clouds.test": { target: { provider: "aws", region: "us-west-2" } },
   "clouds.connect": { target: { provider: "aws", region: "us-west-2" }, makeDefault: false },
+  "clouds.disconnect": { provider: "aws", deleteResources: false },
 };
 
 /** The Tauri app keeps its experiments in UI storage (`model/experiments.ts`). */
@@ -92,17 +99,18 @@ export function newSpaceTauriOps(invoke: Invoke, readUi: (key: string) => string
   const tool = <T>(name: string, args: Record<string, unknown>) => invoke<T>("cloud_tool", { tool: name, args });
   return {
     "spaces.createOptions": async () => {
-      const [local, gpus, cloudPricing] = await Promise.all([
+      const [local, gpus] = await Promise.all([
         invoke<LocalStatus | null>("local_status").catch(() => null),
         invoke<GpuChoice[] | null>("gpu_support").catch(() => null),
-        invoke<CloudPricing | null>("cloud_pricing").catch(() => null),
       ]);
-      return { local: local ?? null, gpus: gpus ?? null, cloudPricing: cloudPricing ?? null, experiments: readExperiments(readUi(EXPERIMENTS_KEY)), maxCpus: null };
+      return { local: local ?? null, gpus: gpus ?? null, experiments: readExperiments(readUi(EXPERIMENTS_KEY)), maxCpus: null };
     },
     "spaces.add": ({ url, token, name }) => invoke<SpaceRow>("add_space", { url, token: token || null, name: name || null }),
     "clouds.status": async () => (await tool<CloudStatusWire | null>("cloud_status", {})) ?? { providers: [] },
     "clouds.test": ({ target }) => tool<CloudTestWire>("cloud_test", { ...target }),
     "clouds.connect": ({ target, makeDefault }) => tool<CloudConnectWire>("cloud_connect", { ...target, make_default: makeDefault }),
+    "clouds.disconnect": ({ provider, deleteResources }) =>
+      tool<CloudDisconnectedWire>("cloud_disconnect", { provider, delete: deleteResources }),
   };
 }
 

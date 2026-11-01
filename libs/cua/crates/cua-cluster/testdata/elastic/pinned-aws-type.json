@@ -1,0 +1,73 @@
+{
+  "assignments": [
+    {
+      "group": "pinned",
+      "target": {
+        "on": "new",
+        "index": 0
+      },
+      "count": 6,
+      "sync": false
+    },
+    {
+      "group": "pinned",
+      "target": {
+        "on": "new",
+        "index": 1
+      },
+      "count": 7,
+      "sync": false
+    },
+    {
+      "group": "pinned",
+      "target": {
+        "on": "new",
+        "index": 2
+      },
+      "count": 7,
+      "sync": false
+    }
+  ],
+  "new_hosts": [
+    {
+      "provider": "aws",
+      "type_name": "c7g.xlarge",
+      "region": "us-west-2",
+      "usd_per_hour": 0.145,
+      "boot_secs": 80,
+      "billed_secs": 1800,
+      "one_space": false
+    },
+    {
+      "provider": "aws",
+      "type_name": "c7g.xlarge",
+      "region": "us-west-2",
+      "usd_per_hour": 0.145,
+      "boot_secs": 80,
+      "billed_secs": 1800,
+      "one_space": false
+    },
+    {
+      "provider": "aws",
+      "type_name": "c7g.xlarge",
+      "region": "us-west-2",
+      "usd_per_hour": 0.145,
+      "boot_secs": 80,
+      "billed_secs": 1800,
+      "one_space": false
+    }
+  ],
+  "unplaced": [],
+  "added_usd_per_hour": 0.43499999999999994,
+  "projected_usd": 0.21749999999999997,
+  "lower_bound_usd": 0.20714285714285713,
+  "solver": "exact",
+  "elapsed_us": 0,
+  "relay_after": 3,
+  "ready_in_secs": 80,
+  "explain": [
+    "6 x pinned -> new aws c7g.xlarge in us-west-2 ($0.1450/h, ready in ~80 s)",
+    "7 x pinned -> new aws c7g.xlarge in us-west-2 ($0.1450/h, ready in ~80 s)",
+    "7 x pinned -> new aws c7g.xlarge in us-west-2 ($0.1450/h, ready in ~80 s)"
+  ]
+}

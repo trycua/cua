@@ -7,6 +7,7 @@ is the engine (``gvisor``, ``runc``, ``qemu``, ``lume``) and implies its kind.
 """
 
 import pytest
+
 from cua_bench.targets import (
     Target,
     TargetError,
@@ -53,6 +54,17 @@ class TestResolveTarget:
         with pytest.raises(SystemExit):
             parser.parse_args(["--on", "azure"])
 
+    def test_hetzner_is_your_own_cloud(self):
+        import argparse
+
+        from cua_bench.cli.commands.run import add_target_args
+
+        parser = argparse.ArgumentParser()
+        add_target_args(parser)
+        assert parser.parse_args(["--on", "hetzner"]).on == "hetzner"
+        t = resolve_target("hetzner", environ={})
+        assert (t.on, t.contrib) == ("hetzner", True)
+
     def test_env_fallbacks(self):
         t = resolve_target(
             environ={"CUA_DEFAULT_ON": "local", "CUA_DEFAULT_KIND": "vm", "CUA_BENCH_IMAGE": IMG}
@@ -75,7 +87,7 @@ class TestResolveTarget:
     @pytest.mark.parametrize(
         "kwargs",
         [
-            {"on": "azure"},  # not a location (aws and gcp are your own cloud)
+            {"on": "azure"},  # not a location (aws, gcp and hetzner are your own cloud)
             {"runtime": "kubevirt"},  # not an engine
             {"kind": "gvisor"},  # gvisor is an engine, not a kind
             {"cpu": "0"},

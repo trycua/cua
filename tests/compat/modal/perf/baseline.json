@@ -1,0 +1,18 @@
+{
+ "unit": "p50 ratio to ClientHello",
+ "n": 100,
+ "ratios": {
+  "dict_put": 1.068,
+  "dict_get": 1.031,
+  "queue_put_get": 2.053,
+  "secret_create": 1.732,
+  "volume_listdir": 1.167,
+  "volume_read_4k": 2.879,
+  "sandbox_get_tags": 1.049,
+  "sandbox_poll": 1.072,
+  "sandbox_exec_echo": 2.705,
+  "fs_read_4k": 3.201,
+  "fs_stat": 2.621,
+  "fs_list": 3.166
+ }
+}

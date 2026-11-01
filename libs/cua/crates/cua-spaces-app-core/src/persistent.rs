@@ -620,7 +620,7 @@ fn detail_view(
     let tabs = [
         (AgentTab::Memory, "Memory"),
         (AgentTab::Routines, "Routines"),
-        (AgentTab::Access, "Access to this computer"),
+        (AgentTab::Access, "Access to this machine"),
     ]
     .into_iter()
     .map(|(tab, label)| TabView {
@@ -696,7 +696,7 @@ fn detail_view(
             line(
                 &g.machine,
                 if this {
-                    "This computer".into()
+                    "This machine".into()
                 } else {
                     g.machine.clone()
                 },
@@ -710,7 +710,7 @@ fn detail_view(
         .this_machine
         .as_ref()
         .filter(|m| !live.iter().any(|g| &&g.machine == m))
-        .map(|_| "Allow on this computer".to_string());
+        .map(|_| "Allow on this machine".to_string());
     let principal = format!("agent:{}", a.name);
     let audit = input
         .audit
@@ -768,7 +768,7 @@ fn detail_view(
         can_add_routine: form_ok(&state.form) && !state.busy,
         add_routine_label: "Add routine".into(),
         access,
-        access_empty: "This agent cannot use your computers.".into(),
+        access_empty: "This agent cannot use your machines.".into(),
         allow_this_machine_label,
         audit,
         error: a.last_error.clone(),
@@ -893,7 +893,7 @@ mod tests {
         let d = agents_view(&i, &s, 0).detail.unwrap();
         assert_eq!(
             d.allow_this_machine_label.as_deref(),
-            Some("Allow on this computer")
+            Some("Allow on this machine")
         );
         let s = agents_reduce(
             &i,

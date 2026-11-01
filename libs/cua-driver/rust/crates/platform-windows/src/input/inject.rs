@@ -374,7 +374,8 @@ pub fn inject_click_screen(
 /// rather than an occluder. Used to enforce the macOS-aligned rule that a
 /// `background` actuation never raises: when this is false the injection bails
 /// and the tool returns `background_unavailable` (escalate to foreground).
-unsafe fn target_visible_at_point(target: HWND, sx: i32, sy: i32) -> bool {
+/// The foreground SendInput drag uses the same check before its button-down.
+pub(crate) unsafe fn target_visible_at_point(target: HWND, sx: i32, sy: i32) -> bool {
     let top = WindowFromPoint(POINT { x: sx, y: sy });
     if top.0.is_null() {
         return false;

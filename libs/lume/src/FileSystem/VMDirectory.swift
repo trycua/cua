@@ -21,6 +21,7 @@ struct VMDirectory: Sendable {
         static let resizeMarker = "resize.lock.json"
         static let diskBackup = "disk.img.pre-resize"
         static let configBackup = "config.json.pre-resize"
+        static let savedState = "state.vzvmsave"
     }
 
     // MARK: - Properties
@@ -28,6 +29,7 @@ struct VMDirectory: Sendable {
     let dir: Path
     let nvramPath: Path
     let diskPath: Path
+    var runOwnerURL: URL { configPath.url.deletingLastPathComponent().appendingPathComponent(".run-owner.json") }
     let configPath: Path
     let sessionsPath: Path
     let provisioningPath: Path
@@ -35,6 +37,8 @@ struct VMDirectory: Sendable {
     let diskBackupPath: Path
     let configBackupPath: Path
     let resizeGuardPath: Path
+    /// The VM's saved machine state (`lume suspend`), restored by the next run.
+    let statePath: Path
 
     /// The name of the VM directory
     var name: String { dir.name }
@@ -54,6 +58,7 @@ struct VMDirectory: Sendable {
         self.resizeMarkerPath = dir.file(FileNames.resizeMarker)
         self.diskBackupPath = dir.file(FileNames.diskBackup)
         self.configBackupPath = dir.file(FileNames.configBackup)
+        self.statePath = dir.file(FileNames.savedState)
         self.resizeGuardPath = Path(
             dir.url.deletingLastPathComponent()
                 .appendingPathComponent(".\(dir.name).resize.guard", isDirectory: false))
@@ -89,6 +94,17 @@ extension VMDirectory {
     /// Checks if the VM directory exists
     func exists() -> Bool {
         dir.exists()
+    }
+
+    /// Whether the VM has a saved machine state its next run restores.
+    func hasSavedState() -> Bool {
+        statePath.exists()
+    }
+
+    /// Drops the saved machine state: once the VM booted or resumed, its
+    /// disk no longer matches the memory the state holds.
+    func discardSavedState() {
+        try? FileManager.default.removeItem(atPath: statePath.path)
     }
 }
 
@@ -494,7 +510,8 @@ extension VMDirectory {
             networkMode: config.networkMode.description,
             downloadProgress: downloadProgress,
             machineIdentifier: config.machineIdentifier?.base64EncodedString(),
-            macAddress: config.macAddress
+            macAddress: config.macAddress,
+            savedState: hasSavedState()
         )
     }
 }

@@ -10,7 +10,7 @@
  */
 
 import { UnsupportedOperationError } from "../adapter";
-import type { LoginItemStatus } from "../contracts/host";
+import type { LoginItemStatus, RuntimePathCheck } from "../contracts/host";
 import type { DevicesInput, EnrollResult, PairingCode, TeamsList } from "../contracts/devices";
 import type {
   AboutInput,
@@ -20,6 +20,8 @@ import type {
   DriveStorageInput,
   Experiments,
   LoginItemReport,
+  RepoCacheChange,
+  RepoCacheView,
   StorageInput,
   StorageRequest,
   UpdateChannelId,
@@ -53,6 +55,19 @@ export interface SettingsOperations {
   /** System Settings, Login Items (to approve it). */
   "loginItem.openSettings": { args: Empty; result: null };
 
+  /** What a binary is for one kind of Space (`container`, `vm`, `microvm`):
+   * Settings, Advanced checks a typed path with it before it is saved. */
+  "runtimes.check": { args: { kind: string; path: string }; result: RuntimePathCheck };
+  /** The host's file panel, to pick a kind's binary (null: cancelled). */
+  "runtimes.browse": { args: { kind: string }; result: { path: string | null } };
+
+  /** The repo cache (Settings, General): on or off, what it holds, what the last week saved. */
+  "repoCache.get": { args: Empty; result: RepoCacheView };
+  /** Turns it on or off and sets its size; answers the cache after. */
+  "repoCache.set": { args: RepoCacheChange; result: RepoCacheView };
+  /** Deletes every repository it holds; answers the cache after. */
+  "repoCache.clear": { args: Empty; result: RepoCacheView };
+
   /** The account's devices and access log (`devices_snapshot`). */
   "devices.get": { args: Empty; result: DevicesInput };
   /** Registers this device: enrolled at once, or a one-time code. */
@@ -74,7 +89,7 @@ export interface SettingsOperations {
   /** Revokes an unused pairing code (`pc_…`). */
   "devices.revokePairingCode": { args: { id: string }; result: null };
   /** The account's Teams (organizations of `GET /v1/me`) and the current one:
-   * "Add a machine" and "Share" offer them. */
+   * "Add a computer" and "Share" offer them. */
   "teams.list": { args: Empty; result: TeamsList };
 
   /** The Cua Volume's storage, mount and cache (`volume_storage`, `volume_mount_status`, `volume_cache_stats`). */
@@ -96,6 +111,11 @@ export const SETTINGS_OPERATIONS = [
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
+  "runtimes.check",
+  "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -168,6 +188,11 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
     "about.checkNow": () => Promise.reject(new UnsupportedOperationError("tauri", "about.checkNow")),
     "update.get": () => Promise.reject(new UnsupportedOperationError("tauri", "update.get")),
     "update.install": () => Promise.reject(new UnsupportedOperationError("tauri", "update.install")),
+    "runtimes.check": () => Promise.reject(new UnsupportedOperationError("tauri", "runtimes.check")),
+    "runtimes.browse": () => Promise.reject(new UnsupportedOperationError("tauri", "runtimes.browse")),
+    "repoCache.get": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.get")),
+    "repoCache.set": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.set")),
+    "repoCache.clear": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.clear")),
 
     // The Tauri app keeps the switches in its UI storage, as its own Settings does.
     "experiments.get": async () => readExperiments(),
@@ -244,7 +269,7 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
 }
 
 /** The Tauri updater has one feed and no controls. */
-export const TAURI_SETTINGS_UNSUPPORTED = ["about.set", "about.checkNow", "update.get", "update.install"] as const satisfies readonly SettingsOpName[];
+export const TAURI_SETTINGS_UNSUPPORTED = ["about.set", "about.checkNow", "update.get", "update.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear"] as const satisfies readonly SettingsOpName[];
 
 /** The Tauri commands each operation calls (`coverage.ts`). */
 export const SETTINGS_TAURI_COMMANDS = {
@@ -258,6 +283,11 @@ export const SETTINGS_TAURI_COMMANDS = {
   "loginItem.get": ["login_item_status", "host_status", "agents_tool"],
   "loginItem.set": ["login_item_set", "login_item_status", "host_status", "agents_tool"],
   "loginItem.openSettings": ["host_open_settings"],
+  "runtimes.check": [],
+  "runtimes.browse": [],
+  "repoCache.get": [],
+  "repoCache.set": [],
+  "repoCache.clear": [],
   "devices.get": ["devices_snapshot"],
   "devices.enroll": ["devices_enroll"],
   "devices.checkEnrolled": ["devices_check_enrolled"],

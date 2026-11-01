@@ -69,7 +69,7 @@ def add_target_args(parser) -> None:
         choices=list(ON_CHOICES),
         default=None,
         help="Where sandboxes run: local (this machine), your own cloud account "
-        "(aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a "
+        "(aws, gcp, hetzner, modal; connect it first with `cua cloud connect <provider>`), or a "
         "contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). "
         "Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
     )

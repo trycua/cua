@@ -12,6 +12,25 @@ pub struct RetainedElement {
     pub center: (i32, i32),
     pub rect: Option<(i32, i32, i32, i32)>,
     pub msaa_role: Option<i32>,
+    pub read_while_minimized: bool,
+}
+
+#[cfg(test)]
+impl RetainedElement {
+    pub(crate) fn detached(
+        kind: SnapshotKind,
+        center: (i32, i32),
+        read_while_minimized: bool,
+    ) -> Self {
+        Self {
+            ptr: 0,
+            kind,
+            center,
+            rect: None,
+            msaa_role: None,
+            read_while_minimized,
+        }
+    }
 }
 
 impl RetainedElement {
@@ -72,6 +91,7 @@ impl Clone for RetainedElement {
             center: self.center,
             rect: self.rect,
             msaa_role: self.msaa_role,
+            read_while_minimized: self.read_while_minimized,
         }
     }
 }
@@ -111,9 +131,17 @@ impl UiaSnapshot {
                     center: (node.center_x, node.center_y),
                     rect: node.rect,
                     msaa_role: node.msaa_role,
+                    read_while_minimized: false,
                 })
                 .collect(),
         }
+    }
+
+    pub fn with_read_while_minimized(mut self, minimized: bool) -> Self {
+        for element in &mut self.elements {
+            element.read_while_minimized = minimized;
+        }
+        self
     }
 }
 

@@ -1,0 +1,34 @@
+Connect the AI agents on this computer to Cua: install the cua skills and configure the cua MCP server
+
+Usage: cua connect [OPTIONS] <COMMAND>
+
+Commands:
+  detect  List supported AI coding agents and which are installed (read-only)
+  setup   Install the default cua skills and configure the cua MCP server
+  status  Whether each agent is really connected: installed and its version, signed in, Cua's MCP entry present and answering, and its sign-in copied to Keyvault. The same rows as the app and the `connect_status` MCP tool
+  remove  Remove the Cua Spaces skills and MCP entries cua added (nothing else)
+  update  Refresh installed cua skills and managed MCP entries to this version
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --json
+          Print JSON
+
+  -h, --help
+          Print help

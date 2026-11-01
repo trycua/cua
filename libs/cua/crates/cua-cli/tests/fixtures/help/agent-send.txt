@@ -1,0 +1,46 @@
+Message a named agent (`send NAME TEXT`), or send a follow-up to a run (`send SANDBOX RUN_ID TEXT`, queued while a turn runs)
+
+Usage: cua agent send [OPTIONS] <NAME|SANDBOX> <TEXT|RUN_ID> [TEXT]
+
+Arguments:
+  <NAME|SANDBOX>
+          A named agent, or the sandbox of a run
+
+  <TEXT|RUN_ID>
+          The message for a named agent, or the run
+
+  [TEXT]
+          The message for a run
+
+Options:
+      --local
+          Look NAME up among local sandboxes only (same as `local:NAME`)
+
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+  -f, --follow
+          Follow a run's turn (`send SANDBOX RUN_ID TEXT` only)
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --json
+          Print JSON
+
+  -h, --help
+          Print help
+
+Examples:
+  cua agent send ada "what did you learn yesterday?"
+  cua agent send local:dev run-1a2b3c4d "now add a regression test" -f

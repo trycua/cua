@@ -4,8 +4,7 @@
 //! Installing Keyvault items into a Firefox profile: cookies into
 //! `cookies.sqlite` (`moz_cookies`, schema 16), localStorage into
 //! `storage/default/<origin>/ls/data.sqlite`, saved logins into `logins.json`
-//! encrypted under the profile's own `key4.db` master key. Formats:
-//! `~/projects/.cua-work/keyvault-v2/browser-formats.md`.
+//! encrypted under the profile's own `key4.db` master key.
 //!
 //! The destination Firefox is not running (the import launches it after).
 
@@ -222,7 +221,9 @@ pub fn install_logins(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-    let mut rng = rand::thread_rng();
+    // The OS RNG (IVs, GUIDs): never a userspace PRNG a memory snapshot
+    // would share with every clone.
+    let mut rng = rand::rngs::OsRng;
     let mut n = 0;
     for l in items {
         let mut iv = [0u8; 8];

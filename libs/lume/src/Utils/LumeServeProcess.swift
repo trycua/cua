@@ -8,7 +8,9 @@ import Foundation
 /// a signal would end the server and every VM it hosts, so `stop` asks the
 /// server to stop the one VM instead.
 enum LumeServeProcess {
-    static let defaultPort: UInt16 = 7777
+    /// The port `serve` listens on when no `--port` is given: 7777 for
+    /// `lume`, 7787 for `lume-local`.
+    static var defaultPort: UInt16 { LumeChannel.current.lumePort }
 
     /// The port `pid` serves the Lume API on, or nil when `pid` is not a
     /// `lume serve` process (a detached `lume run`, say) or cannot be read.
@@ -19,7 +21,10 @@ enum LumeServeProcess {
 
     /// The API port in a `lume serve` command line (`argv`, program first),
     /// or nil when the command is not `serve`.
-    static func apiPort(fromArguments arguments: [String]) -> UInt16? {
+    static func apiPort(
+        fromArguments arguments: [String],
+        defaultPort: UInt16 = LumeServeProcess.defaultPort
+    ) -> UInt16? {
         guard arguments.count >= 2, arguments[1] == "serve" else { return nil }
         var port = defaultPort
         var index = 2

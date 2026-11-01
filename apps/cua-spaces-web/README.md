@@ -13,6 +13,7 @@ pnpm build        # app core wasm, then dist/
 pnpm typecheck
 pnpm test         # vitest; builds the core first when Rust is available
 pnpm core         # just the app core wasm (src/bridge/core/wasm/, gitignored)
+pnpm perf --shift # layout shift and first render of every route (CI); pnpm perf also checks bundle sizes
 pnpm screenshots  # every route, light and dark, demo mode, into docs/screenshots/ (gitignored)
 ```
 
@@ -60,8 +61,7 @@ CUA_WEBUI_DIST=$PWD/../cua-spaces-web/dist scripts/build-app.sh debug
 CUA_SPACES_START_VIEW=webui ".build/app/Cua Spaces.app/Contents/MacOS/CuaSpacesMac"
 ```
 
-In the app, this is Settings > Experiments > "New UI (preview)" (off by
-default), then File > "Open New UI (preview)" (⇧⌘U). A debug build with
+The app opens this UI as its only window. A debug build with
 `CUA_WEBUI_DEV=1` loads this app's dev server instead. The page runs in
 `webkit` mode against the app's own view models (see
 `src/bridge/README.md`). `CUA_SPACES_WEBUI_CAPTURE=<dir>` saves every route,

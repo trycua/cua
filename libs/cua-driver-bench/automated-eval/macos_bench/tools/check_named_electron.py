@@ -15,7 +15,6 @@ returns. App approvals asked by the Codex server are accepted only for the task'
 from __future__ import annotations
 
 import json
-import select
 import subprocess
 import sys
 import tempfile
@@ -28,6 +27,7 @@ sys.path.insert(0, str(HERE.parent))
 import cdb_adapter  # noqa: E402
 import claude_arms as ca  # noqa: E402
 import run_bench  # noqa: E402
+import recorder  # noqa: E402
 
 
 def lsappinfo(pid: int) -> dict[str, str]:
@@ -56,65 +56,15 @@ def codex_get_apps(names: list[str], allowed: set[str], timeout: float = 60.0) -
     if config is None:
         return {"error": "no Codex computer-use MCP config"}
     command, args, env = run_bench.mcp_entry(config)
-    proc = subprocess.Popen(
-        [command, *args],
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        bufsize=1,
-    )
     approvals: list[dict] = []
 
-    def send(message: dict) -> None:
-        assert proc.stdin
-        proc.stdin.write(json.dumps(message) + "\n")
-        proc.stdin.flush()
+    def approve(text: str) -> dict:
+        answer = run_bench.claude_driver.answer_elicitation(text, allowed)
+        approvals.append({"message": text, "answer": answer["action"]})
+        return answer
 
-    def wait_for(msg_id: int, limit: float) -> dict | None:
-        assert proc.stdout
-        deadline = time.monotonic() + limit
-        while time.monotonic() < deadline:
-            ready, _, _ = select.select([proc.stdout], [], [], deadline - time.monotonic())
-            if not ready:
-                return None
-            line = proc.stdout.readline()
-            if not line:
-                return None
-            msg = json.loads(line)
-            if msg.get("method") == "elicitation/create":
-                text = (msg.get("params") or {}).get("message", "")
-                answer = run_bench.claude_driver.answer_elicitation(text, allowed)
-                approvals.append({"message": text, "answer": answer["action"]})
-                send(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": msg["id"],
-                        "result": {"action": answer["action"], "content": {}},
-                    }
-                )
-                continue
-            if msg.get("id") == msg_id:
-                return msg
-        return None
-
+    client = recorder.McpStdioClient([command, *args], env, elicitation=approve)
     try:
-        send(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {"elicitation": {}},
-                    "clientInfo": {"name": "cdb-check-named-electron", "version": "1"},
-                },
-            }
-        )
-        if wait_for(1, 30) is None:
-            return {"error": "no initialize reply"}
-        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         code = (
             f"const names = {json.dumps(names)}; const out = {{}};"
             "for (const n of names) { try { const a = await cua.getApp(n);"
@@ -123,17 +73,9 @@ def codex_get_apps(names: list[str], allowed: set[str], timeout: float = 60.0) -
             "let listed = null; try { listed = await cua.listApps({emit:false}); } catch (e) { listed = String(e); }"
             "nodeRepl.write(JSON.stringify({getApp: out, listApps: listed}));"
         )
-        send(
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "js", "arguments": {"code": code}},
-            }
+        reply = client.request(
+            "tools/call", {"name": "js", "arguments": {"code": code}}, timeout=timeout
         )
-        reply = wait_for(2, timeout)
-        if reply is None:
-            return {"error": "js call timed out", "approvals": approvals}
         texts = [c.get("text", "") for c in (reply.get("result") or {}).get("content", [])]
         data = {"raw": [t[:300] for t in texts]}
         for (
@@ -149,7 +91,7 @@ def codex_get_apps(names: list[str], allowed: set[str], timeout: float = 60.0) -
         data["approvals"] = approvals
         return data
     finally:
-        proc.terminate()
+        client.close()
 
 
 def main() -> int:

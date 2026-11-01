@@ -202,7 +202,7 @@
         "id": "pending:2",
         "name": "",
         "os": "windows",
-        "provider": "cloud",
+        "provider": "direct",
         "now": 50000,
         "image": null,
         "kind": "vm",
@@ -319,7 +319,7 @@
         "id": "pending:5",
         "name": "",
         "os": "linux",
-        "provider": "cloud",
+        "provider": "direct",
         "now": 9000000,
         "image": "linux:24.04",
         "kind": "container",
@@ -347,7 +347,7 @@
       "action": {
         "type": "finish",
         "id": "pending:5",
-        "spaceId": "cloud:maya-private"
+        "spaceId": "direct:maya-private"
       }
     },
     {

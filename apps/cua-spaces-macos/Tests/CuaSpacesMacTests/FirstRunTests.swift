@@ -16,7 +16,7 @@ import Testing
 struct FirstRunTests {
     init() { _ = NSApplication.shared }
 
-    func bridge(webUi: Bool = false, backend: SpacesBackend = FixtureSpacesBackend(),
+    func bridge(backend: SpacesBackend = FixtureSpacesBackend(),
                 loginItem: LoginItemControlling? = nil) -> (WebUIBridge, AppModel, FixtureTelemetry, URL) {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-firstrun-\(UUID().uuidString)")
         let state = dir.appendingPathComponent("onboarding.json")
@@ -25,7 +25,7 @@ struct FirstRunTests {
                              onboarding: OnboardingModel(statePath: state.path),
                              settingsPath: dir.appendingPathComponent("settings.json").path, telemetry: telemetry,
                              loginItem: loginItem)
-        model.settings.experiments = AppExperiments(cuaVolume: false, yourCloud: false, sharing: true, webUi: webUi)
+        model.settings.experiments = AppExperiments(cuaVolume: false, yourCloud: false, sharing: true, webUi: true)
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
         bridge.notifySpaceReady = { _ in }
         return (bridge, model, telemetry, state)
@@ -37,51 +37,16 @@ struct FirstRunTests {
 
     // MARK: - The first run's window
 
-    /// The first run is the web onboarding, with New UI on or off: once the
-    /// launch is ready and until it is done, the native window gives way.
-    @Test func theFirstRunIsTheWebOnboardingWhateverTheNewUISetting() {
-        #expect(MainWindowSwitch.opensFirstRun(ready: true, onboarded: false))
-        #expect(!MainWindowSwitch.opensFirstRun(ready: false, onboarded: false), "the launch screen waits")
-        #expect(!MainWindowSwitch.opensFirstRun(ready: true, onboarded: true))
-        #expect(MainUIRoute.onboarding.webPath == "/onboarding")
-    }
-
-    /// A window that is never shown (the replacement only reads its frame
-    /// and closes it).
-    func hiddenWindow() -> NSWindow {
-        let w = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 760, height: 480),
-                         styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: true)
-        w.isReleasedWhenClosed = false
-        return w
-    }
-
-    /// First run, New UI on or off: the native window that appeared is
-    /// replaced in its frame by the web window, never drawn.
-    @Test func theNativeWindowOnAFirstRunIsReplacedInPlace() async {
-        for webUi in [false, true] {
-            let (_, model, _, _) = bridge(webUi: webUi)
-            let w = hiddenWindow()
-            let frame = w.frame
-            var opened: [NSRect?] = []
-            MainWindowSwitch.firstRunAppeared(w, model: model, web: { opened.append($0) })
-            // Reported twice (its reader, its onAppear): replaced once.
-            MainWindowSwitch.firstRunAppeared(nil, model: model, web: { opened.append($0) })
-            #expect(opened == [frame], "New UI \(webUi ? "on" : "off")")
-            await yield()
-            await yield()
-            #expect(w.alphaValue == 1, "hidden before it draws, then back to normal")
-        }
-    }
-
-    /// Once the first run is done the native window is left alone.
-    @Test func theNativeWindowStaysOnceTheFirstRunIsDone() async {
-        let (_, model, _, _) = bridge()
-        model.onboarding.finish()
-        let w = hiddenWindow()
-        var opened = 0
-        MainWindowSwitch.firstRunAppeared(w, model: model, web: { _ in opened += 1 })
-        await yield()
-        #expect(opened == 0 && w.alphaValue == 1)
+    /// A launch (or a window that opens again) while the first run is not
+    /// done asks for it as due, so the page can keep a "Skip for now": the
+    /// welcome came back at every launch, in Cua Spaces Local as in the
+    /// released app, because the app opened `/onboarding` itself. A person
+    /// asking for it (Settings, Welcome) still gets the page unconditionally.
+    @Test func aWindowOpeningWhileTheFirstRunIsDueLetsThePageHonourSkipForNow() {
+        #expect(MainUIRoute.firstRunDue.webPath == "/onboarding?due=1")
+        #expect(MainUIRouter.launchRoute(onboarded: false) == .firstRunDue)
+        #expect(MainUIRouter.launchRoute(onboarded: true) == nil, "done: the app as it was")
+        #expect(MainUIRoute.onboarding.webPath == "/onboarding", "Show again has no due: it always shows")
     }
 
     // MARK: - onboarding.get, onboarding.complete
@@ -120,19 +85,6 @@ struct FirstRunTests {
         _ = try await bridge.handle("onboarding.complete", ["mode": "client", "launchAtLogin": true])
         #expect(item.calls == ["register"])
         #expect(model.settings.launchAtLogin == true)
-    }
-
-    /// With New UI off the web page stood in for the first run: its window
-    /// gives way to the native one. With it on, the page carries on in the
-    /// same window.
-    @Test func completingHandsOverToTheNativeWindowOnlyWithNewUIOff() async throws {
-        for webUi in [false, true] {
-            let (bridge, model, _, _) = bridge(webUi: webUi)
-            var closed = 0
-            model.closeWebUI = { closed += 1 }
-            _ = try await bridge.handle("onboarding.complete", ["mode": "client"])
-            #expect(closed == (webUi ? 0 : 1), "New UI \(webUi ? "on" : "off")")
-        }
     }
 
     // MARK: - The usage notice

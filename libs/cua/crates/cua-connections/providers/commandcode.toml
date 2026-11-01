@@ -1,0 +1,22 @@
+id = "commandcode"
+name = "CommandCode"
+icon = "commandcode"
+tier = "more"
+rank = 310
+kind = "hosted"
+hidden = true
+hidden_reason = "Unverified: Cua has not run this provider end to end yet."
+wire = "openai-chat"
+base_url = "https://api.commandcode.ai/provider/v1"
+base_url_env = "COMMANDCODE_BASE_URL"
+default_model = "deepseek/deepseek-v4-pro"
+hermes_id = "commandcode"
+key_help = "Create a key at commandcode.ai."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "COMMANDCODE_API_KEY"
+
+[delivery]
+hermes = ["COMMANDCODE_API_KEY"]

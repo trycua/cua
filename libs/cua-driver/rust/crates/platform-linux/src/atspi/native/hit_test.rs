@@ -147,6 +147,61 @@ async fn same_named_item_on_chain(
     None
 }
 
+/// Screen point to toolkit `Window` coordinates for `GetAccessibleAtPoint`.
+///
+/// GTK4 snapshot frames are `screen = client_origin + gtk_inset + window_xy`
+/// (`window_to_screen_offset`): `GetExtents(Screen)` collapses to `(0, 0)`, so
+/// the driver rebuilds them from `CoordType::Window` plus `_GTK_FRAME_EXTENTS`.
+/// Asking at-point with only `client_origin` subtracted lands one shadow away,
+/// on the neighbouring control — GNOME Calculator's "1" was reported as owned
+/// by the "." label, and the press was refused. Drop the inset when that
+/// collapse is what the snapshot used. Trusted Screen extents (GTK3, Qt, GTK
+/// 4.6) were stored unchanged, so `screen_extents_collapsed` stays false and
+/// the inset is not removed from a point that never had it added.
+fn window_coords_for_hit(
+    screen: (i32, i32),
+    client_origin: (i32, i32),
+    gtk_inset: Option<(i32, i32)>,
+    screen_extents_collapsed: bool,
+) -> (i32, i32) {
+    let (mut x, mut y) = (
+        screen.0.saturating_sub(client_origin.0),
+        screen.1.saturating_sub(client_origin.1),
+    );
+    if screen_extents_collapsed {
+        if let Some((left, top)) = gtk_inset {
+            x = x.saturating_sub(left);
+            y = y.saturating_sub(top);
+        }
+    }
+    (x, y)
+}
+
+/// `true` when this element's `GetExtents(Screen)` is the GTK4 `(0, 0)`
+/// collapse (or otherwise unusable): the snapshot then rebuilt the frame from
+/// `Window` coordinates plus `_GTK_FRAME_EXTENTS`. A failed query returns
+/// `false`. Subtracting an inset we did not confirm would move a correct
+/// GTK3/Qt point onto a neighbour.
+async fn gtk_screen_extents_collapsed(
+    conn: &AccessibilityConnection,
+    observed: &RawObjectRef,
+    display: Option<(u32, u32)>,
+) -> bool {
+    let Some(Ok(acc)) = call(accessible_for(conn, observed)).await else {
+        return false;
+    };
+    let Some(Ok(proxies)) = call(acc.proxies()).await else {
+        return false;
+    };
+    let Some(Ok(component)) = call(proxies.component()).await else {
+        return false;
+    };
+    let Some(Ok(raw)) = call(component.get_extents(CoordType::Screen)).await else {
+        return false;
+    };
+    !screen_extents_trusted(raw, display)
+}
+
 /// Who owns screen point `(sx, sy)` of window `xid` in `pid`'s application,
 /// relative to the snapshot object `observed` a click is about to press.
 /// Blocking; bounded by [`INPUT_QUERY_BUDGET`]. Never errors: an unanswered
@@ -164,7 +219,8 @@ pub fn point_ownership(
     let Some(client_origin) = x11_window_origin(xid) else {
         return PointOwnership::Unknown;
     };
-    let (win_x, win_y) = (sx - client_origin.0, sy - client_origin.1);
+    // Read on this blocking thread. The async hit-test below only consumes it.
+    let gtk_inset = gtk_frame_extents(xid);
     let display = x11_display_size();
     let observed_raw = raw_ref(observed);
     let result: Result<PointOwnership> = bounded_for(
@@ -182,6 +238,13 @@ pub fn point_ownership(
                 _ => return Ok(PointOwnership::Unknown),
             };
             let scoped = resolve_window_frame(conn, pid, xid, &seeds).await;
+            // GTK is not a frame-coordinate toolkit, so the VCL rebase below is
+            // a no-op there and the CSD inverse above it does not disturb VCL
+            // (LibreOffice has no `_GTK_FRAME_EXTENTS`).
+            let collapsed = gtk_inset.is_some()
+                && gtk_screen_extents_collapsed(conn, &observed_raw, display).await;
+            let (win_x, win_y) =
+                window_coords_for_hit((sx, sy), client_origin, gtk_inset, collapsed);
             let (hit_x, hit_y) = match scoped {
                 Some(ordinal) => {
                     let frame_origin = decoration_frame_origin(conn, &app, &seeds[ordinal]).await;
@@ -208,6 +271,14 @@ pub fn point_ownership(
                 // that a different control owns it.
                 if is_ancestor_of(conn, &deepest.oref, &observed_raw).await {
                     return Ok(PointOwnership::Unknown);
+                }
+                // GTK4 buttons wrap a slightly smaller inner label, and
+                // GetAccessibleAtPoint returns that label without the button
+                // on the descent chain. The label is still inside the control
+                // the snapshot named, so the press is honest. A sibling (the
+                // "." next to "1") is not an ancestor match and stays a mismatch.
+                if is_ancestor_of(conn, &observed_raw, &deepest.oref).await {
+                    return Ok(PointOwnership::Owned);
                 }
                 let owner = describe_node(deepest).await;
                 let observed_name = match call(accessible_for(conn, &observed_raw)).await {
@@ -298,6 +369,31 @@ mod tests {
         assert!(is_row_container_role("list"));
         assert!(!is_row_container_role("panel"));
         assert!(!is_row_container_role("menu"));
+    }
+
+    #[test]
+    fn gtk4_csd_inset_comes_back_off_a_collapsed_screen_point() {
+        // `_GTK_FRAME_EXTENTS` left/top of 61/55 (the parser fixture) and a
+        // GNOME calculator button about 64×44. Snapshot stored
+        // screen = client + inset + window. At-point must recover window.
+        assert_eq!(
+            window_coords_for_hit((504, 506), (400, 40), Some((61, 55)), true),
+            (43, 411)
+        );
+    }
+
+    #[test]
+    fn trusted_screen_extents_do_not_subtract_the_gtk_inset() {
+        // GTK3 / Qt / GTK 4.6 keep the real Screen extent. Removing the shadow
+        // would slide the press onto the next control.
+        assert_eq!(
+            window_coords_for_hit((504, 506), (400, 40), Some((61, 55)), false),
+            (104, 466)
+        );
+        assert_eq!(
+            window_coords_for_hit((504, 506), (400, 40), None, true),
+            (104, 466)
+        );
     }
 
     #[test]

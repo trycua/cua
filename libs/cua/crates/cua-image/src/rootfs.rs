@@ -228,6 +228,120 @@ pub async fn pull(
     Ok(dest)
 }
 
+/// The run config (`Entrypoint`, `Cmd`, `Env`, `WorkingDir`, `User`) in an
+/// OCI image config blob.
+pub fn run_config(config_json: &[u8]) -> Result<cua_vmm::OciRunConfig> {
+    let v: serde_json::Value = serde_json::from_slice(config_json)
+        .map_err(|e| ImageError::Registry(format!("image config: {e}")))?;
+    let c = &v["config"];
+    let strings = |k: &str| -> Vec<String> {
+        c[k].as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let text = |k: &str| c[k].as_str().map(String::from).filter(|s| !s.is_empty());
+    Ok(cua_vmm::OciRunConfig {
+        entrypoint: strings("Entrypoint"),
+        cmd: strings("Cmd"),
+        env: strings("Env"),
+        working_dir: text("WorkingDir"),
+        user: text("User"),
+    })
+}
+
+/// Pulls a rootfs image's layer blobs (into the blob cache, not unpacked)
+/// and its run config: what the microVM backend builds its root filesystem
+/// from.
+pub async fn pull_layers(
+    client: &RegistryClient,
+    cache: &ImageCache,
+    reference: &str,
+    arch: &str,
+) -> Result<cua_vmm::RootfsLayers> {
+    let (pinned, manifest, digest) = client.resolve_platform(reference, arch).await?;
+    let config = match &manifest.config {
+        Some(d) => run_config(&client.blob_bytes(&pinned, d).await?)?,
+        None => cua_vmm::OciRunConfig::default(),
+    };
+    let missing: u64 = manifest
+        .layers
+        .iter()
+        .filter(|l| !cache.has_blob(&l.digest))
+        .map(|l| l.size)
+        .sum();
+    if missing > 0 {
+        cua_vmm::disk::ensure_space(cache.root(), missing, &format!("pull {reference}"))
+            .map_err(cua_vmm::VmmError::from)?;
+    }
+    let total: u64 = manifest.layers.iter().map(|l| l.size).sum::<u64>().max(1);
+    let mut done = 0u64;
+    let mut files = Vec::new();
+    for layer in &manifest.layers {
+        if !is_container_layer(&layer.media_type) {
+            return Err(ImageError::WrongFormat {
+                reference: reference.into(),
+                expected: "container rootfs",
+                detail: format!("layer media type {}", layer.media_type),
+            });
+        }
+        let blob = cache.blob_path(&layer.digest)?;
+        if !blob.exists() {
+            cua_vmm::progress::report(
+                cua_vmm::progress::Progress::phase(cua_vmm::progress::Phase::Pulling)
+                    .fraction(done as f64 / total as f64)
+                    .detail(reference),
+            );
+            client.blob_to_file(&pinned, layer, &blob).await?;
+        }
+        done += layer.size;
+        files.push(blob);
+    }
+    cache.record_ref(reference, &digest)?;
+    Ok(cua_vmm::RootfsLayers {
+        digest,
+        layers: files,
+        config,
+    })
+}
+
+/// [`cua_vmm::RootfsResolver`] over the image cache (microVM rootfs
+/// images).
+#[derive(Clone, Default)]
+pub struct RootfsLayerResolver {
+    pub client: RegistryClient,
+    pub cache: ImageCache,
+}
+
+impl RootfsLayerResolver {
+    pub fn shared() -> std::sync::Arc<dyn cua_vmm::RootfsResolver> {
+        std::sync::Arc::new(Self::default())
+    }
+}
+
+#[async_trait::async_trait]
+impl cua_vmm::RootfsResolver for RootfsLayerResolver {
+    async fn resolve_rootfs(
+        &self,
+        reference: &str,
+        arch: cua_vmm::Arch,
+        creds: Option<&cua_vmm::RegistryCredentials>,
+    ) -> cua_vmm::Result<cua_vmm::RootfsLayers> {
+        let scoped;
+        let client = match creds {
+            Some(c) => {
+                scoped = RegistryClient::with_credentials(c.clone());
+                &scoped
+            }
+            None => &self.client,
+        };
+        Ok(pull_layers(client, &self.cache, reference, arch.oci()).await?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,5 +454,18 @@ mod tests {
                 .join(&img.layers[0].0.digest[7..])
                 .exists()
         );
+    }
+
+    #[test]
+    fn run_config_reads_the_image_config() {
+        let cfg = br#"{"architecture":"amd64","config":{"Env":["PATH=/bin","DISPLAY=:1"],
+            "Cmd":["/opt/cua/desktop/entrypoint.sh"],"WorkingDir":"","User":"cua"}}"#;
+        let r = run_config(cfg).unwrap();
+        assert_eq!(r.cmd, ["/opt/cua/desktop/entrypoint.sh"]);
+        assert!(r.entrypoint.is_empty());
+        assert_eq!(r.env, ["PATH=/bin", "DISPLAY=:1"]);
+        assert_eq!(r.working_dir, None);
+        assert_eq!(r.user.as_deref(), Some("cua"));
+        assert_eq!(run_config(b"{}").unwrap(), cua_vmm::OciRunConfig::default());
     }
 }

@@ -1,12 +1,12 @@
 ---
 title: Teleport an app
-description: 'Bring an app from this computer into a Space: install it there, open your files in it, or move its signed-in state, with a consent screen for everything that leaves.'
+description: 'Bring an app from this machine into a Space: install it there, open your files in it, or move its signed-in state, with a consent screen for everything that leaves.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-**Teleport an app** lists every app installed on this computer and says what
+**Teleport an app** lists every app installed on this machine and says what
 teleport can do with each one in a Space:
 
 | Level | What happens in the Space | Moves |
@@ -33,9 +33,9 @@ the entry's `sensitive_groups` and `TeleportPlanOptions.sensitive_groups`.
 
 Chrome (and Chromium) encrypts cookies and saved passwords at rest with a
 per-machine **Safe Storage** key held in this Mac's login Keychain, so they
-cannot simply be copied to another computer. When **Keep me signed in** is
+cannot simply be copied to another machine. When **Keep me signed in** is
 checked, teleport decrypts the cookies here (the OS asks you to allow that
-Keychain read) and carries the decrypted values, not the source computer's
+Keychain read) and carries the decrypted values, not the source machine's
 key; the Space re-encrypts them under its own Safe Storage key before Chrome
 ever reads them. The source's key never leaves this Mac.
 
@@ -81,6 +81,17 @@ access. See [Keyvault](/spaces/guides/keyvault).
 - **Drag a window** of any supported app: the notch shows **Teleport to Cua**
   with a preview of that window; drop it on a Space to teleport the app.
   This needs the Accessibility permission (macOS).
+
+When you teleport a browser's signed-in sites, a **Set up** sheet comes before
+the consent screen if anything is missing or there is a choice to make. It
+shows the Keyvault, Full Disk Access, Automation and the browser profile, each
+with a plain word for where it stands and what to do about it. Full Disk Access
+needs the macOS setting turned on for Cua (the sheet opens System Settings for
+you), and then the Cua app opened again; without it you can still **send open
+tabs only**. When the browser has more than one profile, the sheet lists them
+with the account signed in to each and marks the one used last, and the profile
+you choose is the one that is read. Nothing is read, and Touch ID is not asked,
+until you continue past the sheet.
 
 Files land in `~/Downloads/Teleported` in the Space and open in the app.
 
@@ -246,8 +257,34 @@ cua teleport push --app com.google.Chrome --url http://10.0.0.5:3211 --token "$T
 `--include PATH` picks items, `--all` sends everything, `--no-launch` imports
 only. `--sandbox NAME` routes through your own [Cua Keyvault](/spaces/guides/keyvault)
 (one combined Touch ID prompt for the whole capture-and-deliver, and nothing
-raw ever leaves it); `--url` uploads a bundle straight to a spacesd endpoint
-the Keyvault does not manage as a Space, so it never goes through the vault.
+raw ever leaves it). `--url` names a destination that is not one of your
+Spaces, such as another machine's address, and goes the same way: the Cua
+daemon on this machine reads the app, you approve it with the same Keyvault
+prompt, it is recorded in the audit log, and the copy is wiped on the same
+schedule. The destination is only where it goes, and it is not kept in your
+Spaces afterwards. Because the daemon does the reading, macOS uses the Full
+Disk Access you gave the Cua app, not the permissions of the terminal you ran
+the command in.
+
+### When macOS asks for permission
+
+Sending a browser's signed-in sites reads its files, and macOS decides whether
+Cua may do that. Teleport checks first and says what is missing, in words,
+before it asks for Touch ID or reads anything:
+
+```bash test="cli-shape" id="cua-teleport-doctor"
+cua teleport doctor
+cua teleport doctor --app chrome --profile "Profile 1"
+```
+
+It reports whether the Keyvault is set up, whether macOS lets Cua read the
+browser's files (Full Disk Access) and its open tabs (Automation), and which
+browser profiles exist, with the account signed in to each and the one used
+last. Cua cannot grant these for you: macOS only lets you, in System Settings,
+under Privacy and Security. macOS applies Full Disk Access to a program when it
+starts, so after turning it on, restart the Cua daemon. Without Full Disk
+Access you can still teleport open tabs only. Without a `--profile`, a push
+reads the `Default` profile, so pick the one you are signed in to.
 
 <Callout type="warn">
   A teleported session is a live sign-in that anyone controlling the Space can

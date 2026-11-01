@@ -204,7 +204,7 @@ impl NodeIdentity {
         write_private(path, &json)
     }
 
-    fn from_json(raw: &str) -> Result<Self> {
+    pub(crate) fn from_json(raw: &str) -> Result<Self> {
         let s: StoredIdentity =
             serde_json::from_str(raw).map_err(|e| Error::Protocol(e.to_string()))?;
         let d = |v: &str| {

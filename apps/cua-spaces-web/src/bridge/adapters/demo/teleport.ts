@@ -13,6 +13,7 @@ import type {
   CatalogEntry,
   ConsentItem,
   KvInventory,
+  KvReadiness,
   OpenWindow,
   RemoteWindow,
   SensitiveGroup,
@@ -117,7 +118,7 @@ export function demoCatalog(now: number): CatalogEntry[] {
 
 export const DEMO_OPEN_WINDOWS: OpenWindow[] = [
   { windowId: 41, appId: "com.tinyspeck.slackmacgap", appName: "Slack", windowTitle: "general - Acme", supported: true, bundlePath: "/Applications/Slack.app" },
-  { windowId: 38, appId: "com.google.Chrome", appName: "Google Chrome", windowTitle: "Pull requests · trycua/cua", supported: true, bundlePath: "/Applications/Google Chrome.app" },
+  { windowId: 38, appId: "com.google.Chrome", appName: "Google Chrome", windowTitle: "Pull requests - trycua/cua", supported: true, bundlePath: "/Applications/Google Chrome.app" },
   { windowId: 12, appId: "com.microsoft.VSCode", appName: "Code", windowTitle: "main.rs - cua", supported: true, bundlePath: "/Applications/Visual Studio Code.app" },
   { windowId: 7, appId: "com.apple.finder", appName: "Finder", windowTitle: "Downloads", supported: false },
 ];
@@ -148,6 +149,50 @@ export const DEMO_CHROME_SITES: KvInventory = {
     },
   ],
 };
+
+/** The demo's teleport setup: `ready` (one profile, nothing to do: the review
+ * comes straight up), `profiles` (three profiles to choose from), or `blocked`
+ * (three profiles and Full Disk Access off, granted on the second check as a
+ * person would after turning it on). Chosen with the localStorage key
+ * `cua.demo.teleportSetup`, so the sheet can be seen in both states. */
+export type DemoSetupMode = "ready" | "profiles" | "blocked";
+
+export function demoSetupMode(): DemoSetupMode {
+  try {
+    const v = localStorage.getItem("cua.demo.teleportSetup");
+    return v === "profiles" || v === "blocked" ? v : "ready";
+  } catch {
+    return "ready";
+  }
+}
+
+export function demoReadiness(profile: string | null | undefined, mode: DemoSetupMode, checks: number): KvReadiness {
+  const all = [
+    { dir: "Default", name: "Personal", account: "ada@example.com", last_used: false },
+    { dir: "Profile 1", name: "Work", account: "ada@design-studio.example", last_used: true },
+    { dir: "Profile 2", name: "Side project", account: null, last_used: false },
+  ];
+  const profiles = mode === "ready" ? [{ ...all[0]!, last_used: true }] : all;
+  const chosen = profile ?? profiles.find((p) => p.last_used)?.dir ?? "Default";
+  const blocked = mode === "blocked" && checks <= 1;
+  return {
+    provider_id: "chrome",
+    app_display: "Google Chrome",
+    keyvault_initialized: true,
+    keyvault_unlocked: true,
+    profile: chosen,
+    default_profile: "Default",
+    profiles,
+    files: blocked
+      ? {
+          state: "denied",
+          say: "macOS is not letting Cua read this browser's files. Teleporting sign-ins needs Full Disk Access for Cua: open System Settings, Privacy & Security, Full Disk Access, and turn on Cua. Then restart the Cua daemon, because macOS only applies the setting to programs that start after it is on. Without it you can still teleport open tabs only.",
+        }
+      : { state: "granted", say: "" },
+    tabs: { state: "unknown", say: "" },
+    profile_empty: false,
+  };
+}
 
 const MB = 1_048_576;
 
@@ -184,6 +229,7 @@ export interface DemoTeleportDeps {
 }
 
 export function demoTeleportHandlers({ wait, emit, now, stepMs }: DemoTeleportDeps): TeleportHandlers {
+  let readinessChecks = 0;
   const catalog = () => demoCatalog(now());
   const find = (id: string) => {
     const e = catalog().find((x) => x.id === id);
@@ -248,6 +294,11 @@ export function demoTeleportHandlers({ wait, emit, now, stepMs }: DemoTeleportDe
     "teleport.sites": async ({ providerId }) => {
       if (providerId !== "chrome") throw new HostError(`no sites saved for ${providerId}`, "not_found");
       return structuredClone(DEMO_CHROME_SITES);
+    },
+    "teleport.readiness": async ({ providerId, profile }) => {
+      if (providerId !== "chrome") throw new HostError(`no sign-ins to check for ${providerId}`, "not_found");
+      readinessChecks += 1;
+      return structuredClone(demoReadiness(profile, demoSetupMode(), readinessChecks));
     },
     "teleport.remembered": async () => null,
     "teleport.streamWindow": async () => null,

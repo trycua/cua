@@ -1,0 +1,248 @@
+name: "Nightly: Cua Spaces (macOS)"
+
+# The Nightly update channel of the Cua Spaces Mac app (CUA-1991, phase 1 of
+# the build-once plan in docs/design/desktop-release-build-once-promote.md,
+# trycua/cua#5704; channel switch: Settings, Advanced, Updates).
+#
+# Every night, when the release inputs changed since the last nightly (the
+# input tree hash of .github/scripts/spaces_inputs_tree.sh, recorded in
+# nightly.json), builds main's macOS app with cd-cua-spaces-build.yml
+# (`channel: nightly`): signed, notarized and stapled like a release. Then
+# publishes the disk image to the rolling `cua-spaces-nightly` prerelease
+# (never "latest", tag never `cua-spaces-v*`, so no release workflow runs) and
+# adds it to that release's own Sparkle appcast,
+# cua-spaces-nightly-appcast.xml. Only apps set to Nightly read that feed, and
+# its items are on Sparkle's `nightly` channel, so nothing else installs them.
+# The stable and beta appcast on `cua-spaces-latest` is never touched.
+#
+# Versions: VERSION X.Y.Z on main builds X.(Y+1).0-nightly.YYYYMMDD+<sha>
+# (a prerelease X.Y.Z-pre builds X.Y.Z-nightly...). CFBundleVersion, which
+# Sparkle compares, is X.Y.Z.<YYYYMMDDHHMM> (X.Y.Z.0.<...> for a prerelease):
+# above every build of the release it came from, below the next release, so
+# an app back on Stable takes the next stable release.
+#
+# Cost: the last job writes the run's runner minutes per OS to the run
+# summary (the go/no-go of CUA-1991 is decided on them).
+#
+# workflow_dispatch builds even when nothing changed (`force`).
+
+on:
+  schedule:
+    # 07:30 UTC: night in the Americas, morning in Europe.
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if nothing changed since the last nightly"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-cua-spaces
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  TAG: cua-spaces-nightly
+  APPCAST: cua-spaces-nightly-appcast.xml
+
+jobs:
+  plan:
+    name: Plan
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+      version: ${{ steps.plan.outputs.version }}
+      bundle_version: ${{ steps.plan.outputs.bundle_version }}
+      tree: ${{ steps.plan.outputs.tree }}
+      previous_sha: ${{ steps.plan.outputs.previous_sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+        run: |
+          set -euo pipefail
+          tree="$(.github/scripts/spaces_inputs_tree.sh HEAD)"
+          last="$(gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern nightly.json --output - 2>/dev/null || echo '{}')"
+          last_tree="$(jq -r '.tree // ""' <<<"$last")"
+          previous_sha="$(jq -r '.sha // ""' <<<"$last")"
+          skip=false
+          if [ "$tree" = "$last_tree" ] && [ "$FORCE" != true ]; then skip=true; fi
+
+          base="$(tr -d '[:space:]' < apps/cua-spaces-macos/VERSION)"
+          [[ "$base" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::bad VERSION: $base"; exit 1; }
+          x="${BASH_REMATCH[1]}"; y="${BASH_REMATCH[2]}"; z="${BASH_REMATCH[3]}"; pre="${BASH_REMATCH[4]}"
+          stamp="$(date -u +%Y%m%d%H%M)"
+          day="${stamp:0:8}"
+          sha="${GITHUB_SHA:0:7}"
+          if [ -z "$pre" ]; then
+            version="$x.$((y + 1)).0-nightly.$day+$sha"
+            bundle_version="$x.$y.$z.$stamp"
+          else
+            version="$x.$y.$z-nightly.$day+$sha"
+            bundle_version="$x.$y.$z.0.$stamp"
+          fi
+          {
+            echo "skip=$skip"
+            echo "version=$version"
+            echo "bundle_version=$bundle_version"
+            echo "tree=$tree"
+            echo "previous_sha=$previous_sha"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Plan"
+            echo "- Inputs tree \`$tree\` (last nightly: \`${last_tree:-none}\`)"
+            if [ "$skip" = true ]; then
+              echo "- **Skipped:** nothing changed since the last nightly."
+            else
+              echo "- Building **$version** (CFBundleVersion $bundle_version) from $GITHUB_SHA."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The macOS app, signed and notarized: the release build, nightly version.
+  build:
+    name: Build
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    # Everything a job of the called workflow asks for, also the jobs a
+    # nightly skips (GitHub checks them all; test_reusable_workflow_permissions.py).
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/cd-cua-spaces-build.yml
+    with:
+      channel: nightly
+      version: ${{ needs.plan.outputs.version }}
+      bundle_version: ${{ needs.plan.outputs.bundle_version }}
+    secrets: inherit
+
+  # The disk image to the rolling `cua-spaces-nightly` release and its item
+  # into the nightly appcast (EdDSA-signed with the release key and checked
+  # by verify-appcast.sh the way the app reads it).
+  publish:
+    name: Publish to the nightly feed
+    needs: [plan, build]
+    runs-on: macos-26
+    timeout-minutes: 30
+    # Holds the Sparkle EdDSA key; restricted to main.
+    environment: cua-driver-release-signing
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Download the signed disk image
+        uses: actions/download-artifact@v4
+        with:
+          name: part-darwin-universal
+          path: ${{ runner.temp }}/part
+      - name: Sparkle appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.CUA_SPACES_SPARKLE_ED_PRIVATE_KEY }}
+          PREVIOUS_SHA: ${{ needs.plan.outputs.previous_sha }}
+        run: |
+          set -euo pipefail
+          [ -n "$CUA_SPACES_SPARKLE_ED_PRIVATE_KEY" ] || { echo "::error::no CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: cannot sign the nightly appcast"; exit 1; }
+          grep -q "Developer ID signed and notarized" "$RUNNER_TEMP/part/signing-darwin-universal.txt" ||
+            { echo "::error::the nightly disk image is not signed and notarized"; exit 1; }
+          # A GitHub asset name has no '+': the build metadata joins with a dot.
+          asset="cua-spaces-${VERSION//+/.}-darwin-universal.dmg"
+          mkdir -p out
+          mv "$RUNNER_TEMP/part/cua-spaces-$VERSION-darwin-universal.dmg" "out/$asset"
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+          # What changed since the last nightly (the release inputs only).
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "Nightly build of main at ${GITHUB_SHA:0:7}. Nightly builds are not tested and may break; switch back to Stable in Settings, Advanced, Updates."
+            echo
+            range="$GITHUB_SHA"
+            [ -n "$PREVIOUS_SHA" ] && git cat-file -e "$PREVIOUS_SHA^{commit}" 2>/dev/null && range="$PREVIOUS_SHA..$GITHUB_SHA"
+            git log --no-merges --format='- %s' -n 40 "$range" -- \
+              apps/cua-spaces-macos apps/cua-spaces apps/cua-spaces-desktop apps/cua-spaces-web libs/cua libs/cua-spacesd/VERSION
+          } > "$notes"
+
+          mkdir -p "$RUNNER_TEMP/previous"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$APPCAST" \
+            --dir "$RUNNER_TEMP/previous" 2>/dev/null || true
+          apps/cua-spaces-macos/scripts/make-appcast.sh \
+            --dmg "out/$asset" --version "$VERSION" \
+            --download-base "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/" \
+            --previous "$RUNNER_TEMP/previous/$APPCAST" --notes "$notes" \
+            --out "out/$APPCAST"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TREE: ${{ needs.plan.outputs.tree }}
+          BUNDLE_VERSION: ${{ needs.plan.outputs.bundle_version }}
+        run: |
+          set -euo pipefail
+          body="The newest Cua Spaces for Mac, built from main most nights. Nightly builds are not tested and may break. To get them, open Cua Spaces, Settings, Advanced, and set Updates to Nightly. Latest: $VERSION."
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Cua Spaces Nightly" --notes "$body" --prerelease --latest=false
+          fi
+          jq -n --arg version "$VERSION" --arg bundle "$BUNDLE_VERSION" --arg sha "$GITHUB_SHA" \
+            --arg tree "$TREE" --arg asset "$ASSET" --arg run "$GITHUB_RUN_ID" \
+            --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $version, bundleVersion: $bundle, sha: $sha, tree: $tree, dmg: $asset, run: ($run | tonumber), builtAt: $at}' \
+            > out/nightly.json
+          # The image first, then the feed that points at it, then the record.
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "out/$ASSET"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "out/$APPCAST"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber out/nightly.json
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$body" --prerelease --latest=false
+          # Disk images the appcast no longer lists go.
+          keep="$(python3 - "out/$APPCAST" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          for e in ET.parse(sys.argv[1]).iter("enclosure"):
+              print(e.get("url", "").rsplit("/", 1)[-1])
+          PY
+          )"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            grep '\.dmg$' | while read -r name; do
+              grep -qxF "$name" <<<"$keep" || gh release delete-asset "$TAG" "$name" --repo "$GITHUB_REPOSITORY" --yes
+            done
+          {
+            echo "## Published"
+            echo "- **$VERSION** (CFBundleVersion $BUNDLE_VERSION)"
+            echo "- Feed: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$APPCAST"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Runner minutes per OS for the CUA-1991 cost go/no-go.
+  cost:
+    name: Cost summary
+    needs: [plan, build, publish]
+    if: always() && needs.plan.outputs.skip != 'true' && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cost summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I .github/scripts/spaces_build_summary.py "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"

@@ -221,7 +221,12 @@ async fn pull_fails_typed_before_writing_when_the_disk_is_nearly_full() {
             .await
             .unwrap_err();
     assert!(!matches!(err, ImageError::Vmm(_)), "{err:?}");
-    let blobs_left: Vec<_> = walk(&blobs);
+    // A blob's `.partial.lock` stays: removing a lock file another pull may
+    // be waiting on would let a third take the same blob at once.
+    let blobs_left: Vec<_> = walk(&blobs)
+        .into_iter()
+        .filter(|p| !p.to_string_lossy().ends_with(".partial.lock"))
+        .collect();
     assert!(blobs_left.is_empty(), "{blobs_left:?} {err:?}");
     for d in std::fs::read_dir(dir.path().join("cache/disks")).unwrap() {
         let leftovers: Vec<_> = std::fs::read_dir(d.unwrap().path())

@@ -1,0 +1,9 @@
+{
+  "errors.viewer.stream_unreachable": "데스크톱 스트림에 연결할 수 없어요.",
+  "errors.viewer.agent_open_failed": "{agent}을(를) 열 수 없어요: {reason}",
+  "errors.viewer.stop_hotspot_failed": "공유를 중지할 수 없어요",
+  "errors.spaces.create_failed": "Space를 만들 수 없어요",
+  "errors.spaces.refresh_failed": "Spaces를 새로 고치지 못했어요. 이전에 불러온 항목이 최신이 아닐 수 있어요.",
+  "errors.spaces.load_failed": "Spaces를 불러오지 못했어요. 다시 새로 고쳐 보세요.",
+  "errors.settings.sign_in_start_failed": "로그인을 시작할 수 없어요"
+}

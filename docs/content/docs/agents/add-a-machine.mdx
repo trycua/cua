@@ -1,0 +1,65 @@
+---
+title: Add a machine
+description: 'For an AI agent: run a Cua Spaces image by hand on a cloud or machine your user owns, then add it to Cua Spaces with cua spaces add.'
+---
+
+Cua Spaces can't start this image on that cloud itself, so your user wants it run
+by hand and added as a Space. Ask your user which image, which cloud and region,
+and the most they will spend, then wait for a yes. Machines you start in their
+cloud are billed to them. Tell them what you started and how to stop it.
+
+## You run on your user's computer
+
+1. Start a machine in the cloud your user named, with the cloud's own CLI, big
+   enough for the image (a Linux desktop wants 2 CPUs and 4 GB of memory). Use a
+   firewall that lets in only your user's address or their tailnet on port 3211,
+   never the whole internet. Tag it so you can find it later.
+2. On the machine, run the image with a new token. This is the Linux desktop; use
+   the image your user named if it is another Cua Spaces image.
+
+   ```bash skip="no-runner"
+   TOKEN=$(openssl rand -hex 24)
+   docker run -d --name cua-space -e CUA_ENV_TOKEN=$TOKEN -p 3211:3211 ghcr.io/trycua/linux:24.04
+   ```
+
+3. From your user's machine, add it with its address and the token. Keep the
+   token in an environment variable, not in the chat or a file.
+
+   ```bash test="cli-shape" id="agent-machine-add"
+   cua spaces add <address>:3211 --token "$TOKEN" --name <name>
+   ```
+
+## You run in the cloud (hosted assistants)
+
+You can't reach your user's cloud account or machine from here. Tell your user the
+image, cloud and steps above, and ask them to run them or to paste this link into an
+agent on their machine.
+
+## Check it worked
+
+```bash test="cli-shape" id="agent-machine-ls"
+cua spaces ls
+```
+
+The Space should be listed under the name you gave it. In Cua Spaces it shows in
+the Spaces list, and opening it shows the desktop. If `cua spaces add` fails, it
+says whether the address, the token or the handshake was the problem. Check the
+firewall and the token, and try again. Don't open the port wider to make it pass.
+
+## Don't
+
+- Print the token or put it in a file, the chat or a shell history you can avoid.
+- Open port 3211 to everyone, or run the machine without a token.
+- Leave machines running that you started: tell your user, or stop them when done.
+- Touch machines, networks or users in the account that you did not create.
+
+## What you get
+
+- Nothing new for yourself. The machine is one more Space in your user's Cua
+  Spaces, and they or their agents can create work in it.
+- The token is kept apart from the Space list, readable only by your user.
+- Your user can forget it with `cua spaces rm <name>`. That does not stop the
+  machine: stop it with the cloud's own CLI.
+- It is a Space reached by its address (`direct:<address>:3211`), not one of
+  your user's machines. How they differ:
+  [Machines and Spaces](/spaces/concepts/machines-and-spaces).

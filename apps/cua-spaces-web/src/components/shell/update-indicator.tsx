@@ -1,29 +1,30 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { CheckIcon, DownloadIcon, RotateCwIcon } from "lucide-react";
-import { useState } from "react";
+import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+import { DownloadIcon, LoaderCircleIcon } from "lucide-react";
+import { useState, type ReactElement } from "react";
 
 import { useAgents, useSession, useUpdate } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
-import { Menu } from "@/components/ui/menu";
 import { toast } from "@/components/ui/toast";
+import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { useRelayAllowanceShowing } from "./relay-allowance-notice";
-import { restartWarning, runsInProgress, updateView, type UpdateView } from "./update-copy";
+import { restartWarning, runsInProgress, updateTooltip, updateView, type UpdateView } from "./update-copy";
 
 /**
- * Everything the indicator needs: what the host's updater shows, and the two
- * actions. "Restart to update" asks first while an agent is running, and the
+ * Everything the button needs (also the Machines page's "Restart to update"
+ * issue action): what the host's updater shows, and the two actions. "Restart to update" asks first while an agent is running, and the
  * host restarts only on this call: nothing here restarts on its own.
  */
-function useUpdateIndicator() {
+export function useUpdateIndicator() {
   const { data, install } = useUpdate();
   const { data: agents } = useAgents();
   const { openExternal } = useSession();
   const [asking, setAsking] = useState(false);
-  const view = updateView(data?.state);
+  const installing = data?.installing ?? false;
+  const view = updateView(data?.state, installing);
   const running = runsInProgress(agents?.runs);
   const notesUrl = data?.state.notesUrl ?? null;
 
@@ -33,7 +34,7 @@ function useUpdateIndicator() {
   return {
     view,
     running,
-    installing: data?.installing ?? false,
+    installing,
     asking,
     setAsking,
     restart: () => (running > 0 ? setAsking(true) : restartNow()),
@@ -42,17 +43,9 @@ function useUpdateIndicator() {
   };
 }
 
-function ReadyIcon() {
-  return (
-    <span className="relative grid size-4 place-items-center" aria-hidden>
-      <RotateCwIcon className="size-4" strokeWidth={1.75} />
-      <span className="absolute -right-1 -bottom-1 grid size-2.5 place-items-center rounded-full bg-foreground text-background ring-2 ring-sidebar">
-        <CheckIcon className="size-2" strokeWidth={3} />
-      </span>
-    </span>
-  );
-}
+type UpdateButtonUi = ReturnType<typeof useUpdateIndicator>;
 
+/** The download arrow in a ring that fills with the download. */
 function ProgressRing({ percent }: { percent: number | null }) {
   const r = 7;
   const c = 2 * Math.PI * r;
@@ -60,99 +53,122 @@ function ProgressRing({ percent }: { percent: number | null }) {
     <span className="relative grid size-5 place-items-center" aria-hidden>
       <svg viewBox="0 0 20 20" className={cn("absolute inset-0 size-full -rotate-90", percent === null && "animate-spin")}>
         <circle cx="10" cy="10" r={r} fill="none" className="stroke-current/20" strokeWidth="1.5" />
-        <circle cx="10" cy="10" r={r} fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" strokeDasharray={c} strokeDashoffset={c * (1 - (percent ?? 25) / 100)} className="motion-reduce:transition-none" />
+        <circle cx="10" cy="10" r={r} fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" strokeDasharray={c} strokeDashoffset={c * (1 - (percent ?? 25) / 100)} className="transition-[stroke-dashoffset] duration-300 motion-reduce:transition-none" />
       </svg>
-      <DownloadIcon className="size-2.5" />
+      <DownloadIcon className="size-2.5" strokeWidth={2} />
     </span>
   );
 }
 
-function RestartDialog({ ui }: { ui: ReturnType<typeof useUpdateIndicator> }) {
-  const w = restartWarning(ui.running);
+/** The same arrow, with one accent dot: the update is ready. */
+function ReadyIcon() {
   return (
-    <ConfirmDialog open={ui.asking} onOpenChange={ui.setAsking} title={w.title} description={w.description} confirmLabel={w.confirm} cancelLabel={w.cancel} destructive onConfirm={ui.restartNow} />
+    <span className="relative grid size-4 place-items-center" aria-hidden>
+      <DownloadIcon className="size-4" strokeWidth={1.75} />
+      <span data-update-dot="" className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-brand ring-2 ring-sidebar" />
+    </span>
+  );
+}
+
+function UpdateIcon({ view }: { view: UpdateView }) {
+  switch (view.kind) {
+    case "downloading":
+      return <ProgressRing percent={view.percent} />;
+    case "ready":
+      return <ReadyIcon />;
+    case "installing":
+      return <LoaderCircleIcon className="size-4 animate-spin" strokeWidth={1.75} aria-hidden />;
+    case "error":
+      return <DownloadIcon className="size-4 opacity-50" strokeWidth={1.75} aria-hidden />;
+  }
+}
+
+export function RestartDialog({ ui }: { ui: UpdateButtonUi }) {
+  const w = restartWarning(ui.running);
+  return <ConfirmDialog open={ui.asking} onOpenChange={ui.setAsking} title={w.title} description={w.description} confirmLabel={w.confirm} cancelLabel={w.cancel} destructive onConfirm={ui.restartNow} />;
+}
+
+/** What a click on the ready button opens: Restart to update, and What's new. */
+function ReadyPopover({ ui, view, trigger, tip, side }: { ui: UpdateButtonUi; view: Extract<UpdateView, { kind: "ready" }>; trigger: ReactElement; tip: string; side: "top" | "bottom" }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+      <Tooltip content={tip} side={side}>
+        <PopoverPrimitive.Trigger render={trigger} />
+      </Tooltip>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Positioner side={side} align="end" sideOffset={6} className="z-50 outline-none">
+          <PopoverPrimitive.Popup
+            data-update-popover=""
+            className="glass w-56 origin-(--transform-origin) rounded-lg border p-3 text-popover-foreground shadow-float outline-none transition-[opacity,scale] data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0"
+          >
+            <PopoverPrimitive.Title className="text-xs font-medium">{view.label}</PopoverPrimitive.Title>
+            <PopoverPrimitive.Description className="text-2xs text-muted-foreground">{view.detail}</PopoverPrimitive.Description>
+            <Button
+              size="sm"
+              className="mt-2.5 w-full"
+              data-update-restart=""
+              disabled={ui.installing}
+              onClick={() => {
+                setOpen(false);
+                ui.restart();
+              }}
+            >
+              Restart to update
+            </Button>
+            {ui.whatsNew ? (
+              <button
+                type="button"
+                data-update-whats-new=""
+                onClick={ui.whatsNew}
+                className="mt-2 block w-full text-center text-2xs text-muted-foreground underline decoration-dotted underline-offset-4 hover:text-foreground"
+              >
+                What's new
+              </button>
+            ) : null}
+          </PopoverPrimitive.Popup>
+        </PopoverPrimitive.Positioner>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   );
 }
 
 /**
- * The sidebar's update line, above the account: quiet while it downloads,
- * and a "Restart to update" with a "What's new" link once it is ready. While
- * the relay allowance notice (an upgrade prompt) is open it shrinks to an
- * icon, so the two are never both open.
+ * The update button: a small icon, hidden while up to date. Downloading
+ * fills a ring around the arrow; ready adds one accent dot, and a click
+ * opens Restart to update and What's new; installing spins; a failed step
+ * is a muted arrow whose tooltip says why. Its tooltip names the state.
  */
-export function SidebarUpdateIndicator() {
+function UpdateButton({ side }: { side: "top" | "bottom" }) {
   const ui = useUpdateIndicator();
-  const upsellOpen = useRelayAllowanceShowing();
-  if (!ui.view) return null;
-  if (ui.view.kind === "downloading") return <DownloadingRow view={ui.view} />;
-  return (
-    <div data-update-indicator="ready" className="border-t px-3 py-2.5">
-      {upsellOpen ? (
-        <UpdateMenu ui={ui} compact />
-      ) : (
-        <>
-          <div className="flex items-center gap-2.5">
-            <span className="text-muted-foreground">
-              <ReadyIcon />
-            </span>
-            <div className="min-w-0 flex-1 leading-tight">
-              <div className="truncate text-xs font-medium">{ui.view.label}</div>
-              <div className="truncate text-2xs text-muted-foreground">{ui.view.detail}</div>
-            </div>
-          </div>
-          <div className="mt-2 flex items-center gap-3">
-            <Button size="sm" variant="outline" className="min-w-0 flex-1" data-update-restart="" disabled={ui.installing} onClick={ui.restart}>
-              Restart to update
-            </Button>
-            {ui.whatsNew ? (
-              <button type="button" data-update-whats-new="" onClick={ui.whatsNew} className="shrink-0 text-2xs text-muted-foreground underline decoration-dotted underline-offset-4 hover:text-foreground">
-                What's new
-              </button>
-            ) : null}
-          </div>
-        </>
-      )}
-      <RestartDialog ui={ui} />
-    </div>
-  );
-}
-
-function DownloadingRow({ view }: { view: Extract<UpdateView, { kind: "downloading" }> }) {
-  return (
-    <div data-update-indicator="downloading" role="status" className="flex items-center gap-2.5 border-t px-3 py-2.5 text-muted-foreground">
-      <ProgressRing percent={view.percent} />
-      <span className="min-w-0 flex-1 truncate text-2xs">{view.label}</span>
-    </div>
-  );
-}
-
-/** One icon with the same actions in a menu: the top bar (sidebar closed) and the compact sidebar. */
-function UpdateMenu({ ui, compact = false }: { ui: ReturnType<typeof useUpdateIndicator>; compact?: boolean }) {
-  if (!ui.view) return null;
-  const tip = ui.view.kind === "ready" ? `${ui.view.label}: restart to install` : ui.view.label;
-  const items = ui.view.kind === "ready" ? [{ label: "Restart to update", onSelect: ui.restart, disabled: ui.installing }, ...(ui.whatsNew ? [{ label: "What's new", onSelect: ui.whatsNew }] : [])] : [];
-  const icon = ui.view.kind === "ready" ? <ReadyIcon /> : <ProgressRing percent={ui.view.percent} />;
+  const { view } = ui;
+  if (!view) return null;
+  const tip = updateTooltip(view);
   const button = (
-    <Button variant="ghost" size="icon-sm" aria-label={tip} title={tip} data-update-icon="" className={cn("text-muted-foreground", compact && "w-full justify-start gap-2 px-1.5")}>
-      {icon}
-      {compact ? <span className="truncate text-2xs">{ui.view.label}</span> : null}
+    <Button variant="ghost" size="icon-sm" aria-label={tip} data-update-icon={view.kind} className={cn("text-muted-foreground hover:text-foreground", view.kind === "ready" && "text-foreground")}>
+      <UpdateIcon view={view} />
     </Button>
   );
   return (
-    <>
-      {items.length > 0 ? <Menu trigger={button} items={items} /> : button}
+    <span data-update-indicator={view.kind} className="inline-flex" role={view.kind === "downloading" || view.kind === "installing" ? "status" : undefined}>
+      {view.kind === "ready" ? (
+        <ReadyPopover ui={ui} view={view} tip={tip} side={side} trigger={button} />
+      ) : (
+        <Tooltip content={tip} side={side}>
+          {button}
+        </Tooltip>
+      )}
       <RestartDialog ui={ui} />
-    </>
+    </span>
   );
 }
 
-/** The top bar's update icon, shown only while the sidebar (and its line) is closed. */
+/** The update button in the sidebar's footer row. */
+export function SidebarUpdateButton() {
+  return <UpdateButton side="top" />;
+}
+
+/** The same button in the top bar, shown only while the sidebar is closed. */
 export function TopBarUpdateIndicator() {
-  const ui = useUpdateIndicator();
-  if (!ui.view) return null;
-  return (
-    <span data-update-indicator={ui.view.kind}>
-      <UpdateMenu ui={ui} />
-    </span>
-  );
+  return <UpdateButton side="bottom" />;
 }

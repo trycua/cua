@@ -25,6 +25,8 @@ export interface CoreNotchState {
   transfer?: unknown;
   keyvault?: string;
   signedIn: string[];
+  /** The pinned Spaces and desktops, in pin order. */
+  pinned?: string[];
   hidden: boolean;
 }
 
@@ -101,6 +103,10 @@ function tile(t: Obj): Tile {
     progress: optNum(t.progress),
     progressLabel: opt(t.progressLabel),
     signedIn: t.signedIn,
+    // Sent only when set (the helper reads a missing field as false).
+    ...(t.desktop === true ? { desktop: true } : {}),
+    ...(t.pinned === true ? { pinned: true } : {}),
+    ...(opt(t.note) !== undefined ? { note: t.note as string } : {}),
   };
 }
 

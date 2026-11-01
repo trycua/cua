@@ -197,11 +197,13 @@ fn cua_home() -> Option<std::path::PathBuf> {
         }
         return Some(h.into());
     }
-    // Like `cua_home::cua_home()`: another `CUA_ENV` has its own home
-    // (`~/.cua/envs/staging`), where its daemon serves the Keyvault.
+    // Like `cua_home::cua_home()`: the channel's home for the environment
+    // (`~/.cua-local` for Local, `~/.cua/envs/staging` for another
+    // `CUA_ENV`), where that daemon serves the Keyvault.
     home_dir().map(|h| {
-        let base = std::path::PathBuf::from(h).join(".cua");
-        match cua_home::env::CuaEnv::current().home_subdir() {
+        let (channel, env) = cua_home::channel::CuaChannel::current_with_env();
+        let base = std::path::PathBuf::from(h).join(channel.home_dir_name());
+        match channel.home_subdir(env) {
             Some(sub) => base.join(sub),
             None => base,
         }

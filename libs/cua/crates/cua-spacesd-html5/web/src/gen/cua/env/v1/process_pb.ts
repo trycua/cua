@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file cua/env/v1/process.proto.
  */
 export const file_cua_env_v1_process: GenFile = /*@__PURE__*/
-  fileDesc("ChhjdWEvZW52L3YxL3Byb2Nlc3MucHJvdG8SCmN1YS5lbnYudjEi0gEKDVByb2Nlc3NDb25maWcSDwoHY29tbWFuZBgBIAEoCRIMCgRhcmdzGAIgAygJEi8KA2VudhgDIAMoCzIiLmN1YS5lbnYudjEuUHJvY2Vzc0NvbmZpZy5FbnZFbnRyeRILCgNjd2QYBCABKAkSDAoEdXNlchgFIAEoCRIqCgd0aW1lb3V0GAYgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiPAoJUHR5Q29uZmlnEiEKBHNpemUYASABKAsyEy5jdWEuZW52LnYxLlB0eVNpemUSDAoEdGVybRgCIAEoCSJQCgdQdHlTaXplEgwKBGNvbHMYASABKA0SDAoEcm93cxgCIAEoDRITCgtwaXhlbF93aWR0aBgDIAEoDRIUCgxwaXhlbF9oZWlnaHQYBCABKA0iOwoPUHJvY2Vzc1NlbGVjdG9yEg0KA3BpZBgBIAEoDUgAEg0KA3RhZxgCIAEoCUgAQgoKCHNlbGVjdG9yIu0BChNTdGFydFByb2Nlc3NSZXF1ZXN0EikKBmNvbmZpZxgBIAEoCzIZLmN1YS5lbnYudjEuUHJvY2Vzc0NvbmZpZxIiCgNwdHkYAiABKAsyFS5jdWEuZW52LnYxLlB0eUNvbmZpZxILCgN0YWcYAyABKAkSDQoFc3RkaW4YBCABKAgSNQoSa2VlcGFsaXZlX2ludGVydmFsGAUgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEhgKEHNjcm9sbGJhY2tfYnl0ZXMYBiABKAQSGgoSa2lsbF9vbl9kaXNjb25uZWN0GAcgASgIIj8KFFN0YXJ0UHJvY2Vzc1Jlc3BvbnNlEicKBWV2ZW50GAEgASgLMhguY3VhLmVudi52MS5Qcm9jZXNzRXZlbnQiygEKFUNvbm5lY3RQcm9jZXNzUmVxdWVzdBIsCgdwcm9jZXNzGAEgASgLMhsuY3VhLmVudi52MS5Qcm9jZXNzU2VsZWN0b3ISFAoMcmVwbGF5X2J5dGVzGAIgASgEEh8KEnJlcGxheV9mcm9tX29mZnNldBgDIAEoBEgAiAEBEjUKEmtlZXBhbGl2ZV9pbnRlcnZhbBgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbkIVChNfcmVwbGF5X2Zyb21fb2Zmc2V0IkEKFkNvbm5lY3RQcm9jZXNzUmVzcG9uc2USJwoFZXZlbnQYASABKAsyGC5jdWEuZW52LnYxLlByb2Nlc3NFdmVudCK+AQoMUHJvY2Vzc0V2ZW50EikKBXN0YXJ0GAEgASgLMhguY3VhLmVudi52MS5Qcm9jZXNzU3RhcnRIABInCgRkYXRhGAIgASgLMhcuY3VhLmVudi52MS5Qcm9jZXNzRGF0YUgAEiUKA2VuZBgDIAEoCzIWLmN1YS5lbnYudjEuUHJvY2Vzc0VuZEgAEioKCWtlZXBhbGl2ZRgEIAEoCzIVLmN1YS5lbnYudjEuS2VlcEFsaXZlSABCBwoFZXZlbnQilAEKDFByb2Nlc3NTdGFydBILCgNwaWQYASABKA0SCwoDdGFnGAIgASgJEi4KCnN0YXJ0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEh8KF3Njcm9sbGJhY2tfc3RhcnRfb2Zmc2V0GAQgASgEEhkKEW91dHB1dF9lbmRfb2Zmc2V0GAUgASgEIloKC1Byb2Nlc3NEYXRhEg4KBm9mZnNldBgBIAEoBBIQCgZzdGRvdXQYAiABKAxIABIQCgZzdGRlcnIYAyABKAxIABINCgNwdHkYBCABKAxIAEIICgZvdXRwdXQipgEKClByb2Nlc3NFbmQSFgoJZXhpdF9jb2RlGAEgASgFSACIAQESIgoGc2lnbmFsGAIgASgOMhIuY3VhLmVudi52MS5TaWduYWwSEQoJdGltZWRfb3V0GAMgASgIEg0KBWVycm9yGAQgASgJEiwKCGVuZGVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEIMCgpfZXhpdF9jb2RlIkIKFExpc3RQcm9jZXNzZXNSZXF1ZXN0EhYKDmluY2x1ZGVfZXhpdGVkGAEgASgIEhIKCnRhZ19wcmVmaXgYAiABKAkiQwoVTGlzdFByb2Nlc3Nlc1Jlc3BvbnNlEioKCXByb2Nlc3NlcxgBIAMoCzIXLmN1YS5lbnYudjEuUHJvY2Vzc0luZm8iswIKC1Byb2Nlc3NJbmZvEgsKA3BpZBgBIAEoDRILCgN0YWcYAiABKAkSKQoGY29uZmlnGAMgASgLMhkuY3VhLmVudi52MS5Qcm9jZXNzQ29uZmlnEgsKA3B0eRgEIAEoCBInCgVzdGF0ZRgFIAEoDjIYLmN1YS5lbnYudjEuUHJvY2Vzc1N0YXRlEiMKA2VuZBgGIAEoCzIWLmN1YS5lbnYudjEuUHJvY2Vzc0VuZBIuCgpzdGFydGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIfChdzY3JvbGxiYWNrX3N0YXJ0X29mZnNldBgIIAEoBBIZChFvdXRwdXRfZW5kX29mZnNldBgJIAEoBBIYChBhdHRhY2hlZF9jbGllbnRzGAogASgNIjcKDFByb2Nlc3NJbnB1dBIPCgVzdGRpbhgBIAEoDEgAEg0KA3B0eRgCIAEoDEgAQgcKBWlucHV0Io4BChBTZW5kSW5wdXRSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchInCgVpbnB1dBgCIAEoCzIYLmN1YS5lbnYudjEuUHJvY2Vzc0lucHV0EhAKCHNlcXVlbmNlGAMgASgEEhEKCXdyaXRlcl9pZBgEIAEoCSJAChFTZW5kSW5wdXRSZXNwb25zZRIYChBhcHBsaWVkX3NlcXVlbmNlGAEgASgEEhEKCWR1cGxpY2F0ZRgCIAEoCCKmAQoSU3RyZWFtSW5wdXRSZXF1ZXN0Ei4KB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvckgAEikKBWlucHV0GAIgASgLMhguY3VhLmVudi52MS5Qcm9jZXNzSW5wdXRIABIqCglrZWVwYWxpdmUYAyABKAsyFS5jdWEuZW52LnYxLktlZXBBbGl2ZUgAQgkKB21lc3NhZ2UiLAoTU3RyZWFtSW5wdXRSZXNwb25zZRIVCg1ieXRlc193cml0dGVuGAEgASgEIn8KFFNpZ25hbFByb2Nlc3NSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchIiCgZzaWduYWwYAiABKA4yEi5jdWEuZW52LnYxLlNpZ25hbBIVCg1wcm9jZXNzX2dyb3VwGAMgASgIIhcKFVNpZ25hbFByb2Nlc3NSZXNwb25zZSJBChFDbG9zZVN0ZGluUmVxdWVzdBIsCgdwcm9jZXNzGAEgASgLMhsuY3VhLmVudi52MS5Qcm9jZXNzU2VsZWN0b3IiFAoSQ2xvc2VTdGRpblJlc3BvbnNlImMKEFJlc2l6ZVB0eVJlcXVlc3QSLAoHcHJvY2VzcxgBIAEoCzIbLmN1YS5lbnYudjEuUHJvY2Vzc1NlbGVjdG9yEiEKBHNpemUYAiABKAsyEy5jdWEuZW52LnYxLlB0eVNpemUiEwoRUmVzaXplUHR5UmVzcG9uc2UqYgoMUHJvY2Vzc1N0YXRlEh0KGVBST0NFU1NfU1RBVEVfVU5TUEVDSUZJRUQQABIZChVQUk9DRVNTX1NUQVRFX1JVTk5JTkcQARIYChRQUk9DRVNTX1NUQVRFX0VYSVRFRBACKtoBCgZTaWduYWwSFgoSU0lHTkFMX1VOU1BFQ0lGSUVEEAASDgoKU0lHTkFMX0hVUBABEg4KClNJR05BTF9JTlQQAhIPCgtTSUdOQUxfUVVJVBADEg8KC1NJR05BTF9LSUxMEAkSDwoLU0lHTkFMX1VTUjEQChIPCgtTSUdOQUxfVVNSMhAMEg8KC1NJR05BTF9URVJNEA8SDwoLU0lHTkFMX0NPTlQQEhIPCgtTSUdOQUxfU1RPUBATEg8KC1NJR05BTF9UU1RQEBQSEAoMU0lHTkFMX1dJTkNIEBwynwUKDlByb2Nlc3NTZXJ2aWNlElMKDFN0YXJ0UHJvY2VzcxIfLmN1YS5lbnYudjEuU3RhcnRQcm9jZXNzUmVxdWVzdBogLmN1YS5lbnYudjEuU3RhcnRQcm9jZXNzUmVzcG9uc2UwARJZCg5Db25uZWN0UHJvY2VzcxIhLmN1YS5lbnYudjEuQ29ubmVjdFByb2Nlc3NSZXF1ZXN0GiIuY3VhLmVudi52MS5Db25uZWN0UHJvY2Vzc1Jlc3BvbnNlMAESVAoNTGlzdFByb2Nlc3NlcxIgLmN1YS5lbnYudjEuTGlzdFByb2Nlc3Nlc1JlcXVlc3QaIS5jdWEuZW52LnYxLkxpc3RQcm9jZXNzZXNSZXNwb25zZRJICglTZW5kSW5wdXQSHC5jdWEuZW52LnYxLlNlbmRJbnB1dFJlcXVlc3QaHS5jdWEuZW52LnYxLlNlbmRJbnB1dFJlc3BvbnNlElAKC1N0cmVhbUlucHV0Eh4uY3VhLmVudi52MS5TdHJlYW1JbnB1dFJlcXVlc3QaHy5jdWEuZW52LnYxLlN0cmVhbUlucHV0UmVzcG9uc2UoARJUCg1TaWduYWxQcm9jZXNzEiAuY3VhLmVudi52MS5TaWduYWxQcm9jZXNzUmVxdWVzdBohLmN1YS5lbnYudjEuU2lnbmFsUHJvY2Vzc1Jlc3BvbnNlEksKCkNsb3NlU3RkaW4SHS5jdWEuZW52LnYxLkNsb3NlU3RkaW5SZXF1ZXN0Gh4uY3VhLmVudi52MS5DbG9zZVN0ZGluUmVzcG9uc2USSAoJUmVzaXplUHR5EhwuY3VhLmVudi52MS5SZXNpemVQdHlSZXF1ZXN0Gh0uY3VhLmVudi52MS5SZXNpemVQdHlSZXNwb25zZWIGcHJvdG8z", [file_cua_env_v1_common, file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChhjdWEvZW52L3YxL3Byb2Nlc3MucHJvdG8SCmN1YS5lbnYudjEi0gEKDVByb2Nlc3NDb25maWcSDwoHY29tbWFuZBgBIAEoCRIMCgRhcmdzGAIgAygJEi8KA2VudhgDIAMoCzIiLmN1YS5lbnYudjEuUHJvY2Vzc0NvbmZpZy5FbnZFbnRyeRILCgNjd2QYBCABKAkSDAoEdXNlchgFIAEoCRIqCgd0aW1lb3V0GAYgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiPAoJUHR5Q29uZmlnEiEKBHNpemUYASABKAsyEy5jdWEuZW52LnYxLlB0eVNpemUSDAoEdGVybRgCIAEoCSJQCgdQdHlTaXplEgwKBGNvbHMYASABKA0SDAoEcm93cxgCIAEoDRITCgtwaXhlbF93aWR0aBgDIAEoDRIUCgxwaXhlbF9oZWlnaHQYBCABKA0iOwoPUHJvY2Vzc1NlbGVjdG9yEg0KA3BpZBgBIAEoDUgAEg0KA3RhZxgCIAEoCUgAQgoKCHNlbGVjdG9yIpACChNTdGFydFByb2Nlc3NSZXF1ZXN0EikKBmNvbmZpZxgBIAEoCzIZLmN1YS5lbnYudjEuUHJvY2Vzc0NvbmZpZxIiCgNwdHkYAiABKAsyFS5jdWEuZW52LnYxLlB0eUNvbmZpZxILCgN0YWcYAyABKAkSDQoFc3RkaW4YBCABKAgSNQoSa2VlcGFsaXZlX2ludGVydmFsGAUgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEhgKEHNjcm9sbGJhY2tfYnl0ZXMYBiABKAQSGgoSa2lsbF9vbl9kaXNjb25uZWN0GAcgASgIEhIKCnJlcXVlc3RfaWQYCCABKAkSDQoFZXBvY2gYCSABKAQiPwoUU3RhcnRQcm9jZXNzUmVzcG9uc2USJwoFZXZlbnQYASABKAsyGC5jdWEuZW52LnYxLlByb2Nlc3NFdmVudCLKAQoVQ29ubmVjdFByb2Nlc3NSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchIUCgxyZXBsYXlfYnl0ZXMYAiABKAQSHwoScmVwbGF5X2Zyb21fb2Zmc2V0GAMgASgESACIAQESNQoSa2VlcGFsaXZlX2ludGVydmFsGAQgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uQhUKE19yZXBsYXlfZnJvbV9vZmZzZXQiQQoWQ29ubmVjdFByb2Nlc3NSZXNwb25zZRInCgVldmVudBgBIAEoCzIYLmN1YS5lbnYudjEuUHJvY2Vzc0V2ZW50Ir4BCgxQcm9jZXNzRXZlbnQSKQoFc3RhcnQYASABKAsyGC5jdWEuZW52LnYxLlByb2Nlc3NTdGFydEgAEicKBGRhdGEYAiABKAsyFy5jdWEuZW52LnYxLlByb2Nlc3NEYXRhSAASJQoDZW5kGAMgASgLMhYuY3VhLmVudi52MS5Qcm9jZXNzRW5kSAASKgoJa2VlcGFsaXZlGAQgASgLMhUuY3VhLmVudi52MS5LZWVwQWxpdmVIAEIHCgVldmVudCK+AQoMUHJvY2Vzc1N0YXJ0EgsKA3BpZBgBIAEoDRILCgN0YWcYAiABKAkSLgoKc3RhcnRlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASHwoXc2Nyb2xsYmFja19zdGFydF9vZmZzZXQYBCABKAQSGQoRb3V0cHV0X2VuZF9vZmZzZXQYBSABKAQSFAoMZGVkdXBsaWNhdGVkGAYgASgIEhIKCnJlcXVlc3RfaWQYByABKAkiWgoLUHJvY2Vzc0RhdGESDgoGb2Zmc2V0GAEgASgEEhAKBnN0ZG91dBgCIAEoDEgAEhAKBnN0ZGVychgDIAEoDEgAEg0KA3B0eRgEIAEoDEgAQggKBm91dHB1dCLgAQoKUHJvY2Vzc0VuZBIWCglleGl0X2NvZGUYASABKAVIAIgBARIiCgZzaWduYWwYAiABKA4yEi5jdWEuZW52LnYxLlNpZ25hbBIRCgl0aW1lZF9vdXQYAyABKAgSDQoFZXJyb3IYBCABKAkSLAoIZW5kZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEgwKBGxvc3QYBiABKAgSFQoNc2lnbmFsX251bWJlchgHIAEoBRITCgtzaWduYWxfbmFtZRgIIAEoCUIMCgpfZXhpdF9jb2RlIkIKFExpc3RQcm9jZXNzZXNSZXF1ZXN0EhYKDmluY2x1ZGVfZXhpdGVkGAEgASgIEhIKCnRhZ19wcmVmaXgYAiABKAkiQwoVTGlzdFByb2Nlc3Nlc1Jlc3BvbnNlEioKCXByb2Nlc3NlcxgBIAMoCzIXLmN1YS5lbnYudjEuUHJvY2Vzc0luZm8iswIKC1Byb2Nlc3NJbmZvEgsKA3BpZBgBIAEoDRILCgN0YWcYAiABKAkSKQoGY29uZmlnGAMgASgLMhkuY3VhLmVudi52MS5Qcm9jZXNzQ29uZmlnEgsKA3B0eRgEIAEoCBInCgVzdGF0ZRgFIAEoDjIYLmN1YS5lbnYudjEuUHJvY2Vzc1N0YXRlEiMKA2VuZBgGIAEoCzIWLmN1YS5lbnYudjEuUHJvY2Vzc0VuZBIuCgpzdGFydGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIfChdzY3JvbGxiYWNrX3N0YXJ0X29mZnNldBgIIAEoBBIZChFvdXRwdXRfZW5kX29mZnNldBgJIAEoBBIYChBhdHRhY2hlZF9jbGllbnRzGAogASgNIjcKDFByb2Nlc3NJbnB1dBIPCgVzdGRpbhgBIAEoDEgAEg0KA3B0eRgCIAEoDEgAQgcKBWlucHV0Io4BChBTZW5kSW5wdXRSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchInCgVpbnB1dBgCIAEoCzIYLmN1YS5lbnYudjEuUHJvY2Vzc0lucHV0EhAKCHNlcXVlbmNlGAMgASgEEhEKCXdyaXRlcl9pZBgEIAEoCSJAChFTZW5kSW5wdXRSZXNwb25zZRIYChBhcHBsaWVkX3NlcXVlbmNlGAEgASgEEhEKCWR1cGxpY2F0ZRgCIAEoCCKmAQoSU3RyZWFtSW5wdXRSZXF1ZXN0Ei4KB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvckgAEikKBWlucHV0GAIgASgLMhguY3VhLmVudi52MS5Qcm9jZXNzSW5wdXRIABIqCglrZWVwYWxpdmUYAyABKAsyFS5jdWEuZW52LnYxLktlZXBBbGl2ZUgAQgkKB21lc3NhZ2UiLAoTU3RyZWFtSW5wdXRSZXNwb25zZRIVCg1ieXRlc193cml0dGVuGAEgASgEIn8KFFNpZ25hbFByb2Nlc3NSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchIiCgZzaWduYWwYAiABKA4yEi5jdWEuZW52LnYxLlNpZ25hbBIVCg1wcm9jZXNzX2dyb3VwGAMgASgIIhcKFVNpZ25hbFByb2Nlc3NSZXNwb25zZSJBChFDbG9zZVN0ZGluUmVxdWVzdBIsCgdwcm9jZXNzGAEgASgLMhsuY3VhLmVudi52MS5Qcm9jZXNzU2VsZWN0b3IiFAoSQ2xvc2VTdGRpblJlc3BvbnNlImMKEFJlc2l6ZVB0eVJlcXVlc3QSLAoHcHJvY2VzcxgBIAEoCzIbLmN1YS5lbnYudjEuUHJvY2Vzc1NlbGVjdG9yEiEKBHNpemUYAiABKAsyEy5jdWEuZW52LnYxLlB0eVNpemUiEwoRUmVzaXplUHR5UmVzcG9uc2UiKgoUR2V0RXhlY1JlY29yZFJlcXVlc3QSEgoKcmVxdWVzdF9pZBgBIAEoCSJOChVHZXRFeGVjUmVjb3JkUmVzcG9uc2USJgoGcmVjb3JkGAEgASgLMhYuY3VhLmVudi52MS5FeGVjUmVjb3JkEg0KBWVwb2NoGAIgASgEIosCCgpFeGVjUmVjb3JkEhIKCnJlcXVlc3RfaWQYASABKAkSJAoFc3RhdGUYAiABKA4yFS5jdWEuZW52LnYxLkV4ZWNTdGF0ZRINCgVlcG9jaBgDIAEoBBILCgNwaWQYBCABKA0SLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASIwoDZW5kGAYgASgLMhYuY3VhLmVudi52MS5Qcm9jZXNzRW5kEhQKDG91dHB1dF9ieXRlcxgHIAEoBBIVCg1vdXRwdXRfc2hhMjU2GAggASgJEiUKBHRhaWwYCSADKAsyFy5jdWEuZW52LnYxLlByb2Nlc3NEYXRhIiQKE0FkdmFuY2VFcG9jaFJlcXVlc3QSDQoFZXBvY2gYASABKAQiNQoUQWR2YW5jZUVwb2NoUmVzcG9uc2USDQoFZXBvY2gYASABKAQSDgoGa2lsbGVkGAIgASgNKmIKDFByb2Nlc3NTdGF0ZRIdChlQUk9DRVNTX1NUQVRFX1VOU1BFQ0lGSUVEEAASGQoVUFJPQ0VTU19TVEFURV9SVU5OSU5HEAESGAoUUFJPQ0VTU19TVEFURV9FWElURUQQAiraAQoGU2lnbmFsEhYKElNJR05BTF9VTlNQRUNJRklFRBAAEg4KClNJR05BTF9IVVAQARIOCgpTSUdOQUxfSU5UEAISDwoLU0lHTkFMX1FVSVQQAxIPCgtTSUdOQUxfS0lMTBAJEg8KC1NJR05BTF9VU1IxEAoSDwoLU0lHTkFMX1VTUjIQDBIPCgtTSUdOQUxfVEVSTRAPEg8KC1NJR05BTF9DT05UEBISDwoLU0lHTkFMX1NUT1AQExIPCgtTSUdOQUxfVFNUUBAUEhAKDFNJR05BTF9XSU5DSBAcKmsKCUV4ZWNTdGF0ZRIaChZFWEVDX1NUQVRFX1VOU1BFQ0lGSUVEEAASFgoSRVhFQ19TVEFURV9SVU5OSU5HEAESFQoRRVhFQ19TVEFURV9FWElURUQQAhITCg9FWEVDX1NUQVRFX0xPU1QQAzLIBgoOUHJvY2Vzc1NlcnZpY2USUwoMU3RhcnRQcm9jZXNzEh8uY3VhLmVudi52MS5TdGFydFByb2Nlc3NSZXF1ZXN0GiAuY3VhLmVudi52MS5TdGFydFByb2Nlc3NSZXNwb25zZTABElkKDkNvbm5lY3RQcm9jZXNzEiEuY3VhLmVudi52MS5Db25uZWN0UHJvY2Vzc1JlcXVlc3QaIi5jdWEuZW52LnYxLkNvbm5lY3RQcm9jZXNzUmVzcG9uc2UwARJUCg1MaXN0UHJvY2Vzc2VzEiAuY3VhLmVudi52MS5MaXN0UHJvY2Vzc2VzUmVxdWVzdBohLmN1YS5lbnYudjEuTGlzdFByb2Nlc3Nlc1Jlc3BvbnNlEkgKCVNlbmRJbnB1dBIcLmN1YS5lbnYudjEuU2VuZElucHV0UmVxdWVzdBodLmN1YS5lbnYudjEuU2VuZElucHV0UmVzcG9uc2USUAoLU3RyZWFtSW5wdXQSHi5jdWEuZW52LnYxLlN0cmVhbUlucHV0UmVxdWVzdBofLmN1YS5lbnYudjEuU3RyZWFtSW5wdXRSZXNwb25zZSgBElQKDVNpZ25hbFByb2Nlc3MSIC5jdWEuZW52LnYxLlNpZ25hbFByb2Nlc3NSZXF1ZXN0GiEuY3VhLmVudi52MS5TaWduYWxQcm9jZXNzUmVzcG9uc2USSwoKQ2xvc2VTdGRpbhIdLmN1YS5lbnYudjEuQ2xvc2VTdGRpblJlcXVlc3QaHi5jdWEuZW52LnYxLkNsb3NlU3RkaW5SZXNwb25zZRJICglSZXNpemVQdHkSHC5jdWEuZW52LnYxLlJlc2l6ZVB0eVJlcXVlc3QaHS5jdWEuZW52LnYxLlJlc2l6ZVB0eVJlc3BvbnNlElQKDUdldEV4ZWNSZWNvcmQSIC5jdWEuZW52LnYxLkdldEV4ZWNSZWNvcmRSZXF1ZXN0GiEuY3VhLmVudi52MS5HZXRFeGVjUmVjb3JkUmVzcG9uc2USUQoMQWR2YW5jZUVwb2NoEh8uY3VhLmVudi52MS5BZHZhbmNlRXBvY2hSZXF1ZXN0GiAuY3VhLmVudi52MS5BZHZhbmNlRXBvY2hSZXNwb25zZWIGcHJvdG8z", [file_cua_env_v1_common, file_google_protobuf_duration, file_google_protobuf_timestamp]);
 
 /**
  * What to run.
@@ -248,6 +248,30 @@ export type StartProcessRequest = Message<"cua.env.v1.StartProcessRequest"> & {
    * @generated from field: bool kill_on_disconnect = 7;
    */
   killOnDisconnect: boolean;
+
+  /**
+   * Idempotency key. When set, the start is recorded in the exec ledger (a
+   * file in the server's data directory, written and synced before the
+   * process is spawned) and a later `StartProcess` with the same key does
+   * not run the command again: it reattaches to the running process
+   * (replaying retained output from the start), or replays the recorded
+   * outcome (`ProcessStart.deduplicated` is set, then the retained output
+   * tail, then `ProcessEnd`). A process that was running when the server
+   * stopped is recorded as lost and replays as `ProcessEnd.lost`. Empty
+   * means no ledger entry. At most 256 bytes.
+   *
+   * @generated from field: string request_id = 8;
+   */
+  requestId: string;
+
+  /**
+   * Fencing epoch. 0 means unfenced. A value lower than the Space's current
+   * epoch fails with FAILED_PRECONDITION / `ERROR_REASON_STALE_EPOCH`; a
+   * higher value advances the epoch first, as `AdvanceEpoch` does.
+   *
+   * @generated from field: uint64 epoch = 9;
+   */
+  epoch: bigint;
 };
 
 /**
@@ -440,6 +464,22 @@ export type ProcessStart = Message<"cua.env.v1.ProcessStart"> & {
    * @generated from field: uint64 output_end_offset = 5;
    */
   outputEndOffset: bigint;
+
+  /**
+   * True when `StartProcessRequest.request_id` matched an earlier start, so
+   * this stream reattached to it or replays its recorded outcome instead of
+   * running the command again.
+   *
+   * @generated from field: bool deduplicated = 6;
+   */
+  deduplicated: boolean;
+
+  /**
+   * The request's idempotency key, if any.
+   *
+   * @generated from field: string request_id = 7;
+   */
+  requestId: string;
 };
 
 /**
@@ -542,6 +582,35 @@ export type ProcessEnd = Message<"cua.env.v1.ProcessEnd"> & {
    * @generated from field: google.protobuf.Timestamp ended_at = 5;
    */
   endedAt?: Timestamp | undefined;
+
+  /**
+   * True when the outcome is unknown: the process was running when the
+   * server stopped (crash, restart or Space restore), so it may have run
+   * partially or to completion. Only reported for `request_id` processes.
+   *
+   * @generated from field: bool lost = 6;
+   */
+  lost: boolean;
+
+  /**
+   * Raw number of the terminating signal on the guest's OS, set for every
+   * signal death (also those `signal` cannot name, such as SIGSEGV or
+   * SIGABRT, which leave `signal` unspecified). Zero when no signal ended
+   * the process.
+   *
+   * @generated from field: int32 signal_number = 7;
+   */
+  signalNumber: number;
+
+  /**
+   * Conventional name of the terminating signal without the `SIG` prefix and
+   * in upper case ("SEGV", "ABRT", "PIPE"). Unlike the number it does not
+   * depend on the guest's OS. Empty when no signal ended the process, or the
+   * number has no conventional name.
+   *
+   * @generated from field: string signal_name = 8;
+   */
+  signalName: string;
 };
 
 /**
@@ -997,6 +1066,184 @@ export const ResizePtyResponseSchema: GenMessage<ResizePtyResponse> = /*@__PURE_
   messageDesc(file_cua_env_v1_process, 25);
 
 /**
+ * Request for `ProcessService.GetExecRecord`.
+ *
+ * @generated from message cua.env.v1.GetExecRecordRequest
+ */
+export type GetExecRecordRequest = Message<"cua.env.v1.GetExecRecordRequest"> & {
+  /**
+   * The `StartProcessRequest.request_id` to look up.
+   *
+   * @generated from field: string request_id = 1;
+   */
+  requestId: string;
+};
+
+/**
+ * Describes the message cua.env.v1.GetExecRecordRequest.
+ * Use `create(GetExecRecordRequestSchema)` to create a new message.
+ */
+export const GetExecRecordRequestSchema: GenMessage<GetExecRecordRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 26);
+
+/**
+ * Response for `ProcessService.GetExecRecord`.
+ *
+ * @generated from message cua.env.v1.GetExecRecordResponse
+ */
+export type GetExecRecordResponse = Message<"cua.env.v1.GetExecRecordResponse"> & {
+  /**
+   * The ledger entry. Absent when the key was never started here (or the
+   * entry was evicted: the ledger keeps the most recent 4096 keys).
+   *
+   * @generated from field: cua.env.v1.ExecRecord record = 1;
+   */
+  record?: ExecRecord | undefined;
+
+  /**
+   * The Space's current fencing epoch.
+   *
+   * @generated from field: uint64 epoch = 2;
+   */
+  epoch: bigint;
+};
+
+/**
+ * Describes the message cua.env.v1.GetExecRecordResponse.
+ * Use `create(GetExecRecordResponseSchema)` to create a new message.
+ */
+export const GetExecRecordResponseSchema: GenMessage<GetExecRecordResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 27);
+
+/**
+ * What the exec ledger knows about one `request_id`.
+ *
+ * @generated from message cua.env.v1.ExecRecord
+ */
+export type ExecRecord = Message<"cua.env.v1.ExecRecord"> & {
+  /**
+   * The idempotency key.
+   *
+   * @generated from field: string request_id = 1;
+   */
+  requestId: string;
+
+  /**
+   * Where the command is.
+   *
+   * @generated from field: cua.env.v1.ExecState state = 2;
+   */
+  state: ExecState;
+
+  /**
+   * The `StartProcessRequest.epoch` it was started with.
+   *
+   * @generated from field: uint64 epoch = 3;
+   */
+  epoch: bigint;
+
+  /**
+   * Guest process id (0 when it never started).
+   *
+   * @generated from field: uint32 pid = 4;
+   */
+  pid: number;
+
+  /**
+   * When it was started.
+   *
+   * @generated from field: google.protobuf.Timestamp started_at = 5;
+   */
+  startedAt?: Timestamp | undefined;
+
+  /**
+   * How it ended, once `EXEC_STATE_EXITED` or `EXEC_STATE_LOST`.
+   *
+   * @generated from field: cua.env.v1.ProcessEnd end = 6;
+   */
+  end?: ProcessEnd | undefined;
+
+  /**
+   * Total bytes of combined output (stdout, stderr, PTY), once exited.
+   *
+   * @generated from field: uint64 output_bytes = 7;
+   */
+  outputBytes: bigint;
+
+  /**
+   * Lowercase hex SHA-256 of the combined output in offset order, once
+   * exited.
+   *
+   * @generated from field: string output_sha256 = 8;
+   */
+  outputSha256: string;
+
+  /**
+   * The last bytes of output (at most 64 KiB), in offset order, once exited.
+   * The first chunk's offset reveals what was dropped.
+   *
+   * @generated from field: repeated cua.env.v1.ProcessData tail = 9;
+   */
+  tail: ProcessData[];
+};
+
+/**
+ * Describes the message cua.env.v1.ExecRecord.
+ * Use `create(ExecRecordSchema)` to create a new message.
+ */
+export const ExecRecordSchema: GenMessage<ExecRecord> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 28);
+
+/**
+ * Request for `ProcessService.AdvanceEpoch`.
+ *
+ * @generated from message cua.env.v1.AdvanceEpochRequest
+ */
+export type AdvanceEpochRequest = Message<"cua.env.v1.AdvanceEpochRequest"> & {
+  /**
+   * The new epoch. Must not be lower than the current epoch.
+   *
+   * @generated from field: uint64 epoch = 1;
+   */
+  epoch: bigint;
+};
+
+/**
+ * Describes the message cua.env.v1.AdvanceEpochRequest.
+ * Use `create(AdvanceEpochRequestSchema)` to create a new message.
+ */
+export const AdvanceEpochRequestSchema: GenMessage<AdvanceEpochRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 29);
+
+/**
+ * Response for `ProcessService.AdvanceEpoch`.
+ *
+ * @generated from message cua.env.v1.AdvanceEpochResponse
+ */
+export type AdvanceEpochResponse = Message<"cua.env.v1.AdvanceEpochResponse"> & {
+  /**
+   * The current epoch after the call.
+   *
+   * @generated from field: uint64 epoch = 1;
+   */
+  epoch: bigint;
+
+  /**
+   * Running processes killed because they carried a lower epoch.
+   *
+   * @generated from field: uint32 killed = 2;
+   */
+  killed: number;
+};
+
+/**
+ * Describes the message cua.env.v1.AdvanceEpochResponse.
+ * Use `create(AdvanceEpochResponseSchema)` to create a new message.
+ */
+export const AdvanceEpochResponseSchema: GenMessage<AdvanceEpochResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 30);
+
+/**
  * Lifecycle state of a managed process.
  *
  * @generated from enum cua.env.v1.ProcessState
@@ -1132,6 +1379,47 @@ export const SignalSchema: GenEnum<Signal> = /*@__PURE__*/
   enumDesc(file_cua_env_v1_process, 1);
 
 /**
+ * Lifecycle of an exec ledger entry.
+ *
+ * @generated from enum cua.env.v1.ExecState
+ */
+export enum ExecState {
+  /**
+   * Not reported.
+   *
+   * @generated from enum value: EXEC_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Started by this server and still running.
+   *
+   * @generated from enum value: EXEC_STATE_RUNNING = 1;
+   */
+  RUNNING = 1,
+
+  /**
+   * Exited (or could not start); `ExecRecord.end` says how.
+   *
+   * @generated from enum value: EXEC_STATE_EXITED = 2;
+   */
+  EXITED = 2,
+
+  /**
+   * Was running when the server stopped: the outcome is unknown.
+   *
+   * @generated from enum value: EXEC_STATE_LOST = 3;
+   */
+  LOST = 3,
+}
+
+/**
+ * Describes the enum cua.env.v1.ExecState.
+ */
+export const ExecStateSchema: GenEnum<ExecState> = /*@__PURE__*/
+  enumDesc(file_cua_env_v1_process, 2);
+
+/**
  * Runs and supervises guest processes.
  *
  * Processes are detached from the RPC that started them: a client disconnect
@@ -1238,6 +1526,31 @@ export const ProcessService: GenService<{
     methodKind: "unary";
     input: typeof ResizePtyRequestSchema;
     output: typeof ResizePtyResponseSchema;
+  },
+  /**
+   * Looks up the exec ledger entry of a `StartProcessRequest.request_id`
+   * without starting anything. A durable harness uses it after a crash to
+   * learn whether a command it may have started ran, still runs, or was lost.
+   *
+   * @generated from rpc cua.env.v1.ProcessService.GetExecRecord
+   */
+  getExecRecord: {
+    methodKind: "unary";
+    input: typeof GetExecRecordRequestSchema;
+    output: typeof GetExecRecordResponseSchema;
+  },
+  /**
+   * Raises the Space's fencing epoch. Every running process started with a
+   * lower non-zero `StartProcessRequest.epoch` is killed (SIGKILL to its
+   * process group), and later requests carrying a lower epoch fail with
+   * FAILED_PRECONDITION / `ERROR_REASON_STALE_EPOCH`.
+   *
+   * @generated from rpc cua.env.v1.ProcessService.AdvanceEpoch
+   */
+  advanceEpoch: {
+    methodKind: "unary";
+    input: typeof AdvanceEpochRequestSchema;
+    output: typeof AdvanceEpochResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_cua_env_v1_process, 0);

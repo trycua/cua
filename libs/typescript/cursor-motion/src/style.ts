@@ -78,7 +78,8 @@ export function defaultEffects(style: MotionStyle): ResolvedEffects {
   };
   switch (style) {
     case 'signature_arc':
-      return on('glow', 'ripple', 'squish');
+      // Plain by default, like Cua Driver: glow, ripple and squish are opt-in.
+      return on();
     case 'spring_settle':
       return on('glow', 'squish');
     case 'magnetic':

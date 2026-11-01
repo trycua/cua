@@ -1,0 +1,4 @@
+{
+  "$comment": "Known-flaky tests that may fail without blocking CI. Add an entry only with an owner, an issue and an expiry date. CI fails when an entry expires (ci-flaky-quarantine). See .github/scripts/flaky/flaky.py.",
+  "entries": []
+}

@@ -362,6 +362,29 @@ async fn the_watch_finds_a_stop_nobody_listed() {
 }
 
 #[tokio::test]
+async fn one_sandbox_can_be_looked_at_for_an_unasked_stop() {
+    let (_dir, rt, sbx) = env();
+    sbx.state().save(&local("box", "runc")).unwrap();
+    sbx.state().save(&local("other", "runc")).unwrap();
+    rt.set("box", InstanceStatus::Running);
+    rt.set("other", InstanceStatus::Running);
+    // Running: nothing to say, and nothing recorded.
+    assert_eq!(sbx.unasked_stop("box").await, None);
+    assert_eq!(sbx.unasked_stop("missing").await, None);
+    let killed = StopReason {
+        exit_code: 137,
+        out_of_memory: false,
+    };
+    rt.exit("box", killed);
+    // Only the one asked about is looked at, and it is recorded as stopped.
+    assert_eq!(sbx.unasked_stop("box").await, Some(killed));
+    assert_eq!(sbx.stop_reason("box"), Some(killed));
+    assert_eq!(sbx.stop_reason("other"), None);
+    // Already recorded as stopped: it is not an unasked stop again.
+    assert_eq!(sbx.unasked_stop("box").await, None);
+}
+
+#[tokio::test]
 async fn a_stop_that_was_asked_for_has_no_reason() {
     let (_dir, rt, sbx) = env();
     sbx.state().save(&local("mac", "lume")).unwrap();

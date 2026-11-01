@@ -12,8 +12,11 @@
 //!
 //! Tiers (`<os-version>[-<tier>][-disk]`): no suffix is the full default
 //! (dev tooling), `-slim` the minimum that passes `cua-spacesd doctor
-//! --strict` with every feature (CI and benchmarks use it), and on macOS
-//! `-xcode[-X.Y]` adds one pinned Xcode with its iOS simulator runtime.
+//! --strict` with every feature (CI and benchmarks use it), on macOS
+//! `-xcode[-X.Y]` adds one pinned Xcode with its iOS simulator runtime, and
+//! on Linux `-docker` is slim plus the Docker engine (a VM: dockerd up at
+//! boot, for Docker Compose stacks; the tier word resolves to
+//! `-docker-disk`).
 //! [`tier_image`] builds them; entries the catalog marks unpublished fail
 //! with [`ImageError::NotPublished`]. [`omarchy_image`] names the Omarchy
 //! distribution image (`ghcr.io/trycua/omarchy:edge`, an amd64 VM).
@@ -75,6 +78,15 @@ impl CanonicalOs {
         }
     }
 
+    /// Display name (`Linux`, `Windows`, `macOS`).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Linux => "Linux",
+            Self::Windows => "Windows",
+            Self::Macos => "macOS",
+        }
+    }
+
     /// The override variable, then its deprecated aliases.
     pub fn env_vars(self) -> &'static [&'static str] {
         match self {
@@ -127,45 +139,82 @@ pub enum Tier {
     /// macOS only: full plus one pinned Xcode (`-xcode`, or `-xcode-X.Y`
     /// for that Xcode version).
     Xcode(Option<String>),
+    /// Linux only: slim plus the Docker engine (`-docker`), run as a VM
+    /// (`-docker-disk`) with dockerd up at boot.
+    Docker,
 }
 
 impl Tier {
-    /// Parses `slim`, `full` (or empty), `xcode`, `xcode-26.1`.
+    /// Parses `slim`, `full` (or empty), `xcode`, `xcode-26.1`, `docker`.
     pub fn parse(tier: &str) -> Result<Self> {
         let t = tier.trim().to_ascii_lowercase();
         match t.as_str() {
             "" | "full" | "default" => Ok(Self::Full),
             "slim" => Ok(Self::Slim),
             "xcode" => Ok(Self::Xcode(None)),
+            "docker" => Ok(Self::Docker),
             _ => match t.strip_prefix("xcode-") {
                 Some(v) if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit() || b == b'.') => {
                     Ok(Self::Xcode(Some(v.into())))
                 }
                 _ => Err(ImageError::Reference(
                     tier.into(),
-                    "unknown tier; expected slim, full, xcode or xcode-<X.Y>".into(),
+                    "unknown tier; expected slim, full, docker, xcode or xcode-<X.Y>".into(),
                 )),
             },
         }
     }
 
-    /// The tag suffix (`""`, `-slim`, `-xcode`, `-xcode-26.1`).
+    /// The tag suffix (`""`, `-slim`, `-xcode`, `-xcode-26.1`, `-docker`).
     pub fn suffix(&self) -> String {
         match self {
             Self::Slim => "-slim".into(),
             Self::Full => String::new(),
             Self::Xcode(None) => "-xcode".into(),
             Self::Xcode(Some(v)) => format!("-xcode-{v}"),
+            Self::Docker => "-docker".into(),
         }
     }
 
-    /// The catalog's `tier` value (`slim`, `full`, `xcode`).
+    /// The catalog's `tier` value (`slim`, `full`, `xcode`, `docker`).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Slim => "slim",
             Self::Full => "full",
             Self::Xcode(_) => "xcode",
+            Self::Docker => "docker",
         }
+    }
+
+    /// The tag suffix a tier word resolves to: [`Tier::suffix`], plus
+    /// `-disk` for the tiers that exist only as a VM (`docker`: dockerd
+    /// runs in the VM, never in the container rootfs).
+    pub fn reference_suffix(&self) -> String {
+        match self {
+            Self::Docker => format!("{}-disk", self.suffix()),
+            _ => self.suffix(),
+        }
+    }
+
+    /// An error when this tier does not exist for `os` (`xcode` is macOS
+    /// only, `docker` Linux only).
+    pub fn check_os(&self, os: CanonicalOs) -> Result<()> {
+        let only = match self {
+            Self::Xcode(_) => CanonicalOs::Macos,
+            Self::Docker => CanonicalOs::Linux,
+            _ => return Ok(()),
+        };
+        if os == only {
+            return Ok(());
+        }
+        Err(ImageError::Reference(
+            os.as_str().into(),
+            format!(
+                "the {} tier exists only for {}",
+                self.as_str(),
+                only.label()
+            ),
+        ))
     }
 }
 
@@ -247,12 +296,7 @@ pub fn tier_for_with(
     tier: &Tier,
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<String> {
-    if matches!(tier, Tier::Xcode(_)) && os != CanonicalOs::Macos {
-        return Err(ImageError::Reference(
-            os.as_str().into(),
-            "the xcode tier exists only for macOS".into(),
-        ));
-    }
+    tier.check_os(os)?;
     if *tier == Tier::Full {
         let version = version.map(str::trim).filter(|v| !v.is_empty());
         let is_default = version.is_none_or(|v| os.version_tag(v) == os.default_version());
@@ -261,7 +305,7 @@ pub fn tier_for_with(
         }
     }
     let base = canonical_for_with(os, version, &|_| None);
-    crate::catalog::require_published(format!("{base}{}", tier.suffix()))
+    crate::catalog::require_published(format!("{base}{}", tier.reference_suffix()))
 }
 
 /// The Omarchy image (`ghcr.io/trycua/omarchy:<channel>`, default `edge`):
@@ -338,18 +382,17 @@ pub fn word_reference_with(
             ))
         };
     };
-    if matches!(tier, Tier::Xcode(_)) && os != CanonicalOs::Macos {
-        return Err(ImageError::Reference(
-            os.as_str().into(),
-            "the xcode tier exists only for macOS".into(),
-        ));
-    }
+    tier.check_os(os)?;
     if tier == Tier::Full {
         let overridden = !reference.starts_with(os.repo());
         return Ok(Some((reference, os, !overridden)));
     }
     let base = canonical_for_with(os, rest, &|_| None);
-    Ok(Some((format!("{base}{}", tier.suffix()), os, true)))
+    Ok(Some((
+        format!("{base}{}", tier.reference_suffix()),
+        os,
+        true,
+    )))
 }
 
 /// The canonical image an alias names, or `None` when `name` is not an
@@ -562,6 +605,41 @@ mod tests {
             format!("{MACOS_REPO}:15-slim")
         );
         assert!(tier_for_with(CanonicalOs::Linux, None, &t("xcode"), &none).is_err());
+    }
+
+    #[test]
+    fn docker_tier_is_linux_only() {
+        let none = |_: &str| None;
+        let t = |s| Tier::parse(s).unwrap();
+        assert_eq!(t("Docker"), Tier::Docker);
+        assert_eq!(t("docker").suffix(), "-docker");
+        assert_eq!(t("docker").as_str(), "docker");
+        // A VM-only tier: the word resolves to the disk.
+        assert_eq!(t("docker").reference_suffix(), "-docker-disk");
+        assert_eq!(Tier::Slim.reference_suffix(), "-slim");
+        let want = "ghcr.io/trycua/linux:24.04-docker-disk"; // <!-- cua-image-unverified --> not published yet
+        let got = tier_for_with(CanonicalOs::Linux, None, &Tier::Docker, &none);
+        match crate::catalog::find(want) {
+            Some(e) if !e.published => assert!(
+                matches!(&got, Err(ImageError::NotPublished { reference }) if reference == want),
+                "{got:?}"
+            ),
+            _ => assert_eq!(got.unwrap(), want),
+        }
+        for os in [CanonicalOs::Macos, CanonicalOs::Windows] {
+            let err = tier_for_with(os, None, &Tier::Docker, &none).unwrap_err();
+            assert!(err.to_string().contains("only for Linux"), "{err}");
+        }
+        let w = |n: &str, t: Option<&str>| word_reference_with(n, t, &none);
+        assert_eq!(w("linux", Some("docker")).unwrap().unwrap().0, want);
+        assert!(w("macos", Some("docker")).is_err());
+        // The `<os>-<tier>` family word.
+        assert_eq!(
+            alias_with("linux-docker", &none).map(|(r, _)| r).as_deref(),
+            crate::catalog::find(want)
+                .filter(|e| e.published)
+                .map(|_| want)
+        );
     }
 
     #[test]

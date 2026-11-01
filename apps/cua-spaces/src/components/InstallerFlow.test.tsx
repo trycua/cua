@@ -120,6 +120,15 @@ describe("InstallerFlow", () => {
     expect(document.querySelector(".ob-footer")).toBeNull();
   });
 
+  it("Welcome has one clear action: a plain line, and Get started has focus so Enter works (CUA-1959)", () => {
+    render(<InstallerFlow installer={createFakeInstallerBridge()} host={createFakeHostBridge()} onDone={vi.fn()} />);
+    expect(screen.getByText("Computers for you and your AI agents. Setup takes about a minute.")).toBeInTheDocument();
+    const start = screen.getByRole("button", { name: "Get started" });
+    expect(start).toHaveFocus();
+    // The only button on the page; the usage switch never blocks it.
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
   it("walks welcome → sign in → agents → where it shows up → Cua Volume → mode → done, installing cua silently", async () => {
     const installer = createFakeInstallerBridge();
     const host = createFakeHostBridge();
@@ -416,7 +425,7 @@ describe("InstallerFlow", () => {
     click("Turn on remote access");
     // Signed in, no agent yet: honest, with the fix.
     expect(await screen.findByText("Almost done")).toBeInTheDocument();
-    expect(screen.getByText("Your other devices can reach it")).toBeInTheDocument();
+    expect(screen.getByText("Your other machines can reach it")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect an AI agent" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
     expect(screen.queryByText("Grant in System Settings")).toBeNull();

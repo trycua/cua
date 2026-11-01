@@ -1,0 +1,31 @@
+{
+  "routines": [
+    {
+      "agent": "ada",
+      "enabled": true,
+      "id": "FF1A5555-8883-46C8-90E1-943E960D2136",
+      "label": "Every hour",
+      "last_outcome": null,
+      "next_fire": "2026-10-24T17:28:48Z",
+      "title": "Inbox sweep"
+    },
+    {
+      "agent": "ada",
+      "enabled": true,
+      "id": "7EDDD0EB-5408-49F6-8890-F89AA12532A1",
+      "label": "Every day at 8:00 AM",
+      "last_outcome": null,
+      "next_fire": "2026-10-25T15:00:00Z",
+      "title": "Morning"
+    },
+    {
+      "agent": "scout",
+      "enabled": false,
+      "id": "B99ED264-C4E9-41F4-863E-296F3D12EDE0",
+      "label": "Every Monday at 9:00 AM",
+      "last_outcome": null,
+      "next_fire": null,
+      "title": "Weekly report"
+    }
+  ]
+}

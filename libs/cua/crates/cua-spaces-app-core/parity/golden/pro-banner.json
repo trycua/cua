@@ -1,0 +1,47 @@
+{
+  "flow": "pro-banner",
+  "frames": [
+    {
+      "banner": "Run more Spaces at once with Pro [Upgrade]",
+      "menu": [
+        "settings: Settings",
+        "plan: Plan = Free",
+        "--- signOut: Sign out"
+      ],
+      "step": "Free"
+    },
+    {
+      "banner": "hidden",
+      "menu": [
+        "settings: Settings",
+        "plan: Plan = Pro",
+        "--- signOut: Sign out"
+      ],
+      "step": "Pro"
+    },
+    {
+      "banner": "hidden",
+      "menu": [
+        "settings: Settings",
+        "plan: Plan = Teams",
+        "--- signOut: Sign out"
+      ],
+      "step": "Teams"
+    },
+    {
+      "banner": "Run more Spaces at once with Pro [Upgrade]",
+      "menu": [
+        "settings: Settings",
+        "plan: Plan = Free"
+      ],
+      "step": "an API key"
+    },
+    {
+      "banner": "hidden",
+      "menu": [
+        "settings: Settings"
+      ],
+      "step": "signed out"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "WEB-01",
+  "title": "Fern membership signup",
+  "group": "WEB",
+  "category": "web_forms",
+  "kind": "cdb",
+  "ability": "gui_only_workflow",
+  "pack_task": "shared/web-01",
+  "coding_tools": false,
+  "browser": true,
+  "dimension_tags": ["web_forms", "gui_only"],
+  "sentinel_frontmost": false,
+  "timeout_s": 360,
+  "max_turns": 45,
+  "separate_run": true
+}

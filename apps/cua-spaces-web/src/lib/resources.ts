@@ -7,32 +7,42 @@
  * "busy", "in use", "free". Never vCPU, RSS, APFS, sparse or cgroup.
  */
 
-import type { ComputerResources, SpaceResources } from "@/bridge";
+import type { ComputerResources, SharedBase, SpaceResources } from "@/bridge";
 
 export const LABELS = { cpu: "Processor", memory: "Memory", disk: "Space for files" } as const;
 
-const GB = 1_000_000_000;
+const MIB = 1024 * 1024;
+/** Sizes at or above this are "unlimited" or "unknown" sentinels, never sizes (2^60). */
+export const SIZE_SENTINEL_FLOOR = 2 ** 60;
 
-/** A number of GB as people read it: "3.1", "41", "8". */
-function gbNumber(bytes: number): string {
-  const tenths = Math.round((bytes / GB) * 10) / 10;
-  return tenths >= 9.95 || Number.isInteger(tenths) ? String(Math.round(tenths)) : tenths.toFixed(1);
+/** A size, or null when it is 0, negative, not a number or a sentinel. */
+export function knownSize(bytes: number | null | undefined): number | null {
+  return typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0 && bytes < SIZE_SENTINEL_FLOOR ? bytes : null;
 }
 
-/** "41 GB", "3.1 GB", "1 TB", "1.5 TB". */
+/**
+ * A size in binary units labelled the way macOS labels memory: "512 MB",
+ * "2.1 GB", "4 GB", "1.8 TB"; under 1 MB, "244 KB" (never "0 GB" for
+ * something). The app core's `format_size`, the same everywhere.
+ */
 export function size(bytes: number): string {
-  if (bytes >= 999.5 * GB) {
-    const tb = Math.round(bytes / (GB * 100)) / 10;
-    return `${Number.isInteger(tb) ? tb.toFixed(0) : tb.toFixed(1)} TB`;
+  const units = ["MB", "GB", "TB", "PB"];
+  let v = bytes / MIB;
+  if (v < 1) return `${Math.round(bytes / 1024)} KB`;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
   }
-  return `${gbNumber(bytes)} GB`;
+  const text = v >= 100 ? String(Math.round(v)) : (Math.round(v * 10) / 10).toFixed(1).replace(/\.0$/, "");
+  return `${text} ${units[i]}`;
 }
 
-/** "3.1 of 8 GB" (same unit) or "800 GB of 1 TB". */
+/** "3.1 of 8 GB" (same unit) or "717 MB of 4 GB": the core's `of_text`. */
 export function sizeOf(used: number, total: number): string {
   const whole = size(total);
   const unit = whole.split(" ")[1];
-  const part = size(used);
+  const part = size(Math.min(used, total));
   return part.endsWith(` ${unit}`) ? `${part.split(" ")[0]} of ${whole}` : `${part} of ${whole}`;
 }
 
@@ -134,9 +144,162 @@ export function lowDiskWarning(c: ComputerResources, computer: string): { level:
     : { level, title: `${computer} is almost out of space. Delete old Spaces or snapshots.`, detail: `${free} New Spaces may not fit, and apps can slow down.` };
 }
 
-/** The pieces of "How it fits on this Mac": your own files, each Space, and free. */
-export function diskParts(c: ComputerResources, spaces: { name: string; bytes: number }[]): { own: number; free: number } {
-  const used = c.diskTotal - c.diskFree;
-  const inSpaces = spaces.reduce((n, s) => n + s.bytes, 0);
-  return { own: Math.max(0, used - inSpaces), free: c.diskFree };
+/* ---- A Space's resources dialog (the core's `resources.spacePanel`) ---------------- */
+
+export interface SpacePanelCard {
+  label: string;
+  /** The main number: "13% busy", "717 MB of 4 GB", "244 KB". */
+  value: string;
+  /** "Given 2 of this Mac’s 18 cores". */
+  given: string | null;
+  /** The bar, 0 to 1; null: nothing to fill it against. */
+  fraction: number | null;
+}
+
+export type DiskFitKind = "yours" | "thisSpace" | "otherSpaces" | "base" | "free";
+
+export interface DiskFitPart {
+  key: string;
+  kind: DiskFitKind;
+  label: string;
+  value: string;
+  /** For a base: "shared by 3 Spaces", "only this Space uses it". */
+  detail: string | null;
+  bytes: number;
+  /** Its share of the bar; the parts add up to 1. */
+  fraction: number;
+}
+
+export interface DiskFitView {
+  total: string;
+  parts: DiskFitPart[];
+  /** What could not be told apart, in plain words. */
+  note: string | null;
+  warning: { text: string; button: string; critical: boolean } | null;
+}
+
+export interface SpacePanelView {
+  cards: SpacePanelCard[];
+  fit: DiskFitView | null;
+}
+
+export interface SpacePanelInput {
+  space: SpaceResources;
+  name: string;
+  host: ComputerResources | null;
+  /** "this Mac", or the other computer's name. */
+  computer: string;
+  /** Every Space on that computer. */
+  spaces: SpaceResources[];
+  /** Its base image's system ("Ubuntu 24.04"), when known. */
+  baseName: string | null;
+}
+
+/** "Ubuntu 24.04.5 LTS" is "Ubuntu 24.04"; "macOS 26.5.2 (25F84)" is "macOS 26.5". */
+export function systemName(pretty: string | null | undefined): string | null {
+  const m = pretty?.trim().match(/^(.*?\d+(?:\.\d+)?)/);
+  return m?.[1] ?? null;
+}
+
+/** `ghcr.io/trycua/linux:24.04` is "linux 24.04". */
+export function imageName(reference: string): string {
+  const r = reference.split("@")[0] ?? reference;
+  return r.slice(r.lastIndexOf("/") + 1).replace(":", " ");
+}
+
+const ownBytes = (s: SpaceResources): number | null => s.diskOnHost?.bytes ?? null;
+
+/** "How it fits on this Mac": each piece once (a shared base too), adding up to the volume. */
+export function diskFit(host: ComputerResources, me: SpaceResources, name: string, spaces: SpaceResources[], baseName: string | null): DiskFitView {
+  const total = host.diskTotal;
+  const free = Math.min(host.diskFree, total);
+  const used = total - free;
+  const mine = ownBytes(me);
+  const others = spaces.filter((s) => s.id !== me.id).reduce((n, s) => n + (ownBytes(s) ?? 0), 0);
+  const bases: SharedBase[] = [];
+  for (const s of [me, ...spaces.filter((o) => o.id !== me.id)]) {
+    if (s.base && !bases.some((b) => b.key === s.base!.key)) bases.push(s.base);
+  }
+  const knownBases = bases.reduce((n, b) => n + (b.bytes ?? 0), 0);
+  const counted = (mine ?? 0) + others + knownBases;
+  const yours = Math.max(0, used - counted);
+  const whole = Math.max(total, counted + yours + free, 1);
+  const part = (key: string, kind: DiskFitKind, label: string, detail: string | null, bytes: number): DiskFitPart => ({
+    key,
+    kind,
+    label,
+    value: size(bytes),
+    detail,
+    bytes,
+    fraction: bytes / whole,
+  });
+  const parts = [part("yours", "yours", "Your own files and apps", null, yours)];
+  if (mine != null) parts.push(part("space", "thisSpace", name, null, mine));
+  if (others > 0) parts.push(part("others", "otherSpaces", "Other Spaces", null, others));
+  let note = mine == null ? `Can’t tell ${name}’s own data apart from the image it shares.` : null;
+  for (const b of bases) {
+    const isMine = me.base?.key === b.key;
+    const label = `${isMine && baseName ? baseName : imageName(b.image)} image`;
+    const detail = isMine
+      ? b.sharedWith <= 1
+        ? "only this Space uses it"
+        : `shared by ${b.sharedWith} Spaces`
+      : `used by ${b.sharedWith} Space${b.sharedWith === 1 ? "" : "s"}`;
+    if (b.bytes != null) parts.push(part(b.key, "base", label, detail, b.bytes));
+    else if (isMine && note == null) note = `Can’t tell how much the shared ${label} takes.`;
+  }
+  parts.push(part("free", "free", "Free", null, free));
+  const level = host.warning.level;
+  const warning =
+    level === "ok"
+      ? null
+      : {
+          text:
+            level === "critical"
+              ? "This Mac is out of space, so new Spaces can’t be created. Delete old Spaces or snapshots."
+              : "This Mac is almost out of space. Delete old Spaces or snapshots.",
+          button: "See what’s using space",
+          critical: level === "critical",
+        };
+  return { total: size(total), parts, note, warning };
+}
+
+/** A Space's resources dialog: three cards (no explanatory sentences) and how it fits. */
+export function spacePanel(i: SpacePanelInput): SpacePanelView {
+  const s = i.space;
+  const u = s.powerState === "running" ? s.usage : null;
+  const whose = `${i.computer || "this Mac"}’s`;
+  const host = i.host;
+  const processor: SpacePanelCard = {
+    label: LABELS.cpu,
+    value: u ? `${Math.min(100, Math.max(0, Math.round(u.cpuPercent)))}% busy` : "Stopped",
+    given: s.cpuAllocated ? (host?.cpuCount ? `Given ${s.cpuAllocated} of ${whose} ${cores(host.cpuCount)}` : `Given ${cores(s.cpuAllocated)}`) : null,
+    fraction: u ? fill(u.cpuPercent, 100) : 0,
+  };
+  const memTotal = s.memoryAllocated || (u?.memoryLimited ? u.memoryTotal : 0);
+  const memory: SpacePanelCard = {
+    label: LABELS.memory,
+    value: u ? (memTotal ? sizeOf(u.memoryUsed, memTotal) : size(u.memoryUsed)) : "Off",
+    given: s.memoryAllocated
+      ? host?.memoryTotal
+        ? `Given ${size(s.memoryAllocated)} of ${whose} ${size(host.memoryTotal)}`
+        : `Given ${size(s.memoryAllocated)}`
+      : null,
+    fraction: u ? fill(u.memoryUsed, memTotal) : 0,
+  };
+  const given = knownSize(s.diskAllocated) ?? (u?.diskLimited ? knownSize(u.diskTotal) : null);
+  // Not measured on its computer: what the guest holds, only when that is its own data alone
+  // (an overlay with no size of its own; a VM's guest counts its base system too).
+  const guestOwn = u && !u.diskLimited && knownSize(u.diskTotal) == null && u.diskUsed < SIZE_SENTINEL_FLOOR ? u.diskUsed : null;
+  const own = s.diskOnHost?.bytes ?? guestOwn;
+  const files: SpacePanelCard = {
+    label: LABELS.disk,
+    value: own != null && given != null ? sizeOf(own, given) : own != null ? size(own) : given != null ? `Up to ${size(given)}` : "—",
+    given: null,
+    fraction: own != null && given != null ? fill(own, given) : null,
+  };
+  return {
+    cards: [processor, memory, files],
+    fit: host && host.diskTotal > 0 ? diskFit(host, s, i.name, i.spaces, i.baseName) : null,
+  };
 }

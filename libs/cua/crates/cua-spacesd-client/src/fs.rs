@@ -9,7 +9,7 @@
 
 use crate::{
     client::SpacesdClient,
-    error::{Error, Result},
+    error::{Error, ErrorDetails, Result},
     process::duration_pb,
     transport::Transport,
 };
@@ -19,6 +19,7 @@ use cua_proto::env::v1::{
 };
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -27,6 +28,48 @@ use std::{
     time::Duration,
 };
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+
+/// Capability: file calls accept `run_as` (act as another guest user).
+pub const RUN_AS_FEATURE: &str = "fs.run_as";
+/// Capability: writes accept `metadata` (extended attributes) and entries
+/// report it.
+pub const XATTR_FEATURE: &str = "fs.xattr";
+
+/// Who a file call acts as and which extended-attribute namespace it reports.
+///
+/// `run_as` makes the guest perform the operation with that user's identity
+/// (uid, gid, groups): permission checks are that user's, and created files
+/// are owned by that user. It needs a guest agent that switches users
+/// itself (root, or `CAP_SETUID` and `CAP_SETGID`, as the Linux images
+/// grant: see [`crate::RunAsMode`]) or, on older images, passwordless
+/// `sudo`; otherwise the call fails with a permission error that says why. `xattr_namespace` is the extended-attribute prefix
+/// whose values come back in `EntryInfo.metadata` (default
+/// `user.cua.meta.`; it must start with `user.` and end with `.`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileAccess {
+    /// Guest user to act as. `None`: the agent's own user.
+    pub run_as: Option<String>,
+    /// Extended-attribute namespace. `None`: `user.cua.meta.`.
+    pub xattr_namespace: Option<String>,
+}
+
+impl FileAccess {
+    /// Acts as `user`.
+    pub fn user(user: impl Into<String>) -> Self {
+        Self {
+            run_as: Some(user.into()),
+            xattr_namespace: None,
+        }
+    }
+
+    pub(crate) fn run_as_string(&self) -> String {
+        self.run_as.clone().unwrap_or_default()
+    }
+
+    pub(crate) fn namespace_string(&self) -> String {
+        self.xattr_namespace.clone().unwrap_or_default()
+    }
+}
 
 /// What to upload.
 #[derive(Clone, Debug)]
@@ -155,6 +198,15 @@ pub struct UploadOptions {
     pub ttl: Option<Duration>,
     /// Progress counter updated with bytes acknowledged by the server.
     pub progress: Option<Arc<AtomicU64>>,
+    /// Guest user to write as (the file is owned by that user). See
+    /// [`FileAccess`].
+    pub run_as: Option<String>,
+    /// Extended attributes stored with the file (limits: 32 keys, keys of
+    /// 1-128 bytes of `[A-Za-z0-9._:/@+-]`, values up to 1024 bytes, 3072
+    /// bytes in all).
+    pub metadata: BTreeMap<String, String>,
+    /// Extended-attribute namespace for `metadata` (default `user.cua.meta.`).
+    pub xattr_namespace: Option<String>,
 }
 
 /// Result of an upload.
@@ -183,6 +235,8 @@ pub struct DownloadOptions {
     pub chunk_size: u32,
     /// Progress counter (bytes received).
     pub progress: Option<Arc<AtomicU64>>,
+    /// Guest user to read as. See [`FileAccess`].
+    pub run_as: Option<String>,
 }
 
 /// Result of a download to a sink.
@@ -195,6 +249,9 @@ pub struct DownloadResult {
     /// Number of times the transfer resumed.
     pub resumes: u32,
 }
+
+/// From this size an upload uses the driver's largest chunk.
+const LARGE_UPLOAD_BYTES: u64 = 8 * 1024 * 1024;
 
 fn resumable_id(path: &str, sha: &str) -> String {
     let mut h = Sha256::new();
@@ -213,15 +270,33 @@ impl SpacesdClient {
         options: UploadOptions,
     ) -> Result<UploadResult> {
         let source = source.into();
+        self.require_file_features(options.run_as.as_deref(), !options.metadata.is_empty())
+            .await?;
         let size = source.len().await?;
         let sha = source.sha256().await?;
         let (preferred, max) = self.chunk_limits().await;
-        let chunk = if options.chunk_size == 0 {
-            preferred
-        } else {
-            options.chunk_size.min(max)
+        let chunk = match options.chunk_size {
+            // A large file goes in the largest chunks the driver takes:
+            // fewer messages, each a big write on both ends.
+            0 if size >= LARGE_UPLOAD_BYTES => max,
+            0 => preferred,
+            n => n.min(max),
         }
         .max(1);
+        #[cfg(unix)]
+        if size >= cua_proto::bulk::MIN_BYTES
+            && options.resumable != Some(true)
+            // The bulk lane writes as cua-spacesd's own user: not for a
+            // write as another user.
+            && options.run_as.as_deref().is_none_or(str::is_empty)
+            && options.metadata.is_empty()
+            && let Some(lane) = self.bulk_lane()
+            && let Some(done) = self
+                .bulk_push(&lane, path, &source, size, &sha, &options)
+                .await?
+        {
+            return Ok(done);
+        }
         let resumable = options
             .resumable
             .unwrap_or(self.transport() == Transport::GrpcWeb);
@@ -249,7 +324,12 @@ impl SpacesdClient {
         }
     }
 
-    fn header(path: &str, size: u64, sha: &str, options: &UploadOptions) -> pb::WriteFileHeader {
+    pub(crate) fn upload_header(
+        path: &str,
+        size: u64,
+        sha: &str,
+        options: &UploadOptions,
+    ) -> pb::WriteFileHeader {
         pb::WriteFileHeader {
             path: path.to_string(),
             mode: options.mode as i32,
@@ -257,6 +337,13 @@ impl SpacesdClient {
             create_parents: options.create_parents,
             expected_size: size,
             expected_sha256: sha.to_string(),
+            run_as: options.run_as.clone().unwrap_or_default(),
+            metadata: options
+                .metadata
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            xattr_namespace: options.xattr_namespace.clone().unwrap_or_default(),
         }
     }
 
@@ -269,7 +356,7 @@ impl SpacesdClient {
         chunk: usize,
         options: &UploadOptions,
     ) -> Result<UploadResult> {
-        let header = Self::header(path, size, sha, options);
+        let header = Self::upload_header(path, size, sha, options);
         let (tx, rx) = tokio::sync::mpsc::channel::<pb::WriteFileRequest>(4);
         let producer = {
             let source = source.clone();
@@ -284,9 +371,17 @@ impl SpacesdClient {
                 {
                     return Ok(());
                 }
+                // A file is opened once and read in order.
+                let mut file = match &source {
+                    UploadSource::File(p) => Some(tokio::fs::File::open(p).await?),
+                    UploadSource::Bytes(_) => None,
+                };
                 let mut offset = 0u64;
                 while offset < size {
-                    let data = source.read_at(offset, chunk).await?;
+                    let data = match file.as_mut() {
+                        Some(f) => read_chunk(f, chunk).await?,
+                        None => source.read_at(offset, chunk).await?,
+                    };
                     if data.is_empty() {
                         break;
                     }
@@ -341,7 +436,7 @@ impl SpacesdClient {
             .unwrap_or_else(|| resumable_id(path, sha));
         let policy = self.retry_policy();
         let begin_req = pb::BeginUploadRequest {
-            header: Some(Self::header(path, size, sha, options)),
+            header: Some(Self::upload_header(path, size, sha, options)),
             upload_id: upload_id.clone(),
             ttl: options.ttl.map(duration_pb),
         };
@@ -376,6 +471,7 @@ impl SpacesdClient {
                 upload_id: upload_id.clone(),
                 offset,
                 data,
+                ..Default::default()
             };
             match self.filesystem().upload_chunk(req).await {
                 Ok(resp) => {
@@ -428,10 +524,16 @@ impl SpacesdClient {
 
     /// Downloads `path` into memory, verifying SHA-256 per segment.
     pub async fn download(&self, path: &str) -> Result<Bytes> {
+        Ok(self.download_vec(path).await?.into())
+    }
+
+    /// [`SpacesdClient::download`] into a `Vec` (sized from the file's
+    /// entry up front, so the bytes are copied once).
+    pub async fn download_vec(&self, path: &str) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
         self.download_with(path, DownloadOptions::default(), &mut buf)
             .await?;
-        Ok(buf.into())
+        Ok(buf)
     }
 
     /// Downloads `path` to a local file. The bytes land in a fresh temp file
@@ -469,12 +571,28 @@ impl SpacesdClient {
         options: DownloadOptions,
         sink: &mut S,
     ) -> Result<DownloadResult> {
+        self.require_file_features(options.run_as.as_deref(), false)
+            .await?;
         let policy = self.retry_policy();
+        // One running hash of every byte: the first segment's digest is the
+        // running one, so a download that never resumes hashes each byte
+        // once; a resumed segment also keeps its own for the server's check.
         let mut total = Sha256::new();
         let mut received = 0u64;
+        let mut sized = false;
         let mut resumes = 0u32;
         let mut failures = 0u32;
         let end_limit = (options.length > 0).then(|| options.offset + options.length);
+        // A file big enough to be worth the bulk lane (a Linux VM on this
+        // machine) moves through it: the first reply says how big the file
+        // is, and small files never leave the network. Whatever the lane
+        // does not deliver continues over the network below.
+        #[cfg(unix)]
+        // The bulk lane reads as cua-spacesd's own user: not for a read as
+        // another user.
+        let mut lane = self
+            .bulk_lane()
+            .filter(|_| options.run_as.as_deref().is_none_or(str::is_empty));
         loop {
             let offset = options.offset + received;
             let length = end_limit.map(|e| e - offset).unwrap_or(0);
@@ -487,13 +605,33 @@ impl SpacesdClient {
                 length,
                 chunk_size: options.chunk_size,
                 compute_sha256: true,
+                bulk_slot: 0,
+                xattr_namespace: String::new(),
+                run_as: options.run_as.clone().unwrap_or_default(),
             };
+            #[cfg(unix)]
+            let mut to_lane = false;
             let outcome: Result<bool> = async {
                 let mut stream = self.filesystem().read_file(req).await?.into_inner();
-                let mut segment = Sha256::new();
+                let mut segment = (received > 0).then(Sha256::new);
                 while let Some(msg) = stream.message().await? {
                     match msg.message {
-                        Some(ReadMsg::Entry(_)) | None => {}
+                        Some(ReadMsg::Entry(e)) => {
+                            let rest = e.size.saturating_sub(options.offset);
+                            let want = end_limit.map_or(rest, |_| options.length.min(rest));
+                            #[cfg(unix)]
+                            if received == 0 && lane.is_some() && want >= cua_proto::bulk::MIN_BYTES
+                            {
+                                // Dropping the stream ends it; the lane takes over.
+                                to_lane = true;
+                                return Ok(true);
+                            }
+                            if !sized {
+                                sized = true;
+                                sink.size_hint(want);
+                            }
+                        }
+                        None => {}
                         Some(ReadMsg::Chunk(c)) => {
                             if c.offset != options.offset + received {
                                 return Err(Error::Protocol(format!(
@@ -502,7 +640,9 @@ impl SpacesdClient {
                                     options.offset + received
                                 )));
                             }
-                            segment.update(&c.data);
+                            if let Some(segment) = segment.as_mut() {
+                                segment.update(&c.data);
+                            }
                             total.update(&c.data);
                             received += c.data.len() as u64;
                             if let Some(p) = &options.progress {
@@ -512,7 +652,11 @@ impl SpacesdClient {
                         }
                         Some(ReadMsg::End(end)) => {
                             if !end.sha256.is_empty() {
-                                verify(&end.sha256, &hex::encode(segment.finalize()))?;
+                                let got = match segment.take() {
+                                    Some(segment) => segment.finalize(),
+                                    None => total.clone().finalize(),
+                                };
+                                verify(&end.sha256, &hex::encode(got))?;
                             }
                             return Ok(true);
                         }
@@ -525,6 +669,26 @@ impl SpacesdClient {
                 }))
             }
             .await;
+            #[cfg(unix)]
+            if to_lane {
+                let taken = lane.take().expect("the lane was seen");
+                if let Ok(true) = self
+                    .bulk_pull(
+                        &taken,
+                        path,
+                        &options,
+                        sink,
+                        &mut total,
+                        &mut received,
+                        &mut sized,
+                    )
+                    .await
+                {
+                    break;
+                }
+                // Not (all) delivered: the network resumes from `received`.
+                continue;
+            }
             match outcome {
                 Ok(_) => break,
                 Err(e) if e.is_retryable() && failures + 1 < policy.max_attempts => {
@@ -543,12 +707,71 @@ impl SpacesdClient {
         })
     }
 
+    /// Fails clearly when the guest's agent predates a file feature the call
+    /// needs ([`RUN_AS_FEATURE`] for a `run_as` user, [`XATTR_FEATURE`] for
+    /// `metadata`). Without this an older agent would ignore `run_as` and
+    /// act as its own user. The typed file methods call it themselves; it
+    /// is public for raw requests.
+    pub async fn require_file_features(&self, run_as: Option<&str>, metadata: bool) -> Result<()> {
+        if run_as.is_some_and(|u| !u.is_empty()) {
+            self.require_feature(
+                RUN_AS_FEATURE,
+                "acting as another user needs a cua-spacesd with fs.run_as",
+            )
+            .await?;
+        }
+        if metadata {
+            self.require_feature(
+                XATTR_FEATURE,
+                "file metadata needs a cua-spacesd with fs.xattr",
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn require_feature(&self, feature: &str, older: &str) -> Result<()> {
+        let capabilities = self.capabilities().await?;
+        let message = match capabilities.features.iter().find(|f| f.name == feature) {
+            Some(f) if f.supported => return Ok(()),
+            Some(f) if !f.limitation.is_empty() => f.limitation.clone(),
+            Some(_) => format!("{feature} is not supported on this guest"),
+            None => format!(
+                "{older} (this guest runs cua-spacesd {}); use an image with a newer agent",
+                capabilities.version
+            ),
+        };
+        Err(Error::FeatureUnsupported {
+            feature: feature.into(),
+            details: ErrorDetails {
+                code: tonic::Code::FailedPrecondition as i32,
+                message,
+                metadata: Default::default(),
+            },
+        })
+    }
+
     /// `Stat`.
     pub async fn stat(&self, path: &str) -> Result<pb::EntryInfo> {
+        self.stat_with(path, false, &FileAccess::default()).await
+    }
+
+    /// `Stat` as `access.run_as`, reporting `EntryInfo.metadata` under
+    /// `access.xattr_namespace`. `no_follow` reports a symbolic link itself.
+    pub async fn stat_with(
+        &self,
+        path: &str,
+        no_follow: bool,
+        access: &FileAccess,
+    ) -> Result<pb::EntryInfo> {
+        self.require_file_features(access.run_as.as_deref(), false)
+            .await?;
         self.filesystem()
             .stat(pb::StatRequest {
                 path: path.into(),
-                no_follow_symlinks: false,
+                no_follow_symlinks: no_follow,
+                xattr_namespace: access.namespace_string(),
+                run_as: access.run_as_string(),
             })
             .await?
             .into_inner()
@@ -558,6 +781,19 @@ impl SpacesdClient {
 
     /// `ListDir` (all pages).
     pub async fn list_dir(&self, path: &str, depth: u32) -> Result<Vec<pb::EntryInfo>> {
+        self.list_dir_with(path, depth, &FileAccess::default())
+            .await
+    }
+
+    /// `ListDir` (all pages) as `access.run_as`.
+    pub async fn list_dir_with(
+        &self,
+        path: &str,
+        depth: u32,
+        access: &FileAccess,
+    ) -> Result<Vec<pb::EntryInfo>> {
+        self.require_file_features(access.run_as.as_deref(), false)
+            .await?;
         let mut out = Vec::new();
         let mut token = String::new();
         loop {
@@ -569,6 +805,8 @@ impl SpacesdClient {
                     include_hidden: true,
                     page_size: 0,
                     page_token: token.clone(),
+                    xattr_namespace: access.namespace_string(),
+                    run_as: access.run_as_string(),
                 })
                 .await?
                 .into_inner();
@@ -582,11 +820,20 @@ impl SpacesdClient {
 
     /// `MakeDir` with parents.
     pub async fn make_dir(&self, path: &str) -> Result<pb::EntryInfo> {
+        self.make_dir_with(path, &FileAccess::default()).await
+    }
+
+    /// `MakeDir` with parents as `access.run_as` (the new directories are
+    /// owned by that user).
+    pub async fn make_dir_with(&self, path: &str, access: &FileAccess) -> Result<pb::EntryInfo> {
+        self.require_file_features(access.run_as.as_deref(), false)
+            .await?;
         self.filesystem()
             .make_dir(pb::MakeDirRequest {
                 path: path.into(),
                 parents: true,
                 mode: 0,
+                run_as: access.run_as_string(),
             })
             .await?
             .into_inner()
@@ -596,14 +843,55 @@ impl SpacesdClient {
 
     /// `Remove`.
     pub async fn remove(&self, path: &str, recursive: bool) -> Result<()> {
+        self.remove_with(path, recursive, &FileAccess::default())
+            .await
+    }
+
+    /// `Remove` as `access.run_as`.
+    pub async fn remove_with(
+        &self,
+        path: &str,
+        recursive: bool,
+        access: &FileAccess,
+    ) -> Result<()> {
+        self.require_file_features(access.run_as.as_deref(), false)
+            .await?;
         self.filesystem()
             .remove(pb::RemoveRequest {
                 path: path.into(),
                 recursive,
                 missing_ok: false,
+                run_as: access.run_as_string(),
             })
             .await?;
         Ok(())
+    }
+
+    /// `Move`: renames `source` to `destination` as `access.run_as`.
+    /// `overwrite` replaces an existing destination; `create_parents` makes
+    /// its missing parent directories.
+    pub async fn move_path(
+        &self,
+        source: &str,
+        destination: &str,
+        overwrite: bool,
+        create_parents: bool,
+        access: &FileAccess,
+    ) -> Result<pb::EntryInfo> {
+        self.require_file_features(access.run_as.as_deref(), false)
+            .await?;
+        self.filesystem()
+            .r#move(pb::MoveRequest {
+                source: source.into(),
+                destination: destination.into(),
+                overwrite,
+                create_parents,
+                run_as: access.run_as_string(),
+            })
+            .await?
+            .into_inner()
+            .entry
+            .ok_or_else(|| Error::Protocol("Move without entry".into()))
     }
 }
 
@@ -641,12 +929,22 @@ async fn create_download_temp(local: &Path) -> Result<(PathBuf, tokio::fs::File)
 pub trait DownloadSink: Send {
     /// Appends one chunk.
     fn write(&mut self, chunk: Bytes) -> impl std::future::Future<Output = Result<()>> + Send;
+
+    /// How many bytes the download carries (from the file's entry), before
+    /// the first chunk.
+    fn size_hint(&mut self, _bytes: u64) {}
 }
 
 impl DownloadSink for Vec<u8> {
     async fn write(&mut self, chunk: Bytes) -> Result<()> {
         self.extend_from_slice(&chunk);
         Ok(())
+    }
+
+    fn size_hint(&mut self, bytes: u64) {
+        // Bounded: a file that grows while it is read still works, and a
+        // huge one is not reserved in one piece.
+        self.reserve(bytes.min(1 << 30) as usize);
     }
 }
 
@@ -655,6 +953,21 @@ impl DownloadSink for tokio::fs::File {
         self.write_all(&chunk).await?;
         Ok(())
     }
+}
+
+/// Up to `len` bytes from where `f` is (short only at its end).
+async fn read_chunk(f: &mut tokio::fs::File, len: usize) -> Result<Vec<u8>> {
+    let mut buf = vec![0u8; len];
+    let mut filled = 0;
+    while filled < len {
+        let n = f.read(&mut buf[filled..]).await?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    buf.truncate(filled);
+    Ok(buf)
 }
 
 fn verify(expected: &str, actual: &str) -> Result<()> {

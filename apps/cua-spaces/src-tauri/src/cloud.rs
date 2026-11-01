@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! The user's own clouds (AWS, Google Cloud, Modal) for the "Your cloud"
+//! The user's own clouds (AWS, Google Cloud, Hetzner, Modal) for the "Your cloud"
 //! tile and the "Connect a cloud" sheet. The sheet is the app core's
 //! (`cloudConnect.*`, shared with the SwiftUI app); these commands run its
 //! requests through the `cua daemon`'s Spaces tools. Credentials never pass

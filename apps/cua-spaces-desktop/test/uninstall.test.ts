@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("electron", () => ({ app: { isPackaged: true }, shell: {} }));
 
 const { appImageCua, appImageDaemonRoot } = await import("../src/model/appimage-cua");
-const { WINDOWS_APP_KEY, cliRecordArgs, installCliSilently } = await import("../src/model/environment");
+const { WINDOWS_APP_KEY, cliRecordArgs, recordCliInstall } = await import("../src/model/environment");
 const { WINDOWS_RUN_NAME } = await import("../src/login-item");
 
 const require = createRequire(import.meta.url);
@@ -143,16 +143,10 @@ describe("the Windows installer and uninstaller", () => {
 });
 
 describe("the CLI the app puts on PATH", () => {
-  const plan = { upToDate: false, source: "C:\\app\\resources\\native\\cua.exe", onPath: false };
-  const fakeNative = (installed: { target: string }) =>
-    ({
-      AppCliInstaller: { forExecutable: () => ({ plan: async () => plan, install: async () => installed }) },
-    }) as never;
-
   it("is recorded on Windows, with the PATH entry only when the app added it", async () => {
     const target = "C:\\Users\\me\\AppData\\Local\\Programs\\cua\\bin\\cua.exe";
     const calls: string[][] = [];
-    await installCliSilently(fakeNative({ target }), "C:\\app\\resources\\native\\cua.exe", "win32", async (args) => void calls.push(args));
+    await recordCliInstall(target, true, "win32", async (args) => void calls.push(args));
     expect(calls).toEqual([
       ["add", WINDOWS_APP_KEY, "/v", "CliInstalled", "/t", "REG_SZ", "/d", target, "/f"],
       ["add", WINDOWS_APP_KEY, "/v", "CliPathAdded", "/t", "REG_SZ", "/d", "C:\\Users\\me\\AppData\\Local\\Programs\\cua\\bin", "/f"],
@@ -162,7 +156,7 @@ describe("the CLI the app puts on PATH", () => {
 
   it("is not recorded elsewhere (the .deb's is a link into the app)", async () => {
     const calls: string[][] = [];
-    await installCliSilently(fakeNative({ target: "/home/me/.local/bin/cua" }), "/opt/Cua Spaces/resources/native/cua", "linux", async (args) => void calls.push(args));
+    await recordCliInstall("/home/me/.local/bin/cua", true, "linux", async (args) => void calls.push(args));
     expect(calls).toEqual([]);
   });
 });

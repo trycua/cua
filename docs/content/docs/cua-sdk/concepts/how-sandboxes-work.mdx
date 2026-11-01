@@ -21,7 +21,7 @@ description: The SDK, the daemon, cua-spacesd and the backends, where a sandbox 
 | cua SDK and `cua` CLI | The client: a Rust core with generated bindings | Your process or machine |
 | `cua daemon` | The SDK as a local service, so several processes (the CLI, the Spaces app, MCP clients, your script) share sandboxes, connections and credentials. `cua.connect()` instead of `cua.embedded()` | Your machine |
 | cua-spacesd | The optional daemon inside a sandbox: one port (`3211`), gRPC and gRPC-Web. Input and accessibility go to Cua Driver in the guest | The sandbox |
-| Runtimes | Local: gVisor or runc (on Docker or Podman), QEMU, Lume. Your cloud: a VM in your AWS or Google Cloud account, or a Modal sandbox | This machine or your cloud |
+| Runtimes | Local: gVisor or runc (on Docker or Podman), QEMU, Lume, and microVMs on Firecracker, vz or Apple's Containerization. Your cloud: a VM in your AWS or Google Cloud account, or a Modal sandbox | This machine or your cloud |
 
 ## Where, what kind, which engine
 
@@ -29,20 +29,22 @@ Every create takes the same three choices, all optional:
 
 | Axis | SDK | CLI | Values | Default |
 | --- | --- | --- | --- | --- |
-| Where | `on=` (cua-sandbox also `local=True`) | `--on` | `local`, `aws`, `gcp`, `modal` ([your cloud](/cua-sdk/guides/local-runtimes#your-own-cloud)), `direct:<addr>` (an existing machine running cua-spacesd), a registered provider | `default.on`, else `local` |
-| What kind | `kind=` | `--kind` | `auto`, `container`, `vm` | `auto` |
+| Where | `on=` (cua-sandbox also `local=True`) | `--on` | `local`, `aws`, `gcp`, `modal` ([your cloud](/cua-sdk/guides/your-cloud)), `direct:<addr>` (an existing machine running cua-spacesd), a registered provider | `default.on`, else `local` |
+| What kind | `kind=` | `--kind` | `auto`, `container`, `vm`, `microvm` | `auto` |
 | Which engine | `runtime=` | `--runtime` | `auto` or an engine below | `auto` |
 
-| Location | container | vm |
-| --- | --- | --- |
-| `local` | `gvisor` (auto when installed), `runc` | `qemu` (auto), `lume` (auto for macOS guests; Apple silicon only) |
-| `direct:<addr>` | the existing machine: `auto` only | |
+| Location | container | vm | microvm |
+| --- | --- | --- | --- |
+| `local` | `gvisor` (auto when installed), `runc` | `qemu` (auto), `lume` (auto for macOS guests; Apple silicon only) | `firecracker` (Linux with KVM), `vz` (auto on a Mac when installed), `containerization` (macOS 26) |
+| `direct:<addr>` | the existing machine: `auto` only | | |
 
 `auto` kind comes from the image: macOS and Windows images are VMs, an image
 with a container rootfs is a container, and a disk-only image is a VM. So
 `ghcr.io/trycua/linux:24.04` is a gVisor container locally, and `--kind vm` picks its `-disk` variant
 (QEMU locally). A runtime implies its kind. A combination that does not exist fails
-with `InvalidPlacement`, listing the valid values.
+with `InvalidPlacement`, listing the valid values. `auto` never picks a microVM;
+see [Space kinds](/spaces/concepts/space-kinds) for what each kind is and which
+hosts run it.
 
 Defaults resolve in this order, first match wins:
 
@@ -50,6 +52,15 @@ Defaults resolve in this order, first match wins:
 2. env: `CUA_DEFAULT_ON`, `CUA_DEFAULT_KIND`, `CUA_DEFAULT_RUNTIME`
 3. config: `$CUA_HOME/config.toml` (`cua config set default.on aws`)
 4. built-in: `local`, `auto`, `auto`
+
+With no location given and none configured, a Space goes to this machine.
+When you have linked a cloud and set a budget (`cua cloud budget
+--max-per-hour 2`), it goes to this machine first and overflows into your
+clouds once this machine is full, never past the budget; the Space then
+says so (`cloud`, `cloud_place`, and a line from `cua spaces create`).
+`cua config set placement.overflow off` keeps it on this machine. An
+explicit `local` never overflows; `auto`, a host or a cloud keep their
+meaning.
 
 A default kind or runtime that does not fit an explicit request is skipped.
 See [Choose where sandboxes run by default](/cua-sdk/guides/local-runtimes#change-the-default).

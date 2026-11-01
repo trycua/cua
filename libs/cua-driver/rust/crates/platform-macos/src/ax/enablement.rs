@@ -23,7 +23,8 @@ use super::bindings::{
     AccessibilityOptIn,
 };
 
-const CHROMIUM_SETTLE_SECONDS: f64 = 0.5;
+const CHROMIUM_SETTLE_MAX_SECONDS: f64 = 0.5;
+const CHROMIUM_SETTLE_POLL_SECONDS: f64 = 0.05;
 const MATERIALIZE_TIMEOUT_SECONDS: f64 = 4.0;
 const MATERIALIZE_POLL_SECONDS: f64 = 0.1;
 const MATERIALIZE_MAX_ATTEMPTS: u32 = 3;
@@ -33,12 +34,13 @@ const WEB_AREA_ROLE: &str = "AXWebArea";
 const MENU_BAR_ROLE: &str = "AXMenuBar";
 const WEB_AREA_MAX_DEPTH: u32 = 10;
 const WEB_AREA_PROBE_NODES: u32 = 400;
+const WEB_AREA_SETTLE_SAMPLE_CAP: u32 = 128;
 
 type ProcessStartStamp = (u64, u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WebContent {
-    Present,
+    Present { nodes: u32 },
     Absent,
 }
 
@@ -143,42 +145,54 @@ fn wait_outcome(
     }
 }
 
-unsafe fn web_area_is_populated(web_area: AXUIElementRef) -> bool {
-    let children = copy_children(web_area);
-    let populated = !children.is_empty();
+unsafe fn count_web_area_descendants(element: AXUIElementRef, depth: u32, cap: &mut u32) -> u32 {
+    if depth == 0 || *cap == 0 {
+        return 0;
+    }
+    let children = copy_children(element);
+    let mut total = 0u32;
     for child in children {
+        if *cap > 0 {
+            *cap -= 1;
+            total += 1;
+            total += count_web_area_descendants(child, depth - 1, cap);
+        }
         CFRelease(child as CFTypeRef);
     }
-    populated
+    total
 }
 
-unsafe fn has_web_area(element: AXUIElementRef, depth: u32, visits: &mut u32) -> bool {
+unsafe fn find_populated_web_area(element: AXUIElementRef, depth: u32, visits: &mut u32) -> u32 {
     if depth == 0 {
-        return false;
+        return 0;
     }
-    let mut found = false;
+    let mut populated_nodes = 0u32;
     for child in copy_children(element) {
-        if !found && *visits > 0 {
+        if populated_nodes == 0 && *visits > 0 {
             *visits -= 1;
             let role = copy_string_attr(child, "AXRole");
-            found = match role.as_deref() {
+            populated_nodes = match role.as_deref() {
                 // Menu items are numerous and never hold web content.
-                Some(MENU_BAR_ROLE) => false,
+                Some(MENU_BAR_ROLE) => 0,
                 // An AXWebArea with no children is a stub: Chrome has not
                 // built the page tree yet, so it does not count as content.
-                Some(WEB_AREA_ROLE) => web_area_is_populated(child),
-                _ => has_web_area(child, depth - 1, visits),
+                Some(WEB_AREA_ROLE) => {
+                    let mut sample_cap = WEB_AREA_SETTLE_SAMPLE_CAP;
+                    count_web_area_descendants(child, 4, &mut sample_cap)
+                }
+                _ => find_populated_web_area(child, depth - 1, visits),
             };
         }
         CFRelease(child as CFTypeRef);
     }
-    found
+    populated_nodes
 }
 
 unsafe fn probe_web_content(app_element: AXUIElementRef) -> WebContent {
     let mut visits = WEB_AREA_PROBE_NODES;
-    if has_web_area(app_element, WEB_AREA_MAX_DEPTH, &mut visits) {
-        WebContent::Present
+    let nodes = find_populated_web_area(app_element, WEB_AREA_MAX_DEPTH, &mut visits);
+    if nodes > 0 {
+        WebContent::Present { nodes }
     } else {
         WebContent::Absent
     }
@@ -212,11 +226,27 @@ fn await_web_content(
 ) -> bool {
     let steps = (MATERIALIZE_TIMEOUT_SECONDS / MATERIALIZE_POLL_SECONDS).round() as u32;
     let reassert_step = steps / 2;
+    let settle_slices = (CHROMIUM_SETTLE_MAX_SECONDS / CHROMIUM_SETTLE_POLL_SECONDS).round() as u32;
     for step in 0..=steps {
         match probe() {
-            WebContent::Present => {
+            WebContent::Present { nodes: initial } => {
                 reassert();
-                settle(CHROMIUM_SETTLE_SECONDS);
+                // Poll in bounded 50 ms slices up to 500 ms rather than paying
+                // a blind 500 ms sleep when the AXWebArea subtree is already
+                // populated and stable.
+                let mut prev = initial;
+                for slice in 0..settle_slices {
+                    settle(CHROMIUM_SETTLE_POLL_SECONDS);
+                    if slice + 1 == settle_slices {
+                        break;
+                    }
+                    if let WebContent::Present { nodes: current } = probe() {
+                        if current > 0 && current == prev {
+                            break;
+                        }
+                        prev = current;
+                    }
+                }
                 return true;
             }
             WebContent::Absent => {}
@@ -456,15 +486,20 @@ mod tests {
 
     #[test]
     fn an_already_materialized_tree_is_re_asserted_without_polling() {
-        let (materialized, log) = drive(vec![WebContent::Present]);
+        let (materialized, log) = drive(vec![
+            WebContent::Present { nodes: 42 },
+            WebContent::Present { nodes: 42 },
+        ]);
         assert!(materialized);
         assert_eq!(
             log,
             vec![
-                "probe:Present".to_string(),
+                "probe:Present { nodes: 42 }".to_string(),
                 "reassert".to_string(),
-                format!("settle:{CHROMIUM_SETTLE_SECONDS}"),
-            ]
+                format!("settle:{CHROMIUM_SETTLE_POLL_SECONDS}"),
+                "probe:Present { nodes: 42 }".to_string(),
+            ],
+            "an already-stable AXWebArea exits after one 50ms check instead of sleeping 500ms"
         );
     }
 
@@ -473,7 +508,9 @@ mod tests {
         let (materialized, log) = drive(vec![
             WebContent::Absent,
             WebContent::Absent,
-            WebContent::Present,
+            WebContent::Present { nodes: 5 },
+            WebContent::Present { nodes: 28 },
+            WebContent::Present { nodes: 28 },
         ]);
         assert!(materialized);
         assert_eq!(
@@ -483,11 +520,32 @@ mod tests {
                 format!("settle:{MATERIALIZE_POLL_SECONDS}"),
                 "probe:Absent".to_string(),
                 format!("settle:{MATERIALIZE_POLL_SECONDS}"),
-                "probe:Present".to_string(),
+                "probe:Present { nodes: 5 }".to_string(),
                 "reassert".to_string(),
-                format!("settle:{CHROMIUM_SETTLE_SECONDS}"),
+                format!("settle:{CHROMIUM_SETTLE_POLL_SECONDS}"),
+                "probe:Present { nodes: 28 }".to_string(),
+                format!("settle:{CHROMIUM_SETTLE_POLL_SECONDS}"),
+                "probe:Present { nodes: 28 }".to_string(),
             ],
-            "materialization must be detected by polling, not by a fixed sleep"
+            "materialization and stabilization must be detected by polling, not a blind 500ms sleep"
+        );
+    }
+
+    #[test]
+    fn a_continuously_growing_tree_is_bounded_by_max_settle_budget() {
+        let mut script = Vec::new();
+        for n in 1..=20 {
+            script.push(WebContent::Present { nodes: n });
+        }
+        let (materialized, log) = drive(script);
+        assert!(materialized);
+        let settles = log
+            .iter()
+            .filter(|e| *e == &format!("settle:{CHROMIUM_SETTLE_POLL_SECONDS}"))
+            .count();
+        assert_eq!(
+            (settles as f64 * CHROMIUM_SETTLE_POLL_SECONDS * 1000.0).round(),
+            (CHROMIUM_SETTLE_MAX_SECONDS * 1000.0).round()
         );
     }
 
@@ -511,7 +569,7 @@ mod tests {
         );
         assert!(
             !log.iter()
-                .any(|e| e == &format!("settle:{CHROMIUM_SETTLE_SECONDS}")),
+                .any(|e| e == &format!("settle:{CHROMIUM_SETTLE_POLL_SECONDS}")),
             "no post-materialization settle when nothing materialized"
         );
     }

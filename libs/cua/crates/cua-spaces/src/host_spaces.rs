@@ -3534,7 +3534,7 @@ impl Spaces {
     /// virtualization, memory, permissions. `machine` is an id or a name,
     /// as [`Spaces::resolve_host`] takes it; reached over the relay (or the
     /// mesh), or at its direct address. Fails plainly when it is offline,
-    /// not yours, or runs a Cua that predates the check. Bounded (30 s).
+    /// not yours, or does not support remote health checks. Bounded (30 s).
     pub async fn machine_health(&self, machine: &str) -> Result<pb::DiagnoseHostResponse> {
         let (space, name) = match self.resolve_host(machine).await? {
             ResolvedHost::Relay(m) => {
@@ -3567,7 +3567,12 @@ impl Spaces {
             Ok(Ok(r)) => Ok(r.into_inner()),
             Ok(Err(status)) if status.code() == tonic::Code::Unimplemented => Err(Error::host(
                 "machine health",
-                format!("{name} runs an older Cua that can't be checked; update Cua on it"),
+                // An unsupported host transport can return this code too;
+                // it does not establish that an update would help.
+                format!(
+                    "{name} does not support remote health checks; \
+                     run `cua doctor --machine this` on that computer"
+                ),
             )),
             Ok(Err(status)) => Err(from_host(cua_spacesd_client::Error::from(status))),
             Err(_) => Err(Error::host(

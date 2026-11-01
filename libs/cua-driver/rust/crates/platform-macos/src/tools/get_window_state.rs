@@ -143,17 +143,62 @@ fn verified_capture(
 /// Chromium stops painting and stops updating its accessibility tree while its
 /// window is not visible, which includes sitting on another Space (CUA-1351,
 /// cdb-v2-40: a click delivered off-Space only showed once the Space was shown).
-/// AppKit windows keep drawing, so they get no note.
+/// Other apps that draw with their own renderer stop painting too; their
+/// accessibility tree is the better signal but can lag as well (an Electron
+/// app throttles it like Chromium). AppKit windows keep drawing, so they get
+/// no note.
 fn off_space_staleness_note(
     on_current_space: Option<bool>,
     chromium: bool,
+    own_renderer: bool,
 ) -> Option<&'static str> {
-    (on_current_space == Some(false) && chromium).then_some(
-        "This browser window is on another Space. Chromium pauses painting and \
-         accessibility updates while its window is not visible, so this screenshot \
-         and tree can show an older state. Actions are still delivered: confirm \
-         their effect after the window is shown, not from this read.",
+    if on_current_space != Some(false) {
+        return None;
+    }
+    if chromium {
+        return Some(
+            "This browser window is on another Space. Chromium pauses painting and \
+             accessibility updates while its window is not visible, so this screenshot \
+             and tree can show an older state. Actions are still delivered: confirm \
+             their effect after the window is shown, not from this read.",
+        );
+    }
+    own_renderer.then_some(
+        "This window is on another Space and its app pauses painting while hidden, so \
+         this screenshot can show an older state; the accessibility tree is the better \
+         signal but can lag too, so confirm an action's effect in a later read or after \
+         the window is shown.",
     )
+}
+
+/// Bundled frameworks of apps that draw with their own renderer, which stops
+/// painting while the window is not visible: ANGLE (Chromium-based apps,
+/// WeChat), Electron, CEF and Qt.
+const OWN_RENDERER_FRAMEWORKS: &[&str] = &[
+    "Chromium Embedded Framework.framework",
+    "Electron Framework.framework",
+    "QtGui.framework",
+    "libEGL.dylib",
+];
+
+fn bundles_own_renderer<'a>(frameworks: impl IntoIterator<Item = &'a str>) -> bool {
+    frameworks
+        .into_iter()
+        .any(|name| OWN_RENDERER_FRAMEWORKS.contains(&name))
+}
+
+fn own_renderer_app(pid: i32) -> bool {
+    let Some(bundle) = crate::apps::bundle_path_for_pid(pid) else {
+        return false;
+    };
+    let Ok(entries) = std::fs::read_dir(bundle.join("Contents/Frameworks")) else {
+        return false;
+    };
+    let names: Vec<String> = entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    bundles_own_renderer(names.iter().map(String::as_str))
 }
 
 fn chromium_browser_window(pid: i32) -> bool {
@@ -885,8 +930,12 @@ impl Tool for GetWindowStateTool {
         if on_current_space == Some(false) {
             structured["on_current_space"] = serde_json::json!(false);
         }
-        if let Some(note) = off_space_staleness_note(on_current_space, chromium_browser_window(pid))
-        {
+        let chromium = chromium_browser_window(pid);
+        if let Some(note) = off_space_staleness_note(
+            on_current_space,
+            chromium,
+            on_current_space == Some(false) && !chromium && own_renderer_app(pid),
+        ) {
             structured["off_space_staleness"] = serde_json::json!(note);
             content.push(Content::text(note));
         }
@@ -1605,10 +1654,39 @@ mod tests {
 
     #[test]
     fn only_off_space_chromium_windows_get_the_staleness_note() {
-        assert!(off_space_staleness_note(Some(false), true).is_some());
-        assert!(off_space_staleness_note(Some(false), false).is_none());
-        assert!(off_space_staleness_note(Some(true), true).is_none());
-        assert!(off_space_staleness_note(None, true).is_none());
+        assert!(off_space_staleness_note(Some(false), true, false).is_some());
+        assert!(off_space_staleness_note(Some(false), false, false).is_none());
+        assert!(off_space_staleness_note(Some(true), true, false).is_none());
+        assert!(off_space_staleness_note(None, true, false).is_none());
+    }
+
+    #[test]
+    fn an_off_space_own_renderer_window_gets_a_pixels_only_note() {
+        let note = off_space_staleness_note(Some(false), false, true).unwrap();
+        assert!(note.contains("accessibility tree is the better signal but can lag too"));
+        assert!(off_space_staleness_note(Some(true), false, true).is_none());
+        assert!(off_space_staleness_note(Some(false), true, true)
+            .unwrap()
+            .contains("Chromium"));
+    }
+
+    /// WeChat 4 bundles ANGLE and no Qt; TextEdit bundles nothing.
+    #[test]
+    fn bundled_angle_electron_cef_or_qt_marks_an_own_renderer() {
+        let wechat = [
+            "andromeda.framework",
+            "libEGL.dylib",
+            "libGLESv2.dylib",
+            "owl.framework",
+        ];
+        assert!(bundles_own_renderer(wechat));
+        assert!(bundles_own_renderer(["Electron Framework.framework"]));
+        assert!(bundles_own_renderer([
+            "QtGui.framework",
+            "QtCore.framework"
+        ]));
+        assert!(!bundles_own_renderer(["Sparkle.framework"]));
+        assert!(!bundles_own_renderer(std::iter::empty()));
     }
     use crate::ax::tree::AXNode;
     use serde_json::json;

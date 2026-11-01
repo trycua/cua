@@ -1023,13 +1023,97 @@ pub unsafe fn copy_ax_windows_including(
     if should_probe_off_space_window(listed, || {
         crate::windows::window_space_view_by_id(window_id)
     }) {
-        windows.extend(copy_ax_window_by_remote_token(pid, window_id));
+        windows.extend(
+            copy_app_window_by_attribute(app, window_id)
+                .or_else(|| copy_ax_window_by_remote_token(pid, window_id)),
+        );
     }
     windows
 }
 
+/// The app's focused window, main window, or focused element's window when
+/// it is `window_id`. AX keeps these for a window on another Space, so they
+/// find the usual target (the window the user last worked in) without the
+/// remote-token probe, whose id range and deadline a large app can exceed.
+/// Returns a retained element the caller must release.
+///
+/// # Safety
+///
+/// `app` must be a valid application element, and the caller must release
+/// any returned element exactly once with `CFRelease`.
+unsafe fn copy_app_window_by_attribute(
+    app: AXUIElementRef,
+    window_id: u32,
+) -> Option<AXUIElementRef> {
+    let focused_element_window = || {
+        let element = copy_element_attr(app, "AXFocusedUIElement")?;
+        let window = copy_element_attr(element, "AXWindow");
+        CFRelease(element as CFTypeRef);
+        window
+    };
+    let candidates = std::iter::once_with(|| copy_element_attr(app, "AXFocusedWindow"))
+        .chain(std::iter::once_with(|| {
+            copy_element_attr(app, "AXMainWindow")
+        }))
+        .chain(std::iter::once_with(focused_element_window));
+    first_matching_window(
+        candidates,
+        |&window| {
+            copy_string_attr(window, "AXRole").as_deref() == Some("AXWindow")
+                && ax_get_window_id(window) == Some(window_id)
+        },
+        |window| CFRelease(window as CFTypeRef),
+    )
+}
+
+/// The first present candidate that `is_target` accepts, releasing every
+/// other one it reads. Later candidates are not read once one matches.
+fn first_matching_window<E>(
+    candidates: impl Iterator<Item = Option<E>>,
+    is_target: impl Fn(&E) -> bool,
+    release: impl Fn(E),
+) -> Option<E> {
+    for candidate in candidates.flatten() {
+        if is_target(&candidate) {
+            return Some(candidate);
+        }
+        release(candidate);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
+    /// The lookup takes the first candidate that is the target, releases
+    /// every other one it read, and reads no further.
+    #[test]
+    fn the_first_matching_window_wins_and_the_rest_are_released() {
+        use std::cell::{Cell, RefCell};
+        let read = Cell::new(0);
+        let released = RefCell::new(Vec::new());
+        let candidates = [None, Some(7_u32), Some(42), Some(9)]
+            .into_iter()
+            .inspect(|_| {
+                read.set(read.get() + 1);
+            });
+        let found = super::first_matching_window(
+            candidates,
+            |&w| w == 42,
+            |w| released.borrow_mut().push(w),
+        );
+        assert_eq!(found, Some(42));
+        assert_eq!(*released.borrow(), [7]);
+        assert_eq!(read.get(), 3, "the candidate after the match is not read");
+        let released = RefCell::new(Vec::new());
+        let none = super::first_matching_window(
+            [Some(1_u32), None, Some(2)].into_iter(),
+            |&w| w == 42,
+            |w| released.borrow_mut().push(w),
+        );
+        assert_eq!(none, None);
+        assert_eq!(*released.borrow(), [1, 2]);
+    }
+
     use super::*;
     use crate::windows::WindowSpaceView;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};

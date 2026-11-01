@@ -980,6 +980,16 @@ pub fn bundle_id_for_pid(pid: i32) -> Option<String> {
     }
 }
 
+/// The `.app` bundle path of the running process `pid`, if it has one.
+pub fn bundle_path_for_pid(pid: i32) -> Option<std::path::PathBuf> {
+    use objc2_app_kit::NSRunningApplication;
+    unsafe {
+        let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
+        let path = app.bundleURL()?.path()?;
+        Some(std::path::PathBuf::from(path.to_string()))
+    }
+}
+
 /// Return the localized application name for a running process by PID.
 /// Uses `ps -p {pid} -o comm=` which gives the command name without path.
 /// Returns `None` if the PID is unknown or the command fails.

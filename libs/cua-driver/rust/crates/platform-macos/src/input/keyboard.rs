@@ -409,11 +409,14 @@ pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<
 /// Type ASCII text through the global HID queue as physical US-keyboard
 /// transitions.
 ///
-/// This is reserved for a caller that has guarded the exact target with
-/// `with_foreground_hid_activation`. Remote-input clients such as Screen
-/// Sharing forward virtual keycodes and modifier transitions, not the Unicode
-/// payload carried by keycode 0, so the ordinary text synthesis path cannot be
-/// used for them.
+/// Two callers use it. A Screen Sharing route guards the exact target with
+/// `with_foreground_hid_activation`, because remote-input clients forward
+/// virtual keycodes and modifier transitions, not the Unicode payload carried
+/// by keycode 0. Desktop-scope `type_text` uses it when the host sets
+/// `CUA_DRIVER_TEXT_KEY_EVENTS=physical`, because an event tap that rebuilds
+/// events from key code and flags drops that payload too. Check
+/// [`first_char_without_physical_key`] first to refuse with a structured error;
+/// this function also refuses an unsupported payload before posting.
 pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
     use core_graphics::event::CGEventTapLocation;
 
@@ -537,10 +540,16 @@ enum PhysicalEventType {
     FlagsChanged,
 }
 
+/// The first character of `text` that has no physical US-keyboard key, if
+/// any. `type_text_physical_global` cannot type text that contains one.
+pub fn first_char_without_physical_key(text: &str) -> Option<char> {
+    text.chars().find(|&ch| physical_key_for_char(ch).is_none())
+}
+
 fn physical_text_events(ch: char) -> anyhow::Result<Vec<PhysicalTextEvent>> {
     let (key_code, shift) = physical_key_for_char(ch).ok_or_else(|| {
         anyhow::anyhow!(
-            "Screen Sharing physical text delivery does not support character U+{:04X}",
+            "Physical text delivery does not support character U+{:04X}",
             ch as u32
         )
     })?;
@@ -581,7 +590,7 @@ fn physical_text_events(ch: char) -> anyhow::Result<Vec<PhysicalTextEvent>> {
 }
 
 /// Map printable ASCII to the physical key that produces it on the standard US
-/// layout. The Screen Sharing path intentionally sends only the returned
+/// layout. The physical text path intentionally sends only the returned
 /// keycode and the required bare Shift transitions.
 fn physical_key_for_char(ch: char) -> Option<(u16, bool)> {
     let lower = ch.to_ascii_lowercase();

@@ -204,6 +204,9 @@ class NativeRuntime(Runtime):
                 # A VM, or layers a container build cannot run (app_install,
                 # brew_install, ...): after boot, through cua-spacesd.
                 _require_spacesd_for_layers(ref)
+        # Post-boot layers may supply what a probe waits for (a declared server,
+        # say), so those probes run after the layers, not during create.
+        post_boot = build is None and bool(image._layers or image._files or image._env)
         # 3211 is published (and `env` reported) only when the image carries
         # cua-spacesd: the SDK decides from the image, so `env` is implicit.
         ports = sorted({SPACESD_PORT, *image._ports, *services.values()})
@@ -223,7 +226,7 @@ class NativeRuntime(Runtime):
             memory_mb=opts.get("memory_mb") or self.memory_mb,
             ports=ports,
             services=services,
-            wait_for=probes,
+            wait_for=[] if post_boot else probes,
             ready_timeout_ms=millis(self.ready_timeout),
             env={
                 **self.environment,
@@ -256,6 +259,8 @@ class NativeRuntime(Runtime):
         try:
             if build is None:
                 await self._apply_layers(info, image)
+            if post_boot and probes:
+                await handle.wait_ready(probes, millis(self.ready_timeout))
         except BaseException:
             await self._delete_quietly(name)
             raise

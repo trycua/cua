@@ -1727,6 +1727,7 @@ mod tests {
     fn the_tile_holds_every_pixel_of_the_full_screen_paint() {
         let starts = [(200.0, 150.0), (3.0, 4.0), (397.0, 296.0), (-30.0, 150.0)];
         let mut badge_frames = 0;
+        let mut effect_frames = 0;
         let focus_rects = [
             None,
             Some([150.0, 100.0, 120.0, 80.0]),
@@ -1747,6 +1748,16 @@ mod tests {
                         let frame = Some(ScreenFrame::new(0.0, 0.0, 400.0, 300.0));
                         assert!(map.seed_start_if_unplaced("sessA", x, y, frame));
                         let cursor = map.cursors.get_mut("sessA").unwrap();
+                        // Marks (the focus rect) and every motion effect are
+                        // opt-in; turn them all on so the tile must hold them.
+                        cursor.core.options_override = Some(cursor_overlay::CursorOptions::ALL_ON);
+                        cursor.core.motion.effects = cursor_overlay::MotionEffects {
+                            trail: Some(true),
+                            glow: Some(true),
+                            magnet: Some(true),
+                            ripple: Some(true),
+                            squish: Some(true),
+                        };
                         if let Some(label) = label {
                             cursor.core.badge_mode_override =
                                 Some(cursor_overlay::BadgeMode::Verbose);
@@ -1770,6 +1781,9 @@ mod tests {
                                 badge_frames += usize::from(
                                     map.cursors["sessA"].core.session_badge_is_visible(),
                                 );
+                                effect_frames += usize::from(
+                                    map.cursors["sessA"].core.effect_bounds().is_some(),
+                                );
                                 assert_tile_matches_full_screen(&map);
                             }
                         }
@@ -1778,6 +1792,7 @@ mod tests {
             }
         }
         assert!(badge_frames > 0, "no frame showed the session badge");
+        assert!(effect_frames > 0, "no frame played a motion effect");
     }
 
     #[test]

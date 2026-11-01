@@ -4547,6 +4547,37 @@ mod own_dialog_tests {
             thread.join().unwrap();
             assert_eq!(focus, if delayed { dialog } else { main });
         }
+        // A click that closed the saved window leaves nothing to re-activate.
+        let (wm, _) = RustConnection::connect(Some(&name)).unwrap();
+        wm.change_window_attributes(
+            root,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+        set32(
+            &conn,
+            root,
+            "_NET_ACTIVE_WINDOW",
+            AtomEnum::WINDOW,
+            &[sibling],
+        );
+        conn.destroy_window(main).unwrap();
+        conn.get_input_focus().unwrap().reply().unwrap();
+        restore_focus_state(
+            display,
+            &SavedFocus {
+                ewmh_active: Some(main.into()),
+                core_focus: 0,
+                core_revert_to: 0,
+            },
+        );
+        let mut activations = 0;
+        while let Some(event) = wm.poll_for_event().unwrap() {
+            activations += usize::from(matches!(event, Event::ClientMessage(_)));
+        }
+        assert_eq!(activations, 0);
         unsafe { x11::xlib::XCloseDisplay(display) };
     }
 }

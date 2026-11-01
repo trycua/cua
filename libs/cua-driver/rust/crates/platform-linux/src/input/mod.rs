@@ -3009,7 +3009,7 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
             (Some(conn), Some(pid), Some(now)) => now != prev && is_own_dialog(conn, pid, now),
             _ => false,
         };
-        if own_dialog(ewmh_active_window(display)) {
+        if own_dialog(ewmh_active_window(display)) || !window_exists(display, prev) {
             return;
         }
         nap(Duration::from_millis(150));
@@ -3023,7 +3023,7 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
                 if stable >= 3 {
                     return;
                 }
-            } else if own_dialog(now) {
+            } else if own_dialog(now) || !window_exists(display, prev) {
                 return;
             } else {
                 stable = 0;
@@ -3083,6 +3083,18 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         );
         x11::xlib::XSync(display, 0);
         x11::xlib::XSetErrorHandler(prev_handler);
+    }
+}
+
+/// Whether `window` still exists; a click that closed the saved window leaves
+/// nothing to restore.
+fn window_exists(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> bool {
+    unsafe {
+        let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        let mut attributes: x11::xlib::XWindowAttributes = std::mem::zeroed();
+        let exists = x11::xlib::XGetWindowAttributes(display, window, &mut attributes) != 0;
+        x11::xlib::XSetErrorHandler(prev_handler);
+        exists
     }
 }
 
@@ -4535,6 +4547,37 @@ mod own_dialog_tests {
             thread.join().unwrap();
             assert_eq!(focus, if delayed { dialog } else { main });
         }
+        // A click that closed the saved window leaves nothing to re-activate.
+        let (wm, _) = RustConnection::connect(Some(&name)).unwrap();
+        wm.change_window_attributes(
+            root,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+        set32(
+            &conn,
+            root,
+            "_NET_ACTIVE_WINDOW",
+            AtomEnum::WINDOW,
+            &[sibling],
+        );
+        conn.destroy_window(main).unwrap();
+        conn.get_input_focus().unwrap().reply().unwrap();
+        restore_focus_state(
+            display,
+            &SavedFocus {
+                ewmh_active: Some(main.into()),
+                core_focus: 0,
+                core_revert_to: 0,
+            },
+        );
+        let mut activations = 0;
+        while let Some(event) = wm.poll_for_event().unwrap() {
+            activations += usize::from(matches!(event, Event::ClientMessage(_)));
+        }
+        assert_eq!(activations, 0);
         unsafe { x11::xlib::XCloseDisplay(display) };
     }
 }

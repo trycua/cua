@@ -3,6 +3,8 @@
   "pages": [
     "benchmarks",
     "write-a-task",
-    "adapter-benchmarks"
+    "adapter-benchmarks",
+    "record-external-events",
+    "experimental-live-traces"
   ]
 }

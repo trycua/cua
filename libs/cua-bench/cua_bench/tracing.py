@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from io import BytesIO
@@ -21,11 +22,16 @@ class Tracing:
     Exposes a datasets.Dataset-compatible interface for saving/pushing.
     """
 
-    def __init__(self, env: Any) -> None:
+    def __init__(self, env: Any, *, bundle_writer=None, retain_rows=True) -> None:
         self.env = env
+        self.bundle_writer = bundle_writer
+        self.retain_rows = retain_rows
+        if not retain_rows and bundle_writer is None:
+            raise ValueError("retain_rows=False requires a bundle_writer")
         self._trajectory_id: Optional[str] = None
         self._rows: List[Dict[str, Any]] = []
         self._dataset: Optional[Dataset] = None
+        self._rows_complete = True
 
     # --- Lifecycle ---
     def start(self, trajectory_id: Optional[str] = None) -> str:
@@ -36,7 +42,29 @@ class Tracing:
         self._trajectory_id = trajectory_id or str(uuid.uuid4())
         self._rows = []
         self._dataset = None
+        self._rows_complete = True
         return self._trajectory_id
+
+    @contextmanager
+    def bundle(self, directory, *, retain_rows=True, **writer_options):
+        """Attach a live journal for a runner scope; finalize on success or failure.
+
+        The default also retains rows for existing dataset/ATIF exports. Opt out
+        for long-running captures that only need the disk bundle.
+        """
+        from .trace_bundle import TraceBundleWriter
+
+        if self.bundle_writer is not None:
+            raise RuntimeError("a trace bundle is already active")
+        previous = self.retain_rows
+        with TraceBundleWriter(directory, **writer_options) as writer:
+            self.bundle_writer = writer
+            self.retain_rows = retain_rows
+            try:
+                yield writer
+            finally:
+                self.bundle_writer = None
+                self.retain_rows = previous
 
     @property
     def trajectory_id(self) -> Optional[str]:
@@ -48,6 +76,9 @@ class Tracing:
         event_name: str,
         data_dict: Dict[str, Any],
         data_images: List[Image.Image | bytes] | None = None,
+        *,
+        context: Optional[Dict[str, Any]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         if self._trajectory_id is None:
             # If tracing hasn't been started, ignore silently to avoid surprising callers
@@ -66,7 +97,14 @@ class Tracing:
             "trajectory_id": str(self._trajectory_id),
             "timestamp": datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
         }
-        self._rows.append(row)
+        if self.bundle_writer is not None:
+            self.bundle_writer.append(row, context=context, attachments=attachments)
+        elif context is not None or attachments is not None:
+            raise ValueError("context and attachments require a bundle_writer")
+        if self.retain_rows:
+            self._rows.append(row)
+        else:
+            self._rows_complete = False
         # Invalidate cached dataset; it can be rebuilt lazily
         self._dataset = None
 
@@ -82,6 +120,7 @@ class Tracing:
           - trajectory_id: str
           - timestamp: str
         """
+        self._require_complete_rows()
         if self._dataset is None:
             feats = Features(
                 {
@@ -113,6 +152,10 @@ class Tracing:
             self._dataset = Dataset.from_list(rows, features=feats)
         return self._dataset
 
+    def _require_complete_rows(self):
+        if not self.retain_rows or not self._rows_complete:
+            raise RuntimeError("dataset export requires retain_rows=True for the entire trajectory")
+
     # --- Persistence ---
     def save_to_disk(
         self,
@@ -121,6 +164,7 @@ class Tracing:
         image_dir: Optional[str] = None,
         filter_events: Optional[List[str]] = None,
     ) -> None:
+        self._require_complete_rows()
         if save_pngs:
             self._save_to_disk_with_separate_pngs(output_dir, image_dir, filter_events)
         else:

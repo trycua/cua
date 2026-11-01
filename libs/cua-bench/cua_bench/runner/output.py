@@ -19,6 +19,26 @@ from typing import Iterator, Optional, TextIO
 _current: ContextVar[Optional[TextIO]] = ContextVar("cua_bench_task_log", default=None)
 
 
+def write_console(stream: TextIO, text: str) -> None:
+    """Keep status output usable when redirected to a legacy-encoded stream.
+
+    UTF-8 task logs receive the original text. Only a stream that refuses a
+    character gets a printable escape; unrelated write failures still propagate.
+    """
+    try:
+        stream.write(text)
+    except UnicodeEncodeError:
+        encoding = getattr(stream, "encoding", None) or "ascii"
+        stream.write(text.encode(encoding, errors="backslashreplace").decode(encoding))
+
+
+def print_status(*values, sep=" ", end="\n", file=None, flush=False) -> None:
+    stream = sys.stdout if file is None else file
+    write_console(stream, sep.join(str(value) for value in values) + end)
+    if flush:
+        stream.flush()
+
+
 class _Router(io.TextIOBase):
     def __init__(self, fallback: TextIO) -> None:
         self._fallback = fallback

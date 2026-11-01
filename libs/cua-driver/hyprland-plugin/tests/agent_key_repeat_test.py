@@ -17,6 +17,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 FIXTURE = r'''
+#include <chrono>
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -106,6 +107,18 @@ struct Client { WP<Surface> surface; };
 struct Lane {
     struct Keyboard { SP<CWlKeyboard> wl; bool dead = false; WP<Surface> focus; };
     std::vector<std::unique_ptr<Keyboard>> keyboards;
+    // Primary-seat fallback: never engaged here (no primary resources).
+    struct PrimaryKeyboard {
+        bool good() const { return true; }
+        void sendKey(std::uint32_t, std::uint32_t, int) {}
+        void sendMods(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {}
+    };
+    std::vector<WP<PrimaryKeyboard>> primary_keyboards;
+    template<typename T> bool primary_keyboard_enter(const T&) { return false; }
+    void primary_key(std::uint32_t, bool) {}
+    void primary_keyboard_leave() {}
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point primary_keyboard_idle{};
     std::vector<std::uint32_t> held_keys;
     xkb_keymap* keymap = &canonical_map;
     xkb_keymap* physical_keymap = nullptr;

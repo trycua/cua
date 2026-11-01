@@ -46,6 +46,7 @@ void InputExperiment::resume() {
     if (fail_resume) throw std::runtime_error("test transport failure");
 }
 std::string InputExperiment::status_json() const { return "{}"; }
+void InputExperiment::set_primary_seat_fallback(bool) {}
 }
 
 int main() {

@@ -36,6 +36,8 @@ members = [
     "crates/cua-cli",
     "crates/cua-spaces-contract",
     "crates/cua-spaces-transcript",
+    # Test rig for the replicated Volume (impairment proxy, replica node, chaos matrix); not shipped.
+    "crates/cua-replica-lab",
     "crates/cua-spaces",
     # Cua Spaces extensions (FSL-1.1-MIT): teleport, Cua Volume tools and
     # persistent agents over the cua-spaces extension points.

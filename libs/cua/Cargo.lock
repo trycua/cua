@@ -2990,6 +2990,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-replica-lab"
+version = "0.9.0"
+dependencies = [
+ "async-trait",
+ "cua-cluster",
+ "cua-volume",
+ "hex",
+ "libc",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cua-repo-cache"
 version = "0.9.0"
 dependencies = [

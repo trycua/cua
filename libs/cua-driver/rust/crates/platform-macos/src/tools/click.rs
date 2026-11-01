@@ -1195,8 +1195,18 @@ impl Tool for ClickTool {
                         crate::input::ax_actions::focus_element(element as usize).is_ok()
                     } else {
                         let press = core_foundation::string::CFString::new("AXPress");
-                        AXUIElementPerformAction(element, press.as_concrete_TypeRef())
-                            == kAXErrorSuccess
+                        let pressed =
+                            AXUIElementPerformAction(element, press.as_concrete_TypeRef())
+                                == kAXErrorSuccess;
+                        let role = copy_string_attr(element, "AXRole").unwrap_or_default();
+                        if pressed
+                            && press_leaves_field_unfocused(&role, || {
+                                crate::input::ax_actions::is_element_focused(pid, element as usize)
+                            })
+                        {
+                            crate::input::ax_actions::focus_element(element as usize)?;
+                        }
+                        pressed
                     };
                     CFRelease(element as _);
                     Ok(delivered)
@@ -1503,6 +1513,11 @@ impl Tool for ClickTool {
 /// process and take no part in this.
 fn press_needs_key_window(action: &str, front_pid: Option<i32>, pid: i32, native: bool) -> bool {
     action == "AXPress" && native && front_pid != Some(pid)
+}
+
+/// Whether an AXPress on a text input of `role` left it without the keyboard focus, as Qt line edits do.
+fn press_leaves_field_unfocused(role: &str, focused: impl FnOnce() -> bool) -> bool {
+    super::type_text::is_text_input_role(role) && !focused()
 }
 
 /// Make the target window AppKit-key without raising it, activating the app
@@ -2016,6 +2031,16 @@ mod tests {
         assert_eq!(settled(vec![Some("1"), None]), None, "second read failed");
         assert_eq!(settled(vec![Some("0")]), None, "never moved");
         assert_eq!(settled(vec![None]), None, "unreadable");
+    }
+
+    #[test]
+    fn a_pressed_text_input_without_the_focus_takes_it() {
+        assert!(press_leaves_field_unfocused("AXTextField", || false));
+        assert!(press_leaves_field_unfocused("AXTextArea", || false));
+        assert!(!press_leaves_field_unfocused("AXTextField", || true));
+        assert!(!press_leaves_field_unfocused("AXButton", || {
+            panic!("a button press reads no focus")
+        }));
     }
 
     /// Surface 5: schema must advertise the new `button` field with the three

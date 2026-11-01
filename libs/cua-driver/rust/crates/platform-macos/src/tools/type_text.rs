@@ -1744,7 +1744,7 @@ unsafe fn focused_accepts_text(element: AXUIElementRef) -> bool {
         })
 }
 
-fn is_text_input_role(role: &str) -> bool {
+pub(super) fn is_text_input_role(role: &str) -> bool {
     matches!(
         role,
         "AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField"

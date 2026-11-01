@@ -524,8 +524,8 @@ struct InputExperiment::Impl {
     }
     static std::optional<std::array<double, 6>> target_geometry(
         const PHLWINDOW& window, const SP<CWLSurfaceResource>& surface) {
-        if (!window || !surface || !window->m_isMapped || window->isHidden() ||
-            window->m_isX11 || window->resource() != surface || !surface->m_mapped || !surface->good()) return std::nullopt;
+        if (!window || !surface || !window->mapped() || window->isHidden() ||
+            window->backend().isX11() || window->resource() != surface || !surface->m_mapped || !surface->good()) return std::nullopt;
         // Match Driver's captured client surface, not the decorated window box
         // (which includes compositor borders and shifts clicks by their width).
         const auto box = window->surfaceLogicalBox(); const auto surface_box = box;
@@ -845,7 +845,7 @@ struct InputExperiment::Impl {
             .physical_keys = pressed,
             .physical_buttons = g_pInputManager->hasHeldButtons(),
             .grab = bool(g_pSeatManager->m_seatGrab) || bool(g_layoutManager->dragController()->target()) ||
-                !g_pInputManager->m_exclusiveLSes.empty(),
+                !g_pInputManager->m_exclusiveKeyboardLSes.empty(),
             .dnd = PROTO::data && PROTO::data->dndActive(),
             .constraint = g_pInputManager->isConstrained(),
             .exact_keyboard_focus = root && g_pSeatManager->m_state.keyboardFocus == root &&
@@ -1147,8 +1147,8 @@ struct InputExperiment::Impl {
             const auto pid = number(f[1]); const auto address = number(f[2], 16);
             PHLWINDOW window;
             for (const auto& w : Desktop::windowState()->windows())
-                if (reinterpret_cast<std::uintptr_t>(w.get()) == address && static_cast<std::uint64_t>(w->getPID()) == pid) window = w;
-            if (!window || window->m_isX11 || !window->m_isMapped || window->isHidden() || !window->resource()) {
+                if (reinterpret_cast<std::uintptr_t>(w.get()) == address && static_cast<std::uint64_t>(w->backend().pid()) == pid) window = w;
+            if (!window || window->backend().isX11() || !window->mapped() || window->isHidden() || !window->resource()) {
                 invalidate(c); send(c, refusal("stale_target")); return;
             }
             // Retire the old target before rebinding: even if the new target's

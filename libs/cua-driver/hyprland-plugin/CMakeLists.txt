@@ -246,7 +246,7 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
 
     add_library(cua_hyprland_plugin MODULE src/plugin.cpp)
     if(CUA_HYPRLAND_TEST_INPUT OR CUA_HYPRLAND_INPUT)
-        if(NOT HYPRLAND_VERSION STREQUAL "0.56.2")
+        if(NOT HYPRLAND_VERSION MATCHES "^0\.5[67]\.")
             message(FATAL_ERROR "Input is pinned to Hyprland 0.56.2")
         endif()
         target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp)

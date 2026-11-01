@@ -628,13 +628,14 @@ async fn sandbox_view_sends_the_spacesd_token_of_a_space_added_by_address() {
             ..Default::default()
         },
     );
+    // Already on loopback: the link as minted, and `view` returns.
     let o = view(&h, &id).await;
     o.ok();
     assert!(
         o.json()["url"]
             .as_str()
             .unwrap()
-            .contains("#ticket=mock-viewer"),
+            .starts_with(&format!("{}/viewer/#ticket=mock-viewer", server.url())),
         "{o:?}"
     );
     h.set("CUA_ENV_TOKEN", "wrong");
@@ -682,6 +683,44 @@ async fn sandbox_view_sends_the_spacesd_token_of_a_space_added_by_address() {
 
     let (_unregistered, unregistered_id) = spacesd_with_token().await;
     assert_ne!(view(&h, &unregistered_id).await.code, 0);
+}
+
+/// A plain-HTTP viewer link to a host other than loopback (a Lume VM's NAT
+/// address) is not a secure context, so the browser has no WebCodecs
+/// (#5734): `sb view` hands out a loopback proxy to it instead and keeps it
+/// until stopped, with no `tunnel.forward` needed in the guest. `0.0.0.0`
+/// stands in for the NAT address; it reaches the mock's loopback listener
+/// on Unix only.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sandbox_view_forwards_a_non_loopback_link_to_loopback() {
+    use tokio::io::AsyncBufReadExt;
+    let env = fixtures::start_env(Some("t"), None).await;
+    let h = Home::new();
+    let port = env.url.rsplit(':').next().unwrap();
+    direct(&h, &format!("http://0.0.0.0:{port}"), "nat-box").await;
+
+    let mut view = h.spawn(&["--embedded", "--json", "sb", "view", "nat-box", "--no-open"]);
+    let mut stdout = tokio::io::BufReader::new(view.stdout.take().unwrap()).lines();
+    let printed = tokio::time::timeout(Duration::from_secs(60), stdout.next_line())
+        .await
+        .expect("no link printed")
+        .unwrap()
+        .expect("view exited without a link");
+    let url = serde_json::from_str::<serde_json::Value>(&printed).unwrap()["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let link = url::Url::parse(&url).unwrap();
+    assert_eq!(link.host_str(), Some("127.0.0.1"), "{url}");
+    assert_eq!(link.path(), "/viewer/", "{url}");
+    assert!(
+        link.fragment().unwrap().starts_with("ticket=mock-viewer"),
+        "{url}"
+    );
+    // The forward lives while `view` runs.
+    assert_viewer_reaches(&link.origin().ascii_serialization(), &env).await;
+    assert!(view.try_wait().unwrap().is_none(), "view exited: {url}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -110,7 +110,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let markdown = summary.markdown_with_declarations_source_and_environment(
+    let markdown = summary.markdown(
         &declarations,
         &results,
         source_sha.as_deref(),

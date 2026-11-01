@@ -10,6 +10,7 @@
 //! probes only.
 
 use async_trait::async_trait;
+use cua_driver_core::bundle_identity::{is_driver_bundle_id, LOCAL_BUNDLE_ID};
 use cua_driver_core::health_report::{
     CheckData, CheckEntry, HealthCheckProvider, NAME_AX_CAPABILITY, NAME_BINARY_VERSION,
     NAME_BUNDLE_IDENTITY, NAME_PLATFORM_SUPPORTED, NAME_SCREEN_CAPTURE_CAPABILITY,
@@ -33,10 +34,9 @@ pub const MACOS_CHECK_NAMES: &[&str] = &[
     NAME_WINDOWSERVER_CONNECTION,
 ];
 
-/// The canonical bundle identifier whose TCC grants matter for the
-/// daemon. The `bundle_identity` check passes when the running process
-/// reports this id.
-pub const CANONICAL_BUNDLE_ID: &str = "com.trycua.driver";
+/// Release bundle identifier, retained as a compatibility alias.
+/// The standalone diagnostic also accepts the distinct local product identity.
+pub use cua_driver_core::bundle_identity::RELEASE_BUNDLE_ID as CANONICAL_BUNDLE_ID;
 
 pub struct MacosHealthProvider;
 
@@ -166,16 +166,15 @@ fn standalone_bundle_identity(bid: Option<String>, exe: String) -> CheckEntry {
         identity_source: Some("current_process".to_owned()),
         ..Default::default()
     };
-    if bid.as_deref() == Some(CANONICAL_BUNDLE_ID) {
-        return CheckEntry::pass(
-            NAME_BUNDLE_IDENTITY,
-            format!("Bundle is {CANONICAL_BUNDLE_ID}."),
-        )
-        .with_data(data);
+    if let Some(bundle_id) = bid.as_deref().filter(|id| is_driver_bundle_id(id)) {
+        return CheckEntry::pass(NAME_BUNDLE_IDENTITY, format!("Bundle is {bundle_id}."))
+            .with_data(data);
     }
     let message = match bid.as_deref() {
         None | Some("") => "Process has no CFBundleIdentifier.".to_owned(),
-        Some(other) => format!("Bundle is {other}, not {CANONICAL_BUNDLE_ID}."),
+        Some(other) => {
+            format!("Bundle is {other}, not {CANONICAL_BUNDLE_ID} or {LOCAL_BUNDLE_ID}.")
+        }
     };
     let hint = "This bundle check does not identify the app or executable macOS attributes \
                 this process's permission request to. For standalone CuaDriver, start the \
@@ -522,6 +521,8 @@ mod tests {
             None,
             Some(String::new()),
             Some("com.example.host".to_owned()),
+            Some("com.trycua.driver.local.extra".to_owned()),
+            Some("comXtrycuaXdriverXlocal".to_owned()),
         ] {
             let entry = standalone_bundle_identity(bid.clone(), "/tmp/host".to_owned());
             assert_eq!(entry.status, CheckStatus::Fail);
@@ -537,9 +538,16 @@ mod tests {
             assert_eq!(data.executable_path.as_deref(), Some("/tmp/host"));
             assert_eq!(data.identity_source.as_deref(), Some("current_process"));
         }
-        let entry = standalone_bundle_identity(Some(CANONICAL_BUNDLE_ID.to_owned()), String::new());
-        assert_eq!(entry.status, CheckStatus::Pass);
-        assert!(entry.hint.is_none());
+        for bundle_id in [CANONICAL_BUNDLE_ID, LOCAL_BUNDLE_ID] {
+            let entry = standalone_bundle_identity(Some(bundle_id.to_owned()), String::new());
+            assert_eq!(entry.status, CheckStatus::Pass);
+            assert_eq!(entry.message, format!("Bundle is {bundle_id}."));
+            assert_eq!(
+                entry.data.unwrap().bundle_identifier.as_deref(),
+                Some(bundle_id)
+            );
+            assert!(entry.hint.is_none());
+        }
         assert!(wrong_hints.is_empty(), "{}", wrong_hints.join("\n"));
     }
 

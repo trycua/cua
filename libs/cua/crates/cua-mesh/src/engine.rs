@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -61,6 +61,116 @@ impl std::fmt::Display for Path {
             Path::Relay => f.write_str("relay"),
         }
     }
+}
+
+/// Which path traffic to a peer should take (`cua mesh status --prefer`,
+/// `CUA_MESH_PREFER`).
+///
+/// - `auto` (the default): the fastest answering direct path (the local
+///   network or across the internet), the relay while none answers;
+/// - `lan`: a path on the local network whenever one answers, even when a
+///   path across the internet is faster; otherwise as `auto`;
+/// - `direct`: as `auto` (direct first, the relay only while no direct path
+///   answers), named so a pin reads plainly;
+/// - `relay`: the relay always (end-to-end encrypted all the same).
+///
+/// Whatever the pin, traffic never stops: a pinned path that goes away
+/// falls back to the next one, and comes back when it answers again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Prefer {
+    /// Fastest first.
+    #[default]
+    Auto,
+    /// The local network first.
+    Lan,
+    /// Direct first.
+    Direct,
+    /// The relay only.
+    Relay,
+}
+
+impl Prefer {
+    /// The environment variable that sets the pin at start.
+    pub const ENV: &'static str = "CUA_MESH_PREFER";
+
+    /// Its word.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Prefer::Auto => "auto",
+            Prefer::Lan => "lan",
+            Prefer::Direct => "direct",
+            Prefer::Relay => "relay",
+        }
+    }
+
+    /// Parses its word.
+    pub fn parse(word: &str) -> Option<Prefer> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Some(Prefer::Auto),
+            "lan" | "local" => Some(Prefer::Lan),
+            "direct" => Some(Prefer::Direct),
+            "relay" => Some(Prefer::Relay),
+            _ => None,
+        }
+    }
+
+    /// `CUA_MESH_PREFER`, else auto.
+    pub fn from_env() -> Prefer {
+        std::env::var(Self::ENV)
+            .ok()
+            .and_then(|v| Prefer::parse(&v))
+            .unwrap_or_default()
+    }
+
+    fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    fn from_u8(v: u8) -> Prefer {
+        match v {
+            1 => Prefer::Lan,
+            2 => Prefer::Direct,
+            3 => Prefer::Relay,
+            _ => Prefer::Auto,
+        }
+    }
+}
+
+/// An endpoint on the local network: a private, link-local or unique-local
+/// address (the two machines see each other without the internet).
+pub fn is_lan(addr: &SocketAddr) -> bool {
+    match addr.ip() {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => {
+            let s = v6.segments()[0];
+            (s & 0xfe00) == 0xfc00 || (s & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// Whether a pong from `new` (round trip `rtt`) should replace the current
+/// best direct path `best` (round trip `brtt`), given the pin. `stale`: the
+/// current path missed its last round or a ping went unanswered.
+pub(crate) fn should_switch(
+    prefer: Prefer,
+    best: SocketAddr,
+    brtt: Duration,
+    new: SocketAddr,
+    rtt: Duration,
+    stale: bool,
+) -> bool {
+    if stale {
+        return true;
+    }
+    if prefer == Prefer::Lan {
+        match (is_lan(&best), is_lan(&new)) {
+            (false, true) => return true,
+            (true, false) => return false,
+            _ => {}
+        }
+    }
+    rtt.as_secs_f64() < brtt.as_secs_f64() * 0.8
 }
 
 #[derive(Debug, Default)]
@@ -180,6 +290,8 @@ pub(crate) struct Engine {
     disco_kick: Notify,
     /// Never use direct paths (tests and `CUA_MESH_RELAY_ONLY`).
     relay_only: AtomicBool,
+    /// [`Prefer`], as its `u8`.
+    prefer: AtomicU8,
     peers_changed: tokio::sync::watch::Sender<u64>,
 }
 
@@ -205,6 +317,7 @@ impl Engine {
             local_endpoints: RwLock::new(Vec::new()),
             disco_kick: Notify::new(),
             relay_only: AtomicBool::new(relay_only),
+            prefer: AtomicU8::new(Prefer::Auto.to_u8()),
             peers_changed,
         });
         let out: Arc<dyn Outbound> = engine.clone();
@@ -291,6 +404,29 @@ impl Engine {
         if on {
             self.forget_paths();
         }
+    }
+
+    /// The path pin ([`Prefer`]).
+    pub(crate) fn prefer(&self) -> Prefer {
+        Prefer::from_u8(self.prefer.load(Ordering::Relaxed))
+    }
+
+    /// Pins the path: `relay` keeps traffic on the relay; leaving it lets
+    /// discovery find direct paths again; any change re-selects at once.
+    pub(crate) fn set_prefer(&self, prefer: Prefer) {
+        let was = self.prefer();
+        self.prefer.store(prefer.to_u8(), Ordering::SeqCst);
+        if prefer == Prefer::Relay {
+            self.set_relay_only(true);
+        } else if was == Prefer::Relay {
+            self.relay_only.store(false, Ordering::SeqCst);
+        }
+        self.forget_paths();
+    }
+
+    /// Whether relay-only is on (a pin or `CUA_MESH_RELAY_ONLY`).
+    pub(crate) fn relay_only(&self) -> bool {
+        self.relay_only.load(Ordering::Relaxed)
     }
 
     pub(crate) fn set_local_endpoints(&self, endpoints: Vec<SocketAddr>) {
@@ -673,14 +809,15 @@ impl Engine {
                         // The current path leaves a ping unanswered well past
                         // its round trip (the peer moved: a new NAT mapping
                         // or network), it missed its last ping round, or
-                        // this one is clearly faster.
+                        // this one is clearly faster (or on the local
+                        // network, when pinned to it).
                         let overdue = brtt * 2 + Duration::from_millis(100);
                         let best_silent = ps.pending.values().any(|(a, t)| {
                             *a == best && *t > at && now.duration_since(*t) > overdue
                         });
-                        best_silent
-                            || now.duration_since(at) > PING_INTERVAL + Duration::from_secs(1)
-                            || rtt.as_secs_f64() < brtt.as_secs_f64() * 0.8
+                        let stale = best_silent
+                            || now.duration_since(at) > PING_INTERVAL + Duration::from_secs(1);
+                        should_switch(self.prefer(), best, brtt, addr, rtt, stale)
                     }
                 };
                 if switch {
@@ -984,5 +1121,60 @@ async fn maintenance(engine: std::sync::Weak<Engine>) {
         e.timers();
         e.reselect();
         e.discover();
+    }
+}
+
+#[cfg(test)]
+mod prefer_tests {
+    use super::*;
+
+    fn a(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn local_network_endpoints_are_lan() {
+        assert!(is_lan(&a("192.168.1.4:41641")));
+        assert!(is_lan(&a("10.0.0.2:1")));
+        assert!(is_lan(&a("169.254.3.3:1")));
+        assert!(is_lan(&a("[fd00::1]:1")));
+        assert!(is_lan(&a("[fe80::1]:1")));
+        assert!(!is_lan(&a("203.0.113.9:41641")));
+        assert!(!is_lan(&a("[2001:db8::1]:1")));
+    }
+
+    #[test]
+    fn auto_takes_the_clearly_faster_path() {
+        let ms = Duration::from_millis;
+        let lan = a("192.168.1.4:1");
+        let wan = a("203.0.113.9:1");
+        assert!(should_switch(Prefer::Auto, lan, ms(10), wan, ms(5), false));
+        assert!(!should_switch(Prefer::Auto, lan, ms(10), wan, ms(9), false));
+        assert!(
+            should_switch(Prefer::Auto, lan, ms(1), wan, ms(50), true),
+            "stale moves on"
+        );
+    }
+
+    #[test]
+    fn a_lan_pin_keeps_the_local_network_unless_it_goes_away() {
+        let ms = Duration::from_millis;
+        let lan = a("192.168.1.4:1");
+        let wan = a("203.0.113.9:1");
+        assert!(!should_switch(Prefer::Lan, lan, ms(10), wan, ms(1), false));
+        assert!(should_switch(Prefer::Lan, wan, ms(1), lan, ms(10), false));
+        assert!(
+            should_switch(Prefer::Lan, lan, ms(10), wan, ms(1), true),
+            "never stuck"
+        );
+    }
+
+    #[test]
+    fn prefer_words_round_trip() {
+        for p in [Prefer::Auto, Prefer::Lan, Prefer::Direct, Prefer::Relay] {
+            assert_eq!(Prefer::parse(p.as_str()), Some(p));
+            assert_eq!(Prefer::from_u8(p.to_u8()), p);
+        }
+        assert_eq!(Prefer::parse("nope"), None);
     }
 }

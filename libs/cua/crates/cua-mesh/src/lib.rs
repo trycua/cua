@@ -50,7 +50,7 @@ pub mod vnet;
 pub mod testing;
 
 pub use coord::{AuthFuture, AuthProvider, ControlState, PairVerifier};
-pub use engine::Path;
+pub use engine::{Path, Prefer};
 pub use key::{NodeIdentity, PublicKey, SecretKey};
 pub use node::{Forward, IncomingStream, MEDIA_UDP_PORT, Mesh, MeshConfig, PeerStatus, Status};
 pub use policy::Policy;

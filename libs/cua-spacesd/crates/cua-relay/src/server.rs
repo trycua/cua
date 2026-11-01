@@ -868,6 +868,23 @@ impl Relay {
         }
     }
 
+    /// Settle overlapping upgrades where the machine joins the registry.
+    fn insert_machine(&self, machine: Arc<Machine>) -> (Option<Arc<Machine>>, bool) {
+        let mut machines = self.machines.lock().expect("machines");
+        // Generation allocation can precede this lock in a different order.
+        // Admit against occupied slots, excluding the session being replaced.
+        let over_limit = matches!(machine.registrant, Registrant::Static(_))
+            && machines
+                .values()
+                .filter(|m| m.registrant == machine.registrant && m.id != machine.id)
+                .count()
+                >= self.config.max_machines_per_token;
+        if over_limit {
+            return (None, true);
+        }
+        (machines.insert(machine.id.clone(), machine), false)
+    }
+
     /// Connected machine ids.
     pub fn machine_ids(&self) -> Vec<String> {
         let mut ids: Vec<_> = self
@@ -1316,30 +1333,7 @@ async fn machine_connect_inner(
                 user_cuts: Mutex::default(),
                 clients: Mutex::default(),
             });
-            // The limit was checked before the upgrade, and joins that arrive together all
-            // pass it. Settle it here, where the machine is added: the oldest sessions of a
-            // token keep their places, a newer one over the limit is dropped (it retries).
-            let (replaced, over_limit) = {
-                let mut machines = relay.machines.lock().expect("machines");
-                let mut replaced = machines.insert(id.clone(), machine.clone());
-                let over_limit = matches!(machine.registrant, Registrant::Static(_)) && {
-                    let mut same: Vec<u64> = machines
-                        .values()
-                        .filter(|m| m.registrant == machine.registrant)
-                        .map(|m| m.generation)
-                        .collect();
-                    same.sort_unstable();
-                    same.iter().position(|g| *g == generation).unwrap_or(0)
-                        >= relay.config.max_machines_per_token
-                };
-                if over_limit {
-                    machines.remove(&id);
-                    if let Some(old) = replaced.take() {
-                        machines.insert(id.clone(), old);
-                    }
-                }
-                (replaced, over_limit)
-            };
+            let (replaced, over_limit) = relay.insert_machine(machine.clone());
             if over_limit {
                 tracing::info!(machine = %id, "computer limit for this token reached");
                 driver.abort();
@@ -2781,6 +2775,89 @@ impl http_body::Body for GuardedBody {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pending_machine(id: &str, generation: u64) -> (Arc<Machine>, tokio::io::DuplexStream) {
+        use tokio_util::compat::TokioAsyncReadCompatExt as _;
+
+        let (io, peer) = tokio::io::duplex(1024);
+        let (inbound, _received) = mpsc::channel(1);
+        let (handle, driver) = mux::spawn(
+            io.compat(),
+            yamux::Mode::Client,
+            inbound,
+            mux::MAX_STREAMS,
+            mux::DEFAULT_WINDOW_BYTES,
+        );
+        (
+            Arc::new(Machine {
+                id: id.into(),
+                registrant: Registrant::Static(0),
+                version: String::new(),
+                connected_at: SystemTime::now(),
+                generation,
+                handle,
+                counters: Arc::default(),
+                active: AtomicU32::new(0),
+                last_heartbeat: Mutex::new(Instant::now()),
+                abort: driver.abort_handle(),
+                clients_cut: Mutex::default(),
+                user_cuts: Mutex::default(),
+                clients: Mutex::default(),
+            }),
+            peer,
+        )
+    }
+
+    #[tokio::test]
+    async fn machine_limit_is_independent_of_generation_order() {
+        let relay = Relay::new(RelayConfig {
+            max_machines_per_token: 2,
+            ..RelayConfig::default()
+        });
+        let (first, _first_peer) = pending_machine("aaaaaaaaaaaaaaaa", 2);
+        let (second, _second_peer) = pending_machine("bbbbbbbbbbbbbbbb", 3);
+        let (late, _late_peer) = pending_machine("cccccccccccccccc", 1);
+        assert!(!relay.insert_machine(first).1);
+        assert!(!relay.insert_machine(second).1);
+
+        // Its generation was allocated first, but it reached the registry last.
+        let (replaced, over_limit) = relay.insert_machine(late);
+        assert!(
+            over_limit,
+            "an earlier generation must not add a third slot: {:?}",
+            relay.machine_ids()
+        );
+        assert!(replaced.is_none());
+        assert_eq!(
+            relay.machine_ids(),
+            ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"]
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnecting_machine_replaces_its_slot_at_capacity() {
+        let relay = Relay::new(RelayConfig {
+            max_machines_per_token: 2,
+            ..RelayConfig::default()
+        });
+        let (first, _first_peer) = pending_machine("aaaaaaaaaaaaaaaa", 1);
+        let (second, _second_peer) = pending_machine("bbbbbbbbbbbbbbbb", 2);
+        let (replacement, _replacement_peer) = pending_machine("aaaaaaaaaaaaaaaa", 3);
+        assert!(!relay.insert_machine(first.clone()).1);
+        assert!(!relay.insert_machine(second).1);
+
+        let (replaced, over_limit) = relay.insert_machine(replacement.clone());
+        assert!(!over_limit);
+        assert!(Arc::ptr_eq(&replaced.expect("previous session"), &first));
+        assert!(Arc::ptr_eq(
+            &relay.machine(&replacement.id).unwrap(),
+            &replacement
+        ));
+        assert_eq!(
+            relay.machine_ids(),
+            ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"]
+        );
+    }
 
     fn relay(domain: Option<&str>) -> Relay {
         Relay::new(RelayConfig {

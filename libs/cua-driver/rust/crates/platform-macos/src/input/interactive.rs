@@ -374,7 +374,7 @@ impl NativeInputState {
     }
 
     fn key(&self, key: &str, state: KeyState, modifiers: &[Modifier], repeat: bool) -> Result<()> {
-        let key_code = super::keyboard::key_name_to_code(key)
+        let key_code = interactive_key_code(key)
             .map_err(|error| InteractiveInputError::InvalidBatch(error.to_string()))?;
         let event =
             CGEvent::new_keyboard_event(self.source.clone(), key_code, state == KeyState::Down)
@@ -644,6 +644,19 @@ extern "C" {
     fn CGEventSetLocation(event: *mut std::ffi::c_void, x: f64, y: f64);
 }
 
+/// Key code for a key name sent by a viewer.
+///
+/// The tool key table treats `delete` as Backspace, which is right for an
+/// agent's `press_key`. A person's live keystrokes arrive with the DOM key
+/// names, where `Delete` is forward delete and `Backspace` is its own key, so
+/// `delete` resolves to the forward-delete key here.
+fn interactive_key_code(key: &str) -> anyhow::Result<u16> {
+    if key.trim().eq_ignore_ascii_case("delete") {
+        return super::keyboard::key_name_to_code("forward_delete");
+    }
+    super::keyboard::key_name_to_code(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -679,6 +692,14 @@ mod tests {
             state.prepare_target().is_ok(),
             "a display activates nothing"
         );
+    }
+
+    #[test]
+    fn a_viewers_delete_key_is_forward_delete_and_backspace_stays_backspace() {
+        assert_eq!(interactive_key_code("delete").unwrap(), 117);
+        assert_eq!(interactive_key_code("Delete").unwrap(), 117);
+        assert_eq!(interactive_key_code("backspace").unwrap(), 51);
+        assert_eq!(interactive_key_code("enter").unwrap(), 36);
     }
 
     #[test]

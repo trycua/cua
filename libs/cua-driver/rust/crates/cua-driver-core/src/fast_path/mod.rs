@@ -21,9 +21,18 @@ pub mod pixel_guard;
 pub mod reason;
 pub mod store;
 pub mod window;
+#[cfg(not(fast_path_standalone))]
+pub mod wire;
 
 #[cfg(test)]
 mod race_tests;
+
+/// Serialises tests that change the daemon-wide mode.
+#[cfg(test)]
+pub(crate) fn tests_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 use std::sync::atomic::{AtomicU8, Ordering};
 

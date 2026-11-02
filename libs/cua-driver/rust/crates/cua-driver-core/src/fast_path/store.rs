@@ -93,6 +93,32 @@ impl GuardStore {
             .map(|f| (f.element_count, f.thin_frames))
     }
 
+    /// The smallest element of the window's latest snapshot whose read-time
+    /// frame contains the screen point: what the agent saw there.
+    pub fn element_at(
+        &self,
+        pid: i32,
+        window_id: u64,
+        x: f64,
+        y: f64,
+    ) -> Option<ElementFingerprint> {
+        let s = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let snap = s
+            .snapshot_order
+            .iter()
+            .rev()
+            .filter_map(|id| s.snapshots.get(id))
+            .find(|f| f.pid == pid && f.window_id == window_id)?;
+        snap.elements
+            .iter()
+            .filter(|fp| fp.frame.is_some_and(|f| f.contains(x, y) && f.area() > 0.0))
+            .min_by(|a, b| {
+                let (a, b) = (a.frame.unwrap().area(), b.frame.unwrap().area());
+                a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .cloned()
+    }
+
     pub fn put_window(&self, pid: i32, window: WindowFingerprint) {
         let mut s = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         s.windows.insert((pid, window.window_id), window);
@@ -180,6 +206,36 @@ mod tests {
         assert_eq!(store.element(10, 0).unwrap().2.role, "r10");
         assert!(store.element(10, 1).is_none());
         assert_eq!(store.latest_stats(1, 2), Some((1, 0)));
+    }
+
+    #[test]
+    fn element_at_picks_the_smallest_containing_frame() {
+        let store = GuardStore::new();
+        let el = |role: &str, f: Rect| ElementFingerprint {
+            role: role.into(),
+            frame: Some(f),
+            ..Default::default()
+        };
+        store.put_snapshot(
+            1,
+            SnapshotFingerprints {
+                pid: 1,
+                window_id: 2,
+                elements: vec![
+                    el("AXGroup", Rect::new(0.0, 0.0, 500.0, 500.0)),
+                    el("AXButton", Rect::new(10.0, 10.0, 80.0, 24.0)),
+                ],
+                element_count: 2,
+                thin_frames: 0,
+            },
+        );
+        assert_eq!(store.element_at(1, 2, 20.0, 20.0).unwrap().role, "AXButton");
+        assert_eq!(
+            store.element_at(1, 2, 300.0, 300.0).unwrap().role,
+            "AXGroup"
+        );
+        assert!(store.element_at(1, 2, 900.0, 900.0).is_none());
+        assert!(store.element_at(1, 3, 20.0, 20.0).is_none());
     }
 
     #[test]

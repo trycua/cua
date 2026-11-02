@@ -678,7 +678,7 @@ impl Persistent {
             // as the agent, not as the person who signed in).
             "member_credential": {"member_id": member_id, "key": key},
             "next_steps": format!(
-                "You joined {} as @{}.{} {}",
+                "You joined {} as @{}.{} {} {} {}",
                 self.space_name(&code.space),
                 rec.name,
                 if ask {
@@ -686,7 +686,9 @@ impl Persistent {
                 } else {
                     ""
                 },
-                cua_spaces_contract::JOIN_NEXT_STEPS
+                cua_spaces_contract::JOIN_NEXT_STEPS,
+                cua_spaces_contract::LONG_WORK_STEPS,
+                cua_spaces_contract::COORDINATION_STEPS
             ),
         }))
     }

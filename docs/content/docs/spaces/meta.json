@@ -35,6 +35,7 @@
     "guides/keep-an-agent-running",
     "guides/child-spaces",
     "guides/keep-a-command-running",
+    "guides/long-running-jobs",
     "---Keep it working---",
     "guides/troubleshoot",
     "guides/experiments",

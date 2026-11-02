@@ -122,6 +122,17 @@
       "metering": "free"
     },
     {
+      "tool": "space_job",
+      "sdk_symbol": "Space::job",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
       "tool": "space_write",
       "sdk_symbol": "Space::write_text",
       "providers": [

@@ -363,6 +363,7 @@ Run shell commands and move files in and out of a Space.
 | Tool | Description |
 | --- | --- |
 | [`space_bash`](#space_bash) | Run a shell command inside the Space. |
+| [`space_job`](#space_job) | Run a long command in the Space as a background job: tail its log, cancel it, or get woken when it ends. |
 | [`space_write`](#space_write) | Write literal text to a path inside the Space. |
 | [`upload`](#upload) | Send a local file or folder into the Space. |
 | [`send_file`](#send_file) | Send a host file or folder into the Space's Downloads, verified by sha256 on arrival. |
@@ -398,6 +399,58 @@ Text: stdout, then `[stderr]` and stderr, then `[exit N]`.
 #### Errors
 
 [`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`timeout`](/spaces/reference#timeout)
+
+### space_job
+
+Run a long command in the Space as a background job: tail its log, cancel it, or get woken when it ends.
+
+Use this instead of space_bash for anything that takes more than a minute (builds, test suites, installs, waiting on CI). `start` returns a job id at once and the command keeps running when you stop, disconnect, or the Space's daemon restarts. Read it with `logs` (pass the returned `next_offset` as `offset` to read on; `follow_ms` waits for output) or `status`; stop it with `cancel`; `list` shows the Space's jobs. Pass `notify: true` to be woken: the Space's thread gets one message `JOB <id> <state> exit=<n> ...` with the end of the log, and as an agent member you receive it as your next turn, so you can end your turn instead of polling. `until` makes a job that waits for a file, a port, a command or a pull request's required checks; its end is the condition. Output is stdout and stderr together. Linux and macOS guests.
+
+| | |
+| --- | --- |
+| Providers | all (cloud, local, direct, relay) |
+| Platforms | all (macos, windows, linux) |
+| Metering | free |
+| Approval | permission `spaces:space_job`; destructive |
+| Swift SDK | `Space.job(_:)` |
+| Rust | `Space::job` |
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `action` | `string` | required | `start` (begin a job), `status` (state and the end of its log), `logs` (read the log from a byte offset), `cancel` (stop it) or `list` (this Space's jobs, newest first). |
+| `command` | `string` | none | `start`: the command line, run with `/bin/sh -c` in the background. It keeps running when you or your connection go away. Give this or `until`. |
+| `cwd` | `string` | none | `start`: the directory to run in. Default: the Space user's home. |
+| `env` | `map of string` | none | `start`: environment variables for the command. |
+| `follow_ms` | `integer` | `0` | `logs`: when there is nothing new after `offset` and the job is running, wait up to this many milliseconds (at most 25000) for output or for the job to end. Default 0. At least 0. |
+| `job` | `string` | none | `status`, `logs`, `cancel`: the job id `start` returned. |
+| `limit` | `integer` | none | `logs`: most bytes to return (default 16000, at most 262144). At least 0. |
+| `name` | `string` | none | `start`: a short label for the job ("unit tests"), shown in listings and in the message that wakes you. |
+| `notify` | `boolean` | `false` | `start`: wake me when the job ends. The Space's thread gets one message with the job's result and the end of its log, addressed to you when you are an agent member of the Space (so you can finish your turn and sleep), and the person gets a notification. Default false. |
+| `offset` | `integer` | none | `logs`: the byte offset to read from (the `next_offset` of the previous call). Without it: the last `limit` bytes. At least 0. |
+| `space` | `string` | required | Space id or name. |
+| `timeout` | `integer` | none | `start`: seconds before the job is stopped. Default: none. At least 0. |
+| `until` | `object` | none | `start`: wait for a condition instead of running `command`. The job ends when the condition holds (exit 0), or after `timeout`. |
+| `until.command` | `string` | none | Wait for this shell command to exit 0. |
+| `until.file` | `string` | none | Wait for this path to exist in the Space. |
+| `until.host` | `string` | `127.0` | With `port`: the host. Default 127.0.0.1. |
+| `until.interval` | `integer` | `5` | Seconds between checks (1 to 300). Default 5 (30 for `pr_checks`). At least 0. |
+| `until.port` | `integer` | none | Wait for this TCP port to accept connections (on `host`, default 127.0.0.1). 0 to 65535. |
+| `until.pr_checks` | `string` | none | Wait for a GitHub pull request's required checks to finish with `gh` (signed in inside the Space): a number, a URL or `owner/repo#123`. The job exits 0 when they pass and 1 when one fails. |
+| `wake` | `string` | none | `start` with `notify`: the agent member to wake instead of you. |
+
+#### Result
+
+JSON. `start`: `job`, `state`, `log_command` and a `hint`. `status`, `logs`: `job`, `name`, `state` (`running`, `exited`, `cancelled`, `timed_out` or `lost`), `exit_code`, `signal`, `started_at` and `ended_at` (unix seconds), `elapsed_s`, `size` (log bytes), and for `logs` `offset`, `next_offset`, `text` and `more`. `cancel`: the final status. `list`: `jobs`.
+
+#### Errors
+
+[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`wrong_provider`](/spaces/reference#wrong_provider)
+
+#### Notes
+
+- A job is a command that outlives the call, the connection and a restart of the Space's daemon; its state is files in the Space (`~/.cua/jobs/<id>`). Guests that are not Windows.
 
 ### space_write
 

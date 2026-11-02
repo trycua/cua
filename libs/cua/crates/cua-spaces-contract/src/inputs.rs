@@ -304,6 +304,90 @@ pub struct SpaceBash {
     pub timeout: Option<u64>,
 }
 
+/// `space_job`: run a long command in the Space as a background job.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SpaceJob {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// `start` (begin a job), `status` (state and the end of its log),
+    /// `logs` (read the log from a byte offset), `cancel` (stop it) or
+    /// `list` (this Space's jobs, newest first).
+    pub action: String,
+    /// `start`: the command line, run with `/bin/sh -c` in the background. It
+    /// keeps running when you or your connection go away. Give this or
+    /// `until`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// `status`, `logs`, `cancel`: the job id `start` returned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
+    /// `start`: a short label for the job ("unit tests"), shown in listings
+    /// and in the message that wakes you.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `start`: the directory to run in. Default: the Space user's home.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// `start`: environment variables for the command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<BTreeMap<String, String>>,
+    /// `start`: seconds before the job is stopped. Default: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+    /// `start`: wait for a condition instead of running `command`. The job
+    /// ends when the condition holds (exit 0), or after `timeout`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<JobUntil>,
+    /// `start`: wake me when the job ends. The Space's thread gets one
+    /// message with the job's result and the end of its log, addressed to
+    /// you when you are an agent member of the Space (so you can finish your
+    /// turn and sleep), and the person gets a notification. Default false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify: Option<bool>,
+    /// `start` with `notify`: the agent member to wake instead of you.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake: Option<String>,
+    /// `logs`: the byte offset to read from (the `next_offset` of the
+    /// previous call). Without it: the last `limit` bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
+    /// `logs`: most bytes to return (default 16000, at most 262144).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+    /// `logs`: when there is nothing new after `offset` and the job is
+    /// running, wait up to this many milliseconds (at most 25000) for output
+    /// or for the job to end. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_ms: Option<u64>,
+}
+
+/// A condition a `space_job` waits for. Give exactly one of `file`, `port`,
+/// `command` or `pr_checks`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct JobUntil {
+    /// Wait for this path to exist in the Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Wait for this TCP port to accept connections (on `host`, default
+    /// 127.0.0.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// With `port`: the host. Default 127.0.0.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// Wait for this shell command to exit 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Wait for a GitHub pull request's required checks to finish with `gh`
+    /// (signed in inside the Space): a number, a URL or `owner/repo#123`.
+    /// The job exits 0 when they pass and 1 when one fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_checks: Option<String>,
+    /// Seconds between checks (1 to 300). Default 5 (30 for `pr_checks`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<u64>,
+}
+
 /// `space_write`: write literal text to a file in the Space.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SpaceWrite {

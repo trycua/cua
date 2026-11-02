@@ -13,6 +13,10 @@ cua-daemon = { path = "../../../libs/cua/crates/cua-daemon", default-features = 
 cua-sandbox-core = { path = "../../../libs/cua/crates/cua-sandbox-core" }
 # builtin_linux.rs creates a Space through the Spaces SDK the apps use.
 cua-spaces = { path = "../../../libs/cua/crates/cua-spaces" }
+cua-spaces-contract = { path = "../../../libs/cua/crates/cua-spaces-contract" }
+# space_jobs.rs: the daemon side wakes an agent when a job ends.
+cua-spaces-ext = { path = "../../../libs/cua/crates/cua-spaces-ext" }
+cua-volume = { path = "../../../libs/cua/crates/cua-volume" }
 # microvm.rs checks cua-spacesd accepts the Space's token.
 cua-spacesd-client = { path = "../../../libs/cua/crates/cua-spacesd-client" }
 base64 = "0.22"

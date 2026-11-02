@@ -690,6 +690,15 @@ async fn dispatch(
             let s = space_for(spaces, tool, &a.space).await?;
             Ok(ToolOutcome::json(&space_service(&s, a).await?))
         }
+        "space_job" => {
+            let a: i::SpaceJob = args(tool, a)?;
+            let s = space_for(spaces, tool, &a.space).await?;
+            let mut out = s.job(&a).await?;
+            if a.action == "start" && a.notify.unwrap_or(false) {
+                out["notify"] = crate::space_jobs::watch(spaces, &s, &out, &a).await;
+            }
+            Ok(json_of(&out))
+        }
         "space_write" => {
             let a: i::SpaceWrite = args(tool, a)?;
             let s = space_for(spaces, tool, &a.space).await?;

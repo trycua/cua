@@ -30,8 +30,6 @@ Full entries: [Space lifecycle](/spaces/reference/spaces#space-lifecycle).
 | <span id="remove_space"></span>[`remove_space`](/spaces/reference/spaces#remove_space) | Forget a registered Space without touching it. |
 | <span id="list_spaces"></span>[`list_spaces`](/spaces/reference/spaces#list_spaces) | List the Spaces this connection can see. |
 | <span id="create_space"></span>[`create_space`](/spaces/reference/spaces#create_space) | Create a Space: a new sandbox on this computer, on one of your computers, or in the cloud. |
-| <span id="network_show"></span>[`network_show`](/spaces/reference/spaces#network_show) | Show a Space's network: preset, what it opens, where it is enforced, what is always blocked. |
-| <span id="network_set"></span>[`network_set`](/spaces/reference/spaces#network_set) | Tighten a Space's network: internet, none or custom lists. |
 | <span id="delete_space"></span>[`delete_space`](/spaces/reference/spaces#delete_space) | Delete a Space's sandbox and forget it. |
 | <span id="stop_space"></span>[`stop_space`](/spaces/reference/spaces#stop_space) | Turn a Space off: stop it (disk kept, memory freed) or, with suspend, suspend it (memory kept). |
 | <span id="resize_space"></span>[`resize_space`](/spaces/reference/spaces#resize_space) | Change a Space's vCPUs, memory or disk size. |
@@ -44,6 +42,7 @@ Full entries: [Commands and files](/spaces/reference/spaces#commands-and-files).
 | Tool | Description |
 | --- | --- |
 | <span id="space_bash"></span>[`space_bash`](/spaces/reference/spaces#space_bash) | Run a shell command inside the Space. |
+| <span id="space_job"></span>[`space_job`](/spaces/reference/spaces#space_job) | Run a long command in the Space as a background job: tail its log, cancel it, or get woken when it ends. |
 | <span id="space_write"></span>[`space_write`](/spaces/reference/spaces#space_write) | Write literal text to a path inside the Space. |
 | <span id="upload"></span>[`upload`](/spaces/reference/spaces#upload) | Send a local file or folder into the Space. |
 | <span id="send_file"></span>[`send_file`](/spaces/reference/spaces#send_file) | Send a host file or folder into the Space's Downloads, verified by sha256 on arrival. |
@@ -70,7 +69,6 @@ Full entries: [Services](/spaces/reference/spaces#services).
 | --- | --- |
 | <span id="list_tools"></span>[`list_tools`](/spaces/reference/spaces#list_tools) | List the MCP services and tools reachable inside the Space. |
 | <span id="call_tool"></span>[`call_tool`](/spaces/reference/spaces#call_tool) | Call a service tool inside the Space. |
-| <span id="space_service"></span>[`space_service`](/spaces/reference/spaces#space_service) | Keep a command running in the Space: restarts, health checks, start on boot, logs. |
 
 ### Agents
 
@@ -1219,5 +1217,5 @@ Tools are gated by `--permissions` (or `CUA_MCP_PERMISSIONS`), a comma-separated
 | `sandbox:all` | 11 permissions | `sandbox:list`, `sandbox:get` |
 | `share:all` | `share:create`, `share:read`, `share:stop` | `share:read` |
 | `skills:all` | `skills:list`, `skills:read`, `skills:record`, `skills:delete` | `skills:list`, `skills:read` |
-| `spaces:all` | 116 permissions | 37 permissions |
+| `spaces:all` | 114 permissions | 36 permissions |
 | `teleport:all` | `teleport:browser` | none |

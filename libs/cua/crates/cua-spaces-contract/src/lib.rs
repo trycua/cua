@@ -679,6 +679,8 @@ impl Spec {
     }
 }
 
+const SPACE_JOB_INSTRUCTIONS: &str = "Use this instead of space_bash for anything that takes more than a minute (builds, test suites, installs, waiting on CI). `start` returns a job id at once and the command keeps running when you stop, disconnect, or the Space's daemon restarts. Read it with `logs` (pass the returned `next_offset` as `offset` to read on; `follow_ms` waits for output) or `status`; stop it with `cancel`; `list` shows the Space's jobs. Pass `notify: true` to be woken: the Space's thread gets one message `JOB <id> <state> exit=<n> ...` with the end of the log, and as an agent member you receive it as your next turn, so you can end your turn instead of polling. `until` makes a job that waits for a file, a port, a command or a pull request's required checks; its end is the condition. Output is stdout and stderr together. Linux and macOS guests.";
+
 const SEND_FILE_INSTRUCTIONS: &str = "The same transfer the Cua Spaces pop-out's Teleport drop zone performs: files land in the Space user's ~/Downloads through the spacesd's TeleportService (chunked, resumable, every file verified by sha256 before it is published). A transfer that does not land, or lands corrupted, is an error and not a reported success.\n\nrespect_ignorefiles (default true) applies ONLY when `path` is a folder. It honors `.gitignore` and `.ignore` at the folder root and in every subdirectory (each scoped to its own subtree, so a nested ignore file overrides its parent), plus `.dockerignore` at the root only. All three use gitignore semantics: negation (`!`), directory-only patterns (`foo/`), anchoring, `*`/`?`/`[...]`, `**`, comments, last-matching-rule-wins. As in git, an excluded directory is pruned and `!` cannot re-include anything beneath it. `.git/` is always skipped and symlinks are never followed. For a single named file it has NO effect.";
 
 const LIST_TOOLS_INSTRUCTIONS: &str = "Lists the tools of an MCP service INSIDE the Space. `service` is any service the Space declares (an MCP server the image runs, reached over streamable HTTP; no spacesd needed) or `driver`, the spacesd's own cua-driver registry (screenshot, click, type, launch apps, accessibility, ...). The default is `driver`, or the only declared service of a Space without spacesd. With no `name`, returns a scannable overview; pass name=<substring> for full input schemas. Then invoke them with call_tool. The reply names every service the Space exposes.";
@@ -695,6 +697,29 @@ macro_rules! join_next_steps {
         "Next steps, in this order: 1. Set your display name and icon now with thread_join. 2. Keep watching the thread with thread_inbox (wait_ms 25000) in a loop, so you receive what people in the Space send you; answer each task with thread_post and reply_to its seq. 3. Reply with thread_post as yourself (pass the member credential from thread_join_redeem as `_member` on each call, so it posts as the agent and not as the person who signed in) and never @mention yourself, because a message that @mentions you gives you a task. 4. If you cannot loop (a CLI session that only runs when someone prompts it), say so in your first post and stay reachable the supported way: a scheduled poll that runs thread_inbox, or a wake hook."
     };
 }
+
+/// How an agent does work that takes a long time, in plain words. One text
+/// for the agent bridge, the join line and the bundled skill, so every way an
+/// agent learns about `space_job` teaches the same steps.
+macro_rules! long_work_steps {
+    () => {
+        "Long work (a build, a test suite, a wait on CI): never sit inside one call. Start it with space_job (action start, notify true, a name of a few words), post one line in the thread saying what you started, then end your turn. When it ends the thread gets `JOB <id> <state> exit=<n> ...` with the end of the log, and you receive it as your next task; read more with space_job logs (offset: the next_offset you were given). If you cannot be woken, poll with space_job logs and follow_ms instead of sleeping in space_bash."
+    };
+}
+
+/// [`long_work_steps!`] as a constant.
+pub const LONG_WORK_STEPS: &str = long_work_steps!();
+
+/// How agents that share work coordinate through a Space's thread, in plain
+/// words (the same text as [`LONG_WORK_STEPS`]: bridge, join line, skill).
+macro_rules! coordination_steps {
+    () => {
+        "Working with other agents (a parent Space and its child Spaces, or any agents in one Space): 1. Before you start, thread_read and note what others have claimed. 2. Post `CLAIM <what> | files: <paths or branch> | until: <when>` for what you will change. Do not edit files or branches another agent's live CLAIM covers: @mention the owner and wait for the reply. 3. A claim is live until its `until` passes or its owner posts DONE or RELEASE; once it has expired you may take it, and you say so in the thread. 4. Report with one structured line: `DONE <what> | <result> | next: <step>` or `BLOCKED <what> | needs: <thing> | from @who`. 5. Keep messages short, one @mention per request, and never your own name."
+    };
+}
+
+/// [`coordination_steps!`] as a constant.
+pub const COORDINATION_STEPS: &str = coordination_steps!();
 
 /// [`join_next_steps!`] as a constant.
 pub const JOIN_NEXT_STEPS: &str = join_next_steps!();
@@ -881,6 +906,19 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("space_bash", "Run a shell command inside the Space.")
         }
         .with::<i::SpaceBash>(),
+        Spec {
+            category: Category::CommandsAndFiles,
+            result: "JSON. `start`: `job`, `state`, `log_command` and a `hint`. `status`, `logs`: `job`, `name`, `state` (`running`, `exited`, `cancelled`, `timed_out` or `lost`), `exit_code`, `signal`, `started_at` and `ended_at` (unix seconds), `elapsed_s`, `size` (log bytes), and for `logs` `offset`, `next_offset`, `text` and `more`. `cancel`: the final status. `list`: `jobs`.",
+            errors: &["not_found", "wrong_provider"],
+            instructions: SPACE_JOB_INSTRUCTIONS,
+            capabilities: &["space.exec", "space.exec.shell", "space.exec.jobs"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "Space.job(_:)",
+            rust_symbol: "Space::job",
+            notes: &["A job is a command that outlives the call, the connection and a restart of the Space's daemon; its state is files in the Space (`~/.cua/jobs/<id>`). Guests that are not Windows."],
+            ..Spec::new("space_job", "Run a long command in the Space as a background job: tail its log, cancel it, or get woken when it ends.")
+        }
+        .with::<i::SpaceJob>(),
         Spec {
             category: Category::CommandsAndFiles,
             result: "Text: `wrote <path> (<n> bytes, sha256 <hex> verified in Space)`.",
@@ -2300,7 +2338,55 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 117);
+        assert_eq!(tools().len(), 118);
+    }
+
+    #[test]
+    fn the_agent_texts_teach_the_structure_not_a_task() {
+        for word in [
+            "CLAIM",
+            "files:",
+            "until",
+            "DONE",
+            "BLOCKED",
+            "RELEASE",
+            "thread_read",
+        ] {
+            assert!(COORDINATION_STEPS.contains(word), "coordination: {word}");
+        }
+        for word in [
+            "space_job",
+            "notify true",
+            "JOB <id>",
+            "next_offset",
+            "end your turn",
+        ] {
+            assert!(LONG_WORK_STEPS.contains(word), "long work: {word}");
+        }
+        // The bundled skill carries the same words as the bridge and the join result.
+        let skill = include_str!("../../../skills/cua-spaces/SKILL.md");
+        assert!(
+            skill.contains(COORDINATION_STEPS),
+            "SKILL.md drifted from COORDINATION_STEPS"
+        );
+        assert!(
+            skill.contains(LONG_WORK_STEPS),
+            "SKILL.md drifted from LONG_WORK_STEPS"
+        );
+        // Examples are examples: no text names a tool chain or a project.
+        for text in [COORDINATION_STEPS, LONG_WORK_STEPS] {
+            for fixed in [
+                "cargo",
+                "npm",
+                "pytest",
+                "make ",
+                "gradle",
+                "pnpm",
+                "xcodebuild",
+            ] {
+                assert!(!text.contains(fixed), "{fixed} is a task, not the protocol");
+            }
+        }
     }
 
     #[test]

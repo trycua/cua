@@ -67,6 +67,11 @@ pub struct LaunchConfig {
     pub restrict_network: bool,
     pub vnc_display: Option<u16>,
     pub qmp_port: u16,
+    /// QMP on this chardev instead of `qmp_port`: `unix:<path>` or
+    /// `pipe:<name>` (Windows).
+    pub qmp_listen: Option<String>,
+    /// The display asks for a password (set over QMP once QEMU runs).
+    pub vnc_password: bool,
     pub serial_log: Option<PathBuf>,
     pub pidfile: Option<PathBuf>,
     pub daemonize: bool,
@@ -352,10 +357,12 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
 
     // Management.
     let mut push = |xs: &[&str]| a.extend(xs.iter().map(|s| s.to_string()));
-    push(&[
-        "-qmp",
-        &format!("tcp:127.0.0.1:{},server=on,wait=off", cfg.qmp_port),
-    ]);
+    let qmp = match cfg.qmp_listen.as_deref() {
+        Some(a) if a.starts_with("pipe:") => a.to_string(),
+        Some(a) => format!("{a},server=on,wait=off"),
+        None => format!("tcp:127.0.0.1:{},server=on,wait=off", cfg.qmp_port),
+    };
+    push(&["-qmp", &qmp]);
     match &cfg.serial_log {
         Some(p) => push(&["-serial", &format!("file:{}", p.display())]),
         None => push(&["-serial", "none"]),
@@ -401,6 +408,7 @@ fn display(a: &mut Vec<String>, cfg: &LaunchConfig) {
         None => push(&["-display", "none"]),
     }
     match cfg.vnc_display {
+        Some(d) if cfg.vnc_password => push(&["-vnc", &format!("127.0.0.1:{d},password=on")]),
         Some(d) => push(&["-vnc", &format!("127.0.0.1:{d}")]),
         None => push(&["-vnc", "none"]),
     }
@@ -445,6 +453,8 @@ mod tests {
             restrict_network: false,
             vnc_display: Some(3),
             qmp_port: 4444,
+            qmp_listen: None,
+            vnc_password: false,
             serial_log: Some(PathBuf::from("/s/vm1/serial.log")),
             pidfile: Some(PathBuf::from("/s/vm1/qemu.pid")),
             daemonize: true,
@@ -456,6 +466,40 @@ mod tests {
             headless: false,
             bulk: None,
             extra: vec![],
+        }
+    }
+
+    /// Nothing the guest's user-mode network can reach through its host
+    /// alias (`10.0.2.2` is the host's loopback) controls QEMU: QMP is a
+    /// unix socket or named pipe, the display asks for a password, and no
+    /// monitor, chardev or debug stub listens on TCP. Only the guest's own
+    /// forwards do.
+    #[test]
+    fn no_control_channel_listens_on_tcp() {
+        for listen in ["unix:/s/vm1/qmp.sock", "pipe:cua-qmp-0123456789abcdef"] {
+            let mut c = cfg(Arch::X86_64, "kvm");
+            c.qmp_listen = Some(listen.into());
+            c.vnc_password = true;
+            let a = build(&c);
+            let qmp = a
+                .windows(2)
+                .find(|w| w[0] == "-qmp")
+                .map(|w| w[1].clone())
+                .unwrap();
+            assert!(qmp.starts_with(listen), "{qmp}");
+            assert!(has(&a, ["-vnc", "127.0.0.1:3,password=on"]), "{a:?}");
+            for (i, x) in a.iter().enumerate() {
+                let flag = i.checked_sub(1).map(|p| a[p].as_str()).unwrap_or_default();
+                if flag == "-netdev" {
+                    continue; // the guest's own forwards
+                }
+                assert!(!x.contains("tcp:"), "{flag} {x}");
+                assert!(!x.contains("telnet:"), "{flag} {x}");
+            }
+            for flag in ["-gdb", "-s", "-spice"] {
+                assert!(!a.iter().any(|x| x == flag), "{flag} in {a:?}");
+            }
+            assert!(has(&a, ["-monitor", "none"]), "{a:?}");
         }
     }
 

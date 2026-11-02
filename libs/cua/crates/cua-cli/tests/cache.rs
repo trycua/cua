@@ -48,6 +48,8 @@ fn qemu_state(h: &Home, name: &str, disk: &Path, created_at: u64) {
         ports: Default::default(),
         vnc_display: None,
         qmp_port: None,
+        qmp_socket: None,
+        vnc_password: None,
         pid: None,
         accel: String::new(),
         ssh: None,

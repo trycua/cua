@@ -503,6 +503,8 @@ impl QemuRuntime {
             ports: Default::default(),
             vnc_display: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             pid: None,
             snapshots: vec![],
             paused: false,
@@ -670,10 +672,7 @@ impl QemuRuntime {
 
     /// A QMP session to `st` (which need not be a saved entry).
     pub(crate) async fn qmp_at(&self, st: &QemuState) -> Result<QmpClient> {
-        let port = st
-            .qmp_port
-            .ok_or_else(|| VmmError::other("no QMP port recorded"))?;
-        QmpClient::connect(&format!("127.0.0.1:{port}")).await
+        QmpClient::connect(&super::qmp_addr(st)?).await
     }
 
     /// Makes new instance `st` a restore of golden `snap`: its disk becomes
@@ -1078,6 +1077,8 @@ impl QemuRuntime {
             ports: Default::default(),
             vnc_display: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             pid: None,
             snapshots: vec![],
             paused: false,
@@ -1311,6 +1312,8 @@ mod tests {
             ports: Default::default(),
             vnc_display: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             pid: None,
             accel: String::new(),
             ssh: None,

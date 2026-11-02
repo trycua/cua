@@ -937,7 +937,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_refresh() != 45835:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_resize() != 25505:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_resize() != 21403:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_restart() != 22482:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")

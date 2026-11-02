@@ -51968,7 +51968,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_refresh() != 45835) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandbox_resize() != 25505) {
+    if (uniffi_cua_sdk_checksum_method_sandbox_resize() != 21403) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandbox_restart() != 22482) {

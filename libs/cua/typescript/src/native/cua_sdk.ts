@@ -47332,7 +47332,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_refresh() !== 45835) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_refresh");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_resize() !== 25505) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_resize() !== 21403) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_resize");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_restart() !== 22482) {

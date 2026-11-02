@@ -1988,7 +1988,10 @@ impl Sandboxes {
                 rt.stop(name).await?;
                 let inst = rt.resume(name).await?;
                 self.record_endpoints(name, &inst)?;
-                self.inner.state.set_status(name, "running")
+                self.inner.state.set_status(name, "running")?;
+                // Restarted means answering, as a resume and a resize are
+                // waited for: a VM's resume returns while its guest boots.
+                self.wait_recorded_probes(name).await
             }
             (kind, _) => Err(Error::Unsupported {
                 provider: kind,
@@ -2016,24 +2019,30 @@ impl Sandboxes {
                     self.inner.state.save(&SandboxState::Local(l))?;
                 }
                 self.inner.state.set_status(name, "running")?;
-                let probes = self
-                    .inner
-                    .state
-                    .load_raw(name)
-                    .and_then(|m| m.get("ready_probes").cloned())
-                    .map(probes_from_json)
-                    .unwrap_or_default();
-                if !probes.is_empty() {
-                    let sb = self.connect(name).await?;
-                    sb.wait_ready(&probes, RESUME_READY_TIMEOUT).await?;
-                }
-                Ok(())
+                self.wait_recorded_probes(name).await
             }
             (kind, s) => Err(Error::Unsupported {
                 provider: kind,
                 op: format!("resizing {name} ({} cannot be resized)", s.runtime_type()),
             }),
         }
+    }
+
+    /// Waits for the ready probes recorded with sandbox `name` (none: it
+    /// answers when its runtime says so).
+    async fn wait_recorded_probes(&self, name: &str) -> Result<()> {
+        let probes = self
+            .inner
+            .state
+            .load_raw(name)
+            .and_then(|m| m.get("ready_probes").cloned())
+            .map(probes_from_json)
+            .unwrap_or_default();
+        if !probes.is_empty() {
+            let sb = self.connect(name).await?;
+            sb.wait_ready(&probes, RESUME_READY_TIMEOUT).await?;
+        }
+        Ok(())
     }
 
     /// How the sandbox `name` turns off and on again (`None`: it cannot,

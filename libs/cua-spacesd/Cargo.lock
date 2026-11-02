@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "cua-auth"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1816,7 +1816,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -1831,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cluster"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1940,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1948,7 +1948,7 @@ dependencies = [
 
 [[package]]
 name = "cua-host"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1974,7 +1974,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1982,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "cua-logging"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "tracing",
  "tracing-appender",
@@ -1991,7 +1991,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -2005,7 +2005,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-codec"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "audiopus_sys",
  "libloading",
@@ -2021,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -2042,7 +2042,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -2105,7 +2105,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "cua-snapshot-sync"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2223,7 +2223,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2343,7 +2343,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "axum 0.8.9",
  "http",
@@ -2490,7 +2490,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -2503,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "cua-volume"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "cua-home",

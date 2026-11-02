@@ -937,7 +937,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_refresh() != 45835:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_resize() != 25505:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_resize() != 21403:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_restart() != 22482:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -36312,7 +36312,7 @@ class SandboxProtocol(typing.Protocol):
         memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
         VM stops and boots again from its own disk, so its memory and
         running processes do not survive; its files do. Returns once it is
-        ready again. A disk never shrinks. Containers, Fleet and other
+        ready again. A disk never shrinks. Containers and other
         providers' sandboxes are refused (`Unsupported`).
 """
         raise NotImplementedError
@@ -36873,7 +36873,7 @@ class Sandbox(SandboxProtocol):
         memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
         VM stops and boots again from its own disk, so its memory and
         running processes do not survive; its files do. Returns once it is
-        ready again. A disk never shrinks. Containers, Fleet and other
+        ready again. A disk never shrinks. Containers and other
         providers' sandboxes are refused (`Unsupported`).
 """
 

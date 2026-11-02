@@ -631,7 +631,7 @@ impl DriverEnvelopeChannel for Inner {
         &self,
         _: TrustedSessionOptions,
     ) -> Result<Arc<dyn DriverEnvelopeChannel>, String> {
-        Err("Fleet Driver connections use a host-bound session; rebinding is unsupported".into())
+        Err("Remote Driver connections use a host-bound session; rebinding is unsupported".into())
     }
     async fn cancel(&self, request_id: &str) -> Result<(), String> {
         self.state

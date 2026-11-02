@@ -215,7 +215,7 @@ export interface ProBanner {
 export interface AccountMenuInput {
   plan: string;
   signedIn: boolean;
-  /** `SessionSnapshot.fleet.authMode`: only `user` signs out. */
+  /** `SessionSnapshot.account.authMode`: only `user` signs out. */
   authMode: string;
 }
 

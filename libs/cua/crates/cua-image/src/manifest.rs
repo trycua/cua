@@ -184,8 +184,8 @@ mod tests {
     }
 
     #[test]
-    fn fleet_index_resolves_each_arch_and_skips_attestations() {
-        let Manifest::Index(idx) = Manifest::parse(&raw("fleet-index.json")).unwrap() else {
+    fn registry_index_resolves_each_arch_and_skips_attestations() {
+        let Manifest::Index(idx) = Manifest::parse(&raw("registry-index.json")).unwrap() else {
             panic!("index")
         };
         assert_eq!(idx.manifests.len(), 4);
@@ -205,7 +205,8 @@ mod tests {
 
     #[test]
     fn single_manifest_parses_layers() {
-        let Manifest::Image(m) = Manifest::parse(&raw("fleet-containerdisk-arm64.json")).unwrap()
+        let Manifest::Image(m) =
+            Manifest::parse(&raw("registry-containerdisk-arm64.json")).unwrap()
         else {
             panic!("manifest")
         };

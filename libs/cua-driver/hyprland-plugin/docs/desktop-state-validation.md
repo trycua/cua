@@ -1,10 +1,10 @@
 # Desktop-state safety validation
 
-> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026. This is a dated
-> record of validation run on it; the Fleet references below are historical.
+> Note (18 Oct 2026): Cua Cloud ended on 18 Oct 2026. This is a dated
+> record of validation run on it; the cloud references below are historical.
 
 On 2026-09-05, five matched fault-only controls and five Driver MCP background
-drag episodes passed in a disposable Omarchy Cua Fleet VM. Moving, resizing,
+drag episodes passed in a disposable Omarchy Cua Cloud VM. Moving, resizing,
 locking, turning the display off, or destroying the target cancelled the
 background action within the 750 ms test bound. Agent input state and authority
 cleared, old grants were refused, and freshly approved recovery succeeded.
@@ -30,7 +30,7 @@ documentation. The commits adding this report change documentation only.
 | --- | --- |
 | Native Driver and plugin source | `fc225fef9bbaa07c9953e1d80cf6fd82d66bd4fd` |
 | Final executable test-helper source | `9b1c71c67145173d902c6638805afb355b8eb305` |
-| Omarchy | `4.0.1-1`, disposable KVM Fleet VM |
+| Omarchy | `4.0.1-1`, disposable KVM Cloud VM |
 | Hyprland | `0.56.2-1`, commit `efb50993780079460b0cbed1363e2166a2de1d9f` |
 | Portal | `xdg-desktop-portal-hyprland 1.4.1-1` |
 | Driver source and installed version | `0.23.2`, custom task-local source build, not the stock release |
@@ -52,7 +52,7 @@ The installed Driver and both running service executables had matching digests.
 One service performed actions; a separate service from the same binary recorded
 video and observed state. The action service had recording disabled. Separate
 connections to one service would not isolate synchronous recording overhead.
-The ordinary Driver installation was preserved. No host installation or Fleet
+The ordinary Driver installation was preserved. No host installation or cloud
 image publication occurred.
 
 ## Geometry regression
@@ -69,7 +69,7 @@ with `NDEBUG` defined.
 ## Method and foreground comparison
 
 [`desktop_state_live.py`](../tests/desktop_state_live.py) drives native GTK raw-event
-fixtures through real Driver MCP `drag` and `press_key` calls. The Fleet SDK
+fixtures through real Driver MCP `drag` and `press_key` calls. The cloud SDK
 provides VM transport and setup, not the background input path. An independent
 virtual primary pointer holds a real Wayland grab in the foreground fixture.
 It is not physical mouse input.
@@ -140,7 +140,7 @@ machine-specific evidence are not committed to the public repository.
 
 ## Supporting checks and retained failures
 
-- All 79 Python helper tests passed on the host and Fleet guest.
+- All 79 Python helper tests passed on the host and cloud guest.
 - All seven portable CTests passed on the native guest and in a host Release
   build, including the cached-geometry regression with `NDEBUG` enabled.
 - Two initial move episodes exceeded the 750 ms MCP-response bound at roughly

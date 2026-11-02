@@ -11,7 +11,7 @@
 > The lifecycle vocabulary changed too. `claim_space`, `get_or_create_space`,
 > `local_provision_space` and `release_space` are now `create_space` (with
 > `on: local|cloud`, `kind`, `runtime` and `reuse`) and `delete_space`, and the
-> "Fleet" provider is `cloud`. The SDK's answer to §5, §28 and §33 is
+> "Cloud" provider is `cloud`. The SDK's answer to §5, §28 and §33 is
 > `attach(to:)` next to `createSpace(options:)`, whose `on` is required. The
 > entries below keep the names they were written with.
 
@@ -110,7 +110,7 @@ meant a refusal), and the live test caught it; a client without an e2e test
 would have shipped "every message was refused".
 
 The same split appears in `download`, whose Local path returns JSON
-(`{"dest": …}`) and whose Fleet path returns prose, and in `list_spaces`, which
+(`{"dest": …}`) and whose cloud path returns prose, and in `list_spaces`, which
 returns an array normally but the sentence `"No Spaces. Use claim_space …"` when
 there are none.
 
@@ -127,7 +127,7 @@ sentence. Prose is for humans; an SDK should never make an app parse it.
 ## 5. `get_or_create_space` cannot see the Space you are using
 
 **What happened.** The recommended entry point, `get_or_create_space`, only
-enumerates **Fleet** claims. A Local (Lume macOS) Space, the kind actually
+enumerates **Cloud** claims. A Local (Lume macOS) Space, the kind actually
 being demoed from, is invisible to it, so it skips straight to `claim_space`
 and **provisions a new cloud sandbox** while a perfectly good Space sits
 running. The app has no way to say "work in *this* one".
@@ -151,11 +151,11 @@ can silently cost money must not be the recommended default.
 
 ## 6. Provider differences leak into every field
 
-**What happened.** Local and Fleet Spaces disagree on their vocabulary at every
+**What happened.** Local and cloud Spaces disagree on their vocabulary at every
 level. A ready Space has `phase: "running"` on Local and `phase: "Bound"` on
-Fleet. `$HOME` is `/Users/lume` on Local and `/root` on Fleet, so the `upload`
+Cloud. `$HOME` is `/Users/lume` on Local and `/root` on cloud, so the `upload`
 default destination differs. Several tools (`agent_start` on the older server,
-`teleport_app`) are Fleet-only and fail with prose telling you so.
+`teleport_app`) are Cloud-only and fail with prose telling you so.
 
 **Who absorbed it.** `SpaceSummary.isReady`:
 
@@ -713,7 +713,7 @@ a bundle. Say so once, in the template.
 
 `BotStore.connect()` resolves its Space through `MCPSpacesClient.ensureSpace()`,
 which honours an explicit override and otherwise calls `get_or_create_space`,
-and §5 already recorded that `get_or_create_space` **claims a Fleet sandbox**.
+and §5 already recorded that `get_or_create_space` **claims a cloud sandbox**.
 
 For a harness invoked by an operator that is a defensible default. For an app
 that a user double-clicks it is not: opening a window would silently provision
@@ -865,10 +865,10 @@ nowhere, and built a `BotStore`.
 `BotStore.connect()` resolves its own Space (§28). So the first run printed:
 
 ```
-attached to fleet:cua-spaces-ukey-…:claim-e0b003ad2c
+attached to cloud:cua-spaces-ukey-…:claim-e0b003ad2c
 ```
 
-It had been handed a local macOS Space and it claimed a Fleet sandbox instead.
+It had been handed a local macOS Space and it claimed a cloud sandbox instead.
 Nothing warned; the only reason it was caught is that the attach line prints
 what it attached to. The claim was released immediately.
 
@@ -1990,21 +1990,21 @@ outcome rather than an error.
 ## 96. The SDK refused a call the server would have served
 
 `ProviderCapabilities.teleport` was `false` for Local, with the note
-"teleport_app is Fleet-only". It is not. `teleport_app` in `spaces_mcp.py`
+"teleport_app is Cloud-only". It is not. `teleport_app` in `spaces_mcp.py`
 opens by routing Local Spaces to `_local_teleport_app`, which pushes to the
-Space's own in-guest rcdp-handoff receiver on :8700 (the same protocol Fleet
+Space's own in-guest rcdp-handoff receiver on :8700 (the same protocol cloud
 uses, aimed at the VM instead of the gateway). The user teleports Chrome into a
 Local Space routinely, and the Space this suite runs against has a mode-600
 `.credentials.json` sitting in it that arrived that way.
 
-The wrong belief came from a **real** error message on `_sandbox()`, a Fleet
-helper that says "agent-CLI orchestration and app teleport are Fleet-only for
+The wrong belief came from a **real** error message on `_sandbox()`, a cloud
+helper that says "agent-CLI orchestration and app teleport are Cloud-only for
 now". That message is unreachable for teleport: `teleport_app` returns on the
 line above it. It was true once, the Local path was added, the short-circuit
 was added above it, and the message stayed: accurate-looking prose on a branch
 nothing takes any more. Every other clause in it had gone stale the same way:
 all seven of its callers short-circuit Local, and the agent tools never reach
-it at all, so the only genuinely Fleet-only things left are provisioning and
+it at all, so the only genuinely Cloud-only things left are provisioning and
 the hotspot.
 
 An SDK that declares capabilities is strictly better than one that discovers

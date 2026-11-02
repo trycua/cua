@@ -1995,7 +1995,7 @@ impl Sandbox {
     /// memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
     /// VM stops and boots again from its own disk, so its memory and
     /// running processes do not survive; its files do. Returns once it is
-    /// ready again. A disk never shrinks. Containers, Fleet and other
+    /// ready again. A disk never shrinks. Containers and other
     /// providers' sandboxes are refused (`Unsupported`).
     pub async fn resize(
         &self,

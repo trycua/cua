@@ -15,7 +15,7 @@ name: "Image doctor"
 #   runc, runsc     rootfs under docker / gVisor, native runner per arch
 #   conformance     the 22 core + 11 desktop conformance tests against the
 #                   real spacesd in the image (runc and runsc)
-#   claim-token     the Fleet per-claim token path in a container (runc and
+#   claim-token     the per-claim token path in a container (runc and
 #                   runsc): await-token-file install / rotate / revoke
 #   qemu            the containerDisk payload booted under QEMU+KVM, doctor
 #                   over ssh as root; also once with the token delivered

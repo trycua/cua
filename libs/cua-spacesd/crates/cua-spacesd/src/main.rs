@@ -46,7 +46,7 @@ enum Command {
     /// Serve locally and publish through a cua-relay (for computers behind NAT).
     Join(JoinArgs),
     /// Privileged helper for --await-token-file: mirror a root-only token
-    /// file (the Fleet claim Secret) to a file the driver's user can read.
+    /// file (the claim Secret) to a file the driver's user can read.
     #[cfg(unix)]
     TokenSync(TokenSyncArgs),
     /// Mount Cua Volume for the driver's VolumeService (Linux; run as root

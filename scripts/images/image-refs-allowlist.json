@@ -384,7 +384,7 @@
       ]
     },
     "ghcr.io/trycua/minecraft-workspace:1.20.1": {
-      "reason": "cloud workspace image in cua-sandbox Fleet test fixtures",
+      "reason": "cloud workspace image in cua-sandbox cloud test fixtures",
       "paths": [
         "libs/python/cua-sandbox/tests/test_from_registry_ostype.py"
       ]
@@ -433,7 +433,7 @@
       ]
     },
     "public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
+      "reason": "cloud-built workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
         "docs/content/docs/cua-sdk/reference/os-image-catalog.mdx",
         "scripts/docs-generators/sandbox-facts.json",
@@ -441,7 +441,7 @@
       ]
     },
     "public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
+      "reason": "cloud-built workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
         "docs/content/docs/cua-sdk/reference/os-image-catalog.mdx",
         "scripts/docs-generators/sandbox-facts.json",
@@ -449,7 +449,7 @@
       ]
     },
     "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:dd09f70f8cd35eca7871dff000538302baad63688a3008803f2238492802d743": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
+      "reason": "cloud-built workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
         "docs/content/docs/cua-sdk/reference/os-image-catalog.mdx",
         "scripts/docs-generators/sandbox-facts.json",
@@ -457,19 +457,19 @@
       ]
     },
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
+      "reason": "cloud-built workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
         "libs/cua/crates/cua-image/src/detect.rs"
       ]
     },
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
+      "reason": "cloud-built workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
         "scripts/images/test-check-tag-safety.sh"
       ]
     },
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
+      "reason": "cloud-built workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
         "libs/cua/crates/cua-image/src/detect.rs",
         "libs/cua/crates/cua-sandbox-core/tests/fixtures/python-state/py-qemu-sbx.json",
@@ -488,8 +488,8 @@
     "ghcr.io/trycua/localhost": "resolver test message (a host:port prefix is not a repo)",
     "ghcr.io/trycua/macos-sequoia-vanilla": "tag-safety guard list of repos never to re-tag",
     "ghcr.io/trycua/runtime-gvisor": "disk of the built-in Linux runtime VM (cua_vmm::managed), pinned by layer digest; not a Space image, so not in the catalog",
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04": "cloud-built Fleet workspace repo (cloud repo owned)",
-    "public.ecr.aws/k5j5w0x5/cua-windows-2022": "cloud-built Fleet workspace repo (cloud repo owned); source of ghcr.io/trycua/windows:2022-disk"
+    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04": "cloud-built workspace repo (cloud repo owned)",
+    "public.ecr.aws/k5j5w0x5/cua-windows-2022": "cloud-built workspace repo (cloud repo owned); source of ghcr.io/trycua/windows:2022-disk"
   },
   "legacy": {
     "cua-desktop-linux": {

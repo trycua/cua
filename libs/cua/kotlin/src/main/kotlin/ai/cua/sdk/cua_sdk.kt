@@ -3739,7 +3739,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_sandbox_refresh() != 45835.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_sandbox_resize() != 25505.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_sandbox_resize() != 21403.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_sandbox_restart() != 22482.toShort()) {
@@ -14948,7 +14948,7 @@ public interface SandboxInterface {
      * memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
      * VM stops and boots again from its own disk, so its memory and
      * running processes do not survive; its files do. Returns once it is
-     * ready again. A disk never shrinks. Containers, Fleet and other
+     * ready again. A disk never shrinks. Containers and other
      * providers' sandboxes are refused (`Unsupported`).
      */
     suspend fun `resize`(`cpus`: kotlin.UInt?, `memoryMb`: kotlin.ULong?, `diskGb`: kotlin.UInt?)
@@ -15631,7 +15631,7 @@ open class Sandbox: Disposable, AutoCloseable, SandboxInterface
      * memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
      * VM stops and boots again from its own disk, so its memory and
      * running processes do not survive; its files do. Returns once it is
-     * ready again. A disk never shrinks. Containers, Fleet and other
+     * ready again. A disk never shrinks. Containers and other
      * providers' sandboxes are refused (`Unsupported`).
      */
     @Throws(CuaException::class)

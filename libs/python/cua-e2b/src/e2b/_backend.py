@@ -1414,7 +1414,7 @@ def _core_create_options(egress: Optional[dict]) -> dict:
 def _forkable() -> bool:
     """New Spaces can be checkpointed cheaply (`create_snapshot` is a
     milliseconds copy-on-write fork source). `CUA_E2B_FORKABLE=0` turns it
-    off for fleets that never snapshot."""
+    off for setups that never snapshot."""
     return os.environ.get("CUA_E2B_FORKABLE", "1").strip().lower() not in ("0", "false", "no")
 
 

@@ -18,7 +18,7 @@ const SELF_HOSTED = "self-hosted";
 const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set(["experiment:cua_volume"]);
+const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces"]);
 
 /**
  * Settings, Advanced: early releases, Labs, which software runs Spaces on
@@ -137,6 +137,8 @@ function Labs() {
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
+    "experiment:secure_spaces": "A Space reaches the internet and nothing else on your network unless you open it.",
+    "experiment:child_spaces": "A Space can make Spaces of its own, inside a budget you set.",
   };
   return (
     <SettingsGroup title="Labs">

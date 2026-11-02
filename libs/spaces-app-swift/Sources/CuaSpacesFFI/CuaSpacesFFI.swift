@@ -17070,6 +17070,15 @@ public struct AppExperiments: Equatable, Hashable {
      * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
      */
     public var webUi: Bool
+    /**
+     * Secure Spaces: a Space reaches the internet and nothing else on the
+     * network unless it is opened. Off unless turned on.
+     */
+    public var secureSpaces: Bool
+    /**
+     * Child Spaces: a Space may make Spaces of its own. Off unless turned on.
+     */
+    public var childSpaces: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -17087,11 +17096,20 @@ public struct AppExperiments: Equatable, Hashable {
         /**
          * The shared web UI is the main window. Always on in the macOS shell
          * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-         */webUi: Bool) {
+         */webUi: Bool,
+        /**
+         * Secure Spaces: a Space reaches the internet and nothing else on the
+         * network unless it is opened. Off unless turned on.
+         */secureSpaces: Bool = false,
+        /**
+         * Child Spaces: a Space may make Spaces of its own. Off unless turned on.
+         */childSpaces: Bool = false) {
         self.cuaVolume = cuaVolume
         self.yourCloud = yourCloud
         self.sharing = sharing
         self.webUi = webUi
+        self.secureSpaces = secureSpaces
+        self.childSpaces = childSpaces
     }
 
 
@@ -17113,7 +17131,9 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
                 cuaVolume: FfiConverterBool.read(from: &buf),
                 yourCloud: FfiConverterBool.read(from: &buf),
                 sharing: FfiConverterBool.read(from: &buf),
-                webUi: FfiConverterBool.read(from: &buf)
+                webUi: FfiConverterBool.read(from: &buf),
+                secureSpaces: FfiConverterBool.read(from: &buf),
+                childSpaces: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -17122,6 +17142,8 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         FfiConverterBool.write(value.yourCloud, into: &buf)
         FfiConverterBool.write(value.sharing, into: &buf)
         FfiConverterBool.write(value.webUi, into: &buf)
+        FfiConverterBool.write(value.secureSpaces, into: &buf)
+        FfiConverterBool.write(value.childSpaces, into: &buf)
     }
 }
 
@@ -80684,7 +80706,9 @@ public func appSettingsInputFromJson(json: String)throws  -> AppSettingsInput  {
 })
 }
 /**
- * Reads the settings file (defaults when missing or damaged).
+ * Reads the settings file (defaults when missing or damaged). The
+ * experiments the daemon enforces (Secure Spaces, Child Spaces) are what
+ * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 public func appSettingsLoad(path: String) -> AppSettings  {
     return try!  FfiConverterTypeAppSettings_lift(try! rustCall() {
@@ -80717,7 +80741,8 @@ public func appSettingsResolveNewUi(settings: AppSettings, version: String) -> A
 })
 }
 /**
- * Writes the settings file.
+ * Writes the settings file, and keeps the experiments the daemon enforces
+ * where it reads them (the cua home).
  */
 public func appSettingsSave(path: String, settings: AppSettings)throws   {try rustCallWithError(FfiConverterTypeCuaError_lift) {
     uniffi_cua_spaces_ffi_fn_func_app_settings_save(
@@ -82802,7 +82827,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 42027) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 48517) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {
@@ -82811,7 +82836,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() != 48081) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 30129) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 62204) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_with_storage() != 34252) {

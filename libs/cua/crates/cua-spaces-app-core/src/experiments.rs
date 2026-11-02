@@ -14,6 +14,11 @@
 //! - New UI ([`Experiment::WebUi`]): retired. The shared web UI is the only
 //!   UI of every shell, so it has no row; the key stays so the macOS shell
 //!   can report it ([`crate::settings::resolve_new_ui`]).
+//! - Secure Spaces ([`Experiment::SecureSpaces`]) and Child Spaces
+//!   ([`Experiment::ChildSpaces`]): enforced, not only hidden. Their switches
+//!   are also kept in the cua home, where the daemon and `cua experiments`
+//!   read them; the shells load and save them through the app export
+//!   (`app_settings_load` and `app_settings_save`).
 //!
 //! Off only hides the entry points. Nothing is undone: a mounted Volume
 //! stays mounted (and keeps syncing), a connected cloud stays connected
@@ -44,6 +49,13 @@ pub struct Experiments {
     /// The shared web UI is the main window. Always on in the macOS shell
     /// ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
     pub web_ui: bool,
+    /// Secure Spaces: a Space reaches the internet and nothing else on the
+    /// network unless it is opened. Off unless turned on; the daemon enforces
+    /// it (the switch is kept in the cua home).
+    pub secure_spaces: bool,
+    /// Child Spaces: a Space may make Spaces of its own. Off unless turned
+    /// on; the daemon enforces it (the switch is kept in the cua home).
+    pub child_spaces: bool,
 }
 
 impl Default for Experiments {
@@ -53,6 +65,8 @@ impl Default for Experiments {
             your_cloud: true,
             sharing: true,
             web_ui: false,
+            secure_spaces: false,
+            child_spaces: false,
         }
     }
 }
@@ -69,14 +83,20 @@ pub enum Experiment {
     Sharing,
     /// New UI (preview).
     WebUi,
+    /// Secure Spaces.
+    SecureSpaces,
+    /// Child Spaces.
+    ChildSpaces,
 }
 
 /// Every experiment, in the order Settings lists them.
-pub const ALL: [Experiment; 4] = [
+pub const ALL: [Experiment; 6] = [
     Experiment::CuaVolume,
     Experiment::YourCloud,
     Experiment::Sharing,
     Experiment::WebUi,
+    Experiment::SecureSpaces,
+    Experiment::ChildSpaces,
 ];
 
 impl Experiment {
@@ -88,6 +108,8 @@ impl Experiment {
             Experiment::YourCloud => "your_cloud",
             Experiment::Sharing => "sharing",
             Experiment::WebUi => "web_ui",
+            Experiment::SecureSpaces => "secure_spaces",
+            Experiment::ChildSpaces => "child_spaces",
         }
     }
 
@@ -103,6 +125,8 @@ impl Experiment {
             Experiment::YourCloud => "Your cloud",
             Experiment::Sharing => "Sharing",
             Experiment::WebUi => "New UI",
+            Experiment::SecureSpaces => "Secure Spaces",
+            Experiment::ChildSpaces => "Child Spaces",
         }
     }
 
@@ -115,6 +139,12 @@ impl Experiment {
             }
             Experiment::Sharing => "Share a Space with other Cua accounts.",
             Experiment::WebUi => "The Spaces window built on the shared web UI.",
+            Experiment::SecureSpaces => {
+                "A Space reaches the internet and nothing else on your network unless you open it."
+            }
+            Experiment::ChildSpaces => {
+                "A Space can make Spaces of its own, inside a budget you set."
+            }
         }
     }
 }
@@ -127,6 +157,8 @@ impl Experiments {
             Experiment::YourCloud => self.your_cloud,
             Experiment::Sharing => self.sharing,
             Experiment::WebUi => self.web_ui,
+            Experiment::SecureSpaces => self.secure_spaces,
+            Experiment::ChildSpaces => self.child_spaces,
         }
     }
 
@@ -137,6 +169,8 @@ impl Experiments {
             Experiment::YourCloud => self.your_cloud = on,
             Experiment::Sharing => self.sharing = on,
             Experiment::WebUi => self.web_ui = on,
+            Experiment::SecureSpaces => self.secure_spaces = on,
+            Experiment::ChildSpaces => self.child_spaces = on,
         }
         self
     }
@@ -246,6 +280,10 @@ mod tests {
                 "experiment:your_cloud-note",
                 "experiment:sharing",
                 "experiment:sharing-note",
+                "experiment:secure_spaces",
+                "experiment:secure_spaces-note",
+                "experiment:child_spaces",
+                "experiment:child_spaces-note",
             ]
         );
         for r in switches(&p) {
@@ -283,7 +321,14 @@ mod tests {
         assert_eq!(choose(&x, "experiment:nope", "on"), x);
         assert_eq!(
             Experiments::all_on().on_ids(),
-            ["cua_volume", "your_cloud", "sharing", "web_ui"]
+            [
+                "cua_volume",
+                "your_cloud",
+                "sharing",
+                "web_ui",
+                "secure_spaces",
+                "child_spaces"
+            ]
         );
     }
 
@@ -318,7 +363,7 @@ mod tests {
         let back = serde_json::to_value(x).unwrap();
         assert_eq!(
             back,
-            serde_json::json!({"cuaVolume": true, "yourCloud": true, "sharing": true, "webUi": false})
+            serde_json::json!({"cuaVolume": true, "yourCloud": true, "sharing": true, "webUi": false, "secureSpaces": false, "childSpaces": false})
         );
         // An explicit off is kept.
         let off: Experiments = serde_json::from_str(r#"{"yourCloud":false}"#).unwrap();

@@ -604,7 +604,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     func relayHostnames() -> [String: String] { model.relayHostnames }
 
     func settings() -> [String: Any] {
-        [
+        model.refreshDaemonExperiments()
+        return [
             "page": BridgeValue.encode(model.settingsPageWithStorage),
             "experiments": BridgeValue.encode(model.experimentsPage),
             // Settings → About's channel; null while this build has no updater.

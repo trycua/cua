@@ -75,7 +75,7 @@ impl Gate {
     /// What a call says while the experiment is off.
     pub fn off_message(self) -> String {
         format!(
-            "{} is an experiment that is off. Turn it on with `cua experiments enable {}`.",
+            "{} is an experiment that is off. Turn it on with `cua experiments enable {}` (or in the app: Settings, Advanced, Labs).",
             self.title(),
             self.name()
         )
@@ -164,6 +164,8 @@ pub fn set_switch(home: &std::path::Path, gate: Gate, on: bool) -> std::io::Resu
         return Ok(());
     }
     let path = switch_path(home, gate);
+    // A test never writes the user's real cua home.
+    cua_home::guard_write(&path)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }

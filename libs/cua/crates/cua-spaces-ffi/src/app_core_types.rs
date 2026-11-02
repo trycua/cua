@@ -6968,6 +6968,13 @@ pub struct AppExperiments {
     /// The shared web UI is the main window. Always on in the macOS shell
     /// ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
     pub web_ui: bool,
+    /// Secure Spaces: a Space reaches the internet and nothing else on the
+    /// network unless it is opened. Off unless turned on.
+    #[uniffi(default = false)]
+    pub secure_spaces: bool,
+    /// Child Spaces: a Space may make Spaces of its own. Off unless turned on.
+    #[uniffi(default = false)]
+    pub child_spaces: bool,
 }
 
 /// A runtime the host found for one kind (the SDK's `RuntimeDetected`).

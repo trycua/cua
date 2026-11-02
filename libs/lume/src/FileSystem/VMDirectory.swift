@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Virtualization
 
 // MARK: - VMDirectory
 
@@ -22,6 +23,7 @@ struct VMDirectory: Sendable {
         static let diskBackup = "disk.img.pre-resize"
         static let configBackup = "config.json.pre-resize"
         static let savedState = "state.vzvmsave"
+        static let linuxMachineIdentifier = "machine-identifier"
     }
 
     // MARK: - Properties
@@ -39,6 +41,10 @@ struct VMDirectory: Sendable {
     let resizeGuardPath: Path
     /// The VM's saved machine state (`lume suspend`), restored by the next run.
     let statePath: Path
+    /// A Linux VM's generic machine identifier, kept for the VM's whole life:
+    /// a saved state restores only into a VM with the identifier it was saved
+    /// with.
+    let linuxMachineIdentifierPath: Path
 
     /// The name of the VM directory
     var name: String { dir.name }
@@ -59,6 +65,7 @@ struct VMDirectory: Sendable {
         self.diskBackupPath = dir.file(FileNames.diskBackup)
         self.configBackupPath = dir.file(FileNames.configBackup)
         self.statePath = dir.file(FileNames.savedState)
+        self.linuxMachineIdentifierPath = dir.file(FileNames.linuxMachineIdentifier)
         self.resizeGuardPath = Path(
             dir.url.deletingLastPathComponent()
                 .appendingPathComponent(".\(dir.name).resize.guard", isDirectory: false))
@@ -68,6 +75,26 @@ struct VMDirectory: Sendable {
 // MARK: - VM State Management
 
 extension VMDirectory {
+    /// This Linux VM's generic machine identifier, created on first use.
+    /// Without it every run gets a new one, and a saved state can never be
+    /// restored ("invalid argument").
+    func linuxMachineIdentifier() -> Data {
+        if let data = try? Data(contentsOf: linuxMachineIdentifierPath.url),
+            VZGenericMachineIdentifier(dataRepresentation: data) != nil
+        {
+            return data
+        }
+        let data = VZGenericMachineIdentifier().dataRepresentation
+        do {
+            try data.write(to: linuxMachineIdentifierPath.url, options: .atomic)
+        } catch {
+            Logger.error(
+                "Failed to store the VM's machine identifier",
+                metadata: ["path": linuxMachineIdentifierPath.path, "error": "\(error)"])
+        }
+        return data
+    }
+
     /// Checks if the VM directory is initialized (either fully ready or provisioning)
     /// A VM is considered initialized if it has:
     /// - All required files (config + disk + nvram), OR

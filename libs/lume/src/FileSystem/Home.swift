@@ -279,6 +279,11 @@ final class Home {
             if fileName.hasPrefix(sourceDir.statePath.name) {
                 guard includeSavedState, fileName == sourceDir.statePath.name else { continue }
             }
+            // A Linux VM's machine identifier goes with its saved state only;
+            // otherwise the clone is a different machine and gets its own.
+            if fileName == sourceDir.linuxMachineIdentifierPath.name, !includeSavedState {
+                continue
+            }
 
             if fileName == "disk.img" || fileName == sourceDir.statePath.name {
                 // Use clonefile(2) for disk.img (instant APFS copy-on-write)

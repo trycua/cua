@@ -38,7 +38,7 @@ use cua_vmm::{
     VmmError,
     auto::{self, DoctorReport},
     container::{ContainerConfig, ContainerRuntime},
-    containerization::ContainerizationRuntime,
+    containerization::{ContainerizationConfig, ContainerizationRuntime},
     lume::LumeRuntime,
     managed::{self, LinuxSource},
     microvm::{MicroVmConfig, MicroVmRuntime},
@@ -621,7 +621,13 @@ impl VmmLocal {
                 resolver: Some(cua_image::RootfsLayerResolver::shared()),
                 ..MicroVmConfig::default()
             })),
-            apple: Arc::new(ContainerizationRuntime::with_defaults()),
+            // Images come through the shared puller (the host's registry
+            // credentials, mirrors and layer cache), then load into
+            // Apple's store.
+            apple: Arc::new(ContainerizationRuntime::new(ContainerizationConfig {
+                resolver: Some(cua_image::RootfsLayerResolver::shared()),
+                ..ContainerizationConfig::default()
+            })),
             pool: std::sync::OnceLock::new(),
             named_state: Default::default(),
             resolved: Default::default(),
@@ -2891,7 +2897,12 @@ pub(crate) fn headless_command_line() -> Vec<String> {
         "/bin/sh".into(),
         "-c".into(),
         concat!(
-            "if [ -z \"$CUA_ENV_TOKEN\" ]; then ",
+            // A guest that awaits its token file (a microVM's init writes it,
+            // and rewrites it at every boot) must not also be handed the
+            // token in the environment: cua-spacesd refuses both ("--await-token-file
+            // takes the token only from --token-file"), so a restarted microVM,
+            // whose token file already held the token, never came back.
+            "if [ \"$CUA_ENV_AWAIT_TOKEN_FILE\" != 1 ] && [ -z \"$CUA_ENV_TOKEN\" ]; then ",
             "for f in /run/cua/env-token /etc/cua/env-token; do ",
             "if [ -r \"$f\" ]; then CUA_ENV_TOKEN=$(tr -d '\\r\\n' < \"$f\"); export CUA_ENV_TOKEN; break; fi; ",
             "done; fi; ",
@@ -3174,6 +3185,51 @@ mod tests {
             super::catalog_pull_bytes("example.com/not/listed:1", "arm64"),
             None
         );
+    }
+
+    /// A guest that awaits its token file (every microVM whose token is
+    /// delivered later) is never also handed the token through the
+    /// environment: cua-spacesd refuses both, and a restarted microVM, whose
+    /// token file already held the token, never came back.
+    #[cfg(unix)]
+    #[test]
+    fn a_headless_guest_that_awaits_its_token_file_is_not_given_the_token_too() {
+        use std::os::unix::fs::PermissionsExt;
+        let cmd = headless_command_line();
+        let script = &cmd[2];
+        assert!(
+            script.contains("\"$CUA_ENV_AWAIT_TOKEN_FILE\" != 1"),
+            "the token files are read only when the guest does not await its own: {script}"
+        );
+        let dir = std::env::temp_dir().join(format!("cua-headless-cmd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stub = dir.join("spacesd");
+        std::fs::write(
+            &stub,
+            "#!/bin/sh\necho \"token=[$CUA_ENV_TOKEN] await=[$CUA_ENV_AWAIT_TOKEN_FILE]\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let run = |env: &[(&str, &str)]| {
+            let mut c = std::process::Command::new(&cmd[0]);
+            c.args(&cmd[1..])
+                .env_remove("CUA_ENV_TOKEN")
+                .env_remove("CUA_ENV_AWAIT_TOKEN_FILE")
+                .env("CUA_SPACESD_BIN", &stub);
+            for (k, v) in env {
+                c.env(k, v);
+            }
+            String::from_utf8_lossy(&c.output().unwrap().stdout)
+                .trim()
+                .to_string()
+        };
+        assert_eq!(
+            run(&[("CUA_ENV_AWAIT_TOKEN_FILE", "1")]),
+            "token=[] await=[1]"
+        );
+        // A token the runtime put in the environment still passes through.
+        assert_eq!(run(&[("CUA_ENV_TOKEN", "abc")]), "token=[abc] await=[]");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

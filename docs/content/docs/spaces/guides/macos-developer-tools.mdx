@@ -21,7 +21,7 @@ needs to see and control the screen already granted.
 You do not pick an image or run a setup step. Ask for a macOS Space to develop
 Apple software and Cua uses this one.
 
-```bash
+```bash skip="no-runner"
 cua sandbox create macos --tier dev
 ```
 
@@ -82,7 +82,7 @@ developer tools counts as one of the two.
 
 Once the Space is running, the agent works as it would on a Mac of its own.
 
-```bash
+```bash skip="no-runner"
 xcodegen generate
 xcodebuild -scheme MyApp -destination 'platform=iOS Simulator,name=Cua iPhone' test
 xcrun simctl boot "Cua iPhone"

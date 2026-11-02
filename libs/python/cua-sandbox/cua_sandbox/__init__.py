@@ -19,7 +19,7 @@ Usage::
 To control the local machine, use cua-driver (its SDK or MCP server).
 """
 
-__version__ = "0.9.1"  # x-release-please-version
+__version__ = "0.10.0"  # x-release-please-version
 
 from cua_sandbox._auth import login, whoami
 from cua_sandbox._config import configure

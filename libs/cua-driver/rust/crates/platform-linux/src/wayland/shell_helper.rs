@@ -15,6 +15,9 @@
 //!   cursor as a Clutter actor on the compositor stage.
 //! - `SetCursorState(...)` / `SetCursorColor(...)` — keep the compositor cursor
 //!   aligned with the shared semantic theme and active session identity.
+//! - `PlayCursorPath(json)` / `SetCursorLook(json)` (API 11) — play the shared
+//!   planner's poses (path, float, rotation) and paint the shared halo
+//!   (`cursor_overlay::pose_stream`).
 //! - `CaptureWindow(id,pid)` (API 9) / `CaptureWindowPreview(id,pid,max)`
 //!   (API 10) — snapshot one window's own actor, so a covering window never
 //!   shows; the preview variant downscales on the GPU first.
@@ -48,6 +51,9 @@ const SEMANTIC_CURSOR_API_VERSION: u32 = 8;
 pub const WINDOW_CAPTURE_API_VERSION: u32 = 9;
 /// `CaptureWindowPreview(id, pid, max_dimension)`: GPU-downscaled capture.
 pub const WINDOW_PREVIEW_API_VERSION: u32 = 10;
+/// `SetCursorLook(json)` / `PlayCursorPath(json)`: the helper plays the
+/// shared planner's poses (float, rotation) and paints the shared halo.
+pub const POSE_CURSOR_API_VERSION: u32 = 11;
 
 #[derive(Debug, Clone)]
 struct ShellWindow {
@@ -73,6 +79,12 @@ pub fn gnome_shell_session() -> bool {
     }
     .name_owner(COMPOSITOR_DEST)
     .is_some()
+}
+
+/// Whether the helper plays pose tracks ([`POSE_CURSOR_API_VERSION`]).
+pub fn pose_cursor_available() -> bool {
+    shell_owner_with_min_version(Some(POSE_CURSOR_API_VERSION), operation_deadline(CALL_CAP))
+        .is_some()
 }
 
 pub fn semantic_cursor_available() -> bool {
@@ -706,6 +718,26 @@ pub fn set_cursor_state(action: &str, delivery: &str, target: &str, active: bool
     );
 }
 
+/// Set the resting float and halo the compositor cursor paints
+/// ([`cursor_overlay::pose_stream::PoseLook::to_json`]). Helper API 11.
+pub fn set_cursor_look(look_json: &str) {
+    let _ = gdbus_call(
+        "SetCursorLook",
+        &[look_json.to_owned()],
+        operation_deadline(CALL_CAP),
+    );
+}
+
+/// Play a planned move on the compositor cursor
+/// ([`cursor_overlay::pose_stream::PoseTrack::to_json`]). Helper API 11.
+pub fn play_cursor_path(track_json: &str) {
+    let _ = gdbus_call(
+        "PlayCursorPath",
+        &[track_json.to_owned()],
+        operation_deadline(CALL_CAP),
+    );
+}
+
 /// Set the renderer-visible public session label for the compositor cursor.
 pub fn set_session_label(label: &str) {
     let _ = gdbus_call(
@@ -1114,7 +1146,11 @@ mod tests {
     #[test]
     fn bundled_helper_uses_host_owned_modifier_badge_chips() {
         assert!(EXTENSION_SOURCE.contains("GetVersion()"));
-        assert!(EXTENSION_SOURCE.contains("return 10;"));
+        assert!(EXTENSION_SOURCE.contains("return 11;"));
+        assert!(EXTENSION_SOURCE.contains("PlayCursorPath(trackJson)"));
+        assert!(EXTENSION_SOURCE.contains("SetCursorLook(lookJson)"));
+        assert!(EXTENSION_SOURCE.contains("function drawCursorHalo"));
+        assert_eq!(POSE_CURSOR_API_VERSION, 11);
         assert!(EXTENSION_SOURCE.contains("SetCursorState"));
         assert!(EXTENSION_SOURCE.contains("SetCursorColor"));
         assert!(EXTENSION_SOURCE.contains("SetSessionLabel"));
@@ -1139,7 +1175,7 @@ mod tests {
         assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
         let metadata: serde_json::Value =
             serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
-        assert_eq!(metadata["version"], 10);
+        assert_eq!(metadata["version"], 11);
 
         for action in [
             "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",

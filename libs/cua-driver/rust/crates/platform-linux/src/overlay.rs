@@ -433,8 +433,7 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         );
     }
     #[cfg(target_os = "linux")]
-    let layer_shell_queued = native_wayland
-        && dispatch_wayland_overlay_message(&msg) == WaylandOverlayBackend::LayerShell;
+    let layer_shell_queued = native_wayland && dispatch_wayland_overlay_message(&msg);
     #[cfg(not(target_os = "linux"))]
     let layer_shell_queued = false;
     x11_queued || layer_shell_queued
@@ -532,36 +531,164 @@ fn start_shell_helper_idle_watch() {
     });
 }
 
+/// Per-session poses for the GNOME Shell helper cursor (helper API 11). The
+/// helper draws its own cursor, so the shared planner, float, rotation and
+/// halo reach it as pose tracks instead of painted frames.
 #[cfg(target_os = "linux")]
-fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> WaylandOverlayBackend {
+struct ShellHelperPoses {
+    model: cursor_overlay::pose_stream::PoseModel,
+    /// The look last sent, so it is sent again only when it changes.
+    look_sent: Option<String>,
+}
+
+#[cfg(target_os = "linux")]
+static SHELL_HELPER_POSES: Mutex<Option<ShellHelperPoses>> = Mutex::new(None);
+
+/// Whether the helper plays pose tracks. Checked once, like the backend.
+#[cfg(target_os = "linux")]
+fn shell_helper_plays_poses() -> bool {
+    static POSES: OnceLock<bool> = OnceLock::new();
+    *POSES.get_or_init(crate::wayland::shell_helper::pose_cursor_available)
+}
+
+/// What one command sends the pose-playing helper, besides the command.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Default, PartialEq)]
+struct ShellHelperPoseUpdate {
+    /// The look JSON, when it changed.
+    look: Option<String>,
+    /// The track JSON of a move or snap.
+    track: Option<String>,
+    /// For a move: when its hotspot arrives, and which move it is.
+    arrival: Option<(Duration, u64)>,
+}
+
+/// Feed one message to the helper's pose model. `draws` says whether it
+/// reaches the helper (from [`shell_helper_surface_event`]).
+#[cfg(target_os = "linux")]
+fn shell_helper_pose_update(
+    poses: &mut ShellHelperPoses,
+    msg: &OverlayMsg,
+    draws: bool,
+    now: Instant,
+) -> ShellHelperPoseUpdate {
+    let track = poses.model.apply(msg, draws, now);
+    let mut update = ShellHelperPoseUpdate::default();
+    let OverlayMsg::Cmd(command) = msg else {
+        if draws {
+            // The helper hides; send the look again with the next draw.
+            poses.look_sent = None;
+        }
+        return update;
+    };
+    if !draws {
+        return update;
+    }
+    if let Some(look) = poses.model.look(&command.key).map(|look| look.to_json()) {
+        if poses.look_sent.as_deref() != Some(look.as_str()) {
+            poses.look_sent = Some(look.clone());
+            update.look = Some(look);
+        }
+    }
+    if let Some(track) = track {
+        if matches!(command.cmd, OverlayCommand::MoveTo { .. }) {
+            if let Some(seq) = poses.model.move_seq(&command.key) {
+                update.arrival = Some((Duration::from_secs_f64(track.arrival_secs()), seq));
+            }
+        }
+        update.track = Some(track.to_json());
+    }
+    update
+}
+
+/// Release `key`'s arrival waiter once the helper's hotspot has arrived,
+/// unless a later move replaced this one. Returns whether it is scheduled.
+#[cfg(target_os = "linux")]
+fn schedule_shell_helper_arrival(key: CursorKey, wait: Duration, seq: u64) -> bool {
+    std::thread::Builder::new()
+        .name("cua-shell-cursor-arrival".into())
+        .spawn(move || {
+            std::thread::sleep(wait);
+            let current = SHELL_HELPER_POSES
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().and_then(|p| p.model.move_seq(&key)));
+            if current == Some(seq) {
+                arrival_fire(&key);
+            }
+        })
+        .is_ok()
+}
+
+/// Dispatch one message to the Wayland backend. Returns whether a renderer
+/// will fire this command's arrival: the native layer-shell overlay, or the
+/// pose-playing shell helper for a move.
+#[cfg(target_os = "linux")]
+fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> bool {
     let backend = wayland_overlay_backend();
     match backend {
         WaylandOverlayBackend::SemanticShellHelper | WaylandOverlayBackend::LegacyShellHelper => {
             let semantic = backend == WaylandOverlayBackend::SemanticShellHelper;
-            if shell_helper_surface_event(msg, Instant::now()) {
-                if let OverlayMsg::Cmd(command) = msg {
-                    dispatch_shell_helper_command(&command.key, &command.cmd, semantic);
-                } else {
-                    crate::wayland::shell_helper::hide_cursor();
-                }
+            let now = Instant::now();
+            let reach = shell_helper_surface_event(msg, now);
+            let poses = (semantic && shell_helper_plays_poses()).then(|| {
+                // Read the launch template before taking the pose lock.
+                let uninitialised = SHELL_HELPER_POSES.lock().unwrap().is_none();
+                let template = uninitialised
+                    .then(|| read_render(|map| map.template.clone()))
+                    .flatten();
+                let mut guard = SHELL_HELPER_POSES.lock().unwrap();
+                let poses = guard.get_or_insert_with(|| ShellHelperPoses {
+                    model: cursor_overlay::pose_stream::PoseModel::new(
+                        template.unwrap_or_default(),
+                    ),
+                    look_sent: None,
+                });
+                shell_helper_pose_update(poses, msg, reach, now)
+            });
+            if !reach {
+                return false;
             }
+            let OverlayMsg::Cmd(command) = msg else {
+                crate::wayland::shell_helper::hide_cursor();
+                return false;
+            };
+            dispatch_shell_helper_command(&command.key, &command.cmd, semantic, poses.as_ref());
+            poses
+                .and_then(|update| update.arrival)
+                .is_some_and(|(wait, seq)| {
+                    schedule_shell_helper_arrival(command.key.clone(), wait, seq)
+                })
         }
-        WaylandOverlayBackend::LayerShell if !crate::wayland::overlay::forward(msg) => {
-            return WaylandOverlayBackend::None;
-        }
-        WaylandOverlayBackend::LayerShell | WaylandOverlayBackend::None => {}
+        WaylandOverlayBackend::LayerShell => crate::wayland::overlay::forward(msg),
+        WaylandOverlayBackend::None => false,
     }
-    backend
 }
 
 #[cfg(target_os = "linux")]
-fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool) {
+fn dispatch_shell_helper_command(
+    key: &str,
+    cmd: &OverlayCommand,
+    semantic: bool,
+    poses: Option<&ShellHelperPoseUpdate>,
+) {
     if semantic {
         crate::wayland::shell_helper::set_cursor_color(&cursor_overlay::session_fill_hex(key));
+    }
+    if let Some(look) = poses.and_then(|update| update.look.as_deref()) {
+        crate::wayland::shell_helper::set_cursor_look(look);
     }
     match cmd {
         OverlayCommand::ClickPulse { x, y } if semantic => {
             crate::wayland::shell_helper::click_pulse(*x as i32, *y as i32);
+        }
+        // The pose-playing helper follows the planned path itself.
+        OverlayCommand::MoveTo { .. } | OverlayCommand::SnapTo { .. }
+            if poses.is_some_and(|update| update.track.is_some()) =>
+        {
+            if let Some(track) = poses.and_then(|update| update.track.as_deref()) {
+                crate::wayland::shell_helper::play_cursor_path(track);
+            }
         }
         OverlayCommand::MoveTo { x, y, .. }
         | OverlayCommand::SnapTo { x, y, .. }
@@ -5780,5 +5907,80 @@ mod shell_helper_surface_tests {
             now
         ));
         assert!(shell_helper_surface_event(&cmd(b), now));
+    }
+
+    fn keyed(key: &str, cmd: OverlayCommand) -> OverlayMsg {
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: key.to_owned(),
+            cmd,
+        })
+    }
+
+    fn poses() -> ShellHelperPoses {
+        ShellHelperPoses {
+            model: cursor_overlay::pose_stream::PoseModel::new(CursorConfig::default()),
+            look_sent: None,
+        }
+    }
+
+    fn move_to(x: f64, y: f64) -> OverlayCommand {
+        OverlayCommand::MoveTo {
+            x,
+            y,
+            end_heading_radians: std::f64::consts::FRAC_PI_4,
+            target: None,
+        }
+    }
+
+    /// The helper gets the shared planner's path for a move, with the
+    /// arrival that releases the waiting action, and a one-pose track for
+    /// a snap. Only commands that reach it send anything.
+    #[test]
+    fn moves_and_snaps_reach_the_helper_as_pose_tracks() {
+        let now = Instant::now();
+        let mut poses = poses();
+        let snap = shell_helper_pose_update(&mut poses, &cmd("a"), true, now);
+        let track: serde_json::Value =
+            serde_json::from_str(snap.track.as_deref().unwrap()).unwrap();
+        assert_eq!(track["samples"].as_array().unwrap().len(), 1);
+        assert!(track["rest_from"].is_null());
+        assert_eq!(snap.arrival, None, "a snap has no glide to wait for");
+
+        let glide =
+            shell_helper_pose_update(&mut poses, &keyed("a", move_to(600.0, 400.0)), true, now);
+        let track: serde_json::Value =
+            serde_json::from_str(glide.track.as_deref().unwrap()).unwrap();
+        let samples = track["samples"].as_array().unwrap();
+        assert!(samples.len() > 10, "the planned path, not one jump");
+        let last = samples.last().unwrap().as_array().unwrap();
+        assert!((last[1].as_f64().unwrap() - 600.0).abs() < 1.0);
+        assert!((last[2].as_f64().unwrap() - 400.0).abs() < 1.0);
+        let (wait, seq) = glide.arrival.unwrap();
+        assert!(wait > Duration::ZERO);
+        assert_eq!(poses.model.move_seq(&"a".to_owned()), Some(seq));
+
+        let elsewhere =
+            shell_helper_pose_update(&mut poses, &keyed("b", move_to(9.0, 9.0)), false, now);
+        assert_eq!(elsewhere, ShellHelperPoseUpdate::default());
+    }
+
+    /// The look (resting float, halo colour) is sent once, again when it
+    /// changes (another session's colour), and again after the helper hid.
+    #[test]
+    fn the_helper_look_is_sent_only_when_it_changes() {
+        let now = Instant::now();
+        let mut poses = poses();
+        let first = shell_helper_pose_update(&mut poses, &cmd("a"), true, now);
+        assert!(first.look.is_some());
+        assert_eq!(
+            shell_helper_pose_update(&mut poses, &cmd("a"), true, now).look,
+            None
+        );
+        let other = shell_helper_pose_update(&mut poses, &cmd("b"), true, now);
+        assert!(other.look.is_some() && other.look != first.look);
+        shell_helper_pose_update(&mut poses, &OverlayMsg::Remove("b".to_owned()), true, now);
+        assert!(shell_helper_pose_update(&mut poses, &cmd("a"), true, now)
+            .look
+            .is_some());
     }
 }

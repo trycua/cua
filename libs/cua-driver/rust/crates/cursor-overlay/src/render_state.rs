@@ -393,28 +393,45 @@ impl RenderStateCore {
     /// resting bob. 0 with `cursor.float` off, reduced motion or a custom
     /// theme.
     pub fn float_dy(&self) -> f64 {
+        self.float_dy_at(self.motion_t, self.float_secs)
+    }
+
+    /// [`Self::float_dy`] with the move `motion_t` seconds in and the resting
+    /// loop `float_secs` seconds in.
+    pub(crate) fn float_dy_at(&self, motion_t: f64, float_secs: f64) -> f64 {
+        if !self.floats() {
+            return 0.0;
+        }
+        match self.trajectory.as_ref() {
+            Some(traj) if crate::cursor_pose::travelling(traj, motion_t) => {
+                crate::cursor_pose::travel_float_dy(traj, motion_t, self.float_start_dy)
+            }
+            _ => crate::cursor_pose::resting_float_dy(float_secs),
+        }
+    }
+
+    /// Whether this cursor floats at all: `cursor.float` on, the built-in
+    /// theme, and no reduced motion.
+    pub fn floats(&self) -> bool {
         let default_theme = self
             .theme
             .as_deref()
             .is_none_or(|theme| theme.id == crate::DEFAULT_THEME_ID);
-        if !self.options().float || !default_theme || self.reduced_motion() {
-            return 0.0;
-        }
-        match self.trajectory.as_ref() {
-            Some(traj) if crate::cursor_pose::travelling(traj, self.motion_t) => {
-                crate::cursor_pose::travel_float_dy(traj, self.motion_t, self.float_start_dy)
-            }
-            _ => crate::cursor_pose::resting_float_dy(self.float_secs),
-        }
+        self.options().float && default_theme && !self.reduced_motion()
     }
 
     /// Rotation from upright (radians) painted this frame (`cursor.rotate`):
     /// only while travelling, upright at arrival, for clicks and at rest.
     pub fn painted_rotation(&self) -> f64 {
+        self.rotation_at(self.motion_t)
+    }
+
+    /// [`Self::painted_rotation`] with the move `motion_t` seconds in.
+    pub(crate) fn rotation_at(&self, motion_t: f64) -> f64 {
         let mode = self.options().rotate;
         match self.trajectory.as_ref() {
             Some(traj) if !self.reduced_motion() => {
-                crate::cursor_pose::travel_rotation(traj, self.motion_t, mode, self.pressed)
+                crate::cursor_pose::travel_rotation(traj, motion_t, mode, self.pressed)
             }
             _ => 0.0,
         }

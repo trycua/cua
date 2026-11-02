@@ -33,7 +33,8 @@
 #                  $CUA_MACOS_SPACESD_SOURCE. Recorded in the image manifest
 #                  and /etc/cua-image/spacesd-source. With --app the doctor
 #                  expects the bundle's own build-info git_sha.
-#   --push TAG     after the gate passes, `lume push` TAG to the macos repo.
+#   --push TAG     after the gate passes, `lume push` TAG to the macos repo
+#                  (slim and full only: the xcode tier is never pushed).
 #                  TAG must be a new immutable pin of this tier
 #                  (<version>[-slim|-xcode[-X.Y]]-<yyyymmdd>-<sha7>);
 #                  scripts/images/check-tag-safety.sh refuses anything else.
@@ -98,6 +99,10 @@ if [ "$TIER" != slim ] && [ -z "$BASE_VM" ]; then
     echo "--tier $TIER builds on the gated VM of the tier below: pass --base-vm" >&2; exit 2
 fi
 [ -n "$MEMORY" ] || { [ "$TIER" = xcode ] && MEMORY=8GB || MEMORY=4GB; }
+if [ -n "$PUSH_TAG" ] && [ "$TIER" = xcode ]; then
+    echo "the xcode tier is never pushed: it carries Xcode, which Apple's terms do not let us redistribute (each Mac derives it: derive-local.sh)" >&2
+    exit 2
+fi
 MACOS_BASE_IMAGE="$MACOS_BASE_REPO:$MACOS_BASE_TAG"
 BASE_IMAGE="${BASE_IMAGE:-$MACOS_BASE_IMAGE}"
 VM="${VM:-cua-e2e-macos-$TIER-$$}"
@@ -133,6 +138,8 @@ want = {  # claim -> versions.env key, per tier
     ("full", "tools", "pnpm"): "PNPM_VERSION", ("full", "tools", "go"): "GO_VERSION",
     ("full", "tools", "rustc"): "RUST_VERSION", ("full", "tools", "cargo"): "RUST_VERSION",
     ("xcode", "tools", "xcodebuild"): "XCODE_VERSION",
+    ("xcode", "tools", "sccache"): "SCCACHE_VERSION", ("xcode", "tools", "xcodegen"): "XCODEGEN_VERSION",
+    ("xcode", "tools", "pod"): "COCOAPODS_VERSION",
 }
 bad = []
 for (tier, kind, name), key in want.items():
@@ -168,17 +175,8 @@ cp "$HERE"/files/*.sh "$HERE"/files/*.plist "$HERE/image.json" "$HERE/versions.e
 # This tier's downloads: fetched once into the cache, checked, then linked
 # into the setup share (cache/).
 mkdir -p "$CACHE" "$SETUP/cache"
-fetch() {  # URL SHA256
-    local f; f="$CACHE/$(basename "$1")"
-    if [ ! -f "$f" ] || [ "$(shasum -a 256 "$f" | cut -d' ' -f1)" != "$2" ]; then
-        log "fetching $1"
-        curl -fsSL --retry 3 -o "$f.part" "$1"
-        [ "$(shasum -a 256 "$f.part" | cut -d' ' -f1)" = "$2" ] ||
-            { rm -f "$f.part"; echo "checksum mismatch: $1" >&2; exit 1; }
-        mv "$f.part" "$f"
-    fi
-    ln -f "$f" "$SETUP/cache/" 2>/dev/null || cp "$f" "$SETUP/cache/"
-}
+# shellcheck source=files/fetch.sh
+. "$HERE/files/fetch.sh"
 case "$TIER" in
     slim) fetch "$CHROME_URL" "$CHROME_SHA256" ;;
     full)
@@ -190,7 +188,8 @@ case "$TIER" in
         [ -f "$xip" ] || { echo "$xip is missing: put the Xcode $XCODE_VERSION .xip in CUA_XCODE_CACHE" >&2; exit 2; }
         [ "$(shasum -a 1 "$xip" | cut -d' ' -f1)" = "$XCODE_XIP_SHA1" ] ||
             { echo "checksum mismatch: $xip" >&2; exit 1; }
-        ln -f "$xip" "$SETUP/cache/" 2>/dev/null || cp "$xip" "$SETUP/cache/" ;;
+        ln -f "$xip" "$SETUP/cache/" 2>/dev/null || cp "$xip" "$SETUP/cache/"
+        fetch_xcode_tools ;;
 esac
 "$SETUP/Cua Spacesd.app/Contents/MacOS/cua-spacesd" build-info >"$OUT/build-info.json"
 # A prebuilt bundle: the doctor checks the guest runs exactly that build.

@@ -126,6 +126,12 @@ for ref in "${refs[@]}"; do
     if [ "$tag" = latest ] && in_list "$nrepo" "${CANONICAL_REPOS[@]}"; then
         echo "REFUSED $ref: canonical repos never carry latest" >&2; refused=1; continue
     fi
+    # Xcode (with its SDKs and simulator runtimes) is Apple's: the macOS Space
+    # with developer tools is built on each user's own Mac and never pushed.
+    if [[ "$nrepo" == ghcr.io/trycua/macos && "$tag" == *-xcode* ]]; then
+        echo "REFUSED $ref: images with Xcode are not redistributable and are never published (libs/images/macos/derive-local.sh builds one per Mac)" >&2
+        refused=1; continue
+    fi
     rc=0; cur="$(remote_digest "$ref")" || rc=$?
     [ "$rc" = 0 ] || exit 2
     if [ -z "$cur" ]; then echo "ok      $ref (new tag)"; continue; fi

@@ -189,7 +189,18 @@ case "${CARGO_TARGET_DIR:-/}" in
     /*) ;;
     *) die "CARGO_TARGET_DIR must be an absolute path (got: $CARGO_TARGET_DIR)." ;;
 esac
-SPACESD_BIN="${CARGO_TARGET_DIR:-$SPACESD_DIR/target}/release/cua-spacesd"
+# libs/cua and libs/cua-spacesd are separate Cargo workspaces (libs/cua pins its
+# toolchain in rust-toolchain.toml), so they must not share a target directory:
+# artifacts from one toolchain break the other (E0463 "can't find crate for
+# zeroize_derive"). A set CARGO_TARGET_DIR is used as a parent, one subdirectory
+# per workspace.
+if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    SPACESD_TARGET_DIR="$CARGO_TARGET_DIR/cua-spacesd"
+    export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/cua"
+else
+    SPACESD_TARGET_DIR="$SPACESD_DIR/target"
+fi
+SPACESD_BIN="$SPACESD_TARGET_DIR/release/cua-spacesd"
 
 [ -x "$BUILD_SCRIPT" ] || die "missing $BUILD_SCRIPT"
 [ -f "$SIGNING_LIB" ] || die "missing $SIGNING_LIB (the stable local signing shared with Cua Driver)"
@@ -312,21 +323,21 @@ echo ""
 # the two run side by side (a cold wasm build is minutes). Its output goes to a
 # log that is shown when it fails.
 WEB_PID=""
-WEB_LOG=""
+WEB_BUILD_LOG=""
 if [ "$BUILD_WEB" = 1 ]; then
     log "building the web UI (apps/cua-spaces-web: pnpm install, pnpm build) in the background"
-    WEB_LOG="$(mktemp -t cua-local-webui)"
-    (cd "$WEBUI_APP" && CI=true pnpm install --ignore-workspace --frozen-lockfile && pnpm build) >"$WEB_LOG" 2>&1 &
+    WEB_BUILD_LOG="$(mktemp -t cua-local-webui)"
+    (cd "$WEBUI_APP" && CI=true pnpm install --ignore-workspace --frozen-lockfile && pnpm build) >"$WEB_BUILD_LOG" 2>&1 &
     WEB_PID=$!
 fi
 wait_for_web_ui() {
     [ -n "$WEB_PID" ] || return 0
     if wait "$WEB_PID"; then
         ok "the web UI is built"
-        rm -f "$WEB_LOG"
+        rm -f "$WEB_BUILD_LOG"
     else
-        cat "$WEB_LOG" >&2
-        rm -f "$WEB_LOG"
+        cat "$WEB_BUILD_LOG" >&2
+        rm -f "$WEB_BUILD_LOG"
         die "the web UI build failed (see above). Nothing was installed."
     fi
     WEB_PID=""
@@ -349,7 +360,7 @@ if [ "$SKIP_RUST_BUILD" = 0 ]; then
     (cd "$REPO_ROOT/libs/cua" && cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli)
     "$REPO_ROOT/libs/spaces-app-swift/scripts/stage-library.sh"
     log "building cua-spacesd from this checkout (cargo, release)"
-    (cd "$SPACESD_DIR" && cargo build --locked --release -p cua-spacesd --bin cua-spacesd)
+    (cd "$SPACESD_DIR" && CARGO_TARGET_DIR="$SPACESD_TARGET_DIR" cargo build --locked --release -p cua-spacesd --bin cua-spacesd)
 fi
 wait_for_web_ui
 if [ ! -f "$WEBUI_DIST/index.html" ]; then

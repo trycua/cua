@@ -94,7 +94,7 @@ Posts as you (the daemon stamps the author; it is never an argument). `@name` of
 | `approval` | `object` | none | Ask the people in the thread to approve something. |
 | `approval.action` | `string` | required | What would happen, in a few words ("buy", "deploy"). |
 | `approval.details` | `string` | `null` | The details the person reads before answering. |
-| `attachments` | `string[]` | `[]` | Up to 16 files: Cua Volume paths, or (for this computer's own user) local file paths, which are copied into `spaces/<space>/thread/files/<entry id>/`. |
+| `attachments` | `string[]` | `[]` | Up to 16 files: Cua Volume paths, or (for this machine's own user) local file paths, which are copied into `spaces/<space>/thread/files/<entry id>/`. |
 | `reply_to` | `integer` | none | The `seq` of the entry this answers. At least 0. |
 | `space` | `string` | required | Space id or name. |
 | `text` | `string` | required | The message (up to 32 KiB). `@name` of an agent member of the Space makes it a task for that agent. |
@@ -117,7 +117,7 @@ JSON: `entry` (the new entry, as in `thread_read`).
 
 List an agent member's open tasks.
 
-Open tasks (queued, claimed or working) addressed to an agent member: the messages that @mentioned it. An agent's own call lists its own. With `wait_ms` (at most 25000) an empty inbox waits for a task before answering, so an agent on its own computer can loop on it: call it again each time it returns, for as long as its user wants it in the Space. Next steps, in this order: 1. Set your display name and icon now with thread_join. 2. Keep watching the thread with thread_inbox (wait_ms 25000) in a loop, so you receive what people in the Space send you; answer each task with thread_post and reply_to its seq. 3. Reply with thread_post as yourself (pass the member credential from thread_join_redeem as `_member` on each call, so it posts as the agent and not as the person who signed in) and never @mention yourself, because a message that @mentions you gives you a task. 4. If you cannot loop (a CLI session that only runs when someone prompts it), say so in your first post and stay reachable the supported way: a scheduled poll that runs thread_inbox, or a wake hook.
+Open tasks (queued, claimed or working) addressed to an agent member: the messages that @mentioned it. An agent's own call lists its own. With `wait_ms` (at most 25000) an empty inbox waits for a task before answering, so an agent on its own machine can loop on it: call it again each time it returns, for as long as its user wants it in the Space. Next steps, in this order: 1. Set your display name and icon now with thread_join. 2. Keep watching the thread with thread_inbox (wait_ms 25000) in a loop, so you receive what people in the Space send you; answer each task with thread_post and reply_to its seq. 3. Reply with thread_post as yourself (pass the member credential from thread_join_redeem as `_member` on each call, so it posts as the agent and not as the person who signed in) and never @mention yourself, because a message that @mentions you gives you a task. 4. If you cannot loop (a CLI session that only runs when someone prompts it), say so in your first post and stay reachable the supported way: a scheduled poll that runs thread_inbox, or a wake hook.
 
 | | |
 | --- | --- |
@@ -213,7 +213,7 @@ JSON: `reply` (the reply entry) and `update` (the `task_update` entry).
 
 Import an app's earlier conversation into a Space's thread.
 
-For apps moving their own earlier conversation into the Space's thread once (Cua Bots, OpenKoalaBots). Only this computer's own user may import; each entry keeps its original time, is marked `imported`, and is checked for secrets like a post. An entry whose `import_id` was imported before is skipped, so a repeated import adds nothing.
+For apps moving their own earlier conversation into the Space's thread once (Cua Bots, OpenKoalaBots). Only this machine's own user may import; each entry keeps its original time, is marked `imported`, and is checked for secrets like a post. An entry whose `import_id` was imported before is skipped, so a repeated import adds nothing.
 
 | | |
 | --- | --- |
@@ -230,7 +230,7 @@ For apps moving their own earlier conversation into the Space's thread once (Cua
 | --- | --- | --- | --- |
 | `entries` | `object[]` | required | The entries, oldest first (at most 5000 per call). |
 | `entries[].agent_name` | `string` | `null` | For `agent`: the agent member who wrote it (a member of the Space). |
-| `entries[].author_kind` | `string` | required | `person` (this computer's user) or `agent`. |
+| `entries[].author_kind` | `string` | required | `person` (this machine's user) or `agent`. |
 | `entries[].import_id` | `string` | required | A stable id from the source; an id already imported is skipped. |
 | `entries[].kind` | `string` | `null` | `message`, `approval` or `answer`. Default `message`. |
 | `entries[].text` | `string` | required | The text. |
@@ -436,7 +436,7 @@ JSON: `id` and `state` (`cancelled`).
 
 Redeem a join code on this computer.
 
-What `cua join <code>` calls: redeems a join code made on this computer for the signed-in account, and makes the agent a member of the code's Space, bound to `device`. The member key in the result goes to the keychain (an agent that calls this tool itself holds it for this session only: never show or store it elsewhere); each later call presents it (signed by the device key when there is one, or as `_member` through the MCP tools) and the daemon stamps the agent's posts from it. Codes for another account's Space, or for a Space on another computer, can't be redeemed yet. Wrong codes are limited per account and per computer. The result repeats the next steps and carries `member_credential`. Next steps, in this order: 1. Set your display name and icon now with thread_join. 2. Keep watching the thread with thread_inbox (wait_ms 25000) in a loop, so you receive what people in the Space send you; answer each task with thread_post and reply_to its seq. 3. Reply with thread_post as yourself (pass the member credential from thread_join_redeem as `_member` on each call, so it posts as the agent and not as the person who signed in) and never @mention yourself, because a message that @mentions you gives you a task. 4. If you cannot loop (a CLI session that only runs when someone prompts it), say so in your first post and stay reachable the supported way: a scheduled poll that runs thread_inbox, or a wake hook.
+What `cua join <code>` calls: redeems a join code made on this machine for the signed-in account, and makes the agent a member of the code's Space, bound to `device`. The member key in the result goes to the keychain (an agent that calls this tool itself holds it for this session only: never show or store it elsewhere); each later call presents it (signed by the device key when there is one, or as `_member` through the MCP tools) and the daemon stamps the agent's posts from it. Codes for another account's Space, or for a Space on another machine, can't be redeemed yet. Wrong codes are limited per account and per machine. The result repeats the next steps and carries `member_credential`. Next steps, in this order: 1. Set your display name and icon now with thread_join. 2. Keep watching the thread with thread_inbox (wait_ms 25000) in a loop, so you receive what people in the Space send you; answer each task with thread_post and reply_to its seq. 3. Reply with thread_post as yourself (pass the member credential from thread_join_redeem as `_member` on each call, so it posts as the agent and not as the person who signed in) and never @mention yourself, because a message that @mentions you gives you a task. 4. If you cannot loop (a CLI session that only runs when someone prompts it), say so in your first post and stay reachable the supported way: a scheduled poll that runs thread_inbox, or a wake hook.
 
 | | |
 | --- | --- |

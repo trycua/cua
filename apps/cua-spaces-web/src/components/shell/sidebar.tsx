@@ -182,7 +182,7 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
         <Link
           to="/onboarding"
           data-finish-setup
-          className="mb-2 flex items-center gap-2 rounded-md border bg-background px-2.5 py-2 text-sm font-medium text-foreground shadow-xs hover:bg-accent"
+          className="mb-2 flex items-center gap-2 rounded-lg bg-accent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent/70"
         >
           <CuaKey size={18} />
           Finish setting up

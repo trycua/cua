@@ -3571,7 +3571,7 @@ impl Spaces {
                 // it does not establish that an update would help.
                 format!(
                     "{name} does not support remote health checks; \
-                     run `cua doctor --machine this` on that computer"
+                     run `cua doctor --machine this` on that machine"
                 ),
             )),
             Ok(Err(status)) => Err(from_host(cua_spacesd_client::Error::from(status))),

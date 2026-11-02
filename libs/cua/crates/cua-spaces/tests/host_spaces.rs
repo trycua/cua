@@ -1795,7 +1795,7 @@ async fn machine_health_unimplemented_does_not_assume_an_old_host() {
         assert_eq!(error.tag(), "host_capability_missing");
         assert_eq!(
             error.to_string(),
-            "machine health is not available on this host: Mac mini (spare) does not support remote health checks; run `cua doctor --machine this` on that computer"
+            "machine health is not available on this host: Mac mini (spare) does not support remote health checks; run `cua doctor --machine this` on that machine"
         );
     }
 }

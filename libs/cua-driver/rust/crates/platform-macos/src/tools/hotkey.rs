@@ -141,27 +141,34 @@ fn focus_hotkey_element(pid: i32, element_ptr: usize) -> anyhow::Result<()> {
     }
 }
 
-fn screen_sharing_modifier_delivery_error(
-    is_screen_sharing: bool,
+fn input_forwarder_modifier_delivery_error(
+    input_forwarder: Option<crate::input::keyboard::InputForwarder>,
     has_modifiers: bool,
     foreground: bool,
     window_id: Option<u32>,
 ) -> Option<ToolResult> {
-    if !is_screen_sharing || !has_modifiers || (foreground && window_id.is_some()) {
+    let input_forwarder = input_forwarder?;
+    if !has_modifiers || (foreground && window_id.is_some()) {
         return None;
     }
+    let (target, code) = match input_forwarder {
+        crate::input::keyboard::InputForwarder::ScreenSharing => {
+            ("Screen Sharing", "SCREEN_SHARING_REQUIRES_FOREGROUND_HID")
+        }
+        crate::input::keyboard::InputForwarder::Utm => ("UTM", "UTM_REQUIRES_FOREGROUND_HID"),
+    };
     Some(
-        ToolResult::error(
-            "Screen Sharing modifier hotkeys require delivery_mode:\"foreground\" and window_id \
+        ToolResult::error(format!(
+            "{target} modifier hotkeys require delivery_mode:\"foreground\" and window_id \
              so Cua Driver can deliver physical modifier transitions safely.",
-        )
+        ))
         .with_structured(serde_json::json!({
-            "code": "SCREEN_SHARING_REQUIRES_FOREGROUND_HID",
+            "code": code,
             "effect": "refused",
             "escalation": {
                 "recommended": "foreground",
-                "reason": "Screen Sharing does not forward modifier state from background \
-                           PID-routed base-key events.",
+                "reason": format!("{target} does not forward modifier state from background \
+                           PID-routed base-key events."),
                 "requires": ["window_id"]
             }
         })),
@@ -279,9 +286,10 @@ impl Tool for HotkeyTool {
 
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
 
-        let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
-        if let Some(error) = screen_sharing_modifier_delivery_error(
-            screen_sharing_target,
+        let input_forwarder = crate::input::keyboard::input_forwarder_for_pid(pid);
+        let input_forwarder_target = input_forwarder.is_some();
+        if let Some(error) = input_forwarder_modifier_delivery_error(
+            input_forwarder,
             !modifiers.is_empty(),
             fg,
             window_id,
@@ -548,7 +556,7 @@ impl Tool for HotkeyTool {
                                 pid as libc::pid_t,
                                 wid,
                                 || {
-                                    if screen_sharing_target {
+                                    if input_forwarder_target {
                                         crate::input::keyboard::press_key_bare_global(&key, &m)
                                     } else {
                                         crate::input::keyboard::press_key_global(&key, &m)
@@ -693,19 +701,46 @@ mod tests {
     }
 
     #[test]
-    fn screen_sharing_modifier_hotkeys_fail_closed_without_foreground_window() {
-        for (foreground, window_id) in [(false, None), (false, Some(7)), (true, None)] {
-            let result = screen_sharing_modifier_delivery_error(true, true, foreground, window_id)
-                .expect("unsafe Screen Sharing modifier route must be refused");
-            assert_eq!(result.is_error, Some(true));
-            let structured = result.structured_content.unwrap();
-            assert_eq!(structured["code"], "SCREEN_SHARING_REQUIRES_FOREGROUND_HID");
-            assert_eq!(structured["effect"], "refused");
-            assert_eq!(structured["escalation"]["recommended"], "foreground");
-            assert_eq!(structured["escalation"]["requires"][0], "window_id");
+    fn input_forwarder_modifier_hotkeys_preserve_screen_sharing_contract_and_name_utm() {
+        use crate::input::keyboard::InputForwarder;
+
+        for (target, code) in [
+            (
+                InputForwarder::ScreenSharing,
+                "SCREEN_SHARING_REQUIRES_FOREGROUND_HID",
+            ),
+            (InputForwarder::Utm, "UTM_REQUIRES_FOREGROUND_HID"),
+        ] {
+            for (foreground, window_id) in [(false, None), (false, Some(7)), (true, None)] {
+                let result = input_forwarder_modifier_delivery_error(
+                    Some(target),
+                    true,
+                    foreground,
+                    window_id,
+                )
+                .expect("unsafe input-forwarder modifier route must be refused");
+                assert_eq!(result.is_error, Some(true));
+                let structured = result.structured_content.unwrap();
+                assert_eq!(structured["code"], code);
+                assert_eq!(structured["effect"], "refused");
+                assert_eq!(structured["escalation"]["recommended"], "foreground");
+                assert_eq!(structured["escalation"]["requires"][0], "window_id");
+            }
         }
-        assert!(screen_sharing_modifier_delivery_error(true, true, true, Some(7)).is_none());
-        assert!(screen_sharing_modifier_delivery_error(true, false, false, None).is_none());
-        assert!(screen_sharing_modifier_delivery_error(false, true, false, None).is_none());
+        assert!(input_forwarder_modifier_delivery_error(
+            Some(InputForwarder::Utm),
+            true,
+            true,
+            Some(7)
+        )
+        .is_none());
+        assert!(input_forwarder_modifier_delivery_error(
+            Some(InputForwarder::Utm),
+            false,
+            false,
+            None
+        )
+        .is_none());
+        assert!(input_forwarder_modifier_delivery_error(None, true, false, None).is_none());
     }
 }

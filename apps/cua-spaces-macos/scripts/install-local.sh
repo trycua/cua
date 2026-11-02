@@ -331,29 +331,6 @@ wait_for_web_ui() {
     fi
     WEB_PID=""
 }
-if [ ! -f "$WEBUI_DIST/index.html" ]; then
-    web_ui_missing
-    exit 1
-fi
-
-printf '%sCua Spaces Local installer%s\n' "$BOLD$BLUE" "$NORMAL"
-echo "  source:  $REPO_ROOT"
-echo "  config:  $CONFIG"
-echo "  app:     $APP_DEST"
-echo "  cli:     $CLI_LINK"
-echo ""
-
-# --- Build -----------------------------------------------------------------------
-
-# The web UI first (as the release build does: pnpm install --frozen-lockfile,
-# pnpm build, which builds the app core's WebAssembly and then the pages): it
-# is the quick one to fail. CI=true keeps pnpm from asking questions.
-if [ "$BUILD_WEB" = 1 ]; then
-    log "building the web UI (apps/cua-spaces-web: pnpm install, pnpm build)"
-    if ! (cd "$WEBUI_APP" && CI=true pnpm install --ignore-workspace --frozen-lockfile && pnpm build); then
-        die "the web UI build failed (see above). Nothing was installed."
-    fi
-fi
 if [ "$SKIP_RUST_BUILD" = 0 ]; then
     # sccache, when installed, shares compiled crates between checkouts and
     # survives a cargo clean. A set $RUSTC_WRAPPER (even empty) overrides this.

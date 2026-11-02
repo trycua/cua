@@ -26,6 +26,7 @@ pub mod auto;
 pub mod bulk;
 pub mod cleanup;
 pub mod cloudinit;
+pub mod conformance;
 #[cfg(feature = "container")]
 pub mod container;
 #[cfg(feature = "containerization")]

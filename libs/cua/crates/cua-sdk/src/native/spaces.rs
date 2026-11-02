@@ -41,6 +41,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("start_space", "Spaces.start"),
     ("resize_space", "Spaces.resize"),
     ("space_bash", "Space.bash"),
+    ("space_job", "Spaces.call_tool_json"),
     ("space_write", "Space.write"),
     ("upload", "Space.upload"),
     ("send_file", "Space.send_file"),

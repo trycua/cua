@@ -40,7 +40,21 @@ use cua_spaces::{Error, Result, Spaces};
 const MAX_LINE: usize = 16 * 1024 * 1024;
 
 /// Server instructions the agent sees.
-pub const INSTRUCTIONS: &str = "Cua: tools for a persistent agent. Your Space has a thread where people and other agents talk: thread_read reads it, thread_post posts (an @name of another agent gives it a task), thread_inbox lists the tasks addressed to you, thread_claim takes one and thread_reply answers it and marks it done. notify_user tells your user something in the Cua app (use it for results they asked for, or when you need them). The Cua Volume keeps files beyond this Space: your home is agents/<you>/ (your memory lives there too), public/ is shared reference (read only), spaces/<this space>/ is this Space's folder; anything else needs volume_request_access, which the user approves. computer_list shows the user's own computers you were allowed to use; computer_list_tools and computer_call use them. Never put secrets in the drive: the user's Keyvault holds them.";
+const BASE_INSTRUCTIONS: &str = "Cua: tools for a persistent agent. Your Space has a thread where people and other agents talk: thread_read reads it, thread_post posts (an @name of another agent gives it a task), thread_inbox lists the tasks addressed to you, thread_claim takes one and thread_reply answers it and marks it done. notify_user tells your user something in the Cua app (use it for results they asked for, or when you need them). The Cua Volume keeps files beyond this Space: your home is agents/<you>/ (your memory lives there too), public/ is shared reference (read only), spaces/<this space>/ is this Space's folder; anything else needs volume_request_access, which the user approves. computer_list shows the user's own computers you were allowed to use; computer_list_tools and computer_call use them. Never put secrets in the drive: the user's Keyvault holds them.";
+
+/// What the agent's MCP server tells it at `initialize`: its tools, then how
+/// to do long work and how to share a Space with other agents (the texts the
+/// join result and the bundled skill carry too).
+pub fn instructions() -> &'static str {
+    static TEXT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        format!(
+            "{BASE_INSTRUCTIONS} {} {}",
+            cua_spaces_contract::LONG_WORK_STEPS,
+            cua_spaces_contract::COORDINATION_STEPS
+        )
+    });
+    TEXT.as_str()
+}
 
 /// Per-run pipe state kept by the supervisor.
 #[derive(Default)]
@@ -61,7 +75,7 @@ pub fn server(
     McpServer::new(spaces.clone())
         .with_filter(Arc::new(|_| false))
         .with_name("cua-agent")
-        .with_instructions(INSTRUCTIONS)
+        .with_instructions(instructions())
         .with_extension(Arc::new(AgentTools {
             persistent,
             agent: rec.name.clone(),
@@ -218,6 +232,25 @@ fn tool(name: &str, description: &str, input: Value, read_only: bool) -> Value {
     json!({"name": name, "description": description, "inputSchema": input,
            "annotations": {"readOnlyHint": read_only, "destructiveHint": !read_only,
                            "idempotentHint": read_only, "openWorldHint": true}})
+}
+
+/// `space_job` as this agent sees it: the contract's tool for its own Space
+/// (no `space` argument).
+fn space_job_tool() -> Value {
+    let contract = cua_spaces_contract::tool("space_job").expect("space_job is a contract tool");
+    let mut input = contract.input_schema.clone();
+    if let Some(p) = input.get_mut("properties").and_then(Value::as_object_mut) {
+        p.remove("space");
+    }
+    if let Some(r) = input.get_mut("required").and_then(Value::as_array_mut) {
+        r.retain(|x| x != "space");
+    }
+    tool(
+        "space_job",
+        &format!("{} {}", contract.description, contract.instructions),
+        input,
+        false,
+    )
 }
 
 fn str_arg<'a>(a: &'a Value, k: &str) -> Result<&'a str> {
@@ -380,8 +413,38 @@ impl AgentTools {
             "thread_read" | "thread_post" | "thread_inbox" | "thread_claim" | "thread_reply" => {
                 self.thread_tool(tool, a).await
             }
+            "space_job" => self.space_job(a).await,
             other => Err(Error::NotFound(format!("tool {other}"))),
         }
+    }
+
+    /// `space_job` in this agent's own Space (whatever `space` says). With
+    /// `notify` the job's end is a task for this agent in the Space's thread.
+    async fn space_job(&self, mut a: Value) -> Result<ToolOutcome> {
+        if let Some(o) = a.as_object_mut() {
+            o.insert("space".into(), json!(self.space));
+        }
+        let args: cua_spaces_contract::inputs::SpaceJob = serde_json::from_value(a)
+            .map_err(|e| Error::invalid(format!("space_job: {e} (see the tool's inputSchema)")))?;
+        let space = self.persistent.spaces.space(&self.space).await?;
+        let mut out = space.job(&args).await?;
+        if args.action == "start" && args.notify.unwrap_or(false) {
+            let caller = Caller::Agent {
+                name: self.agent.clone(),
+                space: self.space.clone(),
+            };
+            out["notify"] = match self.persistent.watch_job(
+                &caller,
+                &self.space,
+                out["job"].as_str().unwrap_or_default(),
+                out["name"].as_str().unwrap_or_default(),
+                args.wake.as_deref(),
+            ) {
+                Ok(_) => json!({"registered": true}),
+                Err(e) => json!({"registered": false, "reason": e.to_string()}),
+            };
+        }
+        Ok(ToolOutcome::json(&out))
     }
 
     /// The thread tools, as this agent in its own Space (the author and
@@ -487,6 +550,7 @@ const NAMES: &[&str] = &[
     "thread_inbox",
     "thread_claim",
     "thread_reply",
+    "space_job",
 ];
 
 #[async_trait::async_trait]
@@ -601,6 +665,7 @@ impl ToolExtension for AgentTools {
                 ),
                 false,
             ),
+            space_job_tool(),
             tool(
                 "thread_inbox",
                 "The open tasks addressed to you, oldest first.",

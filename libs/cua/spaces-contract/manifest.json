@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 114,
+  "tool_count": 115,
   "categories": [
     {
       "id": "lifecycle",
@@ -858,6 +858,172 @@
         "required": [
           "space",
           "command"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "space_job",
+      "category": "commands-and-files",
+      "description": "Run a long command in the Space as a background job: tail its log, cancel it, or get woken when it ends.",
+      "instructions": "Use this instead of space_bash for anything that takes more than a minute (builds, test suites, installs, waiting on CI). `start` returns a job id at once and the command keeps running when you stop, disconnect, or the Space's daemon restarts. Read it with `logs` (pass the returned `next_offset` as `offset` to read on; `follow_ms` waits for output) or `status`; stop it with `cancel`; `list` shows the Space's jobs. Pass `notify: true` to be woken: the Space's thread gets one message `JOB <id> <state> exit=<n> ...` with the end of the log, and as an agent member you receive it as your next turn, so you can end your turn instead of polling. `until` makes a job that waits for a file, a port, a command or a pull request's required checks; its end is the condition. Output is stdout and stderr together. Linux and macOS guests.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.exec",
+        "space.exec.shell",
+        "space.exec.jobs"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "sdk_symbol": "Space.job(_:)",
+      "rust_symbol": "Space::job",
+      "notes": [
+        "A job is a command that outlives the call, the connection and a restart of the Space's daemon; its state is files in the Space (`~/.cua/jobs/<id>`). Guests that are not Windows."
+      ],
+      "result": "JSON. `start`: `job`, `state`, `log_command` and a `hint`. `status`, `logs`: `job`, `name`, `state` (`running`, `exited`, `cancelled`, `timed_out` or `lost`), `exit_code`, `signal`, `started_at` and `ended_at` (unix seconds), `elapsed_s`, `size` (log bytes), and for `logs` `offset`, `next_offset`, `text` and `more`. `cancel`: the final status. `list`: `jobs`.",
+      "errors": [
+        "not_found",
+        "wrong_provider"
+      ],
+      "input_schema": {
+        "properties": {
+          "action": {
+            "description": "`start` (begin a job), `status` (state and the end of its log),\n`logs` (read the log from a byte offset), `cancel` (stop it) or\n`list` (this Space's jobs, newest first).",
+            "type": "string"
+          },
+          "command": {
+            "description": "`start`: the command line, run with `/bin/sh -c` in the background. It\nkeeps running when you or your connection go away. Give this or\n`until`.",
+            "type": "string"
+          },
+          "cwd": {
+            "description": "`start`: the directory to run in. Default: the Space user's home.",
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "`start`: environment variables for the command.",
+            "type": "object"
+          },
+          "follow_ms": {
+            "description": "`logs`: when there is nothing new after `offset` and the job is\nrunning, wait up to this many milliseconds (at most 25000) for output\nor for the job to end. Default 0.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "job": {
+            "description": "`status`, `logs`, `cancel`: the job id `start` returned.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "`logs`: most bytes to return (default 16000, at most 262144).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "description": "`start`: a short label for the job (\"unit tests\"), shown in listings\nand in the message that wakes you.",
+            "type": "string"
+          },
+          "notify": {
+            "description": "`start`: wake me when the job ends. The Space's thread gets one\nmessage with the job's result and the end of its log, addressed to\nyou when you are an agent member of the Space (so you can finish your\nturn and sleep), and the person gets a notification. Default false.",
+            "type": "boolean"
+          },
+          "offset": {
+            "description": "`logs`: the byte offset to read from (the `next_offset` of the\nprevious call). Without it: the last `limit` bytes.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "`start`: seconds before the job is stopped. Default: none.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "until": {
+            "description": "`start`: wait for a condition instead of running `command`. The job\nends when the condition holds (exit 0), or after `timeout`.",
+            "properties": {
+              "command": {
+                "description": "Wait for this shell command to exit 0.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "file": {
+                "description": "Wait for this path to exist in the Space.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "host": {
+                "description": "With `port`: the host. Default 127.0.0.1.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "interval": {
+                "description": "Seconds between checks (1 to 300). Default 5 (30 for `pr_checks`).",
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "port": {
+                "description": "Wait for this TCP port to accept connections (on `host`, default\n127.0.0.1).",
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "pr_checks": {
+                "description": "Wait for a GitHub pull request's required checks to finish with `gh`\n(signed in inside the Space): a number, a URL or `owner/repo#123`.\nThe job exits 0 when they pass and 1 when one fails.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "wake": {
+            "description": "`start` with `notify`: the agent member to wake instead of you.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space",
+          "action"
         ],
         "type": "object"
       }

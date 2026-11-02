@@ -98,6 +98,7 @@ pub mod routines;
 pub mod services;
 pub mod snapshots;
 mod space;
+pub mod space_jobs;
 mod spaces;
 pub mod thumbnails;
 

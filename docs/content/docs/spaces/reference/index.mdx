@@ -10,7 +10,7 @@ description: "Every Spaces tool by category, with parameters, results, errors an
   Version: 0.9.0
 */}
 
-The Spaces contract: 114 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.9.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
+The Spaces contract: 115 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.9.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
 
 ## Tools
 
@@ -36,6 +36,7 @@ Run shell commands and move files in and out of a Space.
 | Tool | Description | Effect |
 | --- | --- | --- |
 | [`space_bash`](/spaces/reference/spaces#space_bash) | Run a shell command inside the Space. | destructive |
+| [`space_job`](/spaces/reference/spaces#space_job) | Run a long command in the Space as a background job: tail its log, cancel it, or get woken when it ends. | destructive |
 | [`space_write`](/spaces/reference/spaces#space_write) | Write literal text to a path inside the Space. | destructive |
 | [`upload`](/spaces/reference/spaces#upload) | Send a local file or folder into the Space. | destructive |
 | [`send_file`](/spaces/reference/spaces#send_file) | Send a host file or folder into the Space's Downloads, verified by sha256 on arrival. | destructive |
@@ -307,7 +308,7 @@ No Space, run, window, service, tool or file with that id.
 
 Fix: List what exists first (list_spaces, agent_list, list_space_windows, list_tools).
 
-Listed by [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`volume_sync_resolve`](/spaces/reference/agents#volume_sync_resolve), [`cloud_remove_host`](/spaces/reference/spaces#cloud_remove_host).
+Listed by [`space_job`](/spaces/reference/spaces#space_job), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`volume_sync_resolve`](/spaces/reference/agents#volume_sync_resolve), [`cloud_remove_host`](/spaces/reference/spaces#cloud_remove_host).
 
 #### spacesd_not_available
 
@@ -333,7 +334,7 @@ The operation does not apply to this kind of Space.
 
 Fix: Use a tool that serves the Space's provider (see the tool's `providers`).
 
-Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`resize_space`](/spaces/reference/spaces#resize_space), [`start_space`](/spaces/reference/spaces#start_space).
+Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`resize_space`](/spaces/reference/spaces#resize_space), [`start_space`](/spaces/reference/spaces#start_space), [`space_job`](/spaces/reference/spaces#space_job).
 
 #### unauthenticated
 

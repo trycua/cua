@@ -32,6 +32,7 @@
     "guides/agent-memory-and-identity",
     "guides/agent-schedules",
     "guides/keep-an-agent-running",
+    "guides/long-running-jobs",
     "---Keep it working---",
     "guides/troubleshoot",
     "guides/uninstall",

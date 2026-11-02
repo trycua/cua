@@ -3923,7 +3923,6 @@ mod tests {
         assert_eq!(deleted.load(SeqCst), 2);
     }
 
-
     #[test]
     fn only_an_unplaced_create_overflows_into_your_clouds() {
         use cua_sandbox_core::settings::Source;

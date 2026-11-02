@@ -207,7 +207,7 @@ Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account: connect i
 | [`cloud_disconnect`](/spaces/reference/spaces#cloud_disconnect) | Forget a connected cloud account (deleting what Cua created there first, with delete=true). | destructive |
 | [`cloud_approve`](/spaces/reference/spaces#cloud_approve) | Approve (or deny) what an agent asked for on a cloud: its link or its raised limits. For a person only. | destructive |
 | [`cloud_sweep`](/spaces/reference/spaces#cloud_sweep) | Find and delete what Cua left in your clouds. | destructive |
-| [`cloud_plan`](/spaces/reference/spaces#cloud_plan) | Show (or apply) the elastic pool's plan for some Spaces: where they go, which machines it adds, and the cost. | destructive |
+| [`cloud_plan`](/spaces/reference/spaces#cloud_plan) | Show (or apply) the elastic pool's plan for some Spaces: where they go, which computers it adds, and the cost. | destructive |
 | [`cloud_hosts`](/spaces/reference/spaces#cloud_hosts) | List the hosts the elastic pool added in your clouds. | read-only, idempotent |
 | [`cloud_add_host`](/spaces/reference/spaces#cloud_add_host) | Add hosts to your pool in a linked cloud. | destructive |
 | [`cloud_remove_host`](/spaces/reference/spaces#cloud_remove_host) | Remove hosts this home added to your pool. | destructive |
@@ -217,7 +217,7 @@ Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account: connect i
 | [`prewarm_list`](/spaces/reference/spaces#prewarm_list) | List the prewarms and how many Spaces each keeps ready. | read-only, idempotent |
 | [`prewarm_remove`](/spaces/reference/spaces#prewarm_remove) | End a prewarm: its ready Spaces go. | mutating, idempotent |
 | [`cloud_audit`](/spaces/reference/spaces#cloud_audit) | Read the log of what Cua did in your clouds. | read-only, idempotent |
-| [`cloud_cost`](/spaces/reference/spaces#cloud_cost) | Estimate what Cua's machines in your clouds cost, by Space, agent, day or cloud. | read-only, idempotent |
+| [`cloud_cost`](/spaces/reference/spaces#cloud_cost) | Estimate what Cua's computers in your clouds cost, by Space, agent, day or cloud. | read-only, idempotent |
 
 ## Space ids
 
@@ -265,7 +265,7 @@ Branch on `kind`; the message is for people. Every tool can return `invalid_argu
 | [`permission_denied`](#permission_denied) | The signed-in account may not reach that relay computer. |
 | [`ambiguous_host`](#ambiguous_host) | The computer name given to on="host:&lt;name&gt;" fits several of your computers equally well; the message lists them. |
 | [`limit_exceeded`](#limit_exceeded) | The host is at a capacity limit: two macOS VMs per Mac (Apple's macOS license, enforced by Apple Virtualization) or the host's own Space limit. |
-| [`host_capacity`](#host_capacity) | The machine has no room for another Space now: its VMs are at their memory limit (shared snapshot memory counted once) or CPU limit, or it is low on memory. Nothing was started; the message says which limit and by how much. |
+| [`host_capacity`](#host_capacity) | The computer has no room for another Space now: its VMs are at their memory limit (shared snapshot memory counted once) or CPU limit, or it is low on memory. Nothing was started; the message says which limit and by how much. |
 | [`ambiguous_sandbox`](#ambiguous_sandbox) | A short name matches more than one sandbox. |
 | [`transfer_failed`](#transfer_failed) | A file transfer did not land, or landed with a different sha256. |
 | [`teleport_refused`](#teleport_refused) | The teleport consent gate refused: a sensitive item without acknowledge_sensitive, a declined approval, or a Space that cannot import the app. |
@@ -369,9 +369,9 @@ Listed by [`create_space`](/spaces/reference/spaces#create_space), [`cloud_plan`
 
 #### host_capacity
 
-The machine has no room for another Space now: its VMs are at their memory limit (shared snapshot memory counted once) or CPU limit, or it is low on memory. Nothing was started; the message says which limit and by how much.
+The computer has no room for another Space now: its VMs are at their memory limit (shared snapshot memory counted once) or CPU limit, or it is low on memory. Nothing was started; the message says which limit and by how much.
 
-Fix: Delete a Space (delete_space), create it smaller (cpus, memory_mb), or create it with on="auto" so another machine takes it.
+Fix: Delete a Space (delete_space), create it smaller (cpus, memory_mb), or create it with on="auto" so another computer takes it.
 
 #### ambiguous_sandbox
 

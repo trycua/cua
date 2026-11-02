@@ -349,7 +349,7 @@ A persistent agent is an agent member of the Space it works in, with its memory 
 | `every_minutes` | `integer` | none | A schedule: every N minutes (with `prompt`). |
 | `model` | `string` | none | Model id. |
 | `name` | `string` | required | The agent's name: 1-63 of a-z, 0-9, `.`, `_`, `-`. Its home is `agents/<name>/` in the Cua Volume. |
-| `on` | `string` | none | Where it runs: `local` (default), `auto` or a machine. |
+| `on` | `string` | none | Where it runs: `local` (default), `auto` or a computer. |
 | `once` | `boolean` | `false` | Remove the member when its first task ends. Default false. |
 | `prompt` | `string` | none | What the schedule asks each time. |
 | `rights` | `object` | `task` | Who can give it tasks, control it and answer its approvals. Default: `task` members, `control` admins, `approve` admins (the owner always can). |
@@ -446,7 +446,7 @@ A follow-up to the agent's idle run, or a new run with its home restored when it
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `name` | `string` | required | The persistent agent's name. |
-| `space` | `string` | none | The agent's Space (id or name); when given, the agent must be a member of it. Needed for an agent in a Space another machine provides (a teammate's): the message goes to that machine. Default: the agent is found by its name here. |
+| `space` | `string` | none | The agent's Space (id or name); when given, the agent must be a member of it. Needed for an agent in a Space another computer provides (a teammate's): the message goes to that computer. Default: the agent is found by its name here. |
 | `text` | `string` | required | The message (the prompt of a new run, or a follow-up). |
 
 #### Result

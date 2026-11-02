@@ -1,7 +1,6 @@
 //! `images.cua.ai/v1alpha1` Image resource, the Rust source of truth for the
 //! schema published at `libs/cua/crates/cua-image/schema/image-v1alpha1.schema.json`
-//! (JSON Schema generated with `schemars`, the same pattern as the Fleet SDK's
-//! sdk-schema → CRD generation). A test checks the generated schema stays
+//! (JSON Schema generated with `schemars`). A test checks the generated schema stays
 //! compatible with the checked-in schema.
 
 use std::collections::BTreeMap;
@@ -239,7 +238,7 @@ pub struct ImageFile {
     pub destination: String,
 }
 
-/// A file uploaded to Fleet (`uploads/<namespace>/<id>`).
+/// A file uploaded to the cloud (`uploads/<namespace>/<id>`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(title = "ImageFileReference")]

@@ -6,8 +6,8 @@ Applies to: PR #2341 and follow-up SDK/runtime work
 
 Primary objective: eliminate manual contract/runtime bookkeeping before publishing the Python and TypeScript SDKs
 
-> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026 and its source
-> was removed from this repository. The Fleet comparisons below are historical
+> Note (18 Oct 2026): Cua Cloud ended on 18 Oct 2026 and its source
+> was removed from this repository. The cloud comparisons below are historical
 > evidence and refer to source that now exists only in git history.
 
 Decision rationale: [Cua Driver integration surfaces: MCP/CLI and SDK bindings](why-cua-driver-uses-mcp-instead-of-uniffi.md)
@@ -104,27 +104,27 @@ process-global singletons. On macOS, AppKit surfaces require the main thread and
 permission identity is tied to the executable. These constraints are central to
 the transport decision.
 
-### What Fleet proves about UniFFI
+### What cloud proves about UniFFI
 
-Fleet provides a strong precedent for official UniFFI targets such as Python,
+Cloud provides a strong precedent for official UniFFI targets such as Python,
 Kotlin, Swift, and Ruby: its checked-in generator uses pinned Rust dependencies
 and supports regeneration checking.
 
-Fleet also contains generated TypeScript examples:
+Cloud also contains generated TypeScript examples:
 
 - a Node N-API path using `uniffi-bindgen-react-native`, `@ubjs/core`, and
   `@ubjs/node` to load a native `cdylib`; and
 - a browser/WASM path.
 
 Those TypeScript artifacts prove feasibility, not a production-ready generation
-pipeline. In the inspected tree, TypeScript is absent from Fleet's main
+pipeline. In the inspected tree, TypeScript is absent from cloud's main
 generation/check script, the React Native generator is not pinned in the Rust
 workspace, the example `@ubjs/*` dependencies use `latest`, and the browser
 WASM glue depends on configuration and generation that are not checked in.
 
 Therefore:
 
-- do not describe Fleet's TypeScript path as a reproducible template;
+- do not describe cloud's TypeScript path as a reproducible template;
 - use Cua Driver's existing deterministic `--check` flow as the standard the
   TypeScript UniFFI spike must meet; and
 - evaluate Python and TypeScript UniFFI adoption independently.
@@ -357,7 +357,7 @@ Run two distinct experiments:
 - Node TypeScript through `uniffi-bindgen-react-native` and `@ubjs/node`.
 
 The TypeScript experiment starts from a green-field reproducibility assumption,
-not from Fleet's manual artifacts. It must add:
+not from cloud's manual artifacts. It must add:
 
 - exact pinned generator and runtime versions;
 - an in-repository generation command;
@@ -590,10 +590,10 @@ entry on any supported OS.
 ## Review disposition
 
 Claude Code Opus independently reviewed the repository, the original plan,
-the three platform registries, the current SDK generators, and Fleet's UniFFI
+the three platform registries, the current SDK generators, and cloud's UniFFI
 artifacts. This revision incorporates its must-fix findings:
 
-- Fleet TypeScript is described as feasible but not reproducibly wired;
+- Cloud TypeScript is described as feasible but not reproducibly wired;
 - the live tool counts and parity claims are corrected;
 - A0 closes the immediate portable-subset gap;
 - capability ownership and platform-crate dependencies are explicit;
@@ -638,19 +638,19 @@ typed calls, errors, images, and generic runtime-only calls.
 
 ### UniFFI repository spike
 
-The comparison used the latest checked-in Fleet precedent at
+The comparison used the latest checked-in cloud precedent at
 `c2ba0b5e94d0f2c06d0c7efb0913803ca0a616af` rather than creating a second
 throwaway binding implementation with the same toolchain:
 
-- Fleet proves that official UniFFI Python bindings can be generated,
+- Cloud proves that official UniFFI Python bindings can be generated,
   drift-checked, and exercised against a host-native cdylib.
-- Fleet also proves that Node and browser TypeScript generation is technically
+- Cloud also proves that Node and browser TypeScript generation is technically
   possible through `uniffi-bindgen-react-native`; this is not merely WASM.
-- The checked-in Fleet TypeScript roots contain about 4,777 generated lines
+- The checked-in cloud TypeScript roots contain about 4,777 generated lines
   (220 KiB), require `@ubjs/core`, `@ubjs/node`, and a colocated native cdylib,
-  and are not part of Fleet's pinned four-language generation/check script.
+  and are not part of cloud's pinned four-language generation/check script.
   The runnable example declares those runtime/build dependencies as `latest`.
-- The Fleet Python generated root contains about 5,675 lines (228 KiB) for its
+- The cloud Python generated root contains about 5,675 lines (228 KiB) for its
   larger API. Those source sizes are toolchain evidence, not a like-for-like
   API-size benchmark.
 

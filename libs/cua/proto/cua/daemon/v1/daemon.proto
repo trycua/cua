@@ -82,9 +82,9 @@ enum DaemonErrorReason {
   // can). Unlike UNAUTHENTICATED, signing in again does not help. Older
   // daemons answered these as UNAUTHENTICATED.
   DAEMON_ERROR_REASON_PERMISSION_DENIED = 26;
-  // Removed with Cua Cloud (Fleets), which ended on 18 Oct 2026: the Fleet
+  // Removed with Cua Cloud, which ended on 18 Oct 2026: the cloud
   // API failure, a named pool's template mismatch, claim secrets that never
-  // arrived, Fleet's admission refusal and the cloud credit refusal. Their
+  // arrived, the cloud admission refusal and the cloud credit refusal. Their
   // numbers and names are never reused.
   reserved 7, 16, 17, 21, 22;
   reserved "DAEMON_ERROR_REASON_FLEET", "DAEMON_ERROR_REASON_POOL_SPEC_MISMATCH", "DAEMON_ERROR_REASON_CLAIM_SECRETS_NOT_DELIVERED", "DAEMON_ERROR_REASON_FLEET_ADMISSION_DENIED", "DAEMON_ERROR_REASON_CLOUD_CREDIT_EXHAUSTED";

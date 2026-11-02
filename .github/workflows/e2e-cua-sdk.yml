@@ -12,7 +12,7 @@ name: "E2E: cua SDK"
 #                  the suite (the `changes` job,
 #                  .github/scripts/e2e_cua_sdk_scope.py).
 #   nightly        cua-sandbox and local QEMU (KVM) on the reference disk.
-#                  Cua Cloud has ended, so there is no live Fleet lane.
+#                  Cua Cloud has ended, so there is no live cloud lane.
 #                  The five PR build jobs run too (no test shards): on main
 #                  they save their compiler caches, which every pull request
 #                  restores (see "Compiler caches" below).
@@ -538,7 +538,7 @@ jobs:
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
       - name: Build the SDK, fixtures, bindings, images, disks and runtimes
         run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
-      # Cua Cloud has ended (CUA-1854): Fleet refuses the old live lane, so
+      # Cua Cloud has ended (CUA-1854): the old live lane is refused, so
       # the nightly runs only the lanes that need no cloud account.
       - name: Run the suite
         run: >

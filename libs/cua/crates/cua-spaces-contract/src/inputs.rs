@@ -94,7 +94,7 @@ pub struct ListSpaces {
 /// tools take `runtime` as a string).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum FleetRuntime {
+pub enum CloudRuntime {
     /// A full KubeVirt VM booted from a KubeVirt containerDisk image (one
     /// with a `/disk/disk.img` layer).
     Kubevirt,
@@ -103,12 +103,12 @@ pub enum FleetRuntime {
     Gvisor,
 }
 
-impl FleetRuntime {
+impl CloudRuntime {
     /// The wire spelling.
     pub fn as_str(self) -> &'static str {
         match self {
-            FleetRuntime::Kubevirt => "kubevirt",
-            FleetRuntime::Gvisor => "gvisor",
+            CloudRuntime::Kubevirt => "kubevirt",
+            CloudRuntime::Gvisor => "gvisor",
         }
     }
 }

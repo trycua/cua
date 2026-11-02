@@ -657,7 +657,7 @@ pub fn spawn(relay: &Relay) {
             if let Err(e) = tokio::task::spawn_blocking(move || recompute(&relay)).await {
                 tracing::error!(error = %e, "mesh map recomputation failed");
             }
-            // Changes that came in meanwhile (a reconnecting fleet sends
+            // Changes that came in meanwhile (a group of reconnecting machines sends
             // several a second) are folded into the next pass.
             tokio::time::sleep(RECOMPUTE_GAP).await;
         }

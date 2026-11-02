@@ -595,7 +595,7 @@ mod tests {
         let xcode = tier_for_with(CanonicalOs::Macos, Some("tahoe"), &t("xcode"), &none);
         // The macOS Space with developer tools is never published: it is
         // derived on the user's Mac, so the tier resolves.
-        assert_eq!(xcode.unwrap(), "ghcr.io/trycua/macos:26-xcode");
+        assert_eq!(xcode.unwrap(), "ghcr.io/trycua/macos:26-xcode"); // <!-- cua-image-unverified --> not published yet
         for (got, want) in [(slim, "ghcr.io/trycua/linux:24.04-slim")] {
             // Unpublished until CI publishes the tier; then the ref itself.
             match crate::catalog::find(want) {

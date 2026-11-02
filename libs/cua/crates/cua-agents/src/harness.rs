@@ -592,13 +592,17 @@ pub fn memory_dir(h: &Harness) -> Option<&'static str> {
 /// (an explicit `home_dir`) keeps it in its own `.codex-sqlite` sibling.
 pub fn codex_sqlite_dir(home: &str) -> String {
     let home = home.trim_end_matches('/');
-    let marker = "/cua-volume/agents/";
-    match home.rsplit_once(marker) {
-        Some((guest_home, name)) if !name.contains('/') && !name.is_empty() => {
-            format!("{guest_home}/.cua/agents/codex-state/{name}")
+    // `cua-volume` in a Space; on a Mac the Volume is mounted at
+    // `~/Cua Volume`.
+    for marker in ["/cua-volume/agents/", "/Cua Volume/agents/"] {
+        if let Some((guest_home, name)) = home.rsplit_once(marker)
+            && !name.contains('/')
+            && !name.is_empty()
+        {
+            return format!("{guest_home}/.cua/agents/codex-state/{name}");
         }
-        _ => format!("{home}.codex-sqlite"),
     }
+    format!("{home}.codex-sqlite")
 }
 
 /// [`launch`] for a persistent agent whose home is the guest directory
@@ -1096,6 +1100,11 @@ mod tests {
         assert_eq!(
             codex_sqlite_dir("/srv/agents/ada"),
             "/srv/agents/ada.codex-sqlite"
+        );
+        // On a Mac the Volume is mounted at `~/Cua Volume`.
+        assert_eq!(
+            codex_sqlite_dir("/Users/ada/Cua Volume/agents/codex"),
+            "/Users/ada/.cua/agents/codex-state/codex"
         );
         // Not the home's own `codex/` (CODEX_HOME), which is on the Volume.
         let home = "/home/cua/cua-volume/agents/ada";

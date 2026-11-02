@@ -59,6 +59,7 @@ pub(super) struct FixtureState {
     fail_key_down_after: Option<usize>,
     completed_key_pairs: usize,
     semantic_large_page: bool,
+    dom_attribute_bytes: usize,
     semantic_html_style: String,
     semantic_full_dom_fails: bool,
     semantic_full_dom_times_out: bool,
@@ -106,6 +107,7 @@ impl Default for FixtureState {
             fail_key_down_after: None,
             completed_key_pairs: 0,
             semantic_large_page: false,
+            dom_attribute_bytes: 0,
             semantic_html_style: String::new(),
             semantic_full_dom_fails: false,
             semantic_full_dom_times_out: false,
@@ -536,11 +538,16 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 } else if st.semantic_truncated_dom && depth == 8 {
                     MockReply::ok(truncated_semantic_document())
                 } else {
-                    MockReply::ok(if st.semantic_large_page {
+                    let mut document = if st.semantic_large_page {
                         large_semantic_document(&st.semantic_html_style)
                     } else {
                         main_document()
-                    })
+                    };
+                    if st.dom_attribute_bytes > 0 {
+                        document["root"]["children"][0]["attributes"] =
+                            json!(["data-padding", "x".repeat(st.dom_attribute_bytes)]);
+                    }
+                    MockReply::ok(document)
                 }
             }
             "DOM.describeNode" if is_tab && call.params["backendNodeId"] == 999 => {
@@ -1917,6 +1924,76 @@ async fn snapshot_composes_shadow_iframe_and_oopif_refs() {
         !labels.iter().any(|l| l.contains("role=button")),
         "user-agent shadow content leaked: {snap}"
     );
+}
+
+// Chromium sends DOM.getDocument as one frame, even when a small tree has
+// large attribute values. Repeated reads must not consume reconnect attempts.
+async fn large_dom_frames_keep_the_browser_binding(format: &str) {
+    let (f, provider) = protected_existing_profile_fixture().await;
+    {
+        let mut state = f.state.lock().unwrap();
+        state.dom_attribute_bytes = 20 * 1024 * 1024;
+        state.oopif_present = false;
+    }
+    let transport = format!("large-dom-{format}");
+    let prepared = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": transport,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(structured(&prepared)["status"], "ok", "{prepared:?}");
+    assert!(provider.consent_seen.load(Ordering::SeqCst));
+    let tool = GetBrowserStateTool::new(f.engine.clone());
+    let bound = tool
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": transport
+        }))
+        .await;
+    let bound = structured(&bound);
+    assert_eq!(bound["status"], "ok", "{bound}");
+    let target = bound["target_id"].as_str().unwrap();
+    let tab = bound["tabs"][0]["tab_id"].as_str().unwrap();
+    let connections = f._server.accepted_connections();
+    assert_eq!(connections, 1);
+    let args = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "session": SESSION,
+        "_transport_session_id": transport,
+        "snapshot_format": format
+    });
+    for _ in 0..4 {
+        let result = tool.invoke(args.clone()).await;
+        let snapshot = structured(&result);
+        assert_eq!(snapshot["status"], "ok", "{format}: {snapshot}");
+        assert!(snapshot["refs"]
+            .as_array()
+            .is_some_and(|refs| !refs.is_empty()));
+        assert_eq!(f._server.accepted_connections(), connections);
+    }
+    // A normal read must still work with the original target and tab IDs.
+    f.state.lock().unwrap().dom_attribute_bytes = 0;
+    let after = tool.invoke(args).await;
+    assert_eq!(structured(&after)["status"], "ok", "{after:?}");
+    assert_eq!(f._server.accepted_connections(), connections);
+    crate::session::fire_session_end(&transport);
+}
+
+#[tokio::test]
+async fn semantic_snapshot_accepts_large_cdp_frames_without_rebinding() {
+    large_dom_frames_keep_the_browser_binding("semantic_v2").await;
+}
+
+#[tokio::test]
+async fn dom_ref_snapshot_accepts_large_cdp_frames_without_rebinding() {
+    large_dom_frames_keep_the_browser_binding("dom_refs_v1").await;
 }
 
 #[tokio::test]

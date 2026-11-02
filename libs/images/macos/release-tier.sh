@@ -54,6 +54,12 @@ while [ $# -gt 0 ]; do
 done
 # shellcheck source=versions.env
 . "$HERE/versions.env"
+# The xcode tier carries Xcode, SDKs and simulator runtimes: Apple's terms do
+# not allow redistributing them, so it is built and gated here but never
+# pushed. Each Mac derives it (derive-local.sh).
+never_xcode() {
+    [ "$TIER" != xcode ] || { echo "the xcode tier is never $1: it carries Xcode (see versions.env)" >&2; exit 2; }
+}
 pin() {
     [[ "$STAMP" =~ ^[0-9]{8}-[0-9a-f]{7}$ ]] || { echo "--stamp is <yyyymmdd>-<sha7>" >&2; exit 2; }
     local p
@@ -136,6 +142,7 @@ PY
     cp "$d"/* "$EVIDENCE/doctor/arm64-lume/"
     ;;
 push)
+    never_xcode pushed
     p="$(pin)"; vm="$(vm_name "$TIER")"
     digest="$("$HERE/push.sh" "$vm" "$p-raw" | tail -1)"
     python3 -c 'import json,sys;json.dump({"tag":sys.argv[1],"digest":sys.argv[2],"vm":sys.argv[3]},open(sys.argv[4],"w"))' \
@@ -143,6 +150,7 @@ push)
     cat "$EVIDENCE/raw.json"
     ;;
 publish)
+    never_xcode published
     p="$(pin)"
     [ "$(crane digest "$REPOSITORY:$p-raw")" = "$(jget "$EVIDENCE/raw.json" digest)" ] ||
         { echo "$p-raw no longer holds the pushed digest" >&2; exit 1; }
@@ -184,6 +192,7 @@ print(f"verified {rec['repo']}:{rec['tag']} {rec['lume']} ({len(pin.get('layers'
 PY
     ;;
 promote)
+    never_xcode promoted
     rec="$EVIDENCE/pushed.json"
     tag="$(jget "$rec" tag)" digest="$(jget "$rec" lume)"
     [ "$(jget "$rec" tier)" = "$TIER" ] || { echo "$rec is not the $TIER tier" >&2; exit 1; }

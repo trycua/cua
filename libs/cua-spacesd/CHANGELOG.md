@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.10.0...cua-spacesd-v0.10.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** a file write on the Cua Volume mount no longer fails after the file is in place ([#6322](https://github.com/trycua/cua/issues/6322)) ([8c55aa4](https://github.com/trycua/cua/commit/8c55aa4ca8b998c0198625b4df517c5987ecfb0e))
+
 ## [0.10.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.9.0...cua-spacesd-v0.10.0) (2026-11-02)
 
 

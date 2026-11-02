@@ -59,8 +59,10 @@ struct MainUIRouteTests {
         router.openMain()
         m.onboarding.finish()
         router.openMain()
-        #expect(web == [.firstRunDue, .home])
+        // The model's state file does not exist yet: the app's first launch here.
+        #expect(web == [.firstLaunch, .home])
         #expect(MainUIRouter.launchRoute(onboarded: false) == .firstRunDue)
+        #expect(MainUIRouter.launchRoute(onboarded: false, firstLaunch: true) == .firstLaunch)
         #expect(MainUIRouter.launchRoute(onboarded: true) == nil)
     }
 

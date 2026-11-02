@@ -15,10 +15,9 @@
 //! the job's log kept growing and its result is intact. It needs the `docker`
 //! command on `PATH` (and `DOCKER_HOST` for the engine to use).
 //!
-//! A third (`a_finished_job_wakes_the_agent`) registers the Cua Spaces
-//! extension, starts a job with `notify` as an agent member and runs the
-//! supervisor until the agent has the job's result as a task in the Space's
-//! thread.
+//! The daemon side (a finished job waking an agent) is tested against the same
+//! kind of Space in `cua-spaces-ext/tests/e2e_space_job_wake.rs`, because this
+//! crate is MIT and may not depend on the source-available crates.
 //!
 //! | env | meaning |
 //! |---|---|
@@ -332,113 +331,4 @@ async fn a_job_outlives_a_daemon_restart() {
         .collect();
     assert_eq!(full.text.lines().collect::<Vec<_>>(), want);
     eprintln!("{}", space_jobs::result_line(&done));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_finished_job_wakes_the_agent() {
-    use cua_spaces::extension::Caller;
-    use cua_spaces::mcp::McpServer;
-    use cua_spaces_ext::SpacesPersistent as _;
-    use serde_json::{Value, json};
-
-    if !gated("CUA_E2E_SPACE_JOBS") {
-        return;
-    }
-    init_tracing();
-    let bin = std::path::PathBuf::from(
-        std::env::var("CUA_SPACESD_STATIC").expect("set CUA_SPACESD_STATIC"),
-    );
-    let name = format!("cua-e2e-jobs-wake-{}", run_id());
-    let _guard = Container(name.clone());
-    let token = format!("tok-{}", run_id());
-    docker(&[
-        "run",
-        "-d",
-        "--name",
-        &name,
-        "-p",
-        "127.0.0.1::3211",
-        "-e",
-        &format!("CUA_ENV_TOKEN={token}"),
-        "-v",
-        &format!("{}:/cua-spacesd:ro", bin.display()),
-        "alpine:3.20",
-        "sh",
-        "-c",
-        "while true; do /cua-spacesd; sleep 1; done",
-    ]);
-    let addr = docker(&["port", &name, "3211"]);
-    let addr = addr.lines().next().unwrap().to_string();
-
-    let home = tempfile::tempdir().unwrap();
-    let spaces = cua_spaces_ext::register(
-        Spaces::builder()
-            .home(home.path())
-            .download_dir(home.path().join("downloads"))
-            .operator_display(Arc::new(cua_spaces::operator::NoDisplay)),
-        cua_volume::Drive::open_local(home.path()),
-        None,
-    )
-    .build();
-    let info = spaces
-        .add(&format!("http://{addr}"), Some(token), Some("wake".into()))
-        .await
-        .expect("add the Space");
-    let _ = space_again(&spaces, &info.id, Duration::from_secs(60)).await;
-    let mcp = McpServer::new(spaces.clone());
-    let call = |caller: Caller, tool: &'static str, args: Value| {
-        let mcp = mcp.clone();
-        async move {
-            let out = caller.scope(Box::pin(mcp.call(tool, args))).await;
-            cua_spaces::extension::outcome_json(out).unwrap_or_else(|e| panic!("{tool}: {e}"))
-        }
-    };
-    call(
-        Caller::Owner,
-        "agent_add",
-        json!({"space": info.id, "name": "ada", "harness": "claude-code",
-               "env_from_host": ["ANTHROPIC_API_KEY"]}),
-    )
-    .await;
-
-    let started = call(
-        Caller::Agent {
-            name: "ada".into(),
-            space: info.id.clone(),
-        },
-        "space_job",
-        json!({"space": info.id, "action": "start", "name": "wake me",
-               "command": "sleep 8; echo hello from the job", "notify": true}),
-    )
-    .await;
-    assert_eq!(started["state"], "running", "{started}");
-    assert_eq!(started["notify"]["registered"], true, "{started}");
-
-    // The supervisor follows the job; the agent has the result as a task.
-    let p = spaces.persistent();
-    let until = Instant::now() + Duration::from_secs(90);
-    let task = loop {
-        p.tick().await;
-        let inbox = call(
-            Caller::Owner,
-            "thread_inbox",
-            json!({"space": info.id, "member": "ada"}),
-        )
-        .await;
-        if let Some(t) = inbox["tasks"].as_array().and_then(|t| t.first()) {
-            break t.clone();
-        }
-        assert!(Instant::now() < until, "ada was never woken");
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    };
-    let text = task["text"].as_str().unwrap();
-    eprintln!("{text}");
-    assert!(text.starts_with("JOB j"), "{text}");
-    assert!(text.contains(" exited exit=0 "), "{text}");
-    assert!(text.contains("| wake me"), "{text}");
-    assert!(text.contains("hello from the job"), "{text}");
-    assert!(
-        p.watched_jobs().unwrap().is_empty(),
-        "the job is no longer followed"
-    );
 }

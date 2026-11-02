@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.9.0...cua-spacesd-v0.10.0) (2026-11-02)
+
+
+### Features
+
+* **spaces:** keep the Volume on all your machines, started by the daemon ([#6286](https://github.com/trycua/cua/issues/6286)) ([e6a88bf](https://github.com/trycua/cua/commit/e6a88bf12766b6ab85e4ab51aac6e5007588e747))
+
+
+### Bug Fixes
+
+* **cua-spacesd:** end driver sessions idle past their five-minute TTL ([#6284](https://github.com/trycua/cua/issues/6284)) ([f118bca](https://github.com/trycua/cua/commit/f118bca8aa80b9628344e56dbbec4dd4fd0358ab))
+
 ## [0.9.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.8.0...cua-spacesd-v0.9.0) (2026-11-01)
 
 

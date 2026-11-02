@@ -2102,7 +2102,9 @@ async fn a_failing_health_check_restarts_a_service() {
             .find(|s| s.spec.as_ref().is_some_and(|p| p.name == name))
             .unwrap();
         if s.restarts >= 1 {
-            assert!(s.probe_error.contains("127.0.0.1:9"), "{s:?}");
+            // The failed check stopped it (the reason is cleared once the new
+            // run starts, so it is not asserted here).
+            assert_eq!(s.last_end.as_ref().map(|e| e.signal_name.as_str()), Some("TERM"), "{s:?}");
             break;
         }
         assert!(Instant::now() < deadline, "not restarted: {s:?}");

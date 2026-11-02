@@ -2977,11 +2977,17 @@ impl Spaces {
                 return Err(e);
             }
         };
-        self.store(&space, credential)?;
-        if let Some(config) = built_from.as_deref().and_then(|b| self.build_config(b)) {
-            space.set_image_config(config.clone());
-            self.record_image_config(&id.to_string(), &config)?;
-        }
+        // The fork is booted: a failure to register it must not leave it
+        // running for a retry to duplicate.
+        let registered = (|| -> Result<()> {
+            self.store(&space, credential)?;
+            if let Some(config) = built_from.as_deref().and_then(|b| self.build_config(b)) {
+                space.set_image_config(config.clone());
+                self.record_image_config(&id.to_string(), &config)?;
+            }
+            Ok(())
+        })();
+        teardown_on_error(registered, "fork", &name, sandbox.delete()).await?;
         // A fork starts with its source Space's labels and egress policy (a
         // checkpoint source has none).
         let _ = self.inherit_meta(
@@ -3867,8 +3873,55 @@ fn refuse_windows_on_mac(image: Option<&str>, host_is_mac: bool) -> Result<()> {
     Ok(())
 }
 
+/// Passes `result` through; on an error runs `teardown` (best effort),
+/// logging its failure without replacing the original error.
+pub(crate) async fn teardown_on_error<T, E, D>(
+    result: Result<T>,
+    what: &str,
+    name: &str,
+    teardown: D,
+) -> Result<T>
+where
+    E: std::fmt::Display,
+    D: std::future::Future<Output = std::result::Result<(), E>>,
+{
+    if result.is_err()
+        && let Err(e) = teardown.await
+    {
+        tracing::warn!(error = %e, %what, %name, "teardown after failed registration also failed");
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn a_failed_registration_tears_the_fork_down_and_keeps_its_error() {
+        use std::sync::atomic::{AtomicU32, Ordering::SeqCst};
+        let deleted = AtomicU32::new(0);
+        let td = |fail: bool| {
+            let deleted = &deleted;
+            async move {
+                deleted.fetch_add(1, SeqCst);
+                if fail { Err("delete refused") } else { Ok(()) }
+            }
+        };
+        let ok = super::teardown_on_error(Ok(7), "fork", "f", td(false)).await;
+        assert_eq!(ok.unwrap(), 7);
+        assert_eq!(deleted.load(SeqCst), 0, "a registered fork stays");
+        for fail in [false, true] {
+            let err = super::teardown_on_error::<(), _, _>(
+                Err(Error::invalid("register failed")),
+                "fork",
+                "f",
+                td(fail),
+            )
+            .await
+            .unwrap_err();
+            assert!(err.to_string().contains("register failed"), "{err}");
+        }
+        assert_eq!(deleted.load(SeqCst), 2);
+    }
 
     #[test]
     fn only_an_unplaced_create_overflows_into_your_clouds() {

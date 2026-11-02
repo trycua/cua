@@ -460,6 +460,9 @@ export async function mcpInitialize(addr, token) {
   return msg.result
 }
 
-export const embeddedLocal = (dir) => cua.embedded({ stateDir: dir })
+// Its own Spaces registry too: the default is the real ~/.cua, which the
+// cua-home guard refuses in a test (a fork's registration fails there).
+export const embeddedLocal = (dir) => cua.embedded({ stateDir: dir, spacesHome: tmpSpaces() })
 export const tmpState = () => mkdtempSync(join(process.env.TMPDIR ?? "/tmp", `cua-e2e-${RUN}-state-`))
+export const tmpSpaces = () => mkdtempSync(join(process.env.TMPDIR ?? "/tmp", `cua-e2e-${RUN}-spaces-`))
 export { execFileSync }

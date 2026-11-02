@@ -31,6 +31,7 @@ final class MockVMVirtualizationService: VMVirtualizationService {
 
     var state: VZVirtualMachine.State { currentState }
     var displayVirtualMachine: VZVirtualMachine? { nil }
+    var vmHandle: BaseVirtualizationService.VirtualMachineHandle? { nil }
 
     nonisolated func configure(
         shouldFail: Bool,

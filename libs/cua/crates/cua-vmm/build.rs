@@ -1,8 +1,12 @@
 //! Files this crate embeds from elsewhere in the repository (the macOS image
 //! recipe that builds the developer tools image on the user's own Mac).
 //!
-//! In the repository they are read from their source of truth; the crate
-//! published to crates.io carries copies under `vendor/` (copied by
+//! The crate reads committed copies under `recipe/`, so everything it compiles
+//! lives inside libs/cua (the Rust build cache key hashes that tree). The
+//! source of truth stays in libs/images/macos; a test in scripts/images/tests
+//! fails when a copy falls behind (refresh with
+//! `scripts/images/sync-cua-vmm-recipe.sh`). The crate published to crates.io
+//! also carries copies under `vendor/` (copied by
 //! libs/cua/scripts/publish-crates.sh). Either way they land in OUT_DIR and
 //! the code embeds them from there.
 
@@ -11,23 +15,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// (repository path relative to this crate, name in OUT_DIR and vendor/):
+/// (committed copy relative to this crate, name in OUT_DIR and vendor/):
 /// a file or a directory.
 const FILES: &[(&str, &str)] = &[
-    (
-        "../../../images/macos/derive-local.sh",
-        "macos-derive-local.sh",
-    ),
-    ("../../../images/macos/versions.env", "macos-versions.env"),
-    (
-        "../../../images/macos/files/tier-xcode.sh",
-        "macos-tier-xcode.sh",
-    ),
-    ("../../../images/macos/files/fetch.sh", "macos-fetch.sh"),
-    (
-        "../../../images/macos/files/xcode-source.sh",
-        "macos-xcode-source.sh",
-    ),
+    ("recipe/macos-derive-local.sh", "macos-derive-local.sh"),
+    ("recipe/macos-versions.env", "macos-versions.env"),
+    ("recipe/macos-tier-xcode.sh", "macos-tier-xcode.sh"),
+    ("recipe/macos-fetch.sh", "macos-fetch.sh"),
+    ("recipe/macos-xcode-source.sh", "macos-xcode-source.sh"),
 ];
 
 fn copy(from: &Path, to: &Path) -> io::Result<()> {
@@ -48,9 +43,9 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     println!("cargo:rerun-if-changed=build.rs");
     for (repo_path, name) in FILES {
-        let repo = manifest_dir.join(repo_path);
-        let source = if repo.exists() {
-            repo
+        let committed = manifest_dir.join(repo_path);
+        let source = if committed.exists() {
+            committed
         } else {
             manifest_dir.join("vendor").join(name)
         };

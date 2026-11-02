@@ -211,5 +211,26 @@ class DeriveLocal(unittest.TestCase):
         self.assertIn("developer.apple.com", r.stderr)
 
 
+
+class CuaVmmRecipeCopies(unittest.TestCase):
+    """cua-vmm embeds committed copies of the recipe (so the Rust build reads
+    only libs/cua); they must equal libs/images/macos."""
+
+    COPIES = {
+        "derive-local.sh": "macos-derive-local.sh",
+        "versions.env": "macos-versions.env",
+        "files/tier-xcode.sh": "macos-tier-xcode.sh",
+        "files/fetch.sh": "macos-fetch.sh",
+        "files/xcode-source.sh": "macos-xcode-source.sh",
+    }
+
+    def test_the_copies_match_the_recipe(self):
+        recipe = os.path.join(ROOT, "libs", "cua", "crates", "cua-vmm", "recipe")
+        for source, name in self.COPIES.items():
+            with open(os.path.join(MACOS, source), "rb") as a, open(os.path.join(recipe, name), "rb") as b:
+                self.assertEqual(
+                    a.read(), b.read(), f"{name} is behind {source}: run scripts/images/sync-cua-vmm-recipe.sh"
+                )
+
 if __name__ == "__main__":
     unittest.main()

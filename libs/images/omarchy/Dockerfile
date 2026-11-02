@@ -92,6 +92,8 @@ RUN set -eu; \
     pacman -Q omarchy-dev omarchy-settings-dev cua-driver-bin cua-hyprland-plugin hyprland; \
     test -x /usr/bin/cua-driver; test -f /usr/lib/cua/hyprland/cua-hyprland-plugin.so; \
     yes | pacman -Scc >/dev/null; rm -f /tmp/packages.desktop; \
+    install -d /etc/cua-image; \
+    cp /etc/pacman.d/mirrorlist /etc/cua-image/pacman-mirrorlist.build; \
     mv /etc/pacman.d/mirrorlist.omarchy /etc/pacman.d/mirrorlist
 
 # CUA-1948: the compromised eMudhra intermediates. Arch's ca-certificates-mozilla

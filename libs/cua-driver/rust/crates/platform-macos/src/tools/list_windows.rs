@@ -142,7 +142,7 @@ mod tests {
                 height: 200.0,
             },
             layer: 0,
-            z_index: 7,
+            z_index: Some(7),
             is_on_screen: true,
             current_space_id: Some(1),
             on_current_space: Some(true),
@@ -179,12 +179,24 @@ mod tests {
                 height: 100.0,
             },
             layer: 0,
-            z_index: 1,
+            z_index: Some(1),
             is_on_screen: on_screen,
             current_space_id: Some(1),
             on_current_space: Some(true),
             space_ids: Some(vec![1]),
         }
+    }
+
+    #[test]
+    fn off_screen_window_record_has_null_z_index() {
+        let window = crate::windows::WindowInfo {
+            z_index: None,
+            ..window(10701, 65305, "Calculator", "", false)
+        };
+        assert_eq!(
+            window_record_json(&window)["z_index"],
+            serde_json::Value::Null
+        );
     }
 
     #[test]

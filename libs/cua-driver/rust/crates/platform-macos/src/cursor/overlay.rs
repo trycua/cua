@@ -1504,7 +1504,7 @@ mod tests {
                 height: 600.0,
             },
             layer: 0,
-            z_index,
+            z_index: Some(z_index),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: None,
@@ -1535,7 +1535,7 @@ mod tests {
         let mut windows = vec![window(10, target_pid, 20), window(11, 200, 10)];
         // WindowServer may retain another app's window ahead in its global
         // list; the active app identity is the authoritative cross-app guard.
-        windows[1].z_index = 30;
+        windows[1].z_index = Some(30);
         assert!(target_is_frontmost_visible_window(
             10,
             Some(target_pid),

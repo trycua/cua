@@ -567,12 +567,13 @@ impl Rules {
     /// Whether every address of `net` is reachable on a port no rule names:
     /// no rule that drops part of it comes before one that accepts all of
     /// it. Conservative: an accept that covers only part of `net` does not
-    /// count.
+    /// count. A rule for the host's own addresses (`host_local`) is not one
+    /// that drops `net`: it matches only what is local to the host.
     pub fn allows_net(&self, net: &Net) -> bool {
         for r in self
             .rules
             .iter()
-            .filter(|r| r.ports.is_none() && r.proto.is_none())
+            .filter(|r| r.ports.is_none() && r.proto.is_none() && !r.host_local)
         {
             if !r.net.overlaps(net) {
                 continue;

@@ -92,7 +92,7 @@ pub async fn run(
                 line(out, info_json(&info).to_string());
             } else {
                 if info.notice_pending {
-                    line(out, NOTICE.to_string());
+                    line(out, NOTICE);
                 }
                 for l in show_lines(&space, &info) {
                     line(out, l);
@@ -200,7 +200,10 @@ fn show_lines(space: &str, i: &SpaceNetworkInfo) -> Vec<String> {
         out.push(format!("  Allowed more than its parent (by {w})"));
     }
     match i.enforcement.as_str() {
-        "enforced" => out.push(format!("  Enforced by this computer, outside the Space: {}", i.point)),
+        "enforced" => out.push(format!(
+            "  Enforced by this computer, outside the Space: {}",
+            i.point
+        )),
         "no_network" => out.push("  No network: this runtime can't protect it yet".into()),
         "open" => out.push("  No protection: chosen by you".into()),
         "refused" => out.push(format!("  Can't start like this: {}", i.point)),
@@ -238,10 +241,16 @@ mod tests {
             ..Default::default()
         };
         let l = show_lines("studio", &info).join("\n");
-        assert!(l.starts_with("studio: Allow this computer's localhost"), "{l}");
+        assert!(
+            l.starts_with("studio: Allow this computer's localhost"),
+            "{l}"
+        );
         assert!(l.contains("Blocked: 8.8.8.8"), "{l}");
         assert!(l.contains("⚠ Allows this computer's localhost"), "{l}");
-        assert!(l.contains("Enforced by this computer, outside the Space"), "{l}");
+        assert!(
+            l.contains("Enforced by this computer, outside the Space"),
+            "{l}"
+        );
         assert!(l.contains("Always blocked:\n    Cloud metadata"), "{l}");
         let j = info_json(&info);
         assert_eq!(j["settings"]["localhost_ports"][0], 5432);

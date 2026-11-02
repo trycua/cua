@@ -3252,7 +3252,7 @@ impl Runtime for QemuRuntime {
         if st.kind != EntryKind::Instance {
             return Err(VmmError::invalid(format!("'{name}' is not a VM instance")));
         }
-        if Self::is_running(&st) && !st.netns && rules.blocks_anything() {
+        if Self::is_running(&st) && !st.netns && legacy_rules.blocks_anything() {
             refuse_tpm(&st, "a move into a new network namespace")?;
         }
         let previous = st.egress.replace(policy.clone());
@@ -3320,8 +3320,8 @@ impl Runtime for QemuRuntime {
         st.egress = Some(settings.custom.clone());
         let ports_change = crate::network::vm_localhost_ports(before.as_ref()).ok()
             != crate::network::vm_localhost_ports(Some(settings)).ok();
-        let restrict_change = (settings.preset == crate::network::NetworkPreset::None)
-            != st.restrict_network;
+        let restrict_change =
+            (settings.preset == crate::network::NetworkPreset::None) != st.restrict_network;
         let applied = if Self::is_running(&st) && st.netns && secure_netns() {
             let rules = crate::network::vm_rules(
                 st.network.as_ref(),

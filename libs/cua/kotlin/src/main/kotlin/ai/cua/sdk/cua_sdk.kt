@@ -1529,6 +1529,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_routine_set_enabled(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_routines(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_ack_network_notice(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_add(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_add_with_service(
@@ -1549,6 +1551,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_delete(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_delete_many(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_delete_tree(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_delete_volume(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_fork(
@@ -1567,6 +1571,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_list_tools_json(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_machine_health(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_network(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_relay_register(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_relay_unregister(
@@ -1584,6 +1590,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_resources(
 external fun uniffi_cua_sdk_checksum_method_spaces_set_egress(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_set_lifetime(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_set_network(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_space(
 ): Short
@@ -2580,6 +2588,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_routine_set_enabled(`ptr`: Long,`id
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_routines(`ptr`: Long,`agent`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_spaces_ack_network_notice(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_spaces_add(`ptr`: Long,`url`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_add_with_service(`ptr`: Long,`url`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,
@@ -2600,6 +2610,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_delete(`ptr`: Long,`space`: RustBuf
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_delete_many(`ptr`: Long,`ids`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_spaces_delete_tree(`ptr`: Long,`space`: RustBuffer.ByValue,`keepChildren`: Byte,
+): Long
 external fun uniffi_cua_sdk_fn_method_spaces_delete_volume(`ptr`: Long,`name`: RustBuffer.ByValue,`force`: Byte,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_fork(`ptr`: Long,`source`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
@@ -2618,6 +2630,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_list_tools_json(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_machine_health(`ptr`: Long,`machine`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_spaces_network(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_spaces_relay_register(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_relay_unregister(`ptr`: Long,`space`: RustBuffer.ByValue,
@@ -2635,6 +2649,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_resources(`ptr`: Long,`visible`: By
 external fun uniffi_cua_sdk_fn_method_spaces_set_egress(`ptr`: Long,`space`: RustBuffer.ByValue,`policy`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_set_lifetime(`ptr`: Long,`space`: RustBuffer.ByValue,`seconds`: Long,`onExpire`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_set_network(`ptr`: Long,`space`: RustBuffer.ByValue,`settings`: RustBuffer.ByValue,`widen`: Byte,`tree`: Byte,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_space(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
@@ -4198,6 +4214,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_routines() != 22768.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_ack_network_notice() != 32926.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_add() != 56308.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -4222,10 +4241,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_create_with_progress() != 28676.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_spaces_delete() != 39986.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_delete() != 4316.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_delete_many() != 9087.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_delete_tree() != 29454.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_delete_volume() != 11412.toShort()) {
@@ -4255,6 +4277,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_machine_health() != 35352.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_network() != 41208.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_relay_register() != 31691.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -4280,6 +4305,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_set_lifetime() != 62609.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_network() != 31983.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_space() != 26355.toShort()) {
@@ -20759,6 +20787,12 @@ public interface SpacesInterface {
     suspend fun `routines`(`agent`: kotlin.String?): List<RoutineInfo>
 
     /**
+     * Marks the one-time notice about the new network defaults as shown
+     * for `space` ([`SpaceNetworkInfo::notice_pending`]).
+     */
+    suspend fun `ackNetworkNotice`(`space`: kotlin.String)
+
+    /**
      * Adds a Space by URL (`http(s)://host:port`, `host:port`, or a
      * Space id such as `local:<name>`) after a `GetCapabilities` handshake. Any other MCP
      * endpoint (`http://host:8765/mcp`) becomes a Space with one MCP
@@ -20823,7 +20857,8 @@ public interface SpacesInterface {
 
     /**
      * Deletes a Space's sandbox and forgets it (a Space added by address
-     * is only forgotten). Returns what happened.
+     * is only forgotten). Its child Spaces are deleted first. Returns what
+     * happened.
      */
     suspend fun `delete`(`space`: kotlin.String): kotlin.String
 
@@ -20833,6 +20868,12 @@ public interface SpacesInterface {
      * order; one failure never stops the rest.
      */
     suspend fun `deleteMany`(`ids`: List<kotlin.String>): List<BulkResult>
+
+    /**
+     * [`Spaces::delete`], with `keep_children`: its child Spaces become
+     * top-level Spaces and keep running instead of being deleted first.
+     */
+    suspend fun `deleteTree`(`space`: kotlin.String, `keepChildren`: kotlin.Boolean): kotlin.String
 
     /**
      * Deletes the named volume `name` and its files (their history stays
@@ -20909,6 +20950,12 @@ public interface SpacesInterface {
     suspend fun `machineHealth`(`machine`: kotlin.String?): MachineHealth
 
     /**
+     * A Space's network: its settings, what they open, where they are
+     * enforced (or why its network is cut), and what is always blocked.
+     */
+    suspend fun `network`(`space`: kotlin.String): SpaceNetworkInfo
+
+    /**
      * Publishes `space` on the cua.ai relay as a machine of the signed-in
      * account, the way `cua host setup` publishes this computer: the
      * Space's own driver dials out, so the account's other devices (a
@@ -20983,6 +21030,15 @@ public interface SpacesInterface {
      * Embedded: recorded; the cua daemon on this machine enforces it.
      */
     suspend fun `setLifetime`(`space`: kotlin.String, `seconds`: kotlin.ULong, `onExpire`: kotlin.String?): kotlin.Long
+
+    /**
+     * Replaces a Space's network settings (see [`NetworkSettings`]). A
+     * child stays within its parent's unless `widen`; `tree` gives its
+     * children the same settings. They hold at once where the runtime can
+     * change a running guest's network, else from its next start
+     * (`applied`). A Space another machine runs is `Unsupported`.
+     */
+    suspend fun `setNetwork`(`space`: kotlin.String, `settings`: NetworkSettings, `widen`: kotlin.Boolean, `tree`: kotlin.Boolean): SetNetworkResult
 
     /**
      * A connected handle to a registered Space.
@@ -22155,6 +22211,32 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
 
     /**
+     * Marks the one-time notice about the new network defaults as shown
+     * for `space` ([`SpaceNetworkInfo::notice_pending`]).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `ackNetworkNotice`(`space`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_ack_network_notice(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Adds a Space by URL (`http(s)://host:port`, `host:port`, or a
      * Space id such as `local:<name>`) after a `GetCapabilities` handshake. Any other MCP
      * endpoint (`http://host:8765/mcp`) becomes a Space with one MCP
@@ -22371,7 +22453,8 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
     /**
      * Deletes a Space's sandbox and forgets it (a Space added by address
-     * is only forgotten). Returns what happened.
+     * is only forgotten). Its child Spaces are deleted first. Returns what
+     * happened.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -22414,6 +22497,31 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterSequenceTypeBulkResult.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * [`Spaces::delete`], with `keep_children`: its child Spaces become
+     * top-level Spaces and keep running instead of being deleted first.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteTree`(`space`: kotlin.String, `keepChildren`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_delete_tree(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterBoolean.lower(`keepChildren`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -22666,6 +22774,31 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
 
     /**
+     * A Space's network: its settings, what they open, where they are
+     * enforced (or why its network is cut), and what is always blocked.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `network`(`space`: kotlin.String) : SpaceNetworkInfo {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_network(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpaceNetworkInfo.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Publishes `space` on the cua.ai relay as a machine of the signed-in
      * account, the way `cua host setup` publishes this computer: the
      * Space's own driver dials out, so the account's other devices (a
@@ -22908,6 +23041,34 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_i64(future) },
         // lift function
         { FfiConverterLong.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Replaces a Space's network settings (see [`NetworkSettings`]). A
+     * child stays within its parent's unless `widen`; `tree` gives its
+     * children the same settings. They hold at once where the runtime can
+     * change a running guest's network, else from its next start
+     * (`applied`). A Space another machine runs is `Unsupported`.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setNetwork`(`space`: kotlin.String, `settings`: NetworkSettings, `widen`: kotlin.Boolean, `tree`: kotlin.Boolean) : SetNetworkResult {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_network(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterTypeNetworkSettings.lower(`settings`),FfiConverterBoolean.lower(`widen`),FfiConverterBoolean.lower(`tree`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSetNetworkResult.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -38182,6 +38343,111 @@ public object FfiConverterTypeNamedVolume: FfiConverterRustBuffer<NamedVolume> {
 
 
 /**
+ * A Space's network settings: a preset and the user's own lists. The host
+ * the Space runs on compiles them to rules it enforces outside the guest.
+ *
+ * - `internet` (the default): the public internet and the Space's own
+ * tree; this computer, your local network, cloud metadata, other trees
+ * and the cua daemon are blocked;
+ * - `none`: no network;
+ * - `localhost`: `internet`, plus this computer's localhost on
+ * `localhost_ports` (every port only with `all_localhost_ports`);
+ * - `lan`: `internet`, plus your local network (not this computer);
+ * - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
+ * - `unprotected`: everything but cloud metadata, other trees and the
+ * daemon.
+ *
+ * A runtime that can't protect a Space yet starts it without network and
+ * says so (`SpaceInfo.network_note`); it never starts it open unless the
+ * preset is `unprotected`.
+ */
+data class NetworkSettings (
+    /**
+     * `internet`, `none`, `localhost`, `lan`, `custom` or `unprotected`;
+     * empty is `internet`.
+     */
+    var `preset`: kotlin.String = ""
+    ,
+    /**
+     * `localhost`: the ports of this computer's localhost the Space may
+     * reach.
+     */
+    var `localhostPorts`: List<kotlin.UShort> = listOf()
+    ,
+    /**
+     * `localhost`: every port (the daemon's stay blocked).
+     */
+    var `allLocalhostPorts`: kotlin.Boolean = false
+    ,
+    /**
+     * Destinations that stay reachable (addresses or CIDRs).
+     */
+    var `allow`: List<kotlin.String> = listOf()
+    ,
+    /**
+     * Destinations that are blocked (addresses, CIDRs or `all`).
+     */
+    var `deny`: List<kotlin.String> = listOf()
+    ,
+    /**
+     * `custom`: what it starts from, `internet` (empty) or `none`.
+     */
+    var `customBase`: kotlin.String = ""
+    ,
+    /**
+     * Set when the Space was allowed more than its parent: who and when.
+     */
+    var `widenedBy`: kotlin.String? = null
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeNetworkSettings: FfiConverterRustBuffer<NetworkSettings> {
+    override fun read(buf: ByteBuffer): NetworkSettings {
+        return NetworkSettings(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceUShort.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: NetworkSettings) = (
+            FfiConverterString.allocationSize(value.`preset`) +
+            FfiConverterSequenceUShort.allocationSize(value.`localhostPorts`) +
+            FfiConverterBoolean.allocationSize(value.`allLocalhostPorts`) +
+            FfiConverterSequenceString.allocationSize(value.`allow`) +
+            FfiConverterSequenceString.allocationSize(value.`deny`) +
+            FfiConverterString.allocationSize(value.`customBase`) +
+            FfiConverterOptionalString.allocationSize(value.`widenedBy`)
+    )
+
+    override fun write(value: NetworkSettings, buf: ByteBuffer) {
+            FfiConverterString.write(value.`preset`, buf)
+            FfiConverterSequenceUShort.write(value.`localhostPorts`, buf)
+            FfiConverterBoolean.write(value.`allLocalhostPorts`, buf)
+            FfiConverterSequenceString.write(value.`allow`, buf)
+            FfiConverterSequenceString.write(value.`deny`, buf)
+            FfiConverterString.write(value.`customBase`, buf)
+            FfiConverterOptionalString.write(value.`widenedBy`, buf)
+    }
+}
+
+
+
+/**
  * One entry of the notifications feed.
  */
 data class NotificationInfo (
@@ -42098,6 +42364,53 @@ public object FfiConverterTypeServiceEndpoint: FfiConverterRustBuffer<ServiceEnd
 
 
 /**
+ * What [`Spaces::set_network`] did.
+ */
+data class SetNetworkResult (
+    /**
+     * `now` (the running guest is under them) or `next_start`.
+     */
+    var `applied`: kotlin.String
+    ,
+    /**
+     * The Space's network after the change.
+     */
+    var `network`: SpaceNetworkInfo
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSetNetworkResult: FfiConverterRustBuffer<SetNetworkResult> {
+    override fun read(buf: ByteBuffer): SetNetworkResult {
+        return SetNetworkResult(
+            FfiConverterString.read(buf),
+            FfiConverterTypeSpaceNetworkInfo.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SetNetworkResult) = (
+            FfiConverterString.allocationSize(value.`applied`) +
+            FfiConverterTypeSpaceNetworkInfo.allocationSize(value.`network`)
+    )
+
+    override fun write(value: SetNetworkResult, buf: ByteBuffer) {
+            FfiConverterString.write(value.`applied`, buf)
+            FfiConverterTypeSpaceNetworkInfo.write(value.`network`, buf)
+    }
+}
+
+
+
+/**
  * One setup step.
  */
 data class SetupStep (
@@ -43293,6 +43606,25 @@ data class SpaceCreateOptions (
     var `egress`: EgressPolicy? = null
     ,
     /**
+     * Network settings (see [`NetworkSettings`]). `None`: what `network`
+     * and `egress` say (`internet` when neither says anything). A daemon
+     * too old to keep them makes the create fail.
+     */
+    var `networkSettings`: NetworkSettings? = null
+    ,
+    /**
+     * Create it as a child of this Space (id or name): its network is no
+     * more open than its parent's, and it joins the parent's tree.
+     */
+    var `parent`: kotlin.String? = null
+    ,
+    /**
+     * With `parent`: let its network be more open than its parent's
+     * (recorded on the Space).
+     */
+    var `widen`: kotlin.Boolean? = null
+    ,
+    /**
      * With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type
      * its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic
      * pool's solve. `None`: the pool picks the cheapest that fits.
@@ -43345,6 +43677,9 @@ public object FfiConverterTypeSpaceCreateOptions: FfiConverterRustBuffer<SpaceCr
             FfiConverterOptionalString.read(buf),
             FfiConverterMapStringString.read(buf),
             FfiConverterOptionalTypeEgressPolicy.read(buf),
+            FfiConverterOptionalTypeNetworkSettings.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
         )
@@ -43377,6 +43712,9 @@ public object FfiConverterTypeSpaceCreateOptions: FfiConverterRustBuffer<SpaceCr
             FfiConverterOptionalString.allocationSize(value.`network`) +
             FfiConverterMapStringString.allocationSize(value.`labels`) +
             FfiConverterOptionalTypeEgressPolicy.allocationSize(value.`egress`) +
+            FfiConverterOptionalTypeNetworkSettings.allocationSize(value.`networkSettings`) +
+            FfiConverterOptionalString.allocationSize(value.`parent`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`widen`) +
             FfiConverterOptionalString.allocationSize(value.`instanceType`) +
             FfiConverterOptionalString.allocationSize(value.`region`)
     )
@@ -43408,6 +43746,9 @@ public object FfiConverterTypeSpaceCreateOptions: FfiConverterRustBuffer<SpaceCr
             FfiConverterOptionalString.write(value.`network`, buf)
             FfiConverterMapStringString.write(value.`labels`, buf)
             FfiConverterOptionalTypeEgressPolicy.write(value.`egress`, buf)
+            FfiConverterOptionalTypeNetworkSettings.write(value.`networkSettings`, buf)
+            FfiConverterOptionalString.write(value.`parent`, buf)
+            FfiConverterOptionalBoolean.write(value.`widen`, buf)
             FfiConverterOptionalString.write(value.`instanceType`, buf)
             FfiConverterOptionalString.write(value.`region`, buf)
     }
@@ -44004,6 +44345,42 @@ data class SpaceInfo (
     var `egressEnforced`: EgressEnforcement?
     ,
     /**
+     * Its network settings; `None` for a Space this machine keeps no
+     * record of, or one created before they existed (it gets them on its
+     * next start).
+     */
+    var `network`: NetworkSettings?
+    ,
+    /**
+     * Why its network is not what was asked, in plain words (a runtime
+     * that can't protect it yet started it without network); `None`
+     * otherwise.
+     */
+    var `networkNote`: kotlin.String?
+    ,
+    /**
+     * An update changed its network settings (an old Space moved to the
+     * new defaults): say so once.
+     */
+    var `networkNoticePending`: kotlin.Boolean
+    ,
+    /**
+     * The Space it was created from, by id; `None` for a top-level Space.
+     */
+    var `parent`: kotlin.String?
+    ,
+    /**
+     * The top-level Space of its tree, by id; `None` for a top-level
+     * Space.
+     */
+    var `root`: kotlin.String?
+    ,
+    /**
+     * How far below its tree's top-level Space it is (0: top-level).
+     */
+    var `depth`: kotlin.UInt
+    ,
+    /**
      * Named volumes mounted in the Space (see
      * [`SpaceCreateOptions::volumes`]).
      */
@@ -44060,6 +44437,12 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterLong.read(buf),
             FfiConverterTypeEgressPolicy.read(buf),
             FfiConverterOptionalTypeEgressEnforcement.read(buf),
+            FfiConverterOptionalTypeNetworkSettings.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterUInt.read(buf),
             FfiConverterSequenceTypeVolumeMount.read(buf),
             FfiConverterOptionalTypeSpaceSharing.read(buf),
         )
@@ -44096,6 +44479,12 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterLong.allocationSize(value.`createdAtUnix`) +
             FfiConverterTypeEgressPolicy.allocationSize(value.`egress`) +
             FfiConverterOptionalTypeEgressEnforcement.allocationSize(value.`egressEnforced`) +
+            FfiConverterOptionalTypeNetworkSettings.allocationSize(value.`network`) +
+            FfiConverterOptionalString.allocationSize(value.`networkNote`) +
+            FfiConverterBoolean.allocationSize(value.`networkNoticePending`) +
+            FfiConverterOptionalString.allocationSize(value.`parent`) +
+            FfiConverterOptionalString.allocationSize(value.`root`) +
+            FfiConverterUInt.allocationSize(value.`depth`) +
             FfiConverterSequenceTypeVolumeMount.allocationSize(value.`volumes`) +
             FfiConverterOptionalTypeSpaceSharing.allocationSize(value.`sharing`)
     )
@@ -44131,6 +44520,12 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterLong.write(value.`createdAtUnix`, buf)
             FfiConverterTypeEgressPolicy.write(value.`egress`, buf)
             FfiConverterOptionalTypeEgressEnforcement.write(value.`egressEnforced`, buf)
+            FfiConverterOptionalTypeNetworkSettings.write(value.`network`, buf)
+            FfiConverterOptionalString.write(value.`networkNote`, buf)
+            FfiConverterBoolean.write(value.`networkNoticePending`, buf)
+            FfiConverterOptionalString.write(value.`parent`, buf)
+            FfiConverterOptionalString.write(value.`root`, buf)
+            FfiConverterUInt.write(value.`depth`, buf)
             FfiConverterSequenceTypeVolumeMount.write(value.`volumes`, buf)
             FfiConverterOptionalTypeSpaceSharing.write(value.`sharing`, buf)
     }
@@ -44217,6 +44612,117 @@ public object FfiConverterTypeSpaceList: FfiConverterRustBuffer<SpaceList> {
             FfiConverterBoolean.write(value.`stale`, buf)
             FfiConverterString.write(value.`notice`, buf)
             FfiConverterSequenceTypeSpaceCreatingElsewhere.write(value.`creating`, buf)
+    }
+}
+
+
+
+/**
+ * A Space's network as `cua network show` says it ([`Spaces::network`]).
+ */
+data class SpaceNetworkInfo (
+    /**
+     * Its settings.
+     */
+    var `settings`: NetworkSettings
+    ,
+    /**
+     * One plain line ("Internet only").
+     */
+    var `summary`: kotlin.String
+    ,
+    /**
+     * What the settings open beyond `internet`, one plain line each.
+     */
+    var `widenings`: List<kotlin.String>
+    ,
+    /**
+     * `enforced` (rules on the host, outside the guest), `no_network`
+     * (its runtime can't protect it yet), `open` (No protection) or
+     * `refused`; empty when unknown (a Space another machine runs).
+     */
+    var `enforcement`: kotlin.String
+    ,
+    /**
+     * Where the rules are enforced, or why its network is cut.
+     */
+    var `point`: kotlin.String
+    ,
+    /**
+     * Why its network is not what was asked; `None` otherwise.
+     */
+    var `note`: kotlin.String?
+    ,
+    /**
+     * Its parent and its tree's top-level Space; `None` for a top-level
+     * Space.
+     */
+    var `parent`: kotlin.String?
+    ,
+    var `root`: kotlin.String?
+    ,
+    /**
+     * What no setting opens, in plain words.
+     */
+    var `alwaysBlocked`: List<kotlin.String>
+    ,
+    /**
+     * An update changed its settings: say so once.
+     */
+    var `noticePending`: kotlin.Boolean
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceNetworkInfo: FfiConverterRustBuffer<SpaceNetworkInfo> {
+    override fun read(buf: ByteBuffer): SpaceNetworkInfo {
+        return SpaceNetworkInfo(
+            FfiConverterTypeNetworkSettings.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceNetworkInfo) = (
+            FfiConverterTypeNetworkSettings.allocationSize(value.`settings`) +
+            FfiConverterString.allocationSize(value.`summary`) +
+            FfiConverterSequenceString.allocationSize(value.`widenings`) +
+            FfiConverterString.allocationSize(value.`enforcement`) +
+            FfiConverterString.allocationSize(value.`point`) +
+            FfiConverterOptionalString.allocationSize(value.`note`) +
+            FfiConverterOptionalString.allocationSize(value.`parent`) +
+            FfiConverterOptionalString.allocationSize(value.`root`) +
+            FfiConverterSequenceString.allocationSize(value.`alwaysBlocked`) +
+            FfiConverterBoolean.allocationSize(value.`noticePending`)
+    )
+
+    override fun write(value: SpaceNetworkInfo, buf: ByteBuffer) {
+            FfiConverterTypeNetworkSettings.write(value.`settings`, buf)
+            FfiConverterString.write(value.`summary`, buf)
+            FfiConverterSequenceString.write(value.`widenings`, buf)
+            FfiConverterString.write(value.`enforcement`, buf)
+            FfiConverterString.write(value.`point`, buf)
+            FfiConverterOptionalString.write(value.`note`, buf)
+            FfiConverterOptionalString.write(value.`parent`, buf)
+            FfiConverterOptionalString.write(value.`root`, buf)
+            FfiConverterSequenceString.write(value.`alwaysBlocked`, buf)
+            FfiConverterBoolean.write(value.`noticePending`, buf)
     }
 }
 
@@ -51128,6 +51634,38 @@ public object FfiConverterOptionalTypeImageInfo: FfiConverterRustBuffer<ImageInf
         } else {
             buf.put(1)
             FfiConverterTypeImageInfo.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeNetworkSettings: FfiConverterRustBuffer<NetworkSettings?> {
+    override fun read(buf: ByteBuffer): NetworkSettings? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeNetworkSettings.read(buf)
+    }
+
+    override fun allocationSize(value: NetworkSettings?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeNetworkSettings.allocationSize(value)
+        }
+    }
+
+    override fun write(value: NetworkSettings?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeNetworkSettings.write(value, buf)
         }
     }
 }

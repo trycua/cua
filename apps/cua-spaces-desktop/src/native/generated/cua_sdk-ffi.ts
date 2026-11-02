@@ -2359,6 +2359,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_method_spaces_ack_network_notice": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_add": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2524,6 +2529,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_delete_tree": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_delete_volume": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
       ret: FfiType.Handle,
@@ -2565,6 +2575,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_fn_method_spaces_machine_health": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_network": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -2686,6 +2701,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_spaces_set_lifetime": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.UInt64, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_set_network": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.Int8, FfiType.Int8],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -4864,6 +4884,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_ack_network_notice": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_add": {
       args: [],
       ret: FfiType.UInt16,
@@ -5029,6 +5054,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_delete_tree": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_delete_volume": {
       args: [],
       ret: FfiType.UInt16,
@@ -5070,6 +5100,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_machine_health": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_network": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5190,6 +5225,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_set_lifetime": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_set_network": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -6321,6 +6361,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spacestreamsession_request_keyframe(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_method_spacestreamsession_send_text(uniffiSelf: bigint, json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_method_spacestreamsession_stats(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_sdk_fn_method_spaces_ack_network_notice(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_add(uniffiSelf: bigint, url: Uint8Array, token: Uint8Array, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_add_with_service(uniffiSelf: bigint, url: Uint8Array, token: Uint8Array, name: Uint8Array, service: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_agent_capabilities(uniffiSelf: bigint): bigint;
@@ -6354,6 +6395,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_delete(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_delete_build(uniffiSelf: bigint, build: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_delete_many(uniffiSelf: bigint, ids: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_delete_tree(uniffiSelf: bigint, space: Uint8Array, keepChildren: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_delete_volume(uniffiSelf: bigint, name: Uint8Array, force: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_fork(uniffiSelf: bigint, source: Uint8Array, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_gpu_support(uniffiSelf: bigint, on: Uint8Array): bigint;
@@ -6363,6 +6405,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_list_known(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_list_tools_json(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_machine_health(uniffiSelf: bigint, machine: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_network(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications(uniffiSelf: bigint, unreadOnly: number, sinceMs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications_ack(uniffiSelf: bigint, ids: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notify_user(uniffiSelf: bigint, title: Uint8Array, body: Uint8Array, agent: Uint8Array): bigint;
@@ -6387,6 +6430,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_routines(uniffiSelf: bigint, agent: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_egress(uniffiSelf: bigint, space: Uint8Array, policy: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_lifetime(uniffiSelf: bigint, space: Uint8Array, seconds: bigint, onExpire: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_set_network(uniffiSelf: bigint, space: Uint8Array, settings: Uint8Array, widen: number, tree: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_space(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_start(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_stop(uniffiSelf: bigint, space: Uint8Array): bigint;
@@ -6822,6 +6866,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spacestreamsession_request_keyframe(): number;
     uniffi_cua_sdk_checksum_method_spacestreamsession_send_text(): number;
     uniffi_cua_sdk_checksum_method_spacestreamsession_stats(): number;
+    uniffi_cua_sdk_checksum_method_spaces_ack_network_notice(): number;
     uniffi_cua_sdk_checksum_method_spaces_add(): number;
     uniffi_cua_sdk_checksum_method_spaces_add_with_service(): number;
     uniffi_cua_sdk_checksum_method_spaces_agent_capabilities(): number;
@@ -6855,6 +6900,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_delete(): number;
     uniffi_cua_sdk_checksum_method_spaces_delete_build(): number;
     uniffi_cua_sdk_checksum_method_spaces_delete_many(): number;
+    uniffi_cua_sdk_checksum_method_spaces_delete_tree(): number;
     uniffi_cua_sdk_checksum_method_spaces_delete_volume(): number;
     uniffi_cua_sdk_checksum_method_spaces_fork(): number;
     uniffi_cua_sdk_checksum_method_spaces_gpu_support(): number;
@@ -6864,6 +6910,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_list_known(): number;
     uniffi_cua_sdk_checksum_method_spaces_list_tools_json(): number;
     uniffi_cua_sdk_checksum_method_spaces_machine_health(): number;
+    uniffi_cua_sdk_checksum_method_spaces_network(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications_ack(): number;
     uniffi_cua_sdk_checksum_method_spaces_notify_user(): number;
@@ -6888,6 +6935,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_routines(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_egress(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_lifetime(): number;
+    uniffi_cua_sdk_checksum_method_spaces_set_network(): number;
     uniffi_cua_sdk_checksum_method_spaces_space(): number;
     uniffi_cua_sdk_checksum_method_spaces_start(): number;
     uniffi_cua_sdk_checksum_method_spaces_stop(): number;

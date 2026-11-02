@@ -125,7 +125,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
 @Suite(.serialized) struct SpacesTests {
     @Test func everyContractToolMapsToAGeneratedMethod() {
         let rows = spacesToolMethods()
-        #expect(rows.count == 114)
+        #expect(rows.count == 116)
         // Swift spells `Class.method_name` as `methodName` on the generated
         // protocol; check each against the protocol's requirement list.
         let spaceMethods: Set<String> = [
@@ -144,7 +144,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             "volumeRequestAccess", "volumeRequests", "volumeApprove", "volumeDeny", "volumeAudit",
             "volumeStorage", "volumeStorageSet", "volumeMountStatus", "volumeMount", "volumeUnmount",
             "volumeSyncStatus", "volumeSyncEvents", "volumeSyncResolve", "volumeCacheStats",
-            "volumeCacheSet", "volumeCacheClear",
+            "volumeCacheSet", "volumeCacheClear", "network", "setNetwork",
         ]
         let spaceHandle: Set<String> = [
             "bash", "write", "home", "upload", "download", "sendFile", "listTools", "callTool",

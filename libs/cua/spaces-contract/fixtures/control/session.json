@@ -45,6 +45,28 @@
       "metering": "cloud"
     },
     {
+      "tool": "network_show",
+      "sdk_symbol": "Spaces::network_info",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "network_set",
+      "sdk_symbol": "Spaces::set_network",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
       "tool": "delete_space",
       "sdk_symbol": "Space::delete",
       "providers": [

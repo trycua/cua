@@ -505,7 +505,23 @@ export const PAGES: PageSpec[] = [
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
       '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM\'s shape.',
-    items: ['Spaces', 'SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
+    items: ['Spaces'],
+  },
+  {
+    slug: 'spaces/info',
+    title: 'Space records',
+    description: 'What a Space listing returns, and the Spaces tools `cua mcp` serves with the typed method that covers each.',
+    intro: '`SpaceInfo` is one row of a Spaces listing. `spaces_tool_methods` lists every Spaces tool with the method of `Spaces` or `Space` that covers it.',
+    items: ['SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
+  },
+  {
+    slug: 'spaces/network',
+    title: 'Network settings (experiment)',
+    description: 'What a Space can reach: its network preset, the allow and deny lists, and deleting a Space together with its children.',
+    intro:
+      'These calls belong to the Secure Spaces experiment (`cua experiments enable secure-spaces`) and are refused while it is off. `Spaces.network` says what a Space can reach and where that is enforced, `set_network` changes it (a child Space stays within its parent\'s unless widened), and `delete_tree` deletes a Space with or without its children. See [A Space\'s network](/cua-sdk/guides/egress).',
+    items: ['NetworkSettings', 'SpaceNetworkInfo', 'SetNetworkResult'],
+    members: [{ object: 'Spaces', title: 'Network', methods: ['network', 'ack_network_notice', 'set_network', 'delete_tree'] }],
   },
   {
     slug: 'spaces/resize',

@@ -13906,6 +13906,118 @@ const FfiConverterTypeNamedVolume = (() => {
 })();
 
 /**
+ * A Space's network settings: a preset and the user's own lists. The host
+ * the Space runs on compiles them to rules it enforces outside the guest.
+ *
+ * - `internet` (the default): the public internet and the Space's own
+ * tree; this computer, your local network, cloud metadata, other trees
+ * and the cua daemon are blocked;
+ * - `none`: no network;
+ * - `localhost`: `internet`, plus this computer's localhost on
+ * `localhost_ports` (every port only with `all_localhost_ports`);
+ * - `lan`: `internet`, plus your local network (not this computer);
+ * - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
+ * - `unprotected`: everything but cloud metadata, other trees and the
+ * daemon.
+ *
+ * A runtime that can't protect a Space yet starts it without network and
+ * says so (`SpaceInfo.network_note`); it never starts it open unless the
+ * preset is `unprotected`.
+ */
+export type NetworkSettings = {
+    /**
+     * `internet`, `none`, `localhost`, `lan`, `custom` or `unprotected`;
+     * empty is `internet`.
+     */
+    preset: string,
+    /**
+     * `localhost`: the ports of this computer's localhost the Space may
+     * reach.
+     */
+    localhostPorts: Array<number>,
+    /**
+     * `localhost`: every port (the daemon's stay blocked).
+     */
+    allLocalhostPorts: boolean,
+    /**
+     * Destinations that stay reachable (addresses or CIDRs).
+     */
+    allow: Array<string>,
+    /**
+     * Destinations that are blocked (addresses, CIDRs or `all`).
+     */
+    deny: Array<string>,
+    /**
+     * `custom`: what it starts from, `internet` (empty) or `none`.
+     */
+    customBase: string,
+    /**
+     * Set when the Space was allowed more than its parent: who and when.
+     */
+    widenedBy?: string
+}
+
+/**
+ * Generated factory for {@link NetworkSettings} record objects.
+ */
+export const NetworkSettings = (() => {
+    const defaults = () => ({
+        preset: "",
+        localhostPorts: [],
+        allLocalhostPorts: false,
+        allow: [],
+        deny: [],
+        customBase: "",
+        widenedBy: undefined
+    });
+    const create = (() => {
+        return uniffiCreateRecord<NetworkSettings, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<NetworkSettings>,
+    });
+})();
+
+const FfiConverterTypeNetworkSettings = (() => {
+    type TypeName = NetworkSettings;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                preset: FfiConverterString.read(from),
+                localhostPorts: FfiConverterSequenceUInt16.read(from),
+                allLocalhostPorts: FfiConverterBool.read(from),
+                allow: FfiConverterSequenceString.read(from),
+                deny: FfiConverterSequenceString.read(from),
+                customBase: FfiConverterString.read(from),
+                widenedBy: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.preset, into);
+            FfiConverterSequenceUInt16.write(value.localhostPorts, into);
+            FfiConverterBool.write(value.allLocalhostPorts, into);
+            FfiConverterSequenceString.write(value.allow, into);
+            FfiConverterSequenceString.write(value.deny, into);
+            FfiConverterString.write(value.customBase, into);
+            FfiConverterOptionalString.write(value.widenedBy, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.preset) +
+             FfiConverterSequenceUInt16.allocationSize(value.localhostPorts) +
+             FfiConverterBool.allocationSize(value.allLocalhostPorts) +
+             FfiConverterSequenceString.allocationSize(value.allow) +
+             FfiConverterSequenceString.allocationSize(value.deny) +
+             FfiConverterString.allocationSize(value.customBase) +
+             FfiConverterOptionalString.allocationSize(value.widenedBy);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * One entry of the notifications feed.
  */
 export type NotificationInfo = {
@@ -18001,6 +18113,166 @@ const FfiConverterTypeServiceEndpoint = (() => {
 })();
 
 /**
+ * A Space's network as `cua network show` says it ([`Spaces::network`]).
+ */
+export type SpaceNetworkInfo = {
+    /**
+     * Its settings.
+     */
+    settings: NetworkSettings,
+    /**
+     * One plain line ("Internet only").
+     */
+    summary: string,
+    /**
+     * What the settings open beyond `internet`, one plain line each.
+     */
+    widenings: Array<string>,
+    /**
+     * `enforced` (rules on the host, outside the guest), `no_network`
+     * (its runtime can't protect it yet), `open` (No protection) or
+     * `refused`; empty when unknown (a Space another machine runs).
+     */
+    enforcement: string,
+    /**
+     * Where the rules are enforced, or why its network is cut.
+     */
+    point: string,
+    /**
+     * Why its network is not what was asked; `None` otherwise.
+     */
+    note?: string,
+    /**
+     * Its parent and its tree's top-level Space; `None` for a top-level
+     * Space.
+     */
+    parent?: string,
+    root?: string,
+    /**
+     * What no setting opens, in plain words.
+     */
+    alwaysBlocked: Array<string>,
+    /**
+     * An update changed its settings: say so once.
+     */
+    noticePending: boolean
+}
+
+/**
+ * Generated factory for {@link SpaceNetworkInfo} record objects.
+ */
+export const SpaceNetworkInfo = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceNetworkInfo, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceNetworkInfo>,
+    });
+})();
+
+const FfiConverterTypeSpaceNetworkInfo = (() => {
+    type TypeName = SpaceNetworkInfo;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                settings: FfiConverterTypeNetworkSettings.read(from),
+                summary: FfiConverterString.read(from),
+                widenings: FfiConverterSequenceString.read(from),
+                enforcement: FfiConverterString.read(from),
+                point: FfiConverterString.read(from),
+                note: FfiConverterOptionalString.read(from),
+                parent: FfiConverterOptionalString.read(from),
+                root: FfiConverterOptionalString.read(from),
+                alwaysBlocked: FfiConverterSequenceString.read(from),
+                noticePending: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeNetworkSettings.write(value.settings, into);
+            FfiConverterString.write(value.summary, into);
+            FfiConverterSequenceString.write(value.widenings, into);
+            FfiConverterString.write(value.enforcement, into);
+            FfiConverterString.write(value.point, into);
+            FfiConverterOptionalString.write(value.note, into);
+            FfiConverterOptionalString.write(value.parent, into);
+            FfiConverterOptionalString.write(value.root, into);
+            FfiConverterSequenceString.write(value.alwaysBlocked, into);
+            FfiConverterBool.write(value.noticePending, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeNetworkSettings.allocationSize(value.settings) +
+             FfiConverterString.allocationSize(value.summary) +
+             FfiConverterSequenceString.allocationSize(value.widenings) +
+             FfiConverterString.allocationSize(value.enforcement) +
+             FfiConverterString.allocationSize(value.point) +
+             FfiConverterOptionalString.allocationSize(value.note) +
+             FfiConverterOptionalString.allocationSize(value.parent) +
+             FfiConverterOptionalString.allocationSize(value.root) +
+             FfiConverterSequenceString.allocationSize(value.alwaysBlocked) +
+             FfiConverterBool.allocationSize(value.noticePending);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * What [`Spaces::set_network`] did.
+ */
+export type SetNetworkResult = {
+    /**
+     * `now` (the running guest is under them) or `next_start`.
+     */
+    applied: string,
+    /**
+     * The Space's network after the change.
+     */
+    network: SpaceNetworkInfo
+}
+
+/**
+ * Generated factory for {@link SetNetworkResult} record objects.
+ */
+export const SetNetworkResult = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetNetworkResult, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetNetworkResult>,
+    });
+})();
+
+const FfiConverterTypeSetNetworkResult = (() => {
+    type TypeName = SetNetworkResult;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                applied: FfiConverterString.read(from),
+                network: FfiConverterTypeSpaceNetworkInfo.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.applied, into);
+            FfiConverterTypeSpaceNetworkInfo.write(value.network, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.applied) +
+             FfiConverterTypeSpaceNetworkInfo.allocationSize(value.network);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * One setup step.
  */
 export type SetupStep = {
@@ -19176,6 +19448,22 @@ export type SpaceCreateOptions = {
      */
     egress?: EgressPolicy,
     /**
+     * Network settings (see [`NetworkSettings`]). `None`: what `network`
+     * and `egress` say (`internet` when neither says anything). A daemon
+     * too old to keep them makes the create fail.
+     */
+    networkSettings?: NetworkSettings,
+    /**
+     * Create it as a child of this Space (id or name): its network is no
+     * more open than its parent's, and it joins the parent's tree.
+     */
+    parent?: string,
+    /**
+     * With `parent`: let its network be more open than its parent's
+     * (recorded on the Space).
+     */
+    widen?: boolean,
+    /**
      * With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type
      * its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic
      * pool's solve. `None`: the pool picks the cheapest that fits.
@@ -19218,6 +19506,9 @@ export const SpaceCreateOptions = (() => {
         network: undefined,
         labels: new Map(),
         egress: undefined,
+        networkSettings: undefined,
+        parent: undefined,
+        widen: undefined,
         instanceType: undefined,
         region: undefined
     });
@@ -19262,6 +19553,9 @@ const FfiConverterTypeSpaceCreateOptions = (() => {
                 network: FfiConverterOptionalString.read(from),
                 labels: FfiConverterMapStringString.read(from),
                 egress: FfiConverterOptionalTypeEgressPolicy.read(from),
+                networkSettings: FfiConverterOptionalTypeNetworkSettings.read(from),
+                parent: FfiConverterOptionalString.read(from),
+                widen: FfiConverterOptionalBoolean.read(from),
                 instanceType: FfiConverterOptionalString.read(from),
                 region: FfiConverterOptionalString.read(from)
             };
@@ -19293,6 +19587,9 @@ const FfiConverterTypeSpaceCreateOptions = (() => {
             FfiConverterOptionalString.write(value.network, into);
             FfiConverterMapStringString.write(value.labels, into);
             FfiConverterOptionalTypeEgressPolicy.write(value.egress, into);
+            FfiConverterOptionalTypeNetworkSettings.write(value.networkSettings, into);
+            FfiConverterOptionalString.write(value.parent, into);
+            FfiConverterOptionalBoolean.write(value.widen, into);
             FfiConverterOptionalString.write(value.instanceType, into);
             FfiConverterOptionalString.write(value.region, into);
         }
@@ -19323,6 +19620,9 @@ const FfiConverterTypeSpaceCreateOptions = (() => {
              FfiConverterOptionalString.allocationSize(value.network) +
              FfiConverterMapStringString.allocationSize(value.labels) +
              FfiConverterOptionalTypeEgressPolicy.allocationSize(value.egress) +
+             FfiConverterOptionalTypeNetworkSettings.allocationSize(value.networkSettings) +
+             FfiConverterOptionalString.allocationSize(value.parent) +
+             FfiConverterOptionalBoolean.allocationSize(value.widen) +
              FfiConverterOptionalString.allocationSize(value.instanceType) +
              FfiConverterOptionalString.allocationSize(value.region);
 
@@ -19780,6 +20080,36 @@ export type SpaceInfo = {
      */
     egressEnforced?: EgressEnforcement,
     /**
+     * Its network settings; `None` for a Space this machine keeps no
+     * record of, or one created before they existed (it gets them on its
+     * next start).
+     */
+    network?: NetworkSettings,
+    /**
+     * Why its network is not what was asked, in plain words (a runtime
+     * that can't protect it yet started it without network); `None`
+     * otherwise.
+     */
+    networkNote?: string,
+    /**
+     * An update changed its network settings (an old Space moved to the
+     * new defaults): say so once.
+     */
+    networkNoticePending: boolean,
+    /**
+     * The Space it was created from, by id; `None` for a top-level Space.
+     */
+    parent?: string,
+    /**
+     * The top-level Space of its tree, by id; `None` for a top-level
+     * Space.
+     */
+    root?: string,
+    /**
+     * How far below its tree's top-level Space it is (0: top-level).
+     */
+    depth: number,
+    /**
      * Named volumes mounted in the Space (see
      * [`SpaceCreateOptions::volumes`]).
      */
@@ -19846,6 +20176,12 @@ const FfiConverterTypeSpaceInfo = (() => {
                 createdAtUnix: FfiConverterInt64.read(from),
                 egress: FfiConverterTypeEgressPolicy.read(from),
                 egressEnforced: FfiConverterOptionalTypeEgressEnforcement.read(from),
+                network: FfiConverterOptionalTypeNetworkSettings.read(from),
+                networkNote: FfiConverterOptionalString.read(from),
+                networkNoticePending: FfiConverterBool.read(from),
+                parent: FfiConverterOptionalString.read(from),
+                root: FfiConverterOptionalString.read(from),
+                depth: FfiConverterUInt32.read(from),
                 volumes: FfiConverterSequenceTypeVolumeMount.read(from),
                 sharing: FfiConverterOptionalTypeSpaceSharing.read(from)
             };
@@ -19881,6 +20217,12 @@ const FfiConverterTypeSpaceInfo = (() => {
             FfiConverterInt64.write(value.createdAtUnix, into);
             FfiConverterTypeEgressPolicy.write(value.egress, into);
             FfiConverterOptionalTypeEgressEnforcement.write(value.egressEnforced, into);
+            FfiConverterOptionalTypeNetworkSettings.write(value.network, into);
+            FfiConverterOptionalString.write(value.networkNote, into);
+            FfiConverterBool.write(value.networkNoticePending, into);
+            FfiConverterOptionalString.write(value.parent, into);
+            FfiConverterOptionalString.write(value.root, into);
+            FfiConverterUInt32.write(value.depth, into);
             FfiConverterSequenceTypeVolumeMount.write(value.volumes, into);
             FfiConverterOptionalTypeSpaceSharing.write(value.sharing, into);
         }
@@ -19915,6 +20257,12 @@ const FfiConverterTypeSpaceInfo = (() => {
              FfiConverterInt64.allocationSize(value.createdAtUnix) +
              FfiConverterTypeEgressPolicy.allocationSize(value.egress) +
              FfiConverterOptionalTypeEgressEnforcement.allocationSize(value.egressEnforced) +
+             FfiConverterOptionalTypeNetworkSettings.allocationSize(value.network) +
+             FfiConverterOptionalString.allocationSize(value.networkNote) +
+             FfiConverterBool.allocationSize(value.networkNoticePending) +
+             FfiConverterOptionalString.allocationSize(value.parent) +
+             FfiConverterOptionalString.allocationSize(value.root) +
+             FfiConverterUInt32.allocationSize(value.depth) +
              FfiConverterSequenceTypeVolumeMount.allocationSize(value.volumes) +
              FfiConverterOptionalTypeSpaceSharing.allocationSize(value.sharing);
 
@@ -40497,6 +40845,11 @@ const FfiConverterTypeResourcesWatch = new FfiConverterObject(uniffiTypeResource
 export interface SpacesLike {
 
 /**
+ * Marks the one-time notice about the new network defaults as shown
+ * for `space` ([`SpaceNetworkInfo::notice_pending`]).
+ */
+    ackNetworkNotice(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+/**
  * Adds a Space by URL (`http(s)://host:port`, `host:port`, or a
  * Space id such as `local:<name>`) after a `GetCapabilities` handshake. Any other MCP
  * endpoint (`http://host:8765/mcp`) becomes a Space with one MCP
@@ -40676,7 +41029,8 @@ export interface SpacesLike {
     createWithProgress(options: SpaceCreateOptions, listener: SpaceCreateListener, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceCreateResult>;
 /**
  * Deletes a Space's sandbox and forgets it (a Space added by address
- * is only forgotten). Returns what happened.
+ * is only forgotten). Its child Spaces are deleted first. Returns what
+ * happened.
  */
     delete_(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
@@ -40692,6 +41046,11 @@ export interface SpacesLike {
  * order; one failure never stops the rest.
  */
     deleteMany(ids: Array<string>, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<BulkResult>>;
+/**
+ * [`Spaces::delete`], with `keep_children`: its child Spaces become
+ * top-level Spaces and keep running instead of being deleted first.
+ */
+    deleteTree(space: string, keepChildren: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
  * Deletes the named volume `name` and its files (their history stays
  * in the Cua Volume). Refused while Spaces mount it unless `force`.
@@ -40757,6 +41116,11 @@ export interface SpacesLike {
  * offline, not yours, or runs a Cua that predates the check.
  */
     machineHealth(machine: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<MachineHealth>;
+/**
+ * A Space's network: its settings, what they open, where they are
+ * enforced (or why its network is cut), and what is always blocked.
+ */
+    network(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceNetworkInfo>;
 /**
  * The notifications feed, newest first.
  */
@@ -40890,6 +41254,14 @@ export interface SpacesLike {
  * Embedded: recorded; the cua daemon on this machine enforces it.
  */
     setLifetime(space: string, seconds: bigint, onExpire: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<bigint>;
+/**
+ * Replaces a Space's network settings (see [`NetworkSettings`]). A
+ * child stays within its parent's unless `widen`; `tree` gives its
+ * children the same settings. They hold at once where the runtime can
+ * change a running guest's network, else from its next start
+ * (`applied`). A Space another machine runs is `Unsupported`.
+ */
+    setNetwork(space: string, settings: NetworkSettings, widen: boolean, tree: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SetNetworkResult>;
 /**
  * A connected handle to a registered Space.
  */
@@ -41068,6 +41440,37 @@ private constructor(pointer: UniffiHandle) {
 
 
 
+
+/**
+ * Marks the one-time notice about the new network defaults as shown
+ * for `space` ([`SpaceNetworkInfo::notice_pending`]).
+ */
+    async ackNetworkNotice(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_ack_network_notice(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
 
 /**
  * Adds a Space by URL (`http(s)://host:port`, `host:port`, or a
@@ -42179,7 +42582,8 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Deletes a Space's sandbox and forgets it (a Space added by address
- * is only forgotten). Returns what happened.
+ * is only forgotten). Its child Spaces are deleted first. Returns what
+ * happened.
  */
     async delete_(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -42276,6 +42680,42 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterSequenceTypeBulkResult.lift.bind(FfiConverterSequenceTypeBulkResult),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * [`Spaces::delete`], with `keep_children`: its child Spaces become
+ * top-level Spaces and keep running instead of being deleted first.
+ */
+    async deleteTree(space: string, keepChildren: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_delete_tree(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(keepChildren, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -42620,6 +43060,42 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeMachineHealth.lift.bind(FfiConverterTypeMachineHealth),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * A Space's network: its settings, what they open, where they are
+ * enforced (or why its network is cut), and what is always blocked.
+ */
+    async network(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceNetworkInfo> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_network(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpaceNetworkInfo.lift.bind(FfiConverterTypeSpaceNetworkInfo),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -43482,6 +43958,45 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterInt64.lift.bind(FfiConverterInt64),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Replaces a Space's network settings (see [`NetworkSettings`]). A
+ * child stays within its parent's unless `widen`; `tree` gives its
+ * children the same settings. They hold at once where the runtime can
+ * change a running guest's network, else from its next start
+ * (`applied`). A Space another machine runs is `Unsupported`.
+ */
+    async setNetwork(space: string, settings: NetworkSettings, widen: boolean, tree: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<SetNetworkResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_set_network(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc),FfiConverterTypeNetworkSettings.lower(settings, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(widen, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(tree, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSetNetworkResult.lift.bind(FfiConverterTypeSetNetworkResult),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -46380,6 +46895,9 @@ const FfiConverterSequenceTypeVolumeMount = new FfiConverterArray(FfiConverterTy
 // FfiConverter for EgressPolicy | undefined
 const FfiConverterOptionalTypeEgressPolicy = new FfiConverterOptional(FfiConverterTypeEgressPolicy);
 
+// FfiConverter for NetworkSettings | undefined
+const FfiConverterOptionalTypeNetworkSettings = new FfiConverterOptional(FfiConverterTypeNetworkSettings);
+
 // FfiConverter for EgressEnforcement | undefined
 const FfiConverterOptionalTypeEgressEnforcement = new FfiConverterOptional(FfiConverterTypeEgressEnforcement);
 
@@ -47656,6 +48174,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacestreamsession_stats() !== 40219) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacestreamsession_stats");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_ack_network_notice() !== 32926) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_ack_network_notice");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_add() !== 56308) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_add");
     }
@@ -47746,7 +48267,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_create_with_progress() !== 28676) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_create_with_progress");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_delete() !== 39986) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_delete() !== 4316) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_delete");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_delete_build() !== 6500) {
@@ -47754,6 +48275,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_delete_many() !== 9087) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_delete_many");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_delete_tree() !== 29454) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_delete_tree");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_delete_volume() !== 11412) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_delete_volume");
@@ -47781,6 +48305,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_machine_health() !== 35352) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_machine_health");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_network() !== 41208) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_network");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_notifications() !== 10964) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_notifications");
@@ -47853,6 +48380,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_lifetime() !== 62609) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_lifetime");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_network() !== 31983) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_network");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_space() !== 26355) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_space");
@@ -48319,6 +48849,7 @@ export default Object.freeze({
     FfiConverterTypeMediaSession,
     FfiConverterTypeMediaStats,
     FfiConverterTypeNamedVolume,
+    FfiConverterTypeNetworkSettings,
     FfiConverterTypeNotificationInfo,
     FfiConverterTypeOverlay,
     FfiConverterTypeOverlayResult,
@@ -48378,6 +48909,7 @@ export default Object.freeze({
     FfiConverterTypeScreenshotOptions,
     FfiConverterTypeService,
     FfiConverterTypeServiceEndpoint,
+    FfiConverterTypeSetNetworkResult,
     FfiConverterTypeSetupStep,
     FfiConverterTypeShare,
     FfiConverterTypeShareAccess,
@@ -48402,6 +48934,7 @@ export default Object.freeze({
     FfiConverterTypeSpaceHotspotStatus,
     FfiConverterTypeSpaceInfo,
     FfiConverterTypeSpaceList,
+    FfiConverterTypeSpaceNetworkInfo,
     FfiConverterTypeSpacePowerReport,
     FfiConverterTypeSpacePresence,
     FfiConverterTypeSpaceRelayRegistration,

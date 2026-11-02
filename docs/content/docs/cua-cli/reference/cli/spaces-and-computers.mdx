@@ -86,6 +86,10 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua share ls`](#cua-share-ls) | List the active shares. |
 | [`cua share stop`](#cua-share-stop) | Stop a share (its link stops working at once), or `all`. |
 | [`cua share check`](#cua-share-check) | Open a share's link once, as its owner, and say what came back. |
+| [`cua network`](#cua-network) | What a Space can reach on the network, and changing it: `show`, `set`, `log`. |
+| [`cua network show`](#cua-network-show) | What a Space can reach: its preset, what it opens, where it is enforced, and what is always blocked. |
+| [`cua network set`](#cua-network-set) | Change what a Space can reach. |
+| [`cua network log`](#cua-network-log) | What a Space tried to reach and was blocked, most recent first. |
 
 Every command also accepts the [global options](/cua-cli/reference/cli#global-options).
 
@@ -115,6 +119,7 @@ Alias: `cua spaces list`.
 | --- | --- | --- | --- |
 | <span id="cua-spaces-ls--label"></span>`--label` | string |  | Only Spaces with this label (`key=value`; repeat to require several). Repeatable. |
 | <span id="cua-spaces-ls--no-size"></span>`--no-size` | boolean | `false` | Do not measure what each Space takes on this computer's disk (that walk can take a moment with many Spaces). |
+| <span id="cua-spaces-ls--tree"></span>`--tree` | boolean | `false` | List child Spaces under their parent, indented (otherwise the parent's row counts them). |
 
 **Examples**
 
@@ -184,10 +189,13 @@ cua spaces create [OPTIONS] [IMAGE]
 | <span id="cua-spaces-create--region"></span>`--region` | string |  | The cloud region or location of that host (default: the pool picks, near you). |
 | <span id="cua-spaces-create--volume"></span>`--volume` | string |  | Mount a named volume of Cua Volume in the Space: `NAME:PATH[:ro]`, or `NAME/SUBFOLDER:PATH[:ro]` for a folder of it. Repeat for several. Make one with `cua volume named create`. Repeatable. |
 | <span id="cua-spaces-create--label"></span>`--label` | string |  | A label to keep with the Space (`key=value`; repeat for more; up to 64, keys up to 63 bytes, values up to 256, none empty). Not with `--durable`. Repeatable. |
-| <span id="cua-spaces-create--egress-deny"></span>`--egress-deny` | string |  | Block this destination from the guest's first instruction (IP, CIDR or `all`; repeat for more). Enforced by the host, outside the guest. See `cua spaces egress`. Repeatable. |
-| <span id="cua-spaces-create--egress-allow"></span>`--egress-allow` | string |  | Keep this destination reachable where --egress-deny blocks it. Repeatable. |
+| <span id="cua-spaces-create--network"></span>`--network` | string |  | Its network: `internet` (the default: the internet and its own tree; this computer, your local network, cloud metadata and other trees are blocked), `none`, `localhost:5432,3000` (also this computer's localhost on those ports), `lan` (also your local network), `custom` / `custom:none` (with --allow/--deny), or `unprotected` (No protection). Enforced by the host, outside the guest. See `cua network`. |
+| <span id="cua-spaces-create--deny"></span>`--deny` | string |  | Block this destination (IP, CIDR or `all`; repeat for more). Alias: `--egress-deny`. Repeatable. |
+| <span id="cua-spaces-create--allow"></span>`--allow` | string |  | Allow this destination, also where a block covers it (IP or CIDR; repeat for more). This computer itself opens only with `--network localhost:<ports>`. Alias: `--egress-allow`. Repeatable. |
+| <span id="cua-spaces-create--parent"></span>`--parent` | string |  | Create it as a child of this Space: it joins the parent's tree (they reach each other) and its network is no more open than the parent's. With `--parent`, the children are deleted, stopped and suspended with it. |
 | <span id="cua-spaces-create--durable"></span>`--durable` | boolean | `false` | Keep it on your machines (with `--on auto`): when its machine goes away it is created again on another one, with the same name (its disk starts fresh). `cua spaces delete <name>` deletes it for good. |
 | <span id="cua-spaces-create--forkable"></span>`--forkable` | boolean | `false` | A fork source (a "bake" Space): a local QEMU VM's guest RAM is a shared file, so `cua sb checkpoint` takes milliseconds and forks of its checkpoints share its pages. Other kinds ignore it. |
+| <span id="cua-spaces-create--widen"></span>`--widen` | boolean | `false` | With --parent: let its network be more open than its parent's (recorded on the Space). |
 
 **Examples**
 
@@ -333,6 +341,7 @@ cua spaces delete [OPTIONS] <SPACE>
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | <span id="cua-spaces-delete--force"></span>`--force` | `-f` | boolean | `false` | Skip the confirmation (required without a terminal). |
+| <span id="cua-spaces-delete--keep-children"></span>`--keep-children` |  | boolean | `false` | Keep its child Spaces: they become top-level Spaces and keep running (otherwise they are deleted first). |
 
 **Examples**
 
@@ -1662,6 +1671,87 @@ cua share check share-1a2b3c4d5e6f
 
 # Open a page below the link
 cua share check share-1a2b3c4d5e6f /index.html
+```
+
+## `cua network`
+
+What a Space can reach on the network, and changing it: `show`, `set`, `log`. An experiment: see `cua experiments`.
+
+```text output
+cua network [OPTIONS] <COMMAND>
+```
+
+### `cua network show`
+
+What a Space can reach: its preset, what it opens, where it is enforced, and what is always blocked.
+
+```text output
+cua network show [OPTIONS] <SPACE>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-network-show"
+cua network show studio
+cua network show local:studio --json
+```
+
+### `cua network set`
+
+Change what a Space can reach. A child Space stays within its parent's unless `--widen`.
+
+```text output
+cua network set [OPTIONS] --network <PRESET> <SPACE>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-network-set--network"></span>`--network` | string | required | `internet`, `none`, `localhost:<ports>` (or `localhost:all`), `lan`, `custom`, `custom:none` or `unprotected` (No protection). |
+| <span id="cua-network-set--allow"></span>`--allow` | string |  | Allow this destination (IP or CIDR; repeat for more). Repeatable. |
+| <span id="cua-network-set--deny"></span>`--deny` | string |  | Block this destination (IP, CIDR or `all`; repeat for more). Repeatable. |
+| <span id="cua-network-set--widen"></span>`--widen` | boolean | `false` | A child Space: let it reach more than its parent (recorded on the Space). |
+| <span id="cua-network-set--tree"></span>`--tree` | boolean | `false` | Its child Spaces get the same settings (each within its parent's). |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-network-set"
+# This computer's Postgres and dev server only
+cua network set studio --network localhost:5432,3000
+
+# Your local network too
+cua network set studio --network lan
+
+# Only these destinations
+cua network set studio --network custom:none --allow 140.82.112.0/20
+
+# Back to the default
+cua network set studio --network internet
+```
+
+### `cua network log`
+
+What a Space tried to reach and was blocked, most recent first.
+
+```text output
+cua network log [OPTIONS] <SPACE>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-network-log"
+cua network log studio
 ```
 
 ## Exit codes

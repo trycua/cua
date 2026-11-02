@@ -1191,7 +1191,7 @@ impl MicroVmRuntime {
                 &st.ports,
                 st.restrict_network,
                 config.is_some(),
-                &fc_rules(&st)?,
+                &fc_rules(st)?,
                 &localhost,
             ),
         )?;

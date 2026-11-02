@@ -9986,6 +9986,245 @@
    "usage": "cua build [OPTIONS] [CONTEXT]"
   },
   {
+   "abstract": "What a Space can reach on the network, and changing it: `show`, `set`, `log`. An experiment: see `cua experiments`",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "network",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "What a Space can reach: its preset, what it opens, where it is enforced, and what is always blocked",
+     "after_help": "Examples:\n  cua network show studio\n  cua network show local:studio --json",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Space id or name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "show",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua network show [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "Change what a Space can reach. A child Space stays within its parent's unless `--widen`",
+     "after_help": "Examples:\n  # This computer's Postgres and dev server only\n  cua network set studio --network localhost:5432,3000\n  # Your local network too\n  cua network set studio --network lan\n  # Only these destinations\n  cua network set studio --network custom:none --allow 140.82.112.0/20\n  # Back to the default\n  cua network set studio --network internet",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Space id or name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "A child Space: let it reach more than its parent (recorded on the Space)",
+       "hidden": false,
+       "name": "widen",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Its child Spaces get the same settings (each within its parent's)",
+       "hidden": false,
+       "name": "tree",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "set",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "`internet`, `none`, `localhost:<ports>` (or `localhost:all`), `lan`, `custom`, `custom:none` or `unprotected` (No protection)",
+       "hidden": false,
+       "is_optional": false,
+       "multiple_values": false,
+       "name": "network",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "PRESET"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Allow this destination (IP or CIDR; repeat for more)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "allow",
+       "possible_values": [],
+       "repeatable": true,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "ADDR|CIDR"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Block this destination (IP, CIDR or `all`; repeat for more)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "deny",
+       "possible_values": [],
+       "repeatable": true,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "ADDR|CIDR|all"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua network set [OPTIONS] --network <PRESET> <SPACE>"
+    },
+    {
+     "abstract": "What a Space tried to reach and was blocked, most recent first",
+     "after_help": "Examples:\n  cua network log studio",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Space id or name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "log",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua network log [OPTIONS] <SPACE>"
+    }
+   ],
+   "usage": "cua network [OPTIONS] <COMMAND>"
+  },
+  {
+   "abstract": "Features that are still being built, one switch each: `list`, `enable`, `disable`",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "experiments",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [
+    {
+     "abstract": "Every experiment and whether it is on",
+     "after_help": "Examples:\n  cua experiments list\n  cua experiments list --json",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "list",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua experiments list [OPTIONS]"
+    },
+    {
+     "abstract": "Turn an experiment on",
+     "after_help": "Examples:\n  cua experiments enable secure-spaces",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The experiment's name, as `cua experiments` lists it",
+       "hidden": false,
+       "is_optional": false,
+       "name": "NAME",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "enable",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua experiments enable [OPTIONS] <NAME>"
+    },
+    {
+     "abstract": "Turn an experiment off. Nothing it made is deleted",
+     "after_help": "Examples:\n  cua experiments disable secure-spaces",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The experiment's name, as `cua experiments` lists it",
+       "hidden": false,
+       "is_optional": false,
+       "name": "NAME",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "disable",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua experiments disable [OPTIONS] <NAME>"
+    }
+   ],
+   "usage": "cua experiments [OPTIONS] <COMMAND>"
+  },
+  {
    "abstract": "Images: local OCI pull/build/push",
    "aliases": [
     "img"
@@ -13939,6 +14178,17 @@
        "repeatable": false,
        "short_name": null,
        "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "List child Spaces under their parent, indented (otherwise the parent's row counts them)",
+       "hidden": false,
+       "name": "tree",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
       }
      ],
      "hidden": false,
@@ -14103,6 +14353,17 @@
        "help": "A fork source (a \"bake\" Space): a local QEMU VM's guest RAM is a shared file, so `cua sb checkpoint` takes milliseconds and forks of its checkpoints share its pages. Other kinds ignore it",
        "hidden": false,
        "name": "forkable",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "With --parent: let its network be more open than its parent's (recorded on the Space)",
+       "hidden": false,
+       "name": "widen",
        "repeatable": false,
        "short_name": null,
        "takes_value": false
@@ -14324,11 +14585,29 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Block this destination from the guest's first instruction (IP, CIDR or `all`; repeat for more). Enforced by the host, outside the guest. See `cua spaces egress`",
+       "help": "Its network: `internet` (the default: the internet and its own tree; this computer, your local network, cloud metadata and other trees are blocked), `none`, `localhost:5432,3000` (also this computer's localhost on those ports), `lan` (also your local network), `custom` / `custom:none` (with --allow/--deny), or `unprotected` (No protection). Enforced by the host, outside the guest. See `cua network`",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
-       "name": "egress-deny",
+       "name": "network",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "PRESET"
+      },
+      {
+       "aliases": [
+        "egress-deny"
+       ],
+       "default_value": null,
+       "env": null,
+       "help": "Block this destination (IP, CIDR or `all`; repeat for more)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "deny",
        "possible_values": [],
        "repeatable": true,
        "short_name": null,
@@ -14337,20 +14616,38 @@
        "value_name": "ADDR|CIDR|all"
       },
       {
-       "aliases": [],
+       "aliases": [
+        "egress-allow"
+       ],
        "default_value": null,
        "env": null,
-       "help": "Keep this destination reachable where --egress-deny blocks it",
+       "help": "Allow this destination, also where a block covers it (IP or CIDR; repeat for more). This computer itself opens only with `--network localhost:<ports>`",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
-       "name": "egress-allow",
+       "name": "allow",
        "possible_values": [],
        "repeatable": true,
        "short_name": null,
        "takes_value": true,
        "type": "string",
-       "value_name": "ADDR|CIDR|all"
+       "value_name": "ADDR|CIDR"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Create it as a child of this Space: it joins the parent's tree (they reach each other) and its network is no more open than the parent's. With `--parent`, the children are deleted, stopped and suspended with it",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "parent",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "SPACE"
       }
      ],
      "subcommand_optional": false,
@@ -14692,6 +14989,17 @@
        "name": "force",
        "repeatable": false,
        "short_name": "f",
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Keep its child Spaces: they become top-level Spaces and keep running (otherwise they are deleted first)",
+       "hidden": false,
+       "name": "keep-children",
+       "repeatable": false,
+       "short_name": null,
        "takes_value": false
       }
      ],

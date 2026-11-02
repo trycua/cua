@@ -2254,6 +2254,12 @@ impl Spaces {
         use cua_sandbox_core::progress::{Phase, Progress, report};
         refuse_windows_on_mac(opts.image.as_deref(), cfg!(target_os = "macos"))?;
         crate::registry::validate_labels(&opts.labels)?;
+        // Secure Spaces is an experiment: until it is on, a create asks for
+        // no more than the old lists and no parent.
+        crate::network::require_secure_spaces(
+            opts.network_settings.as_ref(),
+            opts.parent.is_some(),
+        )?;
         // The network it gets: what it asks, no more open than its parent.
         // Every path below carries the resolved settings.
         let network = self.create_network(&opts)?;
@@ -3222,7 +3228,7 @@ impl Spaces {
 
     /// [`Spaces::delete`] of this Space alone (its children, if any, are
     /// the caller's).
-    pub(crate) async fn delete_one(&self, space: &str) -> Result<String> {
+    pub(crate) async fn delete_this(&self, space: &str) -> Result<String> {
         // A durable Space goes for good (deleting only its current copy
         // would have it created again).
         if self.inner.pool.read().expect("pool").is_some() {
@@ -3242,7 +3248,16 @@ impl Spaces {
     /// Space's copy: what the coordinator that keeps durable Spaces uses to
     /// remove a copy it replaced or deleted.
     pub async fn delete_copy(&self, space: &str) -> Result<String> {
-        let id = self.resolve(space)?;
+        let id = match self.resolve(space) {
+            Ok(id) => id,
+            // A local sandbox no Space record names (a `cua sb fork`, a
+            // sandbox made with `cua sb create`): delete it by name too.
+            Err(Error::NotFound(m)) => match self.unregistered_local(space) {
+                Some(id) => id,
+                None => return Err(Error::NotFound(m)),
+            },
+            Err(e) => return Err(e),
+        };
         let ended = self.delete_copy_of(id.clone()).await;
         if ended.is_ok() {
             // A Space made later under the same name starts without the
@@ -3250,6 +3265,24 @@ impl Spaces {
             let _ = crate::lifetimes::forget(self.home_dir(), &id.to_string());
         }
         ended
+    }
+
+    /// `local:<name>` when `name` is a plain name (no `kind:` prefix) of a
+    /// sandbox Cua made on this machine (a recorded one) that no Space
+    /// record names. Only recorded sandboxes: a VM the runtime has that Cua
+    /// never made (another tool's Lume VM) is never deleted by name here.
+    fn unregistered_local(&self, name: &str) -> Option<SpaceId> {
+        if name.is_empty() || name.contains(':') || name.contains('/') {
+            return None;
+        }
+        self.inner
+            .sandboxes
+            .state()
+            .load(name)
+            .is_some()
+            .then(|| SpaceId::Local {
+                name: name.to_string(),
+            })
     }
 
     async fn delete_copy_of(&self, id: SpaceId) -> Result<String> {
@@ -3712,7 +3745,7 @@ impl Spaces {
         })
     }
 
-    async fn set_power(&self, space: &str, on: bool) -> Result<SpacePower> {
+    pub(crate) async fn set_power(&self, space: &str, on: bool) -> Result<SpacePower> {
         let id = self.resolve(space)?;
         let cloud = self.cloud_sandbox_of(&id.to_string())?;
         let refuse = |provider: &str| Error::WrongProvider {

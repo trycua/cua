@@ -30,6 +30,8 @@ Full entries: [Space lifecycle](/spaces/reference/spaces#space-lifecycle).
 | <span id="remove_space"></span>[`remove_space`](/spaces/reference/spaces#remove_space) | Forget a registered Space without touching it. |
 | <span id="list_spaces"></span>[`list_spaces`](/spaces/reference/spaces#list_spaces) | List the Spaces this connection can see. |
 | <span id="create_space"></span>[`create_space`](/spaces/reference/spaces#create_space) | Create a Space: a new sandbox on this computer, on one of your computers, or in the cloud. |
+| <span id="network_show"></span>[`network_show`](/spaces/reference/spaces#network_show) | Show a Space's network: preset, what it opens, where it is enforced, what is always blocked. |
+| <span id="network_set"></span>[`network_set`](/spaces/reference/spaces#network_set) | Tighten a Space's network: internet, none or custom lists. |
 | <span id="delete_space"></span>[`delete_space`](/spaces/reference/spaces#delete_space) | Delete a Space's sandbox and forget it. |
 | <span id="stop_space"></span>[`stop_space`](/spaces/reference/spaces#stop_space) | Turn a Space off: stop it (disk kept, memory freed) or, with suspend, suspend it (memory kept). |
 | <span id="resize_space"></span>[`resize_space`](/spaces/reference/spaces#resize_space) | Change a Space's vCPUs, memory or disk size. |
@@ -1216,5 +1218,5 @@ Tools are gated by `--permissions` (or `CUA_MCP_PERMISSIONS`), a comma-separated
 | `sandbox:all` | 11 permissions | `sandbox:list`, `sandbox:get` |
 | `share:all` | `share:create`, `share:read`, `share:stop` | `share:read` |
 | `skills:all` | `skills:list`, `skills:read`, `skills:record`, `skills:delete` | `skills:list`, `skills:read` |
-| `spaces:all` | 113 permissions | 36 permissions |
+| `spaces:all` | 115 permissions | 37 permissions |
 | `teleport:all` | `teleport:browser` | none |

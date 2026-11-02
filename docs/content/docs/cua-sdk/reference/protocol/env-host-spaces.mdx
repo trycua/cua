@@ -341,6 +341,7 @@ Request for `HostSpacesService.CreateHostSpace`.
 | `fork_source` | 11 | `string` | Fork this checkpoint instead of creating from `image`. |
 | `headless` | 14 | `bool` | No desktop (`cua.daemon.v1.CreateSpaceRequest.headless`). |
 | `egress` | 19 | [`HostEgressPolicy`](/cua-sdk/reference/protocol/daemon-egress#hostegresspolicy) | Egress policy, enforced by the host from the guest's first instruction. A host that does not enforce it leaves `HostSpace.egress_enforced` empty. |
+| `network_settings` | 20 | [`HostNetworkSettings`](/cua-sdk/reference/protocol/daemon-egress#hostnetworksettings) | Network settings, compiled and enforced by the host. Unset: what `network` and `egress` say. |
 | `routed` | 13 | `bool` | Reached through this host's channel (no relay machine of its own). |
 | `env` | 15 | map of `string` to `string` | Guest environment; the host's driver settings win on a clash. |
 | `gpu` | 16 | `string` | A GPU option of the host's runtime; empty: none. |

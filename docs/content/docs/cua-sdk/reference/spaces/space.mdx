@@ -75,7 +75,7 @@ Returned by [`Space.fork`](/cua-sdk/reference/sandbox/checkpoints#spacefork), [`
 | Accessor | Returns | Description |
 | --- | --- | --- |
 | `id()` | `String` | Id. |
-| `info()` | [`SpaceInfo`](/cua-sdk/reference/spaces#spaceinfo-record) | Connection-time snapshot; never refreshed. With spacesd, handshake `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown families clear them. Other fields and non-spacesd services retain registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views. |
+| `info()` | [`SpaceInfo`](/cua-sdk/reference/spaces/info#spaceinfo-record) | Connection-time snapshot; never refreshed. With spacesd, handshake `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown families clear them. Other fields and non-spacesd services retain registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views. |
 | `services()` | `Vec<String>` | The MCP services this Space exposes: `driver` when its spacesd has the tool registry, then every declared service (reached over generic MCP; no spacesd needed). |
 
 ### `Space.bash`

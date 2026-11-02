@@ -2288,7 +2288,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 114);
+        assert_eq!(tools().len(), 116);
     }
 
     #[test]

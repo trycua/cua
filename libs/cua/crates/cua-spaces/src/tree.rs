@@ -233,13 +233,20 @@ impl Spaces {
     /// stops the cascade before its parent goes, so nothing is left without
     /// a parent; deleting again continues it.
     pub async fn delete_tree(&self, space: &str, keep_children: bool) -> Result<String> {
-        let id = self.resolve(space)?.to_string();
+        let id = match self.resolve(space) {
+            Ok(id) => id.to_string(),
+            // No record names it (a sandbox made by `cua sb fork` or
+            // `cua sb create`): it has no tree, and deleting it by name
+            // is [`Spaces::delete_copy`]'s.
+            Err(Error::NotFound(_)) => return Box::pin(self.delete_this(space)).await,
+            Err(e) => return Err(e),
+        };
         if keep_children {
             let kids = self
                 .inner
                 .registry
                 .update_all_meta(|all| detach(all, &id))?;
-            let message = Box::pin(self.delete_one(space)).await?;
+            let message = Box::pin(self.delete_this(space)).await?;
             return Ok(if kids.is_empty() {
                 message
             } else {
@@ -255,12 +262,10 @@ impl Spaces {
         let mut failed: Vec<String> = Vec::new();
         let mut deleted = 0usize;
         for level in levels(&all, &id) {
-            let results = futures::future::join_all(
-                level
-                    .iter()
-                    .map(|c| async move { (c.clone(), Box::pin(self.delete_one(c)).await) }),
-            )
-            .await;
+            let mut results = Vec::with_capacity(level.len());
+            for c in &level {
+                results.push((c.clone(), Box::pin(self.delete_this(c)).await));
+            }
             for (c, r) in results {
                 match r {
                     Ok(_) | Err(Error::NotFound(_)) => {
@@ -283,7 +288,7 @@ impl Spaces {
                 )));
             }
         }
-        let message = Box::pin(self.delete_one(space)).await?;
+        let message = Box::pin(self.delete_this(space)).await?;
         Ok(if deleted == 0 {
             message
         } else {
@@ -303,7 +308,7 @@ impl Spaces {
         };
         let all = self.inner.registry.all_meta();
         for level in levels(&all, &id) {
-            let results = futures::future::join_all(level.iter().map(|c| async move {
+            let results = futures_util::future::join_all(level.iter().map(|c| async move {
                 let r = if suspend {
                     Box::pin(self.suspend_one(c)).await.map(|_| ())
                 } else {
@@ -328,7 +333,7 @@ impl Spaces {
         };
         let all = self.inner.registry.all_meta();
         for level in levels(&all, &id).into_iter().rev() {
-            let results = futures::future::join_all(level.iter().map(|c| async move {
+            let results = futures_util::future::join_all(level.iter().map(|c| async move {
                 let _ = self.migrate_network(c);
                 (c.clone(), Box::pin(self.set_power(c, true)).await)
             }))

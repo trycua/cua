@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 114,
+  "tool_count": 116,
   "categories": [
     {
       "id": "lifecycle",
@@ -462,6 +462,13 @@
       ],
       "input_schema": {
         "properties": {
+          "allow": {
+            "description": "Destinations to allow (addresses or CIDRs) on top of `network`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "command": {
             "description": "Entrypoint override (argv), for example\n`[\"python\", \"-m\", \"my_mcp\", \"--port\", \"8765\"]`.",
             "items": {
@@ -474,6 +481,13 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "deny": {
+            "description": "Destinations to block (addresses, CIDRs or `all`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "durable": {
             "description": "Keep it on the user's machines (with `on` `auto`): when its machine\ngoes away it is created again on another one, with the same name\n(its disk starts fresh); `list_spaces` shows it with `durable` (its\nname), and `delete_space` deletes it for good. Default false.",
@@ -530,8 +544,16 @@
             "description": "Name. Default: a generated `space-<hex>`.",
             "type": "string"
           },
+          "network": {
+            "description": "Its network: `internet` (default: the internet and its own tree;\nthis computer, the local network, cloud metadata and other trees are\nblocked), `none`, or `custom` / `custom:none` with `allow` and\n`deny`. Presets that open more (`localhost:<ports>`, `lan`,\n`unprotected`) are the user's to choose: refused here.",
+            "type": "string"
+          },
           "on": {
             "description": "Where it runs: `local` (this computer, free), `auto` (the\nleast-loaded of the user's computers that can take it: this one and\nthe ones signed in to the user's account that provide Spaces, Modal\nonly when connected and no computer has room), `aws`, `gcp` or\n`modal` (your own cloud account, billed there), or `host:<computer>`:\none of the user's own computers that\nprovides Spaces (`cua host setup --share both` on it), named by\nid or by words from its name (\"host:spare mac mini\" matches \"Mac\nmini (spare)\" or `dillons-mac-mini`). Default: the user's default\nlocation (`cua config set default.on`, `CUA_DEFAULT_ON`), else\n`local`; never `auto` unless asked. Not `direct:<addr>`: that is one already-running Space at a\nfixed address, attached with `add_space`, not a host this can create\non. An existing computer is added with `add_space`, not created.",
+            "type": "string"
+          },
+          "parent": {
+            "description": "Create it as a child of this Space (id or name): it joins the\nparent's tree, and its network is no more open than the parent's.",
             "type": "string"
           },
           "region": {
@@ -571,6 +593,130 @@
             "type": "boolean"
           }
         },
+        "type": "object"
+      }
+    },
+    {
+      "name": "network_show",
+      "category": "lifecycle",
+      "description": "Show a Space's network: preset, what it opens, where it is enforced, what is always blocked.",
+      "instructions": "Shows a Space's network: its preset (`internet` by default: the internet and its own tree, with this computer, the local network, cloud metadata and other trees blocked), what it opens beyond that, where the rules are enforced (outside the guest), or why it has no network (a runtime that can't protect it yet starts it without network), and what is always blocked. When a connection fails, check here before retrying: a blocked destination stays blocked.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.network.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "Spaces.network(space)",
+      "rust_symbol": "Spaces::network_info",
+      "notes": [],
+      "result": "JSON: `settings` (preset, lists), `summary`, `widenings` (what it opens beyond internet), `enforcement` (`enforced`, `no_network`, `open`, `refused`), `point`, `note`, `parent`, `root`, `always_blocked`, `notice_pending`.",
+      "errors": [
+        "invalid_argument",
+        "not_found"
+      ],
+      "input_schema": {
+        "properties": {
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "network_set",
+      "category": "lifecycle",
+      "description": "Tighten a Space's network: internet, none or custom lists. Opening more is the user's to do.",
+      "instructions": "Changes a Space's network to `internet`, `none`, or `custom` (from internet) / `custom:none` with `allow` and `deny` (addresses or CIDRs). It can only tighten: anything that opens more than the Space has now (this computer's localhost, the local network, No protection, an allow beyond its preset) is refused; the user does that with `cua network set` or the app. A child stays within its parent's. tree=true gives its children the same settings. Applies at once where the runtime can, else at the Space's next start (`applied`).",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.network.write"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "Spaces.set_network(space, settings, widen, tree)",
+      "rust_symbol": "Spaces::set_network",
+      "notes": [],
+      "result": "JSON: `applied` (`now` or `next_start`) and `network` (as network_show).",
+      "errors": [
+        "invalid_argument",
+        "wrong_provider",
+        "not_found",
+        "sandbox"
+      ],
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "allow": {
+            "description": "Destinations to allow (addresses or CIDRs).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "deny": {
+            "description": "Destinations to block (addresses, CIDRs or `all`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "network": {
+            "description": "`internet`, `none`, or `custom` / `custom:none` with `allow` and\n`deny`. Opening more than the Space has now is the user's to do\n(`cua network set`, or the app): refused here.",
+            "type": "string"
+          },
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          },
+          "tree": {
+            "description": "Its child Spaces take the same settings (each within its parent's).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "space",
+          "network"
+        ],
         "type": "object"
       }
     },

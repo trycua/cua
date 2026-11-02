@@ -272,11 +272,19 @@ fn every_host_address_is_closed_after_the_resolver_and_localhost() {
 }
 
 #[test]
-fn the_revert_switch_restores_the_old_open_default() {
-    assert_eq!(Mode::from_value(None), Mode::Secure);
-    assert_eq!(Mode::from_value(Some("1")), Mode::Secure);
+fn the_old_open_default_is_what_you_get_until_secure_spaces_is_on() {
+    // Off (the experiment is off): the old open default.
+    assert_eq!(Mode::from_value(None, false), Mode::Legacy);
+    assert_eq!(Mode::from_value(Some(""), false), Mode::Legacy);
+    // On: the secure default.
+    assert_eq!(Mode::from_value(None, true), Mode::Secure);
+    // The variable wins over the experiment, either way.
+    assert_eq!(Mode::from_value(Some("1"), false), Mode::Secure);
+    for on in ["true", "ON", " yes "] {
+        assert_eq!(Mode::from_value(Some(on), false), Mode::Secure, "{on}");
+    }
     for off in ["0", "false", "OFF", " no "] {
-        assert_eq!(Mode::from_value(Some(off)), Mode::Legacy, "{off}");
+        assert_eq!(Mode::from_value(Some(off), true), Mode::Legacy, "{off}");
     }
     let r = compile_mode(&NetworkSettings::internet(), &ctx(), Mode::Legacy).unwrap();
     assert!(r.is_empty());
@@ -525,7 +533,10 @@ fn plan_fails_closed() {
             Mode::Secure
         )
         .unwrap(),
-        NetworkPlan::NoNetwork { note: None }
+        // Cua reaches a macOS VM over its network, so even none is refused.
+        NetworkPlan::Refuse(
+            "macOS VMs can't protect your network yet, and Cua reaches a macOS VM over its network, so it can't start without one. Choose No protection to start it."
+        )
     );
     // Refused, in plain words.
     match plan(

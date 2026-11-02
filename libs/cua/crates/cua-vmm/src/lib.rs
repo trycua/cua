@@ -36,6 +36,7 @@ pub mod egress;
 pub mod elf;
 pub mod error;
 pub mod exec;
+pub mod experiments;
 pub mod filetable;
 pub mod gpu;
 pub mod host;

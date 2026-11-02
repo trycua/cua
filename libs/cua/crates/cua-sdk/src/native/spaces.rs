@@ -127,6 +127,8 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("volume_cache_set", "Spaces.volume_cache_set"),
     ("volume_cache_clear", "Spaces.volume_cache_clear"),
     ("share_space", "Space.share"),
+    ("network_show", "Spaces.network"),
+    ("network_set", "Spaces.set_network"),
     ("unshare_space", "Space.unshare"),
     ("space_shares", "Space.shares"),
     ("relay_register_space", "Spaces.relay_register"),
@@ -3696,18 +3698,34 @@ impl Spaces {
         }
         // `network` takes a preset word too (`lan`, `localhost:5432`,
         // `unprotected`): it becomes the settings when none are given.
-        let network_word = options.network.as_deref().map(str::trim).unwrap_or_default();
-        let legacy_word = matches!(network_word.to_ascii_lowercase().as_str(), "" | "default" | "none");
-        let network = cua_sandbox_core::NetworkMode::parse(if legacy_word { network_word } else { "" })
-            .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
+        let network_word = options
+            .network
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        let legacy_word = matches!(
+            network_word.to_ascii_lowercase().as_str(),
+            "" | "default" | "none"
+        );
+        let network =
+            cua_sandbox_core::NetworkMode::parse(if legacy_word { network_word } else { "" })
+                .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
         cua_spaces::registry::validate_labels(&options.labels).map_err(refused)?;
         let network_settings = match &options.network_settings {
             Some(n) => Some(n.checked()?),
             None if !legacy_word => Some(
                 cua_spaces::network::parse_network(
                     network_word,
-                    &options.egress.as_ref().map(|e| e.allow.clone()).unwrap_or_default(),
-                    &options.egress.as_ref().map(|e| e.deny.clone()).unwrap_or_default(),
+                    &options
+                        .egress
+                        .as_ref()
+                        .map(|e| e.allow.clone())
+                        .unwrap_or_default(),
+                    &options
+                        .egress
+                        .as_ref()
+                        .map(|e| e.deny.clone())
+                        .unwrap_or_default(),
                 )
                 .map_err(|e| CuaError::InvalidArgument(e.to_string()))?,
             ),
@@ -4194,7 +4212,9 @@ impl Spaces {
         let host = self.host.clone();
         run(async move {
             match &host {
-                Host::Embedded(s) => Ok(cua_spaces::network::info_to_pb(&s.network_info(&space).await?).into()),
+                Host::Embedded(s) => {
+                    Ok(cua_spaces::network::info_to_pb(&s.network_info(&space).await?).into())
+                }
                 Host::Daemon(d) => Ok(d
                     .spaces()
                     .get_space_network(dpb::GetSpaceNetworkRequest {

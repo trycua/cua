@@ -45,6 +45,7 @@ mod do_cmd;
 mod doctor;
 pub mod drive_cmd;
 mod dump_docs;
+mod experiments_cmd;
 pub mod extension;
 mod host;
 mod image_build;
@@ -52,8 +53,8 @@ mod image_release;
 mod jobs_cmd;
 pub mod keyvault_cmd;
 mod mcp;
-mod network_cmd;
 mod member_cmd;
+mod network_cmd;
 pub mod onboard;
 mod persistent_cmd;
 pub mod prewarm;
@@ -255,9 +256,13 @@ enum Command {
     /// layers already built are reused.
     Build(build_cmd::BuildArgs),
     /// What a Space can reach on the network, and changing it: `show`,
-    /// `set`, `log`.
+    /// `set`, `log`. An experiment: see `cua experiments`.
     #[command(subcommand)]
     Network(network_cmd::NetworkCmd),
+    /// Features that are still being built, one switch each: `list`,
+    /// `enable`, `disable`.
+    #[command(subcommand)]
+    Experiments(experiments_cmd::ExperimentsCmd),
     /// Images: local OCI pull/build/push.
     #[command(subcommand, visible_alias = "img")]
     Image(ImageCmd),
@@ -1333,8 +1338,16 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             cua_home::experimental::TEAMS_UNAVAILABLE.into(),
         ));
     }
+    // An experiment that is off is refused before any sign-in, daemon or
+    // relay call.
+    if let Some(g) = uses_experiment(&cli.command)
+        && !cua_vmm::experiments::enabled(g)
+    {
+        return Err(CuaError::InvalidArgument(g.off_message()));
+    }
     // Commands that need no SDK handle.
     match &cli.command {
+        Command::Experiments(cmd) => return experiments_cmd::run(cmd, json, out),
         Command::Images(cmd) => {
             return match cmd {
                 ImagesCmd::Ls { all, os, browser } => catalog::print_list(
@@ -1916,6 +1929,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     relay: None,
                     label: vec![],
                     no_size: false,
+                    tree: false,
                 }),
                 embedded: true,
                 ..cli
@@ -2313,6 +2327,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Bench(_)
         | Command::Keyvault(_)
         | Command::Images(_)
+        | Command::Experiments(_)
         | Command::DumpDocs { .. } => unreachable!("handled above"),
     }
     Ok(0)
@@ -2779,11 +2794,58 @@ fn uses_teams(cmd: &Command) -> bool {
     }
 }
 
+/// The experiment a command belongs to, if any: the commands and flags that
+/// are new with it. They are hidden from help, and refused with how to turn
+/// the experiment on, until it is on.
+fn uses_experiment(cmd: &Command) -> Option<cua_vmm::experiments::Gate> {
+    use cua_vmm::experiments::Gate;
+    match cmd {
+        Command::Network(_) => Some(Gate::SecureSpaces),
+        Command::Spaces(host::SpacesCmd::Create {
+            network,
+            parent,
+            widen,
+            ..
+        }) if network.is_some() || parent.is_some() || *widen => Some(Gate::SecureSpaces),
+        Command::Spaces(host::SpacesCmd::Ls { tree: true, .. }) => Some(Gate::SecureSpaces),
+        Command::Spaces(host::SpacesCmd::Delete {
+            keep_children: true,
+            ..
+        }) => Some(Gate::SecureSpaces),
+        _ => None,
+    }
+}
+
 /// The clap command `cua` parses with. Teams are experimental: without
 /// them, `cua team` and `cua host pair --team` stay out of help (they still
 /// parse, and are refused with a short reason).
 fn cli_command(teams: bool) -> clap::Command {
-    let cmd = Cli::command();
+    cli_command_for(teams, |_| true)
+}
+
+/// [`cli_command`] with the experiments `on` says are on; the commands and
+/// flags of the others stay out of help (they still parse, and are refused
+/// with how to turn the experiment on).
+fn cli_command_for(teams: bool, on: impl Fn(cua_vmm::experiments::Gate) -> bool) -> clap::Command {
+    use cua_vmm::experiments::Gate;
+    let mut cmd = without_teams_if(Cli::command(), teams);
+    if !on(Gate::SecureSpaces) {
+        cmd = cmd
+            .mut_subcommand("network", |c| c.hide(true))
+            .mut_subcommand("spaces", |s| {
+                s.mut_subcommand("create", |c| {
+                    c.mut_arg("network", |a| a.hide(true))
+                        .mut_arg("parent", |a| a.hide(true))
+                        .mut_arg("widen", |a| a.hide(true))
+                })
+                .mut_subcommand("ls", |c| c.mut_arg("tree", |a| a.hide(true)))
+                .mut_subcommand("delete", |c| c.mut_arg("keep_children", |a| a.hide(true)))
+            });
+    }
+    cmd
+}
+
+fn without_teams_if(cmd: clap::Command, teams: bool) -> clap::Command {
     if teams {
         return cmd;
     }
@@ -2963,7 +3025,10 @@ pub fn main() {
     // process (the daemon) uses that channel's and environment's home.
     unsafe { cua_home::env::pin_home() };
     let matches = channel_command(
-        cli_command(cua_home::experimental::teams_enabled()),
+        cli_command_for(
+            cua_home::experimental::teams_enabled(),
+            cua_vmm::experiments::enabled,
+        ),
         channel,
     )
     .get_matches();

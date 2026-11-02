@@ -498,12 +498,20 @@ Examples:
         #[arg(long, value_name = "PRESET")]
         network: Option<String>,
         /// Block this destination (IP, CIDR or `all`; repeat for more).
-        #[arg(long = "deny", visible_alias = "egress-deny", value_name = "ADDR|CIDR|all")]
+        #[arg(
+            long = "deny",
+            visible_alias = "egress-deny",
+            value_name = "ADDR|CIDR|all"
+        )]
         egress_deny: Vec<String>,
         /// Allow this destination, also where a block covers it (IP or CIDR;
         /// repeat for more). This computer itself opens only with
         /// `--network localhost:<ports>`.
-        #[arg(long = "allow", visible_alias = "egress-allow", value_name = "ADDR|CIDR")]
+        #[arg(
+            long = "allow",
+            visible_alias = "egress-allow",
+            value_name = "ADDR|CIDR"
+        )]
         egress_allow: Vec<String>,
         /// Create it as a child of this Space: it joins the parent's tree
         /// (they reach each other) and its network is no more open than the
@@ -1419,19 +1427,18 @@ pub async fn run_spaces_sdk(
             let volumes = parse_volumes(&volumes)?;
             let labels = parse_labels(&label)?;
             // One shape for the network: a preset and the lists.
-            let network_settings = (network.is_some()
-                || !egress_deny.is_empty()
-                || !egress_allow.is_empty())
-            .then(|| {
-                cua_spaces::network::parse_network(
-                    network.as_deref().unwrap_or("internet"),
-                    &egress_allow,
-                    &egress_deny,
-                )
-                .map(|s| cua_sdk::NetworkSettings::from(s))
-                .map_err(CuaError::from)
-            })
-            .transpose()?;
+            let network_settings =
+                (network.is_some() || !egress_deny.is_empty() || !egress_allow.is_empty())
+                    .then(|| {
+                        cua_spaces::network::parse_network(
+                            network.as_deref().unwrap_or("internet"),
+                            &egress_allow,
+                            &egress_deny,
+                        )
+                        .map(cua_sdk::NetworkSettings::from)
+                        .map_err(CuaError::from)
+                    })
+                    .transpose()?;
             if !(1..=8).contains(&count) {
                 return Err(CuaError::InvalidArgument(format!(
                     "--count {count}: create 1 to 8 Spaces at a time"
@@ -4798,6 +4805,7 @@ mod tests {
                 relay: Some(relay.url.clone()),
                 label: vec![],
                 no_size: true,
+                tree: false,
             },
             &elsewhere.path().join(".cua"),
             Some(Arc::new(StaticToken("acct".into()))),

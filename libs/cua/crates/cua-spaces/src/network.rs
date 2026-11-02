@@ -65,6 +65,30 @@ pub fn note_for(backend: &str, settings: &NetworkSettings) -> Option<String> {
     }
 }
 
+/// While Secure Spaces is off (an experiment), a Space gets the network it
+/// always had: only the old allow and deny lists, and no parent. Anything
+/// else is refused with how to turn the experiment on.
+pub fn require_secure_spaces(settings: Option<&NetworkSettings>, parent: bool) -> Result<()> {
+    if Mode::from_env() == Mode::Secure {
+        return Ok(());
+    }
+    // What the old calls (`network = none`, the egress lists) already
+    // asked for: Internet, None, and Custom from Internet.
+    let beyond_lists = settings.is_some_and(|s| {
+        !(matches!(s.preset, NetworkPreset::Internet | NetworkPreset::None)
+            || (s.preset == NetworkPreset::Custom && s.custom_base == NetworkPreset::Internet))
+            || !s.localhost_ports.is_empty()
+            || s.all_localhost_ports
+            || s.widened_by.is_some()
+    });
+    if beyond_lists || parent {
+        return Err(Error::invalid(
+            cua_vmm::experiments::Gate::SecureSpaces.off_message(),
+        ));
+    }
+    Ok(())
+}
+
 /// Refuses network settings a Space in your own cloud account or a
 /// provider can't keep: anything but No protection (the provider has no
 /// point cua controls to enforce them).
@@ -328,9 +352,10 @@ pub fn parse_network(word: &str, allow: &[String], deny: &[String]) -> Result<Ne
         }
         (NetworkPreset::Localhost, Some(r)) => {
             for p in r.split(',').map(str::trim).filter(|p| !p.is_empty()) {
-                let port = p.parse::<u16>().ok().filter(|p| *p > 0).ok_or_else(|| {
-                    Error::invalid(format!("localhost port {p:?} is not a port"))
-                })?;
+                let port =
+                    p.parse::<u16>().ok().filter(|p| *p > 0).ok_or_else(|| {
+                        Error::invalid(format!("localhost port {p:?} is not a port"))
+                    })?;
                 if !s.localhost_ports.contains(&port) {
                     s.localhost_ports.push(port);
                 }
@@ -544,6 +569,12 @@ impl Spaces {
         tree: bool,
     ) -> Result<cua_vmm::network::Applied> {
         settings.validate().map_err(|e| Error::invalid(e.0))?;
+        // Changing a Space's network is part of the experiment.
+        if Mode::from_env() == Mode::Legacy {
+            return Err(Error::invalid(
+                cua_vmm::experiments::Gate::SecureSpaces.off_message(),
+            ));
+        }
         let id = self.resolve(space)?;
         let crate::SpaceId::Local { name } = &id else {
             return Err(Error::WrongProvider {
@@ -556,13 +587,10 @@ impl Spaces {
         };
         let key = id.to_string();
         let meta = self.inner.registry.meta(&key).unwrap_or_default();
-        let parent = meta
-            .parent
-            .clone()
-            .map(|p| {
-                let m = self.inner.registry.meta(&p);
-                (p, m)
-            });
+        let parent = meta.parent.clone().map(|p| {
+            let m = self.inner.registry.meta(&p);
+            (p, m)
+        });
         let resolved = resolve_create(settings.clone(), parent, widen && meta.parent.is_some())?;
         if widen && meta.parent.is_none() {
             return Err(Error::invalid(
@@ -672,9 +700,15 @@ mod tests {
         assert!(p("lan:5432").is_err());
         assert!(p("open").is_err());
         let c = parse_network("internet", &["10.0.5.0/24".into()], &[]).unwrap();
-        assert_eq!((c.preset, c.custom_base), (NetworkPreset::Custom, NetworkPreset::Internet));
+        assert_eq!(
+            (c.preset, c.custom_base),
+            (NetworkPreset::Custom, NetworkPreset::Internet)
+        );
         let c = parse_network("none", &["1.1.1.1".into()], &[]).unwrap();
-        assert_eq!((c.preset, c.custom_base), (NetworkPreset::Custom, NetworkPreset::None));
+        assert_eq!(
+            (c.preset, c.custom_base),
+            (NetworkPreset::Custom, NetworkPreset::None)
+        );
         let e = parse_network("internet", &["pypi.org".into()], &[]).unwrap_err();
         assert!(e.to_string().contains("by IP/CIDR"), "{e}");
     }
@@ -687,14 +721,27 @@ mod tests {
         let lan = NetworkSettings::preset(NetworkPreset::Lan);
         let e = refuse_widening_by_agent(&lan, None).unwrap_err();
         assert!(e.to_string().contains("cua network set"), "{e}");
-        assert!(refuse_widening_by_agent(&NetworkSettings::preset(NetworkPreset::Unprotected), None).is_err());
+        assert!(
+            refuse_widening_by_agent(&NetworkSettings::preset(NetworkPreset::Unprotected), None)
+                .is_err()
+        );
         let one = parse_network("custom", &["1.1.1.1".into()], &["all".into()]).unwrap();
-        assert!(refuse_widening_by_agent(&one, Some(&internet)).is_ok(), "tighter");
-        assert!(refuse_widening_by_agent(&internet, Some(&one)).is_err(), "wider than now");
+        assert!(
+            refuse_widening_by_agent(&one, Some(&internet)).is_ok(),
+            "tighter: {:?}",
+            refuse_widening_by_agent(&one, Some(&internet))
+        );
+        assert!(
+            refuse_widening_by_agent(&internet, Some(&one)).is_err(),
+            "wider than now"
+        );
         let deny = parse_network("internet", &[], &["8.8.8.8".into()]).unwrap();
         assert!(refuse_widening_by_agent(&deny, Some(&internet)).is_ok());
         let private = parse_network("internet", &["10.0.5.0/24".into()], &[]).unwrap();
-        assert!(refuse_widening_by_agent(&private, None).is_err(), "a LAN allow");
+        assert!(
+            refuse_widening_by_agent(&private, None).is_err(),
+            "a LAN allow"
+        );
     }
 
     #[test]

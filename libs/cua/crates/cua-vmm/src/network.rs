@@ -36,8 +36,10 @@
 //! answer into what a start does; nothing but `unprotected` ever starts
 //! less strict than asked.
 //!
-//! **Revert switch.** `CUA_SECURE_DEFAULT=0` restores the old open default
-//! for one release ([`Mode::Legacy`]).
+//! **Experiment.** All of this is the Secure Spaces experiment, off until
+//! it is turned on (`cua experiments enable secure-spaces`). Off, Spaces
+//! keep the old open default ([`Mode::Legacy`]). `CUA_SECURE_DEFAULT=1` or
+//! `=0` forces one or the other for a process.
 
 use std::net::IpAddr;
 
@@ -668,42 +670,41 @@ pub fn pasta_out_spec(ports: &[u16]) -> String {
     }
 }
 
-/// Whether the secure default applies, or the old open one
-/// (`CUA_SECURE_DEFAULT=0`, for one release).
+/// Whether the secure default applies, or the old open one. The secure
+/// default is the Secure Spaces experiment ([`crate::experiments::Gate`]):
+/// off, Spaces keep the open network they always had.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// The default: presets, platform and default denies.
+    /// Secure Spaces on: presets, platform and default denies.
     Secure,
     /// The old open default: only the user's own lists, and `none`.
     Legacy,
 }
 
-/// The environment variable of the revert switch.
+/// The environment variable that forces the mode over the experiment:
+/// `0` (or `false`, `off`, `no`) the old open default, `1` (or `true`, `on`,
+/// `yes`) the secure one.
 pub const SECURE_DEFAULT_ENV: &str = "CUA_SECURE_DEFAULT";
 
 impl Mode {
-    /// [`Mode::Legacy`] when `CUA_SECURE_DEFAULT` is `0`, `false`, `off` or
-    /// `no` (logged once as a warning); [`Mode::Secure`] otherwise.
+    /// The mode of this process: [`SECURE_DEFAULT_ENV`] when it is set,
+    /// else [`crate::experiments::Gate::SecureSpaces`] (off unless
+    /// turned on).
     pub fn from_env() -> Mode {
-        let mode = Mode::from_value(std::env::var(SECURE_DEFAULT_ENV).ok().as_deref());
-        if mode == Mode::Legacy {
-            static WARNED: std::sync::Once = std::sync::Once::new();
-            WARNED.call_once(|| {
-                tracing::warn!(
-                    "{SECURE_DEFAULT_ENV}=0: Spaces use the old open network default (they can \
-                     reach this machine and your local network); this switch goes away in a \
-                     later release"
-                );
-            });
-        }
-        mode
+        Mode::from_value(
+            std::env::var(SECURE_DEFAULT_ENV).ok().as_deref(),
+            crate::experiments::enabled(crate::experiments::Gate::SecureSpaces),
+        )
     }
 
-    /// [`Mode::from_env`] for a value of the variable.
-    pub fn from_value(v: Option<&str>) -> Mode {
+    /// [`Mode::from_env`] for a value of the variable and the experiment's
+    /// state.
+    pub fn from_value(v: Option<&str>, experiment_on: bool) -> Mode {
         match v.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
             Some("0" | "false" | "off" | "no") => Mode::Legacy,
-            _ => Mode::Secure,
+            Some("1" | "true" | "on" | "yes") => Mode::Secure,
+            _ if experiment_on => Mode::Secure,
+            _ => Mode::Legacy,
         }
     }
 }

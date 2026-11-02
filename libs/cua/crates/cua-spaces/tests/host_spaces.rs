@@ -2868,10 +2868,11 @@ async fn network_none_on_a_host_too_old_to_enforce_it_is_refused() {
         msg.contains("too old") && msg.contains("update cua"),
         "{msg}"
     );
-    // The host made it with outbound network, then deleted it on request.
+    // The host made it (this fixture's host runs current code, so what an old
+    // host would leave open is not simulated; the refusal is the client's),
+    // then deleted it on request.
     let started = f.rt.started.lock().unwrap().clone();
     assert_eq!(started.len(), 1, "{started:?}");
-    assert!(!started[0].restrict_network, "the old host never cut it");
     assert_eq!(
         *f.rt.deleted.lock().unwrap(),
         [started[0].name.clone()],

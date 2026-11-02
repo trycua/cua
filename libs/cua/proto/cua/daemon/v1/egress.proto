@@ -87,6 +87,7 @@ message SpaceNetworkInfo {
   // Its parent and its tree's top-level Space (ids); empty for a
   // top-level Space.
   string parent = 7;
+  // Its tree's top-level Space.
   string root = 8;
   // What no setting opens, in plain words.
   repeated string always_blocked = 9;
@@ -105,6 +106,7 @@ message GetSpaceNetworkRequest {
 
 // Response for `SpaceService.GetSpaceNetwork`.
 message GetSpaceNetworkResponse {
+  // The Space's network.
   SpaceNetworkInfo network = 1;
 }
 

@@ -48,7 +48,7 @@ Renamed members: in Kotlin, objects implement `AutoCloseable`, whose `close()` f
 
 ## All items
 
-328 items. Methods are listed on their object.
+331 items. Methods are listed on their object.
 
 The 10 items of Batched forks are listed on [its page](/cua-sdk/reference/sandbox/fork-batch#all-items).
 
@@ -217,6 +217,7 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`MediaSession`](/cua-sdk/reference/spacesd/computer#mediasession) | object | A live media session. |
 | [`MediaStats`](/cua-sdk/reference/spacesd/computer#mediastats-record) | record | Delivery counters. |
 | [`NamedVolume`](/cua-sdk/reference/spaces/volume#namedvolume-record) | record | A named volume of Cua Volume (`Spaces.volumes`). |
+| [`NetworkSettings`](/cua-sdk/reference/spaces/network#networksettings-record) | record | A Space's network settings: a preset and the user's own lists. |
 | [`normalize_image`](/cua-sdk/reference/image#normalize_image) | function | Normalises a reference like the docker CLI (`python` is `docker.io/library/python:latest`). |
 | [`NotificationInfo`](/cua-sdk/reference/spaces/persistent-agents#notificationinfo-record) | record | One entry of the notifications feed. |
 | [`omarchy_image`](/cua-sdk/reference/image#omarchy_image) | function | The Omarchy image, `ghcr.io/trycua/omarchy:<channel>` (default `edge`; also `rc`, `stable`): Omarchy (Arch Linux, Hyprland) with cua-spacesd, as an… |
@@ -287,6 +288,7 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`ScreenshotOptions`](/cua-sdk/reference/spacesd/computer#screenshotoptions-record) | record | Screenshot options. |
 | [`Service`](/cua-sdk/reference/services#service) | object | A named service of a sandbox. |
 | [`ServiceEndpoint`](/cua-sdk/reference/services#serviceendpoint-record) | record | Where a sandbox service is reachable from this process. |
+| [`SetNetworkResult`](/cua-sdk/reference/spaces/network#setnetworkresult-record) | record | What `Spaces.set_network` did. |
 | [`SetupStep`](/cua-sdk/reference/cua#setupstep-record) | record | One setup step. |
 | [`Share`](/cua-sdk/reference/share#share-record) | record | One share. |
 | [`ShareAccess`](/cua-sdk/reference/share#shareaccess-enum) | enum | Who may open a share. |
@@ -307,14 +309,15 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`SpaceCreatingElsewhere`](/cua-sdk/reference/spaces/space#spacecreatingelsewhere-record) | record | A Space another of your computers is creating (`SpaceList.creating`). |
 | [`SpaceDisplay`](/cua-sdk/reference/spaces/space#spacedisplay-record) | record | One of a Space's displays (`Space.displays`). |
 | [`SpaceHotspotStatus`](/cua-sdk/reference/spaces/space#spacehotspotstatus-record) | record | Hotspot state. |
-| [`SpaceInfo`](/cua-sdk/reference/spaces#spaceinfo-record) | record | A registered Space. |
+| [`SpaceInfo`](/cua-sdk/reference/spaces/info#spaceinfo-record) | record | A registered Space. |
 | [`SpaceList`](/cua-sdk/reference/spaces/list-watch#spacelist-record) | record | The Spaces known now (`Spaces.list_known`) and how far the read got. |
+| [`SpaceNetworkInfo`](/cua-sdk/reference/spaces/network#spacenetworkinfo-record) | record | A Space's network as `cua network show` says it (`Spaces.network`). |
 | [`SpacePowerReport`](/cua-sdk/reference/spaces/resize#spacepowerreport-record) | record | What `Spaces.stop` or `Spaces.start` did. |
 | [`SpacePresence`](/cua-sdk/reference/spaces/streams#spacepresence) | object | A joined presence session. |
 | [`SpaceRelayRegistration`](/cua-sdk/reference/spaces/relay-registration#spacerelayregistration-record) | record | A Space published on the relay (`Spaces.relay_register`). |
 | [`SpaceResizeReport`](/cua-sdk/reference/spaces/resize#spaceresizereport-record) | record | What `Spaces.resize` did: the shape the Space has now. |
 | [`Spaces`](/cua-sdk/reference/spaces#spaces) | object | The Spaces registry: add a machine by URL, provision a local one, and get `Space` handles. |
-| [`spaces_tool_methods`](/cua-sdk/reference/spaces#spaces_tool_methods) | function | Which SDK method covers each Spaces contract tool. |
+| [`spaces_tool_methods`](/cua-sdk/reference/spaces/info#spaces_tool_methods) | function | Which SDK method covers each Spaces contract tool. |
 | [`SpacesdCapabilities`](/cua-sdk/reference/spacesd#spacesdcapabilities-record) | record | `SystemService.GetCapabilities`, summarized. |
 | [`SpacesdClient`](/cua-sdk/reference/spacesd#spacesdclient) | object | Client for one cua-spacesd. |
 | [`SpacesdCommand`](/cua-sdk/reference/spacesd/shell#spacesdcommand-record) | record | A command to run in the guest. |
@@ -336,7 +339,7 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`SpacesHostLoad`](/cua-sdk/reference/spaces/host#spaceshostload-record) | record | How busy one of your machines is (its job runner's view). |
 | [`SpacesListListener`](/cua-sdk/reference/spaces/list-watch#spaceslistlistener) | object | Hears that the Space list changed (`Spaces.watch_list`). |
 | [`SpacesListWatch`](/cua-sdk/reference/spaces/list-watch#spaceslistwatch) | object | A running `Spaces.watch_list`. |
-| [`SpacesToolMethod`](/cua-sdk/reference/spaces#spacestoolmethod-record) | record | One row of `SPACES_TOOL_METHODS`. |
+| [`SpacesToolMethod`](/cua-sdk/reference/spaces/info#spacestoolmethod-record) | record | One row of `SPACES_TOOL_METHODS`. |
 | [`SpaceStreamOptions`](/cua-sdk/reference/spaces/streams#spacestreamoptions-record) | record | What to stream and how. |
 | [`SpaceStreamSession`](/cua-sdk/reference/spaces/streams#spacestreamsession) | object | A live Space media session (see `Space.stream_session`). |
 | [`SpaceStreamStats`](/cua-sdk/reference/spaces/streams#spacestreamstats-record) | record | Delivery counters of a `SpaceStreamSession`. |

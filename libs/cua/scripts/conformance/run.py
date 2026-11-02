@@ -13,7 +13,7 @@ the daemon this script starts from the binary under test (never `cua daemon star
 over to an installed Cua Spaces app), and everything it makes is deleted, also on failure.
 
     CUA=/path/to/cua-spaces-cli ./run.py --entry containerization-microvm --entry vz-microvm \
-        --image ghcr.io/trycua/linux:24.04-headless --private --out results/
+        --image ghcr.io/trycua/linux:24.04-slim --private --out results/
 
 The registry credential comes from the environment (CUA_REGISTRY_USERNAME and CUA_REGISTRY_PASSWORD)
 or, with --private, from `gh auth token`. It is passed to the daemon's environment only and never
@@ -476,7 +476,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--entry", action="append", help="an entry id (repeatable); default: every entry that runs on this OS")
     ap.add_argument("--cua", default=os.environ.get("CUA") or shutil.which("cua"))
-    ap.add_argument("--image", default="ghcr.io/trycua/linux:24.04-headless")
+    ap.add_argument("--image", default="ghcr.io/trycua/linux:24.04-slim")
     ap.add_argument("--alias", default=None, help="the package the image resolves to (a private mirror of the same tag)")
     ap.add_argument("--child-image", default="ghcr.io/trycua/linux:24.04-slim")
     ap.add_argument("--private", action="store_true", help="the image is private: the credential comes from the environment or `gh auth token`")

@@ -29,6 +29,8 @@ pub struct DaemonLaunchState {
     pub approve_capability_manifest: bool,
     pub no_permissions_gate: bool,
     pub claude_code_compat: bool,
+    #[serde(default)]
+    pub development: bool,
     pub grants: Vec<String>,
 }
 
@@ -40,26 +42,9 @@ pub fn configure_admission(admitted: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn configure_daemon_launch_state(
-    permission_mode: Option<&str>,
-    dangerously_bypass_approvals: bool,
-    capability_manifest: Option<&str>,
-    approve_capability_manifest: bool,
-    no_permissions_gate: bool,
-    claude_code_compat: bool,
-    grants: &[String],
-) {
+pub fn configure_daemon_launch_state(launch: DaemonLaunchState) {
     let state = DAEMON_LAUNCH_STATE.get_or_init(|| Mutex::new(DaemonLaunchState::default()));
-    *state.lock().unwrap() = DaemonLaunchState {
-        permission_mode: permission_mode.map(str::to_owned),
-        dangerously_bypass_approvals,
-        capability_manifest: capability_manifest.map(str::to_owned),
-        approve_capability_manifest,
-        no_permissions_gate,
-        claude_code_compat,
-        grants: grants.to_vec(),
-    };
+    *state.lock().unwrap() = launch;
 }
 
 pub fn daemon_launch_state() -> DaemonLaunchState {

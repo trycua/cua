@@ -236,6 +236,12 @@
     },
     {
      "default_value": false,
+     "help": "Run a locally built daemon without installed-app obligations: history stays unadmitted and the first-launch permissions gate is skipped. Still binds the standard socket; stop an installed daemon first or pass --socket.",
+     "name": "development",
+     "short_name": null
+    },
+    {
+     "default_value": false,
      "help": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.",
      "name": "embedded",
      "short_name": null

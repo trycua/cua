@@ -3,8 +3,8 @@
 
 //! Extras of the agent cursor.
 //!
-//! The default agent cursor is a plain, upright arrow with a soft halo that
-//! levitates gently. Four saved settings in `~/.cua-driver/config.json`
+//! The default agent cursor is a plain arrow with a soft halo that levitates
+//! gently and points its tip along the path while it moves. Four saved settings in `~/.cua-driver/config.json`
 //! (`{"cursor": {"marks": true}}`) switch the extras:
 //!
 //! - `cursor.marks`: the theme's action marks (observe arcs, click lines,
@@ -17,9 +17,10 @@
 //!   cursor never floats, so a resting overlay stops redrawing.
 //! - `cursor.halo` (on by default): a soft glow in the cursor's accent colour
 //!   behind the arrow body. No click effect.
-//! - `cursor.rotate` (`off` by default): `lean` tilts the arrow at most 30°
-//!   toward where it is going; `heading` points the tip along the path. Both
-//!   ease back upright before arrival. `on` is the same as `heading`.
+//! - `cursor.rotate` (`heading` by default): `heading` points the tip along
+//!   the path; `lean` tilts the arrow at most 30° toward where it is going;
+//!   `off` keeps it upright. Both turning modes ease back upright before
+//!   arrival. `on` is the same as `heading`.
 //!
 //! Like `cursor.badges` they apply live: every cursor reads the process-wide
 //! value on each frame, so a `set_config` write changes cursors already on
@@ -38,11 +39,11 @@ pub const HALO_KEY: &str = "cursor.halo";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum RotateMode {
     /// Always upright.
-    #[default]
     Off,
     /// Leans toward the direction of travel by at most 30°.
     Lean,
-    /// The tip points along the path.
+    /// The tip points along the path (the default).
+    #[default]
     Heading,
 }
 
@@ -72,7 +73,7 @@ impl RotateMode {
     }
 }
 
-/// The cursor extras. `Default` is the float and the halo; [`CursorOptions::NONE`]
+/// The cursor extras. `Default` is the float, the halo and `heading`; [`CursorOptions::NONE`]
 /// is everything off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CursorOptions {
@@ -89,11 +90,12 @@ impl Default for CursorOptions {
 }
 
 impl CursorOptions {
-    /// The built-in default: a plain upright arrow with a halo that floats.
+    /// The built-in default: a plain arrow with a halo that floats and points
+    /// along its path while it moves.
     pub const DEFAULT: Self = Self {
         marks: false,
         float: true,
-        rotate: RotateMode::Off,
+        rotate: RotateMode::Heading,
         halo: true,
     };
 
@@ -391,7 +393,7 @@ pub fn config_schema_properties() -> Map<String, Value> {
         (
             ROTATE_KEY,
             &["off", "lean", "heading", "on", "default"][..],
-            "Agent cursor rotation while it moves: lean tilts the arrow at most 30 degrees toward where it is going; heading points the tip along the path (on is the same as heading). Both return upright before arrival. off (default): the arrow always stays upright. Applies immediately to every cursor.",
+            "Agent cursor rotation while it moves: heading (default) points the tip along the path; lean tilts the arrow at most 30 degrees toward where it is going (on is the same as heading). Both return upright before arrival, so clicks, typing and scrolling stay upright. off: the arrow always stays upright. Applies immediately to every cursor.",
         ),
     ] {
         properties.insert(
@@ -423,12 +425,12 @@ mod tests {
     }
 
     #[test]
-    fn the_float_and_the_halo_are_on_by_default() {
+    fn the_float_the_halo_and_heading_are_on_by_default() {
         let default = CursorOptions::default();
         assert!(default.float && default.halo);
         assert!(!default.marks);
-        assert_eq!(default.rotate, RotateMode::Off);
-        assert_eq!(default, CursorOptions::from_u8(2 | 16));
+        assert_eq!(default.rotate, RotateMode::Heading);
+        assert_eq!(default, CursorOptions::from_u8(2 | 8 | 16));
         assert_eq!(CursorOptions::NONE, CursorOptions::from_u8(0));
         assert_eq!(active(), CursorOptions::DEFAULT);
         let path = temp_config("missing");
@@ -443,6 +445,7 @@ mod tests {
             options,
             CursorOptions {
                 halo: true,
+                rotate: RotateMode::Heading,
                 ..CursorOptions::NONE
             }
         );
@@ -543,7 +546,7 @@ mod tests {
             (json!(true), RotateMode::Heading),
             (json!("off"), RotateMode::Off),
             (json!(false), RotateMode::Off),
-            (json!("default"), RotateMode::Off),
+            (json!("default"), RotateMode::Heading),
         ] {
             let (options, _) = set_at(&path, &json!({ "cursor.rotate": value })).unwrap();
             assert_eq!(options.rotate, mode, "{value}");

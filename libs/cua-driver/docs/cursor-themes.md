@@ -3,8 +3,10 @@
 Cua Driver ships one built-in cursor theme: `cua.default`. It is the default on
 macOS, Windows, and Linux and cannot be removed. By default the agent cursor is
 a plain, upright arrow: a colored pointer with a white outline over a soft,
-cursor-shaped glow in the same session color. The arrow stands upright like the
-system pointer, with its left edge vertical, and keeps that pose while it moves.
+cursor-shaped glow in the same session color. At rest the arrow stands upright like the
+system pointer, with its left edge vertical. While it moves, its tip points
+along the path (`cursor.rotate`, `heading` by default), and it is upright again
+before it arrives.
 The glow softly fades to transparent around the full pointer silhouette, while
 the white outline preserves a crisp boundary on light, dark, and similarly
 colored backgrounds. The anonymous/default cursor uses Cua blue. Named sessions
@@ -38,9 +40,9 @@ with `set_config`:
 | Key | What it adds |
 | --- | --- |
 | `cursor.marks` | Action marks: a small cue next to the arrow while the agent observes, clicks, types, presses keys, scrolls, drags, manages apps, moves files, records, or makes system calls. Moves and clicks show the navigate and click marks. On macOS, a clicked element also gets a brief focus box. |
-| `cursor.float` | On by default. A slow vertical bob on a four-second loop while the cursor rests, until the idle fade hides it, and a small lift while it travels that is zero on arrival. The arrow never tilts. |
+| `cursor.float` | On by default. A slow vertical bob on a four-second loop while the cursor rests, until the idle fade hides it, and a small lift while it travels that is zero on arrival. |
 | `cursor.halo` | On by default. The soft glow behind the arrow body, in the cursor's color. |
-| `cursor.rotate` | `off` by default. `lean`: the arrow tilts toward where it is going, at most 30° (15° while dragging). `heading`: the tip points along the path. Both skip hops under 40 pt and are upright again before the cursor arrives, so clicks, typing and scrolling are always upright. `on` means `heading`. |
+| `cursor.rotate` | `heading` by default: the tip points along the path. `lean`: the arrow tilts toward where it is going, at most 30° (15° while dragging). `off`: always upright. Both skip hops under 40 pt and are upright again before the cursor arrives, so clicks, typing and scrolling are always upright. `on` means `heading`. |
 | `cursor.motion.effects.glow` | A soft glow behind the pointer that grows with speed. |
 | `cursor.motion.effects.ripple` | A ring that expands from each click point. |
 | `cursor.motion.effects.squish` | The pointer shrinks briefly on each click and springs back. |

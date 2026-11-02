@@ -3196,13 +3196,13 @@ mod plain_cursor_tests {
     }
 
     #[test]
-    fn the_float_and_the_halo_are_on_by_default() {
+    fn the_float_the_halo_and_heading_are_on_by_default() {
         assert_eq!(
             CursorOptions::default(),
             CursorOptions {
                 marks: false,
                 float: true,
-                rotate: RotateMode::Off,
+                rotate: RotateMode::Heading,
                 halo: true,
             }
         );
@@ -3506,6 +3506,8 @@ mod plain_cursor_tests {
     fn the_halo_shows_in_every_state_follows_drags_and_hides_with_the_cursor() {
         let mut cursor = core(CursorOptions {
             float: false,
+            // The probe reads the upright body; rotation has its own tests.
+            rotate: RotateMode::Off,
             ..CursorOptions::DEFAULT
         });
         let resting = halo_probe(&mut cursor);

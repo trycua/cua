@@ -1859,7 +1859,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).\n\nNote: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.\n\nCursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to ~/.cua-driver/config.json and seed sessions started afterwards. start_session cursor_motion and set_agent_cursor_motion override them; reduced motion always wins.\n\nAgent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.\n\nAgent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.marks (action marks) is on, off (default) or default; cursor.rotate is off (default), lean, heading or default. All are saved to ~/.cua-driver/config.json and applied to every cursor at once.",
+   "description": "Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).\n\nNote: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.\n\nCursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to ~/.cua-driver/config.json and seed sessions started afterwards. start_session cursor_motion and set_agent_cursor_motion override them; reduced motion always wins.\n\nAgent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.\n\nAgent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.marks (action marks) is on, off (default) or default; cursor.rotate is heading (default), lean, off or default. All are saved to ~/.cua-driver/config.json and applied to every cursor at once.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1980,7 +1980,7 @@
       "type": "string"
      },
      "cursor.rotate": {
-      "description": "Agent cursor rotation while it moves: lean tilts the arrow at most 30 degrees toward where it is going; heading points the tip along the path (on is the same as heading). Both return upright before arrival. off (default): the arrow always stays upright. Applies immediately to every cursor.",
+      "description": "Agent cursor rotation while it moves: heading (default) points the tip along the path; lean tilts the arrow at most 30 degrees toward where it is going (on is the same as heading). Both return upright before arrival, so clicks, typing and scrolling stay upright. off: the arrow always stays upright. Applies immediately to every cursor.",
       "enum": [
        "off",
        "lean",

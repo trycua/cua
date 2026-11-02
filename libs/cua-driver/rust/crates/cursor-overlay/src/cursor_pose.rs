@@ -114,9 +114,21 @@ pub fn travel_rotation(traj: &Trajectory, t: f64, mode: RotateMode, pressed: boo
     if mode == RotateMode::Off || !travelling(traj, t) || hop_length(traj) < ROTATE_MIN_HOP_PT {
         return 0.0;
     }
-    let (p_in, p_out) = ramps(t, traj.arrival_t, ROTATE_RAMP_IN_SECS, ROTATE_RAMP_OUT_SECS);
     let (a, b) = (traj.samples[0], traj.end());
     let chord = (b.y - a.y).atan2(b.x - a.x);
+    // `heading` can turn the arrow up to 180° (upside down on a move
+    // straight down). Stretch its ramps with the size of the turn so a big
+    // turn eases in and out as gently as a lean, with no flip.
+    let stretch = match mode {
+        RotateMode::Heading => 1.0 + wrap_angle(chord - tip_axis()).abs() / std::f64::consts::PI,
+        _ => 1.0,
+    };
+    let (p_in, p_out) = ramps(
+        t,
+        traj.arrival_t,
+        ROTATE_RAMP_IN_SECS * stretch,
+        ROTATE_RAMP_OUT_SECS * stretch,
+    );
     let (vx, vy) = traj.velocity_at(t);
     let travel = if vx.hypot(vy) > 1.0 {
         vy.atan2(vx)
@@ -330,6 +342,36 @@ mod tests {
         let down = plan((300.0, 100.0), (300.0, 700.0));
         let r = travel_rotation(&down, down.arrival_t * 0.5, RotateMode::Heading, false);
         assert!(r.abs() > PI / 2.0, "{r}");
+    }
+
+    #[test]
+    fn heading_turns_upside_down_on_downward_moves_without_a_snap() {
+        // Straight down and a few degrees either side, where the angle
+        // crosses +-180°: the turn stays continuous at 120 Hz.
+        for to in [
+            (300.0, 700.0),
+            (290.0, 700.0),
+            (310.0, 700.0),
+            (240.0, 700.0),
+        ] {
+            let traj = plan((300.0, 100.0), to);
+            let mut last = travel_rotation(&traj, 0.0, RotateMode::Heading, false);
+            let mut peak: f64 = 0.0;
+            let steps = (traj.arrival_t * 120.0).ceil() as usize;
+            for i in 1..=steps {
+                let t = traj.arrival_t * i as f64 / steps as f64;
+                let r = travel_rotation(&traj, t, RotateMode::Heading, false);
+                assert!(
+                    (r - last).abs() < 10f64.to_radians(),
+                    "{to:?}: jumped {:.1}° at {t:.3}",
+                    (r - last).abs().to_degrees()
+                );
+                peak = peak.max(r.abs());
+                last = r;
+            }
+            assert!(peak > 2.0 * PI / 3.0, "{to:?} turns over: {peak}");
+            assert!(last.abs() < 1e-9, "{to:?} upright at arrival: {last}");
+        }
     }
 
     #[test]

@@ -3,13 +3,13 @@
 //! window, as raw RGBA frames on stdout. Pipe them into ffmpeg:
 //!
 //! ```sh
-//! cargo run -p cursor-overlay --example render_motion_clip -- lean \
+//! cargo run -p cursor-overlay --example render_motion_clip -- heading \
 //!   | ffmpeg -f rawvideo -pix_fmt rgba -s 1600x1000 -r 60 -i - \
-//!       -c:v libx264 -pix_fmt yuv420p -crf 24 lean.mp4
+//!       -c:v libx264 -pix_fmt yuv420p -crf 24 heading.mp4
 //! ```
 //!
-//! The argument is the `cursor.rotate` mode (`off`, `lean` or `heading`).
-//! The float and the halo are on, as by default.
+//! The argument is the `cursor.rotate` mode (`off`, `lean` or `heading`,
+//! the default). The float and the halo are on, as by default.
 
 use cursor_overlay::{
     paint_cursor, CursorAction, CursorConfig, CursorOptions, OverlayCommand, RenderStateCore,
@@ -201,8 +201,8 @@ fn background(scene: &Scene, t: f64) -> Pixmap {
 fn main() {
     let rotate = match std::env::args().nth(1).as_deref() {
         Some("lean") => RotateMode::Lean,
-        Some("heading") => RotateMode::Heading,
-        _ => RotateMode::Off,
+        Some("off") => RotateMode::Off,
+        _ => RotateMode::Heading,
     };
     let mut core = RenderStateCore::new(CursorConfig::default());
     core.options_override = Some(CursorOptions {

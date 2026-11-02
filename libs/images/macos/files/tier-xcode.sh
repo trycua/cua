@@ -10,13 +10,14 @@
 #   STAGE/cache/$XCODE_XIP   the pinned archive of CI's runner (build.sh); its
 #                            SHA-1 is checked here and the build must be
 #                            $XCODE_BUILD
-#   STAGE/xcode/*.zip|*.app  an Xcode already installed on the host Mac
-#                            (derive-local.sh sends a ditto zip), copied as is
+#   STAGE/xcode/*.zip|*.app  an Xcode already installed on the host Mac (a ditto
+#                            zip); with STAGE/xcode/pinned (build.sh, the pinned
+#                            build) the pin checks apply, else any Xcode is taken
 #   STAGE/xcode/*.xip        an archive the user downloaded (derive-local.sh);
 #                            xip checks Apple's signature while it expands
 # and lands at /Applications/Xcode_<version>.app, selected, licensed and
-# first-launched. This tier is never published (Apple's terms), so the Xcode
-# is always the one the Mac's owner already has or downloaded.
+# first-launched. No sign-in is involved: the Xcode is one that is already on
+# the Mac (or runner) building the image.
 #
 # Installs, all pinned in versions.env:
 #   Xcode, Metal toolchain, iOS simulator runtime   Apple (no sign-in)
@@ -51,6 +52,9 @@ if [ -f "$C/$XCODE_XIP" ]; then
         { echo "checksum mismatch: $C/$XCODE_XIP" >&2; exit 1; }
     src="$C/$XCODE_XIP" pinned=1
 else
+    # An Xcode build.sh staged from the runner's own installed Xcode (the same
+    # pinned build): the pin checks apply to it too.
+    [ ! -e "$STAGE/xcode/pinned" ] || pinned=1
     for f in "$STAGE"/xcode/*.zip "$STAGE"/xcode/*.app "$STAGE"/xcode/*.xip; do
         [ -e "$f" ] && { src="$f"; break; }
     done

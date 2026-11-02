@@ -8,8 +8,9 @@
 //! [`PoseModel`] keeps one [`RenderStateCore`] per session, advanced by the
 //! wall clock, and every planned move becomes a [`PoseTrack`] of hotspot
 //! position, float and rotation sampled from that core. The helper only plays
-//! the samples back, then runs the resting float described by [`PoseLook`]
-//! until the next move. The planner, the float, the rotation modes and the
+//! the samples back, then carries the float on at rest from the clock at the
+//! end of the track ([`RestFloat`]) as [`PoseLook`] describes it, until the
+//! next move. The planner, the float, the rotation modes and the
 //! halo colour therefore come from one place for every backend.
 
 use std::time::Instant;
@@ -27,16 +28,30 @@ pub const POSE_STEP_SECS: f64 = 1.0 / 60.0;
 /// settle after it is short).
 const MAX_SAMPLES: usize = 1_200;
 
-/// One pose of the cursor: the hotspot, the float offset in points (negative
-/// is up) and the rotation from upright in radians (clockwise, y down).
+/// One pose of the cursor: the hotspot, the float offset in points (y down,
+/// negative is up) and the rotation from upright in radians (clockwise,
+/// y down; the heading rotation plus the float tilt).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PoseSample {
     /// Seconds from the start of the track.
     pub t: f64,
     pub x: f64,
     pub y: f64,
+    pub float_dx: f64,
     pub float_dy: f64,
     pub rotation: f64,
+}
+
+/// The float clock at the end of a track, so the surface carries it on at
+/// rest with no snap: see [`crate::cursor_pose::rest_amplitude`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RestFloat {
+    /// Seconds into the float loop.
+    pub phase_secs: f64,
+    /// Seconds since the float settled.
+    pub hold_secs: f64,
+    /// Amplitude it settled from.
+    pub from: f64,
 }
 
 /// A planned move (or a snap) as poses to play back.
@@ -44,10 +59,11 @@ pub struct PoseSample {
 pub struct PoseTrack {
     /// In time order. The first is the start pose, the last the end pose.
     pub samples: Vec<PoseSample>,
-    /// Seconds into the track at which the resting float loop restarts from
-    /// 0 (the arrival, where the travel float has settled to 0). `None` for
-    /// a snap: the resting loop carries on.
-    pub rest_from: Option<f64>,
+    /// Seconds into the track at which the hotspot arrives, where the float
+    /// is exactly 0. `None` for a snap.
+    pub arrival: Option<f64>,
+    /// The float clock at the last sample.
+    pub rest: RestFloat,
 }
 
 /// The halo as the surface should paint it.
@@ -62,12 +78,39 @@ pub struct HaloLook {
     pub body_offset_pt: (f64, f64),
 }
 
+/// The float of [`crate::cursor_pose::float_at`] and its rest envelope, for
+/// a surface that runs it itself at rest.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FloatLook {
+    pub secs: f64,
+    pub sway_pt: f64,
+    pub bob_pt: f64,
+    pub lift_pt: f64,
+    pub tilt_radians: f64,
+    pub hold_secs: f64,
+    pub ease_in_secs: f64,
+    pub ease_out_secs: f64,
+}
+
+impl FloatLook {
+    pub const DEFAULT: Self = Self {
+        secs: crate::cursor_pose::FLOAT_SECS,
+        sway_pt: crate::cursor_pose::FLOAT_SWAY_PT,
+        bob_pt: crate::cursor_pose::FLOAT_BOB_PT,
+        lift_pt: crate::cursor_pose::FLOAT_LIFT_PT,
+        tilt_radians: crate::cursor_pose::FLOAT_TILT_RADIANS,
+        hold_secs: crate::cursor_pose::FLOAT_HOLD_SECS,
+        ease_in_secs: crate::cursor_pose::FLOAT_EASE_IN_SECS,
+        ease_out_secs: crate::cursor_pose::FLOAT_EASE_OUT_SECS,
+    };
+}
+
 /// What the surface paints at rest and around the arrow.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PoseLook {
-    /// Peak lift of the resting float in points; 0 for no float.
-    pub rest_lift_pt: f64,
-    pub rest_secs: f64,
+    /// `None` when the cursor rests still (`cursor.float` off, reduced
+    /// motion, a custom theme or a cursor that never hides).
+    pub float: Option<FloatLook>,
     /// `None` with `cursor.halo` off or on a surface that cannot blend.
     pub halo: Option<HaloLook>,
 }
@@ -78,10 +121,10 @@ fn round(value: f64, places: i32) -> f64 {
 }
 
 impl PoseTrack {
-    /// Compact JSON for the helper: `{"samples": [[t, x, y, dy, rot], ...],
-    /// "rest_from": t | null}`.
+    /// Compact JSON for the helper: `{"samples": [[t, x, y, dx, dy, rot],
+    /// ...], "arrival": t | null, "rest": [phase, hold, from]}`.
     pub fn to_json(&self) -> String {
-        let samples: Vec<[f64; 5]> = self
+        let samples: Vec<[f64; 6]> = self
             .samples
             .iter()
             .map(|s| {
@@ -89,6 +132,7 @@ impl PoseTrack {
                     round(s.t, 4),
                     round(s.x, 2),
                     round(s.y, 2),
+                    round(s.float_dx, 3),
                     round(s.float_dy, 3),
                     round(s.rotation, 4),
                 ]
@@ -96,23 +140,41 @@ impl PoseTrack {
             .collect();
         json!({
             "samples": samples,
-            "rest_from": self.rest_from.map(|t| round(t, 4)),
+            "arrival": self.arrival.map(|t| round(t, 4)),
+            "rest": [
+                round(self.rest.phase_secs, 4),
+                round(self.rest.hold_secs.min(3_600.0), 4),
+                round(self.rest.from, 4),
+            ],
         })
         .to_string()
     }
 
     /// Seconds the hotspot takes to reach its target.
     pub fn arrival_secs(&self) -> f64 {
-        self.rest_from
+        self.arrival
             .unwrap_or_else(|| self.samples.last().map_or(0.0, |s| s.t))
     }
 }
 
 impl PoseLook {
-    /// JSON for the helper: `{"rest_lift": pt, "rest_secs": s, "halo":
-    /// {"rgb": "#rrggbb", "radius": pt, "peak": a, "stops": [[o, k], ...],
-    /// "body": [x, y]} | null}`.
+    /// JSON for the helper: `{"float": {"secs", "sway", "bob", "lift",
+    /// "tilt", "hold", "ease_in", "ease_out"} | null, "halo": {"rgb":
+    /// "#rrggbb", "radius": pt, "peak": a, "stops": [[o, k], ...], "body":
+    /// [x, y]} | null}`.
     pub fn to_json(&self) -> String {
+        let float = self.float.map(|f| {
+            json!({
+                "secs": f.secs,
+                "sway": round(f.sway_pt, 4),
+                "bob": round(f.bob_pt, 4),
+                "lift": round(f.lift_pt, 4),
+                "tilt": round(f.tilt_radians, 5),
+                "hold": f.hold_secs,
+                "ease_in": f.ease_in_secs,
+                "ease_out": f.ease_out_secs,
+            })
+        });
         let halo = self.halo.map(|halo| {
             let [r, g, b] = halo.rgb;
             json!({
@@ -124,8 +186,7 @@ impl PoseLook {
             })
         });
         json!({
-            "rest_lift": round(self.rest_lift_pt, 3),
-            "rest_secs": self.rest_secs,
+            "float": float,
             "halo": halo,
         })
         .to_string()
@@ -134,8 +195,9 @@ impl PoseLook {
 
 impl RenderStateCore {
     /// The rest of the current planned move as poses, `step` seconds apart,
-    /// plus an exact sample at the arrival. Floats and rotation come from
-    /// [`Self::float_dy`] and [`Self::painted_rotation`], so they are 0 and
+    /// plus an exact sample at the arrival. Floats and rotation follow
+    /// [`Self::float_offset`] and [`Self::painted_rotation`] on the cursor's
+    /// own float clock, so the phase runs on and they are exactly 0 and
     /// upright at the arrival. `None` when no move is in flight.
     pub fn pose_track(&self, step: f64) -> Option<PoseTrack> {
         let traj = self.trajectory.as_ref()?;
@@ -145,20 +207,34 @@ impl RenderStateCore {
             POSE_STEP_SECS
         };
         let (start, end, arrival) = (self.motion_t, traj.duration(), traj.arrival_t);
-        let pose = |t: f64| {
-            // The resting loop restarts at the arrival (see `tick_motion`).
-            let float_secs = if t >= arrival {
-                t - arrival
+        // The float clock at `t`, as `tick_motion` will advance it.
+        let rest_at = |t: f64| {
+            let phase_secs = self.float_secs + (t - start);
+            if t >= arrival && start < arrival {
+                RestFloat {
+                    phase_secs,
+                    hold_secs: t - arrival,
+                    from: 0.0,
+                }
             } else {
-                self.float_secs + (t - start)
-            };
+                RestFloat {
+                    phase_secs,
+                    hold_secs: self.float_hold_secs + (t - start),
+                    from: self.float_from,
+                }
+            }
+        };
+        let pose = |t: f64| {
+            let rest = rest_at(t);
+            let float = self.float_offset_at(t, rest.phase_secs, rest.hold_secs, rest.from);
             let s = traj.sample_at(t);
             PoseSample {
                 t: t - start,
                 x: s.x,
                 y: s.y,
-                float_dy: self.float_dy_at(t, float_secs),
-                rotation: self.rotation_at(t),
+                float_dx: float.dx,
+                float_dy: float.dy,
+                rotation: self.heading_rotation_at(t) + float.tilt,
             }
         };
         let mut samples = Vec::new();
@@ -177,11 +253,22 @@ impl RenderStateCore {
         if !arrival_added && arrival < end {
             samples.push(pose(arrival));
         }
-        samples.push(pose(end.max(start)));
+        let last = end.max(start);
+        samples.push(pose(last));
         Some(PoseTrack {
             samples,
-            rest_from: Some((arrival - start).max(0.0)),
+            arrival: Some((arrival - start).max(0.0)),
+            rest: rest_at(last),
         })
+    }
+
+    /// The float clock now, for a surface that carries it on at rest.
+    pub fn rest_float(&self) -> RestFloat {
+        RestFloat {
+            phase_secs: self.float_secs,
+            hold_secs: self.float_hold_secs,
+            from: self.float_from,
+        }
     }
 
     /// The resting float and halo this cursor paints with now.
@@ -190,12 +277,7 @@ impl RenderStateCore {
         let rests_floating = self.floats() && self.motion.idle_hide_ms > 0.0;
         let options = self.options();
         PoseLook {
-            rest_lift_pt: if rests_floating {
-                crate::cursor_pose::REST_FLOAT_LIFT_PT
-            } else {
-                0.0
-            },
-            rest_secs: crate::cursor_pose::REST_FLOAT_SECS,
+            float: rests_floating.then_some(FloatLook::DEFAULT),
             halo: (options.halo && self.effects_capable).then(|| HaloLook {
                 rgb: crate::cursor_pose::halo_rgb(self.theme.as_deref(), &self.cfg.cursor_id),
                 radius_pt: crate::cursor_pose::HALO_RADIUS_PT,
@@ -279,15 +361,18 @@ impl PoseModel {
             OverlayCommand::MoveTo { .. } => core.pose_track(POSE_STEP_SECS),
             OverlayCommand::SnapTo { .. } => {
                 let (x, y) = core.hotspot();
+                let float = core.float_offset();
                 Some(PoseTrack {
                     samples: vec![PoseSample {
                         t: 0.0,
                         x,
                         y,
-                        float_dy: core.float_dy(),
-                        rotation: 0.0,
+                        float_dx: float.dx,
+                        float_dy: float.dy,
+                        rotation: float.tilt,
                     }],
-                    rest_from: None,
+                    arrival: None,
+                    rest: core.rest_float(),
                 })
             }
             OverlayCommand::ClickPulse { x, y } => {
@@ -317,7 +402,9 @@ impl PoseModel {
 mod tests {
     use super::*;
     use crate::cursor_options::RotateMode;
-    use crate::cursor_pose::{LEAN_MAX_DRAG_RADIANS, LEAN_MAX_RADIANS, REST_FLOAT_LIFT_PT};
+    use crate::cursor_pose::{
+        FLOAT_LIFT_PT, FLOAT_SWAY_PT, FLOAT_TILT_RADIANS, LEAN_MAX_DRAG_RADIANS, LEAN_MAX_RADIANS,
+    };
     use crate::CursorOptions;
     use std::time::Duration;
 
@@ -353,7 +440,7 @@ mod tests {
     }
 
     fn arrival_sample(track: &PoseTrack) -> PoseSample {
-        let at = track.rest_from.unwrap();
+        let at = track.arrival.unwrap();
         *track.samples.iter().find(|s| s.t == at).unwrap()
     }
 
@@ -387,11 +474,21 @@ mod tests {
             assert_eq!(first.t, 0.0);
             assert!((last.x - 800.0).abs() < 1.0 && (last.y - 500.0).abs() < 1.0);
             let arrival = arrival_sample(&track);
-            assert_eq!(arrival.float_dy, 0.0, "{mode:?}: settled at arrival");
-            assert_eq!(arrival.rotation, 0.0, "{mode:?}: upright at arrival");
+            assert_eq!(
+                (arrival.float_dx, arrival.float_dy, arrival.rotation),
+                (0.0, 0.0, 0.0),
+                "{mode:?}: settled and upright at arrival"
+            );
             assert!(
-                track.samples.iter().any(|s| s.float_dy < -1.5),
-                "{mode:?}: lifts while travelling"
+                track
+                    .samples
+                    .iter()
+                    .any(|s| s.float_dx.hypot(s.float_dy) > 1.0),
+                "{mode:?}: floats while travelling"
+            );
+            assert!(
+                track.samples.iter().any(|s| s.float_dx.abs() > 0.5),
+                "{mode:?}: sways while travelling"
             );
             assert!(track.samples.windows(2).all(|w| w[0].t < w[1].t));
             let peak = track
@@ -400,8 +497,10 @@ mod tests {
                 .map(|s| s.rotation.abs())
                 .fold(0.0, f64::max);
             match mode {
-                RotateMode::Off => assert_eq!(peak, 0.0),
-                RotateMode::Lean => assert!(peak > 0.1 && peak <= LEAN_MAX_RADIANS + 1e-9),
+                RotateMode::Off => assert!(peak <= FLOAT_TILT_RADIANS + 1e-9, "only the tilt"),
+                RotateMode::Lean => {
+                    assert!(peak > 0.1 && peak <= LEAN_MAX_RADIANS + FLOAT_TILT_RADIANS + 1e-9)
+                }
                 RotateMode::Heading => assert!(peak > LEAN_MAX_RADIANS),
             }
         }
@@ -421,12 +520,18 @@ mod tests {
             .map(|s| s.rotation.abs())
             .fold(0.0, f64::max);
         assert!(
-            peak > 0.05 && peak <= LEAN_MAX_DRAG_RADIANS + 1e-9,
+            peak > 0.05 && peak <= LEAN_MAX_DRAG_RADIANS + FLOAT_TILT_RADIANS + 1e-9,
             "{peak}"
         );
-        assert!(track.samples.iter().any(|s| s.float_dy < -1.0));
+        assert!(track
+            .samples
+            .iter()
+            .any(|s| s.float_dx.hypot(s.float_dy) > 1.0));
         let drop = arrival_sample(&track);
-        assert_eq!((drop.float_dy, drop.rotation), (0.0, 0.0));
+        assert_eq!(
+            (drop.float_dx, drop.float_dy, drop.rotation),
+            (0.0, 0.0, 0.0)
+        );
     }
 
     #[test]
@@ -436,7 +541,12 @@ mod tests {
         let hop = model
             .apply(&cmd("s", move_to(120.0, 110.0)), true, now)
             .unwrap();
-        assert!(hop.samples.iter().all(|s| s.rotation == 0.0));
+        // Only the float tilt, which eases out; no heading turn.
+        assert!(hop
+            .samples
+            .iter()
+            .all(|s| s.rotation.abs() <= FLOAT_TILT_RADIANS + 1e-9));
+        assert_eq!(arrival_sample(&hop).rotation, 0.0);
         let snap = model
             .apply(
                 &cmd(
@@ -452,29 +562,56 @@ mod tests {
             )
             .unwrap();
         assert_eq!(snap.samples.len(), 1);
-        assert_eq!(snap.rest_from, None, "a snap does not restart the float");
+        assert_eq!(snap.arrival, None);
+        // The float clock ran on: the snap keeps the phase.
+        let core = model.cursor_mut("s").unwrap();
+        assert_eq!(snap.rest.phase_secs, core.float_secs);
+        assert!(snap.rest.phase_secs >= 2.99);
+    }
+
+    #[test]
+    fn the_float_phase_runs_on_across_moves() {
+        let now = Instant::now();
+        let mut model = placed_model("s", opts(RotateMode::Heading), now);
+        let first = model
+            .apply(&cmd("s", move_to(700.0, 400.0)), true, now)
+            .unwrap();
+        let later = now + Duration::from_secs_f64(first.samples.last().unwrap().t + 0.7);
+        let second = model
+            .apply(&cmd("s", move_to(200.0, 500.0)), true, later)
+            .unwrap();
+        // The second track starts on the clock the first one left off at,
+        // 0.7 s on, rather than from phase 0.
+        let carried = first.rest.phase_secs + 0.7;
+        let phase = model.cursor_mut("s").unwrap().float_secs;
+        assert!((phase - carried).abs() < 1e-3, "{phase} vs {carried}");
+        assert!((second.rest.phase_secs - phase - second.samples.last().unwrap().t).abs() < 1e-6);
     }
 
     #[test]
     fn the_float_carries_over_from_rest_without_a_jump() {
         let now = Instant::now();
         let mut model = placed_model("s", opts(RotateMode::Off), now);
-        // Two seconds into the resting loop the cursor is at its peak lift.
+        // Two seconds into the loop the resting cursor is at its peak lift.
         let later = now + Duration::from_secs(2);
         let track = model
             .apply(&cmd("s", move_to(900.0, 600.0)), true, later)
             .unwrap();
+        let first = track.samples[0];
         assert!(
-            (track.samples[0].float_dy + REST_FLOAT_LIFT_PT).abs() < 1e-6,
-            "starts at the resting lift: {}",
-            track.samples[0].float_dy
+            (first.float_dy + FLOAT_LIFT_PT + crate::cursor_pose::FLOAT_BOB_PT).abs() < 0.05,
+            "starts at the resting float: {}",
+            first.float_dy
         );
-        let steps = track
-            .samples
-            .windows(2)
-            .map(|w| (w[1].float_dy - w[0].float_dy).abs())
-            .fold(0.0, f64::max);
-        assert!(steps < 1.0, "no jump between samples: {steps}");
+        for w in track.samples.windows(2) {
+            let step = (w[1].float_dx - w[0].float_dx)
+                .abs()
+                .max((w[1].float_dy - w[0].float_dy).abs());
+            assert!(step < 0.5, "no jump between samples: {step}");
+            assert!(w[1].float_dx.abs() <= FLOAT_SWAY_PT + 1e-9);
+        }
+        let end = arrival_sample(&track);
+        assert_eq!((end.float_dx, end.float_dy, end.rotation), (0.0, 0.0, 0.0));
     }
 
     #[test]
@@ -488,8 +625,11 @@ mod tests {
         let track = model
             .apply(&cmd("s", move_to(900.0, 600.0)), true, now)
             .unwrap();
-        assert!(track.samples.iter().all(|s| s.float_dy == 0.0));
-        assert_eq!(model.look("s").unwrap().rest_lift_pt, 0.0);
+        assert!(track
+            .samples
+            .iter()
+            .all(|s| s.float_dy == 0.0 && s.float_dx == 0.0));
+        assert_eq!(model.look("s").unwrap().float, None);
 
         let mut model = placed_model("r", opts(RotateMode::Heading), now);
         model.cursor_mut("r").unwrap().visual.reduced_motion = crate::ReducedMotion::On;
@@ -499,9 +639,9 @@ mod tests {
         assert!(track
             .samples
             .iter()
-            .all(|s| s.float_dy == 0.0 && s.rotation == 0.0));
+            .all(|s| s.float_dy == 0.0 && s.float_dx == 0.0 && s.rotation == 0.0));
         let look = model.look("r").unwrap();
-        assert_eq!(look.rest_lift_pt, 0.0);
+        assert_eq!(look.float, None);
         assert!(look.halo.is_some(), "reduced motion keeps the halo");
     }
 
@@ -509,7 +649,7 @@ mod tests {
     fn the_look_follows_cursor_halo_and_the_session_colour() {
         let mut model = model_with("a", opts(RotateMode::Off));
         let look = model.look("a").unwrap();
-        assert!((look.rest_lift_pt - REST_FLOAT_LIFT_PT).abs() < 1e-9);
+        assert_eq!(look.float, Some(FloatLook::DEFAULT));
         let halo = look.halo.unwrap();
         assert_eq!(halo.rgb, crate::cursor_pose::halo_rgb(None, "a"));
         assert_eq!(halo.peak_alpha, crate::cursor_pose::HALO_PEAK_ALPHA);
@@ -553,18 +693,20 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&track.to_json()).unwrap();
         let samples = parsed["samples"].as_array().unwrap();
         assert_eq!(samples.len(), track.samples.len());
-        assert!(samples.iter().all(|s| s.as_array().unwrap().len() == 5));
+        assert!(samples.iter().all(|s| s.as_array().unwrap().len() == 6));
         assert_eq!(
-            parsed["rest_from"].as_f64().unwrap(),
-            round(track.rest_from.unwrap(), 4)
+            parsed["arrival"].as_f64().unwrap(),
+            round(track.arrival.unwrap(), 4)
         );
+        assert_eq!(parsed["rest"].as_array().unwrap().len(), 3);
         assert!(track.arrival_secs() > 0.0);
 
         let look: serde_json::Value =
             serde_json::from_str(&model.look("s").unwrap().to_json()).unwrap();
         assert!(look["halo"]["rgb"].as_str().unwrap().starts_with('#'));
         assert_eq!(look["halo"]["stops"].as_array().unwrap().len(), 3);
-        assert_eq!(look["rest_secs"].as_f64().unwrap(), 4.0);
+        assert_eq!(look["float"]["secs"].as_f64().unwrap(), 4.0);
+        assert!((look["float"]["sway"].as_f64().unwrap() - FLOAT_SWAY_PT).abs() < 1e-3);
     }
 
     #[test]

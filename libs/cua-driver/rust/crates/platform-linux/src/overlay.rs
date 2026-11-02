@@ -5943,7 +5943,8 @@ mod shell_helper_surface_tests {
         let track: serde_json::Value =
             serde_json::from_str(snap.track.as_deref().unwrap()).unwrap();
         assert_eq!(track["samples"].as_array().unwrap().len(), 1);
-        assert!(track["rest_from"].is_null());
+        assert!(track["arrival"].is_null());
+        assert_eq!(track["rest"].as_array().unwrap().len(), 3);
         assert_eq!(snap.arrival, None, "a snap has no glide to wait for");
 
         let glide =

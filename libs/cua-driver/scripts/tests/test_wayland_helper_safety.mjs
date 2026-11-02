@@ -96,11 +96,12 @@ assert.deepEqual(metadata['shell-version'], ['45', '46', '47', '48', '49']);
   // Until a look arrives the older glow stays; a bad look is ignored.
   assert.equal(helper._look, null);
   helper.SetCursorLook('not json');
-  helper.SetCursorLook(JSON.stringify({ rest_lift: -1, rest_secs: 4, halo: null }));
+  const float = { secs: 4, sway: 1.6406, bob: 1.9688, lift: 1.6406, tilt: 0.04363, hold: 0.5, ease_in: 0.8, ease_out: 0.2 };
+  helper.SetCursorLook(JSON.stringify({ float: { ...float, sway: -1 }, halo: null }));
+  helper.SetCursorLook(JSON.stringify({ float: { ...float, ease_out: 0 }, halo: null }));
   assert.equal(helper._look, null);
   const look = {
-    rest_lift: 3.938,
-    rest_secs: 4,
+    float,
     halo: { rgb: '#5ec0e8', radius: 14, peak: 0.11, stops: [[0, 1], [0.45, 0.55], [1, 0]], body: [2, 11.9] },
   };
   helper.SetCursorLook(JSON.stringify(look));
@@ -109,32 +110,44 @@ assert.deepEqual(metadata['shell-version'], ['45', '46', '47', '48', '49']);
   assert.equal(helper._look.halo, null, 'cursor.halo off');
   helper.SetCursorLook(JSON.stringify(look));
 
-  // A move: poses interpolate, the float settles to 0 at the arrival and the
-  // resting loop restarts there.
+  // Before any track a fresh cursor floats fully: the historical loop.
+  near(helper._pose(100).dy, float.bob - float.lift);
+  near(helper._pose(100).rotation, float.tilt);
+  near(helper._pose(101).dx, float.sway);
+  near(helper._pose(102).dy, -float.bob - float.lift);
+
+  // A move: poses interpolate, and the float is exactly 0 at the arrival.
   const samples = [
-    [0, 100, 100, -1, 0],
-    [0.2, 300, 200, -2.2, 0.4],
-    [0.4, 500, 300, 0, 0],
-    [0.5, 501, 300, -0.01, 0],
+    [0, 100, 100, 0.5, -1, 0],
+    [0.2, 300, 200, 1, -2.2, 0.4],
+    [0.4, 500, 300, 0, 0, 0],
+    [0.5, 501, 300, 0, 0, 0],
   ];
-  helper.PlayCursorPath(JSON.stringify({ samples, rest_from: 0.4 }));
+  // The float clock at the last sample: phase 7.3 s, held 0.1 s from 0.
+  const rest = [7.3, 0.1, 0];
+  helper.PlayCursorPath(JSON.stringify({ samples, arrival: 0.4, rest }));
   assert.equal(counts.timer, 1, 'one frame timer while the path plays');
   assert.ok(helper._path);
   near(helper._pose(100).dy, -1);
+  near(helper._pose(100.1).dx, 0.75);
   near(helper._pose(100.1).dy, -1.6);
   near(helper._pose(100.1).rotation, 0.2);
   near(helper._pose(100.4).dy, 0);
+  near(helper._pose(100.4).dx, 0);
   near(helper._pose(100.4).rotation, 0);
-  near(helper._restOrigin, 100.4);
+  near(helper._rest.at, 100.5);
 
   // Malformed tracks change nothing.
   for (const bad of [
     '{}',
-    JSON.stringify({ samples: [] }),
-    JSON.stringify({ samples: [[0, 1, 2, 3]] }),
-    JSON.stringify({ samples: [[0.2, 0, 0, 0, 0], [0.1, 0, 0, 0, 0]] }),
-    JSON.stringify({ samples: [[0, Infinity, 0, 0, 0]] }),
-    JSON.stringify({ samples: [[0, 0, 0, 0, 0]], rest_from: -1 }),
+    JSON.stringify({ samples: [], rest }),
+    JSON.stringify({ samples: [[0, 1, 2, 3, 4]], rest }),
+    JSON.stringify({ samples: [[0, 0, 0, 0, 0]], rest }),
+    JSON.stringify({ samples: [[0.2, 0, 0, 0, 0, 0], [0.1, 0, 0, 0, 0, 0]], rest }),
+    JSON.stringify({ samples: [[0, Infinity, 0, 0, 0, 0]], rest }),
+    JSON.stringify({ samples: [[0, 0, 0, 0, 0, 0]], arrival: -1, rest }),
+    JSON.stringify({ samples: [[0, 0, 0, 0, 0, 0]], arrival: null }),
+    JSON.stringify({ samples: [[0, 0, 0, 0, 0, 0]], arrival: null, rest: [0, -1, 0] }),
   ])
     helper.PlayCursorPath(bad);
   assert.deepEqual(helper._path.samples, samples);
@@ -142,30 +155,47 @@ assert.deepEqual(metadata['shell-version'], ['45', '46', '47', '48', '49']);
   // A click on the point the move settles onto lets it finish.
   helper.ClickPulse(501, 300);
   assert.ok(helper._path, 'settling move kept');
+  near(helper._rest.phase, 7.3);
   // A click elsewhere ends it and snaps.
   helper.ClickPulse(800, 600);
   assert.equal(helper._path, null);
   assert.equal(helper._cursorX, 800);
   assert.equal(counts.remove, 1);
 
-  // After the path the resting float runs from the arrival: 0, then peak
-  // lift halfway through the loop.
-  globalThis.helperClock = 104.4;
-  near(helper._pose(104.4).dy, 0);
-  near(helper._pose(106.4).dy, -3.938);
+  // At rest the float carries on from the track's clock: still held at 0
+  // just after, then eased back in on the same phase (no restart).
+  helper.PlayCursorPath(JSON.stringify({ samples: [[0, 800, 600, 0, 0, 0]], arrival: null, rest }));
+  near(helper._rest.at, 100);
+  assert.equal(helper._pose(100.3).dx, 0);
+  assert.equal(helper._pose(100.3).rotation, 0);
+  // 2 s on: phase 9.3 s (0.325 of a loop), amplitude 1.
+  const angle = (9.3 % 4) / 4 * 2 * Math.PI;
+  near(helper._pose(102).dx, float.sway * Math.sin(angle));
+  near(helper._pose(102).dy, float.bob * Math.cos(angle) - float.lift);
+  near(helper._pose(102).rotation, float.tilt * Math.cos(angle));
+
+  // A cue at rest (typing, scroll) eases it out from where it is, keeps
+  // the phase and holds it at exactly 0.
+  globalThis.helperClock = 102;
+  const before = helper._pose(102);
+  helper.SetCursorState('text', '', '', true);
+  near(helper._rest.phase, 9.3);
+  near(helper._pose(102).dy, before.dy);
+  assert.equal(helper._pose(102.25).dy, 0);
+  assert.equal(helper._pose(102.25).rotation, 0);
+  assert.ok(Math.abs(helper._pose(104).dy) > 0.1, 'back in after the hold');
+  // And a click at rest holds it at 0 too.
+  globalThis.helperClock = 104;
+  helper.ClickPulse(800, 600);
+  globalThis.helperClock = 104.3;
+  assert.equal(helper._pose(104.3).dx, 0);
+
+  // Float off: the look carries no float.
+  helper.SetCursorLook(JSON.stringify({ ...look, float: null }));
+  assert.equal(helper._pose(106.4).dy, 0);
   assert.equal(helper._pose(106.4).rotation, 0);
 
-  // A snap places the cursor and leaves the resting loop running.
-  helper.PlayCursorPath(JSON.stringify({ samples: [[0, 40, 50, -2, 0]], rest_from: null }));
-  assert.equal(helper._path, null);
-  assert.equal(helper._cursorX, 40);
-  near(helper._restOrigin, 100.4);
-
-  // Float off: the look carries no lift.
-  helper.SetCursorLook(JSON.stringify({ ...look, rest_lift: 0 }));
-  assert.equal(helper._pose(106.4).dy, 0);
-
-  helper.PlayCursorPath(JSON.stringify({ samples, rest_from: 0.4 }));
+  helper.PlayCursorPath(JSON.stringify({ samples, arrival: 0.4, rest }));
   helper.HideCursor();
   assert.equal(helper._path, null, 'hiding stops the path');
   helper.disable();

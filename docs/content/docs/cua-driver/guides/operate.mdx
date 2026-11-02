@@ -333,13 +333,14 @@ The agent's cursor is an overlay, not the real pointer: a plain
 session-colored arrow (`cua.default`, the only built-in theme). Its color tells
 agents apart. It is a visual aid, not an authorization signal.
 
-By default the arrow floats gently up and down, with a soft halo in its own
+By default the arrow floats gently, with a soft halo in its own
 color behind it. While it moves, its tip points along the path; it is upright
 again whenever it arrives. It shows no marks next to it, and no ripple or
 bounce. Each extra is a setting you can change for every cursor at once:
 
-- `cursor.float`: the gentle float. It is on by default and settles to zero
-  every time the cursor arrives, so clicks land exactly;
+- `cursor.float`: the gentle float, a slow sway and bob with a slight tilt.
+  It is on by default and settles to zero before every click, drag, scroll
+  and typing, so they land exactly;
   `cua-driver config set cursor.float off` keeps the cursor still.
 - `cursor.halo`: the soft glow behind the arrow. On by default.
 - `cursor.marks`: a small mark for what the agent is doing (observing,

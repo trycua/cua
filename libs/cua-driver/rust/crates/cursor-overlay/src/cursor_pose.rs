@@ -15,21 +15,104 @@ use crate::cursor_options::RotateMode;
 use crate::trajectory::{wrap_angle, Trajectory};
 use std::f64::consts::TAU;
 
-/// Peak lift of the resting float, in points (12 theme canvas units).
-pub const REST_FLOAT_LIFT_PT: f64 =
-    12.0 * crate::theme::DISPLAY_SIZE as f64 / crate::theme::CANVAS_SIZE as f64;
-/// One resting float loop.
-pub const REST_FLOAT_SECS: f64 = 4.0;
-/// Lift held while the cursor travels.
-pub const TRAVEL_LIFT_PT: f64 = 2.2;
-/// Peak-to-peak bob on top of the travel lift.
-pub const TRAVEL_BOB_PT: f64 = 0.8;
-pub const TRAVEL_BOB_SECS: f64 = 0.9;
-/// Hops shorter than this get no travel lift (the resting float still
-/// eases out to zero).
+/// Theme canvas units per point of the painted cursor.
+const CANVAS_PT: f64 = crate::theme::DISPLAY_SIZE as f64 / crate::theme::CANVAS_SIZE as f64;
+
+/// One float loop. The float is the one the cursor had from July to
+/// October 2026 (#2603): a loop that sways side to side, bobs up and down
+/// and tilts with the bob, at rest and while travelling.
+pub const FLOAT_SECS: f64 = 4.0;
+/// Horizontal sway amplitude, in points (5 canvas units; 3.3 pt peak to peak).
+pub const FLOAT_SWAY_PT: f64 = 5.0 * CANVAS_PT;
+/// Vertical bob amplitude, in points (6 canvas units; 3.9 pt peak to peak).
+pub const FLOAT_BOB_PT: f64 = 6.0 * CANVAS_PT;
+/// The bob is centred this far above the hotspot (5 canvas units).
+pub const FLOAT_LIFT_PT: f64 = 5.0 * CANVAS_PT;
+/// Tilt amplitude, phased with the bob.
+pub const FLOAT_TILT_RADIANS: f64 = 2.5 * std::f64::consts::PI / 180.0;
+
+/// After the cursor settles (an arrival, or a click, press, scroll or
+/// typing cue at rest) the float stays at exactly 0 this long, so the
+/// action that follows lands on the hotspot ...
+pub const FLOAT_HOLD_SECS: f64 = 0.5;
+/// ... then eases back in over this long.
+pub const FLOAT_EASE_IN_SECS: f64 = 0.8;
+/// A cue at rest with no move before it eases the float out this fast.
+pub const FLOAT_EASE_OUT_SECS: f64 = 0.2;
+/// Hops shorter than this keep no float while travelling (whatever float
+/// they start with still eases out to 0).
 pub const FLOAT_MIN_HOP_PT: f64 = 30.0;
-const FLOAT_RAMP_IN_SECS: f64 = 0.18;
-const FLOAT_RAMP_OUT_SECS: f64 = 0.24;
+const FLOAT_RAMP_IN_SECS: f64 = 0.25;
+const FLOAT_RAMP_OUT_SECS: f64 = 0.35;
+
+/// A float offset: `dx`, `dy` in points (y down, negative is up) and `tilt`
+/// in radians (clockwise, y down), added to the heading rotation.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FloatOffset {
+    pub dx: f64,
+    pub dy: f64,
+    pub tilt: f64,
+}
+
+impl FloatOffset {
+    pub const ZERO: Self = Self {
+        dx: 0.0,
+        dy: 0.0,
+        tilt: 0.0,
+    };
+
+    /// This offset at `amplitude` (0..1). Exactly [`Self::ZERO`] at 0.
+    pub fn scaled(self, amplitude: f64) -> Self {
+        if amplitude <= 0.0 {
+            return Self::ZERO;
+        }
+        let k = amplitude.min(1.0);
+        Self {
+            dx: self.dx * k,
+            dy: self.dy * k,
+            tilt: self.tilt * k,
+        }
+    }
+}
+
+/// The full float `secs` into its clock: sway `sin`, bob and tilt `cos`.
+/// The clock belongs to the cursor and runs on across every action, so the
+/// phase never snaps back.
+pub fn float_at(secs: f64) -> FloatOffset {
+    let angle = secs.rem_euclid(FLOAT_SECS) / FLOAT_SECS * TAU;
+    FloatOffset {
+        dx: FLOAT_SWAY_PT * angle.sin(),
+        dy: FLOAT_BOB_PT * angle.cos() - FLOAT_LIFT_PT,
+        tilt: FLOAT_TILT_RADIANS * angle.cos(),
+    }
+}
+
+/// Float amplitude (0..1) at rest, `hold` seconds after the cursor last
+/// settled, with amplitude `from` at that moment: `from` eases out to 0,
+/// holds at 0 for [`FLOAT_HOLD_SECS`], then eases back in to 1.
+pub fn rest_amplitude(hold: f64, from: f64) -> f64 {
+    let out = from.clamp(0.0, 1.0) * (1.0 - smoothstep(hold / FLOAT_EASE_OUT_SECS));
+    let back = smoothstep((hold - FLOAT_HOLD_SECS) / FLOAT_EASE_IN_SECS);
+    out.max(back)
+}
+
+/// Float amplitude (0..1) while travelling, `t` seconds into `traj`, from
+/// `start` (the amplitude when the move began, so nothing jumps). Full
+/// mid-move on hops of [`FLOAT_MIN_HOP_PT`] or more; exactly 0 at arrival.
+pub fn travel_amplitude(traj: &Trajectory, t: f64, start: f64) -> f64 {
+    let arrival = traj.arrival_t;
+    if t >= arrival {
+        return 0.0;
+    }
+    let (p_in, p_out) = ramps(t, arrival, FLOAT_RAMP_IN_SECS, FLOAT_RAMP_OUT_SECS);
+    let carry = start.clamp(0.0, 1.0) * (1.0 - p_in) * p_out;
+    let full = if hop_length(traj) < FLOAT_MIN_HOP_PT {
+        0.0
+    } else {
+        1.0
+    };
+    (carry + full * p_in * p_out).min(1.0)
+}
 
 /// `lean` turns the arrow at most this far.
 pub const LEAN_MAX_RADIANS: f64 = 30.0 * std::f64::consts::PI / 180.0;
@@ -82,31 +165,6 @@ pub fn hop_length(traj: &Trajectory) -> f64 {
 /// Whether the hotspot is still on its way (before arrival).
 pub fn travelling(traj: &Trajectory, t: f64) -> bool {
     t < traj.arrival_t
-}
-
-/// Resting float offset in points (negative is up) `secs` into the loop.
-/// Starts and ends each loop at 0, so it picks up seamlessly on arrival.
-pub fn resting_float_dy(secs: f64) -> f64 {
-    let phase = secs.rem_euclid(REST_FLOAT_SECS) / REST_FLOAT_SECS;
-    -0.5 * REST_FLOAT_LIFT_PT * (1.0 - (phase * TAU).cos())
-}
-
-/// Float offset in points while travelling, `t` seconds into `traj`.
-/// `start_dy` is the offset the cursor had when the move began, so the
-/// float carries over without a jump; it is exactly 0 at arrival.
-pub fn travel_float_dy(traj: &Trajectory, t: f64, start_dy: f64) -> f64 {
-    let arrival = traj.arrival_t;
-    if t >= arrival {
-        return 0.0;
-    }
-    let (p_in, p_out) = ramps(t, arrival, FLOAT_RAMP_IN_SECS, FLOAT_RAMP_OUT_SECS);
-    let carry = start_dy * (1.0 - p_in);
-    let lift = if hop_length(traj) < FLOAT_MIN_HOP_PT {
-        0.0
-    } else {
-        TRAVEL_LIFT_PT + 0.5 * TRAVEL_BOB_PT * (t * TAU / TRAVEL_BOB_SECS).sin()
-    };
-    carry - lift * p_in * p_out
 }
 
 /// Rotation in radians from upright, `t` seconds into `traj`. Upright at
@@ -249,49 +307,101 @@ mod tests {
     }
 
     #[test]
-    fn the_resting_float_starts_and_ends_each_loop_on_the_hotspot() {
-        assert_eq!(resting_float_dy(0.0), 0.0);
-        assert!((resting_float_dy(REST_FLOAT_SECS / 2.0) + REST_FLOAT_LIFT_PT).abs() < 1e-9);
-        assert!(resting_float_dy(REST_FLOAT_SECS).abs() < 1e-9);
+    fn the_float_is_the_historical_loop_within_its_bounds() {
+        // #2603: sway 5, bob 6 about a lift of 5 canvas units, tilt 2.5°,
+        // one loop every 4 s.
+        let k = f64::from(crate::theme::DISPLAY_SIZE) / f64::from(crate::theme::CANVAS_SIZE);
+        let at = |phase: f64| float_at(phase * FLOAT_SECS);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        assert!(close(at(0.0).dy, k) && close(at(0.0).dx, 0.0));
+        assert!(close(at(0.0).tilt, 2.5f64.to_radians()));
+        assert!(close(at(0.25).dx, 5.0 * k) && close(at(0.25).dy, -5.0 * k));
+        assert!(close(at(0.5).dy, -11.0 * k) && close(at(0.5).tilt, -2.5f64.to_radians()));
+        let (a, b) = (float_at(1.3), float_at(1.3 + FLOAT_SECS));
+        assert!(
+            close(a.dx, b.dx) && close(a.dy, b.dy) && close(a.tilt, b.tilt),
+            "a 4 s loop"
+        );
+        let (mut dx, mut dy, mut tilt) = ((0f64, 0f64), (0f64, 0f64), (0f64, 0f64));
+        for i in 0..=4000 {
+            let f = float_at(FLOAT_SECS * f64::from(i) / 4000.0);
+            dx = (dx.0.min(f.dx), dx.1.max(f.dx));
+            dy = (dy.0.min(f.dy), dy.1.max(f.dy));
+            tilt = (tilt.0.min(f.tilt), tilt.1.max(f.tilt));
+        }
+        // About 3.3 pt of sway, 3.9 pt of bob and 5° of tilt, peak to peak.
+        assert!((dx.1 - dx.0 - 3.28).abs() < 0.01, "{dx:?}");
+        assert!((dy.1 - dy.0 - 3.94).abs() < 0.01, "{dy:?}");
+        assert!(
+            (tilt.1 - tilt.0 - 5f64.to_radians()).abs() < 1e-6,
+            "{tilt:?}"
+        );
+        // Never more than 3.61 pt from the hotspot (the old miss at a click).
+        assert!(dy.0 >= -11.0 * k - 1e-9 && dy.1 <= k + 1e-9);
+        // Any amplitude stays within the full float, and 0 is exactly 0.
+        for amp in [0.0, 0.3, 0.7, 1.0, 1.4] {
+            let f = float_at(2.1).scaled(amp);
+            assert!(
+                f.dx.abs() <= FLOAT_SWAY_PT + 1e-9 && f.tilt.abs() <= FLOAT_TILT_RADIANS + 1e-9
+            );
+            assert!(f.dy.abs() <= FLOAT_LIFT_PT + FLOAT_BOB_PT + 1e-9);
+        }
+        assert_eq!(float_at(2.1).scaled(0.0), FloatOffset::ZERO);
     }
 
     #[test]
-    fn the_travel_float_is_zero_at_arrival_and_carries_the_resting_lift() {
-        let traj = plan((100.0, 100.0), (700.0, 400.0));
-        let start = -3.0;
+    fn the_rest_amplitude_eases_out_holds_at_zero_and_eases_back_in() {
+        assert_eq!(rest_amplitude(0.0, 0.0), 0.0);
+        assert_eq!(rest_amplitude(0.0, 0.8), 0.8, "no jump when a cue arrives");
+        assert_eq!(rest_amplitude(FLOAT_EASE_OUT_SECS, 1.0), 0.0);
+        assert_eq!(rest_amplitude(FLOAT_HOLD_SECS, 1.0), 0.0, "held at 0");
         assert_eq!(
-            travel_float_dy(&traj, 0.0, start),
-            start,
-            "no jump at the start"
+            rest_amplitude(FLOAT_HOLD_SECS + FLOAT_EASE_IN_SECS, 0.0),
+            1.0
         );
-        assert_eq!(travel_float_dy(&traj, traj.arrival_t, start), 0.0);
-        assert!(travel_float_dy(&traj, traj.arrival_t - 1e-4, start).abs() < 1e-3);
-        let mid = travel_float_dy(&traj, traj.arrival_t * 0.5, start);
-        assert!(
-            (-(TRAVEL_LIFT_PT + TRAVEL_BOB_PT)..-(TRAVEL_LIFT_PT - TRAVEL_BOB_PT)).contains(&mid),
-            "about 2.2 pt up mid-move: {mid}"
-        );
-        // Continuous: no frame-to-frame step bigger than a smooth ramp.
-        let mut last = start;
-        for t in times(&traj) {
-            let dy = travel_float_dy(&traj, t, start);
-            assert!((dy - last).abs() < 0.25, "jump at {t}: {last} -> {dy}");
-            assert!(
-                dy <= 0.0 && dy >= start.min(-TRAVEL_LIFT_PT - TRAVEL_BOB_PT),
-                "{dy}"
-            );
-            last = dy;
+        let mut last = rest_amplitude(0.0, 1.0);
+        for i in 1..=600 {
+            let a = rest_amplitude(f64::from(i) / 300.0, 1.0);
+            assert!((0.0..=1.0).contains(&a));
+            assert!((a - last).abs() < 0.05, "smooth at {i}: {last} -> {a}");
+            last = a;
         }
     }
 
     #[test]
-    fn short_hops_only_ease_the_resting_lift_out() {
+    fn the_travel_amplitude_carries_in_and_is_exactly_zero_at_arrival() {
+        let traj = plan((100.0, 100.0), (700.0, 400.0));
+        for start in [0.0, 0.4, 1.0] {
+            assert_eq!(
+                travel_amplitude(&traj, 0.0, start),
+                start,
+                "no jump at the start"
+            );
+            assert_eq!(travel_amplitude(&traj, traj.arrival_t, start), 0.0);
+            assert!(travel_amplitude(&traj, traj.arrival_t - 1e-4, start) < 1e-3);
+            assert_eq!(
+                travel_amplitude(&traj, traj.arrival_t * 0.5, start),
+                1.0,
+                "floats in travel"
+            );
+            let mut last = start;
+            for t in times(&traj) {
+                let a = travel_amplitude(&traj, t, start);
+                assert!((0.0..=1.0).contains(&a), "{a}");
+                assert!((a - last).abs() < 0.1, "jump at {t}: {last} -> {a}");
+                last = a;
+            }
+        }
+    }
+
+    #[test]
+    fn short_hops_only_ease_the_float_out() {
         let traj = plan((100.0, 100.0), (120.0, 110.0));
         for t in times(&traj) {
-            let dy = travel_float_dy(&traj, t, -1.0);
-            assert!((-1.0..=0.0).contains(&dy), "{dy}");
+            let a = travel_amplitude(&traj, t, 0.6);
+            assert!((0.0..=0.6).contains(&a), "{a}");
         }
-        assert_eq!(travel_float_dy(&traj, traj.arrival_t, -1.0), 0.0);
+        assert_eq!(travel_amplitude(&traj, traj.arrival_t, 0.6), 0.0);
     }
 
     #[test]

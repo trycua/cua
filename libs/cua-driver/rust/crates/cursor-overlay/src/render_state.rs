@@ -33,6 +33,7 @@
 //!   element highlight — drawn inside [`render_frame`] when the caller
 //!   supplies one via the optional argument).
 
+use crate::cursor_pose::FloatOffset;
 use crate::trajectory::{plan_move, MoveRequest, Pt, Trajectory};
 use crate::{
     BadgeMode, CompiledTheme, CursorAction, CursorConfig, CursorOptions, CursorVisualState,
@@ -120,13 +121,18 @@ pub struct RenderStateCore {
     pub motion_t: f64,
     /// Whether the current trajectory still owes its arrival signal.
     pub arrival_pending: bool,
-    /// Seconds into the resting float loop. Owned by the cursor, not the
-    /// action, so a new action never restarts it; it restarts at 0 on each
-    /// arrival, where the travel float has settled to 0.
+    /// Seconds into the float loop. Owned by the cursor, not the action,
+    /// and never reset, so the phase carries on across every move, click
+    /// and cue. Only the amplitude settles to 0 for precise actions.
     pub float_secs: f64,
-    /// Float offset (points) when the current move began, eased out during
-    /// the move so the float never jumps.
-    pub float_start_dy: f64,
+    /// Seconds since the float last settled (an arrival, or a click, press
+    /// or semantic cue at rest); see [`crate::cursor_pose::rest_amplitude`].
+    pub float_hold_secs: f64,
+    /// Float amplitude when it last settled, eased out from there.
+    pub float_from: f64,
+    /// Float amplitude when the current move began, eased out during the
+    /// move so the float never jumps.
+    pub float_start_amp: f64,
     /// Moves planned so far; seeds each trajectory.
     pub move_seq: u64,
     /// Seconds since the last click, while click effects play.
@@ -228,7 +234,11 @@ impl RenderStateCore {
             motion_t: 0.0,
             arrival_pending: false,
             float_secs: 0.0,
-            float_start_dy: 0.0,
+            // A fresh cursor floats fully at rest.
+            float_hold_secs: crate::cursor_pose::FLOAT_HOLD_SECS
+                + crate::cursor_pose::FLOAT_EASE_IN_SECS,
+            float_from: 0.0,
+            float_start_amp: 1.0,
             move_seq: 0,
             click_age: None,
             click_point: (0.0, 0.0),
@@ -388,25 +398,61 @@ impl RenderStateCore {
         }
     }
 
-    /// Vertical float offset in points (negative is up) painted this frame:
-    /// a small lift while travelling that is exactly 0 at arrival, then the
-    /// resting bob. 0 with `cursor.float` off, reduced motion or a custom
-    /// theme.
-    pub fn float_dy(&self) -> f64 {
-        self.float_dy_at(self.motion_t, self.float_secs)
+    /// Float offset painted this frame: the historical 4 s sway, bob and
+    /// tilt ([`crate::cursor_pose::float_at`]) at the current amplitude.
+    /// Exactly 0 at every arrival and while a click, press, drop, scroll or
+    /// typing cue holds it; [`FloatOffset::ZERO`] with `cursor.float` off,
+    /// reduced motion or a custom theme.
+    pub fn float_offset(&self) -> FloatOffset {
+        self.float_offset_at(
+            self.motion_t,
+            self.float_secs,
+            self.float_hold_secs,
+            self.float_from,
+        )
     }
 
-    /// [`Self::float_dy`] with the move `motion_t` seconds in and the resting
-    /// loop `float_secs` seconds in.
-    pub(crate) fn float_dy_at(&self, motion_t: f64, float_secs: f64) -> f64 {
+    /// Float amplitude (0..1) painted this frame.
+    pub fn float_amplitude(&self) -> f64 {
+        self.float_amplitude_at(self.motion_t, self.float_hold_secs, self.float_from)
+    }
+
+    pub(crate) fn float_amplitude_at(&self, motion_t: f64, hold: f64, from: f64) -> f64 {
         if !self.floats() {
             return 0.0;
         }
         match self.trajectory.as_ref() {
             Some(traj) if crate::cursor_pose::travelling(traj, motion_t) => {
-                crate::cursor_pose::travel_float_dy(traj, motion_t, self.float_start_dy)
+                crate::cursor_pose::travel_amplitude(traj, motion_t, self.float_start_amp)
             }
-            _ => crate::cursor_pose::resting_float_dy(float_secs),
+            _ => crate::cursor_pose::rest_amplitude(hold, from),
+        }
+    }
+
+    /// [`Self::float_offset`] with the move `motion_t` seconds in, the float
+    /// clock at `float_secs`, `hold` seconds since it settled from `from`.
+    pub(crate) fn float_offset_at(
+        &self,
+        motion_t: f64,
+        float_secs: f64,
+        hold: f64,
+        from: f64,
+    ) -> FloatOffset {
+        crate::cursor_pose::float_at(float_secs)
+            .scaled(self.float_amplitude_at(motion_t, hold, from))
+    }
+
+    /// Settle the float for a precise action at rest: the amplitude eases
+    /// out from where it is, holds at 0, then eases back in. The phase runs
+    /// on. While travelling the arrival settles it instead.
+    fn settle_float(&mut self) {
+        let travelling = self
+            .trajectory
+            .as_ref()
+            .is_some_and(|traj| crate::cursor_pose::travelling(traj, self.motion_t));
+        if !travelling {
+            self.float_from = self.float_amplitude();
+            self.float_hold_secs = 0.0;
         }
     }
 
@@ -420,14 +466,17 @@ impl RenderStateCore {
         self.options().float && default_theme && !self.reduced_motion()
     }
 
-    /// Rotation from upright (radians) painted this frame (`cursor.rotate`):
-    /// only while travelling, upright at arrival, for clicks and at rest.
+    /// Rotation from upright (radians) painted this frame: the heading
+    /// rotation (`cursor.rotate`) plus the float tilt. Upright at every
+    /// arrival and while a click, press, scroll or typing cue holds the
+    /// float.
     pub fn painted_rotation(&self) -> f64 {
-        self.rotation_at(self.motion_t)
+        self.heading_rotation_at(self.motion_t) + self.float_offset().tilt
     }
 
-    /// [`Self::painted_rotation`] with the move `motion_t` seconds in.
-    pub(crate) fn rotation_at(&self, motion_t: f64) -> f64 {
+    /// The `cursor.rotate` part of [`Self::painted_rotation`] with the move
+    /// `motion_t` seconds in: only while travelling, upright at arrival.
+    pub(crate) fn heading_rotation_at(&self, motion_t: f64) -> f64 {
         let mode = self.options().rotate;
         match self.trajectory.as_ref() {
             Some(traj) if !self.reduced_motion() => {
@@ -720,13 +769,17 @@ impl RenderStateCore {
     pub fn tick_motion(&mut self, dt: f64) -> bool {
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         let mut fire_arrival = false;
-        self.float_secs = (self.float_secs + dt) % (86_400.0 * crate::cursor_pose::REST_FLOAT_SECS);
+        self.float_secs = (self.float_secs + dt) % (86_400.0 * crate::cursor_pose::FLOAT_SECS);
+        self.float_hold_secs = (self.float_hold_secs + dt).min(3_600.0);
         if let Some(traj) = self.trajectory.as_ref() {
             let was_travelling = crate::cursor_pose::travelling(traj, self.motion_t);
             self.motion_t += dt;
             if was_travelling && !crate::cursor_pose::travelling(traj, self.motion_t) {
-                // The travel float is 0 at arrival: the resting loop starts there.
-                self.float_secs = self.motion_t - traj.arrival_t;
+                // The travel float is exactly 0 at arrival: it holds there
+                // for the click, drop or typing that follows. The phase
+                // runs on.
+                self.float_hold_secs = self.motion_t - traj.arrival_t;
+                self.float_from = 0.0;
             }
             let s = traj.sample_at(self.motion_t);
             self.pos = crate::anchor_for_pointer(s.x, s.y, s.heading);
@@ -880,7 +933,7 @@ impl RenderStateCore {
                 // Plan the hotspot so it lands on `(x, y)`; the anchor follows
                 // from the heading at every sample.
                 let (fx, fy) = crate::pointer_for_anchor(self.pos.0, self.pos.1, self.heading);
-                self.float_start_dy = self.float_dy();
+                self.float_start_amp = self.float_amplitude();
                 self.move_seq += 1;
                 let request = MoveRequest {
                     from: Pt::new(fx, fy),
@@ -925,7 +978,18 @@ impl RenderStateCore {
                 if let Some(heading) = heading_radians {
                     self.heading = heading;
                 }
+                // A snap mid-move settles the float from where it was; at
+                // rest it carries on.
+                let travelling = self
+                    .trajectory
+                    .as_ref()
+                    .is_some_and(|traj| crate::cursor_pose::travelling(traj, self.motion_t));
+                let amplitude = self.float_amplitude();
                 self.cancel_motion();
+                if travelling {
+                    self.float_from = amplitude;
+                    self.float_hold_secs = 0.0;
+                }
                 // The navigate mark a move plays by itself is an opt-in
                 // action mark (`cursor.marks`).
                 if self.options().marks
@@ -965,6 +1029,9 @@ impl RenderStateCore {
                 self.click_t = Some(0.0);
                 self.click_age = Some(0.0);
                 self.click_point = (x, y);
+                // The move here already settled the float to 0; keep it
+                // there through the click (and a double click's second).
+                self.settle_float();
                 // Likewise the click mark (`cursor.marks`).
                 if self.options().marks
                     && matches!(
@@ -987,6 +1054,8 @@ impl RenderStateCore {
             }
             OverlayCommand::SetPressed(v) => {
                 self.pressed = v;
+                // Drag start and drop land on the hotspot.
+                self.settle_float();
                 if v {
                     let delivery = self.visual.delivery;
                     let target = self.visual.target;
@@ -1028,6 +1097,8 @@ impl RenderStateCore {
             } => {
                 self.visual.begin(action, delivery, target);
                 self.semantic_cue = true;
+                // Typing focus, scrolls and keys hold the float at 0 too.
+                self.settle_float();
                 // A semantic cue re-reveals an idle-faded cursor that already
                 // has a position; `tick_idle` keeps it visible until the cue ends.
                 self.idle_secs = 0.0;
@@ -1355,7 +1426,7 @@ pub fn paint_cursor(
     // heading, so it lands on the target either way.
     let rotation = core.painted_rotation();
     let heading = crate::trajectory::REST_HEADING + rotation;
-    let float_dy = core.float_dy();
+    let float = core.float_offset();
     let (tip_x, tip_y) = ((tip_x - origin_x) * s, (tip_y - origin_y) * s);
     let alpha_scale = core.idle_alpha as f32;
 
@@ -1420,8 +1491,8 @@ pub fn paint_cursor(
     if options.halo && core.effects_capable {
         let (bx, by) = crate::cursor_pose::BODY_OFFSET_PT;
         let (sin, cos) = rotation.sin_cos();
-        let cx = tip_x + (bx * cos - by * sin) * s;
-        let cy = tip_y + (bx * sin + by * cos + float_dy) * s;
+        let cx = tip_x + (bx * cos - by * sin + float.dx) * s;
+        let cy = tip_y + (bx * sin + by * cos + float.dy) * s;
         crate::cursor_pose::paint_halo(
             pm,
             cx as f32,
@@ -1460,7 +1531,8 @@ pub fn paint_cursor(
             art_scale,
             alpha_scale,
             tint,
-            float_dy as f32,
+            float.dx as f32,
+            float.dy as f32,
         );
     } else {
         // Defensive fallback for a manually constructed RenderStateCore. The
@@ -3356,12 +3428,16 @@ mod plain_cursor_tests {
     }
 
     #[test]
-    fn a_new_action_does_not_restart_the_resting_float() {
-        let mut cursor = core(CursorOptions::default());
-        cursor.tick_motion(1.3);
-        let lifted = cursor.float_dy();
-        assert!(lifted < -1.0, "{lifted}");
+    fn a_new_action_keeps_the_phase_and_settles_the_float_upright() {
+        use crate::cursor_pose::{
+            float_at, FLOAT_EASE_IN_SECS, FLOAT_EASE_OUT_SECS, FLOAT_HOLD_SECS,
+        };
         for action in [CursorAction::Scroll, CursorAction::Text, CursorAction::Key] {
+            let mut cursor = core(CursorOptions::default());
+            cursor.tick_motion(1.3);
+            let before = cursor.float_offset();
+            assert!(before.dy < -1.0 && before.dx.abs() > 1.0, "{before:?}");
+            let phase = cursor.float_secs;
             cursor.apply_command_base(
                 OverlayCommand::BeginAction {
                     action,
@@ -3371,13 +3447,19 @@ mod plain_cursor_tests {
                 false,
                 false,
             );
-            assert_eq!(cursor.float_dy(), lifted, "{}", action.as_str());
+            let label = action.as_str();
+            assert_eq!(cursor.float_secs, phase, "{label}: the phase runs on");
+            assert_eq!(cursor.float_offset(), before, "{label}: no jump");
+            cursor.tick_motion(FLOAT_EASE_OUT_SECS);
+            assert_eq!(cursor.float_offset(), FloatOffset::ZERO, "{label}: settled");
+            assert_eq!(cursor.painted_rotation(), 0.0, "{label}: upright");
+            cursor.tick_motion(FLOAT_HOLD_SECS + FLOAT_EASE_IN_SECS);
             assert_eq!(
-                cursor.painted_rotation(),
-                0.0,
-                "upright for {}",
-                action.as_str()
+                cursor.float_offset(),
+                float_at(cursor.float_secs),
+                "{label}: eases back in on the same clock"
             );
+            assert!((cursor.float_secs - (phase + 1.5)).abs() < 1e-9);
         }
     }
 
@@ -3394,21 +3476,36 @@ mod plain_cursor_tests {
         );
     }
 
-    /// Play the current move at 120 Hz to its end. Returns the float and
-    /// rotation on the arrival tick, plus the peak lift and peak rotation.
-    fn play(cursor: &mut RenderStateCore) -> (f64, f64, f64, f64) {
+    /// Play the current move at 120 Hz to its arrival, where the driver
+    /// performs the click, press or drop. Returns the float and rotation on
+    /// the arrival tick, plus the peak lift and peak rotation. The float
+    /// phase runs on at exactly the tick rate throughout.
+    fn play(cursor: &mut RenderStateCore) -> (FloatOffset, f64, f64, f64) {
         let mut at_arrival = None;
         let (mut peak_lift, mut peak_turn) = (0.0f64, 0.0f64);
+        let mut last = (cursor.float_offset(), cursor.float_secs);
         while cursor.trajectory.is_some() {
             let arrived = cursor.tick_motion(1.0 / 120.0);
-            peak_lift = peak_lift.min(cursor.float_dy());
+            let float = cursor.float_offset();
+            peak_lift = peak_lift.min(float.dy);
             peak_turn = peak_turn.max(cursor.painted_rotation().abs());
-            if arrived && at_arrival.is_none() {
-                at_arrival = Some((cursor.float_dy(), cursor.painted_rotation()));
+            assert!(
+                (float.dx - last.0.dx).abs() < 0.2 && (float.dy - last.0.dy).abs() < 0.2,
+                "the float jumped: {:?} -> {float:?}",
+                last.0
+            );
+            assert!(
+                (cursor.float_secs - last.1 - 1.0 / 120.0).abs() < 1e-9,
+                "phase reset"
+            );
+            last = (float, cursor.float_secs);
+            if arrived {
+                at_arrival = Some((float, cursor.painted_rotation()));
+                break;
             }
         }
-        let (dy, rot) = at_arrival.expect("the move arrives");
-        (dy, rot, peak_lift, peak_turn)
+        let (float, rot) = at_arrival.expect("the move arrives");
+        (float, rot, peak_lift, peak_turn)
     }
 
     #[test]
@@ -3422,29 +3519,38 @@ mod plain_cursor_tests {
                 cursor.motion.style = style;
                 cursor.tick_motion(1.3); // mid resting bob
                 move_to(&mut cursor, 700.0, 420.0);
-                let (dy, rot, lift, turn) = play(&mut cursor);
+                let (float, rot, lift, turn) = play(&mut cursor);
                 let label = format!("{style:?} {rotate:?}");
-                assert!(dy.abs() < 0.01, "{label}: float {dy} at arrival");
+                assert_eq!(float, FloatOffset::ZERO, "{label}: float at arrival");
                 assert_eq!(rot, 0.0, "{label}: upright at arrival");
-                assert!(lift < -1.5, "{label}: lifts while travelling ({lift})");
+                assert!(lift < -1.5, "{label}: floats while travelling ({lift})");
                 match rotate {
-                    RotateMode::Off => assert_eq!(turn, 0.0, "{label}"),
+                    RotateMode::Off => assert!(
+                        turn <= crate::cursor_pose::FLOAT_TILT_RADIANS + 1e-9,
+                        "{label}: only the float tilt ({turn})"
+                    ),
                     RotateMode::Lean => assert!(
                         turn > 0.1 && turn <= crate::cursor_pose::LEAN_MAX_RADIANS + 1e-9,
                         "{label}: {turn}"
                     ),
                     RotateMode::Heading => assert!(turn > 0.1, "{label}: {turn}"),
                 }
-                // The click that follows is upright and does not move the
-                // float (the resting bob started from 0 at arrival).
-                let resting = cursor.float_dy();
-                cursor.apply_command_base(
-                    OverlayCommand::ClickPulse { x: 700.0, y: 420.0 },
-                    true,
-                    true,
-                );
-                assert_eq!(cursor.painted_rotation(), 0.0, "{label}: click upright");
-                assert_eq!(cursor.float_dy(), resting, "{label}: click keeps the float");
+                // The click that follows, and a double click's second, land
+                // on the hotspot: float exactly 0 and upright.
+                for _ in 0..2 {
+                    cursor.apply_command_base(
+                        OverlayCommand::ClickPulse { x: 700.0, y: 420.0 },
+                        true,
+                        true,
+                    );
+                    assert_eq!(cursor.float_offset(), FloatOffset::ZERO, "{label}: click");
+                    assert_eq!(cursor.painted_rotation(), 0.0, "{label}: click upright");
+                    cursor.tick_motion(0.12);
+                    assert_eq!(cursor.float_offset(), FloatOffset::ZERO, "{label}: held");
+                }
+                // Then it eases back in on the same clock.
+                cursor.tick_motion(1.4);
+                assert!(cursor.float_amplitude() > 0.99, "{label}: back in");
             }
         }
     }
@@ -3455,16 +3561,29 @@ mod plain_cursor_tests {
             rotate: RotateMode::Lean,
             ..CursorOptions::DEFAULT
         });
+        cursor.tick_motion(1.3);
+        move_to(&mut cursor, 160.0, 300.0);
+        play(&mut cursor);
+        // Drag start: on the hotspot.
         cursor.apply_command_base(OverlayCommand::SetPressed(true), false, false);
+        assert_eq!(cursor.float_offset(), FloatOffset::ZERO, "press settled");
         move_to(&mut cursor, 600.0, 380.0);
-        let (dy, rot, lift, turn) = play(&mut cursor);
-        assert!(dy.abs() < 0.01 && rot == 0.0, "drop settled: {dy} {rot}");
+        let (float, rot, lift, turn) = play(&mut cursor);
+        assert!(
+            float == FloatOffset::ZERO && rot == 0.0,
+            "drop settled: {float:?} {rot}"
+        );
         assert!(lift < -1.5, "floats during the drag: {lift}");
         assert!(
-            turn > 0.05 && turn <= crate::cursor_pose::LEAN_MAX_DRAG_RADIANS + 1e-9,
+            turn > 0.05
+                && turn
+                    <= crate::cursor_pose::LEAN_MAX_DRAG_RADIANS
+                        + crate::cursor_pose::FLOAT_TILT_RADIANS
+                        + 1e-9,
             "{turn}"
         );
         cursor.apply_command_base(OverlayCommand::SetPressed(false), false, false);
+        assert_eq!(cursor.float_offset(), FloatOffset::ZERO, "drop settled");
         assert_eq!(cursor.painted_rotation(), 0.0);
     }
 
@@ -3475,11 +3594,14 @@ mod plain_cursor_tests {
             ..CursorOptions::DEFAULT
         });
         move_to(&mut cursor, 125.0, 110.0);
-        let (dy, _, lift, turn) = play(&mut cursor);
-        assert_eq!(turn, 0.0, "no turn on a short hop");
+        let (float, _, lift, turn) = play(&mut cursor);
         assert!(
-            lift > -0.5 && dy.abs() < 0.01,
-            "no travel lift on a short hop: {lift}"
+            turn <= crate::cursor_pose::FLOAT_TILT_RADIANS + 1e-9,
+            "no heading turn on a short hop: {turn}"
+        );
+        assert!(
+            lift > -0.5 && float == FloatOffset::ZERO,
+            "no travel float on a short hop: {lift}"
         );
         cursor.apply_command_base(
             OverlayCommand::SnapTo {

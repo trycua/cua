@@ -821,12 +821,13 @@ pub fn paint_compiled_theme_with_tint(
         alpha,
         tint,
         0.0,
+        0.0,
     );
 }
 
-/// [`paint_compiled_theme_with_tint`] lifted by `float_dy` points (negative
-/// is up): the float of the agent cursor (`cursor.float`), a vertical
-/// offset that never tilts the arrow. See [`crate::cursor_pose`].
+/// [`paint_compiled_theme_with_tint`] moved by the float of the agent
+/// cursor (`cursor.float`): `float_dx`, `float_dy` points (negative is up).
+/// The float tilt is part of `heading`. See [`crate::cursor_pose`].
 #[allow(clippy::too_many_arguments)]
 pub fn paint_compiled_theme_with_float(
     target: &mut tiny_skia::Pixmap,
@@ -838,6 +839,7 @@ pub fn paint_compiled_theme_with_float(
     backing_scale: f32,
     alpha: f32,
     tint: Option<[u8; 4]>,
+    float_dx: f32,
     float_dy: f32,
 ) {
     let scale = crate::theme::DISPLAY_SIZE * backing_scale / crate::theme::CANVAS_SIZE;
@@ -845,7 +847,10 @@ pub fn paint_compiled_theme_with_float(
         Transform::from_translate(-f32::from(theme.hotspot[0]), -f32::from(theme.hotspot[1]))
             .post_scale(scale, scale)
             .post_rotate((heading - std::f32::consts::FRAC_PI_4).to_degrees())
-            .post_translate(anchor_x, anchor_y + float_dy * backing_scale);
+            .post_translate(
+                anchor_x + float_dx * backing_scale,
+                anchor_y + float_dy * backing_scale,
+            );
     let reduced = visual.reduced_motion == crate::ReducedMotion::On;
     if let Some(animation) = theme.animation_for_action(visual.resolved_action) {
         draw_layer(

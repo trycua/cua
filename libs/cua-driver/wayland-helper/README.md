@@ -32,12 +32,16 @@ It exposes `org.cua.WinRects` on the session bus:
   cua-driver. The helper validates the `#RRGGBB` value, updates the matching
   glow, and keeps a white pointer outline.
 - `PlayCursorPath(track_json)` (API 11): play one planned move as poses
-  (`[t, x, y, float_dy, rotation]` samples) from cua-driver's shared motion
-  planner, so the cursor follows the same path, float and `cursor.rotate`
-  turn as on every other desktop. The helper interpolates the samples and
-  plans nothing itself. A single sample is a snap.
-- `SetCursorLook(look_json)` (API 11): the resting float (lift and loop
-  length, 0 lift for `cursor.float off`) and the `cursor.halo` glow (colour,
+  (`[t, x, y, float_dx, float_dy, rotation]` samples, the arrival time and
+  the float clock `[phase, hold, from]` at the last sample) from cua-driver's
+  shared motion planner, so the cursor follows the same path, float and
+  `cursor.rotate` turn as on every other desktop. The helper interpolates the
+  samples, then carries the float on at rest from that clock, so its phase
+  never restarts. It plans nothing itself. A single sample is a snap. A click
+  or an action cue at rest eases the float out and holds it at 0.
+- `SetCursorLook(look_json)` (API 11): the float (loop length, sway, bob,
+  lift, tilt and the rest envelope; `null` for `cursor.float off`) and the
+  `cursor.halo` glow (colour,
   radius, peak opacity, gradient stops, body offset). Until a driver sends a
   look, the helper keeps its older glow. Both methods validate every field
   and ignore malformed input.

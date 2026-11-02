@@ -74,7 +74,8 @@ const ACTION_DURATIONS = {
 
 // cua-driver plans every move with the shared planner and sends it as poses
 // (PlayCursorPath), with the resting float and halo it paints with
-// (SetCursorLook). The helper only plays them back; it plans nothing.
+// (SetCursorLook). The helper only plays them back and carries the float on at
+// rest from the clock each track ends on; it plans nothing.
 const TIP_X = 55;
 const TIP_Y = 30;
 const MAX_POSE_JSON = 256 * 1024;
@@ -95,13 +96,36 @@ function parseJsonObject(json) {
   }
 }
 
+function parseFloatLook(value) {
+  if (value === null || value === undefined) return null;
+  const f = value;
+  const ok =
+    finiteWithin(f?.secs, 60) && f.secs >= 0.1 &&
+    finiteWithin(f.sway, 50) && f.sway >= 0 &&
+    finiteWithin(f.bob, 50) && f.bob >= 0 &&
+    finiteWithin(f.lift, 50) && f.lift >= 0 &&
+    finiteWithin(f.tilt, 1) && f.tilt >= 0 &&
+    finiteWithin(f.hold, 60) && f.hold >= 0 &&
+    finiteWithin(f.ease_in, 60) && f.ease_in > 0 &&
+    finiteWithin(f.ease_out, 60) && f.ease_out > 0;
+  if (!ok) return undefined;
+  return {
+    secs: f.secs,
+    sway: f.sway,
+    bob: f.bob,
+    lift: f.lift,
+    tilt: f.tilt,
+    hold: f.hold,
+    easeIn: f.ease_in,
+    easeOut: f.ease_out,
+  };
+}
+
 function parseCursorLook(json) {
   const look = parseJsonObject(json);
   if (!look) return null;
-  const restLift = look.rest_lift;
-  const restSecs = look.rest_secs;
-  if (!finiteWithin(restLift, 50) || restLift < 0) return null;
-  if (!finiteWithin(restSecs, 60) || restSecs < 0.1) return null;
+  const float = parseFloatLook(look.float);
+  if (float === undefined) return null;
   let halo = null;
   if (look.halo !== null && look.halo !== undefined) {
     const h = look.halo;
@@ -135,7 +159,7 @@ function parseCursorLook(json) {
       body: [body[0], body[1]],
     };
   }
-  return { restLift, restSecs, halo };
+  return { float, halo };
 }
 
 function parseCursorPath(json) {
@@ -145,17 +169,33 @@ function parseCursorPath(json) {
   if (samples.length < 1 || samples.length > MAX_PATH_SAMPLES) return null;
   let previous = 0;
   for (const sample of samples) {
-    if (!Array.isArray(sample) || sample.length !== 5) return null;
-    const [t, x, y, dy, rotation] = sample;
+    if (!Array.isArray(sample) || sample.length !== 6) return null;
+    const [t, x, y, dx, dy, rotation] = sample;
     if (!finiteWithin(t, 30) || t < previous) return null;
     if (!finiteWithin(x, 100000) || !finiteWithin(y, 100000)) return null;
-    if (!finiteWithin(dy, 100) || !finiteWithin(rotation, 8)) return null;
+    if (!finiteWithin(dx, 100) || !finiteWithin(dy, 100) || !finiteWithin(rotation, 8)) return null;
     previous = t;
   }
-  const restFrom = track.rest_from;
-  if (restFrom !== null && restFrom !== undefined && (!finiteWithin(restFrom, 30) || restFrom < 0))
+  const arrival = track.arrival;
+  if (arrival !== null && arrival !== undefined && (!finiteWithin(arrival, 30) || arrival < 0))
     return null;
-  return { samples, restFrom: restFrom ?? null };
+  // The float clock at the last sample: [phase, hold, from].
+  const rest = track.rest;
+  if (
+    !Array.isArray(rest) ||
+    rest.length !== 3 ||
+    !finiteWithin(rest[0], 1e7) ||
+    !finiteWithin(rest[1], 3600) ||
+    rest[1] < 0 ||
+    !finiteWithin(rest[2], 1) ||
+    rest[2] < 0
+  )
+    return null;
+  return {
+    samples,
+    arrival: arrival ?? null,
+    rest: { phase: rest[0], hold: rest[1], from: rest[2] },
+  };
 }
 
 // Linear interpolation between the planner's samples, clamped to the ends.
@@ -176,12 +216,36 @@ function samplePath(samples, t) {
   return a.map((value, index) => value + (b[index] - value) * f);
 }
 
-// The resting float of cursor_pose::resting_float_dy: 0 at the start and end
-// of each loop, `restLift` points up halfway.
-function restingFloatDy(look, secs) {
-  if (!look || look.restLift <= 0) return 0;
-  const phase = (((secs % look.restSecs) + look.restSecs) % look.restSecs) / look.restSecs;
-  return -0.5 * look.restLift * (1 - Math.cos(phase * 2 * Math.PI));
+function smoothstep(x) {
+  const t = Math.min(1, Math.max(0, x));
+  return t * t * (3 - 2 * t);
+}
+
+// cursor_pose::rest_amplitude: `from` eases out to 0, holds at 0 for the
+// click, drop or typing that follows, then eases back in to 1.
+function restAmplitude(float, hold, from) {
+  const out = Math.min(1, Math.max(0, from)) * (1 - smoothstep(hold / float.easeOut));
+  const back = smoothstep((hold - float.hold) / float.easeIn);
+  return Math.max(out, back);
+}
+
+const STILL = Object.freeze({ dx: 0, dy: 0, rotation: 0 });
+
+// cursor_pose::float_at at the rest amplitude: the 4 s sway, bob and tilt,
+// `now - rest.at` seconds on from the clock `rest` (phase, hold, from). The
+// phase never restarts.
+function restingFloat(look, rest, now) {
+  const float = look?.float;
+  if (!float || !rest) return STILL;
+  const elapsed = Math.max(0, now - rest.at);
+  const amp = restAmplitude(float, rest.hold + elapsed, rest.from);
+  if (amp <= 0) return STILL;
+  const angle = (((rest.phase + elapsed) % float.secs) / float.secs) * 2 * Math.PI;
+  return {
+    dx: amp * float.sway * Math.sin(angle),
+    dy: amp * (float.bob * Math.cos(angle) - float.lift),
+    rotation: amp * float.tilt * Math.cos(angle),
+  };
 }
 
 // The halo of cursor_pose::paint_halo, centred on the arrow body, in canvas
@@ -849,7 +913,8 @@ export default class WinRectsExtension extends Extension {
     this._look = null;
     this._path = null;
     this._pathFrameId = 0;
-    this._restOrigin = nowSeconds();
+    // The float clock at `at`: a fresh cursor floats fully.
+    this._rest = { at: nowSeconds(), phase: 0, hold: 3600, from: 0 };
     this._cursor = new St.DrawingArea({
       width: ACTOR_SIZE,
       height: ACTOR_SIZE,
@@ -867,8 +932,9 @@ export default class WinRectsExtension extends Extension {
       cr.translate(ACTOR_CENTER, ACTOR_CENTER);
       cr.scale(SCALE, SCALE);
       cr.translate(-CANVAS_SIZE / 2, -CANVAS_SIZE / 2);
-      // The float moves the whole cursor; the rotation turns it about its tip.
-      cr.translate(0, pose.dy / SCALE);
+      // The float moves the whole cursor; the rotation (heading plus the
+      // float tilt) turns it about its tip.
+      cr.translate(pose.dx / SCALE, pose.dy / SCALE);
       if (!this._look) drawCursorGlow(cr, progress, this._action, this._glowSurface);
       else if (this._look.halo) drawCursorHalo(cr, this._look.halo, pose.rotation);
       cr.translate(TIP_X, TIP_Y);
@@ -1210,6 +1276,7 @@ export default class WinRectsExtension extends Extension {
     }
     if (['idle', 'navigate', 'click'].includes(this._action))
       this._setCursorState('click', this._delivery, this._target);
+    this._settleFloat();
     this._cursor.show();
     this._cursor.queue_repaint();
     if (revealBadge) this._revealBadge();
@@ -1242,9 +1309,9 @@ export default class WinRectsExtension extends Extension {
     this._stopPath();
     this._cursor.remove_all_transitions();
     this._badge?.remove_all_transitions();
-    // A move restarts the resting float where the travel float reaches 0;
-    // a snap leaves it running.
-    if (track.restFrom !== null) this._restOrigin = now + track.restFrom;
+    // At rest the float carries on from the clock the track ends on.
+    const end = track.samples[track.samples.length - 1][0];
+    this._rest = { at: now + end, ...track.rest };
     const first = track.samples[0];
     this._placeCursor(first[1], first[2]);
     this._cursor.show();
@@ -1274,10 +1341,25 @@ export default class WinRectsExtension extends Extension {
   // Float offset (points) and rotation (radians) painted at `now`.
   _pose(now) {
     if (this._path) {
-      const [, , , dy, rotation] = samplePath(this._path.samples, now - this._path.start);
-      return { dy, rotation };
+      const [, , , dx, dy, rotation] = samplePath(this._path.samples, now - this._path.start);
+      return { dx, dy, rotation };
     }
-    return { dy: restingFloatDy(this._look, now - this._restOrigin), rotation: 0 };
+    return restingFloat(this._look, this._rest, now);
+  }
+  // RenderStateCore::settle_float: a click or cue at rest eases the float
+  // out from where it is and holds it at 0. The phase runs on. A path in
+  // flight already settles at its arrival.
+  _settleFloat() {
+    if (this._path || !this._look?.float) return;
+    const now = nowSeconds();
+    // Negative when a click cut a path short: the phase is linear in time.
+    const elapsed = now - this._rest.at;
+    const amp = restAmplitude(
+      this._look.float,
+      Math.max(0, this._rest.hold + elapsed),
+      this._rest.from
+    );
+    this._rest = { at: now, phase: this._rest.phase + elapsed, hold: 0, from: amp };
   }
   _placeCursor(x, y) {
     this._cursorX = x;
@@ -1296,6 +1378,7 @@ export default class WinRectsExtension extends Extension {
     if (!ACTIONS.has(action)) return;
     if (active) {
       this._setCursorState(action, delivery, target);
+      this._settleFloat();
     } else if (this._action === action && !ONE_SHOT_ACTIONS.has(action)) {
       this._endingAt = nowSeconds() + 0.4;
     }

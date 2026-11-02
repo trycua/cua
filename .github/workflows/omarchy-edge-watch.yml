@@ -1,0 +1,238 @@
+name: "Omarchy: edge watch"
+
+# Watches Omarchy's edge channel for a new Hyprland build or a new omarchy
+# config package and requalifies the Cua Hyprland plugin against it
+# (CUA-3108). Design and settings: libs/cua-driver/hyprland-plugin/README.md,
+# "Omarchy edge watch".
+#
+#   detect     requalify/channels.py snapshot, compared by edge-watch/edge_watch.py
+#              with the plugin pin and the last qualified versions in
+#              libs/cua-driver/hyprland-plugin/omarchy-qualified.json
+#   lanes      only on a change: lint (Omarchy's Hyprland Lua config against the
+#              Hyprland we would pin), requalify (nightly-hyprland-plugin-requalify.yml),
+#              image build + doctor + Hyprland e2e (cd-image-omarchy.yml, gate only)
+#   green      a PR that bumps the pin and the qualified versions, auto-merge queued
+#   red        one tracking issue (failing step, log excerpt, doctor screenshots);
+#              the failed run reaches Alertmanager through workflow-failure-alerts.yml
+#
+# When Omarchy's packaged plugin moves to our latest release, the same lanes
+# are the post-update recheck and the green PR also drops the recorded
+# stopgaps and closes their open PRs. It never publishes an image and never
+# writes to an Omarchy repository.
+
+on:
+  schedule:
+    # Daily 07:37 UTC, after the nightly image (05:23) and requalification (06:41).
+    - cron: "37 7 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run every lane even if nothing changed"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omarchy-edge-watch
+  cancel-in-progress: false
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  WATCH_DIR: libs/cua-driver/hyprland-plugin/edge-watch
+  REQUALIFY: libs/cua-driver/hyprland-plugin/requalify
+
+jobs:
+  detect:
+    if: github.repository == 'trycua/cua'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+      post_update: ${{ steps.check.outputs.post_update }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Snapshot Arch and Omarchy channels
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p watch
+          python3 "$REQUALIFY/channels.py" detect --output watch/snapshot.json
+      - name: Compare with the pin and the last qualified versions
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force == true }}
+        run: |
+          set -euo pipefail
+          python3 "$WATCH_DIR/edge_watch.py" check --snapshot watch/snapshot.json --output watch/watch.json
+          changed=$(jq -r .changed watch/watch.json)
+          post=$(jq -r .post_update watch/watch.json)
+          [ "$FORCE" = true ] && changed=true
+          {
+            echo "run=$changed"
+            echo "post_update=$post"
+          } >>"$GITHUB_OUTPUT"
+          {
+            echo "### Omarchy edge watch"
+            echo "run lanes: **$changed**; post-update recheck: **$post**"
+            jq -r '.reasons[] | "- " + .' watch/watch.json
+          } >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: omarchy-watch
+          path: watch/
+          retention-days: 30
+
+  lint:
+    needs: detect
+    if: needs.detect.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: omarchy-watch
+          path: watch
+      - name: Config keys the Hyprland we would pin does not know
+        run: python3 "$WATCH_DIR/edge_watch.py" lint --against candidate --watch watch/watch.json
+      - name: Same check against the current pin (warning only)
+        continue-on-error: true
+        run: python3 "$WATCH_DIR/edge_watch.py" lint --against pin --watch watch/watch.json
+
+  requalify:
+    needs: detect
+    if: needs.detect.outputs.run == 'true'
+    # Always rebuild: a same-day nightly may already have recorded this build.
+    uses: ./.github/workflows/nightly-hyprland-plugin-requalify.yml
+    with:
+      force: true
+    permissions:
+      contents: write
+      issues: write
+
+  image:
+    needs: detect
+    if: needs.detect.outputs.run == 'true'
+    # Builds from Omarchy's current edge packages and runs the doctor lanes and
+    # the Hyprland e2e as gates. gate_only: nothing is pushed or promoted.
+    uses: ./.github/workflows/cd-image-omarchy.yml
+    with:
+      gate_only: true
+    permissions:
+      contents: write
+      packages: write
+      issues: write
+
+  green:
+    needs: [detect, lint, requalify, image]
+    if: >-
+      needs.detect.outputs.run == 'true' &&
+      needs.lint.result == 'success' && needs.requalify.result == 'success' &&
+      needs.image.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Generate release GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: omarchy-watch
+          path: watch
+      - name: Open the pin PR and queue auto-merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          POST_UPDATE: ${{ needs.detect.outputs.post_update }}
+        run: |
+          set -euo pipefail
+          f=libs/cua-driver/hyprland-plugin/omarchy-qualified.json
+          hl=$(jq -r .current.hyprland watch/watch.json)
+          dev=$(jq -r .current.omarchy_dev watch/watch.json | sed 's/.*\.r/r/; s/-[0-9]*$//')
+          branch="omarchy-edge-watch/hyprland-${hl}-${dev}"
+          if [ -n "$(gh pr list --state open --head "$branch" --json number --jq '.[].number')" ]; then
+            echo "A PR for $branch is already open."
+            exit 0
+          fi
+          args=(--watch watch/watch.json --run-url "$RUN_URL" --today "$(date -u +%F)")
+          stopgaps=$(jq -r '.stopgaps[] | "\(.pr) \(.paths | join(","))"' "$f")
+          [ "$POST_UPDATE" = true ] && args+=(--drop-stopgaps)
+          python3 "$WATCH_DIR/edge_watch.py" bump "${args[@]}"
+          if git diff --quiet -- "$f"; then
+            echo "Nothing to record."
+            exit 0
+          fi
+          title="fix(cua-driver): qualify the Hyprland plugin for Omarchy edge (Hyprland ${hl})"
+          {
+            echo "Omarchy edge watch: the requalification, image build and doctor lanes, and the config lint all passed."
+            echo
+            echo "What changes for users: the Hyprland plugin is qualified for Omarchy edge's current Hyprland build, and its release follows."
+            echo
+            jq -r '.reasons[] | "- " + .' watch/watch.json
+            echo
+            echo "Run: $RUN_URL"
+            echo "Linear: CUA-3108"
+            if [ "$POST_UPDATE" = true ]; then
+              echo
+              echo "Omarchy now ships our released plugin (post-update recheck), so the recorded stopgaps are dropped:"
+              echo "$stopgaps" | while read -r pr paths; do [ -n "$pr" ] && echo "- #$pr (code to revert if it already merged: $paths)"; done
+            fi
+          } >pr-body.md
+          git config user.name "trycua-release[bot]"
+          git config user.email "trycua-release[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add "$f"
+          git commit -m "$title" -m "Run: $RUN_URL"
+          git push origin "HEAD:refs/heads/$branch"
+          url=$(gh pr create --base main --head "$branch" --title "$title" --body-file pr-body.md --label agent 2>/dev/null \
+                || gh pr create --base main --head "$branch" --title "$title" --body-file pr-body.md)
+          gh pr merge "$url" --auto --squash
+          if [ "$POST_UPDATE" = true ]; then
+            echo "$stopgaps" | while read -r pr _; do
+              [ -n "$pr" ] || continue
+              if [ "$(gh pr view "$pr" --json state --jq .state)" = OPEN ]; then
+                gh pr close "$pr" --comment "No longer needed: Omarchy edge ships our released plugin and the image build and doctor lanes pass without it ($url)."
+              fi
+            done
+          fi
+
+  red:
+    needs: [detect, lint, requalify, image]
+    if: >-
+      always() && needs.detect.outputs.run == 'true' &&
+      (needs.lint.result != 'success' || needs.requalify.result != 'success' ||
+       needs.image.result != 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 "$WATCH_DIR/edge_watch.py" report --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID"
+          echo "::error::Omarchy edge watch is red; see the tracking issue."
+          exit 1

@@ -33,6 +33,8 @@ on:
       - "CD: Lume (macOS)"
       - "Release: Prepare component releases"
       - "Release: installer scripts feed"
+      - "Omarchy: edge watch"
+      - "Release: Omarchy plugin"
     types: [completed]
   schedule:
     - cron: "*/15 * * * *"
@@ -68,6 +70,8 @@ jobs:
         CD: Lume (macOS)=release
         Release: Prepare component releases=release
         Release: installer scripts feed=release
+        Omarchy: edge watch=ci
+        Release: Omarchy plugin=release
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       GH_TOKEN: ${{ github.token }}
       ALERTMANAGER_INTAKE_TOKEN: ${{ secrets.ALERTMANAGER_INTAKE_TOKEN }}

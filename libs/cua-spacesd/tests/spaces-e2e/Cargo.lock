@@ -2572,7 +2572,7 @@ dependencies = [
 
 [[package]]
 name = "cua-relay"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-server"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2984,7 +2984,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-socks"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "cua-hotspot",
  "futures-util",
@@ -2994,7 +2994,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-teleport"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "cua-chromium-storage",
  "cua-teleport-bundle",

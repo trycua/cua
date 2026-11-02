@@ -32,6 +32,14 @@ fn mkdirs(h: &Home, rels: &[&str]) {
     }
 }
 
+/// Files only the agent itself writes, so cua's own setup output in the same
+/// folder doesn't make the agent look uninstalled.
+fn agent_owned(h: &Home, rels: &[&str]) {
+    for r in rels {
+        std::fs::write(h.dir.path().join(r), "{}").unwrap();
+    }
+}
+
 #[derive(Default)]
 struct IssuerLog {
     challenge: Option<String>,
@@ -250,6 +258,7 @@ async fn login_falls_back_to_device_when_loopback_is_not_allowed_and_remote_skip
 async fn agents_commands_round_trip_and_protect_malformed_files() {
     let h = home();
     mkdirs(&h, &[".codex", ".cursor", ".gemini"]);
+    agent_owned(&h, &[".codex/auth.json"]);
     std::fs::write(
         h.dir.path().join(".gemini/settings.json"),
         "{\"mcpServers\": {",
@@ -666,6 +675,7 @@ async fn the_local_cli_leaves_cua_driver_alone_even_when_it_registered_it_first(
 async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     let h = home();
     mkdirs(&h, &[".codex", ".claude"]);
+    agent_owned(&h, &[".codex/auth.json", ".claude/settings.json"]);
     std::fs::write(
         h.dir.path().join(".codex/config.toml"),
         "[mcp_servers.other]\ncommand = \"o\"\n",
@@ -1155,6 +1165,7 @@ async fn interactive_login_onboarding_prompts() {
         .set("CUA_OIDC_POLL_UNIT_MS", "5")
         .set("CUA_AUTH_FLOW", "device");
     mkdirs(&h, &[".claude", ".codex"]);
+    agent_owned(&h, &[".claude/settings.json", ".codex/auth.json"]);
     let h = h;
     tokio::task::spawn_blocking(move || {
         // Yes to onboarding, default (yes) to skills, no to MCP.

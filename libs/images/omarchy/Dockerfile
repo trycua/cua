@@ -102,6 +102,21 @@ RUN set -eu; \
 COPY omarchy/files/distrust-emudhra.sh /tmp/distrust-emudhra.sh
 RUN sh /tmp/distrust-emudhra.sh && rm -f /tmp/distrust-emudhra.sh
 
+# Stopgap (CUA-3107) until cua-hyprland-plugin is qualified for Hyprland 0.57:
+# the plugin pins hyprland=0.56.2-4, but the Omarchy edge config (omarchy-dev,
+# which has no old versions to pin) moved to 0.57 on 2026-11-01 and sets
+# misc.bell_sound, a key 0.56 does not have. Hyprland 0.56 then rejects the
+# whole hl.config block in looknfeel.lua (focus_on_activate, dwindle,
+# cursor, ...) and shows a config-error bar over the desktop, and the doctor's
+# grid fixture never shows in a screenshot. Drop only that key, and only while
+# the installed Hyprland is older than 0.57.
+RUN set -eu; \
+    hv="$(pacman -Q hyprland | cut -d' ' -f2)"; \
+    if [ "$(vercmp "$hv" 0.57.0)" -lt 0 ]; then \
+      grep -rl 'bell_sound' /usr/share/omarchy/default/hypr | xargs -r sed -i '/^[[:space:]]*bell_sound[[:space:]]*=/d'; \
+      if grep -rn 'bell_sound' /usr/share/omarchy/default/hypr; then echo "ERROR: misc.bell_sound is still set for Hyprland $hv" >&2; exit 1; fi; \
+    fi
+
 # The desktop user (uid 1000, like every libs/images desktop), seeded from
 # Omarchy's /etc/skel and its unattended setup: the default theme applied
 # headless, first-run and finalize marked done (they are interactive), and the

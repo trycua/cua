@@ -22,11 +22,5 @@ tokio = { version = "1", features = ["full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json = "1"
 
-# space_jobs.rs: the daemon side (source-available crates) wakes an agent when
-# a job ends. Tests only, so no MIT package ships them.
-[dev-dependencies]
-cua-spaces-ext = { path = "../../../libs/cua/crates/cua-spaces-ext" }
-cua-volume = { path = "../../../libs/cua/crates/cua-volume" }
-
 # Standalone workspace: env-gated local-runtime e2e tests (not part of libs/cua).
 [workspace]

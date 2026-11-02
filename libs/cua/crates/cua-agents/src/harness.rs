@@ -605,6 +605,25 @@ pub fn codex_sqlite_dir(home: &str) -> String {
     format!("{home}.codex-sqlite")
 }
 
+/// Where Codex's own home (`CODEX_HOME`) lives for the agent whose home is
+/// `home`, and whether that is guest-local disk.
+///
+/// In a Space it is the home's `codex/` on the Volume. A Mac's Volume is an
+/// NFS mount that cannot make symlinks, and Codex needs them (its sign-in
+/// link, `tmp/arg0`), so there `CODEX_HOME` is guest-local
+/// (`~/.cua/agents/codex-home/<name>`) and only its `memories/` is a link
+/// into the Volume's `codex/memories`.
+pub fn codex_home_dir(home: &str) -> (String, bool) {
+    let trimmed = home.trim_end_matches('/');
+    if let Some((guest_home, name)) = trimmed.rsplit_once("/Cua Volume/agents/")
+        && !name.contains('/')
+        && !name.is_empty()
+    {
+        return (format!("{guest_home}/.cua/agents/codex-home/{name}"), true);
+    }
+    (format!("{trimmed}/codex"), false)
+}
+
 /// [`launch`] for a persistent agent whose home is the guest directory
 /// `home` (see [`memory_dir`]).
 pub fn launch_with_home(
@@ -689,7 +708,7 @@ pub fn launch_with_config(
             // on; without one, a run-local CODEX_HOME holds only the provider
             // override.
             let codex_home = match home {
-                Some(h) => Some(format!("{h}/codex")),
+                Some(h) => Some(codex_home_dir(h).0),
                 None => base.as_ref().map(|_| format!("{run_dir}/codex-home")),
             };
             let mut toml = String::new();
@@ -723,6 +742,23 @@ pub fn launch_with_config(
                 env(&mut l, "CODEX_SQLITE_HOME", dir);
             }
             if let Some(dir) = codex_home {
+                if let Some((volume_codex, local)) = home.map(|h| {
+                    (
+                        format!("{}/codex", h.trim_end_matches('/')),
+                        codex_home_dir(h).1,
+                    )
+                }) && local
+                {
+                    // Memories stay on the Volume: a link from guest-local
+                    // disk to the Volume's folder (the link is local, so it
+                    // works where the Volume cannot make links).
+                    let mem = crate::quote(&format!("{volume_codex}/memories"));
+                    let link = crate::quote(&format!("{dir}/memories"));
+                    l.prelude.push(format!(
+                        "mkdir -p {d} {mem} && ln -sfn {mem} {link}",
+                        d = crate::quote(&dir)
+                    ));
+                }
                 let rel = match home {
                     Some(_) => format!("{dir}/config.toml"),
                     None => "codex-home/config.toml".into(),
@@ -1100,6 +1136,44 @@ mod tests {
         assert_eq!(
             codex_sqlite_dir("/srv/agents/ada"),
             "/srv/agents/ada.codex-sqlite"
+        );
+        // CODEX_HOME stays on the Volume in a Space; on a Mac it is
+        // guest-local, with memories linked to the Volume.
+        assert_eq!(
+            codex_home_dir("/home/cua/cua-volume/agents/ada"),
+            ("/home/cua/cua-volume/agents/ada/codex".to_string(), false)
+        );
+        assert_eq!(
+            codex_home_dir("/Users/ada/Cua Volume/agents/codex-2"),
+            (
+                "/Users/ada/.cua/agents/codex-home/codex-2".to_string(),
+                true
+            )
+        );
+        let x = launch_with_home(
+            harness("openai-codex").unwrap(),
+            None,
+            None,
+            "/r",
+            "/w",
+            Some("/Users/ada/Cua Volume/agents/codex-2"),
+        )
+        .unwrap();
+        assert!(x.env.contains(&(
+            "CODEX_HOME".to_string(),
+            "/Users/ada/.cua/agents/codex-home/codex-2".to_string()
+        )));
+        assert_eq!(
+            x.files[0].rel,
+            "/Users/ada/.cua/agents/codex-home/codex-2/config.toml"
+        );
+        assert!(
+            x.prelude
+                .iter()
+                .any(|p| p.contains("ln -sfn")
+                    && p.contains("Cua Volume/agents/codex-2/codex/memories")),
+            "{:?}",
+            x.prelude
         );
         // On a Mac the Volume is mounted at `~/Cua Volume`.
         assert_eq!(

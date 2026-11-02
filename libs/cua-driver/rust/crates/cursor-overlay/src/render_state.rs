@@ -120,6 +120,13 @@ pub struct RenderStateCore {
     pub motion_t: f64,
     /// Whether the current trajectory still owes its arrival signal.
     pub arrival_pending: bool,
+    /// Seconds into the resting float loop. Owned by the cursor, not the
+    /// action, so a new action never restarts it; it restarts at 0 on each
+    /// arrival, where the travel float has settled to 0.
+    pub float_secs: f64,
+    /// Float offset (points) when the current move began, eased out during
+    /// the move so the float never jumps.
+    pub float_start_dy: f64,
     /// Moves planned so far; seeds each trajectory.
     pub move_seq: u64,
     /// Seconds since the last click, while click effects play.
@@ -220,6 +227,8 @@ impl RenderStateCore {
             trajectory: None,
             motion_t: 0.0,
             arrival_pending: false,
+            float_secs: 0.0,
+            float_start_dy: 0.0,
             move_seq: 0,
             click_age: None,
             click_point: (0.0, 0.0),
@@ -376,6 +385,38 @@ impl RenderStateCore {
             None => crate::embedded_default_theme()
                 .animation_for_action(action)
                 .is_some_and(|animation| animation.frames.len() > 1),
+        }
+    }
+
+    /// Vertical float offset in points (negative is up) painted this frame:
+    /// a small lift while travelling that is exactly 0 at arrival, then the
+    /// resting bob. 0 with `cursor.float` off, reduced motion or a custom
+    /// theme.
+    pub fn float_dy(&self) -> f64 {
+        let default_theme = self
+            .theme
+            .as_deref()
+            .is_none_or(|theme| theme.id == crate::DEFAULT_THEME_ID);
+        if !self.options().float || !default_theme || self.reduced_motion() {
+            return 0.0;
+        }
+        match self.trajectory.as_ref() {
+            Some(traj) if crate::cursor_pose::travelling(traj, self.motion_t) => {
+                crate::cursor_pose::travel_float_dy(traj, self.motion_t, self.float_start_dy)
+            }
+            _ => crate::cursor_pose::resting_float_dy(self.float_secs),
+        }
+    }
+
+    /// Rotation from upright (radians) painted this frame (`cursor.rotate`):
+    /// only while travelling, upright at arrival, for clicks and at rest.
+    pub fn painted_rotation(&self) -> f64 {
+        let mode = self.options().rotate;
+        match self.trajectory.as_ref() {
+            Some(traj) if !self.reduced_motion() => {
+                crate::cursor_pose::travel_rotation(traj, self.motion_t, mode, self.pressed)
+            }
+            _ => 0.0,
         }
     }
 
@@ -662,8 +703,14 @@ impl RenderStateCore {
     pub fn tick_motion(&mut self, dt: f64) -> bool {
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         let mut fire_arrival = false;
+        self.float_secs = (self.float_secs + dt) % (86_400.0 * crate::cursor_pose::REST_FLOAT_SECS);
         if let Some(traj) = self.trajectory.as_ref() {
+            let was_travelling = crate::cursor_pose::travelling(traj, self.motion_t);
             self.motion_t += dt;
+            if was_travelling && !crate::cursor_pose::travelling(traj, self.motion_t) {
+                // The travel float is 0 at arrival: the resting loop starts there.
+                self.float_secs = self.motion_t - traj.arrival_t;
+            }
             let s = traj.sample_at(self.motion_t);
             self.pos = crate::anchor_for_pointer(s.x, s.y, s.heading);
             self.heading = s.heading;
@@ -816,6 +863,7 @@ impl RenderStateCore {
                 // Plan the hotspot so it lands on `(x, y)`; the anchor follows
                 // from the heading at every sample.
                 let (fx, fy) = crate::pointer_for_anchor(self.pos.0, self.pos.1, self.heading);
+                self.float_start_dy = self.float_dy();
                 self.move_seq += 1;
                 let request = MoveRequest {
                     from: Pt::new(fx, fy),
@@ -1285,15 +1333,12 @@ pub fn paint_cursor(
     let options = core.options();
     // Themes pivot on their hotspot, which is drawn at the pointer point.
     let (tip_x, tip_y) = crate::pointer_for_anchor(core.pos.0, core.pos.1, core.heading);
-    // The arrow stays upright (the rest heading, no rotation) unless
-    // `cursor.rotate` turns it toward the direction of travel. The hotspot
-    // above still follows the planned heading, so it lands on the target
-    // either way.
-    let heading = if options.rotate {
-        core.heading
-    } else {
-        crate::trajectory::REST_HEADING
-    };
+    // The arrow is upright (the rest heading) unless `cursor.rotate` turns
+    // it while it travels. The hotspot above still follows the planned
+    // heading, so it lands on the target either way.
+    let rotation = core.painted_rotation();
+    let heading = crate::trajectory::REST_HEADING + rotation;
+    let float_dy = core.float_dy();
     let (tip_x, tip_y) = ((tip_x - origin_x) * s, (tip_y - origin_y) * s);
     let alpha_scale = core.idle_alpha as f32;
 
@@ -1353,6 +1398,22 @@ pub fn paint_cursor(
     let effects = core.effect_frame();
     let effect_rgb = effect_rgb(crate::session_fill_rgba(&core.cfg.cursor_id));
     let to_px = |x: f64, y: f64| (((x - origin_x) * s) as f32, ((y - origin_y) * s) as f32);
+    // The halo (`cursor.halo`) sits behind the arrow body and moves, floats
+    // and turns with it. Translucent, so not on surfaces that cannot blend.
+    if options.halo && core.effects_capable {
+        let (bx, by) = crate::cursor_pose::BODY_OFFSET_PT;
+        let (sin, cos) = rotation.sin_cos();
+        let cx = tip_x + (bx * cos - by * sin) * s;
+        let cy = tip_y + (bx * sin + by * cos + float_dy) * s;
+        crate::cursor_pose::paint_halo(
+            pm,
+            cx as f32,
+            cy as f32,
+            crate::cursor_pose::HALO_RADIUS_PT * sf,
+            crate::cursor_pose::halo_rgb(core.theme.as_deref(), &core.cfg.cursor_id),
+            crate::cursor_pose::HALO_PEAK_ALPHA * alpha_scale,
+        );
+    }
     paint_effects_under(pm, &effects, effect_rgb, f64::from(alpha_scale), &to_px, sf);
     // Click squish scales the artwork about its hotspot.
     let art_scale = backing_scale.max(1.0) * (1.0 - effects.squish as f32);
@@ -1382,7 +1443,7 @@ pub fn paint_cursor(
             art_scale,
             alpha_scale,
             tint,
-            options.float,
+            float_dy as f32,
         );
     } else {
         // Defensive fallback for a manually constructed RenderStateCore. The
@@ -2539,6 +2600,11 @@ mod pointer_anchor_tests {
     fn cursor() -> RenderStateCore {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.theme = Some(hotspot_marker_theme());
+        // The halo would pull the measured centroid off the marker.
+        core.options_override = Some(crate::CursorOptions {
+            halo: false,
+            ..crate::CursorOptions::DEFAULT
+        });
         core.motion.idle_hide_ms = 0.0;
         core
     }
@@ -3111,7 +3177,7 @@ mod motion_equivalence_tests {
 #[cfg(test)]
 mod plain_cursor_tests {
     use super::*;
-    use crate::{CursorConfig, CursorOptions};
+    use crate::{CursorConfig, CursorOptions, MotionStyle, RotateMode};
     use std::f64::consts::FRAC_PI_4;
 
     fn core(options: CursorOptions) -> RenderStateCore {
@@ -3130,13 +3196,14 @@ mod plain_cursor_tests {
     }
 
     #[test]
-    fn only_the_float_is_on_by_default() {
+    fn the_float_and_the_halo_are_on_by_default() {
         assert_eq!(
             CursorOptions::default(),
             CursorOptions {
                 marks: false,
                 float: true,
-                rotate: false,
+                rotate: RotateMode::Off,
+                halo: true,
             }
         );
         let core = RenderStateCore::new(CursorConfig::default());
@@ -3220,21 +3287,38 @@ mod plain_cursor_tests {
 
     #[test]
     fn the_arrow_stays_upright_unless_rotation_is_on() {
-        let upright = paint(&core(CursorOptions::NONE), None);
-        let mut turned = core(CursorOptions::NONE);
-        turned.heading = FRAC_PI_4 + 0.6;
-        turned.pos = crate::anchor_for_pointer(100.0, 100.0, turned.heading);
-        assert_eq!(
-            paint(&turned, None),
-            upright,
-            "heading does not turn the art"
-        );
-
-        turned.options_override = Some(CursorOptions {
-            rotate: true,
+        let options = |rotate| CursorOptions {
+            rotate,
             ..CursorOptions::NONE
-        });
-        assert_ne!(paint(&turned, None), upright, "cursor.rotate turns it");
+        };
+        let mut upright = core(options(RotateMode::Off));
+        move_to(&mut upright, 200.0, 190.0);
+        let mut lean = core(options(RotateMode::Lean));
+        move_to(&mut lean, 200.0, 190.0);
+        let mut heading = core(options(RotateMode::Heading));
+        move_to(&mut heading, 200.0, 190.0);
+        for cursor in [&mut upright, &mut lean, &mut heading] {
+            let t = cursor.trajectory.as_ref().unwrap().arrival_t * 0.5;
+            cursor.tick_motion(t);
+        }
+        assert_eq!(upright.painted_rotation(), 0.0);
+        assert!(lean.painted_rotation().abs() > 0.1);
+        assert!(lean.painted_rotation().abs() <= crate::cursor_pose::LEAN_MAX_RADIANS);
+        assert!(heading.painted_rotation().abs() > lean.painted_rotation().abs());
+        // Paint the same pose with and without the turn.
+        heading.pos = upright.pos;
+        heading.heading = upright.heading;
+        assert_ne!(
+            paint(&heading, None),
+            paint(&upright, None),
+            "heading turns it"
+        );
+        // A turned planner heading at rest never turns the art.
+        let mut resting = core(options(RotateMode::Heading));
+        let still = paint(&resting, None);
+        resting.heading = FRAC_PI_4 + 0.6;
+        resting.pos = crate::anchor_for_pointer(100.0, 100.0, resting.heading);
+        assert_eq!(paint(&resting, None), still);
     }
 
     #[test]
@@ -3242,16 +3326,258 @@ mod plain_cursor_tests {
         let mut still = core(CursorOptions::NONE);
         still.motion.idle_hide_ms = 20_000.0;
         let before = paint(&still, None);
-        still.visual.elapsed_secs = 1.3;
+        still.float_secs = 1.3;
         assert_eq!(paint(&still, None), before);
         assert!(!still.has_resting_motion());
 
         let mut floating = core(CursorOptions::default());
         floating.motion.idle_hide_ms = 20_000.0;
         let before = paint(&floating, None);
-        floating.visual.elapsed_secs = 1.3;
+        floating.float_secs = 1.3;
         assert_ne!(paint(&floating, None), before);
         assert!(floating.has_resting_motion());
+    }
+
+    #[test]
+    fn a_new_action_does_not_restart_the_resting_float() {
+        let mut cursor = core(CursorOptions::default());
+        cursor.tick_motion(1.3);
+        let lifted = cursor.float_dy();
+        assert!(lifted < -1.0, "{lifted}");
+        for action in [CursorAction::Scroll, CursorAction::Text, CursorAction::Key] {
+            cursor.apply_command_base(
+                OverlayCommand::BeginAction {
+                    action,
+                    delivery: None,
+                    target: None,
+                },
+                false,
+                false,
+            );
+            assert_eq!(cursor.float_dy(), lifted, "{}", action.as_str());
+            assert_eq!(
+                cursor.painted_rotation(),
+                0.0,
+                "upright for {}",
+                action.as_str()
+            );
+        }
+    }
+
+    fn move_to(cursor: &mut RenderStateCore, x: f64, y: f64) {
+        cursor.apply_command_base(
+            OverlayCommand::MoveTo {
+                x,
+                y,
+                end_heading_radians: FRAC_PI_4,
+                target: None,
+            },
+            true,
+            true,
+        );
+    }
+
+    /// Play the current move at 120 Hz to its end. Returns the float and
+    /// rotation on the arrival tick, plus the peak lift and peak rotation.
+    fn play(cursor: &mut RenderStateCore) -> (f64, f64, f64, f64) {
+        let mut at_arrival = None;
+        let (mut peak_lift, mut peak_turn) = (0.0f64, 0.0f64);
+        while cursor.trajectory.is_some() {
+            let arrived = cursor.tick_motion(1.0 / 120.0);
+            peak_lift = peak_lift.min(cursor.float_dy());
+            peak_turn = peak_turn.max(cursor.painted_rotation().abs());
+            if arrived && at_arrival.is_none() {
+                at_arrival = Some((cursor.float_dy(), cursor.painted_rotation()));
+            }
+        }
+        let (dy, rot) = at_arrival.expect("the move arrives");
+        (dy, rot, peak_lift, peak_turn)
+    }
+
+    #[test]
+    fn every_motion_style_floats_while_travelling_and_settles_on_arrival() {
+        for style in MotionStyle::ALL {
+            for rotate in [RotateMode::Off, RotateMode::Lean, RotateMode::Heading] {
+                let mut cursor = core(CursorOptions {
+                    rotate,
+                    ..CursorOptions::DEFAULT
+                });
+                cursor.motion.style = style;
+                cursor.tick_motion(1.3); // mid resting bob
+                move_to(&mut cursor, 700.0, 420.0);
+                let (dy, rot, lift, turn) = play(&mut cursor);
+                let label = format!("{style:?} {rotate:?}");
+                assert!(dy.abs() < 0.01, "{label}: float {dy} at arrival");
+                assert_eq!(rot, 0.0, "{label}: upright at arrival");
+                assert!(lift < -1.5, "{label}: lifts while travelling ({lift})");
+                match rotate {
+                    RotateMode::Off => assert_eq!(turn, 0.0, "{label}"),
+                    RotateMode::Lean => assert!(
+                        turn > 0.1 && turn <= crate::cursor_pose::LEAN_MAX_RADIANS + 1e-9,
+                        "{label}: {turn}"
+                    ),
+                    RotateMode::Heading => assert!(turn > 0.1, "{label}: {turn}"),
+                }
+                // The click that follows is upright and does not move the
+                // float (the resting bob started from 0 at arrival).
+                let resting = cursor.float_dy();
+                cursor.apply_command_base(
+                    OverlayCommand::ClickPulse { x: 700.0, y: 420.0 },
+                    true,
+                    true,
+                );
+                assert_eq!(cursor.painted_rotation(), 0.0, "{label}: click upright");
+                assert_eq!(cursor.float_dy(), resting, "{label}: click keeps the float");
+            }
+        }
+    }
+
+    #[test]
+    fn drags_float_and_lean_less_and_the_drop_lands_settled() {
+        let mut cursor = core(CursorOptions {
+            rotate: RotateMode::Lean,
+            ..CursorOptions::DEFAULT
+        });
+        cursor.apply_command_base(OverlayCommand::SetPressed(true), false, false);
+        move_to(&mut cursor, 600.0, 380.0);
+        let (dy, rot, lift, turn) = play(&mut cursor);
+        assert!(dy.abs() < 0.01 && rot == 0.0, "drop settled: {dy} {rot}");
+        assert!(lift < -1.5, "floats during the drag: {lift}");
+        assert!(
+            turn > 0.05 && turn <= crate::cursor_pose::LEAN_MAX_DRAG_RADIANS + 1e-9,
+            "{turn}"
+        );
+        cursor.apply_command_base(OverlayCommand::SetPressed(false), false, false);
+        assert_eq!(cursor.painted_rotation(), 0.0);
+    }
+
+    #[test]
+    fn short_hops_and_snaps_stay_upright() {
+        let mut cursor = core(CursorOptions {
+            rotate: RotateMode::Heading,
+            ..CursorOptions::DEFAULT
+        });
+        move_to(&mut cursor, 125.0, 110.0);
+        let (dy, _, lift, turn) = play(&mut cursor);
+        assert_eq!(turn, 0.0, "no turn on a short hop");
+        assert!(
+            lift > -0.5 && dy.abs() < 0.01,
+            "no travel lift on a short hop: {lift}"
+        );
+        cursor.apply_command_base(
+            OverlayCommand::SnapTo {
+                x: 400.0,
+                y: 300.0,
+                heading_radians: None,
+            },
+            false,
+            false,
+        );
+        assert_eq!(cursor.painted_rotation(), 0.0);
+    }
+
+    /// How much alpha the halo adds 9 pt from the body centre: the pixel
+    /// painted as is, minus the same frame with `cursor.halo` off.
+    fn halo_probe(cursor: &mut RenderStateCore) -> u8 {
+        let alpha_at = |cursor: &RenderStateCore| {
+            let mut pixmap = tiny_skia::Pixmap::new(240, 240).unwrap();
+            paint_cursor(&mut pixmap, cursor, 0.0, 0.0, None, 1.0);
+            let (tx, ty) = crate::pointer_for_anchor(cursor.pos.0, cursor.pos.1, cursor.heading);
+            let (bx, by) = crate::cursor_pose::BODY_OFFSET_PT;
+            let (x, y) = (tx + bx - 9.0, ty + by + 2.0);
+            pixmap
+                .pixel(x.round() as u32, y.round() as u32)
+                .unwrap()
+                .alpha()
+        };
+        let with = alpha_at(cursor);
+        let saved = cursor.options_override;
+        let options = cursor.options();
+        cursor.options_override = Some(CursorOptions {
+            halo: false,
+            ..options
+        });
+        let without = alpha_at(cursor);
+        cursor.options_override = saved;
+        with.saturating_sub(without)
+    }
+
+    #[test]
+    fn the_halo_shows_in_every_state_follows_drags_and_hides_with_the_cursor() {
+        let mut cursor = core(CursorOptions {
+            float: false,
+            ..CursorOptions::DEFAULT
+        });
+        let resting = halo_probe(&mut cursor);
+        assert!(resting > 0, "halo at rest");
+        let mut plain = core(CursorOptions::NONE);
+        assert_eq!(halo_probe(&mut plain), 0, "cursor.halo off");
+        plain.options_override = Some(CursorOptions {
+            halo: true,
+            ..CursorOptions::NONE
+        });
+        assert_eq!(
+            halo_probe(&mut plain),
+            resting,
+            "the halo needs no other extra"
+        );
+
+        // Click: no ring, no grow, no pulse; the halo is unchanged.
+        cursor.apply_command_base(
+            OverlayCommand::ClickPulse { x: 100.0, y: 100.0 },
+            true,
+            true,
+        );
+        assert_eq!(
+            halo_probe(&mut cursor),
+            resting,
+            "no click effect on the halo"
+        );
+
+        // Drag: pressed and moving, the halo travels with the arrow.
+        cursor.apply_command_base(OverlayCommand::SetPressed(true), false, false);
+        assert_eq!(
+            halo_probe(&mut cursor),
+            resting,
+            "no press effect on the halo"
+        );
+        move_to(&mut cursor, 180.0, 160.0);
+        cursor.tick_motion(cursor.trajectory.as_ref().unwrap().arrival_t * 0.5);
+        assert!(halo_probe(&mut cursor) > 0, "halo mid-drag");
+        play(&mut cursor);
+        assert_eq!(halo_probe(&mut cursor), resting, "halo at the drop point");
+
+        // Scroll and typing keep it.
+        cursor.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Scroll,
+                delivery: None,
+                target: None,
+            },
+            false,
+            false,
+        );
+        assert_eq!(halo_probe(&mut cursor), resting);
+
+        // It fades with the idle fade and is gone when the session ends.
+        cursor.idle_alpha = 0.5;
+        assert!(halo_probe(&mut cursor) < resting);
+        cursor.idle_alpha = 1.0;
+        cursor.apply_command_base(OverlayCommand::SetEnabled(false), false, false);
+        assert_eq!(halo_probe(&mut cursor), 0, "hidden with the cursor");
+        // Surfaces that cannot blend get no halo.
+        cursor.apply_command_base(OverlayCommand::SetEnabled(true), false, false);
+        cursor.effects_capable = false;
+        assert_eq!(halo_probe(&mut cursor), 0);
+    }
+
+    #[test]
+    fn each_session_cursor_gets_its_own_halo_colour() {
+        let colours: std::collections::HashSet<_> = ["default", "agent-1", "agent-2", "agent-3"]
+            .into_iter()
+            .map(|id| crate::cursor_pose::halo_rgb(None, id))
+            .collect();
+        assert_eq!(colours.len(), 4);
     }
 
     #[test]

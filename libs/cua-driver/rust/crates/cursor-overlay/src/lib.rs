@@ -14,6 +14,7 @@ pub mod badge_mode;
 pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod cursor_options;
+pub mod cursor_pose;
 pub mod motion;
 pub mod motion_defaults;
 pub mod render_map;
@@ -29,7 +30,7 @@ pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use badge_mode::BadgeMode;
-pub use cursor_options::CursorOptions;
+pub use cursor_options::{CursorOptions, RotateMode};
 pub use motion::{
     MotionConfig, MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, Spring,
     DEFAULT_FIXED_MS,

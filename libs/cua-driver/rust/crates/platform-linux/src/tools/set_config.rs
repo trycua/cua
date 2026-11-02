@@ -40,9 +40,10 @@ impl Tool for SetConfigTool {
                 `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n\
                 `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge \
                 for every cursor at once.\n\n\
-                `cursor.float` (resting float) is `on` (default), `off` or `default`; \
-                `cursor.marks` (action marks) and `cursor.rotate` (turn toward travel) are `on`, \
-                `off` (default) or `default`. All apply to every cursor at once.".into(),
+                `cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are \
+                `on` (default), `off` or `default`; `cursor.marks` (action marks) is `on`, \
+                `off` (default) or `default`; `cursor.rotate` is `off` (default), `lean`, \
+                `heading` or `default`. All apply to every cursor at once.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
